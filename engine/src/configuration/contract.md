@@ -1,16 +1,13 @@
-# configuration — contrato
+# Contrato de configuração
 
-## Objetivo
-Veja README do módulo. Interface conceitual independente de linguagem.
+## Responsabilidades
+Validar e persistir preferências por perfil de conta e por aplicativo, incluindo `start_with_session`, `auto_sync` e `close_to_background` (na v1, fechar normalmente oculta; saída explícita termina).
 
-## Entradas
-Comandos tipados, IDs e configuração validada, versões esperadas onde relevantes.
+## Pré-condições
+Autostart só pode ser marcado efetivo após autorização/integração com o ambiente; preferência desejada não equivale à permissão concedida.
 
 ## Saídas
-Resposta tipada ou erro (invalid, forbidden, transient, conflict, unknown, cancelled).
+`RequestedAutostart`, `AutostartEnabled`, `AutostartDenied`, `AutostartUnsupported`; configuração validada, persistida e auditável.
 
-## Limites
-Mudar configuração não deve produzir deleção automática. Nenhum outro módulo deverá conhecer sua implementação interna.
-
-## Garantias
-Definir concorrência, idempotência, efeitos colaterais e pós-condições antes do código. Respeitar os invariantes globais.
+## Invariantes
+Nenhuma preferência de ciclo de vida modifica implicitamente filtros de exclusão ou resultados de sincronização.
