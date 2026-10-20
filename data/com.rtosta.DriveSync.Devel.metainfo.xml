@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.rtosta.DriveSync.Devel</id>
+  <name>DriveSync</name>
+  <summary>Google Drive file synchronization for Linux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>DriveSync is an experimental desktop application aiming to synchronize Google Drive files with local folders on Linux.</p>
+    <p>It is in early development and is not yet suitable for everyday file synchronization.</p>
+  </description>
+  <launchable type="desktop-id">com.rtosta.DriveSync.Devel.desktop</launchable>
+  <url type="homepage">https://github.com/rafatosta/drivesync</url>
+  <url type="bugtracker">https://github.com/rafatosta/drivesync/issues</url>
+  <developer id="com.rtosta"><name>Rafael Tosta</name></developer>
+  <content_rating type="oars-1.1"/>
+</component>
