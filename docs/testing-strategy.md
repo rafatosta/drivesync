@@ -1,0 +1,3 @@
+# Test strategy
+
+Unit: deterministic table-driven tests for B/L/R including unknown; property tests for no-silent-loss, repeatability and operation invariants. Contract: fake auth, remote, local, and persistence providers. Fault injection at every transition (before/after network response, write, fsync, rename, SQLite commit, cursor advancement). Integration: isolated test Drive account/folder, NEVER root or personal folders; tagged artifacts; cleanup only test-created IDs. E2E: no-op sync performs no transfers; Unicode names; rename; duplicate names; quota; offline; restart; concurrent edits; symlink escapes; DB corruption; token revocation; retried upload. Test oracle comes from specs rather than implementation.
