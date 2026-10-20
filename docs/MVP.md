@@ -335,6 +335,48 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Gate G15 = MVP ACEITO:** demonstração ponta a ponta reprodutível **com duas contas**, base em SQLite recuperável, arquivos preservados sob falha, mudanças incrementais, aplicação funcional em Flatpak/GNOME e riscos restantes documentados.
 
+## 5A. Quantificação de janelas e páginas por fase
+
+**Arquitetura de navegação:** o MVP utiliza **1 janela principal** (`AdwApplicationWindow`) e **8 páginas funcionais** dentro dela (`AdwNavigationView`). `AdwPreferencesDialog` é um diálogo separado, **não uma segunda janela principal**. O seletor local e o navegador OAuth podem exibir janelas externas do sistema/portal, que não são contabilizadas como janelas próprias do DriveSync.
+
+**Inventário de páginas do MVP:** P01 Welcome; P02 Connect Account; P03 Choose Folders; P04 Dashboard; P05 Account Details; P06 Needs Attention; P07 Accounts; P08 Preferences (em `AdwPreferencesDialog`, não página da pilha principal). Portanto: **7 páginas de navegação + 1 diálogo de preferências = 8 telas conceituais; 1 janela principal**.
+
+| Fase | Telas novas na fase | Telas funcionais acumuladas (ou prototipadas) | Critério de interface ligado ao gate |
+|---|---|---|---|
+| F00 — ambiente | 0 | 0 | Inventariar 8 mockups e mapear ações às APIs |
+| F01 — execução GTK/Builder | 1 janela-base | 1 janela, sem página de produto validada | Mostrar janela no Builder |
+| F02 — Flatpak | 0 | Mesma janela | Testar abertura e permissões |
+| F03 — contratos/CI | 0 | Mesma janela | Contratos de estados para as 8 telas definidos |
+| F04 — pesquisa OAuth | 0 | Mesmo protótipo | Fluxo externo autorizado especificado |
+| F05 — autenticação | 2 páginas: P01/P02 | 2 páginas | Welcome → Connect; retorno/cancelamento OAuth |
+| F06 — Remote | 0 | 2 páginas | Contrato de listagem para o seletor remoto |
+| F07 — configuração e pastas | 1 página: P03 | 3 páginas | Seletores remoto/local; validações |
+| F08 — SQLite | 0 | 3 páginas | Reinício conserva conta/configuração; estado inicial correto |
+| F09 — Planner/Queue | 0 | 3 páginas | Estados de pendência e conflito representáveis |
+| F10 — Download | 0 | 3 páginas | Eventos de progresso disponíveis para a UI |
+| F11 — primeira sincronização | 2 páginas: P04/P05 | 5 páginas | Dashboard e detalhes reais da primeira conta |
+| F12 — incremental/recuperação | 1 página: P06 | 6 páginas | Erros/conflitos exibidos sem comandos destrutivos |
+| F13 — múltiplas contas | 1 página: P07 | 7 páginas | Duas contas gerenciáveis sem duplicar motor |
+| F14 — GNOME/background | 1 diálogo: P08 | 7 páginas + 1 diálogo = 8 telas | Preferências, ocultar/reabrir, autostart |
+| F15 — aceite | 0 | 8 telas | Fluxo completo testado com duas contas |
+
+**Nota:** essa é uma ordem de *integração funcional* vinculada às fases existentes, não impede criar mockups GTK vazios antes (com dados simulados). O fluxo de navegação pode ser montado integralmente como protótipo em F01–F03, mas nenhum gate funcional será aprovado apenas pela simulação.
+
+### Checklist de interface por marco
+
+- [ ] UI-01 — Instanciar **uma** `AdwApplicationWindow` e `AdwNavigationView`; controlar uma única instância ativa.
+- [ ] UI-02 — Construir P01 (`AdwStatusPage`): logo, texto sobre download-only e botão de conectar.
+- [ ] UI-03 — Construir P02: autorização via navegador, voltar/cancelar/erro e retorno ao mesmo processo.
+- [ ] UI-04 — Construir P03: seleção de pasta remota, seleção de pasta local, validação de raízes sobrepostas e resumo download-only.
+- [ ] UI-05 — Construir P04: estado global e lista de contas sem indicador enganoso de progresso.
+- [ ] UI-06 — Construir P05: status de uma raiz, downloads ativos, histórico e pausa/retomada.
+- [ ] UI-07 — Construir P06: itens bloqueados e justificativas, **sem resolução completa de conflitos no MVP**.
+- [ ] UI-08 — Construir P07: adicionar, visualizar, pausar e desconectar contas, preservando arquivos locais.
+- [ ] UI-09 — Construir P08 (`AdwPreferencesDialog`): iniciar com a sessão, sincronização automática, notificações; respeitar autorizações Flatpak.
+- [ ] UI-10 — Testar navegação, teclado/foco, largura adaptável, fechar/ocultar/reabrir, estados vazios, erro, offline e reinício.
+
+Esses itens **não são fases adicionais**: cada UI-xx pertence à fase indicada na tabela, e todos permanecem pendentes até execução real. Consulte [mockups](ui-mockups.md) e [arquivo visual](mockups/README.md).
+
 ## 6. Como fases posteriores podem modificar fases anteriores
 
 O desenvolvimento é **sequencial, mas não irreversível**. Regressões e novas evidências exigem retorno controlado:
