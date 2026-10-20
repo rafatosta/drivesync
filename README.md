@@ -19,6 +19,14 @@ Designed with GNOME in mind, DriveSync aims to feel like a regular desktop appli
 
 The first functional milestone focuses on **safe, one-way synchronization from Google Drive to Linux**. Uploads and two-way synchronization are planned for later stages.
 
+## UI Preview — Concept Mockups
+
+![DriveSync dashboard concept](docs/mockups/04-dashboard.svg)
+
+*Concept mockup only — not a screenshot of a working application. The design and available features may change during development.*
+
+See the [complete MVP mockup gallery](docs/ui-mockups.md) for the welcome screen, account setup, multiple accounts, transfers, issues, and preferences.
+
 ## Get involved
 
 DriveSync is a developing community project. Feedback, testing, bug reports, translations, documentation, and code contributions are welcome.

@@ -1,5 +1,9 @@
 # Documentação global DriveSync
 
+## Mockups e interface
+
+- [Galeria dos mockups e auditoria GNOME HIG / compatibilidade com o motor](ui-mockups.md)
+
 ## Comece aqui
 
 **[MVP — escopo, roteiro progressivo, checklist e critérios de aceite](MVP.md)**. Esse é o plano de implementação em vigor. Seus gates dependem uns dos outros e podem ser reabertos após descobertas posteriores.
