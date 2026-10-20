@@ -1,11 +1,45 @@
 # Arquitetura DriveSync
 
-A aplicação `src/main.rs` consome apenas a fachada pública em `engine/src/lib.rs` por uma dependência Cargo. O motor é uma biblioteca Rust independente em `engine/`. Cada módulo fica integralmente em `engine/src/<módulo>/` com `mod.rs`, README, contract, algorithms e testes conceituais.
+## Decisão: aplicativo único, motor independente
 
-A API pública encapsula módulos privados. Módulos são independentes por **responsabilidade**, mas cooperam por dados de domínio compartilhados e contratos explícitos. Não há estado global mutável livre. O Coordinator organiza pré-condições e o fluxo. Autenticação real é pré-requisito para operações remotas, mas testes unitários podem usar provedores simulados.
+O DriveSync será **um único processo Flatpak** com interface GTK4/Libadwaita e biblioteca Rust `drivesync-engine` carregada no próprio processo. **Não haverá daemon separado na primeira versão.** A separação é arquitetural no código, não entre processos.
 
-A sincronização ainda não foi implementada. `DriveSyncEngine::add_account` e `start_sync` retornam explicitamente `NotImplemented`; a janela inicial GTK4/Libadwaita continua exibindo somente DriveSync.
+- `src/main.rs`: aplicação GNOME e seu ciclo de vida; consome somente a API pública de `engine/src/lib.rs`.
+- `engine/src/<módulo>/`: implementação e documentação juntas; módulos privados e funcionalidades encapsuladas.
+- `docs/`: requisitos, contratos e decisões globais.
+- `engine/src/ipc/`: **integração externa opcional** por API D-Bus de sessão, destinada à futura extensão do Nautilus e outros consumidores; não é necessário para a comunicação entre GUI e motor.
 
-Documentos globais: [dependências](module-dependencies.md), [dados compartilhados](shared-context.md), [API pública](public-engine-api.md), [invariantes](invariants.md).
+## Ciclo de vida
 
-Extensão futura: daemon/CLI usam a mesma biblioteca; processos distintos comunicam-se por adaptador IPC, não por acesso direto ao estado interno.
+1. Abertura normal apresenta a janela existente.
+2. Fechar pelo X **oculta a janela, sem encerrar a aplicação ou parar a sincronização**.
+3. Reabrir pelo lançador traz a janela existente à frente; não inicia um segundo motor.
+4. Inicialização automática opcional inicia o aplicativo **com a janela oculta**, mediante integração de desktop autorizada.
+5. **Pausar** suspende ciclos de sincronização, não o processo.
+6. **Sair do DriveSync** encerra o motor de maneira controlada e libera a retenção da aplicação.
+7. O processo preserva seu ciclo de vida sem janelas visíveis mediante retenção explícita do `GApplication`, sem depender da existência da janela.
+
+O `GtkApplication` deve manter uma instância lógica por sessão para o mesmo application ID; a prevenção de trabalhos duplicados por raiz também é responsabilidade do Coordinator.
+
+## Integração com Nautilus
+
+A extensão do Nautilus é um componente **opcional, instalado nativamente**, fora do Flatpak. Ela acessa uma API de estado no D-Bus de sessão, exposta pelo **mesmo processo** DriveSync quando ativo. Não acessa SQLite, tokens ou arquivos privados do sandbox.
+
+- Consulta status de arquivo e raízes gerenciadas.
+- Recebe sinais de mudanças e atualiza emblemas.
+- Ausência do aplicativo ou falha de consulta equivale a `UNAVAILABLE`, não a `SYNCED`.
+- Consultas locais rápidas: a extensão não executa chamadas à Google Drive API nem bloqueia o Nautilus com rede.
+
+Validar cedo a posse de nome no barramento D-Bus, permissões Flatpak, ciclo de vida em segundo plano e a API do Nautilus antes da implementação da extensão.
+
+## Funcionamento interno
+
+A API pública encapsula módulos privados; o Coordinator verifica as dependências funcionais e orquestra mudanças. Módulos colaboram por dados de domínio e contratos, não por variáveis globais mutáveis. Autenticação é pré-condição de sincronização remota real; testes unitários podem usar provedores simulados.
+
+## Estado atual
+
+A biblioteca ainda não implementa sincronização; a janela inicial apresenta somente “DriveSync”. Esta decisão não cria um daemon ou extensão de Nautilus nesta etapa.
+
+## Referências internas
+
+[Dependências entre módulos](module-dependencies.md) · [Dados compartilhados](shared-context.md) · [API pública](public-engine-api.md) · [Invariantes](invariants.md) · [Integração Nautilus](nautilus-integration.md).
