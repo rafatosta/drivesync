@@ -1,18 +1,14 @@
 # DriveSync
 
-Cliente não oficial de sincronização do Google Drive para Linux/GNOME.
+Cliente de sincronização do Google Drive para Linux/GNOME **em fase de especificação**.
 
-**Fase atual:** projeto inicial executável e especificação modular. Ainda não há autenticação nem sincronização implementadas.
+## Estrutura
 
-## Princípios
-- Motor independente da interface GNOME.
-- Especificações e contratos de módulos independentes da linguagem.
-- Algoritmos, limites, erros e testes documentados antes da implementação.
-- Nenhuma operação destrutiva sem verificação explícita do estado anterior.
+- `src/main.rs`: app GTK4/Libadwaita, apenas janela DriveSync.
+- `engine/`: biblioteca Rust independente, interface pública em `engine/src/lib.rs`.
+- `engine/src/<módulo>/`: implementação-base `mod.rs` e documentação `README.md`, `contract.md`, `algorithms.md`, `tests/test-cases.md` agrupadas.
+- `docs/`: invariantes, modelos e decisões globais.
 
-## Execução inicial
-Instale Rust, GTK4 e Libadwaita com seus pacotes de desenvolvimento e execute `cargo run`.
+`cargo run` executa a janela (requer toolchain Rust e bibliotecas de desenvolvimento GTK4/Libadwaita); `cargo test -p drivesync-engine` valida a fachada inicial.
 
-O protótipo apenas abre uma janela com o texto **DriveSync**.
-
-A integração Flatpak com GNOME Builder ainda precisa ser validada.
+**Não existe sincronização funcional ainda**. Métodos da API não implementados retornam erro explícito. Os arquivos de especificação são propostas para revisão antes de implementar o motor. Não usar conta ou dados pessoais para testes destrutivos.

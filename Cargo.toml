@@ -1,8 +1,13 @@
+[workspace]
+members = [".", "engine"]
+resolver = "2"
+
 [package]
 name = "drivesync"
 version = "0.1.0"
 edition = "2021"
-description = "DriveSync GNOME initial prototype"
+description = "DriveSync GNOME prototype"
 
 [dependencies]
 adw = { package = "libadwaita", version = "0.8" }
+drivesync-engine = { path = "engine" }

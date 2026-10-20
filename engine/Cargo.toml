@@ -1,0 +1,9 @@
+[package]
+name = "drivesync-engine"
+version = "0.1.0"
+edition = "2021"
+description = "DriveSync core engine facade and module contracts"
+
+[lib]
+name = "drivesync_engine"
+path = "src/lib.rs"

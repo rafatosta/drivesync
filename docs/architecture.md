@@ -1,27 +1,11 @@
-# Arquitetura do DriveSync
+# Arquitetura DriveSync
 
-## Princípio
-Independência de responsabilidade e implementação, **não independência de dados e funcionamento**. Módulos colaboram por contratos tipados, respeitando pré-condições funcionais explícitas.
+A aplicação `src/main.rs` consome apenas a fachada pública em `engine/src/lib.rs` por uma dependência Cargo. O motor é uma biblioteca Rust independente em `engine/`. Cada módulo fica integralmente em `engine/src/<módulo>/` com `mod.rs`, README, contract, algorithms e testes conceituais.
 
-## Organização
-- `src/`: aplicativo GNOME inicial; consome somente a fachada pública.
-- `modules/`: documentação dos módulos (estado atual do repositório). **Organização alvo:** mover documentação e implementação juntas para `engine/src/<modulo>/`, tornando `engine/` uma biblioteca Rust independente.
-- `docs/`: arquitetura, invariantes, modelo de dados e dependências globais.
+A API pública encapsula módulos privados. Módulos são independentes por **responsabilidade**, mas cooperam por dados de domínio compartilhados e contratos explícitos. Não há estado global mutável livre. O Coordinator organiza pré-condições e o fluxo. Autenticação real é pré-requisito para operações remotas, mas testes unitários podem usar provedores simulados.
 
-Esta atualização é documental: não movimenta código nem altera a compilação atual.
+A sincronização ainda não foi implementada. `DriveSyncEngine::add_account` e `start_sync` retornam explicitamente `NotImplemented`; a janela inicial GTK4/Libadwaita continua exibindo somente DriveSync.
 
-## Arquitetura lógica
-GUI/CLI → DriveSyncEngine (fachada) → Coordinator → contratos de Auth, Changes, Planner, Queue, Transfers, Conflicts e State → Google Drive API / filesystem / SQLite.
+Documentos globais: [dependências](module-dependencies.md), [dados compartilhados](shared-context.md), [API pública](public-engine-api.md), [invariantes](invariants.md).
 
-## Comunicação
-- Dentro do motor: métodos e contratos de módulo, preferencialmente modelos imutáveis e interfaces tipadas.
-- Entre processos, quando houver daemon: adaptador D-Bus/IPC sobre a mesma semântica da API pública.
-- Nenhuma variável global mutável e acessível a todos.
-- Só os responsáveis podem alterar suas categorias de estado.
-- Dependências funcionais são verificadas pelo Coordinator. Uma sincronização remota exige autorização, mas testes de algoritmos podem injetar provedores simulados.
-
-## Documentos complementares
-- [Dependências entre módulos](module-dependencies.md)
-- [Dados compartilhados](shared-context.md)
-- [API pública prevista](public-engine-api.md)
-- [Invariantes de segurança](invariants.md)
+Extensão futura: daemon/CLI usam a mesma biblioteca; processos distintos comunicam-se por adaptador IPC, não por acesso direto ao estado interno.
