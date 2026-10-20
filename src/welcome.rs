@@ -8,6 +8,7 @@ fn text(value: &str, class: &str) -> gtk::Label {
         .label(value)
         .wrap(true)
         .justify(gtk::Justification::Center)
+        .halign(gtk::Align::Center)
         .css_classes([class])
         .build()
 }
@@ -27,7 +28,9 @@ pub fn build(engine: Rc<DriveSyncEngine>) -> adw::ToolbarView {
     toolbar.add_top_bar(&header);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 24);
-    content.set_margin_top(24);
+    content.set_valign(gtk::Align::Center);
+    content.set_vexpand(true);
+    content.set_margin_top(32);
     content.set_margin_bottom(32);
     content.set_margin_start(24);
     content.set_margin_end(24);
@@ -44,6 +47,7 @@ pub fn build(engine: Rc<DriveSyncEngine>) -> adw::ToolbarView {
         Err(_) => gtk::Image::from_icon_name("folder-download-symbolic"),
     };
     image.set_pixel_size(144);
+    image.set_halign(gtk::Align::Center);
     image.update_property(&[gtk::accessible::Property::Label(
         "DriveSync folder and cloud",
     )]);
@@ -104,53 +108,6 @@ pub fn build(engine: Rc<DriveSyncEngine>) -> adw::ToolbarView {
     learn.connect_toggled(move |button| details_clone.set_reveal_child(button.is_active()));
     content.append(&details);
 
-    let steps = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .homogeneous(true)
-        .min_children_per_line(1)
-        .max_children_per_line(3)
-        .column_spacing(16)
-        .row_spacing(16)
-        .build();
-    for (number, title, description) in [
-        (
-            "1",
-            "Connect your account",
-            "Authorize your Google account in your browser when sign-in becomes available.",
-        ),
-        (
-            "2",
-            "Choose your folders",
-            "Select a Google Drive folder and a local destination for each account.",
-        ),
-        (
-            "3",
-            "Keep local copies updated",
-            "Download remote changes. Local edits stay on your computer and are never uploaded.",
-        ),
-    ] {
-        let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        card.add_css_class("card");
-        for widget in [
-            text(number, "title-1"),
-            text(title, "heading"),
-            text(description, "body"),
-        ] {
-            widget.set_margin_start(16);
-            widget.set_margin_end(16);
-            card.append(&widget);
-        }
-        card.set_margin_top(4);
-        card.set_margin_bottom(4);
-        card.set_width_request(230);
-        card.first_child().unwrap().set_margin_top(20);
-        card.last_child().unwrap().set_margin_bottom(20);
-        let child = gtk::FlowBoxChild::new();
-        child.set_focusable(false);
-        child.set_child(Some(&card));
-        steps.insert(&child, -1);
-    }
-    content.append(&steps);
     let note = text(
         "Browser OAuth · When available, sign-in will open securely in your web browser. DriveSync will never ask for your Google password here.",
         "dim-label",
@@ -161,6 +118,7 @@ pub fn build(engine: Rc<DriveSyncEngine>) -> adw::ToolbarView {
 
     let clamp = adw::Clamp::builder()
         .maximum_size(1000)
+        .vexpand(true)
         .child(&content)
         .build();
     let scroll = gtk::ScrolledWindow::builder()
