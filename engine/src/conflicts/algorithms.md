@@ -38,3 +38,26 @@ Executar nominal, entrada inválida, falha de rede, repetição, interrupção e
 
 ## Complexidade
 Para n arquivos, planejamento e varreduras O(n); lookup indexado típico O(log n); transferência de B bytes O(B). A correção operacional é dominada por falhas e estados concorrentes.
+
+
+## Fundamentação técnica por algoritmo
+
+Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **teste verificável** e **hipótese ainda aberta**. Consulte [método de desenvolvimento](../../../docs/development-methodology.md) e [catálogo de fontes](../../../docs/reference-catalog.md). Os links são referências de projeto, não provas de que a implementação esteja pronta.
+
+### CONFLICT-001
+
+- **Técnica conhecida:** Detecção/preservação de edições divergentes.
+- **Referências primárias:** [Unison file synchronizer](https://www.cis.upenn.edu/~bcpierce/unison/).
+- **Política do DriveSync:** Preservar ambas as versões com nomes reservados e identidade rastreável; decisão pendente não bloqueia outros itens independentes.
+- **Testes/oráculos a detalhar:** Mesmo nome para duas cópias, conflito offline, crash durante preservação.
+- **Limitações / questões abertas:** Política de retenção e apresentação de cópias ainda a decidir.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+
+### CONFLICT-002
+
+- **Técnica conhecida:** Resolução assistida pelo usuário.
+- **Referências primárias:** [Unison file synchronizer](https://www.cis.upenn.edu/~bcpierce/unison/).
+- **Política do DriveSync:** Usuário escolhe manter local, remoto ou ambos; revalidar versões antes de executar; janela oculta mantém conflito pendente.
+- **Testes/oráculos a detalhar:** Usuário escolhe após arquivo mudar de novo, reinicia com decisão pendente.
+- **Limitações / questões abertas:** Sem auto-merge na primeira versão; definir UX apenas após contrato seguro.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.

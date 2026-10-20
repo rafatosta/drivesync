@@ -38,3 +38,26 @@ Consultas pontuais tipicamente O(1) em metadados; inventário e planejamento O(n
 
 ## Critérios de aceitação
 Caso nominal, cancelamento, repetição sem duplicação indevida, erro transitório, erro definitivo, falha parcial e reinicialização. Revisar as decisões pendentes antes de codificar.
+
+
+## Fundamentação técnica por algoritmo
+
+Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **teste verificável** e **hipótese ainda aberta**. Consulte [método de desenvolvimento](../../../docs/development-methodology.md) e [catálogo de fontes](../../../docs/reference-catalog.md). Os links são referências de projeto, não provas de que a implementação esteja pronta.
+
+### LOCAL-001
+
+- **Técnica conhecida:** Monitoramento de arquivos e reconciliação por varredura.
+- **Referências primárias:** [GIO FileMonitor](https://docs.gtk.org/gio/class.FileMonitor.html), [GIO monitor events](https://docs.gtk.org/gio/signal.FileMonitor.changed.html).
+- **Política do DriveSync:** Eventos são pistas; varredura completa reconcilia perda de eventos; manter segurança de caminhos e symlinks.
+- **Testes/oráculos a detalhar:** Renomeação, editor com arquivo temporário, diretórios grandes, overflow/monitor indisponível.
+- **Limitações / questões abertas:** Monitor recursivo e comportamento de mounts/permissões Flatpak requerem prova em Fedora.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+
+### LOCAL-002
+
+- **Técnica conhecida:** Estabilização de gravação e verificação de alterações concorrentes.
+- **Referências primárias:** [GIO FileMonitor](https://docs.gtk.org/gio/class.FileMonitor.html), [Rust std::fs metadata](https://doc.rust-lang.org/std/fs/fn.metadata.html).
+- **Política do DriveSync:** Aguardar quiescência é heurística, não prova de arquivo fechado; revalidar tamanho, mtime e identidade após leitura; replanejar se mudou.
+- **Testes/oráculos a detalhar:** Gravação lenta, edição simultânea, arquivo trocado mantendo nome.
+- **Limitações / questões abertas:** Avaliar estratégia de snapshot/stream para origem modificada durante upload.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.

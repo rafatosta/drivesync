@@ -32,3 +32,26 @@ Nenhum token em evento ou log.
 
 ## Complexidade
 Metadados por item aproximadamente O(1); n operações O(n); B bytes transferidos O(B), excluídas latências externas.
+
+
+## Fundamentação técnica por algoritmo
+
+Separar **técnica consolidada**, **política própria**, **evidência de teste** e **hipótese não demonstrada**. Consulte [método](../../../docs/development-methodology.md), [fontes](../../../docs/reference-catalog.md) e [template](../../../docs/algorithm-spec-template.md).
+
+### NOTIFY-001
+
+- **Técnica conhecida:** Notificação assíncrona orientada a eventos.
+- **Referências primárias:** [GIO Notification](https://docs.gtk.org/gio/class.Notification.html), [D-Bus specification](https://dbus.freedesktop.org/doc/dbus-specification.html).
+- **Política do DriveSync:** Emitir apenas eventos já conhecidos; estado persistente é fonte de verdade; payload não deve revelar credenciais.
+- **Testes/oráculos a detalhar:** Evento fora de ordem, cliente fechou janela, segredo presente em texto de erro.
+- **Limitações / questões abertas:** Definir classes de eventos e campos publicáveis.
+- **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
+
+### NOTIFY-002
+
+- **Técnica conhecida:** Coalescência e reconexão a snapshot.
+- **Referências primárias:** [D-Bus specification](https://dbus.freedesktop.org/doc/dbus-specification.html).
+- **Política do DriveSync:** Agrupar progresso ruidoso, mas preservar transições semânticas (SYNCED/ERROR/CONFLICT); clientes recuperam estado por snapshot.
+- **Testes/oráculos a detalhar:** Evento perdido, 500 mudanças por segundo, Nautilus reiniciado.
+- **Limitações / questões abertas:** Medir limites e frequência; sinais não garantem entrega de histórico.
+- **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.

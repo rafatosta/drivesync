@@ -38,3 +38,26 @@ Consultas pontuais tipicamente O(1) em metadados; inventário e planejamento O(n
 
 ## Critérios de aceitação
 Caso nominal, cancelamento, repetição sem duplicação indevida, erro transitório, erro definitivo, falha parcial e reinicialização. Revisar as decisões pendentes antes de codificar.
+
+
+## Fundamentação técnica por algoritmo
+
+Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **teste verificável** e **hipótese ainda aberta**. Consulte [método de desenvolvimento](../../../docs/development-methodology.md) e [catálogo de fontes](../../../docs/reference-catalog.md). Os links são referências de projeto, não provas de que a implementação esteja pronta.
+
+### PLAN-001
+
+- **Técnica conhecida:** Reconciliação de três estados (base, local, remoto).
+- **Referências primárias:** [Unison file synchronizer](https://www.cis.upenn.edu/~bcpierce/unison/), [Google Drive changes](https://developers.google.com/workspace/drive/api/guides/manage-changes).
+- **Política do DriveSync:** Planejar sem efeitos; divergências de dois lados viram CONFLICT; UNKNOWN bloqueia operações destrutivas.
+- **Testes/oráculos a detalhar:** Tabela completa B/L/R (alterado, excluído, igual e unknown), tipos especiais, renomeação.
+- **Limitações / questões abertas:** Mapear versões e IDs reais da Drive API, inclusive múltiplos pais e nomes iguais.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+
+### SYNC-002
+
+- **Técnica conhecida:** Revalidação de precondição e controle de corrida.
+- **Referências primárias:** [HTTP RFC 9110](https://www.rfc-editor.org/rfc/rfc9110), [Drive files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
+- **Política do DriveSync:** Verificar identidade/versão antes de alterar; comparar antes do write sozinho NÃO elimina TOCTOU; se não houver update condicional comprovado, adotar política conservadora de preservação.
+- **Testes/oráculos a detalhar:** Alteração remota entre GET e PATCH, falha antes da confirmação, perda de acesso.
+- **Limitações / questões abertas:** **Bloqueio de viabilidade:** verificar suporte concreto a precondição atômica da Drive API antes de autorizar substituições.
+- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
