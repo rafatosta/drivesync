@@ -33,3 +33,6 @@ tokens.json
 *~
 .DS_Store
 Thumbs.db
+
+# Official public Desktop metadata staged by the distributor at build time.
+/data/google-oauth-client.json

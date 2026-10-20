@@ -1,3 +1,38 @@
+# Distribution OAuth configuration follow-up — 2026-10-20
+
+The official Desktop client is now a build input (`data/google-oauth-client.json`
+or `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE`), embedded after shared validation and field
+filtering. Optional explicit runtime overrides remain for developers. Implicit
+per-user XDG configuration is removed. `DRIVESYNC_REQUIRE_GOOGLE_OAUTH=1` rejects
+unconfigured publication builds. Desktop `client_secret` is public compatibility
+metadata; no user tokens are build inputs or logged.
+
+Verification executed for this change:
+
+- `cargo fmt --all --check` and `git diff --check`: passed.
+- GNOME SDK 50: workspace check, clippy with `-D warnings`, tests and binary build,
+  all offline/locked: passed. **19 tests passed**, including the existing 17 and
+  two configuration tests covering precedence, invalid overrides, missing metadata,
+  Desktop vs web JSON, validation and filtering of extra downloaded fields.
+- `python3 scripts/check-oauth-build.py`: passed using synthetic, nonfunctional
+  test metadata. Checked configured build, changed/invalid file, missing explicit
+  file, permissive development build and strict publication failure; restored the
+  ordinary development build afterward. No provider/vault calls were made.
+
+The first restricted host test run passed 15 tests and failed four loopback tests
+because sockets were blocked. Flatpak also initially could not create its network
+namespace. Repeating in the GNOME SDK with the required sandbox permission passed
+all tests. This was SDK validation, not a Flatpak manifest package build or a
+GNOME Builder UI acceptance run; those remain manual checks.
+
+No official client metadata was supplied. **No real Google login, consent,
+browser return or actual vault persistence was validated.** The maintainer must
+register/configure the official Desktop client once, meet consent/publication
+requirements and stage its metadata before producing configured packages. Follow
+[the maintainer and manual acceptance guide](google-oauth.md).
+
+---
+
 # Authentication implementation evidence — 2026-10-20
 
 ## Scope and maturity

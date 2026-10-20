@@ -4,65 +4,47 @@ use oauth2::{
 };
 use reqwest::blocking::{Client, Response};
 use serde::Deserialize;
-use std::{io::Read, path::PathBuf, time::Duration};
+use std::{io::Read, time::Duration};
 
 pub(super) const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const MAX_RESPONSE: u64 = 64 * 1024;
 
-/// Public desktop-client configuration, never a user credential or a token.
-/// No Debug: a locally supplied client secret must not appear in diagnostics.
-#[derive(Clone, Deserialize)]
-pub struct OAuthConfig {
-    pub client_id: String,
-    #[serde(default)]
-    pub client_secret: Option<String>,
-}
+#[path = "../../oauth_config.rs"]
+mod config;
+pub use config::OAuthConfig;
 impl OAuthConfig {
     pub fn load() -> Result<Self, AuthError> {
-        // Environment is useful for local builds; Builder can use the XDG file.
-        if let Ok(client_id) = std::env::var("DRIVESYNC_GOOGLE_CLIENT_ID") {
-            return Self {
-                client_id,
-                client_secret: std::env::var("DRIVESYNC_GOOGLE_CLIENT_SECRET").ok(),
-            }
-            .validated();
-        }
-        let path = std::env::var_os("DRIVESYNC_GOOGLE_OAUTH_FILE")
-            .map(PathBuf::from)
-            .or_else(|| {
-                let base = std::env::var_os("XDG_CONFIG_HOME")
-                    .map(PathBuf::from)
-                    .or_else(|| {
-                        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))
-                    })?;
-                Some(base.join("drivesync/oauth-client.json"))
+        // Runtime overrides are deliberately separate from distribution build inputs.
+        let read_env = |name| {
+            std::env::var(name).map(Some).or_else(|e| match e {
+                std::env::VarError::NotPresent => Ok(None),
+                _ => Err(AuthError::Configuration),
             })
-            .ok_or(AuthError::Configuration)?;
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum ConfigFile {
-            Downloaded { installed: OAuthConfig },
-            Plain(OAuthConfig),
-        }
-        let data = std::fs::File::open(path).map_err(|_| AuthError::Configuration)?;
-        let config: ConfigFile = serde_json::from_reader(data.take(MAX_RESPONSE))
-            .map_err(|_| AuthError::Configuration)?;
-        match config {
-            ConfigFile::Downloaded { installed } => installed,
-            ConfigFile::Plain(c) => c,
-        }
-        .validated()
-    }
-    pub(super) fn validated(self) -> Result<Self, AuthError> {
-        if self.client_id.is_empty()
-            || self.client_id.trim() != self.client_id
-            || !self.client_id.ends_with(".apps.googleusercontent.com")
-            || self.client_id.chars().any(char::is_control)
-        {
-            return Err(AuthError::Configuration);
-        }
-        Ok(self)
+        };
+        let id = read_env("DRIVESYNC_GOOGLE_CLIENT_ID")?;
+        let secret = read_env("DRIVESYNC_GOOGLE_CLIENT_SECRET")?;
+        let file = if id.is_none() {
+            std::env::var_os("DRIVESYNC_GOOGLE_OAUTH_FILE")
+                .map(|path| {
+                    let file = std::fs::File::open(path).map_err(|_| AuthError::Configuration)?;
+                    let mut data = String::new();
+                    file.take(MAX_RESPONSE + 1)
+                        .read_to_string(&mut data)
+                        .map_err(|_| AuthError::Configuration)?;
+                    Ok(data)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Self::select(
+            id,
+            secret,
+            file.as_deref(),
+            include_str!(concat!(env!("OUT_DIR"), "/google-oauth.json")),
+        )
+        .map_err(|_| AuthError::Configuration)
     }
     pub(super) fn authorization_url(
         &self,

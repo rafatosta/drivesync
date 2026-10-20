@@ -31,3 +31,11 @@ exist only under `cfg(test)`; production uses Google HTTPS and Secret Service.
 Real Google, browser portal, desktop vault persistence and Flatpak integration
 remain manual checks in `docs/google-oauth.md`. These tests do not validate
 AUTH-003 revocation, file scopes on existing folders, or synchronization.
+
+## Distribution configuration
+
+`engine/oauth_config.rs` tests bundled defaults, explicit ID/file precedence,
+missing/invalid metadata, orphan secret rejection, Desktop vs web JSON and
+filtering downloaded fields. `scripts/check-oauth-build.py` checks Cargo input
+tracking, explicit missing/invalid inputs and the strict publication gate using
+nonfunctional test metadata. Neither is evidence of real Google authorization.

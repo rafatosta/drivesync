@@ -19,15 +19,15 @@ expired token. The in-memory profile registry is populated by login or verificat
 Opening the application again currently starts at Welcome. Reconnecting the same
 Google subject updates that account instead of creating another identity.
 
-## Google Cloud configuration
+## Maintainer: one-time Google Cloud configuration
 
-1. Create/select a development project in Google Cloud Console. Enable the
+1. Create/select the official DriveSync project in Google Cloud Console. Enable the
    **Google Drive API** for the eventual download MVP.
 2. Configure Google Auth Platform branding, audience and support contact. If the
    audience is External and publishing status is Testing, add the intended test
    users. Do not use a service-account or web-application OAuth client.
-3. Under Clients create **Desktop app** credentials. Download the JSON into a
-   private local directory. Do not put the downloaded file in the repository.
+3. Under Clients create **Desktop app** credentials. Download the Desktop client JSON. This is distribution metadata, not a user
+   token. Supply it to the build as described below.
 4. Declare `openid`, `email`, and
    `https://www.googleapis.com/auth/drive.readonly` in Data Access as applicable.
    The application requests these scopes, offline access and an explicit account
@@ -40,10 +40,11 @@ Google subject updates that account instead of creating another identity.
 
 Desktop apps are public clients: a client secret distributed with an application
 cannot establish confidentiality. Some Google Desktop clients still require the
-client secret issued with the client ID during token exchange; the local loader
-supports the downloaded `installed.client_secret` for that compatibility. It is
-never a substitute for PKCE, is never compiled into the application, and must not
-be committed. No real client ID, client secret or user token is supplied here.
+client secret issued with the client ID during token exchange; the build and runtime loaders
+support the downloaded `installed.client_secret` for that compatibility. It is
+never a substitute for PKCE, may be compiled into the application as public compatibility metadata. It must
+never be described as confidential. No official client metadata or user token
+is supplied in this checkout.
 
 References: [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
 [Google OpenID Connect / UserInfo](https://developers.google.com/identity/openid-connect/openid-connect),
@@ -67,35 +68,58 @@ status/policies. This implementation does not establish the F04 feasibility gate
 real access to an existing test folder and publication requirements remain to be
 validated. See [Google's scope documentation](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
-## Local configuration
+## End users
 
-The loader checks, in order:
+Install a configured DriveSync distribution, click **Connect Google Account**,
+sign in and grant access in the external browser, then return to DriveSync.
+No Google Cloud project, JSON file or environment variable is required from users.
+Unlock the desktop keyring if prompted. A build without valid client configuration
+explains that connection is unavailable and asks for a configured release or help
+from the distributor; it never claims success.
 
-1. `DRIVESYNC_GOOGLE_CLIENT_ID`, with optional
-   `DRIVESYNC_GOOGLE_CLIENT_SECRET` in the process environment.
-2. The JSON file pointed to by `DRIVESYNC_GOOGLE_OAUTH_FILE`.
-3. `$XDG_CONFIG_HOME/drivesync/oauth-client.json`, falling back to
-   `$HOME/.config/drivesync/oauth-client.json` outside Flatpak.
+## Maintainer: build and distribution configuration
 
-Both the downloaded Google JSON (`{"installed": {...}}`) and a minimal object
-are accepted. Example without real credentials:
+After creating the official Desktop client once, make its downloaded JSON available
+as `data/google-oauth-client.json` before building. This intentionally ignored file
+is picked up by Cargo, Flatpak and GNOME Builder through the manifest's directory
+source. Alternatively set `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE` to an absolute path
+visible to the build process. The build validates Desktop metadata and embeds only
+`client_id` and optional `client_secret`, not arbitrary fields or endpoints.
+A malformed or unreadable supplied file fails the build with a sanitized error.
+Cargo tracks file changes and both build settings to prevent stale configuration.
 
-```json
-{
-  "client_id": "YOUR_DESKTOP_CLIENT_ID.apps.googleusercontent.com"
-}
+```sh
+DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE=/path/to/desktop-client.json cargo build --release --locked
+# Publication gate: fail rather than ship an unconfigured binary.
+DRIVESYNC_REQUIRE_GOOGLE_OAUTH=1 cargo build --release --locked
 ```
 
-Copy the downloaded JSON into the appropriate private config directory (mode
-0600 recommended) or set the file override. Endpoints in a downloaded JSON are
-not trusted: Google HTTPS authorization/token/UserInfo endpoints are fixed in
-code. `.env` files are **not** loaded automatically.
+For Flatpak/GNOME Builder, place the file at `data/google-oauth-client.json` in the
+source checkout **before** building. No runtime environment or host config mount
+is needed. The development manifest allows an unconfigured build for UI work;
+release packagers must set `DRIVESYNC_REQUIRE_GOOGLE_OAUTH: '1'` in the module's
+`build-options.env`. When using the build file override there, stage the JSON in
+the build sandbox and set its sandbox path in that same environment. Clean/rebuild
+the module after changing manifest inputs. The existing manifest remains a
+network-enabled development build, not a reproducible release manifest.
 
-Inside the development Flatpak, the default file on the host is:
+The maintainer must also configure consent branding, audience, support and declared
+scopes, enable Drive API, and satisfy Google's publication/verification requirements
+before broad distribution. Testing-mode accounts must be explicitly allowed.
+Changing to a different client ID changes the vault namespace and requires users
+to authorize again. Reusing one official client across releases avoids this.
 
-```text
-~/.var/app/com.rtosta.DriveSync.Devel/config/drivesync/oauth-client.json
-```
+## Optional development runtime overrides
+
+Priority is explicit `DRIVESYNC_GOOGLE_CLIENT_ID` (with optional
+`DRIVESYNC_GOOGLE_CLIENT_SECRET`), then explicit `DRIVESYNC_GOOGLE_OAUTH_FILE`, then
+the embedded distribution client. A secret without an ID is rejected; a bad
+explicit override fails closed rather than silently choosing another identity.
+The former implicit XDG config file is no longer read, preventing stale local
+configuration from overriding the distribution. Developers using that file can
+set the file override explicitly. `.env` files are not loaded automatically.
+Both downloaded `installed` JSON and minimal `client_id`/`client_secret` objects
+are supported; web-client JSON is rejected. Google endpoints remain fixed in code.
 
 Never place access or refresh tokens in that file. Tokens are serialized only
 inside GNOME's Secret Service, isolated by `(application + OAuth client ID,
@@ -110,9 +134,9 @@ Secret portal; this development backend uses Secret Service directly.
 1. Open this existing project in GNOME Builder. Install GNOME Platform/SDK **50**
    and its compatible Rust SDK extension. Reload the development manifest after
    changing SDKs or permissions. No Meson project is needed.
-2. Put the Desktop client JSON in the Flatpak config location above. A file
-   override must point to a path actually visible in the sandbox. Environment
-   configuration must be applied to the **running app**, not only build options.
+2. As maintainer, stage the official Desktop JSON in
+   `data/google-oauth-client.json` before building, as described above. Users of
+   the resulting package do not repeat this step.
 3. Build and run with `flatpak/com.rtosta.DriveSync.Devel.yml`. GIO launches the
    default browser via OpenURI in the sandbox; the shared network namespace
    allows its redirect to the loopback listener. A functional desktop portal and

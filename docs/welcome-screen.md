@@ -27,7 +27,7 @@ The setup instruction cards remain removed.
 ## Manual checks
 
 1. Check light/dark style, keyboard navigation, large text and widths 360–960 px.
-2. Configure a Desktop OAuth client and complete the
+2. As maintainer, embed the official Desktop OAuth client at build time and complete the
    [real OAuth checklist](google-oauth.md#gnome-builder--flatpak-test-procedure).
 3. Confirm Connect cannot start duplicate flows; Cancel and errors allow retry.
 4. Confirm Account Information shows the genuine Google subject and optional

@@ -44,7 +44,7 @@ impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Configuration => {
-                "Configure a Google Desktop OAuth client first. See docs/google-oauth.md."
+                "Google connection is unavailable in this build. Please install a configured DriveSync release or contact the distributor."
             }
             Self::Busy => "An account connection is already in progress.",
             Self::Cancelled => "Account connection was cancelled.",

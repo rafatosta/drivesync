@@ -25,6 +25,9 @@ modules:
     buildsystem: simple
     build-options:
       env:
+        # Stage data/google-oauth-client.json before Builder/Flatpak builds.
+        # Release packaging must also set DRIVESYNC_REQUIRE_GOOGLE_OAUTH: '1'.
+        # Metadata is embedded by engine/build.rs; users need no runtime setup.
         CARGO_HOME: /run/build/drivesync/cargo-home
     build-commands:
       - cargo --version

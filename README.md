@@ -24,7 +24,12 @@ The first functional milestone focuses on **safe, one-way synchronization from G
 The native GTK4/Libadwaita Welcome screen connects Google accounts through the
 system browser using OAuth with PKCE. After secure credential storage, Account
 Information shows the real account identifier and optional verified email.
-Configure your own Desktop OAuth client using the [Google OAuth guide](docs/google-oauth.md).
+A configured distribution includes DriveSync’s public Desktop OAuth client: users
+only click **Connect Google Account**, authorize in the browser and return to the
+app. No personal Google Cloud project or JSON is needed. Official client metadata
+is not yet supplied in this checkout; the maintainer must provide it at build time
+using the [maintainer guide](docs/google-oauth.md). Unconfigured builds show an
+explanation instead of starting authorization.
 File transfers and folder setup remain unavailable. Real Google/Flatpak acceptance
 is still pending; see [validation evidence](docs/auth-validation.md).
 
