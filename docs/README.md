@@ -1,5 +1,10 @@
 # Documentação global DriveSync
 
+## Comece aqui
+
+**[MVP — escopo, roteiro progressivo, checklist e critérios de aceite](MVP.md)**. Esse é o plano de implementação em vigor. Seus gates dependem uns dos outros e podem ser reabertos após descobertas posteriores.
+
+
 - [Arquitetura](architecture.md)
 - [Requisitos](requirements.md)
 - [Invariantes](invariants.md)

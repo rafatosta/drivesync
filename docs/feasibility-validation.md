@@ -1,5 +1,8 @@
 # Estudo de viabilidade técnica — DriveSync
 
+**Plano de implementação ativo:** [MVP — roteiro e checklist](MVP.md). A aceitação do MVP cobre a prova de download/incremental/recuperação em Flatpak; os marcos gerais F3 (upload seguro) e F4 (bidirecional/exclusões) continuam **fora do MVP** e não devem ser dados como aprovados por ele.
+
+
 ## Pergunta
 Conseguimos manter pasta local e pasta remota do Google Drive coerentes e recuperáveis, em uso real no Fedora/Flatpak, sem perda silenciosa de dados?
 

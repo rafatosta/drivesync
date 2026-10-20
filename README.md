@@ -1,5 +1,10 @@
 # DriveSync
 
+**[MVP — roteiro de implementação do zero, por fases e checklists](docs/MVP.md)** · [Índice da documentação](docs/README.md)
+
+> **Etapa atual:** planejamento. A janela inicial e a biblioteca Rust estão no repositório, mas a construção no GNOME Builder, o Flatpak e o fluxo de sincronização ainda não foram validados. Inicie pela fase F00 do MVP; não avance sem cumprir o gate anterior.
+
+
 Cliente de sincronização do Google Drive para Linux/GNOME **em fase de especificação**.
 
 ## Estrutura
