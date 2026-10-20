@@ -1,0 +1,8 @@
+[package]
+name = "drivesync"
+version = "0.1.0"
+edition = "2021"
+description = "DriveSync GNOME initial prototype"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.8" }
