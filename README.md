@@ -19,6 +19,13 @@ Designed with GNOME in mind, DriveSync aims to feel like a regular desktop appli
 
 The first functional milestone focuses on **safe, one-way synchronization from Google Drive to Linux**. Uploads and two-way synchronization are planned for later stages.
 
+## Welcome screen
+
+The native GTK4/Libadwaita Welcome screen is implemented. It explains the
+download-only milestone and the planned setup steps. Account connection and
+file transfers remain unavailable; the Connect action reports that state
+without simulating sign-in. See [behavior and manual checks](docs/welcome-screen.md).
+
 ## UI Preview — Concept Mockups
 
 ![DriveSync MVP design concepts: 8 screens](docs/mockups/concepts/10-full-board-gnome-mvp.webp)
