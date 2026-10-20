@@ -21,6 +21,7 @@
 !.env.example
 !.env.sample
 client_secret*.json
+oauth-client.json
 credentials.json
 token.json
 tokens.json

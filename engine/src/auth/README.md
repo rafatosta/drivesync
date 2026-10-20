@@ -27,4 +27,6 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** AUTH-001/002 implementados com testes automatizados; fluxo real Google/Flatpak ainda pendente de validação. AUTH-003 permanece planejado.
+
+Configuração, arquitetura da integração e limites: [Google OAuth](../../../docs/google-oauth.md).

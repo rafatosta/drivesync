@@ -1,7 +1,7 @@
 # Development manifest for GNOME Builder. Not yet a reproducible release build.
 app-id: com.rtosta.DriveSync.Devel
 runtime: org.gnome.Platform
-runtime-version: '49'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -12,6 +12,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
+  # Per-account OAuth credentials in the desktop Secret Service.
+  - --talk-name=org.freedesktop.secrets
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   # Temporary development-only access for Cargo to download crates.
@@ -26,7 +28,7 @@ modules:
         CARGO_HOME: /run/build/drivesync/cargo-home
     build-commands:
       - cargo --version
-      - cargo build --release
+      - cargo build --release --locked
       - install -Dm755 target/release/drivesync /app/bin/drivesync
       - install -Dm644 data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg /app/share/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg
       - install -Dm644 data/com.rtosta.DriveSync.Devel.desktop /app/share/applications/com.rtosta.DriveSync.Devel.desktop

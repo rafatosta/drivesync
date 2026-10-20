@@ -1,6 +1,6 @@
 # Algoritmos — auth
 
-**Status:** proposta v0.2, independente da linguagem.
+**Status:** AUTH-001/002 implementados conforme o complemento do contrato; validação real Google/Flatpak pendente. AUTH-003 continua proposto.
 
 ## Identificadores
 AUTH-001 login; AUTH-002 refresh; AUTH-003 revogação.
@@ -51,7 +51,7 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Política do DriveSync:** Abrir navegador padrão, conferir state, PKCE, callback/redirect e consentimento; nunca solicitar senha Google na interface DriveSync.
 - **Testes/oráculos a detalhar:** Callback forjado, state diferente, code reutilizado, cancelamento e falta de browser.
 - **Limitações / questões abertas:** Escolha de scopes e comportamento dentro do Flatpak precisam de prova real.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+- **Situação:** Implementação e oráculos automatizados disponíveis; validação Google/Flatpak e revisão humana pendentes.
 
 ### AUTH-002
 
@@ -60,7 +60,7 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Política do DriveSync:** Refresh token fica em armazenamento seguro; renovar uma vez por conta mesmo diante de requisições concorrentes; falha temporária não revoga credenciais.
 - **Testes/oráculos a detalhar:** Token expirado, refresh simultâneo, offline, invalid_grant e storage indisponível.
 - **Limitações / questões abertas:** Política de armazenamento de segredo, reautorização e expiração do ambiente Testing devem ser validadas.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+- **Situação:** Implementação e oráculos automatizados disponíveis; validação Google/Flatpak e revisão humana pendentes.
 
 ### AUTH-003
 
@@ -70,3 +70,7 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Testes/oráculos a detalhar:** Revogação remota bem-sucedida, rede indisponível, já revogado, conta ativa em outro perfil.
 - **Limitações / questões abertas:** Precisar semântica de revogação local versus remota.
 - **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+
+## Integração implementada
+
+Pseudocódigo, efeitos, erros e recuperação: [contrato](contract.md#escopo-desta-implementação-auth-001--auth-002). Oráculos concretos: [matriz de testes](tests/test-cases.md). A solicitação explícita de implementação desta integração é o escopo de trabalho; não altera os gates de aceite do MVP.

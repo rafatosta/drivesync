@@ -7,3 +7,11 @@ description = "DriveSync core engine facade and module contracts"
 [lib]
 name = "drivesync_engine"
 path = "src/lib.rs"
+
+[dependencies]
+oauth2 = { version = "5", default-features = false, features = ["timing-resistant-secret-traits"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"

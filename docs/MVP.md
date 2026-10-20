@@ -202,6 +202,14 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 ### F05 — Implementar `auth` (OAuth real e seguro)
 
+**Atualização de implementação (2026-10-20):** a integração AUTH-001/002 e
+Welcome → Account Information foi solicitada explicitamente e implementada,
+com testes automatizados. A [configuração](google-oauth.md) e as
+[evidências/pendências](auth-validation.md) distinguem implementação de aceite.
+Os itens abaixo e os gates G04/G05 permanecem abertos até revisão e validação
+real de Google, cofre e navegador no Flatpak. Não há aprovação implícita das
+fases anteriores nem implementação de sincronização.
+
 **Depende:** G04. Algoritmos: `AUTH-001`, `AUTH-002` e tratamento de revogação.
 
 - [ ] F05.1 — Completar entradas, saídas, pseudocódigo e oráculos em `engine/src/auth/`, com links à RFC 7636, RFC 8252 e documentação Google.

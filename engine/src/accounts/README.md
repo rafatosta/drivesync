@@ -27,4 +27,4 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** registro mínimo em memória de perfis autenticados implementado (identidade estável e atualização sem duplicar); raízes, persistência de perfis e desvinculação não implementadas. Credenciais persistem exclusivamente em auth/Secret Service.

@@ -24,3 +24,20 @@ A fachada valida que cada raiz pertence à conta esperada. Uma sessão Auth não
 A **API D-Bus externa** do módulo `ipc` é uma fronteira opcional para a extensão Nautilus, não substitui a chamada direta GUI→Engine.
 
 **Status:** interface conceitual, não implementada; métodos concretos dependem de revisão de contrato e testes.
+
+## API concreta da integração OAuth
+
+- `add_account(&Cancellation, open_browser)` → `Result<AccountSummary, EngineError>`;
+  chamada bloqueante em worker, com porta de navegador que retorna sucesso/falha.
+- `list_accounts()` → perfis autenticados registrados neste processo.
+- `verify_account(&AccountId)` → perfil confirmado via UserInfo, reutilizando ou
+  renovando credencial persistida. Também deve rodar em worker.
+- `AccountId` é uma chave textual `google:<sub>`, estável entre logins.
+- `AccountSummary` contém ID, subject e e-mail verificado opcional; nenhum token.
+- `EngineError::Authentication(AuthError)` contém somente erros tipados e textos
+  sanitizados. A GUI não acessa os módulos privados.
+
+`status()` continua `NotConfigured`: autenticação não configura uma raiz de
+sincronização. As demais APIs conceituais acima continuam planejadas. A mudança
+na fachada e o registro mínimo de accounts são necessários para a integração
+Welcome → Account Information explicitamente solicitada.

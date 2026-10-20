@@ -21,10 +21,12 @@ The first functional milestone focuses on **safe, one-way synchronization from G
 
 ## Welcome screen
 
-The native GTK4/Libadwaita Welcome screen is implemented. It explains the
-download-only milestone and the planned setup steps. Account connection and
-file transfers remain unavailable; the Connect action reports that state
-without simulating sign-in. See [behavior and manual checks](docs/welcome-screen.md).
+The native GTK4/Libadwaita Welcome screen connects Google accounts through the
+system browser using OAuth with PKCE. After secure credential storage, Account
+Information shows the real account identifier and optional verified email.
+Configure your own Desktop OAuth client using the [Google OAuth guide](docs/google-oauth.md).
+File transfers and folder setup remain unavailable. Real Google/Flatpak acceptance
+is still pending; see [validation evidence](docs/auth-validation.md).
 
 ## UI Preview — Concept Mockups
 

@@ -38,7 +38,7 @@ A API pública encapsula módulos privados; o Coordinator verifica as dependênc
 
 ## Estado atual
 
-A biblioteca ainda não implementa sincronização; a janela inicial apresenta somente “DriveSync”. Esta decisão não cria um daemon ou extensão de Nautilus nesta etapa.
+A biblioteca implementa autenticação Google (AUTH-001/002) com integração Welcome → Account Information e cofre por conta; sincronização continua não implementada. Uma única instância do motor atende as páginas dentro de AdwNavigationView. Ver [configuração OAuth](google-oauth.md) e [evidências](auth-validation.md).
 
 ## Referências internas
 
