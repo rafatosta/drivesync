@@ -1,34 +1,24 @@
-# ui — algoritmos
+# Algoritmos UI / ciclo de vida
 
-**Status:** rascunho v0.2.
+## UI-001 inicialização
+1. Detectar ativação normal versus autostart autorizado.
+2. Construir/obter instância do motor uma única vez.
+3. Em ativação normal, apresentar a janela única; no autostart, não apresentá-la.
+4. Manter processo vivo com retenção apropriada enquanto motor ativo.
 
-## Identificadores
-UI-001 iniciar, UI-002 mostrar status.
+## UI-002 ocultação
+1. Interceptar solicitação de fechar.
+2. Ocultar janela; não emitir shutdown para motor.
+3. Continuar processando eventos e atualizações sem bloquear GTK.
 
-## Objetivo
-Implementar a responsabilidade do módulo sem acoplar a interface ao motor.
+## UI-003 reabertura
+1. Ao ativar o aplicativo já executando, localizar janela existente.
+2. Apresentar janela, não criar segundo motor.
 
-## Pré-condições
-Dados de entrada validados, dependências acessíveis ou erro tipado.
+## UI-004 saída verdadeira
+1. Receber comando explícito Sair.
+2. Solicitar ao motor parada recuperável e confirmar journal.
+3. Liberar retenção de aplicação e terminar.
 
-## Algoritmo
-1. Abrir janela DriveSync GTK4/Libadwaita.
-2. consultar snapshot.
-3. exibir conta/pasta e progresso.
-4. enviar comandos ao motor.
-5. mostrar erros/conflitos.
-
-## Pós-condições
-Resposta ou erro explícito sem perda silenciosa de estado.
-
-## Erros
-Configuração inválida, falha temporária de comunicação, interrupção, cancelamento e incompatibilidade de versão.
-
-## Verificações
-Identidade e versão de contexto, efeitos confirmados e invariantes globais.
-
-## Proibido
-Interface não implementa algoritmos do motor. Timeout não significa sucesso ou ausência remota.
-
-## Complexidade
-Por comando O(1) sem contar eventuais itens de lista; para n registros O(n).
+## Testes
+Fechar/reabrir; executar sem janela; comando Sair; autostart sem janela; duas ativações em sequência; falha do background portal; desempenho da UI sob sincronização.
