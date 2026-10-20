@@ -49,3 +49,12 @@ A biblioteca ainda não implementa sincronização; a janela inicial apresenta s
 A modularização é também a estratégia de reduzir complexidade: cada módulo encapsula **problemas cuja técnica já está documentada**, enquanto o DriveSync explicita suas próprias políticas de segurança e integração. Para cada algoritmo deve haver **fundamentação técnica com referência primária, limitações, política própria, testes e questões em aberto**. A implementação só começa após aprovação do comportamento e de seus oráculos; a IA recebe tarefas pequenas.
 
 [Metodologia](development-methodology.md) · [Catálogo de problemas](problem-catalog.md) · [Modelo de algoritmo](algorithm-spec-template.md) · [Regras para IA](ai-development-guidelines.md).
+
+
+## Múltiplas contas (requisito obrigatório do MVP)
+
+**Não duplicar `DriveSyncEngine` nem abrir um processo/daemon por conta.** A instância única mantém um gerenciador de sessões de conta com `AccountId` estável e operações escopadas por `AccountId + SyncRootId`. O mesmo código em `auth`, `remote`, `changes`, `planner`, `download`, `queue` e `state` atende todas as sessões.
+
+O único motor compartilha recursos (executores, conexão ao banco, limites globais) com **isolamento lógico forte**: credenciais próprias, cursores no escopo correto da Drive API, filas e estados identificados por conta, pausa individual, erros limitados à conta afetada. Ver [modelo de domínio](data-model.md) e [ADR multi-conta](decisions/0004-single-engine-multi-account.md).
+
+A interface mostra uma visão geral e cartões/estados por conta. Contas diferentes nunca compartilham ou sobrepõem a mesma raiz local. O MVP deve comprovar sincronização real de **duas contas distintas**; isso não representa limite fixo do produto.

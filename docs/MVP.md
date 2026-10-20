@@ -9,37 +9,37 @@
 
 ## 0. Por que este MVP existe?
 
-O produto final pretendido é um cliente GNOME de sincronização bidirecional, confiável e recuperável, para arquivos do Google Drive. **Este MVP não é esse produto completo.** Ele é a menor entrega utilizável que demonstra, com arquivos reais de teste, a cadeia essencial de autenticação → observação remota → estado persistente → transferência segura → atualização incremental → recuperação → execução no Flatpak.
+O produto final pretendido é um cliente GNOME de sincronização bidirecional, **com múltiplas contas Google**, confiável e recuperável, para arquivos do Google Drive. **Este MVP não é esse produto completo.** Ele é a menor entrega utilizável que demonstra, com arquivos reais de teste, a cadeia essencial de autenticação → observação remota → estado persistente → transferência segura → atualização incremental → recuperação → execução no Flatpak.
 
-**Hipótese a comprovar:** o DriveSync consegue manter uma cópia local **não destrutiva**, progressivamente atualizada, de uma pasta do Google Drive, depois de alterações e reinicializações, sem substituir arquivos locais divergentes nem interpretar indisponibilidade como exclusão.
+**Hipótese a comprovar:** um único motor DriveSync consegue manter cópias locais **não destrutivas**, progressivamente atualizadas, de pastas pertencentes a **pelo menos duas contas Google independentes**, mesmo depois de alterações, falhas e reinicializações, sem misturar credenciais, estados ou operações e sem substituir arquivos locais divergentes.
 
 Uma execução que somente abre a janela, faz login ou baixa um arquivo avulso **não** satisfaz o MVP. É necessário um fluxo integrado e repetível, com testes adversos e estado persistente.
 
 ### Como o usuário utilizará o MVP
 
 1. Abrir o DriveSync no Fedora GNOME, pelo lançador/Builder/Flatpak de desenvolvimento.
-2. Autorizar uma conta Google de teste via navegador do sistema.
-3. Selecionar **uma pasta do Google Drive** e **uma pasta local**.
-4. Iniciar sincronização somente **Google Drive → pasta local**.
+2. Autorizar duas contas Google de teste, uma por vez, via navegador do sistema.
+3. Selecionar uma pasta remota e uma pasta local **para cada conta**.
+4. Iniciar sincronização somente **Google Drive → pastas locais**, acompanhando ambas independentemente.
 5. Ver arquivos binários comuns e subpastas aparecerem completos e íntegros localmente.
 6. Alterar ou acrescentar um arquivo remoto, solicitar/aguardar próximo ciclo e observar somente a alteração correspondente.
 7. Ocultar a janela; o motor permanece ativo enquanto o processo estiver autorizado e em execução. Reabrir restaura a mesma janela e estado.
-8. Interromper/reiniciar o processo e comprovar retomada sem perda, duplicação ou sobrescrita silenciosa.
+8. Interromper/reiniciar o processo e comprovar retomada independente das duas contas, sem perda, duplicação, troca de dados ou sobrescrita silenciosa.
 
 **Nota de produto:** não anunciar bidirecionalidade no MVP. Mudanças locais **não** são enviadas para o Google Drive. A interface deve explicitar “Somente download / prévia técnica”.
 
 ## 1. Escopo fechado (o que DEVE funcionar)
 
-- **1 conta Google e 1 raiz remota + 1 raiz local**, com pasta remota previamente existente.
-- OAuth 2.0 de aplicativo desktop, navegador do sistema, PKCE, renovação de credencial quando concedida, armazenamento seguro; nenhum segredo em log.
+- **No mínimo 2 contas Google simultaneamente**, cada uma com 1 pasta remota previamente existente e 1 pasta local distinta. Não impor limite artificial de duas contas na API ou no schema; duas são o mínimo de aceite do MVP.
+- OAuth 2.0 de aplicativo desktop, navegador do sistema, PKCE, renovação e armazenamento seguro **independentes por conta**; nenhum segredo em log ou objeto compartilhado.
 - Consulta dos arquivos existentes para os quais o OAuth de teste conceder acesso. **Acesso a arquivos previamente existentes é um bloqueio de viabilidade**, não algo que o MVP deve fingir que consegue fazer.
 - Inventário inicial de **arquivos binários comuns** (ex.: TXT, PDF, JPG, ZIP) e **pastas aninhadas**. Downloads em streaming, arquivos temporários e verificação de integridade quando o provedor oferecer metadados adequados.
-- SQLite com mapeamento `remote_id ↔ local_path`, versão observada, estado de operação e cursor de mudanças. Nomes não são identidades.
+- SQLite com identificação de **conta + raiz + arquivo remoto**, versão observada, estado de operação e cursores vinculados ao **escopo real do fluxo de alterações** (conta e, quando aplicável, Drive compartilhado). Nomes não são identidades; IDs remotos de contas distintas não devem ser tratados como um único namespace.
 - Processamento incremental pela Drive API (`changes`) com paginação e cursor persistido corretamente, complementado por reconciliação quando necessário; após reiniciar, não transferir conteúdo inalterado.
 - Não sobrescrever arquivo preexistente não gerenciado, modificado localmente ou com versão desconhecida. Registrar conflito/bloqueio; **não exigir interface completa de resolução de conflitos**.
 - Se arquivo remoto for removido, movido ou deixar de ser acessível: **nunca apagar automaticamente o local**; registrar evento/estado pendente, preservar bytes. Um novo caminho remoto válido pode criar novo arquivo local, sem exclusão da cópia antiga.
-- Erros visíveis: credencial expirada/revogada, acesso negado, erro temporário/limite, arquivo não baixável, disco cheio, interrupção, conflito e estado inconsistente.
-- Janela GTK4/Libadwaita simples: conta, pastas, conectar, iniciar/pausar, progresso/estado, conflitos ou itens ignorados e opção **Sair**. X oculta sem sair; reabrir exibe a instância existente.
+- Erros visíveis **por conta e por raiz**: credencial expirada/revogada, acesso negado, erro temporário/limite, arquivo não baixável, disco cheio, interrupção, conflito e estado inconsistente. Erro na conta A não paralisa a conta B.
+- Janela GTK4/Libadwaita simples: **lista de contas e seus estados**, adicionar conta, pasta de cada conta, iniciar/pausar individualmente, visão geral, progresso, conflitos ou itens ignorados e opção **Sair**. X oculta sem sair; reabrir exibe a instância existente.
 - Execução e validação em **Flatpak de desenvolvimento no GNOME**. Solicitação opcional de início automático na sessão, se o portal e o consentimento permitirem; comportamento negado/indisponível deve ser claro.
 
 ## 2. Fora do MVP — sem bloquear a arquitetura futura
@@ -50,7 +50,7 @@ Uma execução que somente abre a janela, faz login ou baixa um arquivo avulso *
 | Exclusão/propagação de exclusões | Registrar observações `ABSENT/UNKNOWN` e tombstones, mas nunca executar deleção no MVP |
 | Resolução avançada de conflitos | Modelo e estados `Conflict` preservados; UI pode mostrar “ação manual necessária” |
 | Google Docs/Sheets/Slides | Detectar MIME nativo e **ignorar explicitamente**, sem baixar conteúdo inválido ou exportar silenciosamente |
-| Contas múltiplas, múltiplas raízes e sincronização seletiva | IDs de conta/raiz nos contratos e schema, mesmo que a UI limite a uma por vez |
+| Múltiplas pastas por conta e sincronização seletiva avançada | IDs de conta/raiz nos contratos e schema; o MVP já exige múltiplas **contas**, mas somente uma raiz configurável por conta |
 | Shared Drives, atalhos, arquivos especiais, symlinks remotos | Reconhecer tipos não suportados; não simular arquivos regulares |
 | Daemon separado, system tray e integração Nautilus/D-Bus | Manter biblioteca independente; `ipc` continua opcional e não é pré-requisito |
 | Envio por blocos diferenciais, histórico complexo, Flathub público | Não introduzir abstrações ou permissões prematuras; seguir contratos e ADRs |
@@ -69,6 +69,8 @@ A versão final do produto permanece orientada à sincronização bidirecional; 
 8. Nunca recriar banco de estado corrompido silenciosamente.
 9. Código Rust deve seguir contratos do `engine/`; GUI não importa `auth`, `download`, `state` ou `planner` diretamente.
 10. Operação ambígua requer reconciliação; **repetir mecanicamente não é uma estratégia de recuperação**.
+11. Credencial, fila, operação, conflito, caminho e cursor sempre pertencem a uma conta identificada; isolamento é obrigatório, mesmo com banco e motor compartilhados.
+12. Raízes locais de contas diferentes **não podem coincidir ou se sobrepor**; rejeitar configuração insegura antes da primeira sincronização.
 
 Consultar [invariantes globais](invariants.md), [máquinas de estado](state-machines.md) e [fluxo de recuperação](flows/recovery.md).
 
@@ -79,13 +81,16 @@ Consultar [invariantes globais](invariants.md), [máquinas de estado](state-mach
 ```text
 UI GNOME → DriveSyncEngine (API pública Rust)
                     ↓
-               Coordinator
+         AccountManager / Coordinator
+             ↙             ↘
+       Conta A              Conta B
+       Raiz A               Raiz B
+             ↘             ↙
+           Algoritmos reutilizados
+      Auth / Remote / Changes / Planner
+        Queue / Download / Local / State
                     ↓
-  Auth → Remote → Changes → Planner → Queue
-                 ↑           ↑          ↓
-            State(SQLite) ← Download ← Local
-                    ↓
-           Status / Notifications → UI
+        Status e erros por conta → UI
 ```
 
 **O `Planner` permanece puro**: recebe `BaseVersion`, `LocalObservation` e `RemoteObservation`; devolve `Download`, `NoOp`, `BlockedConflict` ou `DeferredUnknown`. Operações `Upload` e `Delete` continuam no modelo conceitual, porém **não são habilitadas para execução no MVP**.
@@ -94,7 +99,7 @@ UI GNOME → DriveSyncEngine (API pública Rust)
 
 `NOT_CONFIGURED`, `AUTH_REQUIRED`, `READY`, `SCANNING`, `DOWNLOADING`, `SYNCED`, `PAUSED`, `RETRY_WAIT`, `BLOCKED_CONFLICT`, `DEGRADED`, `ERROR`.
 
-- `SYNCED` descreve **somente os itens elegíveis gerenciados e verificados**; itens ignorados/incompatíveis devem ter contagem própria.
+- `SYNCED` descreve **somente os itens elegíveis gerenciados e verificados de uma raiz/conta**; itens ignorados/incompatíveis devem ter contagem própria. Estado global agregado **não** pode ocultar conta em erro.
 - `UNKNOWN` (incerteza) não é `ABSENT` (ausência confirmada).
 - Uma conta válida não substitui a validação de autorização sobre o conteúdo de cada arquivo.
 - Primeira sincronização não deve ser confundida com “estado-base já conhecido”.
@@ -115,6 +120,10 @@ UI GNOME → DriveSyncEngine (API pública Rust)
 | Ocultar janela durante transferência | Processo continua e progresso aparece ao reabrir, dentro das permissões concedidas |
 | Encerrar DriveSync explicitamente | Estado seguro em disco; sem serviço oculto órfão |
 | Negar permissão de background/autostart | Aplicativo informa limitação; não mente que está em execução automática |
+| Duas contas independentes, cada qual com sua raiz | Ambos os inventários e downloads funcionam, sem credenciais/arquivos/cursors cruzados |
+| Pausar ou revogar credencial da conta A | Conta B continua sincronizando e sua fila não sofre alteração indevida |
+| Reiniciar durante downloads simultâneos nas duas contas | Cada fila recupera somente suas operações e conserva seus estados |
+| Configurar duas contas para a mesma pasta local ou pastas sobrepostas | Configuração rejeitada antes de transferir arquivos |
 
 ### Evidências mínimas do MVP
 
@@ -129,7 +138,7 @@ UI GNOME → DriveSyncEngine (API pública Rust)
 
 **Como usar:** somente marque `[x]` após executar, revisar e registrar evidência no repositório. O scaffold Rust/GTK atual **já existe**, mas o usuário ainda não executou Builder nem validou os testes; portanto **tudo começa desmarcado**. Não marcar uma fase como pronta só por seus arquivos terem sido criados.
 
-Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → … → `G14`). As tarefas podem gerar **pequenos PRs/commits** dentro da fase, mas não se inicia implementação funcional da seguinte antes do aceite.
+Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → … → `G15`). As tarefas podem gerar **pequenos PRs/commits** dentro da fase, mas não se inicia implementação funcional da seguinte antes do aceite.
 
 ### F00 — Conferir o ponto de partida e registrar o ambiente
 
@@ -138,7 +147,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 - [ ] F00.1 — Clonar `rafatosta/drivesync` e abrir `README.md`, `docs/architecture.md`, invariantes, metodologia, este MVP e documentação dos módulos.
 - [ ] F00.2 — Verificar `Cargo.toml`, `engine/Cargo.toml`, `src/main.rs` e `engine/src/lib.rs`; documentar o que **existe** vs. o que **funciona**.
 - [ ] F00.3 — Registrar versões reais de Fedora, GNOME, Rust/Cargo, GTK4, Libadwaita, GNOME Builder e Flatpak; instalação das dependências de desenvolvimento.
-- [ ] F00.4 — Definir conta Google **de teste**, pasta remota exclusiva e pasta local temporária. Preparar arquivos descartáveis e proibir testes destrutivos fora desse isolamento.
+- [ ] F00.4 — Definir **duas contas Google de teste**, cada qual com pasta remota exclusiva e pasta local distinta. Preparar arquivos descartáveis e proibir testes destrutivos fora desse isolamento.
 - [ ] F00.5 — Criar registro de evidências (issue/PR ou `docs/implementation-log.md`) com data, ambiente, comandos e resultados.
 
 **Gate G00:** ambiente identificado, arquitetura compreendida e dados de teste isolados. **Entrega:** inventário inicial e registro do ambiente.
@@ -173,7 +182,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 - [ ] F03.1 — Executar teste já existente da fachada (`cargo test -p drivesync-engine`); não presumir aprovação por existir código de teste.
 - [ ] F03.2 — Configurar `fmt`, `clippy` e testes automatizados em CI (sem credenciais reais).
-- [ ] F03.3 — Consolidar tipos conceituais mínimos: `AccountId`, `SyncRootId`, `RemoteFileId`, `RemoteRevision`, `LocalFingerprint`, `Observation`, `BaseVersion`, `Operation`, `EngineError` e `SyncStatus`.
+- [ ] F03.3 — Consolidar tipos conceituais mínimos: `AccountId`, `SyncRootId`, `RemoteFileId`, `RemoteRevision`, `LocalFingerprint`, `Observation`, `BaseVersion`, `Operation`, `EngineError`, `SyncStatus` e contexto de operação por conta. O schema e os contratos **já devem ser multi-conta**, embora a primeira prova ponta a ponta use só uma.
 - [ ] F03.4 — Definir portas de autenticação, armazenamento remoto, estado e filesystem; criar **fakes** simples para casos de erro, sem implementar recursos reais prematuramente.
 - [ ] F03.5 — Especificar testes com fixtures e oráculos independentes para os algoritmos do MVP; revisar contratos antes de implementar.
 
@@ -197,7 +206,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 - [ ] F05.1 — Completar entradas, saídas, pseudocódigo e oráculos em `engine/src/auth/`, com links à RFC 7636, RFC 8252 e documentação Google.
 - [ ] F05.2 — Implementar fluxo do navegador com PKCE/state/callback único e tratamento de cancelamento.
-- [ ] F05.3 — Armazenar tokens por mecanismo seguro do desktop; não em texto simples no banco, logs ou repositório.
+- [ ] F05.3 — Armazenar tokens por mecanismo seguro do desktop, **indexados pela identidade estável de cada conta**; não em texto simples no banco, logs ou repositório.
 - [ ] F05.4 — Implementar renovação e classificação distinta de offline, token inválido/revogado e falha temporária.
 - [ ] F05.5 — Testar fake, fluxo real no Flatpak, reconexão e reinstância; revisar código Rust e segurança.
 
@@ -207,7 +216,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Depende:** G05. Algoritmos: `REMOTE-001/002/003`.
 
-- [ ] F06.1 — Especificar operações mínimas `list(folder)`, `get_metadata(id)`, `download_stream(id)`, `get_start_token()`, `list_changes(token)`.
+- [ ] F06.1 — Especificar operações mínimas `list(account_id, folder)`, `get_metadata(account_id, id)`, `download_stream(account_id, id)`, `get_start_token(account_id, change_scope)`, `list_changes(account_id, change_scope, token)`, com credencial selecionada internamente.
 - [ ] F06.2 — Implementar paginação, máscaras de campos, IDs e MIME sem pressupor nomes únicos.
 - [ ] F06.3 — Distinguir `403`, `404`, `429`, `5xx`, timeout, cancelamento e perda de autorização; backoff bounded.
 - [ ] F06.4 — Testar com fake e com pasta de teste real, incluindo subpastas e arquivos não baixáveis.
@@ -219,8 +228,8 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Depende:** G06.
 
-- [ ] F07.1 — Registrar identidade da conta, uma raiz remota por ID e raiz local autorizada, sem pressupor unicidade de nome.
-- [ ] F07.2 — Validar caminhos, colisões, permissões, nomes inseguros, links simbólicos e limites do diretório local.
+- [ ] F07.1 — Registrar identidade estável de **cada** conta, uma raiz remota por conta e sua raiz local autorizada; não identificar contas apenas por e-mail/nome nem assumir unicidade de nome de arquivo.
+- [ ] F07.2 — Validar caminhos, colisões, permissões, nomes inseguros, links simbólicos e limites do diretório local, **rejeitando raízes locais iguais ou ancestrais/descendentes entre contas**.
 - [ ] F07.3 — Criar snapshots/fingerprints locais para diferenciar arquivo intocado, modificado, preexistente e desconhecido.
 - [ ] F07.4 — Persistir configuração versionada com teste de leitura/reinicialização; exclusões não fazem parte da configuração deste MVP.
 - [ ] F07.5 — Testar filesystem temporário, pastas aninhadas e nomes de teste Unicode.
@@ -231,7 +240,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Depende:** G07. Algoritmos: `STATE-001/002`.
 
-- [ ] F08.1 — Definir schema e migrações mínimas para conta/raiz, IDs remotos, versões, fingerprints locais, operações, conflitos e cursor.
+- [ ] F08.1 — Definir schema e migrações mínimas para **múltiplas contas**, raízes, IDs remotos compostos por contexto de conta, versões, fingerprints, operações, conflitos e cursores escopados; usar chaves estrangeiras e impedir mistura de namespaces.
 - [ ] F08.2 — Implementar transações de intenção/confirmacão, com estados `PENDING/RUNNING/VERIFYING/COMMITTED/RECONCILE`.
 - [ ] F08.3 — Gravar cursores somente após mudanças serem persistidas e classificadas.
 - [ ] F08.4 — Testar crash/reabertura e corrupção do banco: preservar DB e bloquear operações arriscadas.
@@ -245,7 +254,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 - [ ] F09.1 — Definir matriz B/L/R completa para o **subconjunto do MVP**, incluindo primeira descoberta, modificação unilateral, arquivo local preexistente, conflito e estado desconhecido.
 - [ ] F09.2 — Implementar `Planner` puro, sem rede nem escrita; aceitar futuro `Upload/Delete` no modelo, mas bloquear sua execução neste marco.
-- [ ] F09.3 — Implementar fila durável de **downloads** com dependência pai→filho e recuperação de operação interrompida.
+- [ ] F09.3 — Implementar fila durável de **downloads** com `account_id`, `root_id`, dependência pai→filho, recuperação de operação interrompida e política inicial de limite global de concorrência.
 - [ ] F09.4 — Aplicar deduplicação/idempotência de operações: mesmo ciclo não baixa arquivo imutável outra vez.
 - [ ] F09.5 — Criar fixtures B/L/R, casos de conflito local, múltiplas revisões e fake remote.
 
@@ -267,7 +276,7 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Depende:** G10.
 
-- [ ] F11.1 — Implementar `Coordinator` com pré-condições: conta autorizada, raiz válida, banco saudável e exclusividade por raiz.
+- [ ] F11.1 — Implementar `Coordinator` com pré-condições: conta autorizada, raiz válida, banco saudável e exclusividade por raiz; **o motor já deve aceitar mais de uma sessão por design**, ainda que o teste real nesta etapa use uma.
 - [ ] F11.2 — Na primeira varredura, estabelecer estratégia correta para não perder alterações ocorridas durante inventário inicial (token inicial + reconciliação posterior).
 - [ ] F11.3 — Criar diretórios e baixar arquivos elegíveis; registrar itens ignorados/pendentes.
 - [ ] F11.4 — Integrar status pela fachada `DriveSyncEngine` e janela mínima.
@@ -287,30 +296,44 @@ Cada fase depende integralmente da aprovação da anterior (`G00` → `G01` → 
 
 **Gate G12:** alterações incrementais e recovery de falhas centrais comprovados. **Entrega:** sincronização funcional não destrutiva.
 
-### F13 — Finalizar comportamento GNOME/Flatpak em segundo plano
+### F13 — Comprovar múltiplas contas com isolamento real
 
-**Depende:** G12.
+**Depende:** G12. O MVP exige **pelo menos duas contas simultaneamente**. O motor permanece único; cada conta possui contexto, credencial e estado isolados.
 
-- [ ] F13.1 — Implementar fechar → ocultar com retenção explícita do `GApplication` e estado separado do motor.
-- [ ] F13.2 — Reabrir pelo lançador deve recuperar janela existente sem iniciar segunda sincronização.
-- [ ] F13.3 — Incluir Iniciar/Pausar/Sair e informações honestas sobre estado, conflitos e itens não suportados.
-- [ ] F13.4 — Validar solicitação de background/autostart pelo portal, distinção entre solicitação e autorização, e iniciar oculto se habilitado. Se negado, mostrar limitação sem impedir uso manual.
-- [ ] F13.5 — Testar pelo **Flatpak** no GNOME com janela oculta, sem extensão Nautilus ou daemon.
+- [ ] F13.1 — Adicionar **segunda conta Google** sem recriar o motor e sem duplicar seus algoritmos; permitir adicionar/remover conta de forma controlada sem apagar arquivos locais.
+- [ ] F13.2 — Validar duas sessões OAuth e armazenamento de credenciais independentes; reautorização da conta A não altera a sessão B.
+- [ ] F13.3 — Criar uma raiz distinta para cada conta; verificar isolamento no SQLite, em IDs, cursores, operações, filas, conflitos e notificações.
+- [ ] F13.4 — Implementar iniciar/pausar/retomar **por conta**, mantendo o estado agregado e individual; falha de uma conta não interrompe a outra.
+- [ ] F13.5 — Executar downloads simultâneos com limite global de concorrência, quotas/retentativas por conta quando aplicável e agendamento justo, sem starvation.
+- [ ] F13.6 — Testar reinício abrupto, token revogado, erro de rede e operação pendente na conta A enquanto B conclui normalmente; comprovar recuperação isolada.
+- [ ] F13.7 — Rejeitar raízes locais coincidentes/sobrepostas, testar tentativa de usar ID remoto de A em B e verificar que nenhum token ou arquivo atravessa contas.
 
-**Gate G13:** aplicativo continua sincronizando com janela oculta conforme permissões e retoma apresentação corretamente. **Entrega:** comportamento prático de desktop.
+**Gate G13:** duas contas e duas raízes sincronizam de maneira independente no **mesmo processo e mesmo motor**, com persistência, retomada e falhas isoladas. **Entrega:** suporte multiconexão comprovado.
 
-### F14 — Aceitação do MVP e preparação para evolução
+### F14 — Finalizar comportamento GNOME/Flatpak em segundo plano
 
 **Depende:** G13.
 
-- [ ] F14.1 — Rodar toda a matriz funcional da seção 4 com pasta Google de teste e registrar evidência.
-- [ ] F14.2 — Executar pipeline Rust (fmt/clippy/test) e testes adversos; corrigir falhas antes de aprovação.
-- [ ] F14.3 — Conferir proteção de tokens, permissões Flatpak e comportamento sem rede/disco.
-- [ ] F14.4 — Revisar APIs e schema contra as funcionalidades futuras: upload, delete, multi-conta, conflitos, Nautilus; verificar que não há dependência estrutural de read-only.
-- [ ] F14.5 — Registrar decisões, limitações, bugs conhecidos e possíveis gates de distribuição OAuth/Flathub (separados da prova técnica do MVP).
-- [ ] F14.6 — Marcar MVP `VALIDATED` apenas após demonstrar critérios, ou `BLOCKED` com causa e plano de revisão.
+- [ ] F14.1 — Implementar fechar → ocultar com retenção explícita do `GApplication` e estado separado do motor.
+- [ ] F14.2 — Reabrir pelo lançador deve recuperar janela existente sem iniciar motores duplicados por conta ou raiz.
+- [ ] F14.3 — Incluir Iniciar/Pausar por conta, Sair global, estados individuais/agregados e informações honestas sobre conflitos e itens não suportados.
+- [ ] F14.4 — Validar solicitação de background/autostart pelo portal, distinção entre solicitação e autorização, e iniciar oculto se habilitado. Se negado, mostrar limitação sem impedir uso manual.
+- [ ] F14.5 — Testar pelo **Flatpak** no GNOME com janela oculta, sem extensão Nautilus ou daemon.
 
-**Gate G14 = MVP ACEITO:** demonstração ponta a ponta reprodutível, base em SQLite recuperável, arquivos preservados sob falha, mudanças incrementais, aplicação funcional em Flatpak/GNOME e riscos restantes documentados.
+**Gate G14:** aplicativo mantém ambas as contas sincronizando com janela oculta conforme permissões e retoma apresentação corretamente. **Entrega:** comportamento prático de desktop.
+
+### F15 — Aceitação do MVP e preparação para evolução
+
+**Depende:** G14.
+
+- [ ] F15.1 — Rodar toda a matriz funcional da seção 4 com pasta Google de teste e registrar evidência.
+- [ ] F15.2 — Executar pipeline Rust (fmt/clippy/test) e testes adversos; corrigir falhas antes de aprovação.
+- [ ] F15.3 — Conferir proteção de tokens, permissões Flatpak e comportamento sem rede/disco.
+- [ ] F15.4 — Revisar APIs e schema contra as funcionalidades futuras: upload, delete, múltiplas raízes por conta, conflitos, Nautilus; verificar que não há dependência estrutural de read-only.
+- [ ] F15.5 — Registrar decisões, limitações, bugs conhecidos e possíveis gates de distribuição OAuth/Flathub (separados da prova técnica do MVP).
+- [ ] F15.6 — Marcar MVP `VALIDATED` apenas após demonstrar critérios, ou `BLOCKED` com causa e plano de revisão.
+
+**Gate G15 = MVP ACEITO:** demonstração ponta a ponta reprodutível **com duas contas**, base em SQLite recuperável, arquivos preservados sob falha, mudanças incrementais, aplicação funcional em Flatpak/GNOME e riscos restantes documentados.
 
 ## 6. Como fases posteriores podem modificar fases anteriores
 

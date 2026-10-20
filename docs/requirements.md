@@ -9,6 +9,6 @@ Milestones: 0.1 login/list; 0.2 one-way download without deletes; 0.3 two-way sy
 
 ## Primeiro MVP funcional (planejamento, não número de release)
 
-O [MVP](MVP.md) é uma entrega transversal que consolida os marcos iniciais de autenticação/listagem e download unilateral: **uma conta, uma pasta remota, uma pasta local, transferência de arquivos comuns, incremental e recuperação sem perda silenciosa**. A denominação “MVP 0.1” em seu documento designa a revisão do plano, não antecipa o lançamento 0.1/0.2 da aplicação.
+O [MVP](MVP.md) é uma entrega transversal que consolida os marcos iniciais de autenticação/listagem e download unilateral: **pelo menos duas contas Google independentes no mesmo processo, uma pasta remota/local por conta, transferência de arquivos comuns, incremental e recuperação isolada sem perda silenciosa**. A denominação “MVP 0.1” em seu documento designa a revisão do plano, não antecipa o lançamento 0.1/0.2 da aplicação.
 
 Uploads, deleções automáticas e conflitos com resolução avançada permanecem no produto completo. Os contratos devem permitir evolução sem retrabalho estrutural.

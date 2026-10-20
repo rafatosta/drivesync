@@ -14,3 +14,9 @@ Falha de estado bloqueia operações destrutivas. Não assumir funções de outr
 
 ## Concorrência
 Operações concorrentes sobre mesma identidade são serializadas ou recusadas; idempotência e cancelamento precisam ser explícitos.
+
+## Scheduler de múltiplas contas
+
+Um único Coordinator/Scheduler gerencia `AccountSession` independentes. Cada operação contém `AccountId + SyncRootId`; garantir exatamente um fluxo ativo por raiz e rejeitar roots locais sobrepostas. Pausa/retry/falha de autorização são isoladas à conta, exceto falha de recurso **global** (ex.: banco SQLite íntegro não disponível), que deve resultar em degradação explícita.
+
+Recursos globais são limitados (rede, memória, I/O), com progresso justo entre contas; não prometer prioridade rígida sem testes. Testes: A pausa enquanto B conclui, A falha OAuth, reinício com operações em ambas, fairness sob carga desigual.

@@ -14,3 +14,7 @@ Nunca descartar jobs não confirmados. Não assumir funções de outros módulos
 
 ## Concorrência
 Operações concorrentes sobre mesma identidade são serializadas ou recusadas; idempotência e cancelamento precisam ser explícitos.
+
+## Fila por identidade de conta
+
+Todas as operações duráveis incluem `account_id` e `root_id`, além de ID remoto/contexto de escopo. Evitar duplicatas somente **dentro do escopo da identidade**; não coalescer eventos de contas diferentes. Pausar/repetir/retomar jobs de A não manipula a fila de B. Scheduler compartilha limite global de concorrência, com justiça e limites por conta quando relevantes. Testes de starvation e retries isolados.

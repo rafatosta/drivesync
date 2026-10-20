@@ -20,3 +20,9 @@ Banco corrompido não é banco vazio.
 
 ## Qualidade de contrato
 Toda operação deverá especificar efeitos colaterais, idempotência, concorrência permitida, pré/pós-condições e recuperação após interrupções. Nenhuma falha pode ser interpretada como sucesso.
+
+## Escopo de persistência multi-conta
+
+Cada linha de raiz pertence a `AccountId`; cada arquivo mapeado, observação, versão-base, operação, conflito e cursor referencia o escopo proprietário. Invariantes: chaves estrangeiras e relações impedem operação da conta A apontar para root da conta B; identificador remoto nunca é chave única global sem conta/Drive.
+
+Cursor de changes deve ser armazenado por **conta e escopo do feed de alterações** (não necessariamente por raiz). SQLite pode ser único, mas um erro de dados de uma conta não autoriza exclusões em outra; corrupção do banco compartilhado suspende ações arriscadas no motor todo. Testar cross-account references, migração, crash e replay por conta.

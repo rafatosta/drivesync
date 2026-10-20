@@ -11,3 +11,7 @@ Autostart só pode ser marcado efetivo após autorização/integração com o am
 
 ## Invariantes
 Nenhuma preferência de ciclo de vida modifica implicitamente filtros de exclusão ou resultados de sincronização.
+
+## Preferências multi-conta
+
+Aplicativo tem preferências globais (iniciar na sessão, fechar para segundo plano) e preferências **por conta/raiz** (ativar sincronização, pausa, pasta local, política). Cada root referencia uma `AccountId`; não permitir que roots locais de duas contas coincidam ou se sobreponham. Validar caminhos normalizados e symlinks com segurança, não somente prefixos textuais. Preferência global jamais modifica silenciosamente o estado individual das contas.

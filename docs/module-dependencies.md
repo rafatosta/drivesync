@@ -30,3 +30,10 @@ Este D-Bus **não** é exigido entre GUI e motor. Falha na extensão/IPC não in
 Token revogado → `REAUTH_REQUIRED`; falha remota transitória → `RETRY_WAIT`; banco inconsistente → `DEGRADED`; divergência de versões → `CONFLICT`; cliente D-Bus ausente → extensão `UNAVAILABLE`, mas motor continua funcionando.
 
 Para testes, provedores simulados podem satisfazer contratos sem autenticação real. Dependência funcional de autorização permanece nos testes de integração reais.
+
+
+## Múltiplas contas
+
+Uma única instância `DriveSyncEngine` administra sessões por conta. `accounts` gerencia identidades; `auth` fornece credenciais **apenas** por `AccountId`; `remote` recebe contexto autenticado escopado; `state` persiste arquivos, roots, operações e cursores com ownership; `queue` e `coordinator` coordenam operações por raiz, com limite global e justiça entre contas.
+
+Dependência nova de contrato, **não nova árvore de pastas ou motor duplicado**. Uma falha OAuth na conta A deve preservar execução da B; corrupção real do banco compartilhado pode bloquear o sistema para evitar dano.

@@ -1,20 +1,26 @@
-# API pública do DriveSyncEngine — contrato conceitual
+# API pública DriveSyncEngine — contrato conceitual
 
-Esta API interna é consumida **diretamente** pela interface GTK no mesmo processo, sem D-Bus ou daemon.
+A GUI usa chamadas Rust diretamente **no mesmo processo**. **Uma instância DriveSyncEngine gerencia N contas**, sem criar um motor, daemon ou processo por conta.
 
-- `add_account()` → AuthorizationFlowId ou AccountId
+## Contas
+- `add_account()` → AuthorizationFlowId / AccountId (fluxo OAuth)
 - `list_accounts()` → AccountSummary[]
+- `get_account_status(account_id)` → AccountSyncStatus
+- `disconnect_account(account_id)` → resultado controlado (sem apagar arquivos)
+- `pause_account(account_id)` / `resume_account(account_id)` → Result
+
+## Raízes
 - `create_sync_root(account_id, local_path, remote_folder_id, policy)` → SyncRootId
-- `start_sync(root_id)` → OperationId
-- `pause_sync(root_id)` → Result
-- `resume_sync(root_id)` → Result
+- `list_sync_roots(account_id)` → SyncRootSummary[]
+- `start_sync(root_id)`, `pause_sync(root_id)`, `resume_sync(root_id)` → Result/OperationId
 - `get_status(root_id)` → SyncStatus
+- `get_overall_status()` → AggregatedSyncStatus (não ocultar contas com erro)
 - `list_conflicts(root_id)` → ConflictSummary[]
 - `resolve_conflict(conflict_id, choice)` → OperationId
-- `subscribe_events(root_id)` → EngineEvent stream
+- `subscribe_events(root_id?)` → EngineEvent stream, eventos sempre associados a AccountId + SyncRootId quando pertinentes
 
-A interface gráfica não importa módulos internos nem manipula diretamente SQLite, OAuth ou transferências. O `Coordinator` faz a orquestração via contratos.
+A fachada valida que cada raiz pertence à conta esperada. Uma sessão Auth não é compartilhada. A interface nunca acessa tokens, banco, fila ou adaptadores diretamente.
 
-**API externa é outra fronteira:** o módulo `ipc` oferece leitura de estado e sinais via D-Bus a componentes opcionais fora do Flatpak; não exige daemon. Ver [integração Nautilus](nautilus-integration.md).
+A **API D-Bus externa** do módulo `ipc` é uma fronteira opcional para a extensão Nautilus, não substitui a chamada direta GUI→Engine.
 
-Os métodos descritos são planejados; a sincronização real ainda não está implementada.
+**Status:** interface conceitual, não implementada; métodos concretos dependem de revisão de contrato e testes.

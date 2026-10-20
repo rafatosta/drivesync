@@ -12,6 +12,7 @@ Conseguimos manter pasta local e pasta remota do Google Drive coerentes e recupe
 | F0 — OAuth e escopos | autorizar conta de teste, listar pastas/arquivos já existentes, renovar tokens | autorização realmente permite o caso de uso; custos/limitações da publicação compreendidos |
 | F1 — leitura incremental | inventário inicial, cursor changes, vários ciclos sem alterações | IDs/revisões consistentes, nenhuma transferência duplicada |
 | F2 — download seguro | streaming, staging, hash/tamanho quando disponível, crash e espaço insuficiente | arquivo original intacto em todas as falhas |
+| F2A — múltiplas contas | duas contas, duas raízes disjuntas, credenciais/cursores separados e duas sincronizações simultâneas | falha/pausa/revogação em A não altera B; reinício recupera ambas |
 | F3 — upload seguro | criar/atualizar arquivo de teste, interromper sessão resumable | retomada ou reconciliação sem duplicação/perda |
 | F4 — conflito e exclusões | alteração local/remota simultânea, rename, remoção e mudança de permissão | versões preservadas; nenhuma exclusão causada por estado UNKNOWN |
 | F5 — execução GNOME | Flatpak aberto/oculto/autostart, repetidas ativações | motor único e progresso independente da janela; saída limpa |
