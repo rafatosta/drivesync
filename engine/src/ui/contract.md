@@ -1,16 +1,15 @@
-# ui — contrato
+# Contrato UI: processo único
 
-## Objetivo
-Veja README do módulo. Interface conceitual independente de linguagem.
+A UI GNOME consome a fachada pública `DriveSyncEngine` **por chamadas Rust dentro do mesmo processo**. Não usa D-Bus para falar com o motor.
 
-## Entradas
-Comandos tipados, IDs e configuração validada, versões esperadas onde relevantes.
+## Estados de janela
+`VISIBLE`, `HIDDEN`; o motor possui estado próprio e independente de visibilidade.
 
-## Saídas
-Resposta tipada ou erro (invalid, forbidden, transient, conflict, unknown, cancelled).
+## Comandos conceituais
+`ShowWindow` reexibe a instância atual; `HideWindow` não altera tarefas; `QuitApplication` solicita desligamento recuperável; `PauseSync` e `ResumeSync` são comandos distintos.
 
-## Limites
-Interface não implementa algoritmos do motor. Nenhum outro módulo deverá conhecer sua implementação interna.
+## Invariantes
+Fechar X ≠ Sair; fechar X ≠ Pausar. Nova ativação não cria motor duplicado. Interface não faz transferências nem interage diretamente com tokens/SQLite.
 
-## Garantias
-Definir concorrência, idempotência, efeitos colaterais e pós-condições antes do código. Respeitar os invariantes globais.
+## Erros
+Inicialização background não autorizada, falha do motor, saída interrompida: informar estado real sem inventar sincronização ativa.
