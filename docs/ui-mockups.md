@@ -2,7 +2,7 @@
 
 > **Concept only. No screen shown here is implemented or approved as an exact GTK layout.**
 >
-> These eight lightweight SVG **wireframes** are published with the repository as the current inspectable UX baseline. The richer visual explorations were produced separately; the vector wireframes are intentionally simplified, not copies of those images. No original generated PNG was uploaded in this commit.
+> These eight lightweight SVG **wireframes** are published with the repository as the current inspectable UX baseline. The richer visual explorations are **now archived in [docs/mockups/README.md](mockups/README.md)** as high-quality WebP conversions of generated images. The vector wireframes are intentionally simplified and are not copies of those images.
 >
 > User-facing UI labels are in English. This technical review is in Portuguese.
 

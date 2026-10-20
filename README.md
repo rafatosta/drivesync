@@ -21,11 +21,11 @@ The first functional milestone focuses on **safe, one-way synchronization from G
 
 ## UI Preview — Concept Mockups
 
-![DriveSync dashboard concept](docs/mockups/04-dashboard.svg)
+![DriveSync MVP design concepts: 8 screens](docs/mockups/concepts/10-full-board-gnome-mvp.webp)
 
 *Concept mockup only — not a screenshot of a working application. The design and available features may change during development.*
 
-See the [complete MVP mockup gallery](docs/ui-mockups.md) for the welcome screen, account setup, multiple accounts, transfers, issues, and preferences.
+See the [visual concept archive](docs/mockups/README.md) for all ten images and the [MVP UI review](docs/ui-mockups.md) for GNOME component and engine compatibility notes.
 
 ## Get involved
 
