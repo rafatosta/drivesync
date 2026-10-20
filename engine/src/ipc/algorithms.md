@@ -1,35 +1,32 @@
-# ipc — algoritmos
+# Algoritmos IPC — futura extensão Nautilus
 
-**Status:** rascunho v0.2.
+**Status:** proposta; não implementado.
 
-## Identificadores
-IPC-001 comandos, IPC-002 eventos.
+## IPC-001: consultar status de arquivo
 
-## Objetivo
-Implementar a responsabilidade do módulo sem acoplar a interface ao motor.
+1. Receber URI de arquivo ou lote e validar esquema, limites e formato.
+2. Localizar raiz gerenciada com correspondência segura (não confiar em prefixo textual ambíguo).
+3. Consultar snapshot de status já existente no motor.
+4. Identificar snapshot expirado ou motor degradado e classificar como `UNKNOWN`, nunca `SYNCED`.
+5. Retornar o estado tipado, geração e erro controlado quando aplicável, sem revelar segredos.
 
-## Pré-condições
-Dados de entrada validados, dependências acessíveis ou erro tipado.
+## IPC-002: publicar mudança
 
-## Algoritmo
-1. Negociar versão do protocolo.
-2. validar comando/conta.
-3. despachar ao coordinator.
-4. devolver ID.
-5. expor snapshot e eventos.
-6. lidar com desconexão.
+1. Consumir mudança tipada do módulo de notificações.
+2. Projetar em estado público (somente URI, status e geração, sem dados internos).
+3. Agrupar mudanças frequentes e emitir sinal D-Bus.
+4. Permitir ao cliente reconectar e consultar snapshot completo se perder sinais.
 
-## Pós-condições
-Resposta ou erro explícito sem perda silenciosa de estado.
+## IPC-003: integração resiliente
 
-## Erros
-Configuração inválida, falha temporária de comunicação, interrupção, cancelamento e incompatibilidade de versão.
+1. Tentar adquirir nome D-Bus permitido no sandbox.
+2. Se negado, registrar erro sanitizado e continuar motor/GUI.
+3. Se cliente desconectar, descartar apenas assinatura; jamais encerrar a sincronização.
 
-## Verificações
-Identidade e versão de contexto, efeitos confirmados e invariantes globais.
+## Testes
 
-## Proibido
-Sem decisões de sincronização no IPC. Timeout não significa sucesso ou ausência remota.
+Sem cliente; cliente lento; reinício do Nautilus; perda de sinal; URI inválida; permissão D-Bus negada; DriveSync oculto; DriveSync encerrado; status obsoleto; tentativa de consultar arquivo não gerenciado.
 
-## Complexidade
-Por comando O(1) sem contar eventuais itens de lista; para n registros O(n).
+## Invariantes
+
+Nenhuma transferência ou Google Drive API síncrona dentro da operação de status. Nenhum estado obsoleto declarado sincronizado. Nada de gerenciamento do ciclo de vida do motor por causa da extensão.
