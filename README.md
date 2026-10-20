@@ -1,33 +1,42 @@
 # DriveSync
 
-**[MVP — roteiro de implementação do zero, por fases e checklists](docs/MVP.md)** · [Índice da documentação](docs/README.md)
+**Google Drive file synchronization for Linux, built with Rust.**
 
-> **Etapa atual:** planejamento. A janela inicial e a biblioteca Rust estão no repositório, mas a construção no GNOME Builder, o Flatpak e o fluxo de sincronização ainda não foram validados. Inicie pela fase F00 do MVP; não avance sem cumprir o gate anterior.
+DriveSync is an independent project that aims to bring a simple, reliable Google Drive experience to Linux. The goal is to keep your files available on your computer, up to date, and protected against interrupted transfers or accidental data loss.
 
+Designed with GNOME in mind, DriveSync aims to feel like a regular desktop application: open it when you need it, or let it work quietly in the background.
 
-Cliente de sincronização do Google Drive para Linux/GNOME **em fase de especificação**.
+> **Project status: Early development.** DriveSync is not ready for everyday use, and file synchronization is not functional yet. Please do not rely on it for important files.
 
-## Estrutura
+## What DriveSync aims to offer
 
-- `src/main.rs`: app GTK4/Libadwaita, apenas janela DriveSync.
-- `engine/`: biblioteca Rust independente, interface pública em `engine/src/lib.rs`.
-- `engine/src/<módulo>/`: implementação-base `mod.rs` e documentação `README.md`, `contract.md`, `algorithms.md`, `tests/test-cases.md` agrupadas.
-- `docs/`: invariantes, modelos e decisões globais.
+- **Local access to your files:** keep selected Google Drive folders on your computer.
+- **Automatic synchronization:** keep files up to date without manually downloading them.
+- **Offline availability:** work with local copies when you're disconnected.
+- **Safer transfers:** detect incomplete transfers and avoid silently overwriting changes.
+- **Clear status:** see progress, errors, and files that need your attention.
+- **Desktop integration:** run in the background, with future integration for the GNOME Files (Nautilus) file manager.
 
-`cargo run` executa a janela (requer toolchain Rust e bibliotecas de desenvolvimento GTK4/Libadwaita); `cargo test -p drivesync-engine` valida a fachada inicial.
+The first functional milestone focuses on **safe, one-way synchronization from Google Drive to Linux**. Uploads and two-way synchronization are planned for later stages.
 
-**Não existe sincronização funcional ainda**. Métodos da API não implementados retornam erro explícito. Os arquivos de especificação são propostas para revisão antes de implementar o motor. Não usar conta ou dados pessoais para testes destrutivos.
+## Get involved
 
-## Método de desenvolvimento (spec-first)
+DriveSync is a developing community project. Feedback, testing, bug reports, translations, documentation, and code contributions are welcome.
 
-O projeto é organizado em problemas pequenos: **pesquisar técnica já conhecida → documentar fundamento/limites → definir contrato e testes → implementar Rust em escopo pequeno → revisar e integrar**. Cada módulo contém algoritmo e referências técnicas na própria pasta, sem outra árvore de documentação de módulos. A IA atua como implementadora/revisora de tarefas delimitadas, não como autoridade sobre políticas de sincronização.
+- **Issues and ideas:** [GitHub Issues](https://github.com/rafatosta/drivesync/issues)
+- **Contact:** [rafa.ecomp@gmail.com](mailto:rafa.ecomp@gmail.com)
+- **Maintainer:** [Rafael Tosta](https://github.com/rafatosta)
 
-- [Índice da documentação](docs/README.md)
-- [Método de desenvolvimento](docs/development-methodology.md)
-- [Catálogo de problemas e soluções conhecidas](docs/problem-catalog.md)
-- [Template de algoritmo](docs/algorithm-spec-template.md)
-- [Diretrizes para IA](docs/ai-development-guidelines.md)
-- [Estudo de viabilidade](docs/feasibility-validation.md)
-- [Referências oficiais](docs/reference-catalog.md)
+## Support development
 
-**Critério de confiabilidade:** testes reais de recuperação, conflito e integridade; compilar e passar testes unitários não comprovam consistência de sincronização. Algoritmos seguem em DRAFT até revisão.
+If you'd like to support the maintainer's open-source work, you can do so through [GitHub Sponsors](https://github.com/sponsors/rafatosta).
+
+## Learn more
+
+Looking for development plans, technical decisions, or implementation details? Visit the [documentation](docs/README.md) or the [MVP roadmap](docs/MVP.md).
+
+---
+
+**Keywords:** Google Drive · Linux · GNOME · file synchronization · offline files · Rust · Flatpak
+
+*DriveSync is not affiliated with, sponsored by, or endorsed by Google.*
