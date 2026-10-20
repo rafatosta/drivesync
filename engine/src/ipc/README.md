@@ -1,30 +1,23 @@
-# Módulo ipc
+# Módulo ipc — integração externa
 
 ## Objetivo
-Oferecer protocolo estável entre GUI e motor, futuramente por D-Bus.
 
-## Papel no sistema
-Atua como caixa-preta especializada do DriveSync, sujeita aos invariantes globais em `docs/invariants.md`.
+Expor **estado e eventos de sincronização para clientes externos opcionais**, principalmente a futura extensão nativa do Nautilus. O motor e a interface GTK executam no **mesmo processo** e não dependem de IPC.
 
-## Quem utiliza
-ui, CLI.
+## Papel
 
-## Saídas e compromissos
-Comandos tipados e eventos.
+Adaptador de infraestrutura para D-Bus de sessão. Traduz consultas externas em dados sanitizados, previamente disponíveis no motor. Não é um daemon, não executa planejamento, OAuth ou transferências.
 
-## Limites: o que NÃO faz
-Não implementar lógica de sincronização.
+## Quem usa
 
-## Algoritmos previstos
-IPC-001 solicitar operação; IPC-002 acompanhar progresso.
+Extensão do Nautilus; futuramente ferramentas de diagnóstico e CLI, se explicitamente habilitadas.
 
-## Erros e cenários a verificar
-Cliente desconectado; versão de protocolo divergente.
+## Dependências
 
-## Contrato para implementação
-Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempotência e pré/pós-condições antes de gerar código. Não vincular a especificação a Rust ou Python.
+Contratos de snapshots de `state`/`notifications`, modelos de status e raízes gerenciadas. A extensão não deve aceder diretamente aos módulos nem ao SQLite.
 
-## Testes mínimos
-Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
+## Referências
 
-**Estado:** rascunho v0.1; não implementado.
+[`docs/nautilus-integration.md`](../../../docs/nautilus-integration.md) e `docs/architecture.md` (a partir da raiz do repositório).
+
+**Estado:** documentado, não implementado.
