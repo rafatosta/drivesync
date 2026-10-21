@@ -1,0 +1,46 @@
+
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "DriveSync: Compilar",
+      "type": "shell",
+      "command": "flatpak",
+      "args": [
+        "run",
+        "org.flatpak.Builder",
+        "--install-deps-from=flathub",
+        "--force-clean",
+        "--ccache",
+        "${workspaceFolder}/build",
+        "${workspaceFolder}/flatpak/com.rtosta.DriveSync.Devel.yml"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "DriveSync: Executar",
+      "type": "shell",
+      "command": "flatpak",
+      "args": [
+        "run",
+        "org.flatpak.Builder",
+        "--run",
+        "${workspaceFolder}/build",
+        "${workspaceFolder}/flatpak/com.rtosta.DriveSync.Devel.yml",
+        "drivesync"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "DriveSync: Compilar",
+      "problemMatcher": []
+    }
+  ]
+}
