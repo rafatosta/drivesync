@@ -102,11 +102,17 @@ pub fn build(
         }
         button.set_sensitive(false);
     });
+    content.append(&crate::restoration::build(
+        engine.clone(),
+        navigation,
+        toasts,
+        &connect,
+    ));
     let navigation = navigation.downgrade();
     let toasts = toasts.downgrade();
     let feedback_clone = feedback.clone();
     connect.connect_clicked(move |button| {
-        if cancellation.borrow().is_some() {
+        if !button.is_sensitive() || cancellation.borrow().is_some() {
             return;
         }
         let cancel = Cancellation::new();

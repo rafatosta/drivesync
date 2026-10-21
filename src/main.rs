@@ -3,6 +3,7 @@ use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 mod account;
+mod restoration;
 mod welcome;
 
 const APP_ID: &str = "com.rtosta.DriveSync.Devel";

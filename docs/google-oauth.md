@@ -12,12 +12,16 @@ One engine serves all accounts. A worker handles network, callback and vault I/O
 GTK handles only the browser launch, progress, cancellation and navigation.
 `AdwNavigationView` lives inside the existing single application window.
 
-AUTH-001 and AUTH-002 have automated tests. AUTH-003, automatic account discovery
-on startup, folder selection, remote listing and synchronization are not implemented.
-Credentials persist across runs; `verify_account(id)` can reuse them and renew an
-expired token. The in-memory profile registry is populated by login or verification.
-Opening the application again currently starts at Welcome. Reconnecting the same
-Google subject updates that account instead of creating another identity.
+AUTH-001 and AUTH-002 have automated tests. AUTH-003, folder selection, remote
+listing and synchronization are not implemented. ACCT-003 persists sanitized
+profiles under `$XDG_DATA_HOME/drivesync/accounts.json` (fallback
+`$HOME/.local/share/drivesync/accounts.json`) and verifies them on startup using
+the vault and Google. Tokens remain exclusively in Secret Service. A single
+verified account opens Account Information; multiple accounts are listed.
+Offline, locked vault or revoked credentials keep the saved profile with an
+explicit error and retry/reconnect actions, never an authenticated success.
+Profiles created before this index was implemented require one reconnection to
+be discoverable. Reconnecting the same Google subject updates the profile.
 
 ## Maintainer: one-time Google Cloud configuration
 
@@ -154,8 +158,10 @@ Secret portal; this development backend uses Secret Service directly.
    Cancel while the browser portal is pending should stop the worker promptly;
    HTTP requests already in flight finish within their 30-second timeout.
 8. Restart and reconnect a test account. Secure storage must remain intact.
-   Automatic profile restoration is deferred to F07/F08; do not interpret the
-   Welcome page on startup as credential deletion.
+   With one saved account, online verification should open Account Information
+   automatically. With multiple accounts, verify the saved-account list. Repeat
+   offline and with a locked keyring: profiles remain, without claiming connected
+   status; retry after restoring connectivity/unlocking.
 9. Test renewal with `DriveSyncEngine::verify_account(id)` after token expiry in
    a controlled integration harness. Revoking access in Google should produce
    reauthorization-required when Google rejects the refresh. Never print tokens,

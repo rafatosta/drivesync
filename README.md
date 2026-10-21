@@ -30,6 +30,10 @@ app. No personal Google Cloud project or JSON is needed. Official client metadat
 is not yet supplied in this checkout; the maintainer must provide it at build time
 using the [maintainer guide](docs/google-oauth.md). Unconfigured builds show an
 explanation instead of starting authorization.
+Saved account profiles now persist across runs. Startup verifies credentials from
+the Linux vault on a worker and restores connected accounts; failures retain the
+profile with retry/reconnect actions. Accounts connected before this profile index
+was added need one reconnection to register their profile.
 File transfers and folder setup remain unavailable. Real Google/Flatpak acceptance
 is still pending; see [validation evidence](docs/auth-validation.md).
 

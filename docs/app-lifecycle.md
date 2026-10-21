@@ -24,3 +24,14 @@ Um processo Flatpak com interface GTK4/Libadwaita e motor Rust. Fechar a janela 
 
 ## Testes
 Abrir → ocultar → sincronizar; abrir novamente → única janela/motor; iniciar oculto; pausar; sair; crash + recuperação; permissão de execução em background negada; Nautilus conectado/desconectado sem afetar o processo.
+
+## Restauração de contas na abertura — UI-001 / ACCT-003
+
+Após construir o motor e a janela, Welcome inicia ACCT-003 em worker. Connect fica
+indisponível durante a verificação para evitar disputas com a restauração. O índice
+local só descobre identidades: apenas AUTH-002 confirma autenticação. A interface
+continua responsiva e oferece retry para falhas, inclusive offline/cofre bloqueado.
+Uma única conta confirmada abre Account Information; várias são exibidas na lista.
+Ativações posteriores só apresentam a mesma janela (UI-003). Sair cancela o fluxo
+interativo existente; requisições de restauração em curso têm os timeouts de auth.
+Nenhuma sincronização, autostart ou implementação de journal é acrescentada aqui.

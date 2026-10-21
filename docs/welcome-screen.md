@@ -18,7 +18,7 @@ The setup instruction cards remain removed.
   authentication state. Continue Sync Setup explains that setup is not yet
   available. It starts no sync.
 - Back navigation allows connecting another account in the same engine. Existing
-  account tokens remain isolated. Automatic profile restoration awaits F07/F08.
+  account tokens remain isolated. ACCT-003 now restores saved profiles and verifies credentials on startup.
 - Learn More expands inline. Narrow windows and large text retain vertical scrolling.
 - Repeated activation presents the same window. Close hides it; Quit/Ctrl+Q exits.
   Application shutdown cancels pending authorization. Background/autostart portal

@@ -41,3 +41,13 @@ A **API D-Bus externa** do módulo `ipc` é uma fronteira opcional para a extens
 sincronização. As demais APIs conceituais acima continuam planejadas. A mudança
 na fachada e o registro mínimo de accounts são necessários para a integração
 Welcome → Account Information explicitamente solicitada.
+
+## Restauração de login na abertura
+
+`list_accounts()` é leitura bloqueante de perfis salvos, sem verificação.
+`restore_accounts()` é bloqueante e deve executar em worker; retorna
+`Vec<RestoredAccount>`, contendo `account` e `error: Option<AuthError>`. Somente
+`error == None` confirma autenticação nessa verificação. Falha do índice impede
+a restauração com erro; falhas de uma conta não impedem as demais. O método não
+abre navegador nem inicia sincronização. `AccountStorage` distingue erros de
+perfil local de `SecureStorage` (cofre).

@@ -38,6 +38,7 @@ pub enum AuthError {
     IdentityMismatch,
     ReauthorizationRequired,
     SecureStorage,
+    AccountStorage,
     Internal,
 }
 impl std::fmt::Display for AuthError {
@@ -69,6 +70,7 @@ impl std::fmt::Display for AuthError {
             Self::SecureStorage => {
                 "Could not access the desktop credential vault. Unlock your keyring and try again."
             }
+            Self::AccountStorage => "Could not read or save the account list. Your saved credentials have not been deleted.",
             Self::Internal => {
                 "Account connection could not be completed. Please restart DriveSync."
             }
@@ -140,6 +142,7 @@ impl Drop for LoginGuard<'_> {
 impl AuthProvider {
     pub(crate) fn authorize(
         &self,
+        config: &OAuthConfig,
         cancel: &Cancellation,
         open_browser: impl FnOnce(&str) -> Result<(), AuthError>,
     ) -> Result<AccountSummary, AuthError> {
@@ -148,8 +151,7 @@ impl AuthProvider {
         }
         let _guard = LoginGuard(&self.authorizing);
         cancel.check()?;
-        let config = OAuthConfig::load()?;
-        self.authorize_config(&config, cancel, open_browser)
+        self.authorize_config(config, cancel, open_browser)
     }
 
     fn authorize_config(
@@ -219,11 +221,7 @@ impl AuthProvider {
         Ok(account)
     }
 
-    pub(crate) fn verify(&self, id: &AccountId) -> Result<AccountSummary, AuthError> {
-        self.verify_with_config(&OAuthConfig::load()?, id)
-    }
-
-    fn verify_with_config(
+    pub(crate) fn verify_with_config(
         &self,
         config: &OAuthConfig,
         id: &AccountId,

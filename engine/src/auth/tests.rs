@@ -449,7 +449,7 @@ fn missing_refresh_token_cancellation_and_busy_never_publish_success() {
     );
     provider.authorizing.store(true, Ordering::SeqCst);
     assert_eq!(
-        provider.authorize(&Cancellation::new(), |_| panic!("already busy")),
+        provider.authorize(&config(), &Cancellation::new(), |_| panic!("already busy")),
         Err(AuthError::Busy)
     );
     assert!(store.entries.lock().unwrap().is_empty());

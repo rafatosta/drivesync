@@ -42,7 +42,7 @@ impl std::error::Error for EngineError {}
 
 pub use auth::{AuthError, Cancellation};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct AccountId(pub String);
 impl AccountId {
     fn from_subject(subject: &str) -> Self {
@@ -50,9 +50,11 @@ impl AccountId {
     }
 }
 
-/// Sanitized identity. Authentication is confirmed at the time of the operation;
-/// this does not claim that a synchronization root is configured or ready.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Sanitized identity. Saved/listed metadata alone does not prove authentication.
+/// add_account/verify_account confirm it at the time of the operation; no sync
+/// root is implied.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccountSummary {
     pub id: AccountId,
     pub provider_subject: String,
@@ -60,6 +62,14 @@ pub struct AccountSummary {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SyncRootId(pub u64);
+
+/// A saved identity plus the result of verifying it during this startup.
+/// `error == None` is the only authenticated outcome; failures retain the profile.
+#[derive(Debug, Clone)]
+pub struct RestoredAccount {
+    pub account: AccountSummary,
+    pub error: Option<AuthError>,
+}
 
 #[derive(Default)]
 pub struct DriveSyncEngine {
@@ -81,25 +91,68 @@ impl DriveSyncEngine {
         cancel: &Cancellation,
         open_browser: impl FnOnce(&str) -> Result<(), AuthError>,
     ) -> Result<AccountSummary, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let account = self
             .auth
-            .authorize(cancel, open_browser)
+            .authorize(&config, cancel, open_browser)
             .map_err(EngineError::Authentication)?;
         self.accounts
-            .record(account.clone())
+            .record(&config.client_id, account.clone())
             .map_err(EngineError::Authentication)?;
         Ok(account)
     }
+    /// Blocking disk read of saved profiles, not a verification of authentication.
     pub fn list_accounts(&self) -> Result<Vec<AccountSummary>, EngineError> {
-        self.accounts.list().map_err(EngineError::Authentication)
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.accounts
+            .list(&config.client_id)
+            .map_err(EngineError::Authentication)
     }
     /// Reuses persisted credentials, renewing if necessary, without exposing them.
     pub fn verify_account(&self, id: &AccountId) -> Result<AccountSummary, EngineError> {
-        let account = self.auth.verify(id).map_err(EngineError::Authentication)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let account = self
+            .auth
+            .verify_with_config(&config, id)
+            .map_err(EngineError::Authentication)?;
         self.accounts
-            .record(account.clone())
+            .record(&config.client_id, account.clone())
             .map_err(EngineError::Authentication)?;
         Ok(account)
+    }
+    /// Blocking startup operation. Cached profiles never imply authentication.
+    pub fn restore_accounts(&self) -> Result<Vec<RestoredAccount>, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.restore_with(&config.client_id, |id| {
+            self.auth.verify_with_config(&config, id)
+        })
+    }
+    fn restore_with(
+        &self,
+        client: &str,
+        mut verify: impl FnMut(&AccountId) -> Result<AccountSummary, AuthError>,
+    ) -> Result<Vec<RestoredAccount>, EngineError> {
+        let profiles = self
+            .accounts
+            .list(client)
+            .map_err(EngineError::Authentication)?;
+        Ok(profiles
+            .into_iter()
+            .map(|cached| match verify(&cached.id) {
+                Ok(account) if account.id == cached.id => {
+                    let error = self.accounts.record(client, account.clone()).err();
+                    RestoredAccount { account, error }
+                }
+                Ok(_) => RestoredAccount {
+                    account: cached,
+                    error: Some(AuthError::IdentityMismatch),
+                },
+                Err(error) => RestoredAccount {
+                    account: cached,
+                    error: Some(error),
+                },
+            })
+            .collect())
     }
     pub fn start_sync(&self, _root: SyncRootId) -> Result<(), EngineError> {
         Err(EngineError::NotImplemented("start_sync"))
@@ -113,7 +166,6 @@ mod tests {
     fn unimplemented_operations_are_explicit() {
         let engine = DriveSyncEngine::new();
         assert_eq!(engine.status(), EngineStatus::NotConfigured);
-        assert!(engine.list_accounts().unwrap().is_empty());
         assert!(matches!(
             engine.start_sync(SyncRootId(1)),
             Err(EngineError::NotImplemented(_))
