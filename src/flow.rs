@@ -193,6 +193,19 @@ mod layout_tests {
         }
         None
     }
+    fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+        if widget.widget_name() == name {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(found) = find_named(&widget, name) {
+                return Some(found);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
     #[test]
     #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
     fn folder_setup_and_dashboard_layouts() {
@@ -234,21 +247,32 @@ mod layout_tests {
                 } else if screen == "dashboard" {
                     crate::dashboard::build(
                         engine.clone(),
-                        vec![RestoredAccount {
-                            account,
-                            error: None,
-                            folder: Some(drivesync_engine::FolderConfiguration {
-                                account_id: drivesync_engine::AccountId(
-                                    "google:layout-fixture".into(),
-                                ),
-                                remote: drivesync_engine::DriveFolder {
-                                    id: "layout-folder".into(),
-                                    name: "Projects".into(),
+                        vec![
+                            RestoredAccount {
+                                account,
+                                error: None,
+                                folder: Some(drivesync_engine::FolderConfiguration {
+                                    account_id: drivesync_engine::AccountId(
+                                        "google:layout-fixture".into(),
+                                    ),
+                                    remote: drivesync_engine::DriveFolder {
+                                        id: "layout-folder".into(),
+                                        name: "Projects".into(),
+                                    },
+                                    local: "/home/preview/DriveSync/Projects".into(),
+                                    local_display: "/home/preview/DriveSync/Projects".into(),
+                                }),
+                            },
+                            RestoredAccount {
+                                account: AccountSummary {
+                                    id: drivesync_engine::AccountId("google:second-fixture".into()),
+                                    provider_subject: "second-fixture".into(),
+                                    email: Some("second@example.com".into()),
                                 },
-                                local: "/home/preview/DriveSync/Projects".into(),
-                                local_display: "/home/preview/DriveSync/Projects".into(),
-                            }),
-                        }],
+                                error: None,
+                                folder: None,
+                            },
+                        ],
                         &nav,
                         &toasts,
                     )
@@ -276,6 +300,34 @@ mod layout_tests {
                     window.width(),
                     width
                 );
+                if screen == "dashboard" {
+                    let list = find_named(window.upcast_ref(), "account-list")
+                        .unwrap()
+                        .downcast::<gtk::ListBox>()
+                        .unwrap();
+                    let details = find_named(window.upcast_ref(), "account-details")
+                        .unwrap()
+                        .downcast::<gtk::Stack>()
+                        .unwrap();
+                    assert!(list.row_at_index(1).is_some());
+                    list.select_row(list.row_at_index(1).as_ref());
+                    assert_eq!(
+                        details.visible_child_name().as_deref(),
+                        Some("google:second-fixture")
+                    );
+                    list.select_row(list.row_at_index(0).as_ref());
+                    assert_eq!(
+                        details.visible_child_name().as_deref(),
+                        Some("google:layout-fixture")
+                    );
+                }
+                // A stack switch invalidates the paintable until the next frame.
+                let frame = gtk::glib::MainLoop::new(None, false);
+                let finish = frame.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(100), move || {
+                    finish.quit()
+                });
+                frame.run();
                 let snapshot = gtk::Snapshot::new();
                 gtk::WidgetPaintable::new(Some(&window)).snapshot(
                     &snapshot,
