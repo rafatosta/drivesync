@@ -512,3 +512,29 @@ fn renewal_identity_mismatch_preserves_the_previous_vault_entry() {
         0
     );
 }
+
+#[test]
+fn remote_access_port_renews_and_never_runs_after_vault_failure() {
+    let (provider, store, api) = provider();
+    let account = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    expire(&store, &account.id);
+    let value = provider
+        .with_access_config(&config(), &account.id, |token| {
+            assert_eq!(token, "access-a");
+            Ok(42)
+        })
+        .unwrap();
+    assert_eq!(value, 42);
+    assert_eq!(api.refreshes.load(Ordering::SeqCst), 1);
+    store.fail.store(true, Ordering::SeqCst);
+    let result: Result<(), crate::EngineError> =
+        provider.with_access_config(&config(), &account.id, |_| {
+            panic!("vault failure must stop request")
+        });
+    assert_eq!(
+        result,
+        Err(crate::EngineError::Authentication(AuthError::SecureStorage))
+    );
+}

@@ -1,5 +1,5 @@
 //! Durable profile discovery. Credentials and authentication remain in auth.
-use crate::{AccountId, AccountSummary, AuthError};
+use crate::{AccountId, AccountSummary, AuthError, EngineError, FolderConfiguration};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -16,12 +16,15 @@ const MAX_INDEX: u64 = 1024 * 1024;
 struct Index {
     version: u32,
     clients: BTreeMap<String, Vec<AccountSummary>>,
+    #[serde(default)]
+    folders: BTreeMap<String, Vec<FolderConfiguration>>,
 }
 impl Default for Index {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             clients: BTreeMap::new(),
+            folders: BTreeMap::new(),
         }
     }
 }
@@ -67,7 +70,7 @@ impl Accounts {
         Ok(index)
     }
     fn validate(index: &Index) -> Result<(), AuthError> {
-        if index.version != 1 {
+        if ![1, 2].contains(&index.version) || (index.version == 1 && !index.folders.is_empty()) {
             return Err(AuthError::AccountStorage);
         }
         for (client, profiles) in &index.clients {
@@ -93,6 +96,22 @@ impl Accounts {
                 }
             }
         }
+        for (client, folders) in &index.folders {
+            let mut ids = HashSet::new();
+            for folder in folders {
+                if !index
+                    .clients
+                    .get(client)
+                    .is_some_and(|profiles| profiles.iter().any(|p| p.id == folder.account_id))
+                    || !folder.remote.valid()
+                    || !folder.local.is_absolute()
+                    || !folder.local_display.is_absolute()
+                    || !ids.insert(&folder.account_id)
+                {
+                    return Err(AuthError::AccountStorage);
+                }
+            }
+        }
         Ok(())
     }
     pub fn record(&self, client: &str, account: AccountSummary) -> Result<(), AuthError> {
@@ -102,6 +121,35 @@ impl Accounts {
         profiles.retain(|p| p.id != account.id);
         profiles.push(account);
         profiles.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        self.write(index)
+    }
+    fn write(&self, mut index: Index) -> Result<(), AuthError> {
+        if index.version == 1 {
+            let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
+            let backup = path.with_extension("v1.json.bak");
+            // Keep the pre-migration data; never overwrite an existing backup.
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&backup)
+            {
+                Ok(mut file) => {
+                    file.write_all(&fs::read(path).map_err(|_| AuthError::AccountStorage)?)
+                        .and_then(|_| file.sync_all())
+                        .map_err(|_| AuthError::AccountStorage)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if fs::read(backup).map_err(|_| AuthError::AccountStorage)?
+                        != fs::read(path).map_err(|_| AuthError::AccountStorage)?
+                    {
+                        return Err(AuthError::AccountStorage);
+                    }
+                }
+                Err(_) => return Err(AuthError::AccountStorage),
+            }
+            index.version = 2;
+        }
         Self::validate(&index)?;
         let data = serde_json::to_vec(&index).map_err(|_| AuthError::AccountStorage)?;
         if data.len() as u64 > MAX_INDEX {
@@ -133,6 +181,51 @@ impl Accounts {
             let _ = fs::remove_file(&temporary);
         }
         result.map_err(|_| AuthError::AccountStorage)
+    }
+    pub fn folders(&self, client: &str) -> Result<Vec<FolderConfiguration>, AuthError> {
+        let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
+        Ok(self.read()?.folders.remove(client).unwrap_or_default())
+    }
+    pub fn configure(
+        &self,
+        client: &str,
+        mut folder: FolderConfiguration,
+    ) -> Result<(), EngineError> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let mut index = self.read().map_err(EngineError::Authentication)?;
+        if !index
+            .clients
+            .get(client)
+            .is_some_and(|p| p.iter().any(|a| a.id == folder.account_id))
+        {
+            return Err(EngineError::Authentication(
+                AuthError::ReauthorizationRequired,
+            ));
+        }
+        folder.local =
+            std::fs::canonicalize(&folder.local).map_err(|_| EngineError::InvalidFolder)?;
+        folder.local_display = crate::configuration::local_origin(&folder.local)?;
+        for (other_client, folders) in &index.folders {
+            for other in folders {
+                if other_client == client && other.account_id == folder.account_id {
+                    continue;
+                }
+                // Resolve existing aliases again before comparing; missing roots are not silently ignored.
+                let other_path =
+                    std::fs::canonicalize(&other.local).map_err(|_| EngineError::InvalidFolder)?;
+                let origin = crate::configuration::local_origin(&other_path)?;
+                if crate::configuration::overlap(&folder.local_display, &origin) {
+                    return Err(EngineError::FolderOverlap);
+                }
+            }
+        }
+        let folders = index.folders.entry(client.into()).or_default();
+        folders.retain(|f| f.account_id != folder.account_id);
+        folders.push(folder);
+        self.write(index).map_err(EngineError::Authentication)
     }
     pub fn list(&self, client: &str) -> Result<Vec<AccountSummary>, AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;

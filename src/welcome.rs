@@ -161,6 +161,7 @@ pub fn build(
         let navigation = navigation.clone();
         let toasts = toasts.clone();
         let cancellation = cancellation.clone();
+        let page_engine = engine.clone();
         gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
             let result = match receiver.try_recv() {
                 Ok(AuthEvent::OpenBrowser(url, acknowledge)) => {
@@ -202,7 +203,12 @@ pub fn build(
                     if let (Some(navigation), Some(toasts)) =
                         (navigation.upgrade(), toasts.upgrade())
                     {
-                        navigation.push(&crate::account::build(&account, &toasts));
+                        crate::flow::open_account(
+                            page_engine.clone(),
+                            account,
+                            &navigation,
+                            &toasts,
+                        );
                     }
                 }
                 Err(error) => {

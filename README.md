@@ -30,7 +30,8 @@ app. No personal Google Cloud project or JSON is needed. Official client metadat
 is not yet supplied in this checkout; the maintainer must provide it at build time
 using the [maintainer guide](docs/google-oauth.md). Unconfigured builds show an
 explanation instead of starting authorization.
-File transfers and folder setup remain unavailable. Real Google/Flatpak acceptance
+Folder setup now saves a Google Drive folder and a local destination, then opens
+the dashboard; configured accounts return there on startup. File transfers remain unavailable. Real Google/Flatpak acceptance
 is still pending; see [validation evidence](docs/auth-validation.md).
 
 ## UI Preview — Concept Mockups

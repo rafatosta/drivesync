@@ -55,3 +55,29 @@ Separar **técnica consolidada**, **política própria**, **evidência de teste*
 - **Testes/oráculos a detalhar:** Autostart negado, configuração anterior incompleta, versão futura.
 - **Limitações / questões abertas:** Comportamento portal em GNOME/Flatpak alvo precisa de experimento real.
 - **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
+
+## CONFIG-003 — Configuração inicial e roteamento
+
+Fluxo: conectar → selecionar pasta remota/local → salvar → dashboard. Na abertura,
+qualquer conta com pasta salva leva ao dashboard; sem configuração, uma conta
+verificada vai à seleção. Falhas de autenticação permanecem visíveis no dashboard
+sem apagar a configuração. Transferências e autostart não são ativados aqui.
+
+- Selecionar pasta remota por ID com navegação paginada no My Drive; consultar
+  metadados reais pelo auth do motor, sem expor tokens à UI. Revalidar pasta e
+  permissão ao salvar. Não aceitar arquivos, atalhos ou itens na lixeira.
+- Selecionar diretório local existente pelo portal GTK. Canonicalizar aliases e
+  symlinks; no Flatpak, resolver caminhos do Documents portal pelo GetHostPaths
+  (versão 5), preservando o caminho exportado para acesso e o original para
+  exibição/comparação. Falha na resolução impede salvar; confirmar escrita e rejeitar destinos iguais/ancestrais/descendentes
+  de outra configuração. Uma pasta por conta neste incremento.
+- Persistir conta, pasta remota e caminho local atomicamente no índice de contas
+  versão 2. Ler versão 1 sem perda; criar backup antes da primeira escrita v2.
+  Cancelar não grava; falha não conclui configuração. Verificar sobreposição sob
+  o mesmo lock da gravação. Não transferir nem apagar arquivos do usuário.
+
+Referências: [Drive files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list),
+[busca de pastas](https://developers.google.com/workspace/drive/api/guides/search-files),
+[GTK FileDialog](https://docs.gtk.org/gtk4/method.FileDialog.select_folder.html).
+
+Portal de diretórios: [Documents.GetHostPaths](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Documents.html#gethostpaths).

@@ -28,6 +28,12 @@ pub enum EngineStatus {
 pub enum EngineError {
     NotImplemented(&'static str),
     Authentication(AuthError),
+    InvalidFolder,
+    LocalFolderIdentity,
+    FolderOverlap,
+    RemoteFolderUnavailable,
+    RemoteForbidden,
+    RemoteRateLimited,
 }
 
 impl std::fmt::Display for EngineError {
@@ -35,12 +41,20 @@ impl std::fmt::Display for EngineError {
         match self {
             Self::NotImplemented(operation) => write!(f, "{operation} is not implemented"),
             Self::Authentication(error) => error.fmt(f),
+            Self::LocalFolderIdentity => f.write_str("Could not verify this folder’s location. Check that your desktop portal is up to date and choose the folder again."),
+            Self::InvalidFolder => f.write_str("Choose an existing, writable local folder."),
+            Self::FolderOverlap => f.write_str("The local folder overlaps another account’s folder. Choose a different location."),
+            Self::RemoteFolderUnavailable => f.write_str("This Google Drive folder is unavailable. Choose it again."),
+            Self::RemoteForbidden => f.write_str("Google Drive denied access. Check the granted permissions and that Drive API is enabled."),
+            Self::RemoteRateLimited => f.write_str("Google Drive is receiving too many requests. Please try again later."),
         }
     }
 }
 impl std::error::Error for EngineError {}
 
 pub use auth::{AuthError, Cancellation};
+pub use configuration::{DriveFolder, FolderConfiguration};
+pub use remote::FolderPage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct AccountId(pub String);
@@ -69,6 +83,7 @@ pub struct SyncRootId(pub u64);
 pub struct RestoredAccount {
     pub account: AccountSummary,
     pub error: Option<AuthError>,
+    pub folder: Option<FolderConfiguration>,
 }
 
 #[derive(Default)]
@@ -136,23 +151,73 @@ impl DriveSyncEngine {
             .accounts
             .list(client)
             .map_err(EngineError::Authentication)?;
+        let folders = self
+            .accounts
+            .folders(client)
+            .map_err(EngineError::Authentication)?;
         Ok(profiles
             .into_iter()
             .map(|cached| match verify(&cached.id) {
                 Ok(account) if account.id == cached.id => {
                     let error = self.accounts.record(client, account.clone()).err();
-                    RestoredAccount { account, error }
+                    RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == account.id).cloned(),
+                        account,
+                        error,
+                    }
                 }
                 Ok(_) => RestoredAccount {
+                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
                     account: cached,
                     error: Some(AuthError::IdentityMismatch),
                 },
                 Err(error) => RestoredAccount {
+                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
                     account: cached,
                     error: Some(error),
                 },
             })
             .collect())
+    }
+    /// Blocking metadata lookup; tokens stay inside auth.
+    pub fn drive_folders(
+        &self,
+        id: &AccountId,
+        parent: &str,
+        page: Option<&str>,
+    ) -> Result<FolderPage, EngineError> {
+        self.auth
+            .with_access(id, |token| remote::list(token, parent, page))
+    }
+    pub fn saved_folder(&self, id: &AccountId) -> Result<Option<FolderConfiguration>, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        Ok(self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(EngineError::Authentication)?
+            .into_iter()
+            .find(|f| &f.account_id == id))
+    }
+    pub fn configure_folder(
+        &self,
+        id: &AccountId,
+        remote_id: &str,
+        local: &std::path::Path,
+    ) -> Result<FolderConfiguration, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let remote = self
+            .auth
+            .with_access_config(&config, id, |token| remote::get(token, remote_id))?;
+        let local = configuration::local_folder(local)?;
+        let local_display = configuration::local_origin(&local)?;
+        let folder = FolderConfiguration {
+            account_id: id.clone(),
+            remote,
+            local,
+            local_display,
+        };
+        self.accounts.configure(&config.client_id, folder.clone())?;
+        Ok(folder)
     }
     pub fn start_sync(&self, _root: SyncRootId) -> Result<(), EngineError> {
         Err(EngineError::NotImplemented("start_sync"))

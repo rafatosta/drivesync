@@ -77,8 +77,9 @@ fn start(
         rows.remove(&child);
     }
     let (sender, receiver) = mpsc::channel();
+    let worker_engine = engine.clone();
     std::thread::spawn(move || {
-        let _ = sender.send(engine.restore_accounts());
+        let _ = sender.send(worker_engine.restore_accounts());
     });
     let navigation = navigation.downgrade();
     let toasts = toasts.downgrade();
@@ -112,7 +113,19 @@ fn start(
                 } else {
                     "Saved accounts"
                 });
-                let single = accounts.len() == 1;
+                let destination = crate::flow::initial_destination(&accounts);
+                let show_dashboard = destination == crate::flow::InitialDestination::Dashboard;
+                let open_setup = destination == crate::flow::InitialDestination::FolderSetup;
+                if auto_open && show_dashboard {
+                    if let (Some(nav), Some(toasts)) = (navigation.upgrade(), toasts.upgrade()) {
+                        nav.push(&crate::dashboard::build(
+                            engine.clone(),
+                            accounts.clone(),
+                            &nav,
+                            &toasts,
+                        ));
+                    }
+                }
                 for saved in accounts {
                     let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
                     let name = saved
@@ -142,23 +155,48 @@ fn start(
                             }
                         });
                         row.append(&reconnect);
-                    } else {
-                        let open = gtk::Button::with_label("Open Connected Account");
-                        let account = saved.account;
-                        if auto_open && single {
+                    }
+                    if saved.error.is_none() || saved.folder.is_some() {
+                        let open = gtk::Button::with_label(if saved.folder.is_some() {
+                            "Open Dashboard"
+                        } else {
+                            "Choose Folders"
+                        });
+                        let saved = saved.clone();
+                        if auto_open && open_setup {
                             if let (Some(navigation), Some(toasts)) =
                                 (navigation.upgrade(), toasts.upgrade())
                             {
-                                navigation.push(&crate::account::build(&account, &toasts));
+                                navigation.push(&crate::flow::account_page(
+                                    engine.clone(),
+                                    saved.clone(),
+                                    &navigation,
+                                    &toasts,
+                                ));
                             }
                         }
                         let navigation = navigation.clone();
                         let toasts = toasts.clone();
+                        let engine = engine.clone();
                         open.connect_clicked(move |_| {
                             if let (Some(navigation), Some(toasts)) =
                                 (navigation.upgrade(), toasts.upgrade())
                             {
-                                navigation.push(&crate::account::build(&account, &toasts));
+                                if saved.error.is_none() {
+                                    crate::flow::open_account(
+                                        engine.clone(),
+                                        saved.account.clone(),
+                                        &navigation,
+                                        &toasts,
+                                    );
+                                } else {
+                                    navigation.push(&crate::flow::account_page(
+                                        engine.clone(),
+                                        saved.clone(),
+                                        &navigation,
+                                        &toasts,
+                                    ));
+                                }
                             }
                         });
                         row.append(&open);

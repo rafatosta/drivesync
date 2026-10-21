@@ -9,5 +9,6 @@ edition = "2021"
 description = "DriveSync GNOME prototype"
 
 [dependencies]
+gtk = { package = "gtk4", version = "0.10", features = ["v4_10"] }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_4"] }
 drivesync-engine = { path = "engine" }

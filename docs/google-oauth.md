@@ -3,10 +3,9 @@
 ## Implemented behavior
 
 Welcome → Connect Google Account → system browser → loopback callback → token
-exchange → HTTPS UserInfo → desktop credential vault → Account Information.
-The page displays Google's stable `sub`, an optional verified email, and the
-confirmed authentication state. Continue Sync Setup explains that folder setup
-is still unavailable; it does not start any transfer.
+exchange → HTTPS UserInfo → desktop credential vault → folder setup → dashboard.
+Configured accounts open Dashboard on startup. Connection failures preserve saved
+settings and are shown explicitly; no file transfers start in this increment.
 
 One engine serves all accounts. A worker handles network, callback and vault I/O;
 GTK handles only the browser launch, progress, cancellation and navigation.
@@ -16,7 +15,8 @@ AUTH-001/002 and account restoration have automated tests. Startup discovers sav
 profiles and verifies them through the vault and Google; failures preserve profiles
 with retry/reconnect actions. Older accounts need one reconnection to register a
 profile. Storage and restoration rules: [ACCT-003](../engine/src/accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
-AUTH-003, folder selection, remote listing and synchronization remain unimplemented.
+Folder selection uses read-only Drive folder metadata; file synchronization and
+AUTH-003 remain unimplemented.
 
 ## Maintainer: one-time Google Cloud configuration
 
@@ -142,9 +142,9 @@ Secret portal; this development backend uses Secret Service directly.
    unlocked Secret Service are runtime requirements.
 4. Click Connect Google Account. Verify spinner, disabled Connect and enabled
    Cancel, then authorize the test user in the external browser.
-5. Return to DriveSync. Check the Account Information page contains Google's real
-   subject and, when granted, the verified email. Continue Sync Setup must only
-   explain the pending setup functionality.
+5. Return to DriveSync. Check the folder setup page identifies the connected account. Choose remote
+   and local folders, save, and verify the Dashboard shows them without claiming
+   that file transfers have started.
 6. Go back and connect another test account: it must have another subject and
    credential entry, with the same engine. Reauthorize the first account and
    check its identity is reused.
@@ -153,7 +153,8 @@ Secret portal; this development backend uses Secret Service directly.
    Cancel while the browser portal is pending should stop the worker promptly;
    HTTP requests already in flight finish within their 30-second timeout.
 8. After registering an account, Quit/Ctrl+Q and reopen. One verified account
-   should open Account Information; multiple accounts should appear in the list.
+   with a saved folder should open Dashboard; an unconfigured account should open
+   folder selection.
    Repeat offline and with a locked keyring: preserve profiles without claiming
    authentication; retry after recovery.
 9. Test renewal with `DriveSyncEngine::verify_account(id)` after token expiry in

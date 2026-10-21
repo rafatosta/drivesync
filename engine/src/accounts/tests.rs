@@ -218,3 +218,128 @@ fn invalid_profile_and_oversized_index_fail_closed() {
     fs::write(path, vec![b' '; MAX_INDEX as usize + 1]).unwrap();
     assert_eq!(accounts.list(CLIENT), Err(AuthError::AccountStorage));
 }
+
+fn configured(account: &str, path: PathBuf) -> FolderConfiguration {
+    FolderConfiguration {
+        account_id: AccountId::from_subject(account),
+        remote: crate::DriveFolder {
+            id: format!("folder-{account}"),
+            name: "Projects".into(),
+        },
+        local_display: path.clone(),
+        local: path,
+    }
+}
+#[test]
+fn folder_settings_survive_restart_auth_failure_and_profile_updates() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "a@example.com"))
+        .unwrap();
+    let local = dir.0.join("downloads");
+    fs::create_dir(&local).unwrap();
+    let folder = configured("a", local);
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    let reopened = dir.accounts();
+    reopened
+        .record(CLIENT, profile("a", "changed@example.com"))
+        .unwrap();
+    assert_eq!(reopened.folders(CLIENT).unwrap(), vec![folder.clone()]);
+    assert!(reopened
+        .folders("other.apps.googleusercontent.com")
+        .unwrap()
+        .is_empty());
+    let engine = DriveSyncEngine {
+        accounts: reopened,
+        ..DriveSyncEngine::default()
+    };
+    let restored = engine
+        .restore_with(CLIENT, |_| Err(AuthError::Network))
+        .unwrap();
+    assert_eq!(restored[0].folder, Some(folder));
+    assert_eq!(restored[0].error, Some(AuthError::Network));
+}
+#[test]
+fn migration_backs_up_v1_and_rejects_inconsistent_backup() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "a@example.com"))
+        .unwrap();
+    let path = accounts.path.as_ref().unwrap();
+    let mut v1: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    v1["version"] = 1.into();
+    v1.as_object_mut().unwrap().remove("folders");
+    let original = serde_json::to_vec(&v1).unwrap();
+    fs::write(path, &original).unwrap();
+    assert_eq!(accounts.list(CLIENT).unwrap().len(), 1);
+    let local = dir.0.join("downloads");
+    fs::create_dir(&local).unwrap();
+    accounts.configure(CLIENT, configured("a", local)).unwrap();
+    assert_eq!(
+        fs::read(path.with_extension("v1.json.bak")).unwrap(),
+        original
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap()["version"],
+        2
+    );
+    fs::write(path, &original).unwrap();
+    fs::write(path.with_extension("v1.json.bak"), "partial").unwrap();
+    assert_eq!(
+        accounts.record(CLIENT, profile("b", "b@example.com")),
+        Err(AuthError::AccountStorage)
+    );
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+#[test]
+fn local_roots_reject_exact_nested_and_symlink_aliases_without_losing_old_settings() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    for id in ["a", "b"] {
+        accounts
+            .record(CLIENT, profile(id, "test@example.com"))
+            .unwrap();
+    }
+    let parent = dir.0.join("downloads");
+    let child = parent.join("nested");
+    fs::create_dir_all(&child).unwrap();
+    let alias = dir.0.join("alias");
+    std::os::unix::fs::symlink(&parent, &alias).unwrap();
+    accounts
+        .configure(CLIENT, configured("a", parent.clone()))
+        .unwrap();
+    for path in [&parent, &child, &alias] {
+        assert_eq!(
+            accounts.configure(CLIENT, configured("b", path.clone())),
+            Err(EngineError::FolderOverlap)
+        );
+    }
+    assert_eq!(accounts.folders(CLIENT).unwrap().len(), 1);
+    // A textual prefix is a distinct directory, not an ancestor.
+    let other = dir.0.join("downloads-other");
+    fs::create_dir(&other).unwrap();
+    accounts.configure(CLIENT, configured("b", other)).unwrap();
+    accounts.configure(CLIENT, configured("a", child)).unwrap();
+    assert_eq!(
+        accounts.configure(CLIENT, configured("b", parent)),
+        Err(EngineError::FolderOverlap)
+    );
+    assert_eq!(accounts.folders(CLIENT).unwrap().len(), 2);
+}
+#[test]
+fn local_validation_canonicalizes_aliases_and_rejects_non_directories() {
+    let dir = Directory::new();
+    let target = dir.0.join("valid");
+    fs::create_dir(&target).unwrap();
+    let alias = dir.0.join("alias");
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    assert_eq!(crate::configuration::local_folder(&alias).unwrap(), target);
+    assert!(crate::configuration::local_folder(std::path::Path::new("relative")).is_err());
+    assert!(crate::configuration::local_folder(&dir.0.join("missing")).is_err());
+    let file = dir.0.join("file");
+    fs::write(&file, "keep").unwrap();
+    assert!(crate::configuration::local_folder(&file).is_err());
+    assert_eq!(fs::read_to_string(file).unwrap(), "keep");
+}

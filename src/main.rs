@@ -2,8 +2,11 @@ use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-mod account;
+mod dashboard;
+mod flow;
+mod folder_picker;
 mod restoration;
+mod setup;
 mod welcome;
 
 const APP_ID: &str = "com.rtosta.DriveSync.Devel";
@@ -27,7 +30,9 @@ fn main() -> adw::gtk::glib::ExitCode {
         toasts.set_child(Some(&navigation));
         let cancellation = Rc::new(RefCell::new(None::<drivesync_engine::Cancellation>));
         let welcome = welcome::build(engine, &navigation, &toasts, cancellation.clone());
-        navigation.add(&adw::NavigationPage::new(&welcome, "Welcome"));
+        let welcome_page = adw::NavigationPage::new(&welcome, "Welcome");
+        welcome_page.set_tag(Some("welcome"));
+        navigation.add(&welcome_page);
         window.set_content(Some(&toasts));
         app.connect_shutdown(move |_| {
             if let Some(cancel) = cancellation.borrow().as_ref() {

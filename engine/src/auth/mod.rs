@@ -221,6 +221,38 @@ impl AuthProvider {
         Ok(account)
     }
 
+    pub(crate) fn with_access<T>(
+        &self,
+        id: &AccountId,
+        operation: impl FnOnce(&str) -> Result<T, crate::EngineError>,
+    ) -> Result<T, crate::EngineError> {
+        let config = OAuthConfig::load().map_err(crate::EngineError::Authentication)?;
+        self.with_access_config(&config, id, operation)
+    }
+    pub(crate) fn with_access_config<T>(
+        &self,
+        config: &OAuthConfig,
+        id: &AccountId,
+        operation: impl FnOnce(&str) -> Result<T, crate::EngineError>,
+    ) -> Result<T, crate::EngineError> {
+        self.verify_with_config(config, id)
+            .map_err(crate::EngineError::Authentication)?;
+        let lock = self
+            .account_lock(id)
+            .map_err(crate::EngineError::Authentication)?;
+        let _guard = lock
+            .lock()
+            .map_err(|_| crate::EngineError::Authentication(AuthError::Internal))?;
+        let credential = self
+            .store
+            .load(&config.client_id, id)
+            .map_err(crate::EngineError::Authentication)?
+            .ok_or(crate::EngineError::Authentication(
+                AuthError::ReauthorizationRequired,
+            ))?;
+        operation(&credential.access_token)
+    }
+
     pub(crate) fn verify_with_config(
         &self,
         config: &OAuthConfig,

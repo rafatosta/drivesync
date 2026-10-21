@@ -417,6 +417,7 @@ name = "drivesync"
 version = "0.1.0"
 dependencies = [
  "drivesync-engine",
+ "gtk4",
  "libadwaita",
 ]
 
@@ -424,6 +425,7 @@ dependencies = [
 name = "drivesync-engine"
 version = "0.1.0"
 dependencies = [
+ "dbus",
  "keyring",
  "oauth2",
  "reqwest",
