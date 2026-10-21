@@ -3,10 +3,8 @@
 ## UI-001 inicialização
 1. Detectar ativação normal versus autostart autorizado.
 2. Construir/obter instância do motor uma única vez.
-3. Na inicialização do processo, iniciar ACCT-003 em worker: carregar perfis,
-   verificar cofre/Google, atualizar UI sem bloquear GTK nem abrir navegador.
-   Uma conta verificada abre Account Information; múltiplas contas ou falhas
-   ficam na lista com estado explícito e opções de retry/reconexão.
+3. Executar [ACCT-003](../accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura)
+   em worker, uma vez por processo, para restaurar e verificar contas salvas.
 4. Em ativação normal, apresentar a janela única; no autostart, não apresentá-la.
 5. Manter processo vivo com retenção apropriada enquanto motor ativo.
 
@@ -67,7 +65,3 @@ Separar **técnica consolidada**, **política própria**, **evidência de teste*
 - **Testes/oráculos a detalhar:** Sair durante download, timeout de fechamento, cancelamento.
 - **Limitações / questões abertas:** Definir política de encerramento forçado e retomada após kill.
 - **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
-
-ACCT-003 está implementado para a restauração de login. Autostart, journal e
-retenção de background completos continuam pendentes; este incremento não os
-considera validados. UI-003 não repete a restauração em ativações da mesma instância.

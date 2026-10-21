@@ -44,10 +44,8 @@ Welcome → Account Information explicitamente solicitada.
 
 ## Restauração de login na abertura
 
-`list_accounts()` é leitura bloqueante de perfis salvos, sem verificação.
-`restore_accounts()` é bloqueante e deve executar em worker; retorna
-`Vec<RestoredAccount>`, contendo `account` e `error: Option<AuthError>`. Somente
-`error == None` confirma autenticação nessa verificação. Falha do índice impede
-a restauração com erro; falhas de uma conta não impedem as demais. O método não
-abre navegador nem inicia sincronização. `AccountStorage` distingue erros de
-perfil local de `SecureStorage` (cofre).
+`list_accounts()` lê perfis salvos sem verificar autenticação. `restore_accounts()`
+retorna `Vec<RestoredAccount>` com perfil e `error: Option<AuthError>` por conta;
+somente `None` confirma autenticação. Ambos são bloqueantes e exigem worker.
+Falha global do índice retorna erro; `AccountStorage` identifica falhas do perfil
+local, enquanto `SecureStorage` identifica falhas do cofre. Ver [ACCT-003](../engine/src/accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).

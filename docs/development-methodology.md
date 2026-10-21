@@ -26,6 +26,16 @@ Não copiar código de projetos terceiros sem verificar a licença; estudar téc
 8. **Integrar:** só conectar ao Coordinator depois de demonstrar contrato isolado. Verificar comportamento de ponta a ponta com provedores simulados antes de conta Drive de teste.
 9. **Registrar evidência:** PR/commit vincula algoritmo, documentação, referência, riscos, testes executados e lacunas. Nunca anunciar confiabilidade sem evidência.
 
+## Política de atualização da documentação
+
+Documentar o estado atual e as decisões duradouras do projeto. Atualizar documentos
+quando houver mudança relevante no uso, nos contratos, na arquitetura ou nos
+algoritmos; uma alteração de código não exige, por si só, alteração documental.
+Registrar resumo da implementação, verificações executadas, resultados e contexto
+pontual na descrição do commit ou PR, sem reproduzir esse histórico nos documentos.
+Manter uma fonte principal para cada assunto e referenciá-la nos demais arquivos,
+evitando duplicação e atualizações em cadeia sem necessidade.
+
 ## Estados de maturidade
 
 - **DRAFT:** comportamento esboçado, sem testes completos.

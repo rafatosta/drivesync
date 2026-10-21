@@ -29,12 +29,9 @@ Consumidores obtêm perfis sanitizados. Falhas de uma conta não alteram perfis 
 
 ## Integração mínima de login
 
-Após auth confirmar identidade e persistir credenciais, gravar perfil sanitizado
-por `AccountId = google:<sub>` em índice JSON versionado e privado (ACCT-003).
-Reautorizar o mesmo subject atualiza o perfil; e-mail não é chave. `list_accounts`
-lê perfis salvos sem afirmar autenticação. `restore_accounts` verifica cada perfil
-por auth, atualiza sucessos e devolve falhas por conta sem apagar o cadastro.
-Nenhum token sai do cofre. O índice separa clientes OAuth; raízes e SQLite de
-sincronização continuam fora deste incremento. Falha do índice é erro explícito,
-sem sobrescrever corrupção/versão futura. Credenciais salvas antes do índice ou
-antes de uma falha de gravação podem ser recuperadas reconectando a mesma conta.
+Após auth persistir credenciais, registrar perfil por `AccountId = google:<sub>`
+conforme [ACCT-003](algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
+Reautorizar atualiza sem duplicar; e-mail não é chave. `list_accounts` retorna
+metadados, sem afirmar autenticação; `restore_accounts` verifica por auth e retorna
+falhas por conta sem apagar perfis. Tokens permanecem no cofre; erro de persistência
+não pode ser apresentado como sucesso. Raízes e desvinculação continuam pendentes.

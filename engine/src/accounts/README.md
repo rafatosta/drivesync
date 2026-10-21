@@ -27,13 +27,6 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** perfis persistentes e restauração de login na abertura implementados
-(ACCT-003). Identidade estável e atualização sem duplicar; raízes e desvinculação
-continuam pendentes. Credenciais persistem exclusivamente em auth/Secret Service.
-
-## Persistência de login
-
-ACCT-003 implementa índice privado, versionado e atômico dos perfis, separado por
-cliente OAuth. Na abertura, `restore_accounts` verifica cada conta por auth;
-metadados salvos não comprovam autenticação. Tokens continuam somente no cofre.
-Pastas, desvinculação e SQLite de sincronização permanecem pendentes.
+**Estado:** identidade estável, perfis persistentes e restauração na abertura
+implementados em [ACCT-003](algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
+Raízes e desvinculação permanecem pendentes; tokens ficam no auth/Secret Service.

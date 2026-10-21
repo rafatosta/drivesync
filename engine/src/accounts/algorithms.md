@@ -61,35 +61,30 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Limitações / questões abertas:** Política de arquivos remanescentes após desvincular é decisão explícita do DriveSync.
 - **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
 
-## ACCT-003 — Persistir e restaurar perfis na abertura (implementação autorizada)
+## ACCT-003 — Persistir e restaurar perfis na abertura
 
-Escopo: descoberta de perfis de login, sem pastas/sincronização. UI-001 chama uma
-vez por processo, fora da thread GTK; UI-003 reapresenta a janela sem novo motor.
+Implementado para perfis de login; pastas e sincronização ficam fora deste algoritmo.
 
-1. Ler índice JSON versão 1 em `$XDG_DATA_HOME/drivesync/accounts.json`, ou
-   `$HOME/.local/share/drivesync/accounts.json`. XDG relativo é ignorado. No Flatpak,
-   XDG_DATA_HOME já aponta ao diretório privado da aplicação.
-2. Selecionar namespace do client ID Desktop em uso. Perfil salvo não comprova
-   autenticação. Validar versão, identidade, duplicatas e limites; corrupção ou
-   versão desconhecida gera erro e preserva o arquivo, nunca reinicializa.
-3. Após auth salvar no cofre, atualizar perfil sob mutex e gravar arquivo temporário
-   privado no mesmo diretório, fsync, rename e fsync do diretório. Confirmar o
-   perfil só após persistência. Falha pode deixar credencial no cofre sem índice:
-   reconectar a mesma conta repara o cadastro; não enumerar segredos do cofre.
-4. Na abertura, verificar cada ID por AUTH-002 (cofre, renovação se necessário,
-   UserInfo). Sucesso atualiza o perfil; falha mantém o perfil e retorna erro por
-   conta. Uma conta indisponível não impede verificar as demais. Nunca abrir
-   navegador automaticamente. Retry verifica novamente; reconectar exige clique.
-5. UI mostra progresso, contas verificadas ou falhas explícitas. Uma única conta
-   verificada abre Account Information; várias ficam disponíveis na lista.
+1. Ler JSON versão 1 em `$XDG_DATA_HOME/drivesync/accounts.json`, com fallback para
+   `$HOME/.local/share/drivesync/accounts.json`; ignorar XDG relativo. No Flatpak,
+   usar o diretório XDG privado da aplicação. Selecionar o namespace do cliente OAuth.
+2. Validar versão, identidade estável, duplicatas e tamanho. Corrupção ou versão
+   desconhecida gera erro e preserva o arquivo, sem reinicialização silenciosa.
+3. Após auth salvar credenciais no cofre, atualizar o perfil sob mutex e persistir
+   em temporário privado no mesmo diretório: fsync, rename e fsync do diretório.
+   Confirmar sucesso só após gravação. Serializar escritas no motor único;
+   concorrência entre processos externos não é suportada.
+4. Na abertura, UI-001 chama em worker uma vez por processo. Verificar cada ID por
+   AUTH-002 (cofre, renovação e UserInfo); atualizar sucessos e manter falhas por
+   conta sem bloquear as demais. Perfil salvo nunca comprova autenticação.
+5. Uma conta verificada abre Account Information; várias ficam na lista. Oferecer
+   retry/reconexão nas falhas, sem abrir navegador automaticamente. UI-003 apenas
+   reapresenta a janela, sem repetir a restauração.
 
-Índice não armazena tokens nem estado autenticado; credenciais continuam no Secret
-Service. Cliente alterado tem namespace separado. E-mail não é chave. Escritas
-serializadas no motor único; uso concorrente por processos externos não suportado.
-Nenhuma migração de cofre antigo é inferida: perfis anteriores sem índice exigem
-uma reconexão. Versões futuras precisam de migração explícita.
+O índice contém ID interno, subject e e-mail opcional, nunca tokens ou estado de
+login; e-mail não é chave. Clientes OAuth ficam isolados. Credenciais anteriores
+sem índice, ou salvas antes de uma falha na gravação do perfil, exigem reconexão
+para recuperar o cadastro; não enumerar o cofre. Versões futuras exigem migração.
 
-Oráculos: reinício com duas contas; atualização sem duplicar; namespaces isolados;
-falha de gravação sem sucesso; arquivo inválido/futuro preservado; offline, cofre
-bloqueado, credencial ausente/revogada; uma conta falha e outra verifica; retry;
-nenhum token em JSON; nenhuma chamada ao navegador ao restaurar.
+Testes automatizados: [tests.rs](tests.rs). Aceitação com conta/cofre reais:
+[registro de validação](../../../docs/auth-validation.md).

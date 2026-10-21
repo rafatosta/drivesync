@@ -1,48 +1,18 @@
-# Account persistence / startup restoration — 2026-10-21
+# Account restoration validation — 2026-10-21
 
-Implemented ACCT-003 and the account-restoration portion of UI-001; UI-003 keeps
-using the same engine/window. Reviewed the lifecycle and configuration algorithms
-before implementation. No sync roots, state SQLite, autostart, background journal
-or unlink implementation is included.
+ACCT-003 and its UI-001 integration are implemented; see
+[the algorithm](../engine/src/accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
+GNOME SDK 50: workspace check, clippy (`-D warnings`), **24 tests** and build passed
+with `--offline --locked`; formatting and `git diff --check` also passed.
+Tests use temporary profile files, provider/vault doubles and real loopback sockets.
 
-Profiles are atomically persisted in versioned `accounts.json` under the XDG data
-directory, namespaced by Desktop client ID, with private file/directory modes.
-Only subject, internal ID and optional email are stored; auth tokens remain in
-Secret Service. Startup loads the index in a worker and verifies each identity
-through existing AUTH-002, renewing expired credentials as required. Cached data
-never counts as authenticated. Failures preserve the profile and remain isolated
-per account, with UI retry/reconnect actions. Unknown/corrupt index versions fail
-closed and are preserved.
+The user reported real browser login before this change; startup restoration with
+a real account/vault remains unvalidated. Manual check: rebuild, reconnect once to
+register an old profile, Quit/Ctrl+Q and reopen; repeat with multiple accounts,
+offline, locked keyring and revoked access. Failures must preserve profiles without
+claiming authentication; retry after recovery must revalidate them.
 
-Verification actually executed on this change:
-
-- GNOME SDK 50: `cargo check --workspace --offline --locked`,
-  `cargo clippy --workspace --all-targets --offline --locked -- -D warnings`,
-  `cargo test --workspace --offline --locked`, and
-  `cargo build --workspace --offline --locked`: passed.
-- **24 tests passed**, including all existing auth tests and six account tests:
-  disk restart/update/client isolation; corrupt/future/duplicate/foreign identity
-  preservation; write failure; startup per-account failures/retry; concurrent
-  writes and interrupted temp files; invalid profiles and oversized indexes.
-- `cargo fmt --all --check` and `git diff --check`: passed.
-- Rust 1.99.1 tools were installed only under `/tmp/drivesync-persistence-tools`;
-  dependencies were downloaded before the final offline checks. No system packages
-  or shell configuration were changed.
-
-The user reported a successful real browser login with screenshots before this
-change. **This new startup restoration has not been exercised with their real
-Google account or actual vault**; automated provider/vault tests use doubles and
-loopback tests use real local sockets. The application UI has compiled, but no
-new visual or manifest-package acceptance run is claimed.
-
-Manual acceptance: rebuild, reconnect an old account once to create its profile,
-choose Quit / Ctrl+Q (closing only hides the window), reopen and confirm automatic
-Account Information without browser login. Repeat with two accounts, offline,
-locked keyring and revoked access; failures must preserve profiles without a
-connected status, and retry must work after recovery. Old vault entries without
-an index are deliberately not enumerated; reconnection repairs discovery.
-
-The entries below record earlier stages and their then-pending limitations.
+Earlier validation records below describe their respective implementation stages.
 
 ---
 

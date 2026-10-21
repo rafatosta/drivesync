@@ -12,16 +12,11 @@ One engine serves all accounts. A worker handles network, callback and vault I/O
 GTK handles only the browser launch, progress, cancellation and navigation.
 `AdwNavigationView` lives inside the existing single application window.
 
-AUTH-001 and AUTH-002 have automated tests. AUTH-003, folder selection, remote
-listing and synchronization are not implemented. ACCT-003 persists sanitized
-profiles under `$XDG_DATA_HOME/drivesync/accounts.json` (fallback
-`$HOME/.local/share/drivesync/accounts.json`) and verifies them on startup using
-the vault and Google. Tokens remain exclusively in Secret Service. A single
-verified account opens Account Information; multiple accounts are listed.
-Offline, locked vault or revoked credentials keep the saved profile with an
-explicit error and retry/reconnect actions, never an authenticated success.
-Profiles created before this index was implemented require one reconnection to
-be discoverable. Reconnecting the same Google subject updates the profile.
+AUTH-001/002 and account restoration have automated tests. Startup discovers saved
+profiles and verifies them through the vault and Google; failures preserve profiles
+with retry/reconnect actions. Older accounts need one reconnection to register a
+profile. Storage and restoration rules: [ACCT-003](../engine/src/accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
+AUTH-003, folder selection, remote listing and synchronization remain unimplemented.
 
 ## Maintainer: one-time Google Cloud configuration
 
@@ -157,11 +152,10 @@ Secret portal; this development backend uses Secret Service directly.
    and locked/unavailable keyring. No failure should navigate to a success page.
    Cancel while the browser portal is pending should stop the worker promptly;
    HTTP requests already in flight finish within their 30-second timeout.
-8. Restart and reconnect a test account. Secure storage must remain intact.
-   With one saved account, online verification should open Account Information
-   automatically. With multiple accounts, verify the saved-account list. Repeat
-   offline and with a locked keyring: profiles remain, without claiming connected
-   status; retry after restoring connectivity/unlocking.
+8. After registering an account, Quit/Ctrl+Q and reopen. One verified account
+   should open Account Information; multiple accounts should appear in the list.
+   Repeat offline and with a locked keyring: preserve profiles without claiming
+   authentication; retry after recovery.
 9. Test renewal with `DriveSyncEngine::verify_account(id)` after token expiry in
    a controlled integration harness. Revoking access in Google should produce
    reauthorization-required when Google rejects the refresh. Never print tokens,
