@@ -343,3 +343,56 @@ fn local_validation_canonicalizes_aliases_and_rejects_non_directories() {
     assert!(crate::configuration::local_folder(&file).is_err());
     assert_eq!(fs::read_to_string(file).unwrap(), "keep");
 }
+
+#[test]
+fn forgetting_account_removes_its_metadata_and_legacy_backup_but_keeps_user_files() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "forgotten@example.com"))
+        .unwrap();
+    accounts
+        .record(CLIENT, profile("b", "keep@example.com"))
+        .unwrap();
+    accounts
+        .record(
+            "other.apps.googleusercontent.com",
+            profile("a", "other-client@example.com"),
+        )
+        .unwrap();
+    let local = dir.0.join("downloads");
+    fs::create_dir(&local).unwrap();
+    fs::write(local.join("user-file.txt"), "keep my files").unwrap();
+    accounts
+        .configure(CLIENT, configured("a", local.clone()))
+        .unwrap();
+    let path = accounts.path.as_ref().unwrap();
+    fs::copy(path, path.with_extension("v1.json.bak")).unwrap();
+    accounts
+        .forget(CLIENT, &AccountId::from_subject("a"))
+        .unwrap();
+    accounts
+        .forget(CLIENT, &AccountId::from_subject("a"))
+        .unwrap();
+    let reopened = dir.accounts();
+    assert_eq!(
+        reopened.list(CLIENT).unwrap(),
+        vec![profile("b", "keep@example.com")]
+    );
+    assert!(reopened.folders(CLIENT).unwrap().is_empty());
+    assert_eq!(
+        reopened
+            .list("other.apps.googleusercontent.com")
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(local.join("user-file.txt")).unwrap(),
+        "keep my files"
+    );
+    assert!(!fs::read_to_string(path)
+        .unwrap()
+        .contains("forgotten@example.com"));
+    assert!(!path.with_extension("v1.json.bak").exists());
+}

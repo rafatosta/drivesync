@@ -1,10 +1,7 @@
-//! UI-001: restore saved identities on a worker, without opening a browser.
+//! Restore current sessions, without showing a connection-history list on Welcome.
 use adw::{gtk, prelude::*};
-use drivesync_engine::DriveSyncEngine;
-use std::{
-    sync::{mpsc, Arc},
-    time::Duration,
-};
+use drivesync_engine::{DriveSyncEngine, RestoredAccount};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 pub fn build(
     engine: Arc<DriveSyncEngine>,
@@ -12,209 +9,122 @@ pub fn build(
     toasts: &adw::ToastOverlay,
     connect: &gtk::Button,
 ) -> gtk::Box {
-    let panel = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    panel.set_halign(gtk::Align::Center);
     let status = gtk::Label::builder()
+        .label("Checking your connection…")
         .wrap(true)
-        .label("Checking saved accounts…")
+        .max_width_chars(48)
         .build();
     let spinner = gtk::Spinner::new();
-    let rows = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let retry = gtk::Button::with_label("Check Saved Accounts Again");
-    panel.append(&status);
+    let retry = gtk::Button::with_label("Try Again");
+    retry.set_visible(false);
+    let open = gtk::Button::with_label("Open Dashboard");
+    open.set_visible(false);
+    open.add_css_class("flat");
     panel.append(&spinner);
-    panel.append(&rows);
+    panel.append(&status);
     panel.append(&retry);
-    let retry_engine = engine.clone();
-    let retry_status = status.clone();
-    let retry_spinner = spinner.clone();
-    let retry_rows = rows.clone();
-    let retry_connect = connect.clone();
-    let weak_navigation = navigation.downgrade();
+    panel.append(&open);
+    let snapshot = Rc::new(RefCell::new(Vec::<RestoredAccount>::new()));
+    let weak_nav = navigation.downgrade();
     let weak_toasts = toasts.downgrade();
-    retry.connect_clicked(move |button| {
-        if !retry_connect.is_sensitive() {
+    let state = snapshot.clone();
+    let page_engine = engine.clone();
+    open.connect_clicked(move |_| {
+        if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
+            nav.push(&crate::dashboard::build(
+                page_engine.clone(),
+                state.borrow().clone(),
+                &nav,
+                &toasts,
+            ));
+        }
+    });
+    let controls = (panel.clone(), status, spinner, retry.clone(), open);
+    let weak_nav = navigation.downgrade();
+    let weak_toasts = toasts.downgrade();
+    let button = connect.downgrade();
+    let refresh = Rc::new(move |auto_open| {
+        let (Some(nav), Some(toasts), Some(connect)) =
+            (weak_nav.upgrade(), weak_toasts.upgrade(), button.upgrade())
+        else {
+            return;
+        };
+        if !connect.is_sensitive() {
             return;
         }
-        if let (Some(navigation), Some(toasts)) = (weak_navigation.upgrade(), weak_toasts.upgrade())
-        {
-            start(
-                retry_engine.clone(),
-                &navigation,
-                &toasts,
-                &retry_connect,
-                &retry_status,
-                &retry_spinner,
-                &retry_rows,
-                button,
-                false,
-            );
+        connect.set_sensitive(false);
+        let (panel, status, spinner, retry, open) = controls.clone();
+        panel.set_visible(true);
+        status.set_label("Checking your connection…");
+        retry.set_visible(false);
+        open.set_visible(false);
+        spinner.set_visible(true);
+        spinner.start();
+        let worker = engine.clone();
+        let page_engine = engine.clone();
+        let weak_nav = nav.downgrade();
+        let weak_toasts = toasts.downgrade();
+        let snapshot = snapshot.clone();
+        crate::flow::work(
+            move || worker.restore_accounts(),
+            move |result| {
+                connect.set_sensitive(true);
+                spinner.stop();
+                spinner.set_visible(false);
+                match result {
+                    Err(error) => {
+                        status.set_label(&error.to_string());
+                        retry.set_visible(true);
+                    }
+                    Ok(accounts) => {
+                        panel.set_visible(!accounts.is_empty());
+                        status.set_label("");
+                        open.set_visible(!accounts.is_empty());
+                        *snapshot.borrow_mut() = accounts.clone();
+                        if auto_open {
+                            if let (Some(nav), Some(toasts)) =
+                                (weak_nav.upgrade(), weak_toasts.upgrade())
+                            {
+                                match crate::flow::initial_destination(&accounts) {
+                                    crate::flow::InitialDestination::Dashboard => {
+                                        nav.push(&crate::dashboard::build(
+                                            page_engine,
+                                            accounts,
+                                            &nav,
+                                            &toasts,
+                                        ))
+                                    }
+                                    crate::flow::InitialDestination::FolderSetup => {
+                                        nav.push(&crate::flow::account_page(
+                                            page_engine,
+                                            accounts[0].clone(),
+                                            &nav,
+                                            &toasts,
+                                        ))
+                                    }
+                                    crate::flow::InitialDestination::Accounts => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        );
+    });
+    let retry_refresh = Rc::downgrade(&refresh);
+    retry.connect_clicked(move |_| {
+        if let Some(refresh) = retry_refresh.upgrade() {
+            refresh(false);
         }
     });
     let actions = gtk::gio::SimpleActionGroup::new();
-    let refresh = gtk::gio::SimpleAction::new("refresh", None);
-    let weak_retry = retry.downgrade();
-    refresh.connect_activate(move |_, _| {
-        if let Some(retry) = weak_retry.upgrade() {
-            retry.emit_clicked();
-        }
-    });
-    actions.add_action(&refresh);
+    let action = gtk::gio::SimpleAction::new("refresh", None);
+    let action_refresh = refresh.clone();
+    action.connect_activate(move |_, _| action_refresh(false));
+    actions.add_action(&action);
     navigation.insert_action_group("accounts", Some(&actions));
-    start(
-        engine, navigation, toasts, connect, &status, &spinner, &rows, &retry, true,
-    );
+    refresh(true);
     panel
-}
-
-#[allow(clippy::too_many_arguments)]
-fn start(
-    engine: Arc<DriveSyncEngine>,
-    navigation: &adw::NavigationView,
-    toasts: &adw::ToastOverlay,
-    connect: &gtk::Button,
-    status: &gtk::Label,
-    spinner: &gtk::Spinner,
-    rows: &gtk::Box,
-    retry: &gtk::Button,
-    auto_open: bool,
-) {
-    connect.set_sensitive(false);
-    retry.set_sensitive(false);
-    status.set_label("Checking saved accounts…");
-    spinner.set_visible(true);
-    spinner.start();
-    while let Some(child) = rows.first_child() {
-        rows.remove(&child);
-    }
-    let (sender, receiver) = mpsc::channel();
-    let worker_engine = engine.clone();
-    std::thread::spawn(move || {
-        let _ = sender.send(worker_engine.restore_accounts());
-    });
-    let navigation = navigation.downgrade();
-    let toasts = toasts.downgrade();
-    let connect = connect.clone();
-    let status = status.clone();
-    let spinner = spinner.clone();
-    let rows = rows.clone();
-    let retry = retry.clone();
-    gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
-        let result = match receiver.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => return gtk::glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                status.set_label("Could not finish checking saved accounts. Please try again.");
-                spinner.stop();
-                spinner.set_visible(false);
-                connect.set_sensitive(true);
-                retry.set_sensitive(true);
-                return gtk::glib::ControlFlow::Break;
-            }
-        };
-        spinner.stop();
-        spinner.set_visible(false);
-        connect.set_sensitive(true);
-        retry.set_sensitive(true);
-        match result {
-            Err(error) => status.set_label(&error.to_string()),
-            Ok(accounts) => {
-                status.set_label(if accounts.is_empty() {
-                    ""
-                } else {
-                    "Saved accounts"
-                });
-                let destination = crate::flow::initial_destination(&accounts);
-                let show_dashboard = destination == crate::flow::InitialDestination::Dashboard;
-                let open_setup = destination == crate::flow::InitialDestination::FolderSetup;
-                if auto_open && show_dashboard {
-                    if let (Some(nav), Some(toasts)) = (navigation.upgrade(), toasts.upgrade()) {
-                        nav.push(&crate::dashboard::build(
-                            engine.clone(),
-                            accounts.clone(),
-                            &nav,
-                            &toasts,
-                        ));
-                    }
-                }
-                for saved in accounts {
-                    let row = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                    let name = saved
-                        .account
-                        .email
-                        .as_deref()
-                        .unwrap_or(&saved.account.provider_subject);
-                    row.append(
-                        &gtk::Label::builder()
-                            .label(name)
-                            .selectable(true)
-                            .wrap(true)
-                            .build(),
-                    );
-                    if let Some(error) = saved.error {
-                        row.append(
-                            &gtk::Label::builder()
-                                .label(error.to_string())
-                                .wrap(true)
-                                .build(),
-                        );
-                        let reconnect = gtk::Button::with_label("Reconnect Google Account");
-                        let connect = connect.downgrade();
-                        reconnect.connect_clicked(move |_| {
-                            if let Some(connect) = connect.upgrade() {
-                                connect.emit_clicked();
-                            }
-                        });
-                        row.append(&reconnect);
-                    }
-                    if saved.error.is_none() || saved.folder.is_some() {
-                        let open = gtk::Button::with_label(if saved.folder.is_some() {
-                            "Open Dashboard"
-                        } else {
-                            "Choose Folders"
-                        });
-                        let saved = saved.clone();
-                        if auto_open && open_setup {
-                            if let (Some(navigation), Some(toasts)) =
-                                (navigation.upgrade(), toasts.upgrade())
-                            {
-                                navigation.push(&crate::flow::account_page(
-                                    engine.clone(),
-                                    saved.clone(),
-                                    &navigation,
-                                    &toasts,
-                                ));
-                            }
-                        }
-                        let navigation = navigation.clone();
-                        let toasts = toasts.clone();
-                        let engine = engine.clone();
-                        open.connect_clicked(move |_| {
-                            if let (Some(navigation), Some(toasts)) =
-                                (navigation.upgrade(), toasts.upgrade())
-                            {
-                                if saved.error.is_none() {
-                                    crate::flow::open_account(
-                                        engine.clone(),
-                                        saved.account.clone(),
-                                        &navigation,
-                                        &toasts,
-                                    );
-                                } else {
-                                    navigation.push(&crate::flow::account_page(
-                                        engine.clone(),
-                                        saved.clone(),
-                                        &navigation,
-                                        &toasts,
-                                    ));
-                                }
-                            }
-                        });
-                        row.append(&open);
-                    }
-                    rows.append(&row);
-                }
-            }
-        }
-        gtk::glib::ControlFlow::Break
-    });
 }

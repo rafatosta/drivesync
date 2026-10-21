@@ -14,7 +14,7 @@ pub fn sign_out_button(
     button.connect_clicked(move |button| {
         let parent = button.root().and_downcast::<gtk::Window>();
         let dialog = adw::MessageDialog::new(parent.as_ref(), Some("Sign Out of DriveSync?"),
-            Some("Remove this account’s saved sign-in from this computer. Your folder settings and files will be kept."));
+            Some("Remove this account and its folder settings from DriveSync. Your local and Google Drive files will be kept."));
         dialog.add_responses(&[("cancel", "Cancel"), ("sign-out", "Sign Out")]);
         dialog.set_response_appearance("sign-out", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel")); dialog.set_close_response("cancel");
@@ -33,7 +33,7 @@ pub fn sign_out_button(
                             Ok(()) => {
                                 nav.pop_to_tag("welcome");
                                 let _ = nav.activate_action("accounts.refresh", None);
-                                toasts.add_toast(adw::Toast::new("Signed out. Your folder settings and files have been kept."));
+                                toasts.add_toast(adw::Toast::new("Signed out. The account was removed from DriveSync. Your files have been kept."));
                             }
                             Err(error) => toasts.add_toast(adw::Toast::new(&error.to_string())),
                         }

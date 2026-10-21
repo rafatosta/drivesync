@@ -61,7 +61,7 @@ pub fn build(
         // Restricted environments may not provide an SVG loader/portal.
         Err(_) => gtk::Image::from_icon_name("folder-download-symbolic"),
     };
-    image.set_pixel_size(144);
+    image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);
     image.update_property(&[gtk::accessible::Property::Label(
         "DriveSync folder and cloud",
@@ -69,10 +69,10 @@ pub fn build(
     content.append(&image);
     content.append(&text("Welcome to DriveSync", "title-1"));
     let description = text(
-        "Keep selected Google Drive folders available on your Linux computer. The first milestone brings safe, download-only sync, with support for multiple accounts.",
+        "Connect your Google account to choose folders for this computer.",
         "body",
     );
-    description.set_max_width_chars(62);
+    description.set_max_width_chars(48);
     description.set_halign(gtk::Align::Center);
     content.append(&description);
     content.append(&text("Download only · Technical preview", "caption"));
@@ -211,6 +211,10 @@ pub fn build(
                         );
                     }
                 }
+                Err(EngineError::Authentication(AuthError::Cancelled)) => {
+                    feedback.set_label("");
+                    feedback.set_visible(false);
+                }
                 Err(error) => {
                     feedback.set_label(&error.to_string());
                     if let Some(toasts) = toasts.upgrade() {
@@ -240,7 +244,7 @@ pub fn build(
     content.append(&details);
 
     let note = text(
-        "Browser OAuth · Sign-in opens securely in your web browser. DriveSync will never ask for your Google password here.",
+        "Sign in securely in your browser. DriveSync never asks for your Google password.",
         "dim-label",
     );
     note.set_max_width_chars(80);
@@ -248,7 +252,7 @@ pub fn build(
     content.append(&note);
 
     let clamp = adw::Clamp::builder()
-        .maximum_size(1000)
+        .maximum_size(760)
         .vexpand(true)
         .child(&content)
         .build();

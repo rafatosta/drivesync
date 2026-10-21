@@ -36,12 +36,12 @@ pub enum InitialDestination {
     Dashboard,
 }
 pub fn initial_destination(accounts: &[RestoredAccount]) -> InitialDestination {
-    if accounts.iter().any(|a| a.folder.is_some()) {
-        InitialDestination::Dashboard
-    } else if accounts.len() == 1 && accounts[0].error.is_none() {
+    if accounts.is_empty() {
+        InitialDestination::Accounts
+    } else if accounts.len() == 1 && accounts[0].folder.is_none() && accounts[0].error.is_none() {
         InitialDestination::FolderSetup
     } else {
-        InitialDestination::Accounts
+        InitialDestination::Dashboard
     }
 }
 pub fn account_page(
@@ -149,7 +149,7 @@ mod tests {
         );
         assert_eq!(
             initial_destination(&[saved(false, Some(AuthError::Network))]),
-            InitialDestination::Accounts
+            InitialDestination::Dashboard
         );
         for error in [
             None,
@@ -170,7 +170,7 @@ mod tests {
         );
         assert_eq!(
             initial_destination(&[saved(false, None), saved(false, None)]),
-            InitialDestination::Accounts
+            InitialDestination::Dashboard
         );
     }
 }
@@ -206,7 +206,7 @@ mod layout_tests {
             settings.set_gtk_icon_theme_name(Some("Adwaita"));
         }
         for width in [1000, 360] {
-            for dashboard in [false, true] {
+            for screen in ["welcome", "setup", "dashboard"] {
                 let nav = adw::NavigationView::new();
                 let toasts = adw::ToastOverlay::new();
                 toasts.set_child(Some(&nav));
@@ -221,7 +221,17 @@ mod layout_tests {
                     provider_subject: "layout-fixture".into(),
                     email: Some("preview@example.com".into()),
                 };
-                let page = if dashboard {
+                let page = if screen == "welcome" {
+                    let welcome = crate::welcome::build(
+                        engine.clone(),
+                        &nav,
+                        &toasts,
+                        std::rc::Rc::new(std::cell::RefCell::new(None)),
+                    );
+                    root.set_title("Welcome");
+                    root.set_child(Some(&welcome));
+                    root.clone()
+                } else if screen == "dashboard" {
                     crate::dashboard::build(
                         engine.clone(),
                         vec![RestoredAccount {
@@ -245,7 +255,9 @@ mod layout_tests {
                 } else {
                     crate::setup::build(engine.clone(), account, &nav, &toasts)
                 };
-                nav.push(&page);
+                if screen != "welcome" {
+                    nav.push(&page);
+                }
                 let window = adw::Window::builder()
                     .default_width(width)
                     .default_height(800)
@@ -273,22 +285,26 @@ mod layout_tests {
                 let node = snapshot.to_node().expect("rendered layout");
                 let texture = window.renderer().unwrap().render_texture(&node, None);
                 texture
-                    .save_to_png(format!(
-                        "{output}/{}-{width}.png",
-                        if dashboard { "dashboard" } else { "setup" }
-                    ))
+                    .save_to_png(format!("{output}/{}-{width}.png", screen))
                     .unwrap();
-                // Cancelling the product confirmation must leave the page usable.
-                find_button(window.upcast_ref(), "Sign Out")
-                    .expect("logout action")
-                    .emit_clicked();
-                let dialog = gtk::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|widget| widget.downcast::<adw::MessageDialog>().ok())
-                    .expect("logout confirmation");
-                dialog.response("cancel");
-                assert!(nav.is_sensitive());
-                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                if screen == "welcome" {
+                    assert!(find_button(window.upcast_ref(), "Connect Google Account").is_some());
+                    for obsolete in ["Reconnect Google Account", "Check Saved Accounts Again"] {
+                        assert!(find_button(window.upcast_ref(), obsolete).is_none());
+                    }
+                } else {
+                    // Cancelling the product confirmation must leave the page usable.
+                    find_button(window.upcast_ref(), "Sign Out")
+                        .expect("logout action")
+                        .emit_clicked();
+                    let dialog = gtk::Window::list_toplevels()
+                        .into_iter()
+                        .find_map(|widget| widget.downcast::<adw::MessageDialog>().ok())
+                        .expect("logout confirmation");
+                    dialog.response("cancel");
+                    assert!(nav.is_sensitive());
+                    assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                }
                 window.close();
             }
         }

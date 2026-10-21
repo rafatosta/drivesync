@@ -70,7 +70,7 @@ impl std::fmt::Display for AuthError {
             Self::SecureStorage => {
                 "Could not access the desktop credential vault. Unlock your keyring and try again."
             }
-            Self::AccountStorage => "Could not read or save the account list. Your saved credentials have not been deleted.",
+            Self::AccountStorage => "Could not read or update the account list. Please try again.",
             Self::Internal => {
                 "Account connection could not be completed. Please restart DriveSync."
             }
@@ -222,7 +222,34 @@ impl AuthProvider {
         Ok(account)
     }
 
+    pub(crate) fn prune_if_missing(
+        &self,
+        config: &OAuthConfig,
+        id: &AccountId,
+        forget: impl FnOnce() -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
+        if self.authorizing.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let _login_guard = LoginGuard(&self.authorizing);
+        let lock = self.account_lock(id)?;
+        let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
+        match self.store.load(&config.client_id, id) {
+            Ok(None) => forget(),
+            // A locked/unavailable/corrupt vault is never evidence of logout.
+            Ok(Some(_)) | Err(_) => Ok(()),
+        }
+    }
+    #[cfg(test)]
     pub(crate) fn sign_out(&self, config: &OAuthConfig, id: &AccountId) -> Result<(), AuthError> {
+        self.sign_out_then(config, id, || Ok(()))
+    }
+    pub(crate) fn sign_out_then(
+        &self,
+        config: &OAuthConfig,
+        id: &AccountId,
+        forget: impl FnOnce() -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
         // Share the interactive-operation gate: an in-flight login must not
         // recreate credentials after successful logout.
         if self.authorizing.swap(true, Ordering::AcqRel) {
@@ -231,7 +258,8 @@ impl AuthProvider {
         let _login_guard = LoginGuard(&self.authorizing);
         let lock = self.account_lock(id)?;
         let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
-        self.store.delete(&config.client_id, id)
+        self.store.delete(&config.client_id, id)?;
+        forget()
     }
 
     pub(crate) fn with_access<T>(

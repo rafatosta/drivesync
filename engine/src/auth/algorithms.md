@@ -81,6 +81,9 @@ Por solicitação explícita, apagar somente a credencial da conta/cliente atual
 cofre; ausência já é sucesso. Serializar com renovação/acesso da mesma conta e
 recusar enquanto houver autorização interativa em curso, impedindo que um login
 pendente recrie a credencial após o logoff. Falha do cofre não pode virar sucesso.
-Preservar perfil, seleção de pastas e arquivos locais/remotos. Não revogar acesso
+Remover perfil e seleção de pastas do aplicativo, sem manter histórico, e aposentar
+o backup de migração que poderia conter esse cadastro. Preservar arquivos
+locais/remotos. Não revogar acesso
 no Google nem encerrar a sessão do navegador (AUTH-003 continua separado).
-Na reabertura, credencial ausente exige reconexão; outras contas não são afetadas.
+Na reabertura, remover cadastros antigos somente se o cofre confirmar ausência de
+credencial; falhas de rede/cofre não indicam logoff. Outras contas não são afetadas.

@@ -639,3 +639,65 @@ fn logout_waits_for_in_flight_account_work_before_deleting_credentials() {
         .unwrap()
         .is_none());
 }
+
+#[test]
+fn history_cleanup_requires_confirmed_absence_not_a_vault_or_provider_failure() {
+    let (provider, store, api) = provider();
+    let id = AccountId::from_subject("a");
+    let forgotten = AtomicBool::new(false);
+    store.fail.store(true, Ordering::SeqCst);
+    provider
+        .prune_if_missing(&config(), &id, || {
+            forgotten.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+    assert!(!forgotten.load(Ordering::SeqCst));
+    store.fail.store(false, Ordering::SeqCst);
+    provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    *api.failure.lock().unwrap() = Some(AuthError::ReauthorizationRequired);
+    provider
+        .prune_if_missing(&config(), &id, || {
+            forgotten.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+    assert!(!forgotten.load(Ordering::SeqCst));
+    provider.sign_out(&config(), &id).unwrap();
+    provider.authorizing.store(true, Ordering::SeqCst);
+    provider
+        .prune_if_missing(&config(), &id, || {
+            forgotten.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+    assert!(!forgotten.load(Ordering::SeqCst));
+    provider.authorizing.store(false, Ordering::SeqCst);
+    provider
+        .prune_if_missing(&config(), &id, || {
+            forgotten.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+    assert!(forgotten.load(Ordering::SeqCst));
+}
+#[test]
+fn logout_reports_profile_cleanup_failure_after_removing_credentials_and_allows_retry() {
+    let (provider, store, _) = provider();
+    let account = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    assert_eq!(
+        provider.sign_out_then(&config(), &account.id, || Err(AuthError::AccountStorage)),
+        Err(AuthError::AccountStorage)
+    );
+    assert!(store
+        .load(&config().client_id, &account.id)
+        .unwrap()
+        .is_none());
+    provider
+        .sign_out_then(&config(), &account.id, || Ok(()))
+        .unwrap();
+}

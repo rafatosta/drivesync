@@ -140,6 +140,19 @@ impl DriveSyncEngine {
     /// Blocking startup operation. Cached profiles never imply authentication.
     pub fn restore_accounts(&self) -> Result<Vec<RestoredAccount>, EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        // Migrate profiles left by older local logout: prune only a confirmed
+        // missing vault entry. Offline, revoked access and locked vault are not absence.
+        for profile in self
+            .accounts
+            .list(&config.client_id)
+            .map_err(EngineError::Authentication)?
+        {
+            self.auth
+                .prune_if_missing(&config, &profile.id, || {
+                    self.accounts.forget(&config.client_id, &profile.id)
+                })
+                .map_err(EngineError::Authentication)?;
+        }
         self.restore_with(&config.client_id, |id| {
             self.auth.verify_with_config(&config, id)
         })
@@ -221,11 +234,11 @@ impl DriveSyncEngine {
         self.accounts.configure(&config.client_id, folder.clone())?;
         Ok(folder)
     }
-    /// Blocking local logout. Preserves profiles, folder settings and user files.
+    /// Blocking local logout: forgets credentials and app settings, never user files.
     pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         self.auth
-            .sign_out(&config, id)
+            .sign_out_then(&config, id, || self.accounts.forget(&config.client_id, id))
             .map_err(EngineError::Authentication)
     }
     pub fn start_sync(&self, _root: SyncRootId) -> Result<(), EngineError> {

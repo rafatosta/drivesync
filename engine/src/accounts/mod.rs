@@ -182,6 +182,27 @@ impl Accounts {
         }
         result.map_err(|_| AuthError::AccountStorage)
     }
+    /// Forget app metadata only. Never access or delete configured user folders.
+    pub fn forget(&self, client: &str, id: &AccountId) -> Result<(), AuthError> {
+        let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
+        let mut index = self.read()?;
+        if let Some(profiles) = index.clients.get_mut(client) {
+            profiles.retain(|p| &p.id != id);
+        }
+        if let Some(folders) = index.folders.get_mut(client) {
+            folders.retain(|f| &f.account_id != id);
+        }
+        self.write(index)?;
+        // Retire the old migration snapshot: it can contain the forgotten profile.
+        let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
+        match fs::remove_file(path.with_extension("v1.json.bak")) {
+            Ok(()) => File::open(path.parent().ok_or(AuthError::AccountStorage)?)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| AuthError::AccountStorage),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(AuthError::AccountStorage),
+        }
+    }
     pub fn folders(&self, client: &str) -> Result<Vec<FolderConfiguration>, AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         Ok(self.read()?.folders.remove(client).unwrap_or_default())
