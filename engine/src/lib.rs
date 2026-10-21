@@ -33,6 +33,7 @@ pub enum EngineError {
     FolderOverlap,
     RemoteFolderUnavailable,
     RemoteForbidden,
+    DriveApiDisabled,
     RemoteRateLimited,
 }
 
@@ -45,7 +46,8 @@ impl std::fmt::Display for EngineError {
             Self::InvalidFolder => f.write_str("Choose an existing, writable local folder."),
             Self::FolderOverlap => f.write_str("The local folder overlaps another account’s folder. Choose a different location."),
             Self::RemoteFolderUnavailable => f.write_str("This Google Drive folder is unavailable. Choose it again."),
-            Self::RemoteForbidden => f.write_str("Google Drive denied access. Check the granted permissions and that Drive API is enabled."),
+            Self::RemoteForbidden => f.write_str("Google Drive denied access to this folder. Check this account’s access or choose another folder."),
+            Self::DriveApiDisabled => f.write_str("Google Drive access is unavailable because Drive API is disabled for this app. Contact the DriveSync distributor."),
             Self::RemoteRateLimited => f.write_str("Google Drive is receiving too many requests. Please try again later."),
         }
     }
@@ -235,5 +237,37 @@ mod tests {
             engine.start_sync(SyncRootId(1)),
             Err(EngineError::NotImplemented(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod live_google_tests {
+    use super::*;
+    #[test]
+    #[ignore = "explicit opt-in; accesses the real Google account and desktop vault"]
+    fn saved_account_can_browse_drive_folders() {
+        assert_eq!(
+            std::env::var("DRIVESYNC_LIVE_GOOGLE_TEST").as_deref(),
+            Ok("1")
+        );
+        let engine = DriveSyncEngine::new();
+        let accounts = engine.list_accounts().expect("saved profile index");
+        let id = &accounts.first().expect("at least one saved account").id;
+        let page = engine
+            .drive_folders(id, "root", None)
+            .unwrap_or_else(|e| panic!("Sanitized Drive diagnostic: {e:?}"));
+        let config = auth::OAuthConfig::load()
+            .map_err(|_| "OAuth configuration")
+            .unwrap();
+        engine
+            .auth
+            .with_access_config(&config, id, |token| remote::get(token, "root"))
+            .unwrap_or_else(|e| panic!("Sanitized root metadata diagnostic: {e:?}"));
+        if let Some(folder) = page.folders.first() {
+            engine
+                .drive_folders(id, &folder.id, None)
+                .unwrap_or_else(|e| panic!("Sanitized child folder diagnostic: {e:?}"));
+        }
+        println!("Real Google folder listing and metadata retrieval succeeded. No account or folder identifiers printed.");
     }
 }

@@ -44,7 +44,7 @@ fn request(token: &str, endpoint: &str, params: &[(&str, &str)]) -> Result<Vec<u
         .query(params)
         .send()
         .map_err(|_| EngineError::Authentication(AuthError::Network))?;
-    status(response.status().as_u16())?;
+    let code = response.status().as_u16();
     let mut body = Vec::new();
     response
         .take(MAX_BODY + 1)
@@ -53,7 +53,72 @@ fn request(token: &str, endpoint: &str, params: &[(&str, &str)]) -> Result<Vec<u
     if body.len() as u64 > MAX_BODY {
         return Err(EngineError::Authentication(AuthError::InvalidResponse));
     }
+    response_status(code, &body)?;
     Ok(body)
+}
+fn response_status(code: u16, body: &[u8]) -> Result<(), EngineError> {
+    if code != 403 {
+        return status(code);
+    }
+    Err(forbidden_reason(body))
+}
+fn forbidden_reason(body: &[u8]) -> EngineError {
+    // Read only allowlisted reason codes. Never show provider messages, links,
+    // metadata or raw response bodies, which can include private identifiers.
+    #[derive(Deserialize)]
+    struct Reason {
+        reason: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Error {
+        #[serde(default)]
+        errors: Vec<Reason>,
+        #[serde(default)]
+        details: Vec<Reason>,
+    }
+    #[derive(Deserialize)]
+    struct Envelope {
+        error: Error,
+    }
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(body) else {
+        return EngineError::RemoteForbidden;
+    };
+    let reasons: Vec<_> = envelope
+        .error
+        .errors
+        .iter()
+        .chain(envelope.error.details.iter())
+        .filter_map(|r| r.reason.as_deref())
+        .collect();
+    if reasons.iter().any(|r| {
+        matches!(
+            *r,
+            "SERVICE_DISABLED" | "accessNotConfigured" | "serviceDisabled"
+        )
+    }) {
+        EngineError::DriveApiDisabled
+    } else if reasons.iter().any(|r| {
+        matches!(
+            *r,
+            "ACCESS_TOKEN_SCOPE_INSUFFICIENT" | "insufficientPermissions"
+        )
+    }) {
+        EngineError::Authentication(AuthError::MissingPermissions)
+    } else if reasons.iter().any(|r| {
+        matches!(
+            *r,
+            "RATE_LIMIT_EXCEEDED"
+                | "QUOTA_EXCEEDED"
+                | "rateLimitExceeded"
+                | "userRateLimitExceeded"
+                | "dailyLimitExceeded"
+                | "quotaExceeded"
+        )
+    }) {
+        EngineError::RemoteRateLimited
+    } else {
+        EngineError::RemoteForbidden
+    }
 }
 fn status(code: u16) -> Result<(), EngineError> {
     Err(match code {
@@ -170,5 +235,47 @@ mod tests {
             ))
         );
         assert!(status(503).is_err());
+    }
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+    #[test]
+    fn forbidden_reasons_distinguish_disabled_api_scope_quota_and_file_access() {
+        for body in [br#"{"error":{"errors":[{"reason":"accessNotConfigured"}]}}"#.as_slice(), br#"{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"private":"must-not-leak"}}]}}"#] {
+            assert_eq!(response_status(403, body), Err(EngineError::DriveApiDisabled));
+        }
+        assert_eq!(
+            response_status(
+                403,
+                br#"{"error":{"details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#
+            ),
+            Err(EngineError::Authentication(AuthError::MissingPermissions))
+        );
+        assert_eq!(
+            response_status(
+                403,
+                br#"{"error":{"errors":[{"reason":"insufficientPermissions"}]}}"#
+            ),
+            Err(EngineError::Authentication(AuthError::MissingPermissions))
+        );
+        assert_eq!(
+            response_status(
+                403,
+                br#"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#
+            ),
+            Err(EngineError::RemoteRateLimited)
+        );
+        for body in [br#"{"error":{"errors":[{"reason":"insufficientFilePermissions"}],"message":"private-file-name"}}"#.as_slice(), b"not JSON", br#"{"error":{"message":"SERVICE_DISABLED"}}"#] {
+            assert_eq!(response_status(403, body), Err(EngineError::RemoteForbidden));
+        }
+        assert_eq!(
+            response_status(401, b""),
+            Err(EngineError::Authentication(
+                AuthError::ReauthorizationRequired
+            ))
+        );
+        assert!(response_status(200, b"{}").is_ok());
     }
 }
