@@ -74,3 +74,13 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 ## Integração implementada
 
 Pseudocódigo, efeitos, erros e recuperação: [contrato](contract.md#escopo-desta-implementação-auth-001--auth-002). Oráculos concretos: [matriz de testes](tests/test-cases.md). A solicitação explícita de implementação desta integração é o escopo de trabalho; não altera os gates de aceite do MVP.
+
+## AUTH-004 — Logoff local
+
+Por solicitação explícita, apagar somente a credencial da conta/cliente atual do
+cofre; ausência já é sucesso. Serializar com renovação/acesso da mesma conta e
+recusar enquanto houver autorização interativa em curso, impedindo que um login
+pendente recrie a credencial após o logoff. Falha do cofre não pode virar sucesso.
+Preservar perfil, seleção de pastas e arquivos locais/remotos. Não revogar acesso
+no Google nem encerrar a sessão do navegador (AUTH-003 continua separado).
+Na reabertura, credencial ausente exige reconexão; outras contas não são afetadas.

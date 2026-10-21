@@ -50,6 +50,16 @@ pub fn build(
             );
         }
     });
+    let actions = gtk::gio::SimpleActionGroup::new();
+    let refresh = gtk::gio::SimpleAction::new("refresh", None);
+    let weak_retry = retry.downgrade();
+    refresh.connect_activate(move |_, _| {
+        if let Some(retry) = weak_retry.upgrade() {
+            retry.emit_clicked();
+        }
+    });
+    actions.add_action(&refresh);
+    navigation.insert_action_group("accounts", Some(&actions));
     start(
         engine, navigation, toasts, connect, &status, &spinner, &rows, &retry, true,
     );

@@ -178,6 +178,21 @@ mod tests {
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    fn find_button(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            if button.label().as_deref() == Some(label) {
+                return Some(button.clone());
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(button) = find_button(&widget, label) {
+                return Some(button);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
     #[test]
     #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
     fn folder_setup_and_dashboard_layouts() {
@@ -263,6 +278,17 @@ mod layout_tests {
                         if dashboard { "dashboard" } else { "setup" }
                     ))
                     .unwrap();
+                // Cancelling the product confirmation must leave the page usable.
+                find_button(window.upcast_ref(), "Sign Out")
+                    .expect("logout action")
+                    .emit_clicked();
+                let dialog = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|widget| widget.downcast::<adw::MessageDialog>().ok())
+                    .expect("logout confirmation");
+                dialog.response("cancel");
+                assert!(nav.is_sensitive());
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 window.close();
             }
         }

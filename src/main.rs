@@ -6,6 +6,7 @@ mod dashboard;
 mod flow;
 mod folder_picker;
 mod restoration;
+mod session;
 mod setup;
 mod welcome;
 

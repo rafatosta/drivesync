@@ -114,6 +114,7 @@ trait GoogleApi: Send + Sync {
 trait CredentialStore: Send + Sync {
     fn load(&self, client: &str, id: &AccountId) -> Result<Option<Credential>, AuthError>;
     fn save(&self, client: &str, id: &AccountId, value: &Credential) -> Result<(), AuthError>;
+    fn delete(&self, client: &str, id: &AccountId) -> Result<(), AuthError>;
 }
 
 type AccountLocks = Mutex<HashMap<AccountId, Arc<Mutex<()>>>>;
@@ -219,6 +220,18 @@ impl AuthProvider {
         self.store
             .save(&config.client_id, &account.id, &credential)?;
         Ok(account)
+    }
+
+    pub(crate) fn sign_out(&self, config: &OAuthConfig, id: &AccountId) -> Result<(), AuthError> {
+        // Share the interactive-operation gate: an in-flight login must not
+        // recreate credentials after successful logout.
+        if self.authorizing.swap(true, Ordering::AcqRel) {
+            return Err(AuthError::Busy);
+        }
+        let _login_guard = LoginGuard(&self.authorizing);
+        let lock = self.account_lock(id)?;
+        let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
+        self.store.delete(&config.client_id, id)
     }
 
     pub(crate) fn with_access<T>(

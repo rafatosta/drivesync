@@ -75,7 +75,7 @@ pub fn build(
                 "Choose Folders"
             });
             let engine = engine.clone();
-            let account = saved.account;
+            let account = saved.account.clone();
             let weak_nav = nav.downgrade();
             let weak_toasts = toasts.downgrade();
             button.connect_clicked(move |_| {
@@ -99,6 +99,12 @@ pub fn build(
             });
             group.add(&button);
         }
+        group.add(&crate::session::sign_out_button(
+            engine.clone(),
+            saved.account.id.clone(),
+            nav,
+            toasts,
+        ));
         content.append(&group);
     }
     toolbar.set_content(Some(&crate::flow::scroll(&content, 920)));

@@ -30,6 +30,16 @@ impl CredentialStore for MemoryVault {
         );
         Ok(())
     }
+    fn delete(&self, client: &str, id: &AccountId) -> Result<(), AuthError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(AuthError::SecureStorage);
+        }
+        self.entries
+            .lock()
+            .unwrap()
+            .remove(&(client.into(), id.clone()));
+        Ok(())
+    }
 }
 #[derive(Default)]
 struct FakeGoogle {
@@ -537,4 +547,95 @@ fn remote_access_port_renews_and_never_runs_after_vault_failure() {
         result,
         Err(crate::EngineError::Authentication(AuthError::SecureStorage))
     );
+}
+
+#[test]
+fn logout_is_local_idempotent_and_isolated_by_account_and_client() {
+    let (provider, store, api) = provider();
+    let a = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    let b = provider
+        .complete(&config(), tokens("b"), &Cancellation::new())
+        .unwrap();
+    let mut other = config();
+    other.client_id = "other.apps.googleusercontent.com".into();
+    provider
+        .complete(&other, tokens("a"), &Cancellation::new())
+        .unwrap();
+    provider.sign_out(&config(), &a.id).unwrap();
+    provider.sign_out(&config(), &a.id).unwrap();
+    assert!(store.load(&config().client_id, &a.id).unwrap().is_none());
+    assert!(store.load(&config().client_id, &b.id).unwrap().is_some());
+    assert!(store.load(&other.client_id, &a.id).unwrap().is_some());
+    let restarted = AuthProvider {
+        store,
+        api,
+        ..AuthProvider::default()
+    };
+    assert_eq!(
+        restarted.verify_with_config(&config(), &a.id),
+        Err(AuthError::ReauthorizationRequired)
+    );
+    assert!(restarted.verify_with_config(&config(), &b.id).is_ok());
+}
+#[test]
+fn logout_reports_vault_failure_and_refuses_pending_authorization() {
+    let (provider, store, _) = provider();
+    let account = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    provider.authorizing.store(true, Ordering::SeqCst);
+    assert_eq!(
+        provider.sign_out(&config(), &account.id),
+        Err(AuthError::Busy)
+    );
+    provider.authorizing.store(false, Ordering::SeqCst);
+    store.fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        provider.sign_out(&config(), &account.id),
+        Err(AuthError::SecureStorage)
+    );
+    store.fail.store(false, Ordering::SeqCst);
+    assert!(store
+        .load(&config().client_id, &account.id)
+        .unwrap()
+        .is_some());
+    provider.sign_out(&config(), &account.id).unwrap();
+}
+#[test]
+fn logout_waits_for_in_flight_account_work_before_deleting_credentials() {
+    let (provider, store, _) = provider();
+    let account = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    let provider = Arc::new(provider);
+    let lock = provider.account_lock(&account.id).unwrap();
+    let guard = lock.lock().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let worker = provider.clone();
+    let id = account.id.clone();
+    let thread = std::thread::spawn(move || {
+        send.send(worker.sign_out(&config(), &id)).unwrap();
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !provider.authorizing.load(Ordering::Acquire) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(receive.try_recv().is_err());
+    assert!(store
+        .load(&config().client_id, &account.id)
+        .unwrap()
+        .is_some());
+    drop(guard);
+    assert_eq!(
+        receive.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Ok(())
+    );
+    thread.join().unwrap();
+    assert!(store
+        .load(&config().client_id, &account.id)
+        .unwrap()
+        .is_none());
 }

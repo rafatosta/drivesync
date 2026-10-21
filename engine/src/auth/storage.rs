@@ -24,4 +24,10 @@ impl CredentialStore for DesktopVault {
             .set_password(&serialized)
             .map_err(|_| AuthError::SecureStorage)
     }
+    fn delete(&self, client: &str, id: &AccountId) -> Result<(), AuthError> {
+        match Self::entry(client, id)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(AuthError::SecureStorage),
+        }
+    }
 }

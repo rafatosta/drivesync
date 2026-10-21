@@ -221,6 +221,13 @@ impl DriveSyncEngine {
         self.accounts.configure(&config.client_id, folder.clone())?;
         Ok(folder)
     }
+    /// Blocking local logout. Preserves profiles, folder settings and user files.
+    pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.auth
+            .sign_out(&config, id)
+            .map_err(EngineError::Authentication)
+    }
     pub fn start_sync(&self, _root: SyncRootId) -> Result<(), EngineError> {
         Err(EngineError::NotImplemented("start_sync"))
     }

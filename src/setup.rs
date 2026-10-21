@@ -13,7 +13,14 @@ pub fn build(
     toasts: &adw::ToastOverlay,
 ) -> adw::NavigationPage {
     let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
+    let header = adw::HeaderBar::new();
+    header.pack_end(&crate::session::sign_out_button(
+        engine.clone(),
+        account.id.clone(),
+        nav,
+        toasts,
+    ));
+    toolbar.add_top_bar(&header);
     let page = adw::NavigationPage::builder()
         .title("New Sync Folder")
         .child(&toolbar)
