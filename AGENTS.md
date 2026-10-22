@@ -68,6 +68,25 @@ Ao finalizar uma alteração, preparar um commit com:
 
 Criar cada commit ao concluir sua unidade lógica, quando o ambiente e as permissões permitirem; se não for possível, fornecer a mensagem de commit pronta e informar a limitação. Não alterar histórico publicado nem misturar tarefas independentes sem autorização.
 
+## Commits locais e publicação remota
+
+- **No ambiente local (Codex, terminal ou outros agentes com acesso ao checkout):**
+  depois de validar cada unidade lógica, executar `git add` seletivamente e
+  `git commit` automaticamente, sem solicitar autorização adicional para cada
+  commit, desde que o ambiente permita essas operações.
+- Não incluir alterações pré-existentes ou de terceiros no commit; verificar
+  `git status` e revisar o diff preparado antes de confirmar.
+- **Nunca executar `git push`, criar PR, publicar release, alterar tags remotas
+  ou sincronizar alterações com o GitHub sem autorização explícita do usuário
+  para essa operação.** O envio é uma etapa separada da criação de commits.
+- Em ambientes de integração remota, como conectores GitHub, não interpretar
+  esta regra como permissão para enviar alterações diretamente. Respeitar
+  autorizações e restrições específicas do ambiente.
+- Ao finalizar, informar branch, commits locais criados e resultado dos testes;
+  deixar claro que os commits ainda não foram enviados ao remoto. Quando o
+  ambiente não permitir commits locais, informar isso e fornecer as mensagens
+  sugeridas em vez de simular a criação dos commits.
+
 ## Formatos internos antes da primeira versão estável
 
 - Manter somente o formato atual de persistência, sem migradores ou compatibilidade retroativa entre versões internas de desenvolvimento.
