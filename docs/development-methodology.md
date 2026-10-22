@@ -68,6 +68,96 @@ accounts/
 └── tests.rs
 ```
 
+## Documentação do código com rustdoc
+
+**Padrão obrigatório para pessoas e agentes de IA**, aplicado
+incrementalmente nas implementações e refatorações do MVP. A documentação
+de arquitetura e requisitos do produto será consolidada em marcos posteriores;
+o rustdoc deve acompanhar o código desde já.
+
+### Onde e quando documentar
+
+- Colocar `//!` no início de `lib.rs`, `mod.rs` ou do arquivo que define
+  um módulo para explicar responsabilidade, limites e relacionamento com outros
+  componentes, sem repetir o catálogo de arquivos da documentação externa.
+- Usar `///` imediatamente antes de `struct`, `enum`, `trait`, tipos,
+  funções e métodos cujos contratos precisem ser compreendidos por consumidores
+  ou mantenedores. Campos com semântica ou invariantes relevantes também podem
+  receber `///`.
+- Cobrir APIs expostas e **itens privados relevantes** para segurança,
+  persistência, concorrência, I/O e regras de domínio. Não documentar cada
+  getter, auxiliar trivial ou teste só para atingir um número de comentários.
+- Usar texto curto, preciso e no **presente**, explicando comportamento
+  observado no código, não funcionalidades futuras nem histórico de alterações.
+- Organizar a documentação perto de sua implementação, inclusive em arquivos
+  como `models.rs`, `repository.rs` e `validation.rs`. Não manter cópias
+  manuais da referência de métodos em documentos separados.
+
+### Conteúdo dos contratos
+
+- **Resumo:** o que o item faz e quais limites ou garantias importam.
+- **Parâmetros e retorno:** explicar os que não forem evidentes pela assinatura,
+  incluindo significado de valores opcionais, propriedade ou condições especiais.
+- **`# Errors`:** para operações falíveis relevantes, indicar condições de erro
+  e distinções importantes; usar links para tipos reais quando possível.
+- **`# Panics`:** quando houver condições reais de pânico que componham o
+  contrato; não adicionar seção vazia.
+- **`# Safety`:** descrever pré-condições de cada `unsafe fn`; justificar
+  blocos `unsafe` no código quando existirem. Não introduzir `unsafe`
+  apenas por conveniência.
+- **Invariantes e efeitos:** documentar atomicidade, isolamento por conta,
+  comportamento em falhas, concorrência e alterações no filesystem ou rede
+  quando fizerem diferença para uso seguro.
+- **`# Examples`:** exemplos pequenos, reproduzíveis e sem dependência de
+  autenticação real, rede, segredos ou dados pessoais; usar doctests quando
+  a API puder ser exercitada de modo seguro e útil. Não forçar exemplos
+  artificiais para cada método privado.
+- Usar links intra-doc como `[`Tipo`]` e `[`Self::metodo`]` quando
+  apontarem a itens resolvíveis pelo rustdoc; evitar links quebrados.
+
+Exemplo mínimo ilustrativo de comentário sobre um método falível:
+
+```rust
+/// Registra os metadados de uma conta no índice local.
+///
+/// Substitui um perfil salvo com a mesma identidade sem armazenar tokens.
+///
+/// # Errors
+///
+/// Retorna `AuthError::AccountStorage` se o índice salvo for inválido ou
+/// se a persistência falhar.
+```
+
+A documentação deve refletir a implementação real. Não prometer sucesso
+atômico ou ausência de efeitos em todas as falhas quando o código não garante
+isso. Não expor tokens, IDs sensíveis ou caminhos reais de usuários.
+
+### Verificação
+
+A partir da raiz do workspace, quando o ambiente oferecer Rust/Cargo:
+
+```sh
+cargo doc --workspace --no-deps --document-private-items
+cargo test --workspace --doc
+```
+
+O HTML gerado fica em `target/doc/`. Opcionalmente, para detectar links
+intra-doc inválidos:
+
+```sh
+RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --document-private-items
+```
+
+Continuar executando `cargo fmt`, `cargo clippy` e `cargo test` conforme
+as regras de validação; **rustdoc e doctests não substituem testes de
+comportamento**. Registrar resultados efetivos ou impossibilidade de execução
+no commit, nunca afirmar que um comando passou sem executá-lo.
+
+A regra acima é referência suficiente para a documentação rustdoc rotineira;
+consultar fontes oficiais somente para funcionalidades pouco familiares,
+incertezas de sintaxe ou regras sensíveis à versão da ferramenta. Isso não
+elimina a pesquisa técnica exigida ao projetar novos algoritmos.
+
 ## Política de documentação e histórico no Git
 
 Os documentos guardam requisitos, contratos, decisões duradouras, critérios de

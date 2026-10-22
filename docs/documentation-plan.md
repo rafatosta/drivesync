@@ -22,6 +22,11 @@ Adotar rustdoc, ferramenta equivalente ao Javadoc: comentários /// em itens e /
     cargo doc --workspace --no-deps --document-private-items
     cargo test --workspace --doc
 
+Durante o MVP, comentários rustdoc acompanham a implementação e a
+refatoração de cada módulo, conforme `docs/development-methodology.md`.
+Após o MVP, auditar a cobertura e a coerência da documentação do código
+como parte da documentação técnica consolidada.
+
 ## Execução após o MVP
 
 1. Delimitar o escopo do marco e inventariar código, testes e documentação existente.

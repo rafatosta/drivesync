@@ -27,6 +27,26 @@ reexportação, agrupar modelos relacionados em um `models.rs` quando apropriado
 e separar implementações por responsabilidade real. Não impor arquivo por
 estrutura, classe equivalente ou método, nem criar abstrações artificiais.
 
+## Documentação do código Rust (rustdoc)
+
+Em novas implementações e refatorações, seguir o padrão em
+`docs/development-methodology.md` (seção **Documentação do código com rustdoc**):
+
+- Documentar módulos com `//!` e contratos relevantes de tipos, traits e
+  métodos com `///`, no próprio código. Documentar também itens internos
+  quando houver invariantes, riscos ou efeitos não óbvios.
+- Explicar propósito, comportamento, parâmetros relevantes, retorno, erros,
+  invariantes, efeitos colaterais e concorrência conforme o caso. Não repetir
+  assinaturas nem exigir um comentário para cada auxiliar trivial.
+- Manter a documentação coerente com a implementação em cada alteração;
+  preferir exemplos autocontidos e seguros, sem rede, credenciais ou dados reais.
+- Para o uso rotineiro de rustdoc, **a convenção local é suficiente**: não
+  pesquisar novamente a sintaxe na internet. Consultar referências oficiais
+  quando houver recurso desconhecido, ambiguidade ou comportamento dependente
+  de versão.
+- Quando as ferramentas estiverem disponíveis, gerar a documentação e executar
+  doctests. Informar claramente o que não pôde ser verificado.
+
 ## Planejamento, implementação incremental e commits atômicos
 
 Para uma demanda com várias mudanças, **planejar antes de editar**: identificar
@@ -109,6 +129,8 @@ Antes de concluir, executar quando disponível:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo doc --workspace --no-deps --document-private-items
+cargo test --workspace --doc
 ```
 
 Registrar o que foi efetivamente executado no commit. Testes de integração real exigem ambiente isolado e consentimento apropriado.
