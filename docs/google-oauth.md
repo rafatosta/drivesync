@@ -79,8 +79,7 @@ from the distributor; it never claims success.
 ## Development and production packaging
 
 Development uses `com.rtosta.DriveSync.Devel` and the ignored testing client
-`data/oauth/development.json`. Existing local checkouts containing the
-previous `data/google-oauth-client.json` continue to work as a fallback.
+`data/oauth/development.json`.
 Production uses `com.rtosta.DriveSync` and requires a separate production
 Desktop OAuth client staged as `data/oauth/production.json` before building.
 The production Flatpak manifest fails closed if that file is missing.

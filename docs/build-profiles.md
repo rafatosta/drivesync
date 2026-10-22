@@ -40,5 +40,5 @@ Changing application ID changes the desktop identity; users may need to
 authorize the other OAuth client again. Neither build shares OAuth tokens
 with the other through the build artifacts.
 
-The engine's build script also supports overriding the OAuth path using
+The engine's build script selects the development path by default and supports explicitly setting the OAuth path using
 `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE`, for custom local builds.
