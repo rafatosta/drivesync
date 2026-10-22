@@ -261,37 +261,26 @@ fn folder_settings_survive_restart_auth_failure_and_profile_updates() {
     assert_eq!(restored[0].error, Some(AuthError::Network));
 }
 #[test]
-fn migration_backs_up_v1_and_rejects_inconsistent_backup() {
+fn legacy_v1_index_is_rejected_without_mutation() {
     let dir = Directory::new();
     let accounts = dir.accounts();
     accounts
         .record(CLIENT, profile("a", "a@example.com"))
         .unwrap();
     let path = accounts.path.as_ref().unwrap();
-    let mut v1: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    v1["version"] = 1.into();
-    v1.as_object_mut().unwrap().remove("folders");
-    let original = serde_json::to_vec(&v1).unwrap();
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    legacy["version"] = 1.into();
+    legacy.as_object_mut().unwrap().remove("folders");
+    let original = serde_json::to_vec(&legacy).unwrap();
     fs::write(path, &original).unwrap();
-    assert_eq!(accounts.list(CLIENT).unwrap().len(), 1);
-    let local = dir.0.join("downloads");
-    fs::create_dir(&local).unwrap();
-    accounts.configure(CLIENT, configured("a", local)).unwrap();
-    assert_eq!(
-        fs::read(path.with_extension("v1.json.bak")).unwrap(),
-        original
-    );
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap()["version"],
-        2
-    );
-    fs::write(path, &original).unwrap();
-    fs::write(path.with_extension("v1.json.bak"), "partial").unwrap();
+    assert_eq!(accounts.list(CLIENT), Err(AuthError::AccountStorage));
     assert_eq!(
         accounts.record(CLIENT, profile("b", "b@example.com")),
         Err(AuthError::AccountStorage)
     );
     assert_eq!(fs::read(path).unwrap(), original);
+    assert!(!path.with_extension("v1.json.bak").exists());
 }
 #[test]
 fn local_roots_reject_exact_nested_and_symlink_aliases_without_losing_old_settings() {
@@ -345,7 +334,7 @@ fn local_validation_canonicalizes_aliases_and_rejects_non_directories() {
 }
 
 #[test]
-fn forgetting_account_removes_its_metadata_and_legacy_backup_but_keeps_user_files() {
+fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     let dir = Directory::new();
     let accounts = dir.accounts();
     accounts
@@ -367,7 +356,6 @@ fn forgetting_account_removes_its_metadata_and_legacy_backup_but_keeps_user_file
         .configure(CLIENT, configured("a", local.clone()))
         .unwrap();
     let path = accounts.path.as_ref().unwrap();
-    fs::copy(path, path.with_extension("v1.json.bak")).unwrap();
     accounts
         .forget(CLIENT, &AccountId::from_subject("a"))
         .unwrap();
