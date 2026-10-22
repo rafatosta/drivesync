@@ -26,15 +26,21 @@ Não copiar código de projetos terceiros sem verificar a licença; estudar téc
 8. **Integrar:** só conectar ao Coordinator depois de demonstrar contrato isolado. Verificar comportamento de ponta a ponta com provedores simulados antes de conta Drive de teste.
 9. **Registrar evidência:** PR/commit vincula algoritmo, documentação, referência, riscos, testes executados e lacunas. Nunca anunciar confiabilidade sem evidência.
 
-## Política de atualização da documentação
+## Política de documentação e histórico no Git
 
-Documentar o estado atual e as decisões duradouras do projeto. Atualizar documentos
-quando houver mudança relevante no uso, nos contratos, na arquitetura ou nos
-algoritmos; uma alteração de código não exige, por si só, alteração documental.
-Registrar resumo da implementação, verificações executadas, resultados e contexto
-pontual na descrição do commit ou PR, sem reproduzir esse histórico nos documentos.
-Manter uma fonte principal para cada assunto e referenciá-la nos demais arquivos,
-evitando duplicação e atualizações em cadeia sem necessidade.
+Os documentos guardam requisitos, contratos, decisões duradouras, critérios de
+aceite e instruções úteis; não são diários de implementação. Motivações,
+alterações, comandos/testes realmente executados, resultados, riscos e pendências
+de uma tarefa devem ser registrados no corpo do commit ou PR, conforme `AGENTS.md`.
+
+Durante o primeiro MVP, `docs/MVP.md` é um plano temporário. Não sincronizar
+preventivamente os documentos de arquitetura e de módulos a cada pequena mudança.
+Depois da conclusão do MVP, confrontar a implementação real com o planejamento,
+revisar e consolidar a documentação técnica e decidir a retirada do plano.
+
+Exceção: corrigir imediatamente instruções operacionais ou informações de
+segurança que se tornem incorretas e possam causar erro ou perda de dados.
+A organização de conteúdos duplicados fica para uma revisão posterior.
 
 ## Política de evolução de formatos durante o desenvolvimento
 
