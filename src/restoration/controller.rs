@@ -1,31 +1,28 @@
-//! Restore current sessions, without showing a connection-history list on Welcome.
+//! Startup account verification, retries and navigation.
+//!
+//! All engine I/O is submitted through the common GTK worker helper. A saved
+//! profile never implies an authenticated session, even when configured.
+use super::view::RestorationView;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-pub fn build(
+/// Hooks up retry, dashboard-open and account-refresh actions.
+///
+/// An automatic refresh may navigate according to the verified account
+/// state; an explicit retry refreshes the status without forced navigation.
+pub(super) fn bind(
     engine: Arc<DriveSyncEngine>,
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
     connect: &gtk::Button,
-) -> gtk::Box {
-    let panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    panel.set_halign(gtk::Align::Center);
-    let status = gtk::Label::builder()
-        .label("Checking your connection…")
-        .wrap(true)
-        .max_width_chars(48)
-        .build();
-    let spinner = gtk::Spinner::new();
-    let retry = gtk::Button::with_label("Try Again");
-    retry.set_visible(false);
-    let open = gtk::Button::with_label("Open Dashboard");
-    open.set_visible(false);
-    open.add_css_class("flat");
-    panel.append(&spinner);
-    panel.append(&status);
-    panel.append(&retry);
-    panel.append(&open);
+    view: &RestorationView,
+) {
+    let panel = view.panel.clone();
+    let status = view.status.clone();
+    let spinner = view.spinner.clone();
+    let retry = view.retry.clone();
+    let open = view.open.clone();
     let snapshot = Rc::new(RefCell::new(Vec::<RestoredAccount>::new()));
     let weak_nav = navigation.downgrade();
     let weak_toasts = toasts.downgrade();
@@ -126,5 +123,4 @@ pub fn build(
     actions.add_action(&action);
     navigation.insert_action_group("accounts", Some(&actions));
     refresh(true);
-    panel
 }
