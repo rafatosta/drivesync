@@ -90,9 +90,13 @@ identities and Google OAuth projects. See [build profiles](build-profiles.md).
 
 After creating the official Desktop client once, make its downloaded JSON available
 as `data/oauth/development.json` before building. This intentionally ignored file
-is picked up by Cargo, Flatpak and GNOME Builder through the manifest's directory
-source. Alternatively set `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE` to an absolute path
-visible to the build process. The build validates Desktop metadata and embeds only
+is read at compile time and embedded in the binary; it is not opened at runtime.
+The Flatpak manifest's directory source includes local ignored files. Visibility
+in Builder's project tree does not prove whether a file reached the build.
+Alternatively set `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE` to an absolute path
+visible to the build process. Relative overrides resolve from the workspace root
+(the directory containing the top-level Cargo.toml), including in Flatpak.
+The build validates Desktop metadata and embeds only
 `client_id` and optional `client_secret`, not arbitrary fields or endpoints.
 A malformed or unreadable supplied file fails the build with a sanitized error.
 Cargo tracks file changes and both build settings to prevent stale configuration.
@@ -110,7 +114,12 @@ is needed. The development manifest allows an unconfigured build for UI work;
 release packagers must set `DRIVESYNC_REQUIRE_GOOGLE_OAUTH: '1'` in the module's
 `build-options.env`. When using the build file override there, stage the JSON in
 the build sandbox and set its sandbox path in that same environment. Clean/rebuild
-the module after changing manifest inputs. The existing manifest remains a
+the module after changing manifest inputs or adding the JSON to an existing build.
+In Builder, use Clean/Rebuild and verify the active manifest is the development
+manifest. The build emits a warning when it embeds no client. Do not set
+`DRIVESYNC_GOOGLE_OAUTH_FILE` to a host checkout path at runtime: that override
+takes precedence over embedded metadata and may be inaccessible in the sandbox.
+The existing manifest remains a
 network-enabled development build, not a reproducible release manifest.
 
 The maintainer must also configure consent branding, audience, support and declared

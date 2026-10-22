@@ -5,10 +5,17 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE");
     println!("cargo:rerun-if-env-changed=DRIVESYNC_REQUIRE_GOOGLE_OAUTH");
     let explicit = env::var_os("DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE");
-    let path = explicit.clone().map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-            .join("../data/oauth/development.json")
-    });
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=oauth_config.rs");
+    // Manifest paths are relative to the workspace, while Cargo runs this
+    // script in engine/. Absolute paths remain unchanged when joined.
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("..");
+    let path = root.join(
+        explicit
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data/oauth/development.json")),
+    );
     println!("cargo:rerun-if-changed={}", path.display());
     // Both OAuth environments use the same parser; the build manifest picks
     // the credential file, never the runtime user or a stored refresh token.
