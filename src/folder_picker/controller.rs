@@ -1,6 +1,13 @@
+//! Browsing state, Drive pagination and dialog signal handlers.
+//!
+//! All widget changes run on the GTK main context; blocking folder listing
+//! is delegated through `crate::flow::work`.
+use super::view;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountId, DriveFolder, DriveSyncEngine};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+/// Callback invoked once with the folder selected by the user.
 type FolderSelected = Box<dyn FnOnce(DriveFolder)>;
 struct Picker {
     engine: Arc<DriveSyncEngine>,
@@ -16,40 +23,20 @@ struct Picker {
     retry: gtk::Button,
     done: RefCell<Option<FolderSelected>>,
 }
+
+
+/// Presents the folder picker for one Google account.
+///
+/// The callback is invoked only when the user explicitly selects a folder.
+/// Closing the dialog without choosing does not invoke it.
 pub fn show(
     engine: Arc<DriveSyncEngine>,
     account: AccountId,
     parent: Option<&gtk::Window>,
     done: impl FnOnce(DriveFolder) + 'static,
 ) {
-    let window = adw::Window::builder()
-        .title("Choose Google Drive Folder")
-        .modal(true)
-        .default_width(640)
-        .default_height(600)
-        .build();
-    window.set_transient_for(parent);
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
-    let content = crate::flow::content();
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let up = gtk::Button::with_label("Up");
-    let retry = gtk::Button::with_label("Reload");
-    controls.append(&up);
-    controls.append(&retry);
-    content.append(&controls);
-    let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
-    content.append(&status);
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    content.append(&list);
-    let more = gtk::Button::with_label("Load More Folders");
-    more.set_visible(false);
-    content.append(&more);
-    let choose = gtk::Button::with_label("Select This Folder");
-    choose.add_css_class("suggested-action");
-    content.append(&choose);
-    toolbar.set_content(Some(&crate::flow::scroll(&content, 620)));
-    window.set_content(Some(&toolbar));
+    let view = view::build(parent);
+    let window = view.window.clone();
     let picker = Rc::new(Picker {
         engine,
         account,
@@ -59,12 +46,12 @@ pub fn show(
             name: "My Drive".into(),
         }]),
         next: RefCell::new(None),
-        list,
-        status,
-        choose,
-        up,
-        more,
-        retry,
+        list: view.list,
+        status: view.status,
+        choose: view.choose,
+        up: view.up,
+        more: view.more,
+        retry: view.retry,
         done: RefCell::new(Some(Box::new(done))),
     });
     let weak = Rc::downgrade(&picker);
@@ -108,6 +95,11 @@ pub fn show(
     });
     window.present();
 }
+
+/// Requests a page of child folders for the current browsing location.
+///
+/// The next-page token is used only for explicit load-more requests;
+/// errors are shown in the dialog without exposing provider credentials.
 fn load(picker: &Rc<Picker>, more: bool) {
     let current = picker.stack.borrow().last().unwrap().clone();
     let page = if more {
