@@ -1,4 +1,12 @@
-use super::{AuthError, GoogleApi, Identity, Tokens};
+//! HTTP adapter for Google OAuth and OpenID Connect.
+//!
+//! Network requests have bounded durations and response sizes. Raw provider
+//! error bodies are converted to typed, sanitized authentication errors.
+use super::{
+    models::{validate_tokens, Identity, Tokens},
+    ports::GoogleApi,
+    AuthError,
+};
 use oauth2::{
     basic::BasicClient, AuthUrl, ClientId, CsrfToken, PkceCodeChallenge, RedirectUrl, Scope,
 };
@@ -6,12 +14,14 @@ use reqwest::blocking::{Client, Response};
 use serde::Deserialize;
 use std::{io::Read, time::Duration};
 
+/// Read-only Drive permission requested during authorization.
 pub(super) const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const MAX_RESPONSE: u64 = 64 * 1024;
 
 #[path = "../../oauth_config.rs"]
 mod config;
+/// OAuth configuration loaded from explicit runtime or packaged settings.
 pub use config::OAuthConfig;
 impl OAuthConfig {
     pub fn load() -> Result<Self, AuthError> {
@@ -73,6 +83,7 @@ impl OAuthConfig {
     }
 }
 
+/// Production implementation of the Google API port using blocking HTTP.
 pub(super) struct GoogleHttp;
 impl GoogleHttp {
     fn client() -> Result<Client, AuthError> {
@@ -158,6 +169,12 @@ fn parse_tokens(response: Response, refreshing: bool) -> Result<Tokens, AuthErro
     let status = response.status().as_u16();
     decode_tokens(status, &read_body(response)?, refreshing)
 }
+/// Decodes and sanitizes the provider token response without leaking its body.
+/// 
+/// # Errors
+/// 
+/// Returns typed authentication errors for rejected grants, invalid responses,
+/// or transient provider failures.
 pub(super) fn decode_tokens(
     status: u16,
     data: &[u8],
@@ -200,6 +217,6 @@ pub(super) fn decode_tokens(
         expires_in: body.expires_in,
         scope: body.scope,
     };
-    super::validate_tokens(&tokens)?;
+    validate_tokens(&tokens)?;
     Ok(tokens)
 }

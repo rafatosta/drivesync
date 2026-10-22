@@ -1,3 +1,7 @@
+//! Ephemeral loopback callback listener and authorization cancellation.
+//!
+//! The listener accepts only loopback callers and validates the callback
+//! request, host, state and parameters before delivering an authorization code.
 use super::AuthError;
 use oauth2::CsrfToken;
 use std::{
@@ -11,15 +15,19 @@ use std::{
 };
 use url::Url;
 
+/// Shared cancellation signal for an in-progress OAuth authorization.
 #[derive(Clone, Default)]
 pub struct Cancellation(Arc<AtomicBool>);
 impl Cancellation {
+    /// Creates a cancellation token that initially permits the operation.
     pub fn new() -> Self {
         Self::default()
     }
+    /// Requests cooperative cancellation of the active authorization.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
+    /// Reports whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
@@ -31,11 +39,18 @@ impl Cancellation {
         }
     }
 }
+/// Local-only HTTP receiver for a single OAuth redirect.
 pub(super) struct Listener {
     socket: TcpListener,
     authority: String,
 }
 impl Listener {
+    /// Binds an ephemeral loopback port for the OAuth redirect.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::CallbackUnavailable`] when the listener cannot
+    /// be created or configured.
     pub fn bind() -> Result<Self, AuthError> {
         let socket = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .map_err(|_| AuthError::CallbackUnavailable)?;
@@ -51,6 +66,15 @@ impl Listener {
     pub fn redirect_uri(&self) -> String {
         format!("http://{}/oauth/callback", self.authority)
     }
+    /// Waits for a valid browser callback or cancellation until the deadline.
+    ///
+    /// Invalid and forged callbacks cannot complete authorization. This only
+    /// yields an authorization code; it does not verify tokens or store them.
+    ///
+    /// # Errors
+    ///
+    /// Returns typed errors for denial, invalid responses, cancellation,
+    /// listener failures or timeout.
     pub fn receive(
         self,
         state: &CsrfToken,

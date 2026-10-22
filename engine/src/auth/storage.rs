@@ -1,6 +1,11 @@
-use super::{AuthError, Credential, CredentialStore};
+//! Desktop keyring adapter for OAuth credentials.
+//!
+//! Credentials are scoped by OAuth client and account identity. Missing vault
+//! entries are distinct from inaccessible or failed secure storage.
+use super::{models::Credential, ports::CredentialStore, AuthError};
 use crate::AccountId;
 
+/// Production credential-store implementation backed by the system keyring.
 pub(super) struct DesktopVault;
 impl DesktopVault {
     fn entry(client: &str, id: &AccountId) -> Result<keyring::Entry, AuthError> {
