@@ -4,6 +4,11 @@
 
 - [Galeria dos mockups e auditoria GNOME HIG / compatibilidade com o motor](ui-mockups.md)
 
+## Configurar Google Cloud
+
+- [**Tutorial: criar projeto Google Cloud e testar o DriveSync com OAuth próprio**](google-cloud-setup.md)
+- [Perfis de compilação: Development e Production](build-profiles.md)
+
 ## Comece aqui
 
 **[MVP — escopo, roteiro progressivo, checklist e critérios de aceite](MVP.md)**. Esse é o plano de implementação em vigor. Seus gates dependem uns dos outros e podem ser reabertos após descobertas posteriores.
