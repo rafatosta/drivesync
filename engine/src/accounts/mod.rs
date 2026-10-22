@@ -70,7 +70,7 @@ impl Accounts {
         Ok(index)
     }
     fn validate(index: &Index) -> Result<(), AuthError> {
-        if ![1, 2].contains(&index.version) || (index.version == 1 && !index.folders.is_empty()) {
+        if index.version != 2 {
             return Err(AuthError::AccountStorage);
         }
         for (client, profiles) in &index.clients {
@@ -123,33 +123,7 @@ impl Accounts {
         profiles.sort_by(|a, b| a.id.0.cmp(&b.id.0));
         self.write(index)
     }
-    fn write(&self, mut index: Index) -> Result<(), AuthError> {
-        if index.version == 1 {
-            let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
-            let backup = path.with_extension("v1.json.bak");
-            // Keep the pre-migration data; never overwrite an existing backup.
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&backup)
-            {
-                Ok(mut file) => {
-                    file.write_all(&fs::read(path).map_err(|_| AuthError::AccountStorage)?)
-                        .and_then(|_| file.sync_all())
-                        .map_err(|_| AuthError::AccountStorage)?;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if fs::read(backup).map_err(|_| AuthError::AccountStorage)?
-                        != fs::read(path).map_err(|_| AuthError::AccountStorage)?
-                    {
-                        return Err(AuthError::AccountStorage);
-                    }
-                }
-                Err(_) => return Err(AuthError::AccountStorage),
-            }
-            index.version = 2;
-        }
+    fn write(&self, index: Index) -> Result<(), AuthError> {
         Self::validate(&index)?;
         let data = serde_json::to_vec(&index).map_err(|_| AuthError::AccountStorage)?;
         if data.len() as u64 > MAX_INDEX {
@@ -192,16 +166,8 @@ impl Accounts {
         if let Some(folders) = index.folders.get_mut(client) {
             folders.retain(|f| &f.account_id != id);
         }
-        self.write(index)?;
-        // Retire the old migration snapshot: it can contain the forgotten profile.
-        let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
-        match fs::remove_file(path.with_extension("v1.json.bak")) {
-            Ok(()) => File::open(path.parent().ok_or(AuthError::AccountStorage)?)
-                .and_then(|file| file.sync_all())
-                .map_err(|_| AuthError::AccountStorage),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(AuthError::AccountStorage),
-        }
+        self.write(index)
+
     }
     pub fn folders(&self, client: &str) -> Result<Vec<FolderConfiguration>, AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
