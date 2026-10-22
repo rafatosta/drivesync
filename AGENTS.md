@@ -2,6 +2,12 @@
 
 Estas regras se aplicam a alterações realizadas por agentes de IA neste repositório.
 
+## Idioma de commits e comentários
+
+- Escrever **todas as mensagens de commit em inglês**, incluindo título e corpo (motivação, mudanças, validação e limitações).
+- Escrever **todos os comentários no código em inglês**, incluindo comentários inline, documentação rustdoc (`//!`, `///`) e comentários em scripts e arquivos de configuração.
+- Ao adicionar ou alterar comentários, seguir essa regra também nos exemplos de código da documentação.
+
 ## Escopo e segurança
 
 - Trabalhar em tarefas pequenas, com mudanças justificadas e verificáveis.
@@ -78,17 +84,17 @@ um arquivo de histórico no repositório.
 
 Exemplo de sequência para uma funcionalidade envolvendo dois módulos:
 
-1. `feat(engine): implementar contrato de listagem` — lógica e testes do módulo A.
-2. `feat(ui): integrar listagem na interface` — consumo e testes do módulo B.
-3. `fix(ui): tratar erro de paginação` — correção específica identificada nos testes.
-4. `refactor: remover auxiliar substituído` — **somente se** a revisão final
+1. `feat(engine): implement listing contract` — lógica e testes do módulo A.
+2. `feat(ui): integrate listing into the interface` — consumo e testes do módulo B.
+3. `fix(ui): handle pagination errors` — correção específica identificada nos testes.
+4. `refactor: remove superseded helper` — **somente se** a revisão final
    detectar código obsoleto.
 
 ## Commits como registro de implementação
 
 Ao finalizar uma alteração, preparar um commit com:
 
-1. **Título curto e objetivo**, preferencialmente `tipo: descrição` (`feat`, `fix`, `refactor`, `test`, `docs`, `chore`).
+1. **Título curto e objetivo em inglês**, preferencialmente `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`, `chore`).
 2. **Motivação e escopo:** qual problema foi tratado e por quê.
 3. **Mudanças:** comportamento e arquivos/componentes relevantes, sem repetir o diff linha a linha.
 4. **Validação:** comandos e testes realmente executados, resultados e ambiente quando relevante. Não declarar testes não executados.

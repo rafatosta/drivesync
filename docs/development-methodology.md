@@ -75,6 +75,10 @@ incrementalmente nas implementações e refatorações do MVP. A documentação
 de arquitetura e requisitos do produto será consolidada em marcos posteriores;
 o rustdoc deve acompanhar o código desde já.
 
+Escrever todos os comentários e a documentação rustdoc em **inglês**, inclusive
+nos exemplos abaixo. A regra de idioma para mensagens de commit e comentários
+está em `AGENTS.md`.
+
 ### Onde e quando documentar
 
 - Colocar `//!` no início de `lib.rs`, `mod.rs` ou do arquivo que define
@@ -118,14 +122,14 @@ o rustdoc deve acompanhar o código desde já.
 Exemplo mínimo ilustrativo de comentário sobre um método falível:
 
 ```rust
-/// Registra os metadados de uma conta no índice local.
+/// Records account metadata in the local index.
 ///
-/// Substitui um perfil salvo com a mesma identidade sem armazenar tokens.
+/// Replaces a saved profile with the same identity without storing tokens.
 ///
 /// # Errors
 ///
-/// Retorna `AuthError::AccountStorage` se o índice salvo for inválido ou
-/// se a persistência falhar.
+/// Returns `AuthError::AccountStorage` if the saved index is invalid or
+/// persistence fails.
 ```
 
 A documentação deve refletir a implementação real. Não prometer sucesso
