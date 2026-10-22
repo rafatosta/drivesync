@@ -1,4 +1,8 @@
-//! Durable account index operations. Credentials remain in auth.
+//! Durable repository for non-secret account and folder settings.
+//!
+//! Operations validate the index before use and serialize changes within this
+//! repository instance. Credential storage and remote authentication stay in
+//! the auth module; user file contents are never managed here.
 use super::{models::Index, validation};
 use crate::{AccountId, AccountSummary, AuthError, EngineError, FolderConfiguration};
 use std::{
@@ -9,10 +13,17 @@ use std::{
     sync::Mutex,
 };
 
+/// Maximum accepted size in bytes of serialized account-index JSON (1 MiB).
 pub(super) const MAX_INDEX: u64 = 1024 * 1024;
 
+/// Profile and folder store backed by a JSON file.
+///
+/// The mutex serializes operations through this instance, not across
+/// independent processes opening the same file.
 pub(crate) struct Accounts {
+    /// Location of the index, or `None` without a usable data/home directory.
     pub(super) path: Option<PathBuf>,
+    /// Protects in-process read/modify/write operations.
     pub(super) lock: Mutex<()>,
 }
 impl Default for Accounts {
@@ -33,6 +44,13 @@ impl Default for Accounts {
     }
 }
 impl Accounts {
+    /// Reads and validates the index; an absent file means an empty index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::AccountStorage`] for missing storage location,
+    /// I/O failures, oversized content or invalid saved data. Corrupt data
+    /// is never silently recreated.
     fn read(&self) -> Result<Index, AuthError> {
         let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
         let file = match File::open(path) {
@@ -51,6 +69,15 @@ impl Accounts {
         validation::validate(&index)?;
         Ok(index)
     }
+    /// Inserts or updates a saved profile for an OAuth client.
+    ///
+    /// `client` identifies the credential namespace; `account` contains the
+    /// non-secret identity. Existing profiles with the same ID are replaced,
+    /// then sorted. Other accounts and folder settings are preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError`] if locking, validation or persistence fails.
     pub fn record(&self, client: &str, account: AccountSummary) -> Result<(), AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         let mut index = self.read()?;
@@ -60,6 +87,15 @@ impl Accounts {
         profiles.sort_by(|a, b| a.id.0.cmp(&b.id.0));
         self.write(index)
     }
+    /// Validates and replaces the index using a temporary file and rename.
+    ///
+    /// The temporary file and parent directory are synced for durability.
+    /// If directory sync fails after rename, an error may be returned even
+    /// though the new index is already visible on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::AccountStorage`] for invalid data or write errors.
     fn write(&self, index: Index) -> Result<(), AuthError> {
         validation::validate(&index)?;
         let data = serde_json::to_vec(&index).map_err(|_| AuthError::AccountStorage)?;
@@ -93,7 +129,15 @@ impl Accounts {
         }
         result.map_err(|_| AuthError::AccountStorage)
     }
-    /// Forget app metadata only. Never access or delete configured user folders.
+    /// Forgets a profile and its folder settings in the specified OAuth client.
+    ///
+    /// `id` identifies the account to forget. This only changes app metadata:
+    /// it does not delete local files, access the credential vault or revoke
+    /// Google access. Removing an already absent account is supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError`] if locking, reading or writing the index fails.
     pub fn forget(&self, client: &str, id: &AccountId) -> Result<(), AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         let mut index = self.read()?;
@@ -105,10 +149,31 @@ impl Accounts {
         }
         self.write(index)
     }
+    /// Returns saved remote/local folder pairs for the given OAuth client.
+    ///
+    /// The result is cached configuration, not proof of current access.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError`] for locking, read or validation errors.
     pub fn folders(&self, client: &str) -> Result<Vec<FolderConfiguration>, AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         Ok(self.read()?.folders.remove(client).unwrap_or_default())
     }
+    /// Configures one remote/local folder pair for an existing account.
+    ///
+    /// `client` scopes the account namespace. `folder` supplies the remote
+    /// selection and local directory. The local path is canonicalized and
+    /// checked against other accounts' roots, including nested paths and
+    /// filesystem/portal aliases. Reconfiguration replaces the prior pair.
+    /// No user files are created, transferred or deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Authentication`] for missing profiles or index
+    /// failures, [`EngineError::InvalidFolder`] for an invalid local path,
+    /// [`EngineError::LocalFolderIdentity`] when its host identity cannot be
+    /// established, or [`EngineError::FolderOverlap`] for overlapping roots.
     pub fn configure(
         &self,
         client: &str,
@@ -150,6 +215,13 @@ impl Accounts {
         folders.push(folder);
         self.write(index).map_err(EngineError::Authentication)
     }
+    /// Lists saved profiles belonging to one OAuth client.
+    ///
+    /// Saved metadata does not imply that a session is authenticated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError`] for locking, read or validation errors.
     pub fn list(&self, client: &str) -> Result<Vec<AccountSummary>, AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         Ok(self.read()?.clients.remove(client).unwrap_or_default())

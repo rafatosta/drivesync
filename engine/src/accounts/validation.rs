@@ -1,8 +1,21 @@
-//! Validates the persisted index before use or replacement.
+//! Integrity checks for saved account and folder metadata.
+//!
+//! Index validation does not contact Google, the secret store or the local
+//! filesystem. Runtime checks for overlapping local directories are handled
+//! by the repository when configuring folders.
 use super::models::Index;
 use crate::{AccountId, AuthError};
 use std::collections::HashSet;
 
+/// Validates version, client IDs, account identity and folder references.
+///
+/// Rejects unsupported index versions, duplicate accounts or folder mappings,
+/// malformed identities, invalid remote-folder metadata and nonabsolute paths.
+/// This does not verify current authentication or filesystem availability.
+///
+/// # Errors
+///
+/// Returns [`AuthError::AccountStorage`] for any invalid index.
 pub(super) fn validate(index: &Index) -> Result<(), AuthError> {
     if index.version != 2 {
         return Err(AuthError::AccountStorage);
