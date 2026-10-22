@@ -6,10 +6,18 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DRIVESYNC_REQUIRE_GOOGLE_OAUTH");
     let explicit = env::var_os("DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE");
     let path = explicit.clone().map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-            .join("../data/google-oauth-client.json")
+        let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+        let development = root.join("../data/oauth/development.json");
+        let legacy = root.join("../data/google-oauth-client.json");
+        // Watch both paths so adding the new development client rebuilds
+        // metadata even when an older local checkout used the legacy path.
+        println!("cargo:rerun-if-changed={}", development.display());
+        println!("cargo:rerun-if-changed={}", legacy.display());
+        if development.exists() { development } else { legacy }
     });
     println!("cargo:rerun-if-changed={}", path.display());
+    // Both OAuth environments use the same parser; the build manifest picks
+    // the credential file, never the runtime user or a stored refresh token.
     let data = match fs::read_to_string(&path) {
         Ok(data) => {
             let client = config::OAuthConfig::select(None, None, Some(&data), "")

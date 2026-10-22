@@ -39,7 +39,7 @@ DriveSync is not ready for everyday use, but you can explore its current feature
 
 **Want to test Google sign-in?** The Google OAuth integration is currently limited to authorized test accounts. [Open a GitHub issue](https://github.com/rafatosta/drivesync/issues/new) requesting tester access and provide the Google account email you'd like to use. The maintainer will add eligible accounts to the test-user list.
 
-GitHub issues are public: only share an email address you're comfortable making public. If the test build doesn't include the maintainer's OAuth configuration, Google sign-in won't be available even after your account is approved. The [OAuth guide](docs/google-oauth.md) explains that build requirement.
+GitHub issues are public: only share an email address you're comfortable making public. A development build without the testing OAuth configuration can still show the interface, but Google login will be unavailable until configured. See [build profiles](docs/build-profiles.md) for details.
 
 ## Feedback
 

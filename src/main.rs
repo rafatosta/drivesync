@@ -14,8 +14,12 @@ mod session;
 mod setup;
 mod welcome;
 
-/// Development application ID.
-const APP_ID: &str = "com.rtosta.DriveSync.Devel";
+/// The build profile selects the installed Flatpak application identity.
+/// Development remains the fallback for plain local Cargo builds.
+const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
+    Some(id) => id,
+    None => "com.rtosta.DriveSync.Devel",
+};
 
 /// Launches the single-instance GTK application.
 fn main() -> adw::gtk::glib::ExitCode {

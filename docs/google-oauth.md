@@ -76,10 +76,21 @@ Unlock the desktop keyring if prompted. A build without valid client configurati
 explains that connection is unavailable and asks for a configured release or help
 from the distributor; it never claims success.
 
+## Development and production packaging
+
+Development uses `com.rtosta.DriveSync.Devel` and the ignored testing client
+`data/oauth/development.json`. Existing local checkouts containing the
+previous `data/google-oauth-client.json` continue to work as a fallback.
+Production uses `com.rtosta.DriveSync` and requires a separate production
+Desktop OAuth client staged as `data/oauth/production.json` before building.
+The production Flatpak manifest fails closed if that file is missing.
+Both packages build the same Rust application but have distinct desktop
+identities and Google OAuth projects. See [build profiles](build-profiles.md).
+
 ## Maintainer: build and distribution configuration
 
 After creating the official Desktop client once, make its downloaded JSON available
-as `data/google-oauth-client.json` before building. This intentionally ignored file
+as `data/oauth/development.json` before building. This intentionally ignored file
 is picked up by Cargo, Flatpak and GNOME Builder through the manifest's directory
 source. Alternatively set `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE` to an absolute path
 visible to the build process. The build validates Desktop metadata and embeds only
@@ -93,7 +104,8 @@ DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE=/path/to/desktop-client.json cargo build --rel
 DRIVESYNC_REQUIRE_GOOGLE_OAUTH=1 cargo build --release --locked
 ```
 
-For Flatpak/GNOME Builder, place the file at `data/google-oauth-client.json` in the
+For Flatpak/GNOME Builder, place the testing Desktop OAuth file at
+`data/oauth/development.json` in the
 source checkout **before** building. No runtime environment or host config mount
 is needed. The development manifest allows an unconfigured build for UI work;
 release packagers must set `DRIVESYNC_REQUIRE_GOOGLE_OAUTH: '1'` in the module's
@@ -134,7 +146,7 @@ Secret portal; this development backend uses Secret Service directly.
    and its compatible Rust SDK extension. Reload the development manifest after
    changing SDKs or permissions. No Meson project is needed.
 2. As maintainer, stage the official Desktop JSON in
-   `data/google-oauth-client.json` before building, as described above. Users of
+   `data/oauth/development.json` before building, as described above. Users of
    the resulting package do not repeat this step.
 3. Build and run with `flatpak/com.rtosta.DriveSync.Devel.yml`. GIO launches the
    default browser via OpenURI in the sandbox; the shared network namespace
