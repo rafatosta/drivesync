@@ -41,6 +41,12 @@ DriveSync is not ready for everyday use, but you can explore its current feature
 
 GitHub issues are public: only share an email address you're comfortable making public. A development build without the testing OAuth configuration can still show the interface, but Google login will be unavailable until configured. See [build profiles](docs/build-profiles.md) for details.
 
+## Development philosophy
+
+DriveSync starts with a problem to solve, not a preferred programming language. The maintainer defines the goals, discusses technical options, plans the architecture, and checks the results. AI agents help with those discussions and write the Rust code—similar to delegating implementation tasks within a development team.
+
+The focus is on **engineering a reliable, maintainable product**, rather than simply generating code. AI-generated work still needs review and testing, and the maintainer remains responsible for the project. Read more in the [development philosophy](docs/DEVELOPMENT_PHILOSOPHY.md).
+
 ## Feedback
 
 Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
