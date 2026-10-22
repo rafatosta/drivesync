@@ -1,65 +1,48 @@
 # DriveSync
 
-**Google Drive file synchronization for Linux, built with Rust.**
+**Google Drive for the GNOME desktop.**
 
-DriveSync is an independent project that aims to bring a simple, reliable Google Drive experience to Linux. The goal is to keep your files available on your computer, up to date, and protected against interrupted transfers or accidental data loss.
+DriveSync is an open-source Linux application designed to make it easy to access your Google Drive files from your computer.
 
-Designed with GNOME in mind, DriveSync aims to feel like a regular desktop application: open it when you need it, or let it work quietly in the background.
+The goal is to let you choose which Google Drive folders to keep on your computer, with automatic, **download-only** synchronization. Your local changes won't be uploaded to Google Drive.
 
-> **Project status: Early development.** DriveSync is not ready for everyday use, and file synchronization is not functional yet. Please do not rely on it for important files.
+> **Early development:** DriveSync is a technical preview. File downloads and synchronization are **not working yet**. Do not rely on it for important files.
 
-## What DriveSync aims to offer
+## What works today
 
-- **Local access to your files:** keep selected Google Drive folders on your computer.
-- **Automatic synchronization:** keep files up to date without manually downloading them.
-- **Offline availability:** work with local copies when you're disconnected.
-- **Safer transfers:** detect incomplete transfers and avoid silently overwriting changes.
-- **Clear status:** see progress, errors, and files that need your attention.
-- **Desktop integration:** run in the background, with future integration for the GNOME Files (Nautilus) file manager.
+- Connect a Google account through your web browser (for authorized testers using a configured build).
+- Use more than one Google account.
+- Restore saved accounts when reopening the app and see connection problems.
+- Browse folders in Google Drive.
+- Choose a Google Drive folder and a local destination.
+- Save folder settings and view them in the dashboard.
+- Disconnect an account without deleting files from your computer or Google Drive.
 
-The first functional milestone focuses on **safe, one-way synchronization from Google Drive to Linux**. Uploads and two-way synchronization are planned for later stages.
+## What's coming
 
-## Welcome screen
+- Download files from selected Google Drive folders.
+- Keep downloaded files up to date automatically.
+- Make downloaded files available offline.
+- Show transfer progress and errors.
+- Handle interrupted downloads safely.
+- Run in the background and integrate more closely with GNOME.
 
-The native GTK4/Libadwaita Welcome screen connects Google accounts through the
-system browser using OAuth with PKCE. After secure credential storage, Account
-Information shows the real account identifier and optional verified email.
-A configured distribution includes DriveSync’s public Desktop OAuth client: users
-only click **Connect Google Account**, authorize in the browser and return to the
-app. No personal Google Cloud project or JSON is needed. Official client metadata
-is not yet supplied in this checkout; the maintainer must provide it at build time
-using the [maintainer guide](docs/google-oauth.md). Unconfigured builds show an
-explanation instead of starting authorization.
-Folder setup now saves a Google Drive folder and a local destination, then opens
-the dashboard; configured accounts return there on startup. File transfers remain unavailable. Real Google/Flatpak acceptance
-is still pending; see [validation evidence](docs/auth-validation.md).
+**Not planned for the first release:** uploading local changes, two-way synchronization, or automatically deleting local files when something is deleted from Google Drive.
 
-## UI Preview — Concept Mockups
+## Try DriveSync
 
-![DriveSync MVP design concepts: 8 screens](docs/mockups/concepts/10-full-board-gnome-mvp.webp)
+DriveSync is not ready for everyday use, but you can explore its current features with **GNOME Builder**:
 
-*Concept mockup only — not a screenshot of a working application. The design and available features may change during development.*
+1. Clone this repository: `https://github.com/rafatosta/drivesync.git`.
+2. Open the project folder in **GNOME Builder**.
+3. Click **Run** to build and launch the development app.
 
-See the [visual concept archive](docs/mockups/README.md) for all ten images and the [MVP UI review](docs/ui-mockups.md) for GNOME component and engine compatibility notes.
+**Want to test Google sign-in?** The Google OAuth integration is currently limited to authorized test accounts. [Open a GitHub issue](https://github.com/rafatosta/drivesync/issues/new) requesting tester access and provide the Google account email you'd like to use. The maintainer will add eligible accounts to the test-user list.
 
-## Get involved
+GitHub issues are public: only share an email address you're comfortable making public. If the test build doesn't include the maintainer's OAuth configuration, Google sign-in won't be available even after your account is approved. The [OAuth guide](docs/google-oauth.md) explains that build requirement.
 
-DriveSync is a developing community project. Feedback, testing, bug reports, translations, documentation, and code contributions are welcome.
+## Feedback
 
-- **Issues and ideas:** [GitHub Issues](https://github.com/rafatosta/drivesync/issues)
-- **Contact:** [rafa.ecomp@gmail.com](mailto:rafa.ecomp@gmail.com)
-- **Maintainer:** [Rafael Tosta](https://github.com/rafatosta)
+Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
 
-## Support development
-
-If you'd like to support the maintainer's open-source work, you can do so through [GitHub Sponsors](https://github.com/sponsors/rafatosta).
-
-## Learn more
-
-Looking for development plans, technical decisions, or implementation details? Visit the [documentation](docs/README.md) or the [MVP roadmap](docs/MVP.md).
-
----
-
-**Keywords:** Google Drive · Linux · GNOME · file synchronization · offline files · Rust · Flatpak
-
-*DriveSync is not affiliated with, sponsored by, or endorsed by Google.*
+DriveSync is an independent project and is not affiliated with Google.
