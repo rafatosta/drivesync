@@ -28,6 +28,46 @@ Não copiar código de projetos terceiros sem verificar a licença; estudar téc
 
 Para demandas com vários algoritmos ou módulos, dividir o trabalho em unidades lógicas e commits atômicos conforme `AGENTS.md`. Validar as etapas intermediárias; depois revisar o conjunto em busca de resíduos de implementação e executar testes integrados. Registrar ajustes e correções em commits próprios quando fizer sentido, sem divisão artificial por método.
 
+## Organização modular e encapsulamento em Rust
+
+A organização deve facilitar leitura, manutenção e localização humana do código,
+sem replicar mecanicamente classes ou convenções de Java.
+
+- **Separar por responsabilidade e coesão**, não por contagem de linhas, quantidade
+  de métodos ou regra de um tipo por arquivo. Estruturas, enums e tipos relacionados
+  de um módulo podem ficar reunidos em `models.rs` quando isso ajudar a localizar
+  o modelo de domínio; dividir apenas se surgirem responsabilidades distintas.
+- **`mod.rs` é o módulo Rust, não exclusivamente uma interface pública.** No
+  DriveSync, preferir usá-lo como ponto de organização: declarar submódulos,
+  controlar visibilidade e reexportar apenas a API necessária. Pequena lógica
+  de integração pode permanecer ali; mover implementações substanciais para
+  arquivos nomeados conforme sua responsabilidade.
+- Diferenciar **dados/modelos**, **comportamento e serviços**, **adaptadores de
+  I/O**, **validação** e **apresentação** quando houver motivo real para separá-los.
+  Evitar arquivos genéricos ou divisões que apenas deslocam poucas linhas.
+- Manter campos e detalhes internos privados por padrão; empregar `pub`,
+  `pub(crate)` e `pub(super)` somente conforme o acesso necessário. Não abrir
+  visibilidade apenas para facilitar uma divisão artificial.
+- Em Rust, preferir composição (`struct` + `impl`) e `trait` quando existir
+  contrato compartilhado ou substituição útil; não criar traits, wrappers ou
+  abstrações sem consumidores ou necessidade demonstrada.
+- Preservar a separação entre a GUI GTK/Libadwaita e a fachada pública do
+  `drivesync-engine`. Módulos internos não devem ser expostos diretamente à UI.
+- Uma refatoração de organização deve preservar comportamento, contratos,
+  isolamento de contas e segurança. Planejar commits pequenos, testar cada
+  unidade e revisar resíduos ao final, conforme `AGENTS.md`.
+
+Exemplo ilustrativo (não é estrutura obrigatória):
+
+```text
+accounts/
+├── mod.rs         # submódulos e interface controlada
+├── models.rs      # modelos relacionados
+├── repository.rs  # persistência e consultas
+├── validation.rs  # regras de validação, se justificadas
+└── tests.rs
+```
+
 ## Política de documentação e histórico no Git
 
 Os documentos guardam requisitos, contratos, decisões duradouras, critérios de
