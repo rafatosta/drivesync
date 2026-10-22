@@ -26,6 +26,8 @@ Não copiar código de projetos terceiros sem verificar a licença; estudar téc
 8. **Integrar:** só conectar ao Coordinator depois de demonstrar contrato isolado. Verificar comportamento de ponta a ponta com provedores simulados antes de conta Drive de teste.
 9. **Registrar evidência:** PR/commit vincula algoritmo, documentação, referência, riscos, testes executados e lacunas. Nunca anunciar confiabilidade sem evidência.
 
+Para demandas com vários algoritmos ou módulos, dividir o trabalho em unidades lógicas e commits atômicos conforme `AGENTS.md`. Validar as etapas intermediárias; depois revisar o conjunto em busca de resíduos de implementação e executar testes integrados. Registrar ajustes e correções em commits próprios quando fizer sentido, sem divisão artificial por método.
+
 ## Política de documentação e histórico no Git
 
 Os documentos guardam requisitos, contratos, decisões duradouras, critérios de
