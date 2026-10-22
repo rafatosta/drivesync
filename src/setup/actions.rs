@@ -1,113 +1,41 @@
+//! Folder selection, save and prefill interactions for the setup page.
+//!
+//! All GTK changes occur on the main thread. I/O and engine work run via
+//! `crate::flow::work`, with failures reported in the screen feedback label.
+use super::view::SetupView;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountSummary, DriveFolder, DriveSyncEngine};
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
+
+/// Current, not-yet-saved choices for one setup page.
 #[derive(Default)]
 struct Selection {
     remote: Option<DriveFolder>,
     local: Option<PathBuf>,
 }
-pub fn build(
+
+/// Connects folder chooser, cancellation, save and saved-settings prefill.
+///
+/// The save button is enabled only when both local and remote selections
+/// exist. The existing configuration is fetched asynchronously; errors are
+/// shown without overwriting the user's files or performing synchronization.
+pub(super) fn bind(
     engine: Arc<DriveSyncEngine>,
     account: AccountSummary,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
-) -> adw::NavigationPage {
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.pack_end(&crate::session::sign_out_button(
-        engine.clone(),
-        account.id.clone(),
-        nav,
-        toasts,
-    ));
-    toolbar.add_top_bar(&header);
-    let page = adw::NavigationPage::builder()
-        .title("New Sync Folder")
-        .child(&toolbar)
-        .build();
-    let content = crate::flow::content();
-    let columns = gtk::Box::new(gtk::Orientation::Horizontal, 24);
-    let form = gtk::Box::new(gtk::Orientation::Vertical, 24);
-    form.set_hexpand(true);
-    let who = adw::PreferencesGroup::builder()
-        .title("Account")
-        .description("Choose folders for this Google account.")
-        .build();
-    who.add(&crate::flow::row(
-        account.email.as_deref().unwrap_or("Google Account"),
-        "Connected",
-        "avatar-default-symbolic",
-    ));
-    form.append(&who);
-    let remote_group = adw::PreferencesGroup::builder()
-        .title("Remote folder")
-        .description("Select a folder in My Drive.")
-        .build();
-    let remote_row = crate::flow::row(
-        "Google Drive",
-        "No folder selected",
-        "folder-remote-symbolic",
-    );
-    let remote_button = gtk::Button::with_label("Choose Folder");
-    remote_button.set_valign(gtk::Align::Center);
-    remote_row.add_suffix(&remote_button);
-    remote_group.add(&remote_row);
-    form.append(&remote_group);
-    let local_group = adw::PreferencesGroup::builder()
-        .title("Local folder")
-        .description("Choose where downloaded files will be stored.")
-        .build();
-    let local_row = crate::flow::row("On this computer", "No folder selected", "folder-symbolic");
-    let local_button = gtk::Button::with_label("Choose Folder");
-    local_button.set_valign(gtk::Align::Center);
-    local_row.add_suffix(&local_button);
-    local_group.add(&local_row);
-    form.append(&local_group);
-    let rule = gtk::Label::builder()
-        .label("The local folder cannot overlap another account’s folder.")
-        .xalign(0.0)
-        .wrap(true)
-        .css_classes(["dim-label"])
-        .build();
-    form.append(&rule);
-    let summary = adw::PreferencesGroup::builder()
-        .title("Summary")
-        .description("Review your folder settings.")
-        .build();
-    let summary_remote =
-        crate::flow::row("Remote folder", "Not selected", "folder-remote-symbolic");
-    let summary_local = crate::flow::row("Local folder", "Not selected", "folder-symbolic");
-    summary.add(&crate::flow::row(
-        "Account",
-        account
-            .email
-            .as_deref()
-            .unwrap_or(&account.provider_subject),
-        "avatar-default-symbolic",
-    ));
-    summary.add(&summary_remote);
-    summary.add(&summary_local);
-    summary.add(&crate::flow::row(
-        "Sync mode",
-        "Download only",
-        "folder-download-symbolic",
-    ));
-    columns.append(&form);
-    columns.append(&summary);
-    content.append(&columns);
-    let feedback = gtk::Label::builder().wrap(true).xalign(0.0).build();
-    content.append(&feedback);
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let cancel = gtk::Button::with_label("Cancel");
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    let save = gtk::Button::with_label("Save and Continue");
-    save.add_css_class("suggested-action");
-    save.set_sensitive(false);
-    actions.append(&cancel);
-    actions.append(&spacer);
-    actions.append(&save);
-    content.append(&actions);
+    view: &SetupView,
+) {
+    let page = view.page.clone();
+    let remote_row = view.remote_row.clone();
+    let remote_button = view.remote_button.clone();
+    let local_row = view.local_row.clone();
+    let local_button = view.local_button.clone();
+    let summary_remote = view.summary_remote.clone();
+    let summary_local = view.summary_local.clone();
+    let feedback = view.feedback.clone();
+    let cancel = view.cancel.clone();
+    let save = view.save.clone();
     let selection = Rc::new(RefCell::new(Selection::default()));
     {
         let selection = selection.clone();
@@ -246,19 +174,6 @@ pub fn build(
             );
         });
     }
-    let adaptive = adw::BreakpointBin::new();
-    adaptive.set_width_request(300);
-    adaptive.set_height_request(240);
-    adaptive.set_child(Some(&crate::flow::scroll(&content, 1100)));
-    let breakpoint =
-        adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 760px").unwrap());
-    breakpoint.add_setter(
-        &columns,
-        "orientation",
-        Some(&gtk::Orientation::Vertical.to_value()),
-    );
-    adaptive.add_breakpoint(breakpoint);
-    toolbar.set_content(Some(&adaptive));
     // Prefill edits without doing disk I/O on GTK or overwriting a user's input.
     remote_button.set_sensitive(false);
     local_button.set_sensitive(false);
@@ -286,5 +201,4 @@ pub fn build(
             }
         },
     );
-    page
 }
