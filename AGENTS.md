@@ -19,6 +19,14 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 - Não apagar contratos e decisões de projeto apenas porque a implementação ainda não chegou àquela etapa.
 - Evitar informações duplicadas; a reorganização documental ampla será tratada separadamente.
 
+## Convenção de organização dos módulos Rust
+
+Aplicar as diretrizes de `docs/development-methodology.md` sobre coesão,
+visibilidade e modularização. Preferir `mod.rs` como ponto de organização e
+reexportação, agrupar modelos relacionados em um `models.rs` quando apropriado
+e separar implementações por responsabilidade real. Não impor arquivo por
+estrutura, classe equivalente ou método, nem criar abstrações artificiais.
+
 ## Planejamento, implementação incremental e commits atômicos
 
 Para uma demanda com várias mudanças, **planejar antes de editar**: identificar
