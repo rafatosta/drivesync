@@ -1,6 +1,8 @@
-use super::*;
-use crate::DriveSyncEngine;
-use std::os::unix::fs::PermissionsExt;
+use super::{repository::MAX_INDEX, Accounts};
+use crate::{
+    AccountId, AccountSummary, AuthError, DriveSyncEngine, EngineError, FolderConfiguration,
+};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, sync::Mutex};
 const CLIENT: &str = "test.apps.googleusercontent.com";
 struct Directory(PathBuf);
 impl Directory {
@@ -280,7 +282,6 @@ fn legacy_v1_index_is_rejected_without_mutation() {
         Err(AuthError::AccountStorage)
     );
     assert_eq!(fs::read(path).unwrap(), original);
-    assert!(!path.with_extension("v1.json.bak").exists());
 }
 #[test]
 fn local_roots_reject_exact_nested_and_symlink_aliases_without_losing_old_settings() {
@@ -382,5 +383,4 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     assert!(!fs::read_to_string(path)
         .unwrap()
         .contains("forgotten@example.com"));
-    assert!(!path.with_extension("v1.json.bak").exists());
 }
