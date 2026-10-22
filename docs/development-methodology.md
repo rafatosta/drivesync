@@ -36,6 +36,25 @@ pontual na descrição do commit ou PR, sem reproduzir esse histórico nos docum
 Manter uma fonte principal para cada assunto e referenciá-la nos demais arquivos,
 evitando duplicação e atualizações em cadeia sem necessidade.
 
+## Política de evolução de formatos durante o desenvolvimento
+
+Enquanto o DriveSync não tiver uma versão estável publicada, usar **um único
+formato vigente** para persistência interna (incluindo perfis e pastas).
+Alterações de schema atualizam diretamente leitura, escrita, validações e
+testes; **não criar migradores, backups de migração ou caminhos de compatibilidade
+retroativa** apenas para versões internas anteriores de desenvolvimento.
+
+Manter um identificador de versão do formato para rejeitar dados incompatíveis
+explicitamente, sem apagá-los nem sobrescrevê-los automaticamente. A necessidade
+de reinicializar dados locais de desenvolvimento deve ser comunicada e executada
+de forma deliberada; credenciais no cofre do sistema e arquivos de usuário não
+podem ser apagados por detecção de formato antigo.
+
+Esta política **não** dispensa gravação atômica, validação de integridade,
+restrições de permissões, isolamento por conta e proteção contra perda de dados.
+Antes de uma versão estável, reavaliar e documentar a necessidade de migração
+para preservar configurações de usuários em futuras atualizações.
+
 ## Estados de maturidade
 
 - **DRAFT:** comportamento esboçado, sem testes completos.
