@@ -1,3 +1,7 @@
+//! GTK application lifecycle and initial DriveSync window.
+//!
+//! Initializes the engine, welcome navigation, shutdown cancellation and
+//! application actions. The main thread never performs blocking Drive work.
 use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -10,8 +14,10 @@ mod session;
 mod setup;
 mod welcome;
 
+/// Development application ID.
 const APP_ID: &str = "com.rtosta.DriveSync.Devel";
 
+/// Launches the single-instance GTK application.
 fn main() -> adw::gtk::glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
     // Startup runs once for the primary application, even on repeated activation.

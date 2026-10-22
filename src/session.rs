@@ -1,7 +1,15 @@
+//! Confirmed sign-out for a saved Google account.
+//!
+//! Removes account credentials and app metadata through the engine facade.
+//! It never removes files from the local filesystem or Google Drive.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountId, DriveSyncEngine};
 use std::sync::Arc;
 
+/// Builds a sign-out action requiring explicit user confirmation.
+///
+/// Runs the engine logout on a worker thread, temporarily disabling
+/// navigation and refreshing the saved-account state on success.
 pub fn sign_out_button(
     engine: Arc<DriveSyncEngine>,
     id: AccountId,
