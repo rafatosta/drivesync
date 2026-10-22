@@ -19,6 +19,43 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 - Não apagar contratos e decisões de projeto apenas porque a implementação ainda não chegou àquela etapa.
 - Evitar informações duplicadas; a reorganização documental ampla será tratada separadamente.
 
+## Planejamento, implementação incremental e commits atômicos
+
+Para uma demanda com várias mudanças, **planejar antes de editar**: identificar
+resultado esperado, módulos afetados, dependências, riscos e uma sequência de
+entregas pequenas e verificáveis. O plano orienta o trabalho; não precisa virar
+um arquivo de histórico no repositório.
+
+- **Um commit por unidade lógica completa**, não por método, arquivo ou quantidade
+  fixa de linhas. A unidade pode abranger vários arquivos quando isso for
+  indispensável para entregar uma alteração coesa.
+- Implementar e validar cada unidade antes de avançar à próxima; criar o
+  respectivo commit assim que estiver consistente. Não acumular toda a demanda
+  em um único commit final quando houver etapas independentes.
+- Quando houver dependência entre módulos, ordenar os commits para que cada
+  estado intermediário do repositório permaneça compilável e com testes
+  relevantes passando, sempre que tecnicamente possível.
+- Separar correções descobertas durante o desenvolvimento em commits `fix`
+  próprios quando forem mudanças logicamente distintas. Não gerar commits
+  artificiais apenas para aumentar a quantidade de commits.
+- **Ao concluir a demanda**, revisar o conjunto das alterações e procurar código
+  morto, funções substituídas, duplicações, artefatos temporários, imports e
+  dependências desnecessárias. Fazer um commit `refactor` ou `chore` de limpeza
+  somente se houver resíduos reais; não criar commit vazio.
+- Rodar a validação final integrada e informar limites de teste. Se encontrar
+  defeitos, corrigi-los em commits apropriados.
+- Não reescrever commits já publicados para simular etapas posteriores. Se o
+  ambiente não permitir commits, entregar patches e mensagens de commit
+  separados por unidade lógica.
+
+Exemplo de sequência para uma funcionalidade envolvendo dois módulos:
+
+1. `feat(engine): implementar contrato de listagem` — lógica e testes do módulo A.
+2. `feat(ui): integrar listagem na interface` — consumo e testes do módulo B.
+3. `fix(ui): tratar erro de paginação` — correção específica identificada nos testes.
+4. `refactor: remover auxiliar substituído` — **somente se** a revisão final
+   detectar código obsoleto.
+
 ## Commits como registro de implementação
 
 Ao finalizar uma alteração, preparar um commit com:
@@ -29,7 +66,7 @@ Ao finalizar uma alteração, preparar um commit com:
 4. **Validação:** comandos e testes realmente executados, resultados e ambiente quando relevante. Não declarar testes não executados.
 5. **Limitações, riscos e pendências:** verificações não feitas e próximos passos necessários, quando houver.
 
-Criar o commit ao concluir a tarefa, quando o ambiente e as permissões permitirem; se não for possível, fornecer a mensagem de commit pronta e informar a limitação. Não alterar histórico publicado nem misturar tarefas independentes sem autorização.
+Criar cada commit ao concluir sua unidade lógica, quando o ambiente e as permissões permitirem; se não for possível, fornecer a mensagem de commit pronta e informar a limitação. Não alterar histórico publicado nem misturar tarefas independentes sem autorização.
 
 ## Formatos internos antes da primeira versão estável
 
