@@ -1,5 +1,6 @@
 //! Adaptive account navigation and read-only synchronization dashboard.
 mod account_details;
+mod description;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};

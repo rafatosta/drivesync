@@ -41,6 +41,13 @@ fn folder_setup_and_dashboard_layouts() {
         std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
     let data = std::env::var("XDG_DATA_HOME").expect("isolated profile directory");
     assert!(data.starts_with("/tmp/drivesync-ui-"));
+    std::env::set_var(
+        "DRIVESYNC_GOOGLE_CLIENT_ID",
+        "ui-test.apps.googleusercontent.com",
+    );
+    let metadata = std::path::Path::new(&data).join("drivesync");
+    std::fs::create_dir_all(&metadata).unwrap();
+    std::fs::write(metadata.join("accounts.json"), r#"{"version":2,"clients":{"ui-test.apps.googleusercontent.com":[{"id":"google:layout-fixture","provider_subject":"layout-fixture","email":"preview@example.com"},{"id":"google:second-fixture","provider_subject":"second-fixture","email":"second@example.com"}]},"folders":{}}"#).unwrap();
     let engine = Arc::new(DriveSyncEngine::new());
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
@@ -148,11 +155,52 @@ fn folder_setup_and_dashboard_layouts() {
                     .unwrap()
                     .downcast::<adw::EntryRow>()
                     .unwrap();
-                let original = entry.text();
-                entry.set_text("Personal account");
-                assert_eq!(entry.text(), "Personal account");
+                assert!(entry.is_sensitive());
+                let id = drivesync_engine::AccountId("google:layout-fixture".into());
+                for label in ["Principal", "", "Principal"] {
+                    entry.set_text(label);
+                    entry.emit_by_name::<()>("apply", &[]);
+                    let wait = gtk::glib::MainLoop::new(None, false);
+                    let finish = wait.clone();
+                    gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                        finish.quit()
+                    });
+                    wait.run();
+                    let stored = DriveSyncEngine::new().account_description(&id).unwrap();
+                    assert_eq!(
+                        stored.as_deref(),
+                        if label.is_empty() { None } else { Some(label) }
+                    );
+                    assert!(entry.is_sensitive());
+                    assert_eq!(
+                        list.row_at_index(0)
+                            .unwrap()
+                            .downcast::<adw::ActionRow>()
+                            .unwrap()
+                            .title(),
+                        if label.is_empty() {
+                            "preview@example.com"
+                        } else {
+                            label
+                        }
+                    );
+                }
+                entry.set_text(&"x".repeat(129));
+                entry.emit_by_name::<()>("apply", &[]);
+                let wait = gtk::glib::MainLoop::new(None, false);
+                let finish = wait.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    finish.quit()
+                });
+                wait.run();
+                assert!(entry.is_sensitive(), "failed saves remain editable");
+                assert_eq!(
+                    engine.account_description(&id).unwrap().as_deref(),
+                    Some("Principal")
+                );
+                entry.set_text("Principal");
+                entry.emit_by_name::<()>("apply", &[]);
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
-                entry.set_text(&original);
                 assert!(list.row_at_index(1).is_some());
                 list.select_row(list.row_at_index(1).as_ref());
                 assert_eq!(

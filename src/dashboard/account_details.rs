@@ -23,7 +23,8 @@ pub(super) fn populate(
             .subtitle(&state)
             .use_markup(false)
             .build();
-        user.add_prefix(&adw::Avatar::new(32, Some(name), true));
+        let avatar = adw::Avatar::new(32, Some(name), true);
+        user.add_prefix(&avatar);
         user.set_subtitle_selectable(false);
         user.set_title_lines(1);
         user.set_subtitle_lines(2);
@@ -36,16 +37,15 @@ pub(super) fn populate(
         let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let identity = gtk::Box::new(gtk::Orientation::Vertical, 6);
         identity.set_hexpand(true);
-        identity.append(
-            &gtk::Label::builder()
-                .label(name)
-                .use_markup(false)
-                .xalign(0.0)
-                .wrap(true)
-                .wrap_mode(gtk::pango::WrapMode::WordChar)
-                .css_classes(["title-1"])
-                .build(),
-        );
+        let title = gtk::Label::builder()
+            .label(name)
+            .use_markup(false)
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .css_classes(["title-1"])
+            .build();
+        identity.append(&title);
         identity.append(
             &gtk::Label::builder()
                 .label(&state)
@@ -74,16 +74,23 @@ pub(super) fn populate(
         heading.append(&menu);
         content.append(&heading);
 
-        let description = adw::PreferencesGroup::builder()
-            .description("Local account label. Saving changes is not available yet.")
-            .build();
+        let description = adw::PreferencesGroup::new();
         let entry = adw::EntryRow::builder()
             .title("Account description")
             .build();
         entry.set_widget_name("account-display-name");
-        entry.set_text(name);
+
         description.add(&entry);
         content.append(&description);
+        super::description::bind(
+            engine.clone(),
+            &saved,
+            &entry,
+            &description,
+            &title,
+            &user,
+            &avatar,
+        );
 
         let folders = adw::PreferencesGroup::builder().title("Folders").build();
         let remote = saved
