@@ -1,10 +1,10 @@
 //! Bounded read-only traversal of a configured Drive tree; no file transfers.
 use crate::{configuration::valid_id, AccountId, AuthError, Cancellation, EngineError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
 /// Why an observed item is excluded from the initial binary-download scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SkipReason {
     UnsafeName,
     SharedDrive,
@@ -13,7 +13,7 @@ pub enum SkipReason {
     MissingIntegrityMetadata,
 }
 /// Classification is observational, never proof that local installation is safe.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InventoryKind {
     Folder,
     Binary,
@@ -21,7 +21,7 @@ pub enum InventoryKind {
 }
 
 /// One remote identity. Duplicate names remain separate entries by ID.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryEntry {
     pub id: String,
     pub parent_id: String,
@@ -33,7 +33,7 @@ pub struct InventoryEntry {
     pub kind: InventoryKind,
 }
 /// Successful observations scoped to one account/root, not a consistent snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteInventory {
     pub account_id: AccountId,
     pub root_id: String,

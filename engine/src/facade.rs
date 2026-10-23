@@ -202,6 +202,67 @@ impl DriveSyncEngine {
         })
     }
 
+    /// Inventories and prepares download candidates, then persists observations and
+    /// decisions atomically. Existing local files are conflicts, never adopted as
+    /// confirmed bases. No user files are created, replaced or deleted.
+    ///
+    /// # Errors
+    /// Propagates inventory/local errors; rejects changed configurations and corrupt
+    /// state. Cancelled or failed preparations never commit a new generation.
+    pub fn prepare_downloads(
+        &self,
+        id: &AccountId,
+        cancel: &crate::Cancellation,
+    ) -> Result<crate::DownloadPlan, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let inventory = self.inventory(id, cancel)?;
+        if std::fs::symlink_metadata(&folder.local)
+            .map_err(|_| EngineError::InvalidFolder)?
+            .file_type()
+            .is_symlink()
+            || std::fs::canonicalize(&folder.local).map_err(|_| EngineError::InvalidFolder)?
+                != folder.local
+        {
+            return Err(EngineError::InvalidFolder);
+        }
+        let plan = crate::planner::plan(&inventory, &folder.local, |relative| {
+            crate::planner::observe(&folder.local, relative)
+        })?;
+        if cancel.is_cancelled() {
+            return Err(EngineError::Authentication(AuthError::Cancelled));
+        }
+        if self.saved_folder(id)?.as_ref() != Some(&folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        crate::state::Store::open(&crate::state::default_path()?)?.save(
+            &config.client_id,
+            &inventory,
+            &plan,
+            cancel,
+        )?;
+        Ok(plan)
+    }
+
+    /// Loads the current persisted plan for this account's configured root.
+    /// It is historical observation only: executors must revalidate all preconditions.
+    ///
+    /// # Errors
+    /// Returns configuration/storage errors without recreating damaged databases.
+    pub fn saved_download_plan(
+        &self,
+        id: &AccountId,
+    ) -> Result<Option<crate::DownloadPlan>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        crate::state::Store::open(&crate::state::default_path()?)?.load(
+            &config.client_id,
+            id,
+            &folder.remote.id,
+            &folder.local,
+        )
+    }
+
     /// Returns the saved folder pair for an account, without remote validation.
     ///
     /// # Errors

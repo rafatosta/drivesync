@@ -30,3 +30,7 @@ pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncRootId};
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
+
+pub use planner::{
+    decide, ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation, PlanAction, PlanEntry,
+};
