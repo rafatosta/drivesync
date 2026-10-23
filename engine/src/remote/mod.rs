@@ -9,7 +9,10 @@
 //! - [`folders`] implements folder lookup and pagination.
 //! - [`models`] groups decoded JSON and validated response models.
 //! - [`inventory`] traverses configured roots before any download planning.
+mod changes;
 mod client;
+pub(crate) use changes::valid_token as valid_change_token;
+pub(crate) use changes::{change_page, change_start, Change, ChangePage};
 mod errors;
 mod folders;
 mod inventory;

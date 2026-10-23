@@ -1,6 +1,8 @@
 //! SQLite observations, plans and durable download-operation evidence.
+mod checkpoints;
 mod downloads;
 use crate::{DownloadPlan, EngineError, RemoteInventory};
+pub(crate) use checkpoints::{Checkpoints, Scope as CheckpointScope};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::{
     fs::{self, DirBuilder, OpenOptions},
@@ -21,6 +23,16 @@ pub(crate) struct Store(Connection);
 impl Store {
     /// Opens the private database. Existing corrupt/foreign/empty databases fail closed.
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
+        Self::open_format(path, APP_ID, 2, SCHEMA)
+    }
+
+    /// Opens one exact internal format, without migrations or automatic resets.
+    fn open_format(
+        path: &Path,
+        app_id: i64,
+        schema_version: i64,
+        schema: &str,
+    ) -> Result<Self, EngineError> {
         if !path.is_absolute() {
             return Err(EngineError::StateStorage);
         }
@@ -59,10 +71,11 @@ impl Store {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(failed)?;
-            tx.execute_batch(SCHEMA).map_err(failed)?;
-            tx.pragma_update(None, "application_id", APP_ID)
+            tx.execute_batch(schema).map_err(failed)?;
+            tx.pragma_update(None, "application_id", app_id)
                 .map_err(failed)?;
-            tx.pragma_update(None, "user_version", 2).map_err(failed)?;
+            tx.pragma_update(None, "user_version", schema_version)
+                .map_err(failed)?;
             tx.commit().map_err(failed)?;
             fs::File::open(parent)
                 .and_then(|f| f.sync_all())
@@ -80,7 +93,7 @@ impl Store {
         let journal: String = conn
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
             .map_err(failed)?;
-        if version != 2 || app != APP_ID || integrity != "ok" || journal != "delete" {
+        if version != schema_version || app != app_id || integrity != "ok" || journal != "delete" {
             return Err(EngineError::StateStorage);
         }
         let broken: Option<i64> = conn

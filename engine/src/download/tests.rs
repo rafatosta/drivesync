@@ -109,6 +109,8 @@ struct Fake {
     entries: HashMap<String, InventoryEntry>,
     bytes: Vec<u8>,
     media_calls: usize,
+    metadata_calls: usize,
+    cached: bool,
     changed: bool,
     fail_stream: bool,
     on_media: Option<Box<dyn FnMut()>>,
@@ -124,6 +126,8 @@ impl Fake {
                 .collect(),
             bytes: b"abc".to_vec(),
             media_calls: 0,
+            metadata_calls: 0,
+            cached: false,
             changed: false,
             fail_stream: false,
             on_media: None,
@@ -132,7 +136,11 @@ impl Fake {
     }
 }
 impl Source for Fake {
+    fn cached_unchanged(&self, _: &InventoryEntry) -> bool {
+        self.cached
+    }
     fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
+        self.metadata_calls += 1;
         let mut value = self.entries[&item.id].clone();
         if self.changed && self.media_calls > 0 {
             value.version = value.version.map(|version| version + 1);
@@ -642,3 +650,6 @@ fn corrupt_bytes_never_emit_a_verified_or_installing_stage() {
 
 #[path = "update_tests.rs"]
 mod update_tests;
+
+#[path = "incremental_tests.rs"]
+mod incremental_tests;

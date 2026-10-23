@@ -244,7 +244,10 @@ impl DriveSyncEngine {
         Ok(plan)
     }
 
-    /// Runs a fresh manual download-only cycle off the UI thread.
+    /// Runs a manual download-only cycle using durable incremental remote observations.
+    /// The first cycle reconciles an inventory with the change feed; subsequent
+    /// cycles reuse the ID graph and consume new events. Local files are rechecked.
+    /// Call off the UI thread.
     /// Binary files are staged and verified. Managed intact copies can be updated
     /// after preserving their prior version; concurrent destinations are never overwritten.
     /// Existing divergent data is reported per item. Partial staging is preserved.
@@ -259,32 +262,83 @@ impl DriveSyncEngine {
         progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
-        let inventory = self.inventory(id, cancel)?;
-        let plan = crate::planner::plan(&inventory, &folder.local, |path| {
+        self.check_local_folder(&folder.local)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let path = crate::state::default_path()?;
+        // Validate both stores before collecting observations or changing user files.
+        let mut store = crate::state::Store::open(&path)?;
+        let mut checkpoints =
+            crate::state::Checkpoints::open(&path.with_file_name("changes.sqlite3"))?;
+        let root = self.auth.with_access_config(&config, id, |token| {
+            remote::inventory_root(token, &folder.remote.id)
+        })?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &root,
+            local: &folder.local,
+        };
+        let previous = checkpoints.load(&scope)?;
+        let mut source = DownloadSource {
+            engine: self,
+            folder: &folder,
+            config: &config,
+            cancel,
+            unchanged: std::collections::HashSet::new(),
+        };
+        let checkpoint = crate::changes::collect(
+            id,
+            &root,
+            previous.as_ref().map(|(_, checkpoint)| checkpoint),
+            cancel,
+            &mut source,
+        )?;
+        let inventory = &checkpoint.inventory;
+        if let Some((_, old)) = &previous {
+            let old: std::collections::HashMap<_, _> = old
+                .inventory
+                .entries
+                .iter()
+                .map(|item| (&item.id, item))
+                .collect();
+            source.unchanged = inventory
+                .entries
+                .iter()
+                .filter(|item| old.get(&item.id).is_some_and(|prior| *prior == *item))
+                .map(|item| item.id.clone())
+                .collect();
+        }
+        let plan = crate::planner::plan(inventory, &folder.local, |path| {
             crate::planner::observe(&folder.local, path)
         })?;
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
         }
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let mut store = crate::state::Store::open(&crate::state::default_path()?)?;
-        store.save(&config.client_id, &inventory, &plan, cancel)?;
-        let mut source = DownloadSource {
-            engine: self,
-            folder: &folder,
-            config: &config,
-        };
-        crate::download::run(
+        checkpoints.save(
+            &scope,
+            previous.as_ref().map(|(revision, _)| revision.as_str()),
+            &checkpoint,
+            cancel,
+        )?;
+        store.save(&config.client_id, inventory, &plan, cancel)?;
+        let mut report = crate::download::run(
             crate::download::Context {
                 client: &config.client_id,
                 scope: &plan,
                 store: &store,
                 cancel,
             },
-            &inventory,
+            inventory,
             &mut source,
             progress,
-        )
+        )?;
+        for notice in checkpoint.notices {
+            report.issues.push(crate::DownloadIssue {
+                relative_path: notice.path,
+                error: EngineError::RemoteItemUnavailable,
+            });
+        }
+        Ok(report)
     }
 
     /// Loads the current persisted plan for this account's configured root.
@@ -377,8 +431,19 @@ struct DownloadSource<'a> {
     engine: &'a DriveSyncEngine,
     folder: &'a FolderConfiguration,
     config: &'a auth::OAuthConfig,
+    cancel: &'a Cancellation,
+    unchanged: std::collections::HashSet<String>,
 }
 impl crate::download::Source for DownloadSource<'_> {
+    fn cached_unchanged(&self, item: &crate::InventoryEntry) -> bool {
+        self.unchanged.contains(&item.id)
+    }
+    fn check_configuration(&mut self) -> Result<(), EngineError> {
+        if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        Ok(())
+    }
     fn metadata(
         &mut self,
         item: &crate::InventoryEntry,
@@ -410,5 +475,43 @@ impl crate::download::Source for DownloadSource<'_> {
             return Err(EngineError::RemoteChanged);
         }
         Ok(())
+    }
+}
+
+/// Metadata collection and transfer use the same credential/configuration scope.
+impl crate::changes::Provider for DownloadSource<'_> {
+    fn start(&mut self) -> Result<String, EngineError> {
+        self.engine.auth.with_access_config(
+            self.config,
+            &self.folder.account_id,
+            remote::change_start,
+        )
+    }
+    fn scan(&mut self) -> Result<crate::RemoteInventory, EngineError> {
+        let root =
+            self.engine
+                .auth
+                .with_access_config(self.config, &self.folder.account_id, |token| {
+                    remote::inventory_root(token, &self.folder.remote.id)
+                })?;
+        remote::inventory_scan(
+            &self.folder.account_id,
+            &root,
+            self.cancel,
+            |parent, page| {
+                self.engine
+                    .auth
+                    .with_access_config(self.config, &self.folder.account_id, |token| {
+                        remote::inventory_page(token, parent, page)
+                    })
+            },
+        )
+    }
+    fn page(&mut self, page: &str) -> Result<remote::ChangePage, EngineError> {
+        self.engine
+            .auth
+            .with_access_config(self.config, &self.folder.account_id, |token| {
+                remote::change_page(token, page)
+            })
     }
 }

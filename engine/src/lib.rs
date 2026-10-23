@@ -3,7 +3,8 @@
 //! GTK and presentation dependencies are confined to the application crate.
 //! All consumers interact with [`DriveSyncEngine`] and the types reexported
 //! here; internal modules are not exposed as independent public APIs.
-//! Manual binary downloads update intact managed copies and retain prior versions.
+//! Manual binary downloads consume durable incremental remote observations,
+//! update intact managed copies and retain prior versions.
 //! Uploads and continuous synchronization are unavailable.
 mod accounts;
 mod auth;

@@ -22,6 +22,28 @@ pub(super) fn request(
     endpoint: &str,
     params: &[(&str, &str)],
 ) -> Result<Vec<u8>, EngineError> {
+    request_checked(token, endpoint, params, response_status)
+}
+
+/// Uses cursor-specific error classification only for changes.list.
+pub(super) fn change_request(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+) -> Result<Vec<u8>, EngineError> {
+    request_checked(
+        token,
+        endpoint,
+        params,
+        super::errors::change_response_status,
+    )
+}
+fn request_checked(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+    check: fn(u16, &[u8]) -> Result<(), EngineError>,
+) -> Result<Vec<u8>, EngineError> {
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -44,6 +66,6 @@ pub(super) fn request(
     if body.len() as u64 > MAX_BODY {
         return Err(EngineError::Authentication(AuthError::InvalidResponse));
     }
-    response_status(code, &body)?;
+    check(code, &body)?;
     Ok(body)
 }

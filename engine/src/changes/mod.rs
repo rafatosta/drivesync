@@ -1,3 +1,9 @@
-//! changes subsystem.
-//! Contracts and algorithms are documented alongside this module.
-//! Business behavior intentionally remains unimplemented.
+//! Incremental remote observations; never installs or deletes user files.
+//! A terminal feed cursor and its projected inventory form one checkpoint.
+mod collection;
+mod models;
+pub(crate) use collection::validate;
+pub(crate) use collection::{collect, Provider};
+pub(crate) use models::{Checkpoint, Notice};
+#[cfg(test)]
+mod tests;

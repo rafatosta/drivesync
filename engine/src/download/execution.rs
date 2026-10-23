@@ -18,6 +18,15 @@ use std::{collections::HashMap, ffi::OsStr, io::Read, path::Path};
 
 /// Provider seam: mocks exercise failure paths without Google or credentials.
 pub(crate) trait Source {
+    /// A complete feed checkpoint proves only observation equality, not local bytes.
+    /// Returning true permits a no-effect unchanged result after journal/hash checks.
+    fn cached_unchanged(&self, _item: &InventoryEntry) -> bool {
+        false
+    }
+    /// Checks account/root configuration between items without mandatory network I/O.
+    fn check_configuration(&mut self) -> Result<(), EngineError> {
+        self.configured()
+    }
     fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError>;
     fn media(&mut self, id: &str) -> Result<Box<dyn Read>, EngineError>;
     /// Rechecks the saved configuration and authorized remote root.
@@ -143,7 +152,7 @@ pub(crate) fn run(
             }),
         });
         stream::cancelled(session.context.cancel)?;
-        source.configured()?;
+        source.check_configuration()?;
         session.root.validate()?;
         if item.id != decision.remote_id {
             return Err(EngineError::InvalidPlan);
@@ -154,6 +163,14 @@ pub(crate) fn run(
                 Ok(())
             }
             (_, None, _) => Err(EngineError::DownloadConflict),
+            (InventoryKind::Folder, Some(path), PlanAction::NoOp)
+                if source.cached_unchanged(item) =>
+            {
+                session
+                    .root
+                    .check_directory(path)
+                    .map(|()| report.directories += 1)
+            }
             (InventoryKind::Folder, Some(path), PlanAction::CreateDirectory | PlanAction::NoOp) => {
                 validate_chain(source, item, &by_id, &inventory.root_id)
                     .and_then(|()| session.root.mkdir(path))
@@ -383,6 +400,10 @@ impl Session<'_> {
                 || !stream::verify(&mut existing, old_size, sha256, self.context.cancel)?
             {
                 return Err(EngineError::DownloadConflict);
+            }
+            if op.item == *item && source.cached_unchanged(item) {
+                self.root.validate_parent(path, parent_id)?;
+                return Ok(Outcome::Unchanged);
             }
             validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
             self.root.validate_parent(path, parent_id)?;

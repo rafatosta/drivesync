@@ -59,6 +59,6 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Técnica conhecida:** Log incremental remoto com cursor durável.
 - **Referências primárias:** [Google Drive retrieve changes](https://developers.google.com/workspace/drive/api/guides/manage-changes), [changes.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list).
 - **Política do DriveSync:** Capturar startPageToken antes de scan inicial e reconciliar janela; registrar alterações antes de persistir cursor; mudanças de acesso não implicam exclusão.
-- **Testes/oráculos a detalhar:** Interrupção entre páginas, mudança durante scan inicial, tombstone ambíguo, token inválido.
-- **Limitações / questões abertas:** Estratégia exata de recuperação de token inválido precisa ser ensaiada.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+- **Especificação e oráculos:** [CHANGES-002 implementado](incremental.md): paginação, janela inicial, retomada, rejeição de cursor, topologia e preservação local.
+- **Limitações:** coleta My Drive acionada por ciclo manual; validação com provedor simulado não substitui ensaio real.
+- **Situação:** implementado para ciclos manuais de download; CHANGES-001 permanece rascunho.

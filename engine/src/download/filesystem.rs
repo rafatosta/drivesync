@@ -79,6 +79,12 @@ impl Root {
         }
         Ok((parent, parts.last().unwrap().as_os_str().into()))
     }
+    /// Validates an existing directory without creating anything on the fast path.
+    pub fn check_directory(&self, relative: &Path) -> Result<(), EngineError> {
+        let (parent, name) = self.parent(relative)?;
+        directory(&parent, &name)?;
+        self.validate_parent(relative, identity(&parent)?)
+    }
     pub fn mkdir(&self, relative: &Path) -> Result<(), EngineError> {
         let (parent, name) = self.parent(relative)?;
         self.validate_parent(relative, identity(&parent)?)?;

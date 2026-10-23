@@ -27,4 +27,4 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** CHANGES-002 implementado para ciclos manuais de download; ver [contrato executável e oráculos](incremental.md). CHANGES-001 (monitoramento local) permanece rascunho.
