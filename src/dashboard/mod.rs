@@ -23,10 +23,11 @@ pub fn build(
     header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
     let add = gtk::Button::from_icon_name("list-add-symbolic");
     add.set_tooltip_text(Some("Add Account"));
+    add.set_widget_name("add-account");
     let weak_nav = nav.downgrade();
     add.connect_clicked(move |_| {
         if let Some(nav) = weak_nav.upgrade() {
-            nav.pop_to_tag("welcome");
+            let _ = nav.activate_action("connection.open", None);
         }
     });
     header.pack_end(&add);

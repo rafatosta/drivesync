@@ -1,11 +1,12 @@
 //! GTK application lifecycle and initial DriveSync window.
 //!
-//! Initializes the engine, welcome navigation, shutdown cancellation and
+//! Initializes the engine, account restoration, shutdown cancellation and
 //! application actions. The main thread never performs blocking Drive work.
 use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+mod connection;
 mod dashboard;
 mod flow;
 mod folder_picker;
@@ -40,10 +41,8 @@ fn main() -> adw::gtk::glib::ExitCode {
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&navigation));
         let cancellation = Rc::new(RefCell::new(None::<drivesync_engine::Cancellation>));
-        let welcome = welcome::build(engine, &navigation, &toasts, cancellation.clone());
-        let welcome_page = adw::NavigationPage::new(&welcome, "Welcome");
-        welcome_page.set_tag(Some("welcome"));
-        navigation.add(&welcome_page);
+        let startup = restoration::build(engine, &navigation, &toasts, cancellation.clone());
+        navigation.add(&startup);
         window.set_content(Some(&toasts));
         app.connect_shutdown(move |_| {
             if let Some(cancel) = cancellation.borrow().as_ref() {

@@ -1,18 +1,13 @@
 //! GTK4/Libadwaita first-run presentation.
 //!
 //! Constructs the welcome page and its reusable presentation widgets, while
-//! OAuth coordination and cancellation remain in the sibling auth-flow module.
+//! Browser authorization is presented by the shared connection module.
 use adw::{gtk, prelude::*};
-use drivesync_engine::DriveSyncEngine;
-use std::sync::Arc;
 
-/// Widgets consumed by the authentication controller for one welcome page.
+/// First-run content and the entry point to the shared connection window.
 pub(super) struct WelcomeView {
     pub(super) toolbar: adw::ToolbarView,
     pub(super) connect: gtk::Button,
-    pub(super) cancel_button: gtk::Button,
-    pub(super) spinner: gtk::Spinner,
-    pub(super) feedback: gtk::Label,
 }
 
 /// Creates a centered, wrapping text label with the requested CSS class.
@@ -26,16 +21,10 @@ fn text(value: &str, class: &str) -> gtk::Label {
         .build()
 }
 
-
 /// Builds the welcome view without starting or completing Google OAuth.
 ///
-/// Restored-account UI is embedded here, as in the original first-run page;
-/// the authentication controller installs only the connect/cancel callbacks.
-pub(super) fn build(
-    engine: Arc<DriveSyncEngine>,
-    navigation: &adw::NavigationView,
-    toasts: &adw::ToastOverlay,
-) -> WelcomeView {
+/// Account restoration and browser authorization have separate screens.
+pub(super) fn build() -> WelcomeView {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     let menu = gtk::gio::Menu::new();
@@ -92,27 +81,10 @@ pub(super) fn build(
     connect.set_tooltip_text(Some("Sign in securely in your web browser"));
     actions.append(&connect);
 
-    let feedback = text("", "body");
-    feedback.set_max_width_chars(60);
-    feedback.set_selectable(true);
-    feedback.set_visible(false);
-    let spinner = gtk::Spinner::new();
-    spinner.set_visible(false);
-    actions.append(&spinner);
-    let cancel_button = gtk::Button::with_label("Cancel");
-    cancel_button.set_visible(false);
-    actions.append(&cancel_button);
-    content.append(&crate::restoration::build(
-        engine.clone(),
-        navigation,
-        toasts,
-        &connect,
-    ));
     let learn = gtk::ToggleButton::with_label("Learn More");
     learn.add_css_class("flat");
     actions.append(&learn);
     content.append(&actions);
-    content.append(&feedback);
 
     let details = gtk::Revealer::new();
     let explanation = text(
@@ -145,11 +117,5 @@ pub(super) fn build(
         .build();
     toolbar.set_content(Some(&scroll));
 
-    WelcomeView {
-        toolbar,
-        connect,
-        cancel_button,
-        spinner,
-        feedback,
-    }
+    WelcomeView { toolbar, connect }
 }

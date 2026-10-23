@@ -49,6 +49,8 @@ fn folder_setup_and_dashboard_layouts() {
         for screen in ["welcome", "setup", "dashboard"] {
             let nav = adw::NavigationView::new();
             let toasts = adw::ToastOverlay::new();
+            let cancellation = std::rc::Rc::new(std::cell::RefCell::new(None));
+            crate::connection::install_action(engine.clone(), &nav, &toasts, cancellation.clone());
             toasts.set_child(Some(&nav));
             let root = adw::NavigationPage::builder()
                 .title("Layout fixture")
@@ -62,12 +64,8 @@ fn folder_setup_and_dashboard_layouts() {
                 email: Some("preview@example.com".into()),
             };
             let page = if screen == "welcome" {
-                let welcome = crate::welcome::build(
-                    engine.clone(),
-                    &nav,
-                    &toasts,
-                    std::rc::Rc::new(std::cell::RefCell::new(None)),
-                );
+                let welcome =
+                    crate::welcome::build(engine.clone(), &nav, &toasts, cancellation.clone());
                 root.set_title("Welcome");
                 root.set_child(Some(&welcome));
                 root.clone()
@@ -183,6 +181,70 @@ fn folder_setup_and_dashboard_layouts() {
             texture
                 .save_to_png(format!("{output}/{}-{width}.png", screen))
                 .unwrap();
+            if screen == "welcome" || screen == "dashboard" {
+                if screen == "welcome" {
+                    find_button(window.upcast_ref(), "Connect Google Account")
+                        .unwrap()
+                        .emit_clicked();
+                } else {
+                    find_named(window.upcast_ref(), "add-account")
+                        .unwrap()
+                        .downcast::<gtk::Button>()
+                        .unwrap()
+                        .emit_clicked();
+                }
+                let connection = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|w| {
+                        if w.widget_name() == "google-account-connection" {
+                            w.downcast::<adw::Window>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("shared account connection window");
+                assert!(connection.is_modal());
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                assert!(find_button(connection.upcast_ref(), "Sign In…").is_some());
+                assert!(!find_button(connection.upcast_ref(), "Copy Link")
+                    .unwrap()
+                    .is_sensitive());
+                assert!(
+                    cancellation.borrow().is_none(),
+                    "opening must not start OAuth"
+                );
+                let same =
+                    crate::connection::show(engine.clone(), &nav, &toasts, cancellation.clone());
+                assert_eq!(same, connection, "reuse the open connection window");
+                let frame = gtk::glib::MainLoop::new(None, false);
+                let finish = frame.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    finish.quit()
+                });
+                frame.run();
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&connection)).snapshot(
+                    &snapshot,
+                    connection.width() as f64,
+                    connection.height() as f64,
+                );
+                let node = snapshot.to_node().expect("connection window rendered");
+                connection
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{output}/connection-{width}.png"))
+                    .unwrap();
+                let pending = drivesync_engine::Cancellation::new();
+                *cancellation.borrow_mut() = Some(pending.clone());
+                connection.close();
+                assert!(
+                    pending.is_cancelled(),
+                    "closing must cancel pending authorization"
+                );
+                cancellation.borrow_mut().take();
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+            }
             if screen == "welcome" {
                 assert!(find_button(window.upcast_ref(), "Connect Google Account").is_some());
                 for obsolete in ["Reconnect Google Account", "Check Saved Accounts Again"] {
@@ -200,6 +262,37 @@ fn folder_setup_and_dashboard_layouts() {
                 dialog.response("cancel");
                 assert!(nav.is_sensitive());
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
+            }
+            if screen == "dashboard" {
+                let cached = RestoredAccount {
+                    account: AccountSummary {
+                        id: drivesync_engine::AccountId("google:cached".into()),
+                        provider_subject: "cached".into(),
+                        email: Some("cached@example.com".into()),
+                    },
+                    error: Some(drivesync_engine::AuthError::Network),
+                    folder: None,
+                };
+                crate::restoration::show_accounts(
+                    engine.clone(),
+                    vec![cached],
+                    &nav,
+                    &toasts,
+                    cancellation.clone(),
+                );
+                assert_eq!(nav.visible_page().unwrap().title(), "Dashboard");
+                assert!(
+                    !nav.pop(),
+                    "saved accounts must not expose welcome through Back"
+                );
+                crate::restoration::show_accounts(
+                    engine.clone(),
+                    vec![],
+                    &nav,
+                    &toasts,
+                    cancellation.clone(),
+                );
+                assert_eq!(nav.visible_page().unwrap().title(), "Welcome");
             }
             window.close();
         }

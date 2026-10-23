@@ -39,7 +39,6 @@ pub fn sign_out_button(
                     if let Some(toasts) = weak_toasts.upgrade() {
                         match result {
                             Ok(()) => {
-                                nav.pop_to_tag("welcome");
                                 let _ = nav.activate_action("accounts.refresh", None);
                                 toasts.add_toast(adw::Toast::new("Signed out. The account was removed from DriveSync. Your files have been kept."));
                             }

@@ -124,7 +124,7 @@ pub(super) fn populate(
             let weak_nav = nav.downgrade();
             reconnect.connect_clicked(move |_| {
                 if let Some(nav) = weak_nav.upgrade() {
-                    nav.pop_to_tag("welcome");
+                    let _ = nav.activate_action("connection.open", None);
                 }
             });
             content.append(&reconnect);

@@ -164,8 +164,9 @@ pub(super) fn bind(
                                 if nav.visible_page() != weak_page.upgrade() {
                                     return;
                                 }
-                                nav.pop_to_tag("welcome");
-                                nav.push(&crate::dashboard::build(engine, accounts, &nav, &toasts));
+                                nav.replace(&[crate::dashboard::build(
+                                    engine, accounts, &nav, &toasts,
+                                )]);
                             }
                         }
                         Err(error) => feedback.set_label(&error.to_string()),

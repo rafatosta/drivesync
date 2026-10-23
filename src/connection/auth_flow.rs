@@ -1,9 +1,9 @@
-//! Google OAuth coordination for the welcome page.
+//! Google OAuth coordination for the connection window.
 //!
 //! Runs the blocking authorization in a worker thread while using the GTK
 //! main context to open the browser through GIO, update progress and
 //! navigate only after the engine reports a fully persisted account.
-use super::view::WelcomeView;
+use super::view::ConnectionView;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountSummary, AuthError, Cancellation, DriveSyncEngine, EngineError};
 use std::{
@@ -22,7 +22,7 @@ enum AuthEvent {
     Finished(Result<AccountSummary, EngineError>),
 }
 
-/// Connects the welcome page's browser authorization and cancellation actions.
+/// Connects the connection window's browser authorization and cancellation actions.
 ///
 /// Cancellation is shared with the application lifecycle. The browser is
 /// launched from the GTK context using GIO/OpenURI; the worker handles PKCE,
@@ -33,9 +33,27 @@ pub(super) fn bind(
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
     cancellation: Rc<RefCell<Option<Cancellation>>>,
-    view: &WelcomeView,
+    view: &ConnectionView,
 ) {
     let connect = view.connect.clone();
+    let window = view.window.downgrade();
+    let copy = view.copy.clone();
+    let url_slot = Rc::new(RefCell::new(None::<String>));
+    let copy_url = url_slot.clone();
+    copy.connect_clicked(move |button| {
+        if let Some(url) = copy_url.borrow().as_ref() {
+            button.clipboard().set_text(url);
+        }
+    });
+    let close_cancel = cancellation.clone();
+    let close_url = url_slot.clone();
+    view.window.connect_close_request(move |_| {
+        if let Some(cancel) = close_cancel.borrow().as_ref() {
+            cancel.cancel();
+        }
+        close_url.borrow_mut().take();
+        gtk::glib::Propagation::Proceed
+    });
     let cancel_button = view.cancel_button.clone();
     let spinner = view.spinner.clone();
     let feedback = view.feedback.clone();
@@ -53,6 +71,8 @@ pub(super) fn bind(
         if !button.is_sensitive() || cancellation.borrow().is_some() {
             return;
         }
+        url_slot.borrow_mut().take();
+        copy.set_sensitive(false);
         let cancel = Cancellation::new();
         *cancellation.borrow_mut() = Some(cancel.clone());
         button.set_sensitive(false);
@@ -92,6 +112,9 @@ pub(super) fn bind(
             });
             let _ = sender.send(AuthEvent::Finished(result));
         });
+        let copy = copy.clone();
+        let url_slot = url_slot.clone();
+        let window = window.clone();
         let button = button.clone();
         let spinner = spinner.clone();
         let cancel_button = cancel_button.clone();
@@ -111,6 +134,9 @@ pub(super) fn bind(
                         let _ = acknowledge.send(false);
                         return gtk::glib::ControlFlow::Continue;
                     }
+                    *url_slot.borrow_mut() = Some(url.clone());
+                    copy.set_sensitive(true);
+                    copy.set_tooltip_text(Some("Copy the current authorization link"));
                     gtk::glib::spawn_future_local(async move {
                         // GIO uses the desktop OpenURI portal inside Flatpak.
                         let launched = gtk::gio::AppInfo::launch_default_for_uri_future(
@@ -131,12 +157,18 @@ pub(super) fn bind(
             };
             cancellation.borrow_mut().take();
             button.set_sensitive(true);
-            button.set_label("Connect Google Account");
+            button.set_label("Sign In…");
+            copy.set_sensitive(false);
+            copy.set_tooltip_text(Some("Available after starting sign-in"));
+            url_slot.borrow_mut().take();
             spinner.stop();
             spinner.set_visible(false);
             cancel_button.set_visible(false);
             match result {
                 Ok(account) => {
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
                     feedback.set_visible(false);
                     if let (Some(navigation), Some(toasts)) =
                         (navigation.upgrade(), toasts.upgrade())

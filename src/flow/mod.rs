@@ -7,11 +7,11 @@ mod navigation;
 mod widgets;
 mod worker;
 
-pub use navigation::{account_page, initial_destination, open_account, InitialDestination};
+pub use navigation::{initial_destination, open_account, InitialDestination};
 pub use widgets::{content, row, scroll};
 pub use worker::work;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod layout_tests;
+#[cfg(test)]
+mod tests;
