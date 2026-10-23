@@ -17,7 +17,11 @@ const MAX_BODY: u64 = 1024 * 1024;
 /// Returns a typed [`EngineError`] for network errors, excessive response
 /// size, authorization failures, unavailable providers or other HTTP errors.
 /// Raw provider responses are not included in returned errors.
-pub(super) fn request(token: &str, endpoint: &str, params: &[(&str, &str)]) -> Result<Vec<u8>, EngineError> {
+pub(super) fn request(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+) -> Result<Vec<u8>, EngineError> {
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))

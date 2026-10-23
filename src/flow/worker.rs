@@ -27,9 +27,9 @@ pub fn work<T: Send + 'static>(
         let result = match receive.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return gtk::glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => Err(EngineError::Authentication(
-                AuthError::Internal,
-            )),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(EngineError::Authentication(AuthError::Internal))
+            }
         };
         if let Some(done) = done.take() {
             done(result);

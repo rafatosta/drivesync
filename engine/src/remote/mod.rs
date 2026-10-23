@@ -13,8 +13,8 @@ mod errors;
 mod folders;
 mod models;
 
-pub use models::FolderPage;
 pub(crate) use folders::{get, list};
+pub use models::FolderPage;
 
 #[cfg(test)]
 mod tests;

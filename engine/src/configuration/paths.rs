@@ -101,7 +101,11 @@ pub(crate) fn local_origin(path: &Path) -> Result<PathBuf, EngineError> {
 /// # Errors
 ///
 /// Returns [`EngineError::LocalFolderIdentity`] for an inconsistent mapping.
-pub(super) fn portal_origin(path: &Path, mount: &Path, host: &Path) -> Result<PathBuf, EngineError> {
+pub(super) fn portal_origin(
+    path: &Path,
+    mount: &Path,
+    host: &Path,
+) -> Result<PathBuf, EngineError> {
     let relative = path
         .strip_prefix(mount)
         .map_err(|_| EngineError::LocalFolderIdentity)?;

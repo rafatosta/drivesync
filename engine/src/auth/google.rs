@@ -170,9 +170,9 @@ fn parse_tokens(response: Response, refreshing: bool) -> Result<Tokens, AuthErro
     decode_tokens(status, &read_body(response)?, refreshing)
 }
 /// Decodes and sanitizes the provider token response without leaking its body.
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns typed authentication errors for rejected grants, invalid responses,
 /// or transient provider failures.
 pub(super) fn decode_tokens(

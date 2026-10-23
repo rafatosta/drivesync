@@ -13,7 +13,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriveFolder {
-    /// Provider folder ID, subject to [`valid_id`] validation.
+    /// Provider folder ID, subject to internal folder identifier validation.
     pub id: String,
     /// Nonempty Drive folder name; control characters are rejected.
     pub name: String,
