@@ -288,7 +288,7 @@ pub(super) fn build(
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
-        .label("Manual download · local edits are preserved. Updates keep a previous copy beside the file.")
+        .label("Manual download · up-to-date files are not downloaded again. Local edits are preserved; updates keep a previous copy.")
         .wrap(true)
         .xalign(0.0)
         .css_classes(["dim-label"])
@@ -364,11 +364,11 @@ pub(super) fn build(
             menu.set_sensitive(false);
         }
         if let Some(row) = ui.row.upgrade() {
-            row.set_title("Preparing downloads");
-            row.set_subtitle("Scanning Google Drive and checking local files…");
+            row.set_title("Checking for changes");
+            row.set_subtitle("Checking Google Drive changes and existing local copies…");
         }
         if let Some(status) = ui.status.upgrade() {
-            status.set_label("Preparing a fresh download plan…");
+            status.set_label("The first cycle also scans the selected folders.");
         }
         ui.clear_issues();
         if let Some(preserved) = ui.preserved.upgrade() {

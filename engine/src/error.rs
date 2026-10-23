@@ -40,7 +40,7 @@ impl std::fmt::Display for EngineError {
             Self::DownloadIntegrity => f.write_str("The downloaded file failed its size or checksum verification. It was not installed."),
             Self::DownloadIo => f.write_str("Could not safely read, write or synchronize the local folder. Check permissions and free space."),
             Self::ChangeCursorRejected => f.write_str("The Drive change cursor was rejected. A complete reconciliation is required."),
-            Self::RemoteItemUnavailable => f.write_str("This previously observed path changed or is no longer available on Google Drive. Its local copy was preserved."),
+            Self::RemoteItemUnavailable => f.write_str("This previously observed path changed or is no longer available on Google Drive. Any existing local copy is preserved."),
             Self::RemoteChanged => f.write_str("The item or its folder changed on Google Drive during verification. Run synchronization again. Existing local files were preserved."),
             Self::SyncBusy => f.write_str("This local folder is already being synchronized."),
             Self::InvalidPlan => f.write_str("The download plan is inconsistent or its configuration changed. Scan the folder again."),
