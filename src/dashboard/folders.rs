@@ -291,10 +291,6 @@ fn autosave(
     };
     ui.refresh(&draft.borrow(), true);
     ui.message("Checking folders and saving your settings…");
-    let engine = engine.clone();
-    let id = id.clone();
-    let ui = ui.clone();
-    let draft = draft.clone();
     crate::flow::work(
         move || {
             engine.configure_folder(&id, &remote.id, &local)?;
