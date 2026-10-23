@@ -81,6 +81,7 @@ impl Root {
     }
     pub fn mkdir(&self, relative: &Path) -> Result<(), EngineError> {
         let (parent, name) = self.parent(relative)?;
+        self.validate_parent(relative, identity(&parent)?)?;
         match fs::mkdirat(&parent, &name, Mode::RWXU) {
             Ok(()) => parent.sync_all().map_err(io)?,
             Err(rustix::io::Errno::EXIST) => {}

@@ -286,6 +286,7 @@ impl Session<'_> {
             parent: parent_id,
             phase: Phase::Started,
         };
+        self.root.validate_parent(path, parent_id)?;
         self.put(&op)?;
         let mut staged = filesystem::create(&parent, &op.temporary, size)?;
         let mut input = source.media(&item.id)?;

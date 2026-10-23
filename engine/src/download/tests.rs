@@ -505,3 +505,26 @@ fn interrupted_staging_mutation_is_not_confirmed_or_installed() {
     assert!(!f.root.join("file.txt").exists());
     assert_eq!(fs::read(temp).unwrap(), b"xyz");
 }
+
+#[test]
+fn journal_identity_collision_cannot_report_a_successful_write() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut source = Fake::new(&inv);
+    f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    let plan =
+        crate::planner::plan(&inv, &f.root, |p| crate::planner::observe(&f.root, p)).unwrap();
+    let store = Store::open(&f.db()).unwrap();
+    let before = store.operations("client", &plan).unwrap();
+    let mut forged = before[0].clone();
+    forged.item.id = "different".into();
+    assert_eq!(
+        store.put_operation("client", &plan, &forged).unwrap_err(),
+        EngineError::StateStorage
+    );
+    assert_eq!(
+        store.operations("client", &plan).unwrap()[0].item.id,
+        "file"
+    );
+}

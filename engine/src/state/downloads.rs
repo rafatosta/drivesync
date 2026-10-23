@@ -14,8 +14,14 @@ impl Store {
         op: &Operation,
     ) -> Result<(), EngineError> {
         let local = scope.local_root.to_str().ok_or(EngineError::InvalidPlan)?;
+        if !valid(op) {
+            return Err(EngineError::InvalidPlan);
+        }
         let json = serde_json::to_string(op).map_err(failed)?;
-        self.0.execute("INSERT INTO downloads VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(client,account,remote,local,operation) DO UPDATE SET record=excluded.record WHERE file=excluded.file",params![client,scope.account_id.0,scope.remote_root,local,op.id,op.item.id,json]).map_err(failed)?;
+        let changed = self.0.execute("INSERT INTO downloads VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(client,account,remote,local,operation) DO UPDATE SET record=excluded.record WHERE file=excluded.file",params![client,scope.account_id.0,scope.remote_root,local,op.id,op.item.id,json]).map_err(failed)?;
+        if changed != 1 {
+            return Err(EngineError::StateStorage);
+        }
         Ok(())
     }
     /// Returns journal evidence only; callers must check inode and content again.
