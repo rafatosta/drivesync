@@ -27,8 +27,9 @@ Closing the window requests the desktop Background portal permission without
 requesting login autostart. Only an explicit grant hides the window. A native
 notification offers Open and Quit; the primary header menu and Ctrl+Q also quit.
 Denied or unavailable permission leaves the window visible with a Keep Open / Quit
-dialog. GNOME background status distinguishes active manual cycles from waiting.
-Closing the window does not schedule new synchronization cycles.
+dialog. GNOME background status distinguishes active cycles, connection failures,
+pending issues and automatic checks. Saved configured accounts are checked
+automatically while the application is running, including with its window hidden.
 
 The launcher and notifications require installing the Flatpak, not merely running
 its build directory in Builder. Installed desktop identity must match the binary's

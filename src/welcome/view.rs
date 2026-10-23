@@ -80,7 +80,7 @@ pub(super) fn build() -> WelcomeView {
 
     let details = gtk::Revealer::new();
     let explanation = text(
-        "DriveSync is in early development. Google sign-in is available; file transfers are not functional yet. The MVP will download files from Google Drive to local folders. Local edits will not be uploaded, and remote deletions will not automatically delete local files. Google Workspace documents are outside this milestone.",
+        "DriveSync is in early development. Connect an account and choose folders to download files automatically from Google Drive. Local edits will not be uploaded, and remote deletions will not automatically delete local files. Google Workspace documents are outside this milestone.",
         "body",
     );
     explanation.set_max_width_chars(70);

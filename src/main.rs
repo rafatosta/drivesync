@@ -6,6 +6,7 @@ use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+mod automatic;
 mod background;
 mod connection;
 mod dashboard;
@@ -28,6 +29,7 @@ fn main() -> adw::gtk::glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
     // Startup runs once for the primary application, even on repeated activation.
     app.connect_startup(|app| {
+        automatic::install(app);
         let engine = Arc::new(DriveSyncEngine::new());
         let window = adw::ApplicationWindow::builder()
             .application(app)

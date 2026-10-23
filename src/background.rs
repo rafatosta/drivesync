@@ -1,7 +1,7 @@
 //! Desktop background permission, discoverable notifications and window activation.
 //!
 //! A denied or unavailable portal never silently hides the application. No login
-//! autostart is requested; existing manual download cycles retain their behavior.
+//! autostart is requested; automatic downloads continue without requiring a visible window.
 use adw::{
     gtk::{gio, glib},
     prelude::*,
@@ -17,7 +17,10 @@ const PORTAL: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
 const INTERFACE: &str = "org.freedesktop.portal.Background";
 const NOTICE: &str = "background";
-thread_local! { static ACTIVE: Cell<usize> = const { Cell::new(0) }; }
+thread_local! {
+    static ACTIVE: Cell<usize> = const { Cell::new(0) };
+    static IDLE_STATUS: RefCell<&'static str> = const { RefCell::new("Choose folders to enable synchronization") };
+}
 
 /// Installs application actions and intercepts close until background permission
 /// has been obtained. All portal communication runs on the GTK main context.
@@ -49,7 +52,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
             if allowed {
                 let Some(app) = window.application() else { return; };
                 let notice = gio::Notification::new("DriveSync continues running");
-                notice.set_body(Some("Downloads already started will continue. Open DriveSync to start another synchronization."));
+                notice.set_body(Some("DriveSync is running in the background. Open it to view synchronization status."));
                 notice.set_default_action("app.show");
                 notice.add_button("Open DriveSync", "app.show");
                 notice.add_button("Quit", "app.quit");
@@ -148,7 +151,7 @@ async fn request() -> bool {
     false
 }
 
-/// Publishes honest manual-cycle activity in GNOME's background applications list.
+/// Publishes automatic download activity in GNOME's background applications list.
 /// Older portal versions may not support status messages; permission and window
 /// visibility remain independent of this optional status update.
 pub(crate) fn set_activity(active: bool) {
@@ -162,6 +165,14 @@ pub(crate) fn set_activity(active: bool) {
     publish_status();
 }
 
+/// Updates the aggregate idle state without emitting repeated desktop requests.
+pub(crate) fn set_idle_status(message: &'static str) {
+    let changed = IDLE_STATUS.with(|current| current.replace(message) != message);
+    if changed {
+        publish_status();
+    }
+}
+
 fn publish_status() {
     let active = ACTIVE.with(|count| count.get() > 0);
     glib::spawn_future_local(async move {
@@ -171,7 +182,7 @@ fn publish_status() {
         let message = if active {
             "Synchronization in progress"
         } else {
-            "Waiting for manual synchronization"
+            IDLE_STATUS.with(|message| *message.borrow())
         };
         let options = HashMap::from([("message", message.to_variant())]);
         let _ = bus

@@ -22,9 +22,10 @@ impl DriveSyncEngine {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Returns the current coarse engine status.
+    /// Returns the reserved coarse configuration placeholder.
     ///
-    /// Synchronization is not yet implemented in this MVP.
+    /// This does not describe download jobs. Callers must use cycle results and
+    /// their application-owned scheduler to present actual synchronization state.
     pub fn status(&self) -> EngineStatus {
         EngineStatus::NotConfigured
     }
@@ -244,7 +245,7 @@ impl DriveSyncEngine {
         Ok(plan)
     }
 
-    /// Runs a manual download-only cycle using durable incremental remote observations.
+    /// Runs one download-only cycle using durable incremental remote observations.
     /// The first cycle reconciles an inventory with the change feed; subsequent
     /// cycles reuse the ID graph and consume new events. Local files are rechecked.
     /// Call off the UI thread.
@@ -426,7 +427,7 @@ mod live_google_tests;
 #[cfg(test)]
 mod tests;
 
-/// Holds one account/configuration scope throughout a manual transfer cycle.
+/// Holds one account/configuration scope throughout one transfer cycle.
 struct DownloadSource<'a> {
     engine: &'a DriveSyncEngine,
     folder: &'a FolderConfiguration,

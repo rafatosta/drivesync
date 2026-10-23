@@ -187,7 +187,7 @@ pub(super) fn build(
         warning: warning.downgrade(),
         sync: sync.downgrade(),
         status: status.downgrade(),
-        editable: saved.error.is_none(),
+        editable: crate::automatic::eligible(saved),
         start: start.downgrade(),
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
@@ -311,6 +311,7 @@ fn autosave(
         move |result| {
             match result {
                 Ok(Some(saved)) => {
+                    crate::automatic::configured(saved.clone());
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
                     draft.borrow_mut().local_available = true;
                     ui.message("");

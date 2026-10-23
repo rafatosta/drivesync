@@ -1,15 +1,11 @@
-//! Manual download cycles on workers, using native progress and cancellation UI.
+//! Automatic and explicit downloads observing application-owned account jobs.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
-    Cancellation, DownloadProgress, DownloadReport, DownloadStage, DriveSyncEngine, EngineError,
-    RestoredAccount,
+    DownloadProgress, DownloadReport, DownloadStage, DriveSyncEngine, EngineError, RestoredAccount,
 };
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+#[cfg(test)]
+use std::{cell::Cell, rc::Rc};
+use std::{sync::Arc, time::Duration};
 
 /// Weak handles let navigation dispose account pages while cancellation propagates.
 #[derive(Clone)]
@@ -113,9 +109,109 @@ impl Widgets {
             container.set_visible(!report.issues.is_empty());
         }
     }
+    fn begin(&self) {
+        if let Some(button) = self.start.upgrade() {
+            button.set_label("Cancel");
+            button.set_sensitive(true);
+            button.remove_css_class("suggested-action");
+        }
+        if let Some(folders) = self.folders.upgrade() {
+            folders.set_sensitive(false);
+        }
+        if let Some(menu) = self.menu.upgrade() {
+            menu.set_sensitive(false);
+        }
+        if let Some(row) = self.row.upgrade() {
+            row.set_title("Checking for changes");
+            row.set_subtitle("Checking Google Drive changes and existing local copies…");
+        }
+        if let Some(status) = self.status.upgrade() {
+            status.set_label("The first cycle also scans the selected folders.");
+        }
+        self.clear_issues();
+        if let Some(preserved) = self.preserved.upgrade() {
+            preserved.set_visible(false);
+        }
+        if let Some(skipped) = self.skipped.upgrade() {
+            skipped.set_visible(false);
+        }
+        if let Some(spinner) = self.spinner.upgrade() {
+            spinner.set_visible(true);
+            spinner.start();
+        }
+        if let Some(bar) = self.progress.upgrade() {
+            bar.set_fraction(0.0);
+            bar.set_visible(false);
+        }
+    }
+    /// Scheduling state and transfer results have separate meanings. Keep issue
+    /// details visible while showing offline/retry/pause as the account status.
+    fn present_job(
+        &self,
+        snapshot: &crate::automatic::Snapshot,
+        previous: Option<crate::automatic::Phase>,
+    ) {
+        use crate::automatic::Phase;
+        if snapshot.phase == Phase::Running {
+            if previous != Some(Phase::Running) {
+                self.begin();
+            }
+            if snapshot.cancelling {
+                if let Some(button) = self.start.upgrade() {
+                    button.set_label("Cancelling…");
+                    button.set_sensitive(false);
+                }
+                if let Some(row) = self.row.upgrade() {
+                    row.set_title("Cancelling downloads");
+                }
+            } else if let Some(progress) = &snapshot.progress {
+                self.progress(progress);
+            }
+            return;
+        }
+        if let Some(result) = &snapshot.result {
+            self.finish(result.clone());
+        }
+        if let Some(row) = self.row.upgrade() {
+            let (title, subtitle) = match snapshot.phase {
+                Phase::Unconfigured => return,
+                Phase::Waiting => (
+                    "Waiting for automatic synchronization",
+                    "Configured accounts are checked automatically.",
+                ),
+                Phase::UpToDate => (
+                    "Up to date",
+                    "Next automatic check in about a minute · download only",
+                ),
+                Phase::Attention => (
+                    "Needs attention",
+                    "Local files were preserved. Automatic checks continue.",
+                ),
+                Phase::Offline => (
+                    "Unable to connect",
+                    "Waiting for a connection · automatic retry enabled",
+                ),
+                Phase::Retrying => (
+                    "Retrying automatically",
+                    "Temporary failure · retry interval increases up to five minutes",
+                ),
+                Phase::Paused => (
+                    "Synchronization paused",
+                    "Start synchronization to resume automatic checks.",
+                ),
+                Phase::Blocked => (
+                    "Needs attention",
+                    "Fix the problem, then start synchronization to retry.",
+                ),
+                Phase::Running => unreachable!(),
+            };
+            row.set_title(title);
+            row.set_subtitle(subtitle);
+        }
+    }
     fn finish(&self, result: Result<DownloadReport, EngineError>) {
         if let Some(start) = self.start.upgrade() {
-            start.set_label("Start Synchronization");
+            start.set_label("Synchronize Now");
             start.add_css_class("suggested-action");
             start.set_sensitive(true);
         }
@@ -274,8 +370,8 @@ fn preserved_text(report: &DownloadReport) -> String {
     }
     text
 }
-/// Binds the configured account to a single manual worker. The same button
-/// cancels active work; folder/account actions stay unavailable until it stops.
+/// Observes the shared account job. Page disposal stops observation only; the
+/// application-owned worker continues while hidden or while pages are rebuilt.
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
@@ -287,7 +383,7 @@ pub(super) fn build(
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
-        .label("Manual download · up-to-date files are not downloaded again. Local edits are preserved; updates keep a previous copy.")
+        .label("Automatic download · checks every minute. Up-to-date files are not downloaded again. Local edits are preserved; updates keep a previous copy.")
         .wrap(true)
         .xalign(0.0)
         .css_classes(["dim-label"])
@@ -339,100 +435,36 @@ pub(super) fn build(
         preserved: preserved.downgrade(),
         spinner: spinner.downgrade(),
     };
-    let running: Rc<RefCell<Option<Cancellation>>> = Rc::new(RefCell::new(None));
-    let id = saved.account.id.clone();
+    let job = crate::automatic::Controller::attach(engine, saved);
+    let click_job = job.clone();
+    let click_ui = ui.clone();
     start.connect_clicked(move |button| {
-        if let Some(cancel) = running.borrow().as_ref() {
-            cancel.cancel();
+        if click_job.running() {
+            click_job.cancel();
             button.set_sensitive(false);
             button.set_label("Cancelling…");
-            if let Some(row) = ui.row.upgrade() {
+            if let Some(row) = click_ui.row.upgrade() {
                 row.set_title("Cancelling downloads");
                 row.set_subtitle("Waiting for the current operation to stop safely…");
             }
-            return;
+        } else {
+            click_job.request();
+            click_ui.present_job(&click_job.snapshot(), None);
         }
-        crate::background::set_activity(true);
-        let cancel = Cancellation::new();
-        *running.borrow_mut() = Some(cancel.clone());
-        button.set_label("Cancel");
-        button.remove_css_class("suggested-action");
-        if let Some(folders) = ui.folders.upgrade() {
-            folders.set_sensitive(false);
+    });
+    let mut revision = u64::MAX;
+    let mut phase = None;
+    gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
+        if ui.start.upgrade().is_none() {
+            return gtk::glib::ControlFlow::Break;
         }
-        if let Some(menu) = ui.menu.upgrade() {
-            menu.set_sensitive(false);
+        if job.revision() != revision {
+            let snapshot = job.snapshot();
+            ui.present_job(&snapshot, phase);
+            revision = snapshot.revision;
+            phase = Some(snapshot.phase);
         }
-        if let Some(row) = ui.row.upgrade() {
-            row.set_title("Checking for changes");
-            row.set_subtitle("Checking Google Drive changes and existing local copies…");
-        }
-        if let Some(status) = ui.status.upgrade() {
-            status.set_label("The first cycle also scans the selected folders.");
-        }
-        ui.clear_issues();
-        if let Some(preserved) = ui.preserved.upgrade() {
-            preserved.set_visible(false);
-        }
-        if let Some(skipped) = ui.skipped.upgrade() {
-            skipped.set_visible(false);
-        }
-        if let Some(spinner) = ui.spinner.upgrade() {
-            spinner.set_visible(true);
-            spinner.start();
-        }
-        if let Some(bar) = ui.progress.upgrade() {
-            bar.set_fraction(0.0);
-            bar.set_visible(false);
-        }
-        let latest: Arc<Mutex<Option<DownloadProgress>>> = Arc::new(Mutex::new(None));
-        let receive = latest.clone();
-        let worker = engine.clone();
-        let account = id.clone();
-        let worker_cancel = cancel.clone();
-        let finished = Rc::new(Cell::new(false));
-        let progress_finished = finished.clone();
-        let updates = ui.clone();
-        let active = running.clone();
-        let completion = ui.clone();
-        let completion_active = running.clone();
-        // A single replaceable snapshot keeps the newest file/stage without an event backlog.
-        gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
-            if progress_finished.get() || active.borrow().is_none() {
-                return gtk::glib::ControlFlow::Break;
-            }
-            if updates.start.upgrade().is_none() {
-                cancel.cancel();
-                return gtk::glib::ControlFlow::Break;
-            }
-            if active
-                .borrow()
-                .as_ref()
-                .is_some_and(Cancellation::is_cancelled)
-            {
-                return gtk::glib::ControlFlow::Continue;
-            }
-            let event = receive.lock().ok().and_then(|mut slot| slot.take());
-            if let Some(event) = event {
-                updates.progress(&event);
-            }
-            gtk::glib::ControlFlow::Continue
-        });
-        crate::flow::work(
-            move || {
-                worker.download_once(&account, &worker_cancel, |event| {
-                    if let Ok(mut slot) = latest.lock() {
-                        *slot = Some(event);
-                    }
-                })
-            },
-            move |result| {
-                crate::background::set_activity(false);
-                finished.set(true);
-                *completion_active.borrow_mut() = None;
-                completion.finish(result);
-            },
-        );
+        gtk::glib::ControlFlow::Continue
     });
     footer
 }
@@ -447,10 +479,18 @@ pub(super) fn verify_worker_failure() {
             email: None,
         },
         error: None,
-        folder: None,
+        folder: Some(drivesync_engine::FolderConfiguration {
+            account_id: AccountId("google:download-ui-fixture".into()),
+            remote: drivesync_engine::DriveFolder {
+                id: "fixture".into(),
+                name: "Fixture".into(),
+            },
+            local: "/tmp/drivesync-ui-missing".into(),
+            local_display: "/tmp/drivesync-ui-missing".into(),
+        }),
     };
     let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let start = gtk::Button::with_label("Start Synchronization");
+    let start = gtk::Button::with_label("Synchronize Now");
     let row = adw::ActionRow::new();
     let status = gtk::Label::new(None);
     let menu = gtk::MenuButton::new();
@@ -475,7 +515,7 @@ pub(super) fn verify_worker_failure() {
         count.set(count.get() + 1);
         if weak_start
             .upgrade()
-            .is_some_and(|b| b.label().as_deref() == Some("Start Synchronization"))
+            .is_some_and(|b| b.label().as_deref() == Some("Synchronize Now"))
             || count.get() > 100
         {
             finish.quit();
@@ -485,7 +525,7 @@ pub(super) fn verify_worker_failure() {
         }
     });
     wait.run();
-    assert_eq!(row.title(), "Download needs attention");
+    assert_eq!(row.title(), "Needs attention");
     assert!(!start.is_sensitive());
     assert!(folders.is_sensitive());
     assert!(menu.is_sensitive());
@@ -630,6 +670,43 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         assert!(!spinner.is_spinning());
         capture(&window, &format!("download-result-{width}"));
         assert!(window.width() <= width + 10);
+        for (phase, title, name) in [
+            (crate::automatic::Phase::UpToDate, "Up to date", "current"),
+            (
+                crate::automatic::Phase::Offline,
+                "Unable to connect",
+                "offline",
+            ),
+            (
+                crate::automatic::Phase::Retrying,
+                "Retrying automatically",
+                "retry",
+            ),
+            (
+                crate::automatic::Phase::Paused,
+                "Synchronization paused",
+                "paused",
+            ),
+            (
+                crate::automatic::Phase::Blocked,
+                "Needs attention",
+                "blocked",
+            ),
+        ] {
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 1,
+                    cancelling: false,
+                    phase,
+                    progress: None,
+                    result: None,
+                },
+                None,
+            );
+            assert_eq!(row.title(), title);
+            capture(&window, &format!("automatic-{name}-{width}"));
+            assert!(window.width() <= width + 10);
+        }
         window.close();
     }
 }

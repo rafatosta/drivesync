@@ -1,4 +1,4 @@
-//! Adaptive account navigation and manual download dashboard.
+//! Adaptive account navigation and automatic download dashboard.
 mod account_details;
 mod description;
 mod folders;
@@ -8,7 +8,7 @@ use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;
 
-/// Builds account navigation with account-scoped configuration and manual downloads.
+/// Builds account navigation with account-scoped configuration and automatic downloads.
 pub fn build(
     engine: Arc<DriveSyncEngine>,
     accounts: Vec<RestoredAccount>,
@@ -26,6 +26,7 @@ pub fn build_selected(
     toasts: &adw::ToastOverlay,
     selected: Option<&str>,
 ) -> adw::NavigationPage {
+    crate::automatic::reconcile(engine.clone(), &accounts);
     let split = adw::NavigationSplitView::builder()
         .min_sidebar_width(240.0)
         .max_sidebar_width(300.0)

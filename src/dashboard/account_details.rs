@@ -113,7 +113,7 @@ pub(super) fn populate(
             .wrap(true)
             .css_classes(["dim-label"])
             .build();
-        let start = gtk::Button::with_label("Start Synchronization");
+        let start = gtk::Button::with_label("Synchronize Now");
         start.set_halign(gtk::Align::End);
         start.add_css_class("suggested-action");
         start.set_sensitive(false);

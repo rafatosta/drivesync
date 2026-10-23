@@ -9,7 +9,7 @@ pub struct DownloadIssue {
     pub relative_path: Option<PathBuf>,
     pub error: EngineError,
 }
-/// A completed manual cycle. Issues/skipped items are not synchronization success.
+/// A completed download cycle. Issues/skipped items are not synchronization success.
 #[derive(Debug, Clone, Default)]
 pub struct DownloadReport {
     pub downloaded: usize,

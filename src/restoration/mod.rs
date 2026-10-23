@@ -33,6 +33,7 @@ pub(crate) fn show_accounts(
 ) {
     match crate::flow::initial_destination(&accounts) {
         crate::flow::InitialDestination::Accounts => {
+            crate::automatic::reconcile(engine.clone(), &accounts);
             let welcome = crate::welcome::build(engine, nav, toasts, cancellation);
             nav.replace(&[adw::NavigationPage::new(&welcome, "Welcome")]);
         }

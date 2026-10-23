@@ -1,0 +1,48 @@
+# Automatic download behavior
+
+Configured accounts are checked three seconds after registration and every minute
+**after the previous cycle completes**. Opening an existing account again or
+rebuilding the dashboard reuses its application-owned job. The explicit
+synchronization button uses that same job. Hiding the window leaves scheduling
+active; Quit cancels all running jobs. This does not enable login autostart.
+
+At most one worker runs per account. Reconfiguration and account removal cancel
+the previous job and retain its guard until it stops; obsolete results cannot
+replace the state of a new configuration. Engine journal and filesystem locks
+remain the final safety boundary across processes and local-root aliases.
+
+Transient transport/provider failures, rate limits, busy resources and remotely
+changing items retry after 30, 60, 120, 240 and at most 300 seconds. This includes
+per-item failures in a partially completed report. Success resets backoff. The
+native network monitor is only a hint: actual engine results remain authoritative.
+A connectivity-restored signal retries network failures promptly, but does not
+bypass rate-limit backoff, explicit pause or blocking errors.
+
+Cancellation pauses automatic checks for that account until the user starts
+synchronization again (or explicitly saves its folder configuration). Pause is an
+in-memory session state; restarting the application schedules configured accounts
+again. Invalid folders, revoked authorization, integrity, storage and local I/O
+failures require correction/manual retry. Temporary startup authentication
+transport failures remain eligible for retry. No error triggers automatic login,
+credential removal or destructive repairs.
+
+Local conflicts, remote removals and skipped unsupported items remain visible as
+needing attention; ordinary checks continue. Local edits and previous copies are
+preserved using the existing engine behavior. These cycles never upload, remove
+local copies or resolve conflicts automatically.
+
+## Validation
+
+The deterministic scheduling tests use explicit timestamps instead of waiting for
+minute-long deadlines. Scripted worker tests exercise overlap rejection, network
+retry, cancellation acknowledgement, stale configuration results and shutdown
+without credentials or user files. Existing engine tests cover incremental remote
+changes, conflicts, interrupted installation and durable recovery.
+
+The ignored `automatic::runtime::tests::hidden_window_runs_automatic_cycles` test
+requires the matching desktop sandbox, session bus and background permission, with
+`DRIVESYNC_BACKGROUND_TEST=1`. It injects a network failure and a conflict report,
+uses the real application timer and simulates a connectivity-restored signal while
+the window is hidden. It never initializes the engine or accesses account data.
+The regular GTK layout fixture uses isolated manual controllers so preview windows
+cannot start automatic network jobs.
