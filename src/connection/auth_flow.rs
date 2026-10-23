@@ -54,35 +54,29 @@ pub(super) fn bind(
         close_url.borrow_mut().take();
         gtk::glib::Propagation::Proceed
     });
-    let cancel_button = view.cancel_button.clone();
+    let subtitle = view.subtitle.clone();
     let spinner = view.spinner.clone();
     let feedback = view.feedback.clone();
-    let cancel_slot = cancellation.clone();
-    cancel_button.connect_clicked(move |button| {
-        if let Some(cancel) = cancel_slot.borrow().as_ref() {
-            cancel.cancel();
-        }
-        button.set_sensitive(false);
-    });
     let navigation = navigation.downgrade();
     let toasts = toasts.downgrade();
     let feedback_clone = feedback.clone();
     connect.connect_clicked(move |button| {
-        if !button.is_sensitive() || cancellation.borrow().is_some() {
+        if !button.is_sensitive() {
+            return;
+        }
+        if let Some(cancel) = cancellation.borrow().as_ref() {
+            cancel.cancel();
+            button.set_sensitive(false);
+            button.set_label("Cancelling…");
+            copy.set_sensitive(false);
+            url_slot.borrow_mut().take();
             return;
         }
         url_slot.borrow_mut().take();
         copy.set_sensitive(false);
         let cancel = Cancellation::new();
         *cancellation.borrow_mut() = Some(cancel.clone());
-        button.set_sensitive(false);
-        button.set_label("Waiting for Google…");
-        spinner.set_visible(true);
-        spinner.start();
-        cancel_button.set_sensitive(true);
-        cancel_button.set_visible(true);
-        feedback_clone.set_label("Complete authorization in your web browser, then return here.");
-        feedback_clone.set_visible(true);
+        super::view::set_waiting(button, &subtitle, &spinner, &feedback_clone, true);
         let (sender, receiver) = mpsc::channel();
         let worker_engine = engine.clone();
         std::thread::spawn(move || {
@@ -116,8 +110,8 @@ pub(super) fn bind(
         let url_slot = url_slot.clone();
         let window = window.clone();
         let button = button.clone();
+        let subtitle = subtitle.clone();
         let spinner = spinner.clone();
-        let cancel_button = cancel_button.clone();
         let feedback = feedback_clone.clone();
         let navigation = navigation.clone();
         let toasts = toasts.clone();
@@ -156,14 +150,10 @@ pub(super) fn bind(
                 }
             };
             cancellation.borrow_mut().take();
-            button.set_sensitive(true);
-            button.set_label("Sign In…");
+            super::view::set_waiting(&button, &subtitle, &spinner, &feedback, false);
             copy.set_sensitive(false);
             copy.set_tooltip_text(Some("Available after starting sign-in"));
             url_slot.borrow_mut().take();
-            spinner.stop();
-            spinner.set_visible(false);
-            cancel_button.set_visible(false);
             match result {
                 Ok(account) => {
                     if let Some(window) = window.upgrade() {
@@ -187,6 +177,7 @@ pub(super) fn bind(
                 }
                 Err(error) => {
                     feedback.set_label(&error.to_string());
+                    feedback.set_visible(true);
                     if let Some(toasts) = toasts.upgrade() {
                         toasts.add_toast(adw::Toast::new(&error.to_string()));
                     }

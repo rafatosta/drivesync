@@ -235,6 +235,23 @@ fn folder_setup_and_dashboard_layouts() {
                     .render_texture(&node, None)
                     .save_to_png(format!("{output}/connection-{width}.png"))
                     .unwrap();
+                assert!(
+                    connection.height() < 570,
+                    "connection should fit its content"
+                );
+                let cancel_action = drivesync_engine::Cancellation::new();
+                *cancellation.borrow_mut() = Some(cancel_action.clone());
+                find_button(connection.upcast_ref(), "Sign In…")
+                    .unwrap()
+                    .emit_clicked();
+                assert!(
+                    cancel_action.is_cancelled(),
+                    "primary action must cancel pending login"
+                );
+                assert!(!find_button(connection.upcast_ref(), "Cancelling…")
+                    .unwrap()
+                    .is_sensitive());
+                cancellation.borrow_mut().take();
                 let pending = drivesync_engine::Cancellation::new();
                 *cancellation.borrow_mut() = Some(pending.clone());
                 connection.close();
@@ -244,6 +261,40 @@ fn folder_setup_and_dashboard_layouts() {
                 );
                 cancellation.borrow_mut().take();
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                let waiting = crate::connection::waiting_preview(Some(window.upcast_ref()));
+                waiting.present();
+                let frame = gtk::glib::MainLoop::new(None, false);
+                let finish = frame.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    finish.quit()
+                });
+                frame.run();
+                assert!(find_button(waiting.upcast_ref(), "Cancel")
+                    .unwrap()
+                    .is_sensitive());
+                assert!(find_button(waiting.upcast_ref(), "Sign In…").is_none());
+                let subtitle = find_named(waiting.upcast_ref(), "connection-subtitle").unwrap();
+                let spinner = find_named(waiting.upcast_ref(), "connection-spinner").unwrap();
+                assert_eq!(
+                    subtitle.clone().downcast::<gtk::Label>().unwrap().text(),
+                    "Complete authorization in your web browser, then return here."
+                );
+                assert_eq!(subtitle.next_sibling().as_ref(), Some(&spinner));
+                assert!(spinner.downcast::<gtk::Spinner>().unwrap().is_spinning());
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&waiting)).snapshot(
+                    &snapshot,
+                    waiting.width() as f64,
+                    waiting.height() as f64,
+                );
+                let node = snapshot.to_node().unwrap();
+                waiting
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{output}/connection-waiting-{width}.png"))
+                    .unwrap();
+                waiting.close();
             }
             if screen == "welcome" {
                 assert!(find_button(window.upcast_ref(), "Connect Google Account").is_some());

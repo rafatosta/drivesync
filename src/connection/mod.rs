@@ -48,3 +48,11 @@ pub fn install_action(
     actions.add_action(&action);
     navigation.insert_action_group("connection", Some(&actions));
 }
+
+/// Renders the waiting presentation in fixtures without starting real OAuth.
+#[cfg(test)]
+pub(crate) fn waiting_preview(parent: Option<&gtk::Window>) -> adw::Window {
+    let view = view::build(parent);
+    view.set_waiting(true);
+    view.window
+}
