@@ -81,6 +81,16 @@ pub(super) fn populate(
         entry.set_widget_name("account-display-name");
 
         description.add(&entry);
+        let email = adw::ActionRow::builder()
+            .title("Email")
+            .subtitle(name)
+            .use_markup(false)
+            .subtitle_selectable(true)
+            .build();
+        email.set_widget_name("account-email");
+        email.set_subtitle_lines(2);
+        email.set_tooltip_text(Some(name));
+        description.add(&email);
         content.append(&description);
         super::description::bind(
             engine.clone(),

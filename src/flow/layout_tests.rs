@@ -153,6 +153,12 @@ fn folder_setup_and_dashboard_layouts() {
                     .unwrap()
                     .downcast::<adw::EntryRow>()
                     .unwrap();
+                let email = find_named(window.upcast_ref(), "account-email")
+                    .unwrap()
+                    .downcast::<adw::ActionRow>()
+                    .unwrap();
+                assert_eq!(email.subtitle().as_deref(), Some("preview@example.com"));
+                assert!(!email.is_activatable());
                 assert!(entry.is_sensitive());
                 let id = drivesync_engine::AccountId("google:layout-fixture".into());
                 for label in ["Principal", "", "Principal"] {
@@ -170,6 +176,17 @@ fn folder_setup_and_dashboard_layouts() {
                         if label.is_empty() { None } else { Some(label) }
                     );
                     assert!(entry.is_sensitive());
+                    let account_row = list
+                        .row_at_index(0)
+                        .unwrap()
+                        .downcast::<adw::ActionRow>()
+                        .unwrap();
+                    assert_eq!(account_row.subtitle().as_deref(), Some("Connected"));
+                    assert_eq!(
+                        account_row.tooltip_text().as_deref(),
+                        Some("preview@example.com")
+                    );
+                    assert_eq!(email.subtitle().as_deref(), Some("preview@example.com"));
                     assert_eq!(
                         list.row_at_index(0)
                             .unwrap()

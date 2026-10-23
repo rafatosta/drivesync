@@ -28,11 +28,8 @@ impl Presentation {
         }
         if let Some(user) = self.user.upgrade() {
             user.set_title(name);
-            user.set_subtitle(&if description.is_some() {
-                format!("{}\n{}", self.email, self.state)
-            } else {
-                self.state.clone()
-            });
+            user.set_subtitle(&self.state);
+            user.set_tooltip_text(Some(&self.email));
         }
         if let Some(avatar) = self.avatar.upgrade() {
             avatar.set_text(Some(name));
