@@ -163,6 +163,7 @@ impl Widgets {
                 }
                 if let Some(row) = self.row.upgrade() {
                     row.set_title("Cancelling downloads");
+                    row.set_subtitle("Waiting for the current operation to stop safely…");
                 }
             } else if let Some(progress) = &snapshot.progress {
                 self.progress(progress);
@@ -170,7 +171,14 @@ impl Widgets {
             return;
         }
         if let Some(result) = &snapshot.result {
-            self.finish(result.clone());
+            self.finish(result);
+        } else if previous == Some(Phase::Running) {
+            self.idle();
+            if snapshot.phase == Phase::Unconfigured {
+                if let Some(button) = self.start.upgrade() {
+                    button.set_sensitive(false);
+                }
+            }
         }
         if let Some(row) = self.row.upgrade() {
             let (title, subtitle) = match snapshot.phase {
@@ -209,7 +217,7 @@ impl Widgets {
             row.set_subtitle(subtitle);
         }
     }
-    fn finish(&self, result: Result<DownloadReport, EngineError>) {
+    fn idle(&self) {
         if let Some(start) = self.start.upgrade() {
             start.set_label("Synchronize Now");
             start.add_css_class("suggested-action");
@@ -228,25 +236,19 @@ impl Widgets {
             spinner.stop();
             spinner.set_visible(false);
         }
+    }
+    fn finish(&self, result: &Result<DownloadReport, EngineError>) {
+        self.idle();
         match result {
             Ok(report) => {
-                let attention = !report.issues.is_empty();
-                if let Some(row) = self.row.upgrade() {
-                    row.set_title(if attention {
-                        "Cycle finished with pending items"
-                    } else {
-                        "Download cycle completed"
-                    });
-                    row.set_subtitle("Download only · local edits are preserved");
-                }
                 if let Some(status) = self.status.upgrade() {
-                    status.set_label(&summary(&report));
+                    status.set_label(&summary(report));
                 }
                 if let Some(preserved) = self.preserved.upgrade() {
-                    preserved.set_label(&preserved_text(&report));
+                    preserved.set_label(&preserved_text(report));
                     preserved.set_visible(!report.preserved_copies.is_empty());
                 }
-                self.show_issues(&report);
+                self.show_issues(report);
                 if let Some(skipped) = self.skipped.upgrade() {
                     skipped.set_label(&if report.skipped == 1 {
                         "1 item skipped: unsupported type or download restriction.".into()
@@ -260,7 +262,7 @@ impl Widgets {
                 }
             }
             Err(error) => {
-                if error == EngineError::InvalidFolder {
+                if error == &EngineError::InvalidFolder {
                     if let Some(start) = self.start.upgrade() {
                         start.set_sensitive(false);
                     }
@@ -269,16 +271,6 @@ impl Widgets {
                     error,
                     EngineError::Authentication(drivesync_engine::AuthError::Cancelled)
                 );
-                if let Some(row) = self.row.upgrade() {
-                    row.set_title(if cancelled {
-                        "Cancelled"
-                    } else {
-                        "Download needs attention"
-                    });
-                    row.set_subtitle(
-                        "Completed files are preserved; the next cycle rechecks them.",
-                    );
-                }
                 if let Some(status) = self.status.upgrade() {
                     status.set_label(if cancelled {
                         "Download cancelled. Completed files were preserved."
@@ -292,7 +284,7 @@ impl Widgets {
                     } else {
                         vec![drivesync_engine::DownloadIssue {
                             relative_path: None,
-                            error,
+                            error: error.clone(),
                         }]
                     },
                     ..Default::default()
@@ -438,19 +430,14 @@ pub(super) fn build(
     let job = crate::automatic::Controller::attach(engine, saved);
     let click_job = job.clone();
     let click_ui = ui.clone();
-    start.connect_clicked(move |button| {
+    start.connect_clicked(move |_| {
+        let previous = click_job.snapshot().phase;
         if click_job.running() {
             click_job.cancel();
-            button.set_sensitive(false);
-            button.set_label("Cancelling…");
-            if let Some(row) = click_ui.row.upgrade() {
-                row.set_title("Cancelling downloads");
-                row.set_subtitle("Waiting for the current operation to stop safely…");
-            }
         } else {
             click_job.request();
-            click_ui.present_job(&click_job.snapshot(), None);
         }
+        click_ui.present_job(&click_job.snapshot(), Some(previous));
     });
     let mut revision = u64::MAX;
     let mut phase = None;
@@ -644,25 +631,43 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         ui.progress(&event);
         assert_eq!(row.title(), "Verifying file integrity");
         assert_eq!(bar.fraction(), 0.35);
-        ui.finish(Ok(DownloadReport {
-            skipped: 1,
-            ..Default::default()
-        }));
-        assert_eq!(row.title(), "Download cycle completed");
+        let completed = |report, phase| {
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 1,
+                    cancelling: false,
+                    phase,
+                    progress: None,
+                    result: Some(Ok(report)),
+                },
+                Some(crate::automatic::Phase::Running),
+            )
+        };
+        completed(
+            DownloadReport {
+                skipped: 1,
+                ..Default::default()
+            },
+            crate::automatic::Phase::Attention,
+        );
+        assert_eq!(row.title(), "Needs attention");
         assert!(!issues.is_visible());
         assert!(skipped.is_visible());
         assert!(!skipped.has_css_class("error"));
-        ui.finish(Ok(DownloadReport {
-            unchanged: 5,
-            updated: 2,
-            preserved_copies: vec!["Reports/DriveSync backup example.bak".into()],
-            skipped: 1,
-            issues: vec![DownloadIssue {
-                relative_path: Some("Reports/Report.pdf".into()),
-                error: EngineError::RemoteChanged,
-            }],
-            ..Default::default()
-        }));
+        completed(
+            DownloadReport {
+                unchanged: 5,
+                updated: 2,
+                preserved_copies: vec!["Reports/DriveSync backup example.bak".into()],
+                skipped: 1,
+                issues: vec![DownloadIssue {
+                    relative_path: Some("Reports/Report.pdf".into()),
+                    error: EngineError::RemoteChanged,
+                }],
+                ..Default::default()
+            },
+            crate::automatic::Phase::Retrying,
+        );
         assert!(preserved.is_visible());
         assert!(preserved.text().contains("DriveSync backup example.bak"));
         assert!(issues.is_visible());
@@ -707,6 +712,21 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             capture(&window, &format!("automatic-{name}-{width}"));
             assert!(window.width() <= width + 10);
         }
+        ui.begin();
+        ui.present_job(
+            &crate::automatic::Snapshot {
+                revision: 2,
+                cancelling: false,
+                phase: crate::automatic::Phase::Waiting,
+                progress: None,
+                result: None,
+            },
+            Some(crate::automatic::Phase::Running),
+        );
+        assert!(!spinner.is_spinning());
+        assert!(folders.is_sensitive());
+        assert!(menu.is_sensitive());
+        assert_eq!(start.label().as_deref(), Some("Synchronize Now"));
         window.close();
     }
 }
