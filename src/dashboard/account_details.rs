@@ -57,16 +57,6 @@ pub(super) fn populate(
             .build();
         let popover = gtk::Popover::new();
         let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let detail = gtk::Button::with_label("Account Details…");
-        let email = name.to_string();
-        let weak_popover = popover.downgrade();
-        detail.connect_clicked(move |button| {
-            if let Some(popover) = weak_popover.upgrade() {
-                popover.popdown();
-            }
-            show_details(button, &email);
-        });
-        actions.append(&detail);
         actions.append(&crate::session::sign_out_button(
             engine.clone(),
             saved.account.id.clone(),
@@ -77,6 +67,17 @@ pub(super) fn populate(
         menu.set_popover(Some(&popover));
         heading.append(&menu);
         content.append(&heading);
+
+        let description = adw::PreferencesGroup::builder()
+            .description("Local account label. Saving changes is not available yet.")
+            .build();
+        let entry = adw::EntryRow::builder()
+            .title("Account description")
+            .build();
+        entry.set_widget_name("account-display-name");
+        entry.set_text(name);
+        description.add(&entry);
+        content.append(&description);
 
         let folders = adw::PreferencesGroup::builder().title("Folders").build();
         let remote = saved
@@ -174,25 +175,4 @@ pub(super) fn populate(
         content.append(&footer);
         details.add_named(&content, Some(&saved.account.id.0));
     }
-}
-
-/// Presents a local display-name placeholder without mutating account metadata.
-fn show_details(button: &gtk::Button, email: &str) {
-    let parent = button.root().and_downcast::<gtk::Window>();
-    let dialog = adw::MessageDialog::new(
-        parent.as_ref(),
-        Some("Account Details"),
-        Some("A display name is a local nickname. Renaming will be available in a future version."),
-    );
-    dialog.add_responses(&[("cancel", "Close"), ("save", "Save")]);
-    dialog.set_response_enabled("save", false);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
-    let group = adw::PreferencesGroup::new();
-    group.add(&crate::flow::row("Email", email, "mail-unread-symbolic"));
-    let name = adw::EntryRow::builder().title("Display name").build();
-    name.set_widget_name("account-display-name");
-    group.add(&name);
-    dialog.set_extra_child(Some(&group));
-    dialog.present();
 }

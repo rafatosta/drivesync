@@ -143,16 +143,16 @@ fn folder_setup_and_dashboard_layouts() {
                 );
                 let start = find_named(window.upcast_ref(), "start-synchronization").unwrap();
                 assert!(!start.is_sensitive());
-                find_button(window.upcast_ref(), "Account Details…")
+                assert!(find_button(window.upcast_ref(), "Account Details…").is_none());
+                let entry = find_named(window.upcast_ref(), "account-display-name")
                     .unwrap()
-                    .emit_clicked();
-                let dialog = gtk::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|widget| widget.downcast::<adw::MessageDialog>().ok())
-                    .expect("account details dialog");
-                assert!(!dialog.is_response_enabled("save"));
-                assert!(find_named(dialog.upcast_ref(), "account-display-name").is_some());
-                dialog.response("cancel");
+                    .downcast::<adw::EntryRow>()
+                    .unwrap();
+                let original = entry.text();
+                entry.set_text("Personal account");
+                assert_eq!(entry.text(), "Personal account");
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                entry.set_text(&original);
                 assert!(list.row_at_index(1).is_some());
                 list.select_row(list.row_at_index(1).as_ref());
                 assert_eq!(
