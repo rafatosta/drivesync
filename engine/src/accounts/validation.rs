@@ -59,5 +59,20 @@ pub(super) fn validate(index: &Index) -> Result<(), AuthError> {
             }
         }
     }
+    for (client, descriptions) in &index.descriptions {
+        for (id, description) in descriptions {
+            if !index
+                .clients
+                .get(client)
+                .is_some_and(|profiles| profiles.iter().any(|p| &p.id.0 == id))
+                || description.is_empty()
+                || description.trim() != description
+                || description.chars().count() > 128
+                || description.chars().any(char::is_control)
+            {
+                return Err(AuthError::AccountStorage);
+            }
+        }
+    }
     Ok(())
 }

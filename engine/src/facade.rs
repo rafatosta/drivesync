@@ -3,9 +3,8 @@
 //! Coordinates independent account, authentication, Drive and local folder
 //! modules without exposing credentials or platform storage to the GUI.
 use crate::{
-    accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError,
-    Cancellation, EngineError, EngineStatus, FolderConfiguration, FolderPage,
-    RestoredAccount, SyncRootId,
+    accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError, Cancellation,
+    EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount, SyncRootId,
 };
 
 /// Public boundary for account authorization, restoration and folder setup.
@@ -53,6 +52,33 @@ impl DriveSyncEngine {
             .list(&config.client_id)
             .map_err(EngineError::Authentication)
     }
+    /// Reads the local account description without contacting Google or the vault.
+    ///
+    /// # Errors
+    /// Returns configuration, storage or missing-account errors.
+    pub fn account_description(&self, id: &AccountId) -> Result<Option<String>, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.accounts
+            .description(&config.client_id, id)
+            .map_err(EngineError::Authentication)
+    }
+
+    /// Saves a local description in the account index using the existing atomic writer.
+    ///
+    /// Blank input clears the description. This never changes Google identity,
+    /// credentials or folder settings and may be used while the account is offline.
+    ///
+    /// # Errors
+    /// Returns invalid-description, configuration, storage or missing-account errors.
+    pub fn set_account_description(
+        &self,
+        id: &AccountId,
+        value: &str,
+    ) -> Result<Option<String>, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.accounts.set_description(&config.client_id, id, value)
+    }
+
     /// Reuses persisted credentials, renewing if necessary, without exposing them.
     pub fn verify_account(&self, id: &AccountId) -> Result<AccountSummary, EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
@@ -194,6 +220,6 @@ impl DriveSyncEngine {
     }
 }
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod live_google_tests;
+#[cfg(test)]
+mod tests;

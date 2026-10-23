@@ -19,6 +19,9 @@ pub(super) struct Index {
     /// Folder pairs keyed by client; at most one pair per account.
     #[serde(default)]
     pub(super) folders: BTreeMap<String, Vec<FolderConfiguration>>,
+    /// Optional local labels, keyed by OAuth client and stable account ID.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) descriptions: BTreeMap<String, BTreeMap<String, String>>,
 }
 impl Default for Index {
     fn default() -> Self {
@@ -26,6 +29,7 @@ impl Default for Index {
             version: 2,
             clients: BTreeMap::new(),
             folders: BTreeMap::new(),
+            descriptions: BTreeMap::new(),
         }
     }
 }

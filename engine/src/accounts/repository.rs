@@ -147,6 +147,9 @@ impl Accounts {
         if let Some(folders) = index.folders.get_mut(client) {
             folders.retain(|f| &f.account_id != id);
         }
+        if let Some(descriptions) = index.descriptions.get_mut(client) {
+            descriptions.remove(&id.0);
+        }
         self.write(index)
     }
     /// Returns saved remote/local folder pairs for the given OAuth client.
@@ -215,6 +218,71 @@ impl Accounts {
         folders.push(folder);
         self.write(index).map_err(EngineError::Authentication)
     }
+    /// Reads a local label for an existing account without verifying credentials.
+    ///
+    /// # Errors
+    /// Returns storage failures or reauthorization-required for an unknown account.
+    pub fn description(&self, client: &str, id: &AccountId) -> Result<Option<String>, AuthError> {
+        let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
+        let index = self.read()?;
+        if !index
+            .clients
+            .get(client)
+            .is_some_and(|profiles| profiles.iter().any(|p| &p.id == id))
+        {
+            return Err(AuthError::ReauthorizationRequired);
+        }
+        Ok(index
+            .descriptions
+            .get(client)
+            .and_then(|labels| labels.get(&id.0))
+            .cloned())
+    }
+
+    /// Atomically saves a trimmed local label, or clears it for blank input.
+    ///
+    /// The existing lock and validated writer preserve profiles, folders and
+    /// other clients' labels. Provider identity refresh never overwrites labels.
+    ///
+    /// # Errors
+    /// Returns invalid-description for control characters or more than 128
+    /// Unicode characters, or an authentication/storage error on lookup/write.
+    pub fn set_description(
+        &self,
+        client: &str,
+        id: &AccountId,
+        value: &str,
+    ) -> Result<Option<String>, EngineError> {
+        if value.chars().any(char::is_control) || value.trim().chars().count() > 128 {
+            return Err(EngineError::InvalidAccountDescription);
+        }
+        let value = value.trim();
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let mut index = self.read().map_err(EngineError::Authentication)?;
+        if !index
+            .clients
+            .get(client)
+            .is_some_and(|profiles| profiles.iter().any(|p| &p.id == id))
+        {
+            return Err(EngineError::Authentication(
+                AuthError::ReauthorizationRequired,
+            ));
+        }
+        let labels = index.descriptions.entry(client.into()).or_default();
+        let result = if value.is_empty() {
+            labels.remove(&id.0);
+            None
+        } else {
+            labels.insert(id.0.clone(), value.into());
+            Some(value.into())
+        };
+        self.write(index).map_err(EngineError::Authentication)?;
+        Ok(result)
+    }
+
     /// Lists saved profiles belonging to one OAuth client.
     ///
     /// Saved metadata does not imply that a session is authenticated.
