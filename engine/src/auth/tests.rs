@@ -1,11 +1,11 @@
-use super::{
+use super::super::{
     callback::{self, Cancellation},
     google::{self, OAuthConfig},
     models::{validate_tokens, Credential, Identity, Tokens},
     ports::{CredentialStore, GoogleApi},
-    provider::{now, AuthProvider},
     AuthError,
 };
+use super::{now, AuthProvider};
 use crate::AccountId;
 use oauth2::{CsrfToken, PkceCodeChallenge, PkceCodeVerifier};
 use std::{

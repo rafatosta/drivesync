@@ -1,7 +1,5 @@
 use super::{repository::MAX_INDEX, Accounts};
-use crate::{
-    AccountId, AccountSummary, AuthError, DriveSyncEngine, EngineError, FolderConfiguration,
-};
+use crate::{AccountId, AccountSummary, AuthError, EngineError, FolderConfiguration};
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, sync::Mutex};
 const CLIENT: &str = "test.apps.googleusercontent.com";
 struct Directory(PathBuf);
@@ -132,55 +130,6 @@ fn failed_write_is_reported_without_an_in_memory_success() {
         "blocked parent"
     );
 }
-#[test]
-fn startup_failures_are_per_account_retry_updates_and_no_cached_authentication() {
-    let dir = Directory::new();
-    let accounts = dir.accounts();
-    accounts
-        .record(CLIENT, profile("a", "a@example.com"))
-        .unwrap();
-    accounts
-        .record(CLIENT, profile("b", "old@example.com"))
-        .unwrap();
-    let engine = DriveSyncEngine {
-        accounts: dir.accounts(),
-        ..DriveSyncEngine::default()
-    };
-    for error in [
-        AuthError::Network,
-        AuthError::SecureStorage,
-        AuthError::ReauthorizationRequired,
-    ] {
-        let results = engine
-            .restore_with(CLIENT, |id| {
-                if id == &AccountId::from_subject("a") {
-                    Err(error)
-                } else {
-                    Ok(profile("b", "new@example.com"))
-                }
-            })
-            .unwrap();
-        assert_eq!(results[0].error, Some(error));
-        assert!(results[1].error.is_none());
-        assert_eq!(engine.accounts.list(CLIENT).unwrap().len(), 2);
-    }
-    let retry = engine
-        .restore_with(CLIENT, |id| {
-            Ok(profile(
-                id.0.strip_prefix("google:").unwrap(),
-                "verified@example.com",
-            ))
-        })
-        .unwrap();
-    assert!(retry.iter().all(|r| r.error.is_none()));
-    let wrong = engine
-        .restore_with(CLIENT, |_| Ok(profile("foreign", "foreign@example.com")))
-        .unwrap();
-    assert!(wrong
-        .iter()
-        .all(|r| r.error == Some(AuthError::IdentityMismatch)));
-    assert_eq!(dir.accounts().list(CLIENT).unwrap().len(), 2);
-}
 
 #[test]
 fn concurrent_updates_are_serialized_and_uncommitted_temp_is_ignored() {
@@ -232,36 +181,7 @@ fn configured(account: &str, path: PathBuf) -> FolderConfiguration {
         local: path,
     }
 }
-#[test]
-fn folder_settings_survive_restart_auth_failure_and_profile_updates() {
-    let dir = Directory::new();
-    let accounts = dir.accounts();
-    accounts
-        .record(CLIENT, profile("a", "a@example.com"))
-        .unwrap();
-    let local = dir.0.join("downloads");
-    fs::create_dir(&local).unwrap();
-    let folder = configured("a", local);
-    accounts.configure(CLIENT, folder.clone()).unwrap();
-    let reopened = dir.accounts();
-    reopened
-        .record(CLIENT, profile("a", "changed@example.com"))
-        .unwrap();
-    assert_eq!(reopened.folders(CLIENT).unwrap(), vec![folder.clone()]);
-    assert!(reopened
-        .folders("other.apps.googleusercontent.com")
-        .unwrap()
-        .is_empty());
-    let engine = DriveSyncEngine {
-        accounts: reopened,
-        ..DriveSyncEngine::default()
-    };
-    let restored = engine
-        .restore_with(CLIENT, |_| Err(AuthError::Network))
-        .unwrap();
-    assert_eq!(restored[0].folder, Some(folder));
-    assert_eq!(restored[0].error, Some(AuthError::Network));
-}
+
 #[test]
 fn legacy_v1_index_is_rejected_without_mutation() {
     let dir = Directory::new();
@@ -270,8 +190,7 @@ fn legacy_v1_index_is_rejected_without_mutation() {
         .record(CLIENT, profile("a", "a@example.com"))
         .unwrap();
     let path = accounts.path.as_ref().unwrap();
-    let mut legacy: serde_json::Value =
-        serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     legacy["version"] = 1.into();
     legacy.as_object_mut().unwrap().remove("folders");
     let original = serde_json::to_vec(&legacy).unwrap();

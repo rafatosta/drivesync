@@ -6,7 +6,7 @@ use super::{
 use crate::{AuthError, EngineError};
 
 #[cfg(test)]
-mod tests {
+mod folder_tests {
     use super::*;
     #[test]
     fn folders_and_pagination_require_real_folder_metadata() {

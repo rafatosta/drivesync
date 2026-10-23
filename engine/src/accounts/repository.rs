@@ -44,6 +44,15 @@ impl Default for Accounts {
     }
 }
 impl Accounts {
+    /// Supplies an isolated store to engine unit tests without global environment changes.
+    #[cfg(test)]
+    pub(crate) fn for_test(path: PathBuf) -> Self {
+        Self {
+            path: Some(path),
+            lock: Mutex::new(()),
+        }
+    }
+
     /// Reads and validates the index; an absent file means an empty index.
     ///
     /// # Errors

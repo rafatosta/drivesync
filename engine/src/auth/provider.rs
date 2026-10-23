@@ -7,8 +7,7 @@ use super::{
     google::{self, OAuthConfig},
     models::{validate_tokens, Credential, Tokens},
     ports::{CredentialStore, GoogleApi},
-    storage,
-    AuthError,
+    storage, AuthError,
 };
 use crate::{AccountId, AccountSummary};
 use oauth2::{CsrfToken, PkceCodeChallenge};
@@ -323,3 +322,7 @@ pub(super) fn now() -> Result<u64, AuthError> {
         .map_err(|_| AuthError::Internal)?
         .as_secs())
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
