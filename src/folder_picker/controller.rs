@@ -20,6 +20,8 @@ struct Picker {
     spinner: gtk::Spinner,
     status: gtk::Label,
     choose: gtk::Button,
+    all: gtk::Button,
+    pending_click: RefCell<Option<gtk::glib::SourceId>>,
     up: gtk::Button,
     more: gtk::Button,
     retry: gtk::Button,
@@ -52,6 +54,8 @@ pub fn show(
         spinner: view.spinner,
         status: view.status,
         choose: view.choose,
+        all: view.all,
+        pending_click: RefCell::new(None),
         up: view.up,
         more: view.more,
         retry: view.retry,
@@ -82,18 +86,18 @@ pub fn show(
     picker.choose.connect_clicked(move |_| {
         if let Some(p) = weak.upgrade() {
             let selected = p.stack.borrow().last().cloned();
-            if let (Some(done), Some(folder)) = (p.done.borrow_mut().take(), selected) {
-                done(folder);
-            }
-            if let Some(window) = p.window.upgrade() {
-                window.close();
+            if let Some(folder) = selected {
+                finish(&p, folder);
             }
         }
     });
+    bind_all(&picker);
     load(&picker, false);
     let lifetime = RefCell::new(Some(picker));
     window.connect_close_request(move |_| {
-        lifetime.borrow_mut().take();
+        if let Some(picker) = lifetime.borrow_mut().take() {
+            cancel_pending(&picker);
+        }
         gtk::glib::Propagation::Proceed
     });
     window.present();
@@ -104,6 +108,7 @@ pub fn show(
 /// The next-page token is used only for explicit load-more requests;
 /// errors are shown in the dialog without exposing provider credentials.
 fn load(picker: &Rc<Picker>, more: bool) {
+    cancel_pending(picker);
     let current = picker.stack.borrow().last().unwrap().clone();
     let page = if more {
         picker.next.borrow().clone()
@@ -121,6 +126,7 @@ fn load(picker: &Rc<Picker>, more: bool) {
     picker.spinner.start();
     picker.breadcrumbs.set_sensitive(false);
     picker.choose.set_sensitive(false);
+    picker.all.set_sensitive(false);
     picker.up.set_sensitive(false);
     picker.more.set_sensitive(false);
     picker.retry.set_sensitive(false);
@@ -154,15 +160,9 @@ fn load(picker: &Rc<Picker>, more: bool) {
                     picker.status.set_label("");
                     picker.status.set_visible(false);
                     picker.choose.set_sensitive(true);
+                    picker.all.set_sensitive(true);
                     for folder in page.folders {
-                        let row = view::folder_row(&folder.name);
-                        let weak = Rc::downgrade(&picker);
-                        row.connect_activated(move |_| {
-                            if let Some(p) = weak.upgrade() {
-                                p.stack.borrow_mut().push(folder.clone());
-                                load(&p, false);
-                            }
-                        });
+                        let row = folder_row(&picker, folder);
                         picker.list.append(&row);
                     }
                     if picker.list.first_child().is_none() {
@@ -209,5 +209,144 @@ fn update_path(picker: &Rc<Picker>) {
             }
         });
         picker.breadcrumbs.append(&button);
+    }
+}
+
+/// Cancels delayed single-click navigation when a newer action supersedes it.
+fn cancel_pending(picker: &Picker) {
+    if let Some(source) = picker.pending_click.borrow_mut().take() {
+        source.remove();
+    }
+}
+
+/// Confirms one folder exactly once, including the explicit root action.
+fn finish(picker: &Picker, folder: DriveFolder) {
+    cancel_pending(picker);
+    let done = picker.done.borrow_mut().take();
+    if let Some(done) = done {
+        done(folder);
+    }
+    if let Some(window) = picker.window.upgrade() {
+        window.close();
+    }
+}
+
+/// Defers pointer navigation for the system double-click interval so the
+/// second click can confirm the original row before it is replaced by children.
+/// Keyboard row activation continues to navigate immediately.
+fn folder_row(picker: &Rc<Picker>, folder: DriveFolder) -> adw::ActionRow {
+    let row = view::folder_row(&folder.name);
+    let weak = Rc::downgrade(picker);
+    let keyboard_folder = folder.clone();
+    row.connect_activated(move |_| {
+        if let Some(picker) = weak.upgrade() {
+            picker.stack.borrow_mut().push(keyboard_folder.clone());
+            load(&picker, false);
+        }
+    });
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(1);
+    gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = Rc::downgrade(picker);
+    gesture.connect_pressed(move |gesture, count, _, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(picker) = weak.upgrade() {
+            pointer_press(&picker, &folder, count);
+        }
+    });
+    row.add_controller(gesture);
+    row
+}
+
+fn bind_all(picker: &Rc<Picker>) {
+    let weak = Rc::downgrade(picker);
+    picker.all.connect_clicked(move |_| {
+        if let Some(picker) = weak.upgrade() {
+            finish(
+                &picker,
+                DriveFolder {
+                    id: "root".into(),
+                    name: "My Drive".into(),
+                },
+            );
+        }
+    });
+}
+
+fn pointer_press(picker: &Rc<Picker>, folder: &DriveFolder, count: i32) {
+    cancel_pending(picker);
+    if count >= 2 {
+        finish(picker, folder.clone());
+        return;
+    }
+    let delay = gtk::Settings::default()
+        .map(|s| s.gtk_double_click_time())
+        .unwrap_or(400)
+        .max(1) as u64;
+    let weak = Rc::downgrade(picker);
+    let folder = folder.clone();
+    let timer = gtk::glib::timeout_add_local_once(
+        std::time::Duration::from_millis(delay + 30),
+        move || {
+            if let Some(picker) = weak.upgrade() {
+                picker.pending_click.borrow_mut().take();
+                picker.stack.borrow_mut().push(folder);
+                load(&picker, false);
+            }
+        },
+    );
+    *picker.pending_click.borrow_mut() = Some(timer);
+}
+
+/// Exercises selection decisions with fictional folders and no engine requests.
+#[cfg(test)]
+pub(super) fn verify_selection() {
+    let selected = Rc::new(RefCell::new(Vec::new()));
+    for root_action in [false, true] {
+        let view = view::build(None);
+        let window = view.window.clone();
+        let sink = selected.clone();
+        let picker = Rc::new(Picker {
+            engine: Arc::new(DriveSyncEngine::new()),
+            account: AccountId("google:fixture".into()),
+            window: window.downgrade(),
+            stack: RefCell::new(vec![DriveFolder {
+                id: "root".into(),
+                name: "My Drive".into(),
+            }]),
+            next: RefCell::new(None),
+            list: view.list,
+            breadcrumbs: view.breadcrumbs,
+            spinner: view.spinner,
+            status: view.status,
+            choose: view.choose,
+            all: view.all,
+            pending_click: RefCell::new(None),
+            up: view.up,
+            more: view.more,
+            retry: view.retry,
+            done: RefCell::new(Some(Box::new(move |folder| sink.borrow_mut().push(folder)))),
+        });
+        bind_all(&picker);
+        let folder = DriveFolder {
+            id: "projects".into(),
+            name: "Projects".into(),
+        };
+        pointer_press(&picker, &folder, 1);
+        assert!(picker.pending_click.borrow().is_some());
+        if root_action {
+            picker.stack.borrow_mut().push(folder.clone());
+            picker.all.set_sensitive(true);
+            picker.all.emit_clicked();
+            assert_eq!(selected.borrow().last().unwrap().id, "root");
+        } else {
+            pointer_press(&picker, &folder, 2);
+            assert_eq!(selected.borrow().last().unwrap().id, "projects");
+            assert_eq!(picker.stack.borrow().len(), 1);
+        }
+        assert!(picker.pending_click.borrow().is_none());
+        let count = selected.borrow().len();
+        finish(&picker, folder);
+        assert_eq!(selected.borrow().len(), count, "callback runs only once");
     }
 }

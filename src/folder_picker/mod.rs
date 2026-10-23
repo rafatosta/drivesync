@@ -28,5 +28,11 @@ pub(crate) fn preview(parent: Option<&adw::gtk::Window>) -> adw::Window {
         view.list.append(&view::folder_row(name));
     }
     view.choose.set_sensitive(true);
+    view.all.set_sensitive(true);
     view.window
+}
+
+#[cfg(test)]
+pub(crate) fn verify_selection() {
+    controller::verify_selection();
 }

@@ -8,6 +8,7 @@ pub(super) struct PickerView {
     pub(super) spinner: gtk::Spinner,
     pub(super) status: gtk::Label,
     pub(super) choose: gtk::Button,
+    pub(super) all: gtk::Button,
     pub(super) up: gtk::Button,
     pub(super) more: gtk::Button,
     pub(super) retry: gtk::Button,
@@ -75,6 +76,13 @@ pub(super) fn build(parent: Option<&gtk::Window>) -> PickerView {
         .child(&breadcrumbs)
         .build();
     content.append(&path_scroll);
+    let all = gtk::Button::with_label("Select All Folders (My Drive)");
+    all.set_tooltip_text(Some(
+        "Choose the root of My Drive, including all its subfolders",
+    ));
+    all.set_widget_name("select-all-drive-folders");
+    all.set_sensitive(false);
+    content.append(&all);
     let progress = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
@@ -131,6 +139,7 @@ pub(super) fn build(parent: Option<&gtk::Window>) -> PickerView {
         spinner,
         status,
         choose,
+        all,
         up,
         more,
         retry,

@@ -37,6 +37,7 @@ fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
 #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
 fn folder_setup_and_dashboard_layouts() {
     adw::init().unwrap();
+    crate::folder_picker::verify_selection();
     let output =
         std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
     let data = std::env::var("XDG_DATA_HOME").expect("isolated profile directory");
@@ -436,6 +437,9 @@ fn folder_setup_and_dashboard_layouts() {
                     .unwrap()
                     .downcast::<gtk::ListBox>()
                     .unwrap();
+                assert!(find_named(picker.upcast_ref(), "select-all-drive-folders")
+                    .unwrap()
+                    .is_sensitive());
                 assert!(list.row_at_index(7).is_some());
                 assert!(list
                     .row_at_index(0)
