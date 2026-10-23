@@ -37,7 +37,7 @@ impl std::fmt::Display for EngineError {
             Self::DownloadConflict => f.write_str("A local file or folder conflicts with this download. Existing data was preserved."),
             Self::DownloadIntegrity => f.write_str("The downloaded file failed its size or checksum verification. It was not installed."),
             Self::DownloadIo => f.write_str("Could not safely read, write or synchronize the local folder. Check permissions and free space."),
-            Self::RemoteChanged => f.write_str("The Google Drive item changed during this cycle. Try again to refresh its settings."),
+            Self::RemoteChanged => f.write_str("The item or its folder changed on Google Drive during verification. Run synchronization again. Existing local files were preserved."),
             Self::SyncBusy => f.write_str("This local folder is already being synchronized."),
             Self::InvalidPlan => f.write_str("The download plan is inconsistent or its configuration changed. Scan the folder again."),
             Self::InventoryLimit => f.write_str("The remote inventory exceeded its safety limits. Choose a smaller folder."),

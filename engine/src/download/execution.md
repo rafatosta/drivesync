@@ -7,7 +7,9 @@ execução automática ou exportação de documentos Google nesta unidade.
 ## Técnica e política
 
 - Consultar metadados por ID antes/depois do streaming: ID, pai, nome, tipo,
-  versão, tamanho, MD5 e permissão precisam corresponder ao inventário.
+  versão, tamanho, MD5 e permissão do arquivo precisam corresponder ao inventário.
+  Para pastas ancestrais, validar identidade, pai, nome e tipo; sua versão pode
+  mudar por outros metadados sem alterar a localização do arquivo.
 - Streaming limitado ao tamanho esperado, buffers de 64 KiB; validar tamanho e
   MD5 do provedor. Guardar SHA-256 como evidência local adicional.
 - Abrir raiz e componentes por descritores Linux com NOFOLLOW; diretórios

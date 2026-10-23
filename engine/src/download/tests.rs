@@ -528,3 +528,32 @@ fn journal_identity_collision_cannot_report_a_successful_write() {
         "file"
     );
 }
+
+#[test]
+fn ancestor_metadata_versions_do_not_masquerade_as_binary_changes() {
+    let f = Fixture::new();
+    let mut inv = inventory();
+    let mut folder = inv.entries[0].clone();
+    folder.id = "folder".into();
+    folder.name = "nested".into();
+    folder.kind = InventoryKind::Folder;
+    inv.entries[0].parent_id = "folder".into();
+    inv.entries.push(folder);
+    let mut source = Fake::new(&inv);
+    source.entries.get_mut("folder").unwrap().version = Some(2);
+    let report = f
+        .execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert_eq!(report.downloaded, 1);
+    assert!(report.issues.is_empty());
+    source.entries.get_mut("folder").unwrap().name = "moved".into();
+    let report = f
+        .execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert_eq!(report.issues.len(), 2);
+    assert!(report
+        .issues
+        .iter()
+        .all(|e| e.error == EngineError::RemoteChanged));
+    assert_eq!(fs::read(f.root.join("nested/file.txt")).unwrap(), b"abc");
+}

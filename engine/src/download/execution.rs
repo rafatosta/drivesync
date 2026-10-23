@@ -135,7 +135,7 @@ fn validate_chain(
 ) -> Result<(), EngineError> {
     let mut current = item;
     for _ in 0..=by_id.len() {
-        if source.metadata(current)? != *current {
+        if !matches_metadata(current, &source.metadata(current)?) {
             return Err(EngineError::RemoteChanged);
         }
         if current.parent_id == root {
@@ -148,6 +148,19 @@ fn validate_chain(
             .ok_or(EngineError::InvalidPlan)?;
     }
     Err(EngineError::InvalidPlan)
+}
+/// Folder versions also reflect unrelated metadata changes. Location checks use
+/// identity, parent, name and type; binary bytes still require the exact version.
+fn matches_metadata(expected: &InventoryEntry, current: &InventoryEntry) -> bool {
+    if expected.kind == InventoryKind::Folder {
+        current.kind == InventoryKind::Folder
+            && current.id == expected.id
+            && current.parent_id == expected.parent_id
+            && current.name == expected.name
+            && current.mime_type == expected.mime_type
+    } else {
+        current == expected
+    }
 }
 impl Session<'_> {
     fn put(&self, op: &Operation) -> Result<(), EngineError> {
