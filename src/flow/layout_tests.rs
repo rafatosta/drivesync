@@ -219,9 +219,7 @@ fn folder_setup_and_dashboard_layouts() {
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 assert!(find_button(window.upcast_ref(), "Save and Continue").is_none());
                 let configured = details.visible_child().unwrap();
-                assert!(!find_named(&configured, "save-folders")
-                    .unwrap()
-                    .is_visible());
+                assert!(find_named(&configured, "save-folders").is_none());
                 for name in ["change-remote-folder", "change-local-folder"] {
                     assert!(find_named(&configured, name).unwrap().is_sensitive());
                 }
@@ -232,9 +230,10 @@ fn folder_setup_and_dashboard_layouts() {
                     Some("google:second-fixture")
                 );
                 let unconfigured = details.visible_child().unwrap();
-                let save = find_named(&unconfigured, "save-folders").unwrap();
-                assert!(save.is_visible());
-                assert!(!save.is_sensitive(), "both folder choices are required");
+                assert!(find_named(&unconfigured, "save-folders").is_none());
+                assert!(!find_named(&unconfigured, "start-synchronization")
+                    .unwrap()
+                    .is_sensitive());
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 list.select_row(list.row_at_index(0).as_ref());
                 assert_eq!(

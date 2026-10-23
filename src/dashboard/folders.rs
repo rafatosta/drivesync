@@ -38,8 +38,6 @@ struct Widgets {
     local: gtk::glib::WeakRef<adw::ActionRow>,
     remote_button: gtk::glib::WeakRef<gtk::Button>,
     local_button: gtk::glib::WeakRef<gtk::Button>,
-    save: gtk::glib::WeakRef<gtk::Button>,
-    discard: gtk::glib::WeakRef<gtk::Button>,
     feedback: gtk::glib::WeakRef<gtk::Label>,
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
@@ -73,18 +71,11 @@ impl Widgets {
                 button.set_sensitive(self.editable && !busy);
             }
         }
-        if let Some(save) = self.save.upgrade() {
-            save.set_visible(draft.dirty() || draft.saved.is_none());
-            save.set_sensitive(self.editable && draft.ready() && draft.dirty() && !busy);
-            save.set_label(if busy { "Saving…" } else { "Save Folders" });
-        }
-        if let Some(discard) = self.discard.upgrade() {
-            discard.set_visible(draft.dirty());
-            discard.set_sensitive(!busy);
-        }
         if let Some(status) = self.status.upgrade() {
-            status.set_label(if draft.dirty() {
-                "Unsaved folder changes"
+            status.set_label(if busy {
+                "Saving folder configuration…"
+            } else if draft.dirty() {
+                "Folder configuration incomplete"
             } else if draft.saved.is_some() {
                 "Configuration saved"
             } else {
@@ -92,7 +83,7 @@ impl Widgets {
             });
         }
         if let Some(sync) = self.sync.upgrade() {
-            sync.set_subtitle(if draft.saved.is_some() {
+            sync.set_subtitle(if draft.saved.is_some() && !draft.dirty() && !busy {
                 "Folders are configured"
             } else {
                 "Choose folders before synchronization"
@@ -107,7 +98,7 @@ impl Widgets {
     }
 }
 
-/// Builds independent remote/local choosers with explicit save and discard.
+/// Builds independent choosers that save automatically once both folders exist.
 /// Existing engine validation, portal handling and account isolation are reused.
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
@@ -149,21 +140,11 @@ pub(super) fn build(
         .build();
     feedback.set_widget_name("folder-feedback");
     content.append(&feedback);
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let discard = gtk::Button::with_label("Cancel");
-    let save = gtk::Button::with_label("Save Folders");
-    save.add_css_class("suggested-action");
-    save.set_widget_name("save-folders");
-    actions.append(&discard);
-    actions.append(&save);
-    content.append(&actions);
     let ui = Widgets {
         remote: remote.downgrade(),
         local: local.downgrade(),
         remote_button: remote_button.downgrade(),
         local_button: local_button.downgrade(),
-        save: save.downgrade(),
-        discard: discard.downgrade(),
         feedback: feedback.downgrade(),
         sync: sync.downgrade(),
         status: status.downgrade(),
@@ -179,14 +160,20 @@ pub(super) fn build(
         remote_button.connect_clicked(move |button| {
             let ui = ui.clone();
             let draft = draft.clone();
+            let save_engine = engine.clone();
+            let save_id = id.clone();
             crate::folder_picker::show(
                 engine.clone(),
                 id.clone(),
                 button.root().and_downcast::<gtk::Window>().as_ref(),
                 move |folder| {
                     draft.borrow_mut().remote = Some(folder);
-                    ui.refresh(&draft.borrow(), false);
-                    ui.message("");
+                    autosave(
+                        save_engine.clone(),
+                        save_id.clone(),
+                        ui.clone(),
+                        draft.clone(),
+                    );
                 },
             );
         });
@@ -194,6 +181,8 @@ pub(super) fn build(
     {
         let ui = ui.clone();
         let draft = draft.clone();
+        let engine = engine.clone();
+        let id = saved.account.id.clone();
         local_button.connect_clicked(move |button| {
             let dialog = gtk::FileDialog::builder()
                 .title("Choose Local Folder")
@@ -205,13 +194,14 @@ pub(super) fn build(
             let parent = button.root().and_downcast::<gtk::Window>();
             let ui = ui.clone();
             let draft = draft.clone();
+            let engine = engine.clone();
+            let id = id.clone();
             gtk::glib::spawn_future_local(async move {
                 match dialog.select_folder_future(parent.as_ref()).await {
                     Ok(file) => {
                         if let Some(path) = file.path() {
                             draft.borrow_mut().local = Some(path);
-                            ui.refresh(&draft.borrow(), false);
-                            ui.message("");
+                            autosave(engine.clone(), id.clone(), ui.clone(), draft.clone());
                         } else {
                             ui.message("Choose a folder available on this computer.");
                         }
@@ -224,58 +214,63 @@ pub(super) fn build(
             });
         });
     }
-    {
-        let ui = ui.clone();
-        let draft = draft.clone();
-        discard.connect_clicked(move |_| {
-            let saved = draft.borrow().saved.clone();
-            *draft.borrow_mut() = Selection::from_saved(saved);
-            ui.refresh(&draft.borrow(), false);
-            ui.message("");
-        });
-    }
-    let id = saved.account.id.clone();
-    save.connect_clicked(move |button| {
-        if !button.is_sensitive() {
-            return;
-        }
-        let (Some(remote), Some(local)) =
-            (draft.borrow().remote.clone(), draft.borrow().local.clone())
-        else {
-            return;
-        };
-        ui.refresh(&draft.borrow(), true);
-        ui.message("Checking folders and saving your settings…");
-        let engine = engine.clone();
-        let id = id.clone();
-        let ui = ui.clone();
-        let draft = draft.clone();
-        crate::flow::work(
-            move || {
-                engine.configure_folder(&id, &remote.id, &local)?;
-                engine.saved_folder(&id)
-            },
-            move |result| {
-                match result {
-                    Ok(Some(saved)) => {
-                        *draft.borrow_mut() = Selection::from_saved(Some(saved));
-                        ui.message("");
-                    }
-                    Ok(None) => ui.message("Could not load the saved folders. Please try again."),
-                    Err(e) => ui.message(&e.to_string()),
-                }
-                ui.refresh(&draft.borrow(), false);
-            },
-        );
-    });
     content
+}
+
+/// Validates and persists a complete changed pair off the GTK thread.
+/// Partial selections remain local; failures preserve the last saved pair.
+fn autosave(
+    engine: Arc<DriveSyncEngine>,
+    id: drivesync_engine::AccountId,
+    ui: Widgets,
+    draft: Rc<RefCell<Selection>>,
+) {
+    ui.refresh(&draft.borrow(), false);
+    if !ui.editable {
+        return;
+    }
+    if !draft.borrow().ready() {
+        ui.message("Choose both a Google Drive folder and a folder on this computer.");
+        return;
+    }
+    if !draft.borrow().dirty() {
+        ui.message("");
+        return;
+    }
+    let (Some(remote), Some(local)) = (draft.borrow().remote.clone(), draft.borrow().local.clone())
+    else {
+        return;
+    };
+    ui.refresh(&draft.borrow(), true);
+    ui.message("Checking folders and saving your settings…");
+    let engine = engine.clone();
+    let id = id.clone();
+    let ui = ui.clone();
+    let draft = draft.clone();
+    crate::flow::work(
+        move || {
+            engine.configure_folder(&id, &remote.id, &local)?;
+            engine.saved_folder(&id)
+        },
+        move |result| {
+            match result {
+                Ok(Some(saved)) => {
+                    *draft.borrow_mut() = Selection::from_saved(Some(saved));
+                    ui.message("");
+                }
+                Ok(None) => ui.message("Could not load the saved folders. Please try again."),
+                Err(e) => ui.message(&e.to_string()),
+            }
+            ui.refresh(&draft.borrow(), false);
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn drafts_require_both_folders_and_discard_preserves_saved_pair() {
+    fn automatic_save_requires_complete_changed_pair() {
         let mut draft = Selection::default();
         assert!(!draft.ready());
         assert!(!draft.dirty());
