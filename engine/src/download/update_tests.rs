@@ -357,3 +357,25 @@ fn backup_collision_and_symlinks_do_not_move_or_replace_unrelated_data() {
         assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
     }
 }
+
+#[test]
+fn confirmed_new_base_does_not_depend_on_user_retaining_old_backups() {
+    let (f, inv) = installed();
+    let (next, mut source) = changed(&inv, b"new content");
+    let report = f
+        .execute(&next, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    fs::remove_file(f.root.join(&report.preserved_copies[0])).unwrap();
+    let report = f
+        .execute(&next, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert_eq!(report.unchanged, 1);
+    assert!(report.issues.is_empty());
+    let (newest, mut source) = changed(&next, b"newer content");
+    assert_eq!(
+        f.execute(&newest, &mut source, &Cancellation::new(), |_| {})
+            .unwrap()
+            .updated,
+        1
+    );
+}

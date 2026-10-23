@@ -15,7 +15,11 @@ impl Session<'_> {
         let Some(mut file) = filesystem::read(parent, name)? else {
             return Ok(false);
         };
-        Ok(identity(&file)? == expected && stream::verify(&mut file, size, sha, cancel)?)
+        if identity(&file)? != expected || !stream::verify(&mut file, size, sha, cancel)? {
+            return Ok(false);
+        }
+        file.sync_all().map_err(filesystem::io)?;
+        Ok(true)
     }
     fn remember_backup(&self, op: &Operation, backup: &str) {
         *self.preserved.borrow_mut() = Some(op.relative.with_file_name(backup));

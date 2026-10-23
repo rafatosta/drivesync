@@ -16,7 +16,8 @@ UNKNOWN/conflito. Arquivos preexistentes não gerenciados não são adotados.
    exclusivo `DriveSync backup <op>.bak`.
 4. Sem cancelamento cooperativo dentro desta curta seção de commit: mover o
    destino antigo para a cópia com RENAME_NOREPLACE e sincronizar o diretório.
-   Reabrir/verificar a cópia movida para detectar troca/edição concorrente.
+   Reabrir/verificar e sincronizar o conteúdo da cópia movida para detectar
+   troca/edição concorrente e não depender somente do fsync do diretório.
 5. Se a cópia não corresponde à base, tentar restaurá-la com NOREPLACE. Se
    alguém criou um destino no intervalo, preservá-lo e manter a cópia, informando
    conflito. Nunca sobrescrever esse destino concorrente.
