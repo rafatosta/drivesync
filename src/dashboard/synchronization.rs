@@ -79,15 +79,14 @@ impl Widgets {
             for issue in report.issues.iter().take(5) {
                 let path = issue.relative_path.as_deref();
                 let name = path
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned())
+                    .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "Item".into());
                 let row = adw::ActionRow::builder()
                     .title(&name)
                     .subtitle(issue.error.to_string())
                     .use_markup(false)
                     .build();
-                row.set_title_lines(2);
+                row.set_title_lines(0);
                 row.set_subtitle_lines(3);
                 row.set_tooltip_text(Some(&format!(
                     "{}\n{}",
