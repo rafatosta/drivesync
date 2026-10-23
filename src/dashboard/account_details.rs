@@ -69,6 +69,9 @@ pub(super) fn populate(
             nav,
             toasts,
         ));
+        let quit = gtk::Button::with_label("Quit DriveSync");
+        quit.set_action_name(Some("app.quit"));
+        actions.append(&quit);
         popover.set_child(Some(&actions));
         menu.set_popover(Some(&popover));
         heading.append(&menu);

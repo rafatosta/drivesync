@@ -352,6 +352,7 @@ pub(super) fn build(
             }
             return;
         }
+        crate::background::set_activity(true);
         let cancel = Cancellation::new();
         *running.borrow_mut() = Some(cancel.clone());
         button.set_label("Cancel");
@@ -426,6 +427,7 @@ pub(super) fn build(
                 })
             },
             move |result| {
+                crate::background::set_activity(false);
                 finished.set(true);
                 *completion_active.borrow_mut() = None;
                 completion.finish(result);

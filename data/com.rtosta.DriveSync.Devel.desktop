@@ -9,3 +9,4 @@ Terminal=false
 Categories=Network;FileTransfer;Utility;
 Keywords=Google;Drive;Cloud;Sync;Files;
 StartupNotify=true
+X-GNOME-UsesNotifications=true

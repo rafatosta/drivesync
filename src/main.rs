@@ -6,6 +6,7 @@ use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+mod background;
 mod connection;
 mod dashboard;
 mod flow;
@@ -34,7 +35,6 @@ fn main() -> adw::gtk::glib::ExitCode {
             .default_height(800)
             .width_request(360)
             .height_request(360)
-            .hide_on_close(true)
             .build();
         let navigation = adw::NavigationView::new();
         let toasts = adw::ToastOverlay::new();
@@ -56,12 +56,8 @@ fn main() -> adw::gtk::glib::ExitCode {
             }
         });
         app.add_action(&quit);
+        background::install(app, &window);
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
-    });
-    app.connect_activate(|app| {
-        if let Some(window) = app.active_window() {
-            window.present();
-        }
     });
     app.run()
 }
