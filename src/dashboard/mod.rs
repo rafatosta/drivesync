@@ -1,24 +1,28 @@
-//! Read-only account dashboard for the DriveSync MVP.
-//!
-//! Builds account selection and hosts per-account details. Account cards and
-//! their action controls are delegated to [`account_details`]; sync transfers
-//! are not implemented by this screen.
+//! Adaptive account navigation and read-only synchronization dashboard.
 mod account_details;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;
 
-/// Builds the account overview page and its selectable detail stack.
+/// Builds account navigation without changing engine or transfer behavior.
 pub fn build(
     engine: Arc<DriveSyncEngine>,
     accounts: Vec<RestoredAccount>,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
 ) -> adw::NavigationPage {
-    let toolbar = adw::ToolbarView::new();
+    let split = adw::NavigationSplitView::builder()
+        .min_sidebar_width(240.0)
+        .max_sidebar_width(300.0)
+        .sidebar_width_fraction(0.28)
+        .build();
+    split.set_widget_name("dashboard-split");
+    let sidebar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    let add = gtk::Button::with_label("Add Account");
+    header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
+    let add = gtk::Button::from_icon_name("list-add-symbolic");
+    add.set_tooltip_text(Some("Add Account"));
     let weak_nav = nav.downgrade();
     add.connect_clicked(move |_| {
         if let Some(nav) = weak_nav.upgrade() {
@@ -26,50 +30,77 @@ pub fn build(
         }
     });
     header.pack_end(&add);
-    toolbar.add_top_bar(&header);
-    let content = crate::flow::content();
-    let title = gtk::Label::builder()
-        .label("Your Google Drive folders")
+    sidebar.add_top_bar(&header);
+    let side_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let count = gtk::Label::builder()
+        .label(format!("Accounts · {}", accounts.len()))
         .xalign(0.0)
-        .css_classes(["title-1"])
-        .wrap(true)
+        .margin_start(18)
+        .margin_top(20)
+        .css_classes(["heading"])
         .build();
-    content.append(&title);
-    content.append(
-        &gtk::Label::builder()
-            .label("Select an account to view its folders and connection. File transfers are not available yet.")
-            .xalign(0.0)
-            .wrap(true)
-            .build(),
-    );
-    let users = adw::PreferencesGroup::builder()
-        .title("Accounts")
-        .description("Current accounts in DriveSync")
-        .build();
+    side_content.append(&count);
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
-        .css_classes(["boxed-list"])
+        .activate_on_single_click(true)
+        .css_classes(["navigation-sidebar"])
         .build();
     list.set_widget_name("account-list");
-    users.add(&list);
-    content.append(&users);
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .child(&list)
+        .build();
+    side_content.append(&scroller);
+    sidebar.set_content(Some(&side_content));
+    split.set_sidebar(Some(&adw::NavigationPage::new(&sidebar, "Accounts")));
+
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    split
+        .bind_property("collapsed", &header, "show-back-button")
+        .sync_create()
+        .build();
+    toolbar.add_top_bar(&header);
     let details = gtk::Stack::new();
     details.set_widget_name("account-details");
     let ids: Vec<_> = accounts.iter().map(|a| a.account.id.0.clone()).collect();
     account_details::populate(engine, accounts, nav, toasts, &list, &details);
     let weak_details = details.downgrade();
+    let weak_split = split.downgrade();
     list.connect_row_selected(move |_, row| {
         if let (Some(details), Some(row)) = (weak_details.upgrade(), row) {
             if let Some(id) = ids.get(row.index() as usize) {
                 details.set_visible_child_name(id);
+                if let Some(split) = weak_split.upgrade() {
+                    split.set_show_content(true);
+                }
             }
         }
     });
+    let weak_split = split.downgrade();
+    list.connect_row_activated(move |_, _| {
+        if let Some(split) = weak_split.upgrade() {
+            split.set_show_content(true);
+        }
+    });
     list.select_row(list.row_at_index(0).as_ref());
-    content.append(&details);
-    toolbar.set_content(Some(&crate::flow::scroll(&content, 920)));
+    toolbar.set_content(Some(&crate::flow::scroll(&details, 760)));
+    split.set_content(Some(&adw::NavigationPage::new(&toolbar, "Folders")));
+    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        660.0,
+        adw::LengthUnit::Sp,
+    ));
+    breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
+    // Breakpoints belong to a breakpoint bin, not the application's outer routing view.
+    let bin = adw::BreakpointBin::new();
+    bin.set_width_request(320);
+    bin.set_height_request(320);
+    bin.set_child(Some(&split));
+    bin.add_breakpoint(breakpoint);
     adw::NavigationPage::builder()
         .title("Dashboard")
-        .child(&toolbar)
+        .child(&bin)
         .build()
 }

@@ -117,9 +117,7 @@ fn folder_setup_and_dashboard_layouts() {
             window.present();
             let wait = gtk::glib::MainLoop::new(None, false);
             let finish = wait.clone();
-            gtk::glib::timeout_add_local_once(Duration::from_millis(350), move || {
-                finish.quit()
-            });
+            gtk::glib::timeout_add_local_once(Duration::from_millis(350), move || finish.quit());
             wait.run();
             assert!(
                 window.width() <= width + 10,
@@ -136,6 +134,27 @@ fn folder_setup_and_dashboard_layouts() {
                     .unwrap()
                     .downcast::<gtk::Stack>()
                     .unwrap();
+                let split = find_named(window.upcast_ref(), "dashboard-split")
+                    .unwrap()
+                    .downcast::<adw::NavigationSplitView>()
+                    .unwrap();
+                assert_eq!(split.is_collapsed(), width < 660);
+                assert!(
+                    split.width() <= window.width(),
+                    "dashboard content overflow"
+                );
+                let start = find_named(window.upcast_ref(), "start-synchronization").unwrap();
+                assert!(!start.is_sensitive());
+                find_button(window.upcast_ref(), "Account Details…")
+                    .unwrap()
+                    .emit_clicked();
+                let dialog = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|widget| widget.downcast::<adw::MessageDialog>().ok())
+                    .expect("account details dialog");
+                assert!(!dialog.is_response_enabled("save"));
+                assert!(find_named(dialog.upcast_ref(), "account-display-name").is_some());
+                dialog.response("cancel");
                 assert!(list.row_at_index(1).is_some());
                 list.select_row(list.row_at_index(1).as_ref());
                 assert_eq!(
@@ -151,9 +170,7 @@ fn folder_setup_and_dashboard_layouts() {
             // A stack switch invalidates the paintable until the next frame.
             let frame = gtk::glib::MainLoop::new(None, false);
             let finish = frame.clone();
-            gtk::glib::timeout_add_local_once(Duration::from_millis(100), move || {
-                finish.quit()
-            });
+            gtk::glib::timeout_add_local_once(Duration::from_millis(100), move || finish.quit());
             frame.run();
             let snapshot = gtk::Snapshot::new();
             gtk::WidgetPaintable::new(Some(&window)).snapshot(
