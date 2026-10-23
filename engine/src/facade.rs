@@ -172,6 +172,36 @@ impl DriveSyncEngine {
         Ok(())
     }
 
+    /// Inventories the configured remote tree without transferring or modifying files.
+    ///
+    /// Resolves the root and scopes each request to this account's credentials.
+    /// The result is observational; it is not a consistent remote snapshot or
+    /// proof of synchronization. Call off the GTK thread. Cancellation is checked
+    /// between bounded HTTP requests, not during a blocking request.
+    ///
+    /// # Errors
+    /// Returns invalid-folder for absent/unavailable configuration, inventory-limit,
+    /// cancellation, invalid remote metadata, authorization or transport failures.
+    /// No partial result is published on failure and no state cursor is advanced.
+    pub fn inventory(
+        &self,
+        id: &AccountId,
+        cancel: &crate::Cancellation,
+    ) -> Result<crate::RemoteInventory, EngineError> {
+        if cancel.is_cancelled() {
+            return Err(EngineError::Authentication(AuthError::Cancelled));
+        }
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        self.check_local_folder(&folder.local)?;
+        let root = self
+            .auth
+            .with_access(id, |token| remote::inventory_root(token, &folder.remote.id))?;
+        remote::inventory_scan(id, &root, cancel, |parent, page| {
+            self.auth
+                .with_access(id, |token| remote::inventory_page(token, parent, page))
+        })
+    }
+
     /// Returns the saved folder pair for an account, without remote validation.
     ///
     /// # Errors

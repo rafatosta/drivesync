@@ -29,4 +29,4 @@ pub use configuration::{DriveFolder, FolderConfiguration};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncRootId};
-pub use remote::FolderPage;
+pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
