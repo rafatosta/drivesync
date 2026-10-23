@@ -1,3 +1,12 @@
-//! download subsystem.
-//! Contracts and algorithms are documented alongside this module.
-//! Business behavior intentionally remains unimplemented.
+//! One manual, non-overwriting binary download cycle with durable replay evidence.
+mod execution;
+mod filesystem;
+mod models;
+mod stream;
+
+pub(crate) use execution::{run, Context, Source};
+pub use models::{DownloadIssue, DownloadProgress, DownloadReport};
+pub(crate) use models::{Operation, Phase};
+
+#[cfg(test)]
+mod tests;

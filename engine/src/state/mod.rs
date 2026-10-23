@@ -1,4 +1,5 @@
-//! SQLite observations and plans, kept separate from verified installations.
+//! SQLite observations, plans and durable download-operation evidence.
+mod downloads;
 use crate::{DownloadPlan, EngineError, RemoteInventory};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::{
@@ -9,7 +10,8 @@ use std::{
 
 const APP_ID: i64 = 0x4453594e;
 const SCHEMA:&str="CREATE TABLE roots(client TEXT NOT NULL, account TEXT NOT NULL, remote TEXT NOT NULL, local TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation>0), PRIMARY KEY(client,account,remote,local));
-CREATE TABLE observations(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,generation INTEGER NOT NULL,item TEXT NOT NULL,plan TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));";
+CREATE TABLE observations(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,generation INTEGER NOT NULL,item TEXT NOT NULL,plan TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
+CREATE TABLE downloads(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));";
 fn failed(_: impl std::fmt::Debug) -> EngineError {
     EngineError::StateStorage
 }
@@ -60,7 +62,7 @@ impl Store {
             tx.execute_batch(SCHEMA).map_err(failed)?;
             tx.pragma_update(None, "application_id", APP_ID)
                 .map_err(failed)?;
-            tx.pragma_update(None, "user_version", 1).map_err(failed)?;
+            tx.pragma_update(None, "user_version", 2).map_err(failed)?;
             tx.commit().map_err(failed)?;
             fs::File::open(parent)
                 .and_then(|f| f.sync_all())
@@ -78,7 +80,7 @@ impl Store {
         let journal: String = conn
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
             .map_err(failed)?;
-        if version != 1 || app != APP_ID || integrity != "ok" || journal != "delete" {
+        if version != 2 || app != APP_ID || integrity != "ok" || journal != "delete" {
             return Err(EngineError::StateStorage);
         }
         let broken: Option<i64> = conn

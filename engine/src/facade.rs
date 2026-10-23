@@ -244,6 +244,48 @@ impl DriveSyncEngine {
         Ok(plan)
     }
 
+    /// Runs a fresh manual download-only cycle off the UI thread.
+    /// New binary files are staged and verified, then installed without overwriting.
+    /// Existing divergent data is reported per item. Partial staging is preserved.
+    ///
+    /// # Errors
+    /// Returns configuration, authorization, cancellation, root lock or state errors.
+    /// A failure can follow completed downloads; durable evidence permits replay.
+    pub fn download_once(
+        &self,
+        id: &AccountId,
+        cancel: &crate::Cancellation,
+        progress: impl FnMut(crate::DownloadProgress),
+    ) -> Result<crate::DownloadReport, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let inventory = self.inventory(id, cancel)?;
+        let plan = crate::planner::plan(&inventory, &folder.local, |path| {
+            crate::planner::observe(&folder.local, path)
+        })?;
+        if self.saved_folder(id)?.as_ref() != Some(&folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let mut store = crate::state::Store::open(&crate::state::default_path()?)?;
+        store.save(&config.client_id, &inventory, &plan, cancel)?;
+        let mut source = DownloadSource {
+            engine: self,
+            folder: &folder,
+            config: &config,
+        };
+        crate::download::run(
+            crate::download::Context {
+                client: &config.client_id,
+                scope: &plan,
+                store: &store,
+                cancel,
+            },
+            &inventory,
+            &mut source,
+            progress,
+        )
+    }
+
     /// Loads the current persisted plan for this account's configured root.
     /// It is historical observation only: executors must revalidate all preconditions.
     ///
@@ -328,3 +370,44 @@ impl DriveSyncEngine {
 mod live_google_tests;
 #[cfg(test)]
 mod tests;
+
+/// Holds one account/configuration scope throughout a manual transfer cycle.
+struct DownloadSource<'a> {
+    engine: &'a DriveSyncEngine,
+    folder: &'a FolderConfiguration,
+    config: &'a auth::OAuthConfig,
+}
+impl crate::download::Source for DownloadSource<'_> {
+    fn metadata(
+        &mut self,
+        item: &crate::InventoryEntry,
+    ) -> Result<crate::InventoryEntry, EngineError> {
+        self.engine
+            .auth
+            .with_access_config(self.config, &self.folder.account_id, |token| {
+                remote::file_metadata(token, item)
+            })
+    }
+    fn media(&mut self, id: &str) -> Result<Box<dyn std::io::Read>, EngineError> {
+        self.engine
+            .auth
+            .with_access_config(self.config, &self.folder.account_id, |token| {
+                Ok(Box::new(remote::file_media(token, id)?) as Box<dyn std::io::Read>)
+            })
+    }
+    fn configured(&mut self) -> Result<(), EngineError> {
+        if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        let root =
+            self.engine
+                .auth
+                .with_access_config(self.config, &self.folder.account_id, |token| {
+                    remote::inventory_root(token, &self.folder.remote.id)
+                })?;
+        if root != self.folder.remote.id {
+            return Err(EngineError::RemoteChanged);
+        }
+        Ok(())
+    }
+}

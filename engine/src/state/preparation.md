@@ -4,7 +4,7 @@ Escopo desta unidade: persistir observações remotas e um plano inicial, sem
 transferir bytes, registrar instalação confirmada, avançar cursores ou apagar
 arquivos. Um inventário anterior não é uma base de sincronização confirmada.
 
-SQLite privado em XDG_DATA_HOME/drivesync/state.sqlite3. Schema 1, application_id
+SQLite privado em XDG_DATA_HOME/drivesync/state.sqlite3. Schema 2, application_id
 próprio, foreign_keys ON, synchronous FULL e journal DELETE. Transações IMMEDIATE
 publicam atomicamente uma nova geração de inventário e plano da raiz. Itens
 não observados permanecem como evidência antiga, sem gerar exclusões.

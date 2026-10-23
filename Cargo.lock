@@ -427,11 +427,14 @@ version = "0.1.0"
 dependencies = [
  "dbus",
  "keyring",
+ "md-5",
  "oauth2",
  "reqwest",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "url",
 ]
 
@@ -1355,6 +1358,16 @@ name = "lru-slab"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest",
+]
 
 [[package]]
 name = "memchr"

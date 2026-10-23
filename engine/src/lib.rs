@@ -3,7 +3,7 @@
 //! GTK and presentation dependencies are confined to the application crate.
 //! All consumers interact with [`DriveSyncEngine`] and the types reexported
 //! here; internal modules are not exposed as independent public APIs.
-//! Synchronization and file transfers are not implemented yet.
+//! Manual binary downloads preserve existing files; uploads and continuous sync are unavailable.
 mod accounts;
 mod auth;
 mod changes;
@@ -34,3 +34,5 @@ pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, Ski
 pub use planner::{
     decide, ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation, PlanAction, PlanEntry,
 };
+
+pub use download::{DownloadIssue, DownloadProgress, DownloadReport};
