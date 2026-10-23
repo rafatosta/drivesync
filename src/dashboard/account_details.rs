@@ -113,12 +113,16 @@ pub(super) fn populate(
             .wrap(true)
             .css_classes(["dim-label"])
             .build();
-        content.append(&super::folders::build(
-            engine.clone(),
-            &saved,
-            &sync_state,
-            &status,
+        let start = gtk::Button::with_label("Start Synchronization");
+        start.set_halign(gtk::Align::End);
+        start.add_css_class("suggested-action");
+        start.set_sensitive(false);
+        start.set_tooltip_text(Some(
+            "Download new binary files without replacing existing local files",
         ));
+        start.set_widget_name("start-synchronization");
+        let folders = super::folders::build(engine.clone(), &saved, &sync_state, &status, &start);
+        content.append(&folders);
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -140,19 +144,15 @@ pub(super) fn populate(
         ));
         sync.add(&sync_state);
         content.append(&sync);
-        let banner = adw::Banner::new("File transfers are not available yet.");
-        banner.set_revealed(true);
-        content.append(&banner);
-        let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        footer.append(&status);
-        let start = gtk::Button::with_label("Start Synchronization");
-        start.set_halign(gtk::Align::End);
-        start.add_css_class("suggested-action");
-        start.set_sensitive(false);
-        start.set_tooltip_text(Some("Synchronization is not implemented yet"));
-        start.set_widget_name("start-synchronization");
-        footer.append(&start);
-        content.append(&footer);
+        content.append(&super::synchronization::build(
+            engine.clone(),
+            &saved,
+            &folders,
+            &start,
+            &sync_state,
+            &status,
+            &menu,
+        ));
         details.add_named(&content, Some(&saved.account.id.0));
     }
 }

@@ -33,6 +33,31 @@ fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     }
     None
 }
+/// A compositor may defer a frame after stack switches; retry capture, never skip it.
+fn rendered(window: &adw::Window) -> gtk::gsk::RenderNode {
+    for _ in 0..20 {
+        window.queue_draw();
+        let frame = gtk::glib::MainLoop::new(None, false);
+        let finish = frame.clone();
+        gtk::glib::timeout_add_local_once(Duration::from_millis(50), move || finish.quit());
+        frame.run();
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(window)).snapshot(
+            &snapshot,
+            window.width() as f64,
+            window.height() as f64,
+        );
+        if let Some(node) = snapshot.to_node() {
+            return node;
+        }
+    }
+    panic!(
+        "window did not render: mapped={}, width={}, height={}",
+        window.is_mapped(),
+        window.width(),
+        window.height()
+    );
+}
 #[test]
 #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
 fn folder_setup_and_dashboard_layouts() {
@@ -49,9 +74,11 @@ fn folder_setup_and_dashboard_layouts() {
     let metadata = std::path::Path::new(&data).join("drivesync");
     std::fs::create_dir_all(&metadata).unwrap();
     std::fs::write(metadata.join("accounts.json"), r#"{"version":2,"clients":{"ui-test.apps.googleusercontent.com":[{"id":"google:layout-fixture","provider_subject":"layout-fixture","email":"preview@example.com"},{"id":"google:second-fixture","provider_subject":"second-fixture","email":"second@example.com"}]},"folders":{}}"#).unwrap();
+    crate::dashboard::verify_download_worker_failure();
     let engine = Arc::new(DriveSyncEngine::new());
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
+        settings.set_gtk_enable_animations(false);
     }
     for width in [1000, 360] {
         for screen in ["welcome", "dashboard"] {
@@ -252,18 +279,7 @@ fn folder_setup_and_dashboard_layouts() {
                     Some("google:layout-fixture")
                 );
             }
-            // A stack switch invalidates the paintable until the next frame.
-            let frame = gtk::glib::MainLoop::new(None, false);
-            let finish = frame.clone();
-            gtk::glib::timeout_add_local_once(Duration::from_millis(100), move || finish.quit());
-            frame.run();
-            let snapshot = gtk::Snapshot::new();
-            gtk::WidgetPaintable::new(Some(&window)).snapshot(
-                &snapshot,
-                window.width() as f64,
-                window.height() as f64,
-            );
-            let node = snapshot.to_node().expect("rendered layout");
+            let node = rendered(&window);
             let texture = window.renderer().unwrap().render_texture(&node, None);
             texture
                 .save_to_png(format!("{output}/{}-{width}.png", screen))

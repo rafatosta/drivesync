@@ -1,13 +1,14 @@
-//! Adaptive account navigation and read-only synchronization dashboard.
+//! Adaptive account navigation and manual download dashboard.
 mod account_details;
 mod description;
 mod folders;
+mod synchronization;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;
 
-/// Builds account navigation without changing engine or transfer behavior.
+/// Builds account navigation with account-scoped configuration and manual downloads.
 pub fn build(
     engine: Arc<DriveSyncEngine>,
     accounts: Vec<RestoredAccount>,
@@ -120,4 +121,9 @@ pub fn build_selected(
         .title("Dashboard")
         .child(&bin)
         .build()
+}
+
+#[cfg(test)]
+pub(crate) fn verify_download_worker_failure() {
+    synchronization::verify_worker_failure();
 }

@@ -45,6 +45,7 @@ struct Widgets {
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
     editable: bool,
+    start: gtk::glib::WeakRef<gtk::Button>,
 }
 impl Widgets {
     fn refresh(&self, draft: &Selection, busy: bool) {
@@ -99,6 +100,15 @@ impl Widgets {
                 "Configuration required"
             });
         }
+        if let Some(start) = self.start.upgrade() {
+            start.set_sensitive(
+                self.editable
+                    && draft.saved.is_some()
+                    && draft.local_available
+                    && !draft.dirty()
+                    && !busy,
+            );
+        }
         if let Some(sync) = self.sync.upgrade() {
             sync.set_subtitle(
                 if draft.saved.is_some() && draft.local_available && !draft.dirty() && !busy {
@@ -124,6 +134,7 @@ pub(super) fn build(
     saved: &RestoredAccount,
     sync: &adw::ActionRow,
     status: &gtk::Label,
+    start: &gtk::Button,
 ) -> gtk::Box {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let group = adw::PreferencesGroup::builder()
@@ -177,6 +188,7 @@ pub(super) fn build(
         sync: sync.downgrade(),
         status: status.downgrade(),
         editable: saved.error.is_none(),
+        start: start.downgrade(),
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
     ui.refresh(&draft.borrow(), false);
