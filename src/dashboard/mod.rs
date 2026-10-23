@@ -35,16 +35,6 @@ pub fn build_selected(
     let sidebar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
-    let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some("Add Account"));
-    add.set_widget_name("add-account");
-    let weak_nav = nav.downgrade();
-    add.connect_clicked(move |_| {
-        if let Some(nav) = weak_nav.upgrade() {
-            let _ = nav.activate_action("connection.open", None);
-        }
-    });
-    header.pack_end(&add);
     header.pack_end(&crate::main_menu::button());
     sidebar.add_top_bar(&header);
     let side_content = gtk::Box::new(gtk::Orientation::Vertical, 12);

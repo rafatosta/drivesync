@@ -299,11 +299,8 @@ fn folder_setup_and_dashboard_layouts() {
                         .unwrap()
                         .emit_clicked();
                 } else {
-                    find_named(window.upcast_ref(), "add-account")
-                        .unwrap()
-                        .downcast::<gtk::Button>()
-                        .unwrap()
-                        .emit_clicked();
+                    assert!(find_named(window.upcast_ref(), "add-account").is_none());
+                    page.activate_action("connection.open", None).unwrap();
                 }
                 let connection = gtk::Window::list_toplevels()
                     .into_iter()
