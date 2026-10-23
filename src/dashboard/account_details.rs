@@ -19,6 +19,7 @@ pub(super) fn populate(
             .map(|e| e.to_string())
             .unwrap_or_else(|| "Connected".into());
         let user = crate::flow::row(name, &state, "avatar-default-symbolic");
+        user.set_subtitle_selectable(false);
         user.set_title_lines(1);
         user.set_subtitle_lines(2);
         user.set_tooltip_text(Some(name));
