@@ -158,6 +158,20 @@ impl DriveSyncEngine {
         self.auth
             .with_access(id, |token| remote::list(token, parent, page))
     }
+    /// Checks a saved local directory without creating files or contacting Google.
+    ///
+    /// Uses the stored access path (including portal paths), not the host display
+    /// path. Availability is a point-in-time check and does not prove write access.
+    ///
+    /// # Errors
+    /// Returns invalid-folder for absent, inaccessible, relative or non-directory paths.
+    pub fn check_local_folder(&self, path: &std::path::Path) -> Result<(), EngineError> {
+        if !path.is_absolute() || !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+            return Err(EngineError::InvalidFolder);
+        }
+        Ok(())
+    }
+
     /// Returns the saved folder pair for an account, without remote validation.
     ///
     /// # Errors

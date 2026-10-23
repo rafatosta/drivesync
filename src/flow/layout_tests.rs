@@ -92,8 +92,8 @@ fn folder_setup_and_dashboard_layouts() {
                                     id: "layout-folder".into(),
                                     name: "Projects".into(),
                                 },
-                                local: "/home/preview/DriveSync/Projects".into(),
-                                local_display: "/home/preview/DriveSync/Projects".into(),
+                                local: metadata.join("missing-sync-folder"),
+                                local_display: metadata.join("missing-sync-folder"),
                             }),
                         },
                         RestoredAccount {
@@ -220,6 +220,13 @@ fn folder_setup_and_dashboard_layouts() {
                 assert!(find_button(window.upcast_ref(), "Save and Continue").is_none());
                 let configured = details.visible_child().unwrap();
                 assert!(find_named(&configured, "save-folders").is_none());
+                let warning = find_named(&configured, "folder-feedback")
+                    .unwrap()
+                    .downcast::<gtk::Label>()
+                    .unwrap();
+                assert!(warning.is_visible());
+                assert!(warning.text().contains("local folder is unavailable"));
+                assert!(!metadata.join("missing-sync-folder").exists());
                 for name in ["change-remote-folder", "change-local-folder"] {
                     assert!(find_named(&configured, name).unwrap().is_sensitive());
                 }

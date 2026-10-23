@@ -8,6 +8,7 @@ struct Selection {
     remote: Option<DriveFolder>,
     local: Option<PathBuf>,
     saved: Option<FolderConfiguration>,
+    local_available: bool,
 }
 impl Selection {
     fn from_saved(saved: Option<FolderConfiguration>) -> Self {
@@ -15,6 +16,7 @@ impl Selection {
             remote: saved.as_ref().map(|f| f.remote.clone()),
             local: saved.as_ref().map(|f| f.local.clone()),
             saved,
+            local_available: false,
         }
     }
     fn dirty(&self) -> bool {
@@ -76,6 +78,8 @@ impl Widgets {
                 "Saving folder configuration…"
             } else if draft.dirty() {
                 "Folder configuration incomplete"
+            } else if draft.saved.is_some() && !draft.local_available {
+                "Local folder unavailable"
             } else if draft.saved.is_some() {
                 "Configuration saved"
             } else {
@@ -83,11 +87,13 @@ impl Widgets {
             });
         }
         if let Some(sync) = self.sync.upgrade() {
-            sync.set_subtitle(if draft.saved.is_some() && !draft.dirty() && !busy {
-                "Folders are configured"
-            } else {
-                "Choose folders before synchronization"
-            });
+            sync.set_subtitle(
+                if draft.saved.is_some() && draft.local_available && !draft.dirty() && !busy {
+                    "Folders are configured"
+                } else {
+                    "Choose folders before synchronization"
+                },
+            );
         }
     }
     fn message(&self, text: &str) {
@@ -152,6 +158,26 @@ pub(super) fn build(
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
     ui.refresh(&draft.borrow(), false);
+    if let Some(folder) = &saved.folder {
+        ui.refresh(&draft.borrow(), true);
+        ui.message("Checking the saved local folder…");
+        let path = folder.local.clone();
+        let worker = engine.clone();
+        let ui = ui.clone();
+        let draft = draft.clone();
+        crate::flow::work(
+            move || worker.check_local_folder(&path),
+            move |result| {
+                draft.borrow_mut().local_available = result.is_ok();
+                ui.refresh(&draft.borrow(), false);
+                if result.is_ok() {
+                    ui.message("");
+                } else {
+                    ui.message("The saved local folder is unavailable. It may have been moved, removed, or access may have changed. Choose the folder again.");
+                }
+            },
+        );
+    }
     {
         let ui = ui.clone();
         let draft = draft.clone();
@@ -233,7 +259,7 @@ fn autosave(
         ui.message("Choose both a Google Drive folder and a folder on this computer.");
         return;
     }
-    if !draft.borrow().dirty() {
+    if !draft.borrow().dirty() && draft.borrow().local_available {
         ui.message("");
         return;
     }
@@ -256,6 +282,7 @@ fn autosave(
             match result {
                 Ok(Some(saved)) => {
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
+                    draft.borrow_mut().local_available = true;
                     ui.message("");
                 }
                 Ok(None) => ui.message("Could not load the saved folders. Please try again."),
