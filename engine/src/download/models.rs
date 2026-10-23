@@ -19,12 +19,30 @@ pub struct DownloadReport {
     pub skipped: usize,
     pub issues: Vec<DownloadIssue>,
 }
-/// Progress is observational; bytes received do not imply installation.
+/// Current item stage. Receiving bytes is distinct from verification/installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStage {
+    Checking,
+    Downloading,
+    Verifying,
+    Installing,
+}
+/// Item-local details; byte totals never describe the complete cycle.
+#[derive(Debug, Clone)]
+pub struct DownloadItemProgress {
+    pub relative_path: PathBuf,
+    pub stage: DownloadStage,
+    pub received: u64,
+    /// Binary byte size; None for folders or unsupported items.
+    pub total: Option<u64>,
+}
+/// Cycle progress counts processed inventory items, including folders, skipped
+/// items and failures. It is not a measure of successful installation or time.
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
-    pub relative_path: PathBuf,
-    pub received: u64,
-    pub total: u64,
+    pub completed_items: usize,
+    pub total_items: usize,
+    pub current: Option<DownloadItemProgress>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Identity {

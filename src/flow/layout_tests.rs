@@ -80,6 +80,15 @@ fn folder_setup_and_dashboard_layouts() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
         settings.set_gtk_enable_animations(false);
     }
+    crate::dashboard::verify_download_progress(|window, name| {
+        let node = rendered(window);
+        window
+            .renderer()
+            .unwrap()
+            .render_texture(&node, None)
+            .save_to_png(format!("{output}/{name}.png"))
+            .unwrap();
+    });
     for width in [1000, 360] {
         for screen in ["welcome", "dashboard"] {
             let nav = adw::NavigationView::new();

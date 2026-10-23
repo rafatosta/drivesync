@@ -1,12 +1,13 @@
 //! Manual download cycles on workers, using native progress and cancellation UI.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
-    Cancellation, DownloadProgress, DownloadReport, DriveSyncEngine, EngineError, RestoredAccount,
+    Cancellation, DownloadProgress, DownloadReport, DownloadStage, DriveSyncEngine, EngineError,
+    RestoredAccount,
 };
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    sync::{mpsc, Arc},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -19,27 +20,97 @@ struct Widgets {
     row: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
-    issues: gtk::glib::WeakRef<gtk::Label>,
+    issues: gtk::glib::WeakRef<gtk::Box>,
+    skipped: gtk::glib::WeakRef<gtk::Label>,
+    spinner: gtk::glib::WeakRef<gtk::Spinner>,
 }
 impl Widgets {
     fn progress(&self, event: &DownloadProgress) {
         if let Some(bar) = self.progress.upgrade() {
-            bar.set_fraction(if event.total == 0 {
-                0.0
-            } else {
-                (event.received as f64 / event.total as f64).clamp(0.0, 1.0)
-            });
+            bar.set_visible(true);
+            bar.set_fraction(cycle_fraction(event));
+            bar.set_text(Some(&format!(
+                "Cycle: {} of {} items processed",
+                event.completed_items, event.total_items
+            )));
         }
-        if let Some(row) = self.row.upgrade() {
-            row.set_title("Downloading");
-            row.set_subtitle(&event.relative_path.to_string_lossy());
+        if let Some(current) = &event.current {
+            if let Some(row) = self.row.upgrade() {
+                row.set_title(match current.stage {
+                    DownloadStage::Checking => "Checking item",
+                    DownloadStage::Downloading => "Downloading file",
+                    DownloadStage::Verifying => "Verifying file integrity",
+                    DownloadStage::Installing => "Saving verified file",
+                });
+                row.set_subtitle(&current.relative_path.to_string_lossy());
+            }
+        }
+        if event.current.is_none() {
+            if let Some(row) = self.row.upgrade() {
+                row.set_title(if event.completed_items == event.total_items {
+                    "Finalizing cycle"
+                } else {
+                    "Processing files and folders"
+                });
+                row.set_subtitle(
+                    "Items include folders, unchanged files, skipped items and conflicts.",
+                );
+            }
         }
         if let Some(status) = self.status.upgrade() {
-            status.set_label(&format!(
-                "{} / {} received · verifying before installation",
-                gtk::glib::format_size(event.received),
-                gtk::glib::format_size(event.total)
-            ));
+            status.set_label(&progress_text(event));
+        }
+    }
+    fn clear_issues(&self) {
+        if let Some(container) = self.issues.upgrade() {
+            while let Some(child) = container.first_child() {
+                container.remove(&child);
+            }
+            container.set_visible(false);
+        }
+    }
+    fn show_issues(&self, report: &DownloadReport) {
+        self.clear_issues();
+        if let Some(container) = self.issues.upgrade() {
+            let group = adw::PreferencesGroup::builder()
+                .title("Needs attention")
+                .build();
+            for issue in report.issues.iter().take(5) {
+                let path = issue.relative_path.as_deref();
+                let name = path
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Item".into());
+                let row = adw::ActionRow::builder()
+                    .title(&name)
+                    .subtitle(issue.error.to_string())
+                    .use_markup(false)
+                    .build();
+                row.set_title_lines(2);
+                row.set_subtitle_lines(3);
+                row.set_tooltip_text(Some(&format!(
+                    "{}\n{}",
+                    path.map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "Item".into()),
+                    issue.error
+                )));
+                let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+                icon.add_css_class("warning");
+                row.add_prefix(&icon);
+                group.add(&row);
+            }
+            if report.issues.len() > 5 {
+                group.add(
+                    &adw::ActionRow::builder()
+                        .title(format!(
+                            "{} more items need attention",
+                            report.issues.len() - 5
+                        ))
+                        .build(),
+                );
+            }
+            container.append(&group);
+            container.set_visible(!report.issues.is_empty());
         }
     }
     fn finish(&self, result: Result<DownloadReport, EngineError>) {
@@ -57,9 +128,13 @@ impl Widgets {
         if let Some(bar) = self.progress.upgrade() {
             bar.set_visible(false);
         }
+        if let Some(spinner) = self.spinner.upgrade() {
+            spinner.stop();
+            spinner.set_visible(false);
+        }
         match result {
             Ok(report) => {
-                let attention = !report.issues.is_empty() || report.skipped > 0;
+                let attention = !report.issues.is_empty();
                 if let Some(row) = self.row.upgrade() {
                     row.set_title(if attention {
                         "Cycle finished with pending items"
@@ -71,34 +146,17 @@ impl Widgets {
                 if let Some(status) = self.status.upgrade() {
                     status.set_label(&summary(&report));
                 }
-                if let Some(issues) = self.issues.upgrade() {
-                    let mut messages: Vec<_> = report
-                        .issues
-                        .iter()
-                        .take(5)
-                        .map(|issue| {
-                            format!(
-                                "{}: {}",
-                                issue
-                                    .relative_path
-                                    .as_ref()
-                                    .map(|p| p.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "Item".into()),
-                                issue.error
-                            )
-                        })
-                        .collect();
-                    if report.issues.len() > 5 {
-                        messages.push(format!(
-                            "{} additional items need attention.",
-                            report.issues.len() - 5
-                        ));
-                    }
-                    if report.skipped > 0 {
-                        messages.push("Unsupported items, including Google documents and shortcuts, were skipped.".into());
-                    }
-                    issues.set_label(&messages.join("\n\n"));
-                    issues.set_visible(!messages.is_empty());
+                self.show_issues(&report);
+                if let Some(skipped) = self.skipped.upgrade() {
+                    skipped.set_label(&if report.skipped == 1 {
+                        "1 item skipped: unsupported type or download restriction.".into()
+                    } else {
+                        format!(
+                            "{} items skipped: unsupported types or download restrictions.",
+                            report.skipped
+                        )
+                    });
+                    skipped.set_visible(report.skipped > 0);
                 }
             }
             Err(error) => {
@@ -128,12 +186,54 @@ impl Widgets {
                         "The cycle could not finish."
                     });
                 }
-                if let Some(issues) = self.issues.upgrade() {
-                    issues.set_label(&error.to_string());
-                    issues.set_visible(!cancelled);
-                }
+                let report = DownloadReport {
+                    issues: if cancelled {
+                        vec![]
+                    } else {
+                        vec![drivesync_engine::DownloadIssue {
+                            relative_path: None,
+                            error,
+                        }]
+                    },
+                    ..Default::default()
+                };
+                self.show_issues(&report);
             }
         }
+    }
+}
+/// Item-count progress advances only after an item finishes checking/installation.
+fn cycle_fraction(event: &DownloadProgress) -> f64 {
+    if event.total_items == 0 {
+        0.0
+    } else {
+        (event.completed_items as f64 / event.total_items as f64).clamp(0.0, 1.0)
+    }
+}
+fn progress_text(event: &DownloadProgress) -> String {
+    let Some(item) = &event.current else {
+        return if event.completed_items == event.total_items {
+            "All items processed. Preparing the result…".into()
+        } else {
+            "The cycle bar counts checked files and folders, not bytes.".into()
+        };
+    };
+    match item.stage {
+        DownloadStage::Checking => "Checking this item and its existing local copy…".into(),
+        DownloadStage::Verifying => "Download received. Verifying this file before saving…".into(),
+        DownloadStage::Installing => "Integrity verified. Saving this file safely…".into(),
+        DownloadStage::Downloading => match item.total {
+            Some(total) if total > 0 => format!(
+                "Current file: {} of {} ({:.0}%)",
+                gtk::glib::format_size(item.received),
+                gtk::glib::format_size(total),
+                100.0 * (item.received as f64 / total as f64).clamp(0.0, 1.0)
+            ),
+            _ => format!(
+                "Current file: {} received",
+                gtk::glib::format_size(item.received)
+            ),
+        },
     }
 }
 fn summary(report: &DownloadReport) -> String {
@@ -158,19 +258,35 @@ pub(super) fn build(
     menu: &gtk::MenuButton,
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let note=gtk::Label::builder().label("Manual download preview. Existing files are preserved. Automatic updates and Google documents are not supported yet.").wrap(true).xalign(0.0).css_classes(["dim-label"]).build();
+    let note = gtk::Label::builder()
+        .label("Manual download · existing local files are preserved.")
+        .wrap(true)
+        .xalign(0.0)
+        .css_classes(["dim-label"])
+        .build();
     footer.append(&note);
+    let spinner = gtk::Spinner::new();
+    spinner.set_widget_name("download-activity");
+    spinner.set_halign(gtk::Align::Start);
+    spinner.set_visible(false);
+    footer.append(&spinner);
     let progress = gtk::ProgressBar::new();
     progress.set_widget_name("download-progress");
+    progress.set_show_text(true);
+    progress.set_tooltip_text(Some("Cycle progress counts all processed files and folders, including skipped items and conflicts. It does not show downloaded bytes."));
     progress.set_visible(false);
     footer.append(&progress);
     footer.append(status);
-    let issues = gtk::Label::builder()
+    let skipped = gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
         .visible(false)
-        .css_classes(["error"])
+        .css_classes(["dim-label"])
         .build();
+    skipped.set_widget_name("download-skipped");
+    footer.append(&skipped);
+    let issues = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    issues.set_visible(false);
     issues.set_widget_name("download-issues");
     footer.append(&issues);
     footer.append(start);
@@ -182,6 +298,8 @@ pub(super) fn build(
         status: status.downgrade(),
         progress: progress.downgrade(),
         issues: issues.downgrade(),
+        skipped: skipped.downgrade(),
+        spinner: spinner.downgrade(),
     };
     let running: Rc<RefCell<Option<Cancellation>>> = Rc::new(RefCell::new(None));
     let id = saved.account.id.clone();
@@ -190,6 +308,10 @@ pub(super) fn build(
             cancel.cancel();
             button.set_sensitive(false);
             button.set_label("Cancelling…");
+            if let Some(row) = ui.row.upgrade() {
+                row.set_title("Cancelling downloads");
+                row.set_subtitle("Waiting for the current operation to stop safely…");
+            }
             return;
         }
         let cancel = Cancellation::new();
@@ -209,14 +331,20 @@ pub(super) fn build(
         if let Some(status) = ui.status.upgrade() {
             status.set_label("Preparing a fresh download plan…");
         }
-        if let Some(issues) = ui.issues.upgrade() {
-            issues.set_visible(false);
+        ui.clear_issues();
+        if let Some(skipped) = ui.skipped.upgrade() {
+            skipped.set_visible(false);
+        }
+        if let Some(spinner) = ui.spinner.upgrade() {
+            spinner.set_visible(true);
+            spinner.start();
         }
         if let Some(bar) = ui.progress.upgrade() {
             bar.set_fraction(0.0);
-            bar.set_visible(true);
+            bar.set_visible(false);
         }
-        let (send, receive) = mpsc::sync_channel(1);
+        let latest: Arc<Mutex<Option<DownloadProgress>>> = Arc::new(Mutex::new(None));
+        let receive = latest.clone();
         let worker = engine.clone();
         let account = id.clone();
         let worker_cancel = cancel.clone();
@@ -226,7 +354,7 @@ pub(super) fn build(
         let active = running.clone();
         let completion = ui.clone();
         let completion_active = running.clone();
-        // Bounded progress messages never block a disk/network worker.
+        // A single replaceable snapshot keeps the newest file/stage without an event backlog.
         gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
             if progress_finished.get() || active.borrow().is_none() {
                 return gtk::glib::ControlFlow::Break;
@@ -235,7 +363,15 @@ pub(super) fn build(
                 cancel.cancel();
                 return gtk::glib::ControlFlow::Break;
             }
-            if let Ok(event) = receive.try_recv() {
+            if active
+                .borrow()
+                .as_ref()
+                .is_some_and(Cancellation::is_cancelled)
+            {
+                return gtk::glib::ControlFlow::Continue;
+            }
+            let event = receive.lock().ok().and_then(|mut slot| slot.take());
+            if let Some(event) = event {
                 updates.progress(&event);
             }
             gtk::glib::ControlFlow::Continue
@@ -243,7 +379,9 @@ pub(super) fn build(
         crate::flow::work(
             move || {
                 worker.download_once(&account, &worker_cancel, |event| {
-                    let _ = send.try_send(event);
+                    if let Ok(mut slot) = latest.lock() {
+                        *slot = Some(event);
+                    }
                 })
             },
             move |result| {
@@ -311,9 +449,165 @@ pub(super) fn verify_worker_failure() {
     assert!(footer.first_child().is_some());
 }
 
+/// Verifies real native controls in active, verification and completion states.
+#[cfg(test)]
+pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window, &str)) {
+    use drivesync_engine::{AccountId, AccountSummary, DownloadIssue, DownloadItemProgress};
+    for width in [720, 360] {
+        let saved = RestoredAccount {
+            account: AccountSummary {
+                id: AccountId("google:progress-fixture".into()),
+                provider_subject: "progress-fixture".into(),
+                email: None,
+            },
+            error: None,
+            folder: None,
+        };
+        let start = gtk::Button::with_label("Cancel");
+        start.set_halign(gtk::Align::End);
+        let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let menu = gtk::MenuButton::new();
+        let row = adw::ActionRow::builder()
+            .title("Synchronization")
+            .use_markup(false)
+            .build();
+        let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
+        let footer = build(
+            Arc::new(DriveSyncEngine::new()),
+            &saved,
+            &folders,
+            &start,
+            &row,
+            &status,
+            &menu,
+        );
+        let mut controls = std::collections::HashMap::new();
+        let mut child = footer.first_child();
+        while let Some(widget) = child {
+            controls.insert(widget.widget_name().to_string(), widget.clone());
+            child = widget.next_sibling();
+        }
+        let bar = controls["download-progress"]
+            .clone()
+            .downcast::<gtk::ProgressBar>()
+            .unwrap();
+        let spinner = controls["download-activity"]
+            .clone()
+            .downcast::<gtk::Spinner>()
+            .unwrap();
+        let issues = controls["download-issues"]
+            .clone()
+            .downcast::<gtk::Box>()
+            .unwrap();
+        let skipped = controls["download-skipped"]
+            .clone()
+            .downcast::<gtk::Label>()
+            .unwrap();
+        let ui = Widgets {
+            start: start.downgrade(),
+            folders: folders.downgrade(),
+            menu: menu.downgrade(),
+            row: row.downgrade(),
+            status: status.downgrade(),
+            progress: bar.downgrade(),
+            issues: issues.downgrade(),
+            skipped: skipped.downgrade(),
+            spinner: spinner.downgrade(),
+        };
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(18)
+            .margin_top(24)
+            .margin_bottom(24)
+            .margin_start(24)
+            .margin_end(24)
+            .build();
+        let group = adw::PreferencesGroup::builder()
+            .title("Synchronization")
+            .build();
+        group.add(&row);
+        content.append(&group);
+        content.append(&footer);
+        let window = adw::Window::builder()
+            .default_width(width)
+            .default_height(520)
+            .content(&content)
+            .build();
+        window.present();
+        spinner.set_visible(true);
+        spinner.start();
+        let mut event = DownloadProgress {
+            completed_items: 7,
+            total_items: 20,
+            current: Some(DownloadItemProgress {
+                relative_path: "Photos/Example.jpg".into(),
+                stage: DownloadStage::Downloading,
+                received: 2_500_000,
+                total: Some(3_400_000),
+            }),
+        };
+        ui.progress(&event);
+        assert_eq!(bar.fraction(), 0.35);
+        assert!(bar.text().unwrap().contains("7 of 20"));
+        assert!(status.text().starts_with("Current file:"));
+        capture(&window, &format!("download-progress-{width}"));
+        assert!(window.width() <= width + 10);
+        event.current.as_mut().unwrap().stage = DownloadStage::Verifying;
+        ui.progress(&event);
+        assert_eq!(row.title(), "Verifying file integrity");
+        assert_eq!(bar.fraction(), 0.35);
+        ui.finish(Ok(DownloadReport {
+            skipped: 1,
+            ..Default::default()
+        }));
+        assert_eq!(row.title(), "Download cycle completed");
+        assert!(!issues.is_visible());
+        assert!(skipped.is_visible());
+        assert!(!skipped.has_css_class("error"));
+        ui.finish(Ok(DownloadReport {
+            unchanged: 5,
+            skipped: 1,
+            issues: vec![DownloadIssue {
+                relative_path: Some("Reports/Report.pdf".into()),
+                error: EngineError::RemoteChanged,
+            }],
+            ..Default::default()
+        }));
+        assert!(issues.is_visible());
+        assert!(!bar.is_visible());
+        assert!(!spinner.is_spinning());
+        capture(&window, &format!("download-result-{width}"));
+        assert!(window.width() <= width + 10);
+        window.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cycle_count_and_current_file_bytes_have_separate_meanings() {
+        let mut progress = DownloadProgress {
+            completed_items: 3,
+            total_items: 10,
+            current: Some(drivesync_engine::DownloadItemProgress {
+                relative_path: "photo.jpg".into(),
+                stage: DownloadStage::Downloading,
+                received: 25,
+                total: Some(100),
+            }),
+        };
+        assert_eq!(cycle_fraction(&progress), 0.3);
+        assert!(progress_text(&progress).starts_with("Current file:"));
+        assert!(progress_text(&progress).contains("25%"));
+        progress.current.as_mut().unwrap().received = 100;
+        assert_eq!(cycle_fraction(&progress), 0.3);
+        progress.current.as_mut().unwrap().stage = DownloadStage::Verifying;
+        assert!(progress_text(&progress).contains("Verifying"));
+        assert_eq!(cycle_fraction(&progress), 0.3);
+        progress.current.as_mut().unwrap().stage = DownloadStage::Installing;
+        assert!(progress_text(&progress).contains("Saving"));
+    }
     #[test]
     fn completion_summary_does_not_hide_pending_items() {
         let report = DownloadReport {

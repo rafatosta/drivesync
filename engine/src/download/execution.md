@@ -32,6 +32,19 @@ execução automática ou exportação de documentos Google nesta unidade.
   sucesso global quando houver itens pendentes. Cancelamento é cooperativo;
   leituras HTTP têm prazo finito e o commit já iniciado é reconciliável.
 
+## Progresso observável
+
+A barra do ciclo mede itens processados (arquivos, diretórios, itens ignorados e
+falhas), com denominador fixo após o inventário. Avança após o resultado de cada
+item, sem prometer tempo restante ou sucesso de todas as transferências. Bytes
+recebidos pertencem somente ao arquivo atual. Recebimento, verificação e instalação
+são etapas distintas; receber todos os bytes não confirma a instalação. Antes de
+conhecer o inventário, a interface indica atividade sem porcentagem inventada.
+Itens não suportados são informação separada dos erros de transferência.
+A UI mantém apenas a observação mais recente para evitar exibir outro arquivo
+por atraso de mensagens. Referência GNOME consultada em 2026-10-23:
+https://developer.gnome.org/hig/patterns/feedback/progress-bars.html
+
 SQLite schema 2 adiciona journal por cliente/conta/raiz remota/local. Como nas
 regras do projeto, formatos internos antigos são rejeitados e preservados, sem
 migração ou reinicialização automática. Tokens não entram no journal.

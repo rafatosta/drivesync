@@ -105,7 +105,7 @@ pub(super) fn populate(
         let sync_state = crate::flow::row(
             "Not started",
             "Choose folders before synchronization",
-            "media-playback-pause-symbolic",
+            "folder-download-symbolic",
         );
         let status = gtk::Label::builder()
             .xalign(0.0)

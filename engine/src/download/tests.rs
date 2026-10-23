@@ -178,7 +178,11 @@ fn installs_verifies_reopens_and_never_overwrites_local_changes() {
     let mut progress = Vec::new();
     let result = f
         .execute(&inv, &mut source, &Cancellation::new(), |p| {
-            progress.push(p.received)
+            if let Some(item) = p.current {
+                if item.stage == DownloadStage::Downloading {
+                    progress.push(item.received);
+                }
+            }
         })
         .unwrap();
     assert_eq!(result.downloaded, 1);
@@ -251,8 +255,12 @@ fn network_failure_and_cancellation_preserve_final_namespace() {
     source.fail_stream = false;
     let cancel = Cancellation::new();
     assert!(matches!(
-        f.execute(&inv, &mut source, &cancel, |p| if p.received > 0 {
-            cancel.cancel();
+        f.execute(&inv, &mut source, &cancel, |p| {
+            if p.current
+                .is_some_and(|item| item.stage == DownloadStage::Downloading && item.received > 0)
+            {
+                cancel.cancel();
+            }
         }),
         Err(EngineError::Authentication(crate::AuthError::Cancelled))
     ));
@@ -556,4 +564,78 @@ fn ancestor_metadata_versions_do_not_masquerade_as_binary_changes() {
         .iter()
         .all(|e| e.error == EngineError::RemoteChanged));
     assert_eq!(fs::read(f.root.join("nested/file.txt")).unwrap(), b"abc");
+}
+
+#[test]
+fn cycle_progress_counts_every_item_without_equating_bytes_with_installation() {
+    let f = Fixture::new();
+    let mut inv = inventory();
+    let mut second = inv.entries[0].clone();
+    second.id = "second".into();
+    second.name = "second.txt".into();
+    inv.entries.push(second);
+    let mut skipped = inv.entries[0].clone();
+    skipped.id = "unsupported".into();
+    skipped.name = "document".into();
+    skipped.kind = InventoryKind::Skipped(crate::SkipReason::GoogleNativeOrShortcut);
+    inv.entries.push(skipped);
+    fs::write(f.root.join("file.txt"), b"keep").unwrap();
+    let mut source = Fake::new(&inv);
+    let mut events = Vec::new();
+    let report = f
+        .execute(&inv, &mut source, &Cancellation::new(), |event| {
+            if event
+                .current
+                .as_ref()
+                .is_some_and(|item| item.stage == DownloadStage::Installing)
+            {
+                assert!(!f.root.join("second.txt").exists());
+                assert_eq!(event.completed_items, 1);
+            }
+            events.push(event);
+        })
+        .unwrap();
+    assert_eq!(report.downloaded, 1);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.issues.len(), 1);
+    assert!(events
+        .iter()
+        .all(|p| p.total_items == 3 && p.completed_items <= 3));
+    assert!(events
+        .windows(2)
+        .all(|pair| pair[0].completed_items <= pair[1].completed_items));
+    let last = events.last().unwrap();
+    assert_eq!(last.completed_items, 3);
+    assert!(last.current.is_none());
+    let stages: Vec<_> = events
+        .iter()
+        .filter_map(|p| p.current.as_ref().map(|c| c.stage))
+        .collect();
+    assert!(stages.contains(&DownloadStage::Downloading));
+    assert!(stages.contains(&DownloadStage::Verifying));
+    assert!(stages.contains(&DownloadStage::Installing));
+    assert!(events
+        .iter()
+        .filter(|p| p.current.as_ref().is_some_and(|c| c.received == 3))
+        .all(|p| p.completed_items == 1));
+}
+#[test]
+fn corrupt_bytes_never_emit_a_verified_or_installing_stage() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut source = Fake::new(&inv);
+    source.bytes = b"bad".to_vec();
+    let mut events = Vec::new();
+    let report = f
+        .execute(&inv, &mut source, &Cancellation::new(), |p| events.push(p))
+        .unwrap();
+    assert_eq!(report.issues[0].error, EngineError::DownloadIntegrity);
+    assert!(!events
+        .iter()
+        .filter_map(|e| e.current.as_ref())
+        .any(|e| matches!(
+            e.stage,
+            DownloadStage::Verifying | DownloadStage::Installing
+        )));
+    assert_eq!(events.last().unwrap().completed_items, 1);
 }

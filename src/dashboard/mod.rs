@@ -127,3 +127,8 @@ pub fn build_selected(
 pub(crate) fn verify_download_worker_failure() {
     synchronization::verify_worker_failure();
 }
+
+#[cfg(test)]
+pub(crate) fn verify_download_progress(capture: impl FnMut(&adw::Window, &str)) {
+    synchronization::verify_progress_presentations(capture);
+}

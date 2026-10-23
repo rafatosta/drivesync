@@ -5,7 +5,9 @@ mod models;
 mod stream;
 
 pub(crate) use execution::{run, Context, Source};
-pub use models::{DownloadIssue, DownloadProgress, DownloadReport};
+pub use models::{
+    DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
+};
 pub(crate) use models::{Operation, Phase};
 
 #[cfg(test)]

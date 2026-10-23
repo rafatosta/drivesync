@@ -3,7 +3,10 @@
 use super::filesystem::{identity, Root};
 use super::{
     filesystem,
-    models::{DownloadIssue, DownloadProgress, DownloadReport, Operation, Phase},
+    models::{
+        DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
+        Operation, Phase,
+    },
     stream,
 };
 use crate::{
@@ -78,7 +81,26 @@ pub(crate) fn run(
             .map(|p| p.components().count())
             .unwrap_or(usize::MAX)
     });
-    for (item, decision) in work {
+    let total_items = work.len();
+    progress(DownloadProgress {
+        completed_items: 0,
+        total_items,
+        current: None,
+    });
+    for (completed_items, (item, decision)) in work.into_iter().enumerate() {
+        progress(DownloadProgress {
+            completed_items,
+            total_items,
+            current: Some(DownloadItemProgress {
+                relative_path: decision
+                    .relative_path
+                    .clone()
+                    .unwrap_or_else(|| item.name.clone().into()),
+                stage: DownloadStage::Checking,
+                received: 0,
+                total: item.size,
+            }),
+        });
         stream::cancelled(session.context.cancel)?;
         source.configured()?;
         session.root.validate()?;
@@ -88,7 +110,7 @@ pub(crate) fn run(
         let result = match (&item.kind, &decision.relative_path, &decision.action) {
             (InventoryKind::Skipped(_), _, _) => {
                 report.skipped += 1;
-                continue;
+                Ok(())
             }
             (_, None, _) => Err(EngineError::DownloadConflict),
             (InventoryKind::Folder, Some(path), PlanAction::CreateDirectory | PlanAction::NoOp) => {
@@ -99,7 +121,13 @@ pub(crate) fn run(
                     })
             }
             (InventoryKind::Binary, Some(path), _) => session
-                .file(item, path, &by_id, source, &mut progress)
+                .file(item, path, &by_id, source, &mut |current| {
+                    progress(DownloadProgress {
+                        completed_items,
+                        total_items,
+                        current: Some(current),
+                    })
+                })
                 .map(|outcome| match outcome {
                     Outcome::Downloaded => report.downloaded += 1,
                     Outcome::Recovered => report.recovered += 1,
@@ -118,6 +146,11 @@ pub(crate) fn run(
                 }),
             }
         }
+        progress(DownloadProgress {
+            completed_items: completed_items + 1,
+            total_items,
+            current: None,
+        });
     }
     Ok(report)
 }
@@ -174,7 +207,7 @@ impl Session<'_> {
         path: &Path,
         by_id: &HashMap<&str, &InventoryEntry>,
         source: &mut impl Source,
-        progress: &mut impl FnMut(DownloadProgress),
+        progress: &mut impl FnMut(DownloadItemProgress),
     ) -> Result<Outcome, EngineError> {
         let size = item.size.ok_or(EngineError::InvalidPlan)?;
         let checksum = item
@@ -245,6 +278,12 @@ impl Session<'_> {
             validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
             self.root.validate_parent(path, parent_id)?;
             stream::cancelled(self.context.cancel)?;
+            progress(DownloadItemProgress {
+                relative_path: path.into(),
+                stage: DownloadStage::Installing,
+                received: size,
+                total: Some(size),
+            });
             filesystem::install(&parent, &op.temporary, &name)?;
             let mut confirmed = op.clone();
             confirmed.phase = Phase::Installed {
@@ -302,12 +341,13 @@ impl Session<'_> {
         self.root.validate_parent(path, parent_id)?;
         self.put(&op)?;
         let mut staged = filesystem::create(&parent, &op.temporary, size)?;
-        let mut input = source.media(&item.id)?;
-        progress(DownloadProgress {
+        progress(DownloadItemProgress {
             relative_path: path.into(),
+            stage: DownloadStage::Downloading,
             received: 0,
-            total: size,
+            total: Some(size),
         });
+        let mut input = source.media(&item.id)?;
         let sha256 = stream::copy(
             &mut input,
             &mut staged,
@@ -315,13 +355,20 @@ impl Session<'_> {
             checksum,
             self.context.cancel,
             |received| {
-                progress(DownloadProgress {
+                progress(DownloadItemProgress {
                     relative_path: path.into(),
+                    stage: DownloadStage::Downloading,
                     received,
-                    total: size,
+                    total: Some(size),
                 })
             },
         )?;
+        progress(DownloadItemProgress {
+            relative_path: path.into(),
+            stage: DownloadStage::Verifying,
+            received: size,
+            total: Some(size),
+        });
         staged.sync_all().map_err(filesystem::io)?;
         parent.sync_all().map_err(filesystem::io)?;
         let staged_id = identity(&staged)?;
@@ -347,6 +394,12 @@ impl Session<'_> {
         self.put(&op)?;
         // Cancellation after Ready still leaves enough evidence for replay.
         stream::cancelled(self.context.cancel)?;
+        progress(DownloadItemProgress {
+            relative_path: path.into(),
+            stage: DownloadStage::Installing,
+            received: size,
+            total: Some(size),
+        });
         filesystem::install(&parent, &op.temporary, &name)?;
         op.phase = Phase::Installed {
             identity: staged_id,

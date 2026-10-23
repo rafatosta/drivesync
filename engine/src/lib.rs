@@ -35,4 +35,6 @@ pub use planner::{
     decide, ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation, PlanAction, PlanEntry,
 };
 
-pub use download::{DownloadIssue, DownloadProgress, DownloadReport};
+pub use download::{
+    DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
+};
