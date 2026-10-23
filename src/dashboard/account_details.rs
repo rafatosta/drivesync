@@ -18,7 +18,12 @@ pub(super) fn populate(
             .error
             .map(|e| e.to_string())
             .unwrap_or_else(|| "Connected".into());
-        let user = crate::flow::row(name, &state, "avatar-default-symbolic");
+        let user = adw::ActionRow::builder()
+            .title(name)
+            .subtitle(&state)
+            .use_markup(false)
+            .build();
+        user.add_prefix(&adw::Avatar::new(32, Some(name), true));
         user.set_subtitle_selectable(false);
         user.set_title_lines(1);
         user.set_subtitle_lines(2);
