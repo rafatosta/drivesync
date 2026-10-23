@@ -118,7 +118,7 @@ pub(super) fn populate(
         start.add_css_class("suggested-action");
         start.set_sensitive(false);
         start.set_tooltip_text(Some(
-            "Download new binary files without replacing existing local files",
+            "Download new files and update intact managed copies; preserve local edits",
         ));
         start.set_widget_name("start-synchronization");
         let folders = super::folders::build(engine.clone(), &saved, &sync_state, &status, &start);

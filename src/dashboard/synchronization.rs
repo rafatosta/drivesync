@@ -22,6 +22,7 @@ struct Widgets {
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
     issues: gtk::glib::WeakRef<gtk::Box>,
     skipped: gtk::glib::WeakRef<gtk::Label>,
+    preserved: gtk::glib::WeakRef<gtk::Label>,
     spinner: gtk::glib::WeakRef<gtk::Spinner>,
 }
 impl Widgets {
@@ -141,10 +142,14 @@ impl Widgets {
                     } else {
                         "Download cycle completed"
                     });
-                    row.set_subtitle("Manual mode · existing local files are preserved");
+                    row.set_subtitle("Download only · local edits are preserved");
                 }
                 if let Some(status) = self.status.upgrade() {
                     status.set_label(&summary(&report));
+                }
+                if let Some(preserved) = self.preserved.upgrade() {
+                    preserved.set_label(&preserved_text(&report));
+                    preserved.set_visible(!report.preserved_copies.is_empty());
                 }
                 self.show_issues(&report);
                 if let Some(skipped) = self.skipped.upgrade() {
@@ -238,13 +243,37 @@ fn progress_text(event: &DownloadProgress) -> String {
 }
 fn summary(report: &DownloadReport) -> String {
     format!(
-        "{} downloaded · {} recovered · {} unchanged · {} skipped · {} need attention",
+        "{} downloaded · {} updated · {} recovered · {} unchanged · {} skipped · {} need attention",
         report.downloaded,
+        report.updated,
         report.recovered,
         report.unchanged,
         report.skipped,
         report.issues.len()
     )
+}
+/// Shows bounded relative paths without implying old versions were deleted.
+fn preserved_text(report: &DownloadReport) -> String {
+    if report.preserved_copies.is_empty() {
+        return String::new();
+    }
+    let mut text = String::from("Previous versions kept beside the updated files:\n");
+    text.push_str(
+        &report
+            .preserved_copies
+            .iter()
+            .take(3)
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    if report.preserved_copies.len() > 3 {
+        text.push_str(&format!(
+            "\n{} additional copies kept.",
+            report.preserved_copies.len() - 3
+        ));
+    }
+    text
 }
 /// Binds the configured account to a single manual worker. The same button
 /// cancels active work; folder/account actions stay unavailable until it stops.
@@ -259,7 +288,7 @@ pub(super) fn build(
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
-        .label("Manual download · existing local files are preserved.")
+        .label("Manual download · local edits are preserved. Updates keep a previous copy beside the file.")
         .wrap(true)
         .xalign(0.0)
         .css_classes(["dim-label"])
@@ -285,6 +314,15 @@ pub(super) fn build(
         .build();
     skipped.set_widget_name("download-skipped");
     footer.append(&skipped);
+    let preserved = gtk::Label::builder()
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .xalign(0.0)
+        .visible(false)
+        .css_classes(["dim-label"])
+        .build();
+    preserved.set_widget_name("download-preserved");
+    footer.append(&preserved);
     let issues = gtk::Box::new(gtk::Orientation::Vertical, 0);
     issues.set_visible(false);
     issues.set_widget_name("download-issues");
@@ -299,6 +337,7 @@ pub(super) fn build(
         progress: progress.downgrade(),
         issues: issues.downgrade(),
         skipped: skipped.downgrade(),
+        preserved: preserved.downgrade(),
         spinner: spinner.downgrade(),
     };
     let running: Rc<RefCell<Option<Cancellation>>> = Rc::new(RefCell::new(None));
@@ -332,6 +371,9 @@ pub(super) fn build(
             status.set_label("Preparing a fresh download plan…");
         }
         ui.clear_issues();
+        if let Some(preserved) = ui.preserved.upgrade() {
+            preserved.set_visible(false);
+        }
         if let Some(skipped) = ui.skipped.upgrade() {
             skipped.set_visible(false);
         }
@@ -503,6 +545,10 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .clone()
             .downcast::<gtk::Label>()
             .unwrap();
+        let preserved = controls["download-preserved"]
+            .clone()
+            .downcast::<gtk::Label>()
+            .unwrap();
         let ui = Widgets {
             start: start.downgrade(),
             folders: folders.downgrade(),
@@ -512,6 +558,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             progress: bar.downgrade(),
             issues: issues.downgrade(),
             skipped: skipped.downgrade(),
+            preserved: preserved.downgrade(),
             spinner: spinner.downgrade(),
         };
         let content = gtk::Box::builder()
@@ -566,6 +613,8 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         assert!(!skipped.has_css_class("error"));
         ui.finish(Ok(DownloadReport {
             unchanged: 5,
+            updated: 2,
+            preserved_copies: vec!["Reports/DriveSync backup example.bak".into()],
             skipped: 1,
             issues: vec![DownloadIssue {
                 relative_path: Some("Reports/Report.pdf".into()),
@@ -573,6 +622,8 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             }],
             ..Default::default()
         }));
+        assert!(preserved.is_visible());
+        assert!(preserved.text().contains("DriveSync backup example.bak"));
         assert!(issues.is_visible());
         assert!(!bar.is_visible());
         assert!(!spinner.is_spinning());
@@ -585,6 +636,17 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn updated_count_and_preserved_paths_remain_visible_in_summary() {
+        let report = DownloadReport {
+            updated: 2,
+            preserved_copies: vec!["Folder/DriveSync backup example.bak".into()],
+            ..Default::default()
+        };
+        assert!(summary(&report).contains("2 updated"));
+        assert!(preserved_text(&report).contains("Folder/DriveSync backup example.bak"));
+        assert!(preserved_text(&DownloadReport::default()).is_empty());
+    }
     #[test]
     fn cycle_count_and_current_file_bytes_have_separate_meanings() {
         let mut progress = DownloadProgress {
@@ -621,7 +683,7 @@ mod tests {
         };
         assert_eq!(
             summary(&report),
-            "2 downloaded · 0 recovered · 0 unchanged · 1 skipped · 1 need attention"
+            "2 downloaded · 0 updated · 0 recovered · 0 unchanged · 1 skipped · 1 need attention"
         );
     }
 }
