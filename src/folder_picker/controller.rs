@@ -15,7 +15,9 @@ struct Picker {
     window: gtk::glib::WeakRef<adw::Window>,
     stack: RefCell<Vec<DriveFolder>>,
     next: RefCell<Option<String>>,
-    list: gtk::Box,
+    list: gtk::ListBox,
+    breadcrumbs: gtk::Box,
+    spinner: gtk::Spinner,
     status: gtk::Label,
     choose: gtk::Button,
     up: gtk::Button,
@@ -23,7 +25,6 @@ struct Picker {
     retry: gtk::Button,
     done: RefCell<Option<FolderSelected>>,
 }
-
 
 /// Presents the folder picker for one Google account.
 ///
@@ -47,6 +48,8 @@ pub fn show(
         }]),
         next: RefCell::new(None),
         list: view.list,
+        breadcrumbs: view.breadcrumbs,
+        spinner: view.spinner,
         status: view.status,
         choose: view.choose,
         up: view.up,
@@ -108,15 +111,21 @@ fn load(picker: &Rc<Picker>, more: bool) {
         None
     };
     if !more {
+        update_path(picker);
+        picker.next.borrow_mut().take();
         while let Some(child) = picker.list.first_child() {
             picker.list.remove(&child);
         }
     }
+    picker.spinner.set_visible(true);
+    picker.spinner.start();
+    picker.breadcrumbs.set_sensitive(false);
     picker.choose.set_sensitive(false);
     picker.up.set_sensitive(false);
     picker.more.set_sensitive(false);
     picker.retry.set_sensitive(false);
     picker.list.set_sensitive(false);
+    picker.status.set_visible(true);
     picker
         .status
         .set_label("Loading folders from Google Drive…");
@@ -129,42 +138,38 @@ fn load(picker: &Rc<Picker>, more: bool) {
             let Some(picker) = weak.upgrade() else {
                 return;
             };
+            picker.spinner.stop();
+            picker.spinner.set_visible(false);
+            picker.breadcrumbs.set_sensitive(true);
             picker.up.set_sensitive(picker.stack.borrow().len() > 1);
             picker.retry.set_sensitive(true);
             picker.list.set_sensitive(true);
             match result {
                 Err(error) => {
                     picker.status.set_label(&error.to_string());
+                    picker.status.set_visible(true);
                     picker.more.set_visible(false);
                 }
                 Ok(page) => {
-                    let path = picker
-                        .stack
-                        .borrow()
-                        .iter()
-                        .map(|f| f.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" / ");
-                    picker.status.set_label(&path);
+                    picker.status.set_label("");
+                    picker.status.set_visible(false);
                     picker.choose.set_sensitive(true);
                     for folder in page.folders {
-                        let button = gtk::Button::builder()
-                            .label(&folder.name)
-                            .halign(gtk::Align::Fill)
-                            .build();
+                        let row = view::folder_row(&folder.name);
                         let weak = Rc::downgrade(&picker);
-                        button.connect_clicked(move |_| {
+                        row.connect_activated(move |_| {
                             if let Some(p) = weak.upgrade() {
                                 p.stack.borrow_mut().push(folder.clone());
                                 load(&p, false);
                             }
                         });
-                        picker.list.append(&button);
+                        picker.list.append(&row);
                     }
                     if picker.list.first_child().is_none() {
-                        picker.list.append(&gtk::Label::new(Some(
-                            "This folder has no subfolders. You can select it here.",
-                        )));
+                        picker
+                            .status
+                            .set_label("This folder has no subfolders. You can select it here.");
+                        picker.status.set_visible(true);
                     }
                     picker.more.set_visible(page.next_page.is_some());
                     picker.more.set_sensitive(true);
@@ -173,4 +178,36 @@ fn load(picker: &Rc<Picker>, more: bool) {
             }
         },
     );
+}
+
+/// Renders ancestor buttons separately from loading/error feedback.
+fn update_path(picker: &Rc<Picker>) {
+    while let Some(child) = picker.breadcrumbs.first_child() {
+        picker.breadcrumbs.remove(&child);
+    }
+    let path = picker.stack.borrow().clone();
+    for (index, folder) in path.iter().enumerate() {
+        if index > 0 {
+            picker
+                .breadcrumbs
+                .append(&gtk::Image::from_icon_name("go-next-symbolic"));
+        }
+        if index + 1 == path.len() {
+            picker
+                .breadcrumbs
+                .append(&view::current_location(&folder.name));
+            continue;
+        }
+        let button = gtk::Button::with_label(&folder.name);
+        button.add_css_class("flat");
+        button.set_tooltip_text(Some(&folder.name));
+        let weak = Rc::downgrade(picker);
+        button.connect_clicked(move |_| {
+            if let Some(picker) = weak.upgrade() {
+                picker.stack.borrow_mut().truncate(index + 1);
+                load(&picker, false);
+            }
+        });
+        picker.breadcrumbs.append(&button);
+    }
 }

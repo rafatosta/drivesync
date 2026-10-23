@@ -421,6 +421,49 @@ fn folder_setup_and_dashboard_layouts() {
                 );
                 assert_eq!(nav.visible_page().unwrap().title(), "Welcome");
             }
+            if screen == "dashboard" {
+                let picker = crate::folder_picker::preview(Some(window.upcast_ref()));
+                picker.set_default_size(if width == 1000 { 600 } else { 360 }, 480);
+                picker.present();
+                let frame = gtk::glib::MainLoop::new(None, false);
+                let finish = frame.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    finish.quit()
+                });
+                frame.run();
+                assert!(picker.width() <= if width == 1000 { 610 } else { 370 });
+                let list = find_named(picker.upcast_ref(), "drive-folder-list")
+                    .unwrap()
+                    .downcast::<gtk::ListBox>()
+                    .unwrap();
+                assert!(list.row_at_index(7).is_some());
+                assert!(list
+                    .row_at_index(0)
+                    .unwrap()
+                    .downcast::<adw::ActionRow>()
+                    .unwrap()
+                    .is_activatable());
+                assert!(find_button(picker.upcast_ref(), "Select Folder")
+                    .unwrap()
+                    .is_sensitive());
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&picker)).snapshot(
+                    &snapshot,
+                    picker.width() as f64,
+                    picker.height() as f64,
+                );
+                let node = snapshot.to_node().unwrap();
+                picker
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{output}/drive-folders-{width}.png"))
+                    .unwrap();
+                find_button(picker.upcast_ref(), "Cancel")
+                    .unwrap()
+                    .emit_clicked();
+                assert!(!picker.is_visible());
+            }
             window.close();
         }
     }
