@@ -2,7 +2,7 @@
 //!
 //! Navigation, off-main-thread engine operations, and reusable presentation
 //! helpers are independent submodules. Keep the existing crate-level access
-//! paths stable for welcome, dashboard, folder picker and setup screens.
+//! paths stable for welcome, dashboard, folder picker screens.
 mod navigation;
 mod widgets;
 mod worker;

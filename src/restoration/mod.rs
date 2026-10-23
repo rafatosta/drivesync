@@ -36,21 +36,8 @@ pub(crate) fn show_accounts(
             let welcome = crate::welcome::build(engine, nav, toasts, cancellation);
             nav.replace(&[adw::NavigationPage::new(&welcome, "Welcome")]);
         }
-        destination => {
-            let setup = if destination == crate::flow::InitialDestination::FolderSetup {
-                Some(accounts[0].account.clone())
-            } else {
-                None
-            };
-            nav.replace(&[crate::dashboard::build(
-                engine.clone(),
-                accounts,
-                nav,
-                toasts,
-            )]);
-            if let Some(account) = setup {
-                nav.push(&crate::setup::build(engine, account, nav, toasts));
-            }
+        crate::flow::InitialDestination::Dashboard => {
+            nav.replace(&[crate::dashboard::build(engine, accounts, nav, toasts)]);
         }
     }
 }

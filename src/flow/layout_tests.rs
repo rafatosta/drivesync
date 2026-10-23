@@ -1,4 +1,4 @@
-//! Opt-in visual regression fixtures for welcome/setup/dashboard.
+//! Opt-in visual regression fixtures for welcome and account dashboards.
 //!
 //! These tests require a desktop display and an isolated XDG_DATA_HOME.
 use adw::{gtk, prelude::*};
@@ -53,7 +53,7 @@ fn folder_setup_and_dashboard_layouts() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
     }
     for width in [1000, 360] {
-        for screen in ["welcome", "setup", "dashboard"] {
+        for screen in ["welcome", "dashboard"] {
             let nav = adw::NavigationView::new();
             let toasts = adw::ToastOverlay::new();
             let cancellation = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -76,7 +76,7 @@ fn folder_setup_and_dashboard_layouts() {
                 root.set_title("Welcome");
                 root.set_child(Some(&welcome));
                 root.clone()
-            } else if screen == "dashboard" {
+            } else {
                 crate::dashboard::build(
                     engine.clone(),
                     vec![
@@ -108,8 +108,6 @@ fn folder_setup_and_dashboard_layouts() {
                     &nav,
                     &toasts,
                 )
-            } else {
-                crate::setup::build(engine.clone(), account, &nav, &toasts)
             };
             if screen != "welcome" {
                 nav.push(&page);
@@ -201,12 +199,25 @@ fn folder_setup_and_dashboard_layouts() {
                 entry.set_text("Principal");
                 entry.emit_by_name::<()>("apply", &[]);
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                assert!(find_button(window.upcast_ref(), "Save and Continue").is_none());
+                let configured = details.visible_child().unwrap();
+                assert!(!find_named(&configured, "save-folders")
+                    .unwrap()
+                    .is_visible());
+                for name in ["change-remote-folder", "change-local-folder"] {
+                    assert!(find_named(&configured, name).unwrap().is_sensitive());
+                }
                 assert!(list.row_at_index(1).is_some());
                 list.select_row(list.row_at_index(1).as_ref());
                 assert_eq!(
                     details.visible_child_name().as_deref(),
                     Some("google:second-fixture")
                 );
+                let unconfigured = details.visible_child().unwrap();
+                let save = find_named(&unconfigured, "save-folders").unwrap();
+                assert!(save.is_visible());
+                assert!(!save.is_sensitive(), "both folder choices are required");
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 list.select_row(list.row_at_index(0).as_ref());
                 assert_eq!(
                     details.visible_child_name().as_deref(),

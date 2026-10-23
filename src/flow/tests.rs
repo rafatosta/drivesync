@@ -25,11 +25,11 @@ fn saved(configured: bool, error: Option<AuthError>) -> RestoredAccount {
     }
 }
 #[test]
-fn initial_route_depends_on_saved_configuration_not_authentication_success() {
+fn saved_accounts_always_open_dashboard_regardless_of_configuration() {
     assert_eq!(initial_destination(&[]), InitialDestination::Accounts);
     assert_eq!(
         initial_destination(&[saved(false, None)]),
-        InitialDestination::FolderSetup
+        InitialDestination::Dashboard
     );
     assert_eq!(
         initial_destination(&[saved(false, Some(AuthError::Network))]),

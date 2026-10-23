@@ -11,23 +11,20 @@ use std::sync::Arc;
 #[derive(Debug, PartialEq, Eq)]
 pub enum InitialDestination {
     Accounts,
-    FolderSetup,
     Dashboard,
 }
 /// Selects the initial screen according to saved accounts and configuration.
 ///
-/// A single verified account with no folder opens setup directly; an empty
-/// list opens welcome, and all other combinations show dashboard.
+/// An empty list opens welcome. Every saved account opens the dashboard,
+/// where folder configuration is edited inline.
 pub fn initial_destination(accounts: &[RestoredAccount]) -> InitialDestination {
     if accounts.is_empty() {
         InitialDestination::Accounts
-    } else if accounts.len() == 1 && accounts[0].folder.is_none() && accounts[0].error.is_none() {
-        InitialDestination::FolderSetup
     } else {
         InitialDestination::Dashboard
     }
 }
-/// Restores the dashboard after authorization, then opens setup if required.
+/// Restores the dashboard with the newly authorized account selected.
 ///
 /// The storage/restoration operation runs off the GTK main thread. The
 /// completion callback navigates on the main context and reports errors in
@@ -47,20 +44,13 @@ pub fn open_account(
             if let (Some(nav), Some(toasts)) = (nav.upgrade(), toasts.upgrade()) {
                 match result {
                     Ok(accounts) => {
-                        let needs_setup = accounts.iter().any(|saved| {
-                            saved.account.id == account.id
-                                && saved.folder.is_none()
-                                && saved.error.is_none()
-                        });
-                        nav.replace(&[crate::dashboard::build(
+                        nav.replace(&[crate::dashboard::build_selected(
                             engine.clone(),
                             accounts,
                             &nav,
                             &toasts,
+                            Some(&account.id.0),
                         )]);
-                        if needs_setup {
-                            nav.push(&crate::setup::build(engine, account, &nav, &toasts));
-                        }
                     }
                     Err(e) => {
                         toasts.add_toast(adw::Toast::new(&e.to_string()));

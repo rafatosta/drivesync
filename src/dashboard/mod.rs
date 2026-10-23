@@ -1,6 +1,7 @@
 //! Adaptive account navigation and read-only synchronization dashboard.
 mod account_details;
 mod description;
+mod folders;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
@@ -12,6 +13,17 @@ pub fn build(
     accounts: Vec<RestoredAccount>,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
+) -> adw::NavigationPage {
+    build_selected(engine, accounts, nav, toasts, None)
+}
+
+/// Builds the dashboard with the requested account selected after authorization.
+pub fn build_selected(
+    engine: Arc<DriveSyncEngine>,
+    accounts: Vec<RestoredAccount>,
+    nav: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    selected: Option<&str>,
 ) -> adw::NavigationPage {
     let split = adw::NavigationSplitView::builder()
         .min_sidebar_width(240.0)
@@ -67,6 +79,9 @@ pub fn build(
     let details = gtk::Stack::new();
     details.set_widget_name("account-details");
     let ids: Vec<_> = accounts.iter().map(|a| a.account.id.0.clone()).collect();
+    let initial = selected
+        .and_then(|id| ids.iter().position(|candidate| candidate == id))
+        .unwrap_or(0);
     account_details::populate(engine, accounts, nav, toasts, &list, &details);
     let weak_details = details.downgrade();
     let weak_split = split.downgrade();
@@ -86,7 +101,7 @@ pub fn build(
             split.set_show_content(true);
         }
     });
-    list.select_row(list.row_at_index(0).as_ref());
+    list.select_row(list.row_at_index(initial as i32).as_ref());
     toolbar.set_content(Some(&crate::flow::scroll(&details, 760)));
     split.set_content(Some(&adw::NavigationPage::new(&toolbar, "Folders")));
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(

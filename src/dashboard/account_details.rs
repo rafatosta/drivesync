@@ -92,47 +92,23 @@ pub(super) fn populate(
             &avatar,
         );
 
-        let folders = adw::PreferencesGroup::builder().title("Folders").build();
-        let remote = saved
-            .folder
-            .as_ref()
-            .map(|f| f.remote.name.as_str())
-            .unwrap_or("Not configured");
-        let local = saved
-            .folder
-            .as_ref()
-            .map(|f| f.local_display.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Not configured".into());
-        for (title, subtitle, icon) in [
-            ("Google Drive", remote, "folder-remote-symbolic"),
-            ("Folder on this computer", local.as_str(), "folder-symbolic"),
-        ] {
-            let row = crate::flow::row(title, subtitle, icon);
-            row.set_subtitle_lines(2);
-            row.set_tooltip_text(Some(subtitle));
-            let button = gtk::Button::with_label("Change…");
-            button.set_valign(gtk::Align::Center);
-            button.set_tooltip_text(Some("Change Google Drive and local folders"));
-            button.set_sensitive(saved.error.is_none());
-            let engine = engine.clone();
-            let account = saved.account.clone();
-            let weak_nav = nav.downgrade();
-            let weak_toasts = toasts.downgrade();
-            button.connect_clicked(move |_| {
-                if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
-                    nav.push(&crate::setup::build(
-                        engine.clone(),
-                        account.clone(),
-                        &nav,
-                        &toasts,
-                    ));
-                }
-            });
-            row.add_suffix(&button);
-            row.set_activatable_widget(Some(&button));
-            folders.add(&row);
-        }
-        content.append(&folders);
+        let sync_state = crate::flow::row(
+            "Not started",
+            "Choose folders before synchronization",
+            "media-playback-pause-symbolic",
+        );
+        let status = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .wrap(true)
+            .css_classes(["dim-label"])
+            .build();
+        content.append(&super::folders::build(
+            engine.clone(),
+            &saved,
+            &sync_state,
+            &status,
+        ));
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -152,31 +128,12 @@ pub(super) fn populate(
             "From Google Drive to this computer",
             "folder-download-symbolic",
         ));
-        sync.add(&crate::flow::row(
-            "Not started",
-            if saved.folder.is_some() {
-                "Folders are configured"
-            } else {
-                "Choose folders before synchronization"
-            },
-            "media-playback-pause-symbolic",
-        ));
+        sync.add(&sync_state);
         content.append(&sync);
         let banner = adw::Banner::new("File transfers are not available yet.");
         banner.set_revealed(true);
         content.append(&banner);
         let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        let status = gtk::Label::builder()
-            .label(if saved.folder.is_some() {
-                "Configuration saved"
-            } else {
-                "Configuration required"
-            })
-            .xalign(0.0)
-            .hexpand(true)
-            .wrap(true)
-            .css_classes(["dim-label"])
-            .build();
         footer.append(&status);
         let start = gtk::Button::with_label("Start Synchronization");
         start.set_halign(gtk::Align::End);
