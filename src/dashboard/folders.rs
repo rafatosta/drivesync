@@ -41,12 +41,25 @@ struct Widgets {
     remote_button: gtk::glib::WeakRef<gtk::Button>,
     local_button: gtk::glib::WeakRef<gtk::Button>,
     feedback: gtk::glib::WeakRef<gtk::Label>,
+    warning: gtk::glib::WeakRef<gtk::Image>,
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
     editable: bool,
 }
 impl Widgets {
     fn refresh(&self, draft: &Selection, busy: bool) {
+        let unavailable =
+            draft.saved.is_some() && !draft.local_available && !draft.dirty() && !busy;
+        if let Some(warning) = self.warning.upgrade() {
+            warning.set_visible(unavailable);
+        }
+        if let Some(feedback) = self.feedback.upgrade() {
+            if unavailable {
+                feedback.add_css_class("error");
+            } else {
+                feedback.remove_css_class("error");
+            }
+        }
         if let Some(row) = self.remote.upgrade() {
             row.set_subtitle(
                 draft
@@ -123,6 +136,14 @@ pub(super) fn build(
         "Not configured",
         "folder-symbolic",
     );
+    let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
+    warning.set_widget_name("local-folder-warning");
+    warning.add_css_class("error");
+    warning.set_tooltip_text(Some(
+        "The saved local folder is unavailable. Choose it again.",
+    ));
+    warning.set_visible(false);
+    local.add_suffix(&warning);
     let remote_button = gtk::Button::with_label("Change…");
     let local_button = gtk::Button::with_label("Change…");
     remote_button.set_widget_name("change-remote-folder");
@@ -152,6 +173,7 @@ pub(super) fn build(
         remote_button: remote_button.downgrade(),
         local_button: local_button.downgrade(),
         feedback: feedback.downgrade(),
+        warning: warning.downgrade(),
         sync: sync.downgrade(),
         status: status.downgrade(),
         editable: saved.error.is_none(),

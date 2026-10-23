@@ -225,6 +225,10 @@ fn folder_setup_and_dashboard_layouts() {
                     .downcast::<gtk::Label>()
                     .unwrap();
                 assert!(warning.is_visible());
+                assert!(warning.has_css_class("error"));
+                assert!(find_named(&configured, "local-folder-warning")
+                    .unwrap()
+                    .is_visible());
                 assert!(warning.text().contains("local folder is unavailable"));
                 assert!(!metadata.join("missing-sync-folder").exists());
                 for name in ["change-remote-folder", "change-local-folder"] {
