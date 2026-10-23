@@ -413,6 +413,30 @@ impl Session<'_> {
             if item.version.is_none_or(|version| version <= old_version) {
                 return Err(EngineError::RemoteChanged);
             }
+            if op.item.size == item.size
+                && op
+                    .item
+                    .md5_checksum
+                    .as_ref()
+                    .is_some_and(|old| old.eq_ignore_ascii_case(checksum))
+            {
+                // A newer metadata version does not necessarily change file bytes.
+                // Recheck the path after remote I/O before advancing durable evidence.
+                source.configured()?;
+                let mut current =
+                    filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+                if identity(&current)? != expected
+                    || !stream::verify(&mut current, old_size, sha256, self.context.cancel)?
+                {
+                    return Err(EngineError::DownloadConflict);
+                }
+                self.root.validate_parent(path, parent_id)?;
+                stream::cancelled(self.context.cancel)?;
+                let mut confirmed = op.clone();
+                confirmed.item = item.clone();
+                self.put(&confirmed)?;
+                return Ok(Outcome::Unchanged);
+            }
             previous = Some(Previous {
                 identity: expected,
                 sha256: sha256.clone(),

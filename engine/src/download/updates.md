@@ -6,6 +6,29 @@ o SHA-256 local permanece intacto e a versão remota cresce. Versões iguais sã
 NoOp apenas com metadados iguais; regressões ou divergência sem incremento são
 UNKNOWN/conflito. Arquivos preexistentes não gerenciados não são adotados.
 
+## Continuação com conteúdo idêntico
+
+Uma versão maior pode representar somente metadados, inclusive restauração da
+Lixeira. Após validar a base Installed/Updated, a identidade/caminho/tipo, a
+cadeia remota e o crescimento da versão, comparar tamanho e MD5 remoto com a
+base confirmada. Exigir ambos presentes e iguais (MD5 sem distinção de caixa).
+Se coincidirem, revalidar configuração e reabrir o caminho local sem symlinks;
+conferir novamente inode, tamanho e SHA-256 após as consultas remotas. Checar
+cancelamento e persistir somente os novos metadados no registro confirmado,
+conservando identidade, SHA-256, fase e eventual evidência de backup. Relatar
+Unchanged. Não criar staging, baixar conteúdo, alterar o arquivo ou gerar backup.
+
+Erro de rede/configuração, edição/troca local, regressão de versão ou falha SQLite
+não avança a base. Uma falha antes da gravação permite repetir a observação; uma
+falha depois do commit encontra a base já atualizada. O formato não muda.
+O MD5 do provedor é evidência de igualdade de conteúdo no modelo de confiança
+existente; a cópia local continua dependendo do SHA-256 e identidade confirmados.
+
+Oráculos: incremento apenas de versão (incluindo arquivo vazio), base Installed
+e Updated, repetição/reabertura, mudança real posterior, regressão com mesmos
+bytes, arquivo local alterado/trocado durante consulta, cancelamento e rollback
+SQLite. Exigir zero chamadas de mídia, zero backups novos e inode local intacto.
+
 ## Algoritmo e estados
 
 1. Revalidar a base Installed/Updated por device+inode, tamanho antigo e SHA-256.

@@ -379,3 +379,147 @@ fn confirmed_new_base_does_not_depend_on_user_retaining_old_backups() {
         1
     );
 }
+
+#[test]
+fn metadata_versions_advance_without_media_backups_or_inode_changes() {
+    use std::os::unix::fs::MetadataExt;
+    for updated_base in [false, true] {
+        let (f, mut inv) = installed();
+        if updated_base {
+            let (next, mut source) = changed(&inv, b"actual new bytes");
+            f.execute(&next, &mut source, &Cancellation::new(), |_| {})
+                .unwrap();
+            inv = next;
+        }
+        let before = fs::metadata(f.root.join("file.txt")).unwrap().ino();
+        let paths_before = fs::read_dir(&f.root).unwrap().count();
+        let mut newer = inv.clone();
+        newer.entries[0].version = Some(inv.entries[0].version.unwrap() + 2);
+        newer.entries[0].md5_checksum = newer.entries[0]
+            .md5_checksum
+            .as_ref()
+            .map(|h| h.to_uppercase());
+        let mut source = Fake::new(&newer);
+        for _ in 0..2 {
+            let result = f
+                .execute(&newer, &mut source, &Cancellation::new(), |_| {})
+                .unwrap();
+            assert_eq!(result.unchanged, 1);
+            assert_eq!(result.updated, 0);
+            assert!(result.issues.is_empty());
+            assert!(result.preserved_copies.is_empty());
+        }
+        assert_eq!(source.media_calls, 0);
+        assert_eq!(fs::metadata(f.root.join("file.txt")).unwrap().ino(), before);
+        assert_eq!(fs::read_dir(&f.root).unwrap().count(), paths_before);
+        let plan =
+            crate::planner::plan(&newer, &f.root, |p| crate::planner::observe(&f.root, p)).unwrap();
+        let store = Store::open(&f.db()).unwrap();
+        let operations = store.operations("client", &plan).unwrap();
+        assert_eq!(operations.last().unwrap().item, newer.entries[0]);
+        drop(store);
+        let (content, mut source) = changed(&newer, b"later content change");
+        let report = f
+            .execute(&content, &mut source, &Cancellation::new(), |_| {})
+            .unwrap();
+        assert_eq!(report.updated, 1);
+        assert_eq!(source.media_calls, 1);
+        assert_eq!(report.preserved_copies.len(), 1);
+    }
+}
+#[test]
+fn metadata_only_changes_do_not_adopt_local_edits_swaps_or_regressions() {
+    for failure in 0..4 {
+        let (f, inv) = installed();
+        let mut newer = inv.clone();
+        newer.entries[0].version = Some(if failure == 3 { 1 } else { 3 });
+        let mut source = Fake::new(&newer);
+        if failure == 0 {
+            fs::write(f.root.join("file.txt"), b"edited").unwrap();
+        }
+        if failure == 1 || failure == 2 {
+            let path = f.root.join("file.txt");
+            source.on_metadata = Some(Box::new(move || {
+                if failure == 2 {
+                    fs::rename(&path, path.with_extension("saved")).unwrap();
+                }
+                fs::write(&path, b"changed during metadata request").unwrap();
+            }));
+        }
+        if failure == 3 {
+            // Establish a higher confirmed revision before testing a regression.
+            let mut higher = inv.clone();
+            higher.entries[0].version = Some(4);
+            f.execute(
+                &higher,
+                &mut Fake::new(&higher),
+                &Cancellation::new(),
+                |_| {},
+            )
+            .unwrap();
+        }
+        let result = f
+            .execute(&newer, &mut source, &Cancellation::new(), |_| {})
+            .unwrap();
+        assert_eq!(result.unchanged, 0);
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(source.media_calls, 0);
+        assert!(result.preserved_copies.is_empty());
+    }
+}
+#[test]
+fn metadata_confirmation_failure_and_cancellation_leave_base_retryable() {
+    for cancelled in [false, true] {
+        let (f, inv) = installed();
+        let mut newer = inv.clone();
+        newer.entries[0].version = Some(3);
+        let mut source = Fake::new(&newer);
+        let cancel = Cancellation::new();
+        if cancelled {
+            let flag = cancel.clone();
+            source.on_metadata = Some(Box::new(move || flag.cancel()));
+        } else {
+            rusqlite::Connection::open(f.db()).unwrap().execute_batch("CREATE TRIGGER fail_metadata BEFORE UPDATE ON downloads BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+        }
+        assert!(f.execute(&newer, &mut source, &cancel, |_| {}).is_err());
+        assert_eq!(source.media_calls, 0);
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+        let conn = rusqlite::Connection::open(f.db()).unwrap();
+        let json: String = conn
+            .query_row("SELECT record FROM downloads", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Operation>(&json)
+                .unwrap()
+                .item
+                .version,
+            Some(1)
+        );
+        conn.execute_batch("DROP TRIGGER IF EXISTS fail_metadata")
+            .unwrap();
+        drop(conn);
+        let result = f
+            .execute(&newer, &mut Fake::new(&newer), &Cancellation::new(), |_| {})
+            .unwrap();
+        assert_eq!(result.unchanged, 1);
+    }
+}
+#[test]
+fn empty_binary_metadata_change_does_not_download_again() {
+    let f = Fixture::new();
+    let mut inv = inventory();
+    inv.entries[0].size = Some(0);
+    inv.entries[0].md5_checksum = Some("d41d8cd98f00b204e9800998ecf8427e".into());
+    let mut source = Fake::new(&inv);
+    source.bytes.clear();
+    f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    inv.entries[0].version = Some(5);
+    let mut source = Fake::new(&inv);
+    let result = f
+        .execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert_eq!(result.unchanged, 1);
+    assert_eq!(source.media_calls, 0);
+    assert!(result.preserved_copies.is_empty());
+}

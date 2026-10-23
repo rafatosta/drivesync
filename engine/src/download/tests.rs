@@ -114,6 +114,7 @@ struct Fake {
     changed: bool,
     fail_stream: bool,
     on_media: Option<Box<dyn FnMut()>>,
+    on_metadata: Option<Box<dyn FnMut()>>,
     configure_error: bool,
 }
 impl Fake {
@@ -131,6 +132,7 @@ impl Fake {
             changed: false,
             fail_stream: false,
             on_media: None,
+            on_metadata: None,
             configure_error: false,
         }
     }
@@ -141,6 +143,9 @@ impl Source for Fake {
     }
     fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
         self.metadata_calls += 1;
+        if let Some(callback) = &mut self.on_metadata {
+            callback();
+        }
         let mut value = self.entries[&item.id].clone();
         if self.changed && self.media_calls > 0 {
             value.version = value.version.map(|version| version + 1);
