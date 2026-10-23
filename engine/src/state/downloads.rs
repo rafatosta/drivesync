@@ -77,8 +77,37 @@ fn valid(op: &Operation) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
         && match &op.phase {
             Phase::Started => true,
+            Phase::Updating { previous } => previous_valid(previous),
+            Phase::UpdateAbandoned { backup } => backup_valid(backup),
+            Phase::UpdateReady {
+                sha256,
+                previous,
+                backup,
+                ..
+            }
+            | Phase::Updated {
+                sha256,
+                previous,
+                backup,
+                ..
+            } => hash_valid(sha256) && previous_valid(previous) && backup_valid(backup),
             Phase::Ready { sha256, .. } | Phase::Installed { sha256, .. } => {
                 sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit())
             }
         }
+}
+
+fn hash_valid(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+fn previous_valid(previous: &crate::download::Previous) -> bool {
+    previous.version > 0 && hash_valid(&previous.sha256)
+}
+fn backup_valid(name: &str) -> bool {
+    name.starts_with("DriveSync backup ")
+        && name.ends_with(".bak")
+        && name.len() <= 255
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b" ._-".contains(&b))
 }

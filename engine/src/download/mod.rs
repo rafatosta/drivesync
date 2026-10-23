@@ -1,4 +1,4 @@
-//! One manual, non-overwriting binary download cycle with durable replay evidence.
+//! Manual binary downloads and managed updates with preserved prior versions.
 mod execution;
 mod filesystem;
 mod models;
@@ -8,7 +8,7 @@ pub(crate) use execution::{run, Context, Source};
 pub use models::{
     DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
 };
-pub(crate) use models::{Operation, Phase};
+pub(crate) use models::{Operation, Phase, Previous};
 
 #[cfg(test)]
 mod tests;

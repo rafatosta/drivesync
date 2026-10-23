@@ -1,11 +1,12 @@
-//! One manual, non-overwriting binary download cycle with durable replay evidence.
+//! Manual downloads and managed updates with durable replay evidence.
+mod updates;
 
 use super::filesystem::{identity, Root};
 use super::{
     filesystem,
     models::{
         DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
-        Operation, Phase,
+        Operation, Phase, Previous,
     },
     stream,
 };
@@ -32,6 +33,7 @@ struct Session<'a> {
     context: Context<'a>,
     root: Root,
     operations: HashMap<std::path::PathBuf, Vec<Operation>>,
+    preserved: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
 /// Executes a freshly built plan. Installed evidence is reverified, never trusted
@@ -61,6 +63,7 @@ pub(crate) fn run(
         context,
         root,
         operations,
+        preserved: Default::default(),
     };
     let mut report = DownloadReport::default();
     let by_id: HashMap<_, _> = inventory
@@ -73,6 +76,44 @@ pub(crate) fn run(
         .iter()
         .zip(&session.context.scope.entries)
         .collect();
+    let represented: std::collections::HashSet<_> = work
+        .iter()
+        .filter_map(|(item, entry)| {
+            (item.kind == InventoryKind::Binary)
+                .then(|| {
+                    entry
+                        .relative_path
+                        .as_deref()
+                        .map(|path| (item.id.as_str(), path))
+                })
+                .flatten()
+        })
+        .collect();
+    for op in session
+        .operations
+        .values()
+        .flatten()
+        .filter(|op| matches!(op.phase, Phase::UpdateReady { .. }))
+    {
+        let present = represented.contains(&(op.item.id.as_str(), op.relative.as_path()));
+        if !present {
+            stream::cancelled(session.context.cancel)?;
+            let result = session.retire_update(op);
+            if let Some(copy) = session.preserved.borrow_mut().take() {
+                report.preserved_copies.push(copy);
+            }
+            match result {
+                Err(EngineError::StateStorage) => return Err(EngineError::StateStorage),
+                Err(EngineError::Authentication(crate::AuthError::Cancelled)) => {
+                    return Err(EngineError::Authentication(crate::AuthError::Cancelled))
+                }
+                _ => report.issues.push(DownloadIssue {
+                    relative_path: Some(op.relative.clone()),
+                    error: result.err().unwrap_or(EngineError::RemoteChanged),
+                }),
+            }
+        }
+    }
     // Parents must exist even if a fixture/provider order is not breadth first.
     work.sort_by_key(|(_, entry)| {
         entry
@@ -130,11 +171,15 @@ pub(crate) fn run(
                 })
                 .map(|outcome| match outcome {
                     Outcome::Downloaded => report.downloaded += 1,
+                    Outcome::Updated => report.updated += 1,
                     Outcome::Recovered => report.recovered += 1,
                     Outcome::Unchanged => report.unchanged += 1,
                 }),
             _ => Err(EngineError::DownloadConflict),
         };
+        if let Some(copy) = session.preserved.borrow_mut().take() {
+            report.preserved_copies.push(copy);
+        }
         if let Err(error) = result {
             match error {
                 EngineError::StateStorage
@@ -156,6 +201,7 @@ pub(crate) fn run(
 }
 enum Outcome {
     Downloaded,
+    Updated,
     Recovered,
     Unchanged,
 }
@@ -221,6 +267,16 @@ impl Session<'_> {
         let (parent, name) = self.root.parent(path)?;
         let root_id = identity(&self.root.file)?;
         let parent_id = identity(&parent)?;
+        if let Some(op) = self
+            .operations
+            .get(path)
+            .into_iter()
+            .flatten()
+            .rev()
+            .find(|op| matches!(op.phase, Phase::UpdateReady { .. }))
+        {
+            return self.resume_update(op, item, by_id, source, progress);
+        }
         // Replay Ready first: rename may already have happened without DB confirmation.
         if let Some(op) = self
             .operations
@@ -293,6 +349,7 @@ impl Session<'_> {
             self.put(&confirmed)?;
             return Ok(Outcome::Recovered);
         }
+        let mut previous = None;
         if let Some(mut existing) = filesystem::read(&parent, &name)? {
             let Some(op) = self
                 .operations
@@ -302,30 +359,45 @@ impl Session<'_> {
                 .rev()
                 .find(|op| {
                     op.item.id == item.id
-                        && op.relative == path
-                        && matches!(op.phase, Phase::Installed { .. })
+                        && matches!(op.phase, Phase::Installed { .. } | Phase::Updated { .. })
                 })
             else {
                 return Err(EngineError::DownloadConflict);
             };
-            let Phase::Installed {
-                identity: expected,
-                sha256,
-            } = &op.phase
-            else {
-                unreachable!()
+            let (expected, sha256) = match &op.phase {
+                Phase::Installed { identity, sha256 }
+                | Phase::Updated {
+                    identity, sha256, ..
+                } => (*identity, sha256),
+                _ => unreachable!(),
             };
-            if op.item != *item
-                || op.root != root_id
+            let old_size = op.item.size.ok_or(EngineError::StateStorage)?;
+            let old_version = op.item.version.ok_or(EngineError::StateStorage)?;
+            if op.root != root_id
                 || op.parent != parent_id
-                || identity(&existing)? != *expected
-                || !stream::verify(&mut existing, size, sha256, self.context.cancel)?
+                || op.item.parent_id != item.parent_id
+                || op.item.name != item.name
+                || op.item.mime_type != item.mime_type
+                || op.item.kind != item.kind
+                || identity(&existing)? != expected
+                || !stream::verify(&mut existing, old_size, sha256, self.context.cancel)?
             {
                 return Err(EngineError::DownloadConflict);
             }
             validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
             self.root.validate_parent(path, parent_id)?;
-            return Ok(Outcome::Unchanged);
+            if op.item == *item {
+                return Ok(Outcome::Unchanged);
+            }
+            if item.version.is_none_or(|version| version <= old_version) {
+                return Err(EngineError::RemoteChanged);
+            }
+            previous = Some(Previous {
+                identity: expected,
+                sha256: sha256.clone(),
+                size: old_size,
+                version: old_version,
+            });
         }
         validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
         let id = oauth2::CsrfToken::new_random().secret().clone();
@@ -336,7 +408,12 @@ impl Session<'_> {
             temporary: format!(".drivesync-{id}.part"),
             root: root_id,
             parent: parent_id,
-            phase: Phase::Started,
+            phase: previous
+                .as_ref()
+                .map(|previous| Phase::Updating {
+                    previous: previous.clone(),
+                })
+                .unwrap_or(Phase::Started),
         };
         self.root.validate_parent(path, parent_id)?;
         self.put(&op)?;
@@ -387,6 +464,23 @@ impl Session<'_> {
             return Err(EngineError::DownloadConflict);
         }
         stream::cancelled(self.context.cancel)?;
+        if let Some(previous) = previous {
+            op.phase = Phase::UpdateReady {
+                identity: staged_id,
+                sha256,
+                previous,
+                backup: format!("DriveSync backup {}.bak", op.id),
+            };
+            self.put(&op)?;
+            stream::cancelled(self.context.cancel)?;
+            progress(DownloadItemProgress {
+                relative_path: path.into(),
+                stage: DownloadStage::Installing,
+                received: size,
+                total: Some(size),
+            });
+            return self.commit_update(&op);
+        }
         op.phase = Phase::Ready {
             identity: staged_id,
             sha256: sha256.clone(),

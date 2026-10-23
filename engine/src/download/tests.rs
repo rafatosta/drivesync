@@ -135,7 +135,7 @@ impl Source for Fake {
     fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
         let mut value = self.entries[&item.id].clone();
         if self.changed && self.media_calls > 0 {
-            value.version = Some(2);
+            value.version = value.version.map(|version| version + 1);
         }
         Ok(value)
     }
@@ -639,3 +639,6 @@ fn corrupt_bytes_never_emit_a_verified_or_installing_stage() {
         )));
     assert_eq!(events.last().unwrap().completed_items, 1);
 }
+
+#[path = "update_tests.rs"]
+mod update_tests;

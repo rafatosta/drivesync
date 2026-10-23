@@ -1,7 +1,7 @@
 # Download inicial seguro — DOWNLOAD-001/002
 
-Escopo autorizado: um ciclo manual Drive → computador, somente arquivos binários
-novos e diretórios. Não implementar upload, exclusões, sobrescrita, changes,
+Escopo autorizado: um ciclo manual Drive → computador, arquivos binários novos,
+atualizações gerenciadas conforme [DOWNLOAD-003](updates.md) e diretórios. Não implementar upload, exclusões, substituição cega, changes,
 execução automática ou exportação de documentos Google nesta unidade.
 
 ## Técnica e política
@@ -18,15 +18,16 @@ execução automática ou exportação de documentos Google nesta unidade.
   do destino. Sincronizar arquivo e diretório antes de registrar Ready.
 - Revalidar configuração, identidade da raiz/pai e estado remoto. Instalar com
   renameat2(RENAME_NOREPLACE), sincronizar diretório e só então confirmar Installed.
-  Nenhum arquivo final existente pode ser substituído, inclusive em corrida.
+  Instalações nunca sobrescrevem destinos concorrentes. Atualizações preservam a
+  base anterior antes da instalação, conforme DOWNLOAD-003.
 - Registrar raiz/pai/staging por device+inode. Ready após interrupção só é
   confirmado se o destino tiver identidade, tamanho e SHA-256 esperados. Se
   apenas staging existir, revalidar e finalizar. Ambiguidade preserva ambos.
 - Started interrompido não é base: seus temporários são preservados; uma nova
   tentativa pode baixar novamente. Limpeza automática fica fora do escopo.
 - Installed intacto e com metadados remotos iguais permite reconhecer repetição.
-  Arquivos preexistentes, alterados ou com nova versão remota permanecem conflitos;
-  atualizar arquivos já instalados exige uma unidade posterior.
+  Arquivos preexistentes ou alterados localmente permanecem conflitos. Uma versão
+  remota mais nova permite atualização com backup e verificação da base.
 - Erros por item não impedem itens independentes; corrupção/erro no journal,
   mudança de configuração e cancelamento suspendem o ciclo. Não confirmar
   sucesso global quando houver itens pendentes. Cancelamento é cooperativo;

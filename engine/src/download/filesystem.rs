@@ -134,12 +134,30 @@ pub(super) fn create(parent: &File, name: &str, size: u64) -> Result<File, Engin
 }
 /// Kernel-enforced no-clobber installation; unsupported filesystems fail closed.
 pub(super) fn install(parent: &File, temp: &str, name: &OsStr) -> Result<(), EngineError> {
-    fs::renameat_with(parent, temp, parent, name, fs::RenameFlags::NOREPLACE).map_err(|e| {
+    move_entry(parent, OsStr::new(temp), name)
+}
+/// Moves an entry without replacing any destination, then syncs the directory.
+pub(super) fn move_entry(parent: &File, old: &OsStr, new: &OsStr) -> Result<(), EngineError> {
+    rename_entry(parent, old, new)?;
+    parent.sync_all().map_err(io)
+}
+/// Reports syscall success independently so journaled recovery can handle fsync failure.
+pub(super) fn rename_entry(parent: &File, old: &OsStr, new: &OsStr) -> Result<(), EngineError> {
+    fs::renameat_with(parent, old, parent, new, fs::RenameFlags::NOREPLACE).map_err(|e| {
         if e == rustix::io::Errno::EXIST {
             EngineError::DownloadConflict
         } else {
             io(e)
         }
     })?;
-    parent.sync_all().map_err(io)
+    Ok(())
+}
+
+/// Observes an entry without following symlinks, including unexpected file types.
+pub(super) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
+    match fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => Ok(true),
+        Err(rustix::io::Errno::NOENT) => Ok(false),
+        Err(e) => Err(io(e)),
+    }
 }

@@ -245,7 +245,8 @@ impl DriveSyncEngine {
     }
 
     /// Runs a fresh manual download-only cycle off the UI thread.
-    /// New binary files are staged and verified, then installed without overwriting.
+    /// Binary files are staged and verified. Managed intact copies can be updated
+    /// after preserving their prior version; concurrent destinations are never overwritten.
     /// Existing divergent data is reported per item. Partial staging is preserved.
     ///
     /// # Errors
