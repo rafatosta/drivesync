@@ -57,7 +57,7 @@ pub(super) fn populate(
         );
         heading.append(&identity);
         let menu = gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
+            .icon_name("view-more-symbolic")
             .tooltip_text("Account actions")
             .valign(gtk::Align::Start)
             .build();
@@ -69,9 +69,6 @@ pub(super) fn populate(
             nav,
             toasts,
         ));
-        let quit = gtk::Button::with_label("Quit DriveSync");
-        quit.set_action_name(Some("app.quit"));
-        actions.append(&quit);
         popover.set_child(Some(&actions));
         menu.set_popover(Some(&popover));
         heading.append(&menu);

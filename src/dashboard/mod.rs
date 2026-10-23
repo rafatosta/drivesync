@@ -45,6 +45,7 @@ pub fn build_selected(
         }
     });
     header.pack_end(&add);
+    header.pack_end(&crate::main_menu::button());
     sidebar.add_top_bar(&header);
     let side_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let count = gtk::Label::builder()
@@ -76,6 +77,12 @@ pub fn build_selected(
         .bind_property("collapsed", &header, "show-back-button")
         .sync_create()
         .build();
+    let menu = crate::main_menu::button();
+    split
+        .bind_property("collapsed", &menu, "visible")
+        .sync_create()
+        .build();
+    header.pack_end(&menu);
     toolbar.add_top_bar(&header);
     let details = gtk::Stack::new();
     details.set_widget_name("account-details");

@@ -11,6 +11,7 @@ mod connection;
 mod dashboard;
 mod flow;
 mod folder_picker;
+mod main_menu;
 mod restoration;
 mod session;
 mod welcome;
@@ -57,6 +58,7 @@ fn main() -> adw::gtk::glib::ExitCode {
         });
         app.add_action(&quit);
         background::install(app, &window);
+        main_menu::install(app, &window);
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     });
     app.run()

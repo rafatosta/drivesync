@@ -27,15 +27,7 @@ fn text(value: &str, class: &str) -> gtk::Label {
 pub(super) fn build() -> WelcomeView {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    let menu = gtk::gio::Menu::new();
-    menu.append(Some("Quit"), Some("app.quit"));
-    header.pack_end(
-        &gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .tooltip_text("Main Menu")
-            .menu_model(&menu)
-            .build(),
-    );
+    header.pack_end(&crate::main_menu::button());
     toolbar.add_top_bar(&header);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 24);
