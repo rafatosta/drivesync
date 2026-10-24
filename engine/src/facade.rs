@@ -315,7 +315,7 @@ impl DriveSyncEngine {
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
         }
-        checkpoints.save(
+        let mut notice_revision = checkpoints.save(
             &scope,
             previous.as_ref().map(|(revision, _)| revision.as_str()),
             &checkpoint,
@@ -346,8 +346,16 @@ impl DriveSyncEngine {
             if self.saved_folder(id)?.as_ref() != Some(&folder) {
                 return Err(EngineError::InvalidPlan);
             }
-            checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
+            notice_revision = checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
             checkpoint = refreshed;
+        }
+        if !checkpoint.notices.is_empty() {
+            report.historical_notices = Some(crate::HistoricalNotices {
+                client: config.client_id.clone(),
+                folder: folder.clone(),
+                root: root.clone(),
+                revision: notice_revision,
+            });
         }
         for notice in checkpoint.notices {
             report.issues.push(crate::DownloadIssue {
@@ -356,6 +364,35 @@ impl DriveSyncEngine {
             });
         }
         Ok(report)
+    }
+
+    /// Acknowledges historical path notices without touching files, credentials
+    /// or the remote provider. Call off the UI thread. A newer checkpoint or
+    /// changed account/folder configuration rejects the stale acknowledgment.
+    ///
+    /// # Errors
+    /// Returns configuration/storage errors or `SyncBusy` for a stale revision.
+    pub fn acknowledge_historical_notices(
+        &self,
+        notices: &crate::HistoricalNotices,
+        cancel: &Cancellation,
+    ) -> Result<(), EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        if config.client_id != notices.client
+            || self.saved_folder(&notices.folder.account_id)?.as_ref() != Some(&notices.folder)
+        {
+            return Err(EngineError::InvalidPlan);
+        }
+        let mut store = crate::state::Checkpoints::open(
+            &crate::state::default_path()?.with_file_name("changes.sqlite3"),
+        )?;
+        let scope = crate::state::CheckpointScope {
+            client: &notices.client,
+            account: &notices.folder.account_id,
+            remote: &notices.root,
+            local: &notices.folder.local,
+        };
+        store.acknowledge(&scope, &notices.revision, cancel)
     }
 
     /// Loads the current persisted plan for this account's configured root.

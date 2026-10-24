@@ -427,7 +427,7 @@ pub(super) fn build(
         preserved: preserved.downgrade(),
         spinner: spinner.downgrade(),
     };
-    let job = crate::automatic::Controller::attach(engine, saved);
+    let job = crate::automatic::Controller::attach(engine.clone(), saved);
     let click_job = job.clone();
     let click_ui = ui.clone();
     start.connect_clicked(move |_| {
@@ -439,6 +439,14 @@ pub(super) fn build(
         }
         click_ui.present_job(&click_job.snapshot(), Some(previous));
     });
+    let acknowledge = gtk::Button::with_label("Acknowledge old path notices");
+    acknowledge.set_tooltip_text(Some("Dismiss reviewed historical path notices. No local or Google Drive files will be changed. Current conflicts remain visible."));
+    acknowledge.set_halign(gtk::Align::Start);
+    acknowledge.set_visible(false);
+    footer.insert_child_after(&acknowledge, Some(&issues));
+    let acknowledge_job = job.clone();
+    acknowledge.connect_clicked(move |_| acknowledge_job.acknowledge_notices(engine.clone()));
+    let weak_acknowledge = acknowledge.downgrade();
     let mut revision = u64::MAX;
     let mut phase = None;
     gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -448,6 +456,16 @@ pub(super) fn build(
         if job.revision() != revision {
             let snapshot = job.snapshot();
             ui.present_job(&snapshot, phase);
+            if let Some(button) = weak_acknowledge.upgrade() {
+                button.set_visible(
+                    snapshot.phase != crate::automatic::Phase::Running
+                        && snapshot
+                            .result
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .is_some_and(|r| r.historical_notices.is_some()),
+                );
+            }
             revision = snapshot.revision;
             phase = Some(snapshot.phase);
         }

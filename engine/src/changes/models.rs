@@ -13,6 +13,6 @@ pub(crate) struct Notice {
 pub(crate) struct Checkpoint {
     pub cursor: String,
     pub inventory: RemoteInventory,
-    /// Unavailable previous paths remain visible until the same ID/path returns.
+    /// Unavailable previous paths remain visible until acknowledged or the same ID/path returns.
     pub notices: Vec<Notice>,
 }

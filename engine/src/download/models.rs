@@ -9,6 +9,15 @@ pub struct DownloadIssue {
     pub relative_path: Option<PathBuf>,
     pub error: EngineError,
 }
+/// Opaque authorization to acknowledge exactly the historical notices in one
+/// checkpoint revision. A newer cycle or different folder pair invalidates it.
+#[derive(Debug, Clone)]
+pub struct HistoricalNotices {
+    pub(crate) client: String,
+    pub(crate) folder: crate::FolderConfiguration,
+    pub(crate) root: String,
+    pub(crate) revision: String,
+}
 /// A completed download cycle. Issues/skipped items are not synchronization success.
 #[derive(Debug, Clone, Default)]
 pub struct DownloadReport {
@@ -21,6 +30,8 @@ pub struct DownloadReport {
     pub directories: usize,
     pub skipped: usize,
     pub issues: Vec<DownloadIssue>,
+    /// Present only when historical path notices can be acknowledged.
+    pub historical_notices: Option<HistoricalNotices>,
 }
 /// Current item stage. Receiving bytes is distinct from verification/installation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

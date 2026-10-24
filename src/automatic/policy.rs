@@ -103,6 +103,17 @@ impl Schedule {
             self.due = Some(now + INTERVAL);
         }
     }
+    /// Reviewing historical notices is not a new cycle or a request to resume.
+    /// Preserve pause, connectivity state, backoff and the existing deadline.
+    pub fn reviewed(&mut self, report: &DownloadReport) {
+        if matches!(self.phase, Phase::Attention | Phase::UpToDate) {
+            self.phase = if report.issues.is_empty() && report.skipped == 0 {
+                Phase::UpToDate
+            } else {
+                Phase::Attention
+            };
+        }
+    }
     /// A positive connectivity hint retries network failures promptly, but never
     /// bypasses rate-limit backoff, user pause or a blocking local failure.
     pub fn network_changed(&mut self, online: bool, now: u64) {
@@ -144,6 +155,35 @@ mod tests {
     use super::*;
     fn network() -> Result<DownloadReport, EngineError> {
         Err(EngineError::Authentication(AuthError::Network))
+    }
+    #[test]
+    fn reviewing_notices_preserves_conflicts_pause_and_deadlines() {
+        let mut s = Schedule::new(true, 0);
+        s.phase = Phase::Attention;
+        let deadline = s.due;
+        s.reviewed(&DownloadReport::default());
+        assert_eq!(s.phase, Phase::UpToDate);
+        assert_eq!(s.due, deadline);
+        s.reviewed(&DownloadReport {
+            issues: vec![drivesync_engine::DownloadIssue {
+                relative_path: Some("edited.txt".into()),
+                error: EngineError::DownloadConflict,
+            }],
+            ..Default::default()
+        });
+        assert_eq!(s.phase, Phase::Attention);
+        for phase in [
+            Phase::Paused,
+            Phase::Offline,
+            Phase::Retrying,
+            Phase::Blocked,
+        ] {
+            s.phase = phase;
+            s.due = None;
+            s.reviewed(&DownloadReport::default());
+            assert_eq!(s.phase, phase);
+            assert_eq!(s.due, None);
+        }
     }
     #[test]
     fn periodic_cycles_are_single_flight_and_timed_from_completion() {

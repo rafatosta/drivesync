@@ -39,6 +39,22 @@ impl Checkpoints {
         })
         .transpose()
     }
+    /// Clears only the exact observed revision. CAS prevents a stale user action
+    /// from suppressing newly discovered notices; inventory and cursor survive.
+    pub(crate) fn acknowledge(
+        &mut self,
+        scope: &Scope<'_>,
+        revision: &str,
+        cancel: &Cancellation,
+    ) -> Result<(), EngineError> {
+        let (current, mut checkpoint) = self.load(scope)?.ok_or(EngineError::SyncBusy)?;
+        if current != revision {
+            return Err(EngineError::SyncBusy);
+        }
+        checkpoint.notices.clear();
+        self.save(scope, Some(revision), &checkpoint, cancel)
+            .map(|_| ())
+    }
     /// CAS prevents a slow worker from replacing a newer cursor with stale data.
     /// Cursor and replayable inventory/notices either commit together or roll back.
     pub(crate) fn save(
@@ -47,7 +63,7 @@ impl Checkpoints {
         expected: Option<&str>,
         checkpoint: &Checkpoint,
         cancel: &Cancellation,
-    ) -> Result<(), EngineError> {
+    ) -> Result<String, EngineError> {
         validate(scope, checkpoint)?;
         let json = serde_json::to_string(checkpoint).map_err(failed)?;
         if json.len() > MAX_BYTES {
@@ -70,7 +86,8 @@ impl Checkpoints {
         if cancel.is_cancelled() {
             return Err(EngineError::Authentication(AuthError::Cancelled));
         }
-        tx.commit().map_err(failed)
+        tx.commit().map_err(failed)?;
+        Ok(revision)
     }
 }
 fn local<'a>(scope: &'a Scope<'_>) -> Result<&'a str, EngineError> {
@@ -199,6 +216,70 @@ mod tests {
             .is_none());
         drop(store);
         drop(reopened);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn acknowledgment_is_durable_scoped_and_rejects_stale_or_cancelled_actions() {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "drivesync-ack-{}",
+                oauth2::CsrfToken::new_random().secret()
+            ))
+            .join("changes.sqlite3");
+        let account = AccountId("account".into());
+        let scope = Scope {
+            client: "client",
+            account: &account,
+            remote: "root",
+            local: Path::new("/files"),
+        };
+        let mut store = Checkpoints::open(&path).unwrap();
+        let mut original = checkpoint("cursor");
+        original.notices.push(crate::changes::Notice {
+            id: "old".into(),
+            path: Some("old/file.txt".into()),
+        });
+        let revision = store
+            .save(&scope, None, &original, &Cancellation::new())
+            .unwrap();
+        let other = Scope {
+            local: Path::new("/other"),
+            ..scope
+        };
+        store
+            .save(&other, None, &original, &Cancellation::new())
+            .unwrap();
+        let cancelled = Cancellation::new();
+        cancelled.cancel();
+        assert!(store.acknowledge(&scope, &revision, &cancelled).is_err());
+        assert_eq!(
+            store.load(&scope).unwrap().unwrap().1.notices,
+            original.notices
+        );
+        let newer = store
+            .save(&scope, Some(&revision), &original, &Cancellation::new())
+            .unwrap();
+        assert_eq!(
+            store.acknowledge(&scope, &revision, &Cancellation::new()),
+            Err(EngineError::SyncBusy)
+        );
+        store
+            .acknowledge(&scope, &newer, &Cancellation::new())
+            .unwrap();
+        let reopened = Checkpoints::open(&path).unwrap();
+        let acknowledged = reopened.load(&scope).unwrap().unwrap().1;
+        assert!(acknowledged.notices.is_empty());
+        assert_eq!(acknowledged.cursor, original.cursor);
+        assert_eq!(
+            acknowledged.inventory.entries.len(),
+            original.inventory.entries.len()
+        );
+        assert_eq!(
+            reopened.load(&other).unwrap().unwrap().1.notices,
+            original.notices
+        );
+        drop(reopened);
+        drop(store);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
     #[test]
