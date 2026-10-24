@@ -64,3 +64,11 @@ commit is required: observation persistence always precedes effects.
 
 The feed reports current metadata, not immutable historical file bytes. It is
 not a snapshot; existing download metadata/integrity checks remain mandatory.
+
+When transfer-time metadata revalidation reports `RemoteChanged`, a complete
+reconciliation is required even if the incremental change query returned no events. Capture a
+new boundary, scan and replay its window, retain pending path notices, recheck
+configuration and commit with the latest checkpoint revision using CAS. The
+failed cycle remains a retryable result; the next cycle must use the refreshed
+inventory. Do not relax exact binary revision checks or reset/delete checkpoints.
+A failed/cancelled refresh must never publish a partial inventory or clear notices.

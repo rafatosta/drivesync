@@ -287,7 +287,7 @@ impl DriveSyncEngine {
             cancel,
             unchanged: std::collections::HashSet::new(),
         };
-        let checkpoint = crate::changes::collect(
+        let mut checkpoint = crate::changes::collect(
             id,
             &root,
             previous.as_ref().map(|(_, checkpoint)| checkpoint),
@@ -333,6 +333,22 @@ impl DriveSyncEngine {
             &mut source,
             progress,
         )?;
+        if report
+            .issues
+            .iter()
+            .any(|issue| issue.error == EngineError::RemoteChanged)
+        {
+            // A feed observation can lag behind current metadata. Repeating the cached
+            // observation cannot repair that mismatch, especially for deleted local
+            // files which must pass exact provider validation before downloading.
+            let (revision, latest) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
+            let refreshed = crate::changes::reconcile(id, &root, &latest, cancel, &mut source)?;
+            if self.saved_folder(id)?.as_ref() != Some(&folder) {
+                return Err(EngineError::InvalidPlan);
+            }
+            checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
+            checkpoint = refreshed;
+        }
         for notice in checkpoint.notices {
             report.issues.push(crate::DownloadIssue {
                 relative_path: notice.path,

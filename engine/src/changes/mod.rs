@@ -3,7 +3,7 @@
 mod collection;
 mod models;
 pub(crate) use collection::validate;
-pub(crate) use collection::{collect, Provider};
+pub(crate) use collection::{collect, reconcile, Provider};
 pub(crate) use models::{Checkpoint, Notice};
 #[cfg(test)]
 mod tests;

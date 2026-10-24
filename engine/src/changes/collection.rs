@@ -32,11 +32,35 @@ pub(crate) fn collect(
     cancel: &Cancellation,
     source: &mut impl Provider,
 ) -> Result<Checkpoint, EngineError> {
+    collect_mode(account, root, previous, cancel, source, false)
+}
+
+/// Rebuilds observations after transfer revalidation exposes a stale feed cache.
+/// The boundary precedes the scan, prior notices survive and the catch-up window
+/// is replayed exactly as during bootstrap. This never changes local files.
+pub(crate) fn reconcile(
+    account: &AccountId,
+    root: &str,
+    previous: &Checkpoint,
+    cancel: &Cancellation,
+    source: &mut impl Provider,
+) -> Result<Checkpoint, EngineError> {
+    collect_mode(account, root, Some(previous), cancel, source, true)
+}
+
+fn collect_mode(
+    account: &AccountId,
+    root: &str,
+    previous: Option<&Checkpoint>,
+    cancel: &Cancellation,
+    source: &mut impl Provider,
+    force_scan: bool,
+) -> Result<Checkpoint, EngineError> {
     cancelled(cancel)?;
     if let Some(old) = previous {
         validate(account, root, &old.inventory)?;
     }
-    let mut current = previous.cloned();
+    let mut current = previous.filter(|_| !force_scan).cloned();
     let mut notices = previous.map(|old| old.notices.clone()).unwrap_or_default();
     let mut observed = previous.map(|old| old.inventory.clone());
     for _ in 0..3 {

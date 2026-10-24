@@ -337,3 +337,84 @@ fn root_metadata_without_parent_is_not_a_removed_root() {
         Err(EngineError::RemoteFolderUnavailable)
     ));
 }
+
+#[test]
+fn forced_reconciliation_refreshes_silent_revisions_and_preserves_notices() {
+    let mut old = checkpoint(vec![item("file", "root", false)]);
+    old.notices.push(Notice {
+        id: "previously-moved".into(),
+        path: Some("old/path.txt".into()),
+    });
+    let mut newer = item("file", "root", false);
+    newer.version = Some(2);
+    let mut provider = Fake::new(vec![terminal(vec![])]);
+    provider.scans.push_back(inventory(vec![newer.clone()]));
+    let result = reconcile(
+        &old.inventory.account_id,
+        "root",
+        &old,
+        &Cancellation::new(),
+        &mut provider,
+    )
+    .unwrap();
+    assert_eq!(result.inventory.entries, vec![newer]);
+    assert_eq!(result.notices, old.notices);
+    assert_eq!(provider.calls, vec!["start", "scan", "page:start"]);
+    assert_eq!(result.cursor, "new");
+    // The captured pre-scan boundary must still catch a concurrent newer revision.
+    let mut newest = item("file", "root", false);
+    newest.version = Some(3);
+    let mut provider = Fake::new(vec![terminal(vec![event(newest.clone())])]);
+    provider.scans.push_back(result.inventory.clone());
+    assert_eq!(
+        reconcile(
+            &old.inventory.account_id,
+            "root",
+            &result,
+            &Cancellation::new(),
+            &mut provider
+        )
+        .unwrap()
+        .inventory
+        .entries,
+        vec![newest]
+    );
+}
+
+#[test]
+fn failed_forced_refresh_does_not_change_prior_observations_or_notices() {
+    let mut old = checkpoint(vec![item("file", "root", false)]);
+    old.notices.push(Notice {
+        id: "missing".into(),
+        path: Some("old.txt".into()),
+    });
+    let before = serde_json::to_string(&old).unwrap();
+    let mut provider = Fake::new(vec![Err(EngineError::Authentication(AuthError::Network))]);
+    provider.scans.push_back(old.inventory.clone());
+    assert!(matches!(
+        reconcile(
+            &old.inventory.account_id,
+            "root",
+            &old,
+            &Cancellation::new(),
+            &mut provider
+        ),
+        Err(EngineError::Authentication(AuthError::Network))
+    ));
+    assert_eq!(serde_json::to_string(&old).unwrap(), before);
+    let cancel = Cancellation::new();
+    cancel.cancel();
+    let mut provider = Fake::new(vec![]);
+    assert!(matches!(
+        reconcile(
+            &old.inventory.account_id,
+            "root",
+            &old,
+            &cancel,
+            &mut provider
+        ),
+        Err(EngineError::Authentication(AuthError::Cancelled))
+    ));
+    assert!(provider.calls.is_empty());
+    assert_eq!(serde_json::to_string(&old).unwrap(), before);
+}

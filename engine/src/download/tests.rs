@@ -658,3 +658,43 @@ mod update_tests;
 
 #[path = "incremental_tests.rs"]
 mod incremental_tests;
+
+/// A metadata-only revision can be absent from the feed. Deleted local copies
+/// must not bypass the version check, and a fresh inventory must permit recovery.
+#[test]
+fn deleted_local_copy_requires_reconciliation_of_silent_metadata_revision() {
+    let fixture = Fixture::new();
+    let old = inventory();
+    let mut source = Fake::new(&old);
+    let cancel = Cancellation::new();
+    assert_eq!(
+        fixture
+            .execute(&old, &mut source, &cancel, |_| {})
+            .unwrap()
+            .downloaded,
+        1
+    );
+    fs::remove_file(fixture.root.join("file.txt")).unwrap();
+    source.cached = true;
+    source.entries.get_mut("file").unwrap().version = Some(2);
+    let result = fixture.execute(&old, &mut source, &cancel, |_| {}).unwrap();
+    assert_eq!(result.issues[0].error, EngineError::RemoteChanged);
+    assert!(!fixture.root.join("file.txt").exists());
+    assert_eq!(
+        source.media_calls, 1,
+        "mismatched metadata cannot authorize media"
+    );
+    let mut refreshed = old.clone();
+    refreshed.entries = source.entries.values().cloned().collect();
+    let result = fixture
+        .execute(&refreshed, &mut source, &cancel, |_| {})
+        .unwrap();
+    assert_eq!(result.downloaded, 1);
+    assert!(result.issues.is_empty());
+    assert_eq!(fs::read(fixture.root.join("file.txt")).unwrap(), b"abc");
+    let result = fixture
+        .execute(&refreshed, &mut source, &cancel, |_| {})
+        .unwrap();
+    assert_eq!(result.unchanged, 1);
+    assert_eq!(source.media_calls, 2);
+}
