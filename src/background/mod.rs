@@ -87,7 +87,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
     });
 }
 
-/// Publishes automatic download activity in GNOME's background applications list.
+/// Publishes automatic synchronization activity in GNOME's background applications list.
 /// Older portal versions may not support status messages; permission and window
 /// visibility remain independent of this optional status update.
 pub(crate) fn set_activity(active: bool) {

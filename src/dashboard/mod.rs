@@ -3,6 +3,7 @@ mod account_details;
 mod description;
 mod folders;
 mod synchronization;
+mod upload_mode;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
@@ -127,6 +128,7 @@ pub(crate) fn verify_download_worker_failure() {
 }
 
 #[cfg(test)]
-pub(crate) fn verify_download_progress(capture: impl FnMut(&adw::Window, &str)) {
+pub(crate) fn verify_download_progress(mut capture: impl FnMut(&adw::Window, &str)) {
+    upload_mode::verify_presentations(&mut capture);
     synchronization::verify_progress_presentations(capture);
 }

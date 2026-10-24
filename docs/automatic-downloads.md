@@ -32,8 +32,18 @@ ordinary checks continue. Previously observed paths changed or no longer listed
 in the selected remote root are informational activity, never pending failures.
 They require no acknowledgment and cannot cause retry/backoff or an attention state.
 The collapsed native activity view retains full previous and known current paths.
-Local edits and previous copies are preserved using the existing engine behavior. These cycles never upload, remove
-local copies or resolve conflicts automatically.
+Local edits and previous copies are preserved using the existing engine behavior.
+The default download-only mode never uploads, removes local copies or resolves
+conflicts automatically.
+
+An account can explicitly enable **Upload new files and folders**. This requires
+additional browser consent for that exact account. The same single-flight job
+then performs download reconciliation followed by create-only upload. Only absent
+destinations are created; existing remote files are never updated and deletions
+are never propagated. Folder-pair opt-in and upload intents are durable and scoped
+by client, account and folder configuration. The selected local inode is verified
+before upload. See [create-only contract](../engine/src/upload/create-only.md).
+Signing out disables the folder pair's upload setting without deleting files.
 
 ## Validation
 

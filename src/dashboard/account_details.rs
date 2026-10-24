@@ -137,10 +137,11 @@ pub(super) fn populate(
             .title("Synchronization")
             .description("Local files will not be uploaded to Google Drive.")
             .build();
-        sync.add(&crate::flow::row(
-            "Download only",
-            "From Google Drive to this computer",
-            "folder-download-symbolic",
+        sync.add(&super::upload_mode::build(
+            engine.clone(),
+            &saved,
+            &folders,
+            &sync,
         ));
         sync.add(&sync_state);
         content.append(&sync);

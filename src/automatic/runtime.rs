@@ -100,7 +100,7 @@ impl Controller {
     }
     fn for_engine(engine: Arc<DriveSyncEngine>, saved: &RestoredAccount, desktop: bool) -> Self {
         let execute: Execute =
-            Arc::new(move |id, cancel, progress| engine.download_once(id, cancel, progress));
+            Arc::new(move |id, cancel, progress| engine.synchronize_once(id, cancel, progress));
         let job = Self::new(saved.account.id.clone(), execute, desktop);
         job.configure(saved.folder.clone(), super::eligible(saved));
         job
@@ -122,6 +122,9 @@ impl Controller {
         state.progress = None;
         state.result = None;
         state.revision += 1;
+    }
+    pub fn folder(&self) -> Option<FolderConfiguration> {
+        self.0.state.borrow().folder.clone()
     }
     pub fn revision(&self) -> u64 {
         self.0.state.borrow().revision

@@ -4,7 +4,7 @@
 
 DriveSync is an open-source Linux application designed to make it easy to access your Google Drive files from your computer.
 
-The goal is to let you choose which Google Drive folders to keep on your computer, with automatic, **download-only** synchronization. Your local changes won't be uploaded to Google Drive.
+The goal is to let you choose which Google Drive folders to keep on your computer, with automatic, **download-only** synchronization. Local changes are not uploaded by default. An optional per-account **Upload new files and folders** mode requires additional Google consent and creates new destinations only.
 
 > **Early development:** DriveSync is a technical preview. File downloads and synchronization are **not working yet**. Do not rely on it for important files.
 
@@ -27,7 +27,7 @@ The goal is to let you choose which Google Drive folders to keep on your compute
 - Handle interrupted downloads safely.
 - Run in the background and integrate more closely with GNOME.
 
-**Not planned for the first release:** uploading local changes, two-way synchronization, or automatically deleting local files when something is deleted from Google Drive.
+**Not implemented:** uploading modifications to existing files, full two-way synchronization, or propagating deletions. Create-only upload remains opt-in; download-only is the default.
 
 ## Try DriveSync
 
