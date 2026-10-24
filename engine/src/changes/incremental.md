@@ -24,9 +24,10 @@ inventory. Local monitoring, scheduling, upload and deletion are outside scope.
    unstable tree. HTTP 410 or an explicit invalid `pageToken` parameter triggers
    the same safe bootstrap; other errors fail. Google documents these tokens as
    non-expiring; reconciliation handles rejection, not scheduled expiration.
-5. Preserve notices for previously observed paths no longer represented. A
-   returning identical path clears its notice. Save the complete inventory,
-   notices and terminal cursor in ONE SQLite transaction with compare-and-swap
+5. Preserve informational activity for previously observed paths no longer
+   represented. A returning identical path clears its record. These observations
+   do not imply deletion, do not become download errors and require no user action.
+   Save the complete inventory, notices and terminal cursor in ONE SQLite transaction with compare-and-swap
    revision. A racing collector fails; it cannot overwrite a newer checkpoint.
 6. Build a local plan from every cached entry and execute existing verified
    downloads. Saving observations is NOT confirming installation. Failed,

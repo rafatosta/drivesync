@@ -54,7 +54,8 @@ fn cycle(
         &checkpoint,
         &Cancellation::new(),
     )?;
-    let result = f.execute(&checkpoint.inventory, source, &Cancellation::new(), |_| {})?;
+    let mut result = f.execute(&checkpoint.inventory, source, &Cancellation::new(), |_| {})?;
+    result.previous_paths = changes::previous_paths(&checkpoint)?;
     Ok((result, checkpoint))
 }
 #[test]
@@ -146,12 +147,17 @@ fn removal_is_durable_unavailability_and_preserves_user_bytes() {
     });
     let (removed, checkpoint) = cycle(&f, &mut feed, &mut source).unwrap();
     assert_eq!(removed.downloaded, 0);
+    assert!(removed.issues.is_empty());
+    assert_eq!(removed.previous_paths.len(), 1);
+    assert!(removed.previous_paths[0].current_path.is_none());
     assert!(checkpoint.inventory.entries.is_empty());
     assert_eq!(
         checkpoint.notices[0].path.as_deref(),
         Some(std::path::Path::new("file.txt"))
     );
-    let (_, reopened) = cycle(&f, &mut feed, &mut source).unwrap();
+    let (report, reopened) = cycle(&f, &mut feed, &mut source).unwrap();
+    assert!(report.issues.is_empty());
+    assert_eq!(report.previous_paths, removed.previous_paths);
     assert_eq!(reopened.notices, checkpoint.notices);
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
     assert_eq!(source.media_calls, 1);
@@ -189,4 +195,117 @@ fn unchanged_directory_fast_path_never_creates_missing_directories() {
         .unwrap();
     assert!(source.metadata_calls > 0);
     assert_eq!(fs::read(f.root.join("folder/file.txt")).unwrap(), b"abc");
+}
+
+#[test]
+fn rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_restart() {
+    let f = Fixture::new();
+    let mut inv = inventory();
+    let folder = InventoryEntry {
+        id: "folder".into(),
+        parent_id: "root".into(),
+        name: "old-folder".into(),
+        mime_type: "application/vnd.google-apps.folder".into(),
+        version: Some(1),
+        size: None,
+        md5_checksum: None,
+        kind: InventoryKind::Folder,
+    };
+    inv.entries.insert(0, folder);
+    inv.entries[1].parent_id = "folder".into();
+    let mut feed = Feed {
+        inventory: inv.clone(),
+        events: vec![],
+        scans: 0,
+    };
+    let mut source = Fake::new(&inv);
+    assert_eq!(cycle(&f, &mut feed, &mut source).unwrap().0.downloaded, 1);
+    // Rename a folder without child events: reconciliation must project the new
+    // child path while preserving its previous local directory and file.
+    inv.entries[0].name = "new-folder".into();
+    inv.entries[0].version = Some(2);
+    source
+        .entries
+        .insert("folder".into(), inv.entries[0].clone());
+    feed.inventory = inv.clone();
+    feed.events.push(Change {
+        id: "folder".into(),
+        removed: false,
+        item: Some(inv.entries[0].clone()),
+    });
+    let (renamed, _) = cycle(&f, &mut feed, &mut source).unwrap();
+    assert!(renamed.issues.is_empty());
+    assert_eq!(renamed.previous_paths.len(), 2);
+    assert_eq!(
+        fs::read(f.root.join("old-folder/file.txt")).unwrap(),
+        b"abc"
+    );
+    assert_eq!(
+        fs::read(f.root.join("new-folder/file.txt")).unwrap(),
+        b"abc"
+    );
+    // Move the child out of its folder, then remove it remotely.
+    inv.entries[1].parent_id = "root".into();
+    inv.entries[1].name = "moved.txt".into();
+    inv.entries[1].version = Some(2);
+    source.entries.insert("file".into(), inv.entries[1].clone());
+    feed.events.push(Change {
+        id: "file".into(),
+        removed: false,
+        item: Some(inv.entries[1].clone()),
+    });
+    let (moved, _) = cycle(&f, &mut feed, &mut source).unwrap();
+    assert!(moved.issues.is_empty());
+    assert_eq!(fs::read(f.root.join("moved.txt")).unwrap(), b"abc");
+    feed.events.push(Change {
+        id: "file".into(),
+        removed: true,
+        item: None,
+    });
+    let (removed, _) = cycle(&f, &mut feed, &mut source).unwrap();
+    assert!(removed.issues.is_empty());
+    let media = source.media_calls;
+    // Every cycle reopens both SQLite stores, as a restarted process does.
+    for _ in 0..3 {
+        let (report, _) = cycle(&f, &mut feed, &mut source).unwrap();
+        assert!(report.issues.is_empty());
+        assert_eq!(report.previous_paths, removed.previous_paths);
+        assert_eq!(source.media_calls, media);
+        for path in ["old-folder/file.txt", "new-folder/file.txt", "moved.txt"] {
+            assert_eq!(fs::read(f.root.join(path)).unwrap(), b"abc");
+        }
+    }
+}
+
+#[test]
+fn historical_activity_never_suppresses_a_current_local_conflict() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut feed = Feed {
+        inventory: inv.clone(),
+        events: vec![],
+        scans: 0,
+    };
+    let mut source = Fake::new(&inv);
+    cycle(&f, &mut feed, &mut source).unwrap();
+    let mut renamed = inv.entries[0].clone();
+    renamed.name = "renamed.txt".into();
+    source.entries.insert("file".into(), renamed.clone());
+    fs::write(f.root.join("renamed.txt"), b"my own data").unwrap();
+    feed.events.push(Change {
+        id: "file".into(),
+        removed: false,
+        item: Some(renamed),
+    });
+    for _ in 0..2 {
+        let (report, _) = cycle(&f, &mut feed, &mut source).unwrap();
+        assert_eq!(report.previous_paths.len(), 1);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+        assert_eq!(
+            fs::read(f.root.join("renamed.txt")).unwrap(),
+            b"my own data"
+        );
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+    }
 }

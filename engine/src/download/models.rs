@@ -9,14 +9,13 @@ pub struct DownloadIssue {
     pub relative_path: Option<PathBuf>,
     pub error: EngineError,
 }
-/// Opaque authorization to acknowledge exactly the historical notices in one
-/// checkpoint revision. A newer cycle or different folder pair invalidates it.
-#[derive(Debug, Clone)]
-pub struct HistoricalNotices {
-    pub(crate) client: String,
-    pub(crate) folder: crate::FolderConfiguration,
-    pub(crate) root: String,
-    pub(crate) revision: String,
+/// Informational record of a previously observed remote path. A missing current
+/// path means it is no longer represented in the selected root, not proof of
+/// deletion. Download-only synchronization never removes the previous local copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviousPath {
+    pub previous_path: Option<PathBuf>,
+    pub current_path: Option<PathBuf>,
 }
 /// A completed download cycle. Issues/skipped items are not synchronization success.
 #[derive(Debug, Clone, Default)]
@@ -30,8 +29,8 @@ pub struct DownloadReport {
     pub directories: usize,
     pub skipped: usize,
     pub issues: Vec<DownloadIssue>,
-    /// Present only when historical path notices can be acknowledged.
-    pub historical_notices: Option<HistoricalNotices>,
+    /// Historical path activity, independent of actionable download failures.
+    pub previous_paths: Vec<PreviousPath>,
 }
 /// Current item stage. Receiving bytes is distinct from verification/installation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

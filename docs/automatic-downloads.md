@@ -27,9 +27,12 @@ failures require correction/manual retry. Temporary startup authentication
 transport failures remain eligible for retry. No error triggers automatic login,
 credential removal or destructive repairs.
 
-Local conflicts, remote removals and skipped unsupported items remain visible as
-needing attention; ordinary checks continue. Local edits and previous copies are
-preserved using the existing engine behavior. These cycles never upload, remove
+Local conflicts and skipped unsupported items remain visible as needing attention;
+ordinary checks continue. Previously observed paths changed or no longer listed
+in the selected remote root are informational activity, never pending failures.
+They require no acknowledgment and cannot cause retry/backoff or an attention state.
+The collapsed native activity view retains full previous and known current paths.
+Local edits and previous copies are preserved using the existing engine behavior. These cycles never upload, remove
 local copies or resolve conflicts automatically.
 
 ## Validation

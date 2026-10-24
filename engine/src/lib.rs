@@ -39,5 +39,5 @@ pub use planner::{
 
 pub use download::{
     DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
-    HistoricalNotices,
+    PreviousPath,
 };

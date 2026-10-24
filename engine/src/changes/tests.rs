@@ -420,23 +420,31 @@ fn failed_forced_refresh_does_not_change_prior_observations_or_notices() {
 }
 
 #[test]
-fn acknowledged_paths_stay_dismissed_but_future_moves_produce_new_notices() {
+fn previous_paths_distinguish_moves_from_unavailability_without_creating_issues() {
     let previous = checkpoint(vec![item("file", "root", false)]);
     let mut renamed = item("file", "root", false);
     renamed.name = "renamed.txt".into();
-    let mut fake = Fake::new(vec![terminal(vec![event(renamed.clone())])]);
-    let mut moved = collect_with(Some(&previous), &mut fake).unwrap();
-    assert_eq!(moved.notices.len(), 1);
-    moved.notices.clear(); // Represents the durable acknowledgment transaction.
+    let mut fake = Fake::new(vec![terminal(vec![event(renamed)])]);
+    let moved = collect_with(Some(&previous), &mut fake).unwrap();
+    let activity = previous_paths(&moved).unwrap();
+    assert_eq!(
+        activity,
+        [crate::PreviousPath {
+            previous_path: Some("file".into()),
+            current_path: Some("renamed.txt".into()),
+        }]
+    );
     let mut fake = Fake::new(vec![terminal(vec![])]);
     let unchanged = collect_with(Some(&moved), &mut fake).unwrap();
-    assert!(unchanged.notices.is_empty());
-    renamed.name = "moved-again.txt".into();
-    let mut fake = Fake::new(vec![terminal(vec![event(renamed)])]);
-    let changed = collect_with(Some(&unchanged), &mut fake).unwrap();
-    assert_eq!(changed.notices.len(), 1);
-    assert_eq!(
-        changed.notices[0].path.as_deref(),
-        Some(std::path::Path::new("renamed.txt"))
-    );
+    assert_eq!(previous_paths(&unchanged).unwrap(), activity);
+    let mut fake = Fake::new(vec![terminal(vec![Change {
+        id: "file".into(),
+        removed: true,
+        item: None,
+    }])]);
+    let unavailable = collect_with(Some(&unchanged), &mut fake).unwrap();
+    assert!(previous_paths(&unavailable)
+        .unwrap()
+        .iter()
+        .all(|a| a.current_path.is_none()));
 }

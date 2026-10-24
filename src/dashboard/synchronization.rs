@@ -17,6 +17,7 @@ struct Widgets {
     status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
     issues: gtk::glib::WeakRef<gtk::Box>,
+    activity: gtk::glib::WeakRef<gtk::Box>,
     skipped: gtk::glib::WeakRef<gtk::Label>,
     preserved: gtk::glib::WeakRef<gtk::Label>,
     spinner: gtk::glib::WeakRef<gtk::Spinner>,
@@ -109,6 +110,69 @@ impl Widgets {
             container.set_visible(!report.issues.is_empty());
         }
     }
+    /// Normal remote path changes belong in optional activity details. They
+    /// never display warning icons or require a user acknowledgment.
+    fn show_activity(&self, report: &DownloadReport) {
+        let Some(container) = self.activity.upgrade() else {
+            return;
+        };
+        while let Some(child) = container.first_child() {
+            container.remove(&child);
+        }
+        container.set_visible(!report.previous_paths.is_empty());
+        if report.previous_paths.is_empty() {
+            return;
+        }
+        let group = adw::PreferencesGroup::new();
+        let details = adw::ExpanderRow::builder()
+            .title("View activity")
+            .subtitle("Previous local copies are kept. No action is needed.")
+            .use_markup(false)
+            .build();
+        details.set_subtitle_lines(0);
+        for activity in report.previous_paths.iter().take(50) {
+            let name = activity
+                .previous_path
+                .as_deref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Previous location".into());
+            let subtitle = activity
+                .current_path
+                .as_deref()
+                .map(|path| {
+                    format!(
+                        "Now at {} on Google Drive. Previous local copies are kept.",
+                        path.to_string_lossy()
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "No longer listed in the selected Google Drive folder. Local copies are kept."
+                        .into()
+                });
+            let row = adw::ActionRow::builder()
+                .title(&name)
+                .subtitle(&subtitle)
+                .use_markup(false)
+                .build();
+            row.set_title_lines(0);
+            row.set_subtitle_lines(0);
+            row.set_tooltip_text(Some(&format!("{name}\n{subtitle}")));
+            row.add_prefix(&gtk::Image::from_icon_name("document-open-recent-symbolic"));
+            details.add_row(&row);
+        }
+        if report.previous_paths.len() > 50 {
+            details.add_row(
+                &adw::ActionRow::builder()
+                    .title(format!(
+                        "{} additional previous paths recorded",
+                        report.previous_paths.len() - 50
+                    ))
+                    .build(),
+            );
+        }
+        group.add(&details);
+        container.append(&group);
+    }
     fn begin(&self) {
         if let Some(button) = self.start.upgrade() {
             button.set_label("Cancel");
@@ -129,6 +193,9 @@ impl Widgets {
             status.set_label("The first cycle also scans the selected folders.");
         }
         self.clear_issues();
+        if let Some(activity) = self.activity.upgrade() {
+            activity.set_visible(false);
+        }
         if let Some(preserved) = self.preserved.upgrade() {
             preserved.set_visible(false);
         }
@@ -192,7 +259,7 @@ impl Widgets {
                     "Next automatic check in about a minute · download only",
                 ),
                 Phase::Attention => (
-                    "Needs attention",
+                    "Some files could not be updated",
                     "Local files were preserved. Automatic checks continue.",
                 ),
                 Phase::Offline => (
@@ -249,6 +316,7 @@ impl Widgets {
                     preserved.set_visible(!report.preserved_copies.is_empty());
                 }
                 self.show_issues(report);
+                self.show_activity(report);
                 if let Some(skipped) = self.skipped.upgrade() {
                     skipped.set_label(&if report.skipped == 1 {
                         "1 item skipped: unsupported type or download restriction.".into()
@@ -290,6 +358,9 @@ impl Widgets {
                     ..Default::default()
                 };
                 self.show_issues(&report);
+                if let Some(activity) = self.activity.upgrade() {
+                    activity.set_visible(false);
+                }
             }
         }
     }
@@ -329,15 +400,23 @@ fn progress_text(event: &DownloadProgress) -> String {
     }
 }
 fn summary(report: &DownloadReport) -> String {
-    format!(
-        "{} downloaded · {} updated · {} recovered · {} unchanged · {} skipped · {} need attention",
-        report.downloaded,
-        report.updated,
-        report.recovered,
-        report.unchanged,
-        report.skipped,
-        report.issues.len()
-    )
+    let mut parts = Vec::new();
+    for (count, label) in [
+        (report.downloaded, "downloaded"),
+        (report.updated, "updated"),
+        (report.recovered, "recovered"),
+        (report.skipped, "skipped"),
+        (report.issues.len(), "need attention"),
+    ] {
+        if count > 0 {
+            parts.push(format!("{count} {label}"));
+        }
+    }
+    if parts.is_empty() {
+        "All files are up to date.".into()
+    } else {
+        parts.join(" · ")
+    }
 }
 /// Shows bounded relative paths without implying old versions were deleted.
 fn preserved_text(report: &DownloadReport) -> String {
@@ -414,6 +493,10 @@ pub(super) fn build(
     issues.set_visible(false);
     issues.set_widget_name("download-issues");
     footer.append(&issues);
+    let activity = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    activity.set_visible(false);
+    activity.set_widget_name("download-history");
+    footer.append(&activity);
     footer.append(start);
     let ui = Widgets {
         start: start.downgrade(),
@@ -423,11 +506,12 @@ pub(super) fn build(
         status: status.downgrade(),
         progress: progress.downgrade(),
         issues: issues.downgrade(),
+        activity: activity.downgrade(),
         skipped: skipped.downgrade(),
         preserved: preserved.downgrade(),
         spinner: spinner.downgrade(),
     };
-    let job = crate::automatic::Controller::attach(engine.clone(), saved);
+    let job = crate::automatic::Controller::attach(engine, saved);
     let click_job = job.clone();
     let click_ui = ui.clone();
     start.connect_clicked(move |_| {
@@ -439,14 +523,6 @@ pub(super) fn build(
         }
         click_ui.present_job(&click_job.snapshot(), Some(previous));
     });
-    let acknowledge = gtk::Button::with_label("Acknowledge old path notices");
-    acknowledge.set_tooltip_text(Some("Dismiss reviewed historical path notices. No local or Google Drive files will be changed. Current conflicts remain visible."));
-    acknowledge.set_halign(gtk::Align::Start);
-    acknowledge.set_visible(false);
-    footer.insert_child_after(&acknowledge, Some(&issues));
-    let acknowledge_job = job.clone();
-    acknowledge.connect_clicked(move |_| acknowledge_job.acknowledge_notices(engine.clone()));
-    let weak_acknowledge = acknowledge.downgrade();
     let mut revision = u64::MAX;
     let mut phase = None;
     gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -456,16 +532,6 @@ pub(super) fn build(
         if job.revision() != revision {
             let snapshot = job.snapshot();
             ui.present_job(&snapshot, phase);
-            if let Some(button) = weak_acknowledge.upgrade() {
-                button.set_visible(
-                    snapshot.phase != crate::automatic::Phase::Running
-                        && snapshot
-                            .result
-                            .as_ref()
-                            .and_then(|r| r.as_ref().ok())
-                            .is_some_and(|r| r.historical_notices.is_some()),
-                );
-            }
             revision = snapshot.revision;
             phase = Some(snapshot.phase);
         }
@@ -587,6 +653,10 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .clone()
             .downcast::<gtk::Box>()
             .unwrap();
+        let activity = controls["download-history"]
+            .clone()
+            .downcast::<gtk::Box>()
+            .unwrap();
         let skipped = controls["download-skipped"]
             .clone()
             .downcast::<gtk::Label>()
@@ -603,6 +673,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             status: status.downgrade(),
             progress: bar.downgrade(),
             issues: issues.downgrade(),
+            activity: activity.downgrade(),
             skipped: skipped.downgrade(),
             preserved: preserved.downgrade(),
             spinner: spinner.downgrade(),
@@ -668,7 +739,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             },
             crate::automatic::Phase::Attention,
         );
-        assert_eq!(row.title(), "Needs attention");
+        assert_eq!(row.title(), "Some files could not be updated");
         assert!(!issues.is_visible());
         assert!(skipped.is_visible());
         assert!(!skipped.has_css_class("error"));
@@ -693,6 +764,53 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         assert!(!spinner.is_spinning());
         capture(&window, &format!("download-result-{width}"));
         assert!(window.width() <= width + 10);
+        let history_report = DownloadReport {
+            unchanged: 8,
+            previous_paths: vec![
+                drivesync_engine::PreviousPath {
+                    previous_path: Some("pasta-a/mesmo-nome.txt".into()),
+                    current_path: Some("pasta-a-renomeada/mesmo-nome.txt".into()),
+                },
+                drivesync_engine::PreviousPath {
+                    previous_path: Some("pasta-b/mesmo-nome.txt".into()),
+                    current_path: None,
+                },
+            ],
+            ..Default::default()
+        };
+        completed(history_report.clone(), crate::automatic::Phase::UpToDate);
+        assert_eq!(row.title(), "Up to date");
+        assert_eq!(status.text(), "All files are up to date.");
+        assert!(!issues.is_visible());
+        assert!(activity.is_visible());
+        let mut pending = vec![activity.clone().upcast::<gtk::Widget>()];
+        let mut expander = None;
+        while let Some(widget) = pending.pop() {
+            if let Ok(found) = widget.clone().downcast::<adw::ExpanderRow>() {
+                expander = Some(found);
+                break;
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                child = widget.next_sibling();
+                pending.push(widget);
+            }
+        }
+        let expander = expander.expect("native activity expander");
+        assert!(!expander.is_expanded());
+        capture(&window, &format!("download-history-collapsed-{width}"));
+        expander.set_expanded(true);
+        capture(&window, &format!("download-history-expanded-{width}"));
+        assert!(window.width() <= width + 10);
+        let mut conflict = history_report;
+        conflict.issues.push(DownloadIssue {
+            relative_path: Some("current/local-edit.txt".into()),
+            error: EngineError::DownloadConflict,
+        });
+        completed(conflict, crate::automatic::Phase::Attention);
+        assert!(issues.is_visible());
+        assert!(activity.is_visible());
+        assert_eq!(row.title(), "Some files could not be updated");
         for (phase, title, name) in [
             (crate::automatic::Phase::UpToDate, "Up to date", "current"),
             (
@@ -753,6 +871,18 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
 mod tests {
     use super::*;
     #[test]
+    fn activity_is_not_an_error_or_an_action_in_the_completion_summary() {
+        let report = DownloadReport {
+            unchanged: 8,
+            previous_paths: vec![drivesync_engine::PreviousPath {
+                previous_path: Some("old.txt".into()),
+                current_path: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(summary(&report), "All files are up to date.");
+    }
+    #[test]
     fn updated_count_and_preserved_paths_remain_visible_in_summary() {
         let report = DownloadReport {
             updated: 2,
@@ -799,7 +929,7 @@ mod tests {
         };
         assert_eq!(
             summary(&report),
-            "2 downloaded · 0 updated · 0 recovered · 0 unchanged · 1 skipped · 1 need attention"
+            "2 downloaded · 1 skipped · 1 need attention"
         );
     }
 }

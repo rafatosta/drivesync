@@ -147,7 +147,7 @@ fn run() -> Result<(), String> {
             ];
             println!(
                 "{}",
-                json!({"event":"completed","counts":counts,"media_attempts":media_attempts})
+                json!({"event":"completed","counts":counts,"media_attempts":media_attempts,"previous_paths":report.previous_paths.len()})
             );
             if options.expected_error.is_some() {
                 return Err("Expected error did not occur".into());

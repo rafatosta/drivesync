@@ -280,6 +280,24 @@ fn paths(
         .map(|entry| (entry.remote_id, entry.relative_path))
         .collect())
 }
+/// Projects durable path observations as information, never as download errors.
+/// Missing graph entries are unavailable observations, not deletion evidence.
+pub(crate) fn previous_paths(
+    checkpoint: &Checkpoint,
+) -> Result<Vec<crate::PreviousPath>, EngineError> {
+    if checkpoint.notices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let current = paths(&checkpoint.inventory)?;
+    Ok(checkpoint
+        .notices
+        .iter()
+        .map(|notice| crate::PreviousPath {
+            previous_path: notice.path.clone(),
+            current_path: current.get(&notice.id).cloned().flatten(),
+        })
+        .collect())
+}
 fn reconcile_notices(
     old: &RemoteInventory,
     new: &RemoteInventory,

@@ -103,17 +103,6 @@ impl Schedule {
             self.due = Some(now + INTERVAL);
         }
     }
-    /// Reviewing historical notices is not a new cycle or a request to resume.
-    /// Preserve pause, connectivity state, backoff and the existing deadline.
-    pub fn reviewed(&mut self, report: &DownloadReport) {
-        if matches!(self.phase, Phase::Attention | Phase::UpToDate) {
-            self.phase = if report.issues.is_empty() && report.skipped == 0 {
-                Phase::UpToDate
-            } else {
-                Phase::Attention
-            };
-        }
-    }
     /// A positive connectivity hint retries network failures promptly, but never
     /// bypasses rate-limit backoff, user pause or a blocking local failure.
     pub fn network_changed(&mut self, online: bool, now: u64) {
@@ -143,11 +132,7 @@ fn transient(error: &EngineError) -> bool {
     )
 }
 fn blocking(error: &EngineError) -> bool {
-    !transient(error)
-        && !matches!(
-            error,
-            EngineError::DownloadConflict | EngineError::RemoteItemUnavailable
-        )
+    !transient(error) && !matches!(error, EngineError::DownloadConflict)
 }
 
 #[cfg(test)]
@@ -157,33 +142,33 @@ mod tests {
         Err(EngineError::Authentication(AuthError::Network))
     }
     #[test]
-    fn reviewing_notices_preserves_conflicts_pause_and_deadlines() {
+    fn historical_activity_is_success_but_current_conflicts_and_network_errors_remain_visible() {
         let mut s = Schedule::new(true, 0);
-        s.phase = Phase::Attention;
-        let deadline = s.due;
-        s.reviewed(&DownloadReport::default());
-        assert_eq!(s.phase, Phase::UpToDate);
-        assert_eq!(s.due, deadline);
-        s.reviewed(&DownloadReport {
-            issues: vec![drivesync_engine::DownloadIssue {
-                relative_path: Some("edited.txt".into()),
-                error: EngineError::DownloadConflict,
+        let mut report = DownloadReport {
+            unchanged: 8,
+            previous_paths: vec![drivesync_engine::PreviousPath {
+                previous_path: Some("old/file.txt".into()),
+                current_path: Some("new/file.txt".into()),
             }],
             ..Default::default()
-        });
-        assert_eq!(s.phase, Phase::Attention);
-        for phase in [
-            Phase::Paused,
-            Phase::Offline,
-            Phase::Retrying,
-            Phase::Blocked,
-        ] {
-            s.phase = phase;
-            s.due = None;
-            s.reviewed(&DownloadReport::default());
-            assert_eq!(s.phase, phase);
-            assert_eq!(s.due, None);
+        };
+        for now in [3, 63, 123] {
+            assert!(s.start(now, true, false));
+            s.finish(&Ok(report.clone()), now);
+            assert_eq!(s.phase, Phase::UpToDate);
+            assert_eq!(s.due, Some(now + INTERVAL));
         }
+        report.issues.push(drivesync_engine::DownloadIssue {
+            relative_path: Some("local-edit.txt".into()),
+            error: EngineError::DownloadConflict,
+        });
+        s.finish(&Ok(report.clone()), 200);
+        assert_eq!(s.phase, Phase::Attention);
+        assert_eq!(s.due, Some(260));
+        report.issues[0].error = EngineError::Authentication(AuthError::Network);
+        s.finish(&Ok(report), 300);
+        assert_eq!(s.phase, Phase::Offline);
+        assert_eq!(s.due, Some(330));
     }
     #[test]
     fn periodic_cycles_are_single_flight_and_timed_from_completion() {
