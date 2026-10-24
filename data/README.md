@@ -23,8 +23,8 @@ Google account authentication requires the local Desktop OAuth configuration and
 
 ## Background execution
 
-Closing the window requests the desktop Background portal permission without
-requesting login autostart. Only an explicit grant hides the window. A native
+Closing the window requests the desktop Background portal permission and preserves
+login autostart registration. Only an explicit grant hides the window. A native
 notification offers Open and Quit; the primary header menu and Ctrl+Q also quit.
 Denied or unavailable permission leaves the window visible with a Keep Open / Quit
 dialog. GNOME background status distinguishes active cycles, connection failures,
@@ -40,3 +40,28 @@ sandbox with the matching app identity, session bus and desktop display, with
 `DRIVESYNC_BACKGROUND_TEST=1`. It creates only a test window and never initializes
 the engine or reads account data. It requires background permission; denial must
 leave the test window visible and therefore fails its success-path assertion.
+
+## Session startup
+
+The primary instance requests Background portal authorization once per launch,
+with `autostart=true` and the argument array `drivesync --background`. The portal
+owns the session launcher; DriveSync never writes host autostart files directly.
+Closing a window uses the same request so it cannot accidentally remove that
+registration. Concurrent startup/close requests share one in-flight portal call.
+
+The response's `background` and `autostart` results are checked separately. Denial,
+malformed responses, unavailable services and registration failures expose the
+window with a native toast and leave manual use available. Success is never
+inferred merely from receiving a request handle.
+
+A session launch keeps the initial window hidden. A normal launcher invocation
+shows the existing primary instance; a repeated `--background` invocation never
+hides a visible window or constructs another engine. Quit ends the current run
+without disabling the next session's startup. Login autostart remains subject to
+the desktop's permission and session settings.
+
+The ignored `background::startup::tests` native fixtures cover permission denial,
+late grants, hidden startup and activation without engine data. The real-portal
+fixture requires `DRIVESYNC_BACKGROUND_TEST=1` and registers the development login
+command. An actual logout/login must be verified separately; it is not simulated
+by a unit test and must not interrupt an active user session during testing.

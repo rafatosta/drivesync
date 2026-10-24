@@ -4,7 +4,8 @@ Configured accounts are checked three seconds after registration and every minut
 **after the previous cycle completes**. Opening an existing account again or
 rebuilding the dashboard reuses its application-owned job. The explicit
 synchronization button uses that same job. Hiding the window leaves scheduling
-active; Quit cancels all running jobs. This does not enable login autostart.
+active; Quit cancels all running jobs. Session startup is registered separately through the native Background portal;
+its `--background` launch follows the same scheduling path.
 
 At most one worker runs per account. Reconfiguration and account removal cancel
 the previous job and retain its guard until it stops; obsolete results cannot

@@ -27,6 +27,7 @@ const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
 /// Launches the single-instance GTK application.
 fn main() -> adw::gtk::glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
+    background::configure_application(&app);
     // Startup runs once for the primary application, even on repeated activation.
     app.connect_startup(|app| {
         automatic::install(app);
@@ -60,6 +61,7 @@ fn main() -> adw::gtk::glib::ExitCode {
         });
         app.add_action(&quit);
         background::install(app, &window);
+        background::install_startup(app, &window, &toasts);
         main_menu::install(app, &window);
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     });
