@@ -23,6 +23,7 @@ pub(crate) use media::{media as file_media, metadata as file_metadata};
 pub(crate) use folders::{get, list};
 pub(crate) use inventory::{
     page as inventory_page, root as inventory_root, scan as inventory_scan,
+    scan_with_progress as inventory_scan_with_progress,
 };
 pub use inventory::{InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 pub use models::FolderPage;

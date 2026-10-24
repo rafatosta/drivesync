@@ -7,7 +7,7 @@ mod stream;
 pub(crate) use execution::{run, Context, Source};
 pub use models::{
     DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
-    PreviousPath,
+    PreparationProgress, PreviousPath,
 };
 pub(crate) use models::{Operation, Phase, Previous};
 

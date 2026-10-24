@@ -49,10 +49,27 @@ pub struct DownloadItemProgress {
     /// Binary byte size; None for folders or unsupported items.
     pub total: Option<u64>,
 }
+/// Observable preparation work before the complete transfer plan is known.
+/// Counters are observations, never percentages or confirmed downloads.
+#[derive(Debug, Clone)]
+pub enum PreparationProgress {
+    Connecting,
+    ReadingChanges,
+    Scanning {
+        files: usize,
+        folders: usize,
+        current_path: PathBuf,
+    },
+    CheckingLocal {
+        checked: usize,
+    },
+    SavingState,
+}
 /// Cycle progress counts processed inventory items, including folders, skipped
 /// items and failures. It is not a measure of successful installation or time.
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
+    pub preparation: Option<PreparationProgress>,
     pub completed_items: usize,
     pub total_items: usize,
     pub current: Option<DownloadItemProgress>,
@@ -110,4 +127,15 @@ pub(crate) struct Operation {
     pub root: Identity,
     pub parent: Identity,
     pub phase: Phase,
+}
+
+impl DownloadProgress {
+    pub(crate) fn preparing(stage: PreparationProgress) -> Self {
+        Self {
+            preparation: Some(stage),
+            completed_items: 0,
+            total_items: 0,
+            current: None,
+        }
+    }
 }

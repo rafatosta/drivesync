@@ -24,6 +24,30 @@ struct Widgets {
 }
 impl Widgets {
     fn progress(&self, event: &DownloadProgress) {
+        if let Some(stage) = &event.preparation {
+            let (title, detail) = preparation_text(stage);
+            if let Some(row) = self.row.upgrade() {
+                row.set_title(title);
+                if let drivesync_engine::PreparationProgress::Scanning { current_path, .. } = stage
+                {
+                    let path = if current_path.as_os_str().is_empty() {
+                        "Selected folder".into()
+                    } else {
+                        current_path.to_string_lossy()
+                    };
+                    row.set_subtitle(&format!("Reading folder: {path}"));
+                } else {
+                    row.set_subtitle(&detail);
+                }
+            }
+            if let Some(status) = self.status.upgrade() {
+                status.set_label(&detail);
+            }
+            if let Some(bar) = self.progress.upgrade() {
+                bar.set_visible(false);
+            }
+            return;
+        }
         if let Some(bar) = self.progress.upgrade() {
             bar.set_visible(true);
             bar.set_fraction(cycle_fraction(event));
@@ -190,7 +214,7 @@ impl Widgets {
             row.set_subtitle("Checking Google Drive changes and existing local copies…");
         }
         if let Some(status) = self.status.upgrade() {
-            status.set_label("The first cycle also scans the selected folders.");
+            status.set_label("Connecting to Google Drive. Analysis progress will appear here…");
         }
         self.clear_issues();
         if let Some(activity) = self.activity.upgrade() {
@@ -363,6 +387,32 @@ impl Widgets {
                 }
             }
         }
+    }
+}
+/// Preparation has no known total: show actual observations without a percentage.
+fn preparation_text(stage: &drivesync_engine::PreparationProgress) -> (&'static str, String) {
+    use drivesync_engine::PreparationProgress;
+    match stage {
+        PreparationProgress::Connecting => (
+            "Connecting to Google Drive",
+            "Verifying account access and the selected folder…".into(),
+        ),
+        PreparationProgress::ReadingChanges => (
+            "Checking recent Drive changes",
+            "Reading changes reported by Google Drive…".into(),
+        ),
+        PreparationProgress::Scanning { files, folders, .. } => (
+            "Analyzing Google Drive",
+            format!("{files} files and {folders} folders found so far…"),
+        ),
+        PreparationProgress::CheckingLocal { checked } => (
+            "Checking files on this computer",
+            format!("{checked} local paths checked…"),
+        ),
+        PreparationProgress::SavingState => (
+            "Preparing downloads",
+            "Saving the analysis before checking and downloading files…".into(),
+        ),
     }
 }
 /// Item-count progress advances only after an item finishes checking/installation.
@@ -700,7 +750,34 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         window.present();
         spinner.set_visible(true);
         spinner.start();
+        for stage in [
+            drivesync_engine::PreparationProgress::Connecting,
+            drivesync_engine::PreparationProgress::Scanning {
+                files: 320,
+                folders: 42,
+                current_path: "Documentos/Projetos".into(),
+            },
+            drivesync_engine::PreparationProgress::ReadingChanges,
+            drivesync_engine::PreparationProgress::CheckingLocal { checked: 128 },
+            drivesync_engine::PreparationProgress::SavingState,
+        ] {
+            ui.progress(&DownloadProgress {
+                preparation: Some(stage),
+                completed_items: 0,
+                total_items: 0,
+                current: None,
+            });
+            assert!(!bar.is_visible());
+            assert!(spinner.is_spinning());
+            if row.title() == "Analyzing Google Drive" {
+                assert!(status.text().contains("320 files and 42 folders"));
+                assert!(row.subtitle().unwrap().contains("Documentos/Projetos"));
+                capture(&window, &format!("download-analysis-{width}"));
+                assert!(window.width() <= width + 10);
+            }
+        }
         let mut event = DownloadProgress {
+            preparation: None,
             completed_items: 7,
             total_items: 20,
             current: Some(DownloadItemProgress {
@@ -896,6 +973,7 @@ mod tests {
     #[test]
     fn cycle_count_and_current_file_bytes_have_separate_meanings() {
         let mut progress = DownloadProgress {
+            preparation: None,
             completed_items: 3,
             total_items: 10,
             current: Some(drivesync_engine::DownloadItemProgress {

@@ -153,7 +153,8 @@ fn errors_cancellation_and_limits_never_publish_partial_results() {
             &Cancellation::new(),
             &mut |_, _| Ok(page(vec![file("a", "root-id")], None)),
             0,
-            10
+            10,
+            &mut |_, _, _| {}
         ),
         Err(EngineError::InventoryLimit)
     ));
@@ -164,7 +165,8 @@ fn errors_cancellation_and_limits_never_publish_partial_results() {
             &Cancellation::new(),
             &mut |_, _| Ok(page(vec![], Some("next"))),
             10,
-            1
+            1,
+            &mut |_, _, _| {}
         ),
         Err(EngineError::InventoryLimit)
     ));
@@ -176,4 +178,73 @@ fn resolves_root_alias_and_rejects_shared_or_mismatched_roots() {
     assert_eq!(decode_root(body, "root").unwrap(), "actual");
     assert!(decode_root(body, "other").is_err());
     assert!(decode_root(br#"{"id":"actual","mimeType":"application/vnd.google-apps.folder","trashed":false,"driveId":"shared"}"#,"root").is_err());
+}
+
+#[test]
+fn reports_real_page_counts_and_folder_paths_before_waiting_for_requests() {
+    let mut observations = Vec::new();
+    let result = scan_with_progress(
+        &account(),
+        "root-id",
+        &Cancellation::new(),
+        |parent, token| {
+            Ok(match (parent, token) {
+                ("root-id", None) => {
+                    let mut folder = file("child", "root-id");
+                    folder["mimeType"] = json!(super::super::models::MIME);
+                    folder["name"] = json!("Documents");
+                    page(vec![folder, file("a", "root-id")], Some("next"))
+                }
+                ("root-id", Some("next")) => page(vec![], None),
+                ("child", None) => page(vec![file("b", "child")], None),
+                _ => panic!("unexpected request"),
+            })
+        },
+        |files, folders, path| observations.push((files, folders, path.to_path_buf())),
+    )
+    .unwrap();
+    assert_eq!(result.entries.len(), 3);
+    assert_eq!(
+        observations,
+        vec![
+            (0, 0, "".into()),
+            (1, 1, "".into()),
+            (1, 1, "".into()),
+            (1, 1, "".into()),
+            (1, 1, "Documents".into()),
+            (2, 1, "Documents".into()),
+        ]
+    );
+}
+
+#[test]
+fn preparation_observations_do_not_bypass_cancellation_or_provider_errors() {
+    let cancel = Cancellation::new();
+    let mut requests = 0;
+    assert!(matches!(
+        scan_with_progress(
+            &account(),
+            "root-id",
+            &cancel,
+            |_, _| {
+                requests += 1;
+                Ok(page(vec![], None))
+            },
+            |_, _, _| cancel.cancel()
+        ),
+        Err(EngineError::Authentication(AuthError::Cancelled))
+    ));
+    assert_eq!(requests, 0);
+    let mut observations = 0;
+    assert!(matches!(
+        scan_with_progress(
+            &account(),
+            "root-id",
+            &Cancellation::new(),
+            |_, _| Err(EngineError::RemoteRateLimited),
+            |_, _, _| observations += 1
+        ),
+        Err(EngineError::RemoteRateLimited)
+    ));
+    assert_eq!(observations, 1);
 }

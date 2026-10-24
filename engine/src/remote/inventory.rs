@@ -154,7 +154,34 @@ pub(crate) fn scan(
     cancel: &Cancellation,
     mut fetch: impl FnMut(&str, Option<&str>) -> Result<Vec<u8>, EngineError>,
 ) -> Result<RemoteInventory, EngineError> {
-    scan_bounded(account, root, cancel, &mut fetch, 100_000, 10_000)
+    scan_bounded(
+        account,
+        root,
+        cancel,
+        &mut fetch,
+        100_000,
+        10_000,
+        &mut |_, _, _| {},
+    )
+}
+/// Reports completed pages and the next folder before waiting on its request.
+/// Partial counts never escape as a successful inventory on failure.
+pub(crate) fn scan_with_progress(
+    account: &AccountId,
+    root: &str,
+    cancel: &Cancellation,
+    mut fetch: impl FnMut(&str, Option<&str>) -> Result<Vec<u8>, EngineError>,
+    mut progress: impl FnMut(usize, usize, &std::path::Path),
+) -> Result<RemoteInventory, EngineError> {
+    scan_bounded(
+        account,
+        root,
+        cancel,
+        &mut fetch,
+        100_000,
+        10_000,
+        &mut progress,
+    )
 }
 fn scan_bounded(
     account: &AccountId,
@@ -163,15 +190,18 @@ fn scan_bounded(
     fetch: &mut impl FnMut(&str, Option<&str>) -> Result<Vec<u8>, EngineError>,
     max_items: usize,
     max_pages: usize,
+    progress: &mut impl FnMut(usize, usize, &std::path::Path),
 ) -> Result<RemoteInventory, EngineError> {
     if !valid_id(root) {
         return Err(EngineError::RemoteFolderUnavailable);
     }
     let mut seen = HashSet::from([root.to_string()]);
-    let mut queue = VecDeque::from([root.to_string()]);
+    let mut queue = VecDeque::from([(root.to_string(), std::path::PathBuf::new())]);
     let mut entries = Vec::new();
     let mut pages = 0;
-    while let Some(parent) = queue.pop_front() {
+    let mut files = 0;
+    let mut folders = 0;
+    while let Some((parent, path)) = queue.pop_front() {
         let mut token: Option<String> = None;
         let mut tokens = HashSet::new();
         loop {
@@ -180,6 +210,8 @@ fn scan_bounded(
             if pages > max_pages {
                 return Err(EngineError::InventoryLimit);
             }
+            progress(files, folders, &path);
+            cancelled(cancel)?;
             let body = fetch(&parent, token.as_deref())?;
             cancelled(cancel)?;
             let page: Page = serde_json::from_slice(&body).map_err(|_| invalid())?;
@@ -195,11 +227,17 @@ fn scan_bounded(
                 if entries.len() >= max_items {
                     return Err(EngineError::InventoryLimit);
                 }
+                if entry.mime_type == super::models::MIME {
+                    folders += 1;
+                } else {
+                    files += 1;
+                }
                 if entry.kind == InventoryKind::Folder {
-                    queue.push_back(entry.id.clone());
+                    queue.push_back((entry.id.clone(), path.join(&entry.name)));
                 }
                 entries.push(entry);
             }
+            progress(files, folders, &path);
             token = page.next_page_token;
             match &token {
                 None => break,

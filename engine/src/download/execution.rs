@@ -133,12 +133,14 @@ pub(crate) fn run(
     });
     let total_items = work.len();
     progress(DownloadProgress {
+        preparation: None,
         completed_items: 0,
         total_items,
         current: None,
     });
     for (completed_items, (item, decision)) in work.into_iter().enumerate() {
         progress(DownloadProgress {
+            preparation: None,
             completed_items,
             total_items,
             current: Some(DownloadItemProgress {
@@ -181,6 +183,7 @@ pub(crate) fn run(
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {
+                        preparation: None,
                         completed_items,
                         total_items,
                         current: Some(current),
@@ -209,6 +212,7 @@ pub(crate) fn run(
             }
         }
         progress(DownloadProgress {
+            preparation: None,
             completed_items: completed_items + 1,
             total_items,
             current: None,

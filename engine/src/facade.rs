@@ -262,6 +262,10 @@ impl DriveSyncEngine {
         cancel: &crate::Cancellation,
         progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
+        let progress = std::cell::RefCell::new(progress);
+        let preparation =
+            |stage| (progress.borrow_mut())(crate::DownloadProgress::preparing(stage));
+        preparation(crate::PreparationProgress::Connecting);
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         self.check_local_folder(&folder.local)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
@@ -286,6 +290,7 @@ impl DriveSyncEngine {
             config: &config,
             cancel,
             unchanged: std::collections::HashSet::new(),
+            preparation: &preparation,
         };
         let mut checkpoint = crate::changes::collect(
             id,
@@ -309,9 +314,17 @@ impl DriveSyncEngine {
                 .map(|item| item.id.clone())
                 .collect();
         }
+        let mut checked = 0;
+        preparation(crate::PreparationProgress::CheckingLocal { checked });
         let plan = crate::planner::plan(inventory, &folder.local, |path| {
-            crate::planner::observe(&folder.local, path)
+            let observation = crate::planner::observe(&folder.local, path);
+            checked += 1;
+            if checked % 128 == 0 {
+                preparation(crate::PreparationProgress::CheckingLocal { checked });
+            }
+            observation
         })?;
+        preparation(crate::PreparationProgress::SavingState);
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
         }
@@ -331,7 +344,7 @@ impl DriveSyncEngine {
             },
             inventory,
             &mut source,
-            progress,
+            |event| (progress.borrow_mut())(event),
         )?;
         if report
             .issues
@@ -445,6 +458,7 @@ struct DownloadSource<'a> {
     config: &'a auth::OAuthConfig,
     cancel: &'a Cancellation,
     unchanged: std::collections::HashSet<String>,
+    preparation: &'a dyn Fn(crate::PreparationProgress),
 }
 impl crate::download::Source for DownloadSource<'_> {
     fn cached_unchanged(&self, item: &crate::InventoryEntry) -> bool {
@@ -493,6 +507,7 @@ impl crate::download::Source for DownloadSource<'_> {
 /// Metadata collection and transfer use the same credential/configuration scope.
 impl crate::changes::Provider for DownloadSource<'_> {
     fn start(&mut self) -> Result<String, EngineError> {
+        (self.preparation)(crate::PreparationProgress::ReadingChanges);
         self.engine.auth.with_access_config(
             self.config,
             &self.folder.account_id,
@@ -500,13 +515,18 @@ impl crate::changes::Provider for DownloadSource<'_> {
         )
     }
     fn scan(&mut self) -> Result<crate::RemoteInventory, EngineError> {
+        (self.preparation)(crate::PreparationProgress::Scanning {
+            files: 0,
+            folders: 0,
+            current_path: std::path::PathBuf::new(),
+        });
         let root =
             self.engine
                 .auth
                 .with_access_config(self.config, &self.folder.account_id, |token| {
                     remote::inventory_root(token, &self.folder.remote.id)
                 })?;
-        remote::inventory_scan(
+        remote::inventory_scan_with_progress(
             &self.folder.account_id,
             &root,
             self.cancel,
@@ -517,9 +537,17 @@ impl crate::changes::Provider for DownloadSource<'_> {
                         remote::inventory_page(token, parent, page)
                     })
             },
+            |files, folders, path| {
+                (self.preparation)(crate::PreparationProgress::Scanning {
+                    files,
+                    folders,
+                    current_path: path.to_path_buf(),
+                })
+            },
         )
     }
     fn page(&mut self, page: &str) -> Result<remote::ChangePage, EngineError> {
+        (self.preparation)(crate::PreparationProgress::ReadingChanges);
         self.engine
             .auth
             .with_access_config(self.config, &self.folder.account_id, |token| {

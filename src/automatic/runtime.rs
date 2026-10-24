@@ -484,6 +484,7 @@ mod tests {
         let execute: Execute = Arc::new(move |_, cancel, progress| {
             let n = calls_worker.fetch_add(1, Ordering::SeqCst);
             progress(DownloadProgress {
+                preparation: None,
                 completed_items: 0,
                 total_items: 1,
                 current: None,
