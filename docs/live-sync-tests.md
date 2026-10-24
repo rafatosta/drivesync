@@ -73,6 +73,26 @@ process, an SDK sandbox and the application's `by-app/<APP_ID>` view can expose
 different inode identities for the same underlying bytes. Keep the existing
 journal checks; do not rewrite stored identities to make a test pass.
 
+Prefer an installed-runtime check before concluding that packaging works. It
+retains the native `/run/user/UID/doc` alias instead of replacing that mount:
+
+```sh
+flatpak run --filesystem=/absolute/repository:ro \
+  --filesystem=/absolute/local/test-folder:ro \
+  --env=DRIVESYNC_LIVE_GOOGLE_TEST=1 \
+  --command=/absolute/repository/target/debug/examples/sync-cycle \
+  APP_ID test@example.com REMOTE_TEST_FOLDER_ID /absolute/local/test-folder \
+  --expect 0,0,0,8,4,0
+```
+
+The direct host-folder grant above is only for checking the supplied display-path
+oracle; engine access still uses the saved portal path. Its native mount alias
+must preserve the same grant/inode evidence while rejecting ordinary symlinks.
+A custom SDK bind mount can hide this runtime difference and cannot replace this
+packaging check. The ignored `runtime_portal_alias_preserves_host_origin_and_inode`
+fixture also checks alias/canonical host origins using explicit portal test paths
+without reading file contents or credentials.
+
 For a Builder development checkout, `flatpak build --with-appdir` uses its build
 directory, but a developer invocation may also need an explicit scoped portal
 mount. Use the app's existing grant view as the source, for example:

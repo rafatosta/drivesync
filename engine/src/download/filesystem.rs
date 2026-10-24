@@ -51,8 +51,9 @@ impl Root {
         if !path.is_absolute() {
             return Err(EngineError::InvalidFolder);
         }
+        let access = crate::configuration::access_path(path)?;
         let mut file = File::open("/").map_err(io)?;
-        for part in path.components() {
+        for part in access.components() {
             match part {
                 Component::RootDir => {}
                 Component::Normal(name) => file = directory(&file, name)?,

@@ -20,3 +20,10 @@ Arquivo incompleto não substitui arquivo válido. Respeitar `docs/invariants.md
 
 ## Qualidade
 Especificar idempotência, efeitos colaterais, concorrência, cancelamento, erro e recuperação antes da implementação.
+
+The installed Flatpak runtime may expose `/run/user/<uid>/doc` as the fixed
+`../../flatpak/doc` mount alias. Resolve only this platform alias for root access
+inside Flatpak, keeping persisted scope strings unchanged. All components beneath
+the mount, root identity, parent identity, file identity and hashes still require
+the existing descriptor-relative no-follow checks. Other symlink targets fail
+closed; never canonicalize arbitrary root/descendant symlinks as a workaround.
