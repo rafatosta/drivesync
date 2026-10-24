@@ -1,3 +1,13 @@
-//! upload subsystem.
-//! Contracts and algorithms are documented alongside this module.
-//! Business behavior intentionally remains unimplemented.
+//! Optional create-only uploads with immutable snapshots and durable provider IDs.
+//! Existing remote data is never updated or deleted. See `create-only.md`.
+pub(crate) mod execution;
+mod local;
+mod models;
+pub(crate) mod provider;
+mod transport;
+pub(crate) use execution::run;
+pub(crate) use models::Intent;
+pub(crate) use transport::valid_session;
+
+#[cfg(test)]
+mod tests;

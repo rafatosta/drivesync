@@ -61,6 +61,7 @@ impl Widgets {
                 row.set_title(match current.stage {
                     DownloadStage::Checking => "Checking item",
                     DownloadStage::Downloading => "Downloading file",
+                    DownloadStage::Uploading => "Uploading new file",
                     DownloadStage::Verifying => "Verifying file integrity",
                     DownloadStage::Installing => "Saving verified file",
                 });
@@ -278,10 +279,7 @@ impl Widgets {
                     "Waiting for automatic synchronization",
                     "Configured accounts are checked automatically.",
                 ),
-                Phase::UpToDate => (
-                    "Up to date",
-                    "Next automatic check in about a minute · download only",
-                ),
+                Phase::UpToDate => ("Up to date", "Next automatic check in about a minute"),
                 Phase::Attention => (
                     "Some files could not be updated",
                     "Local files were preserved. Automatic checks continue.",
@@ -393,6 +391,14 @@ impl Widgets {
 fn preparation_text(stage: &drivesync_engine::PreparationProgress) -> (&'static str, String) {
     use drivesync_engine::PreparationProgress;
     match stage {
+        PreparationProgress::ScanningUploads => (
+            "Looking for new local files",
+            "Checking which new files and folders can be uploaded…".into(),
+        ),
+        PreparationProgress::PreparingUpload { current_path } => (
+            "Preparing a new upload",
+            format!("Reading: {}", current_path.to_string_lossy()),
+        ),
         PreparationProgress::Connecting => (
             "Connecting to Google Drive",
             "Verifying account access and the selected folder…".into(),
@@ -435,7 +441,7 @@ fn progress_text(event: &DownloadProgress) -> String {
         DownloadStage::Checking => "Checking this item and its existing local copy…".into(),
         DownloadStage::Verifying => "Download received. Verifying this file before saving…".into(),
         DownloadStage::Installing => "Integrity verified. Saving this file safely…".into(),
-        DownloadStage::Downloading => match item.total {
+        DownloadStage::Downloading | DownloadStage::Uploading => match item.total {
             Some(total) if total > 0 => format!(
                 "Current file: {} of {} ({:.0}%)",
                 gtk::glib::format_size(item.received),
@@ -453,6 +459,8 @@ fn summary(report: &DownloadReport) -> String {
     let mut parts = Vec::new();
     for (count, label) in [
         (report.downloaded, "downloaded"),
+        (report.uploaded, "uploaded"),
+        (report.created_remote_folders, "folders created in Drive"),
         (report.updated, "updated"),
         (report.recovered, "recovered"),
         (report.skipped, "skipped"),
@@ -504,7 +512,7 @@ pub(super) fn build(
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
-        .label("Automatic download · checks every minute. Up-to-date files are not downloaded again. Local edits are preserved; updates keep a previous copy.")
+        .label("Automatic checks run every minute. Up-to-date files are not transferred again. Existing local edits and previous copies are preserved.")
         .wrap(true)
         .xalign(0.0)
         .css_classes(["dim-label"])
@@ -793,6 +801,10 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         assert!(status.text().starts_with("Current file:"));
         capture(&window, &format!("download-progress-{width}"));
         assert!(window.width() <= width + 10);
+        event.current.as_mut().unwrap().stage = DownloadStage::Uploading;
+        ui.progress(&event);
+        assert_eq!(row.title(), "Uploading new file");
+        capture(&window, &format!("upload-progress-{width}"));
         event.current.as_mut().unwrap().stage = DownloadStage::Verifying;
         ui.progress(&event);
         assert_eq!(row.title(), "Verifying file integrity");

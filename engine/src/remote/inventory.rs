@@ -318,7 +318,7 @@ fn decode_root(body: &[u8], configured: &str) -> Result<String, EngineError> {
 mod tests;
 
 /// Decodes single-item metadata for download revalidation without relaxing inventory rules.
-pub(super) fn decode_item(body: &[u8], parent: &str) -> Result<InventoryEntry, EngineError> {
+pub(crate) fn decode_item(body: &[u8], parent: &str) -> Result<InventoryEntry, EngineError> {
     serde_json::from_slice::<Item>(body)
         .map_err(|_| invalid())?
         .decode(parent)

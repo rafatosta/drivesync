@@ -9,10 +9,10 @@ use std::{
     path::{Component, Path},
 };
 
-pub(super) fn io(_: impl std::fmt::Debug) -> EngineError {
+pub(crate) fn io(_: impl std::fmt::Debug) -> EngineError {
     EngineError::DownloadIo
 }
-pub(super) fn identity(file: &File) -> Result<Identity, EngineError> {
+pub(crate) fn identity(file: &File) -> Result<Identity, EngineError> {
     let m = file.metadata().map_err(io)?;
     Ok(Identity {
         device: m.dev(),
@@ -33,7 +33,7 @@ fn directory(parent: &File, name: &OsStr) -> Result<File, EngineError> {
     })
 }
 /// Holds an exclusive advisory lock on the authorized root inode for this cycle.
-pub(super) struct Root {
+pub(crate) struct Root {
     pub file: File,
     path: std::path::PathBuf,
 }
@@ -106,7 +106,7 @@ impl Root {
     }
 }
 /// Opens regular files only; NONBLOCK prevents a hostile FIFO from blocking.
-pub(super) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
+pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
     match fs::openat(
         parent,
         name,

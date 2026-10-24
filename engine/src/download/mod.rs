@@ -1,6 +1,6 @@
 //! Manual binary downloads and managed updates with preserved prior versions.
 mod execution;
-mod filesystem;
+pub(crate) mod filesystem;
 mod models;
 mod stream;
 
@@ -9,7 +9,7 @@ pub use models::{
     DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
     PreparationProgress, PreviousPath,
 };
-pub(crate) use models::{Operation, Phase, Previous};
+pub(crate) use models::{Identity, Operation, Phase, Previous};
 
 #[cfg(test)]
 mod tests;

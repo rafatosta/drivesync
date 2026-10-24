@@ -19,6 +19,8 @@ pub(super) struct Credential {
     pub(super) refresh_token: String,
     /// Unix expiration timestamp, in seconds.
     pub(super) expires_at: u64,
+    #[serde(default)]
+    pub(super) write_access: bool,
 }
 /// OAuth tokens returned by a provider exchange or refresh.
 /// A refresh response may omit a new refresh token; retain the stored one.
@@ -72,7 +74,9 @@ pub(super) fn validate_tokens(tokens: &Tokens) -> Result<(), AuthError> {
     }
     if let Some(scope) = &tokens.scope {
         let scopes: Vec<_> = scope.split_whitespace().collect();
-        if !scopes.contains(&"openid") || !scopes.contains(&google::DRIVE_SCOPE) {
+        if !scopes.contains(&"openid")
+            || !(scopes.contains(&google::DRIVE_SCOPE) || scopes.contains(&google::WRITE_SCOPE))
+        {
             return Err(AuthError::MissingPermissions);
         }
     }

@@ -718,3 +718,88 @@ fn logout_reports_profile_cleanup_failure_after_removing_credentials_and_allows_
         .sign_out_then(&config(), &account.id, || Ok(()))
         .unwrap();
 }
+
+#[test]
+fn upload_consent_requires_exact_identity_and_write_scope_before_vault_changes() {
+    let (provider, store, _) = provider();
+    provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    let saved = store.entries.lock().unwrap().clone();
+    assert_eq!(
+        provider.complete_scoped(
+            &config(),
+            tokens("a"),
+            &Cancellation::new(),
+            Some(&AccountId("google:a".into()))
+        ),
+        Err(AuthError::MissingPermissions)
+    );
+    let mut granted = tokens("b");
+    granted.scope = Some(format!("openid email {}", google::WRITE_SCOPE));
+    assert_eq!(
+        provider.complete_scoped(
+            &config(),
+            granted,
+            &Cancellation::new(),
+            Some(&AccountId("google:a".into()))
+        ),
+        Err(AuthError::IdentityMismatch)
+    );
+    assert_eq!(*store.entries.lock().unwrap(), saved);
+    let mut granted = tokens("a");
+    granted.scope = Some(format!("openid email {}", google::WRITE_SCOPE));
+    provider
+        .complete_scoped(
+            &config(),
+            granted,
+            &Cancellation::new(),
+            Some(&AccountId("google:a".into())),
+        )
+        .unwrap();
+    assert!(provider
+        .can_upload(&config(), &AccountId("google:a".into()))
+        .unwrap());
+}
+
+#[test]
+fn write_consent_url_is_explicit_but_regular_login_stays_read_only() {
+    let (provider, store, _) = provider();
+    let result = provider.authorize_upload(
+        &config(),
+        &AccountId("google:a".into()),
+        &Cancellation::new(),
+        |url| {
+            let parsed = url::Url::parse(url).unwrap();
+            let scope = parsed
+                .query_pairs()
+                .find(|(key, _)| key == "scope")
+                .unwrap()
+                .1
+                .into_owned();
+            assert!(scope.split_whitespace().any(|s| s == google::WRITE_SCOPE));
+            browser_response(url, "code=valid-code")
+        },
+    );
+    // The fake exchange grants read-only access. The provider must refuse the
+    // write operation even though the browser callback and identity are valid.
+    assert_eq!(result, Err(AuthError::MissingPermissions));
+    assert!(store.entries.lock().unwrap().is_empty());
+    let challenge =
+        PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new("a".repeat(64)));
+    let url = config()
+        .authorization_url(
+            "http://127.0.0.1:1234/oauth/callback",
+            &CsrfToken::new("state".into()),
+            challenge,
+        )
+        .unwrap();
+    assert!(!url::Url::parse(&url)
+        .unwrap()
+        .query_pairs()
+        .find(|(k, _)| k == "scope")
+        .unwrap()
+        .1
+        .split_whitespace()
+        .any(|s| s == google::WRITE_SCOPE));
+}

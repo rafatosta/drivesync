@@ -366,6 +366,150 @@ impl DriveSyncEngine {
         Ok(report)
     }
 
+    /// Returns the exact folder pair's opt-in. Missing settings are download-only.
+    pub fn upload_enabled(&self, id: &AccountId) -> Result<bool, EngineError> {
+        let Some(folder) = self.saved_folder(id)? else {
+            return Ok(false);
+        };
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        crate::state::Uploads::open(
+            &crate::state::default_path()?.with_file_name("uploads.sqlite3"),
+            &config.client_id,
+            &folder,
+        )?
+        .enabled()
+    }
+    /// Enables create-only upload after verifying write consent for this account.
+    /// This never changes another account or an old folder pair.
+    pub fn set_upload_enabled(
+        &self,
+        folder: &FolderConfiguration,
+        enabled: bool,
+    ) -> Result<(), EngineError> {
+        if self.saved_folder(&folder.account_id)?.as_ref() != Some(folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        if enabled
+            && !self
+                .auth
+                .can_upload(&config, &folder.account_id)
+                .map_err(EngineError::Authentication)?
+        {
+            return Err(EngineError::Authentication(AuthError::MissingPermissions));
+        }
+        crate::state::Uploads::open(
+            &crate::state::default_path()?.with_file_name("uploads.sqlite3"),
+            &config.client_id,
+            folder,
+        )?
+        .enable(enabled)
+    }
+    /// Requests browser consent for write access to precisely the selected account.
+    pub fn authorize_upload(
+        &self,
+        id: &AccountId,
+        cancel: &Cancellation,
+        open: impl FnOnce(&str) -> Result<(), AuthError>,
+    ) -> Result<(), EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        self.auth
+            .authorize_upload(&config, id, cancel, open)
+            .map_err(EngineError::Authentication)
+    }
+    pub(crate) fn auth_upload_access<T>(
+        &self,
+        config: &auth::OAuthConfig,
+        id: &AccountId,
+        f: impl FnOnce(&str) -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        if !self
+            .auth
+            .can_upload(config, id)
+            .map_err(EngineError::Authentication)?
+        {
+            return Err(EngineError::Authentication(AuthError::MissingPermissions));
+        }
+        self.auth.with_access_config(config, id, f)
+    }
+    /// Runs download reconciliation and optional create-only upload, sequentially.
+    /// Updates/deletions are never sent. Call off the UI thread.
+    pub fn synchronize_once(
+        &self,
+        id: &AccountId,
+        cancel: &Cancellation,
+        mut progress: impl FnMut(crate::DownloadProgress),
+    ) -> Result<crate::DownloadReport, EngineError> {
+        let mut report = self.download_once(id, cancel, &mut progress)?;
+        if !self.upload_enabled(id)? {
+            return Ok(report);
+        }
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let path = crate::state::default_path()?;
+        let checkpoints = crate::state::Checkpoints::open(&path.with_file_name("changes.sqlite3"))?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        let (_, checkpoint) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
+        let uploads = crate::state::Uploads::open(
+            &path.with_file_name("uploads.sqlite3"),
+            &config.client_id,
+            &folder,
+        )?;
+        let mut excluded: std::collections::HashSet<_> = checkpoint
+            .notices
+            .iter()
+            .filter_map(|n| n.path.clone())
+            .collect();
+        let journal = crate::state::Store::open(&path)?;
+        let plan = journal
+            .load(&config.client_id, id, &folder.remote.id, &folder.local)?
+            .ok_or(EngineError::StateStorage)?;
+        let current: std::collections::HashSet<_> = plan
+            .entries
+            .iter()
+            .filter_map(|e| e.relative_path.clone())
+            .collect();
+        for op in journal.operations(&config.client_id, &plan)? {
+            if !current.contains(&op.relative) {
+                excluded.insert(op.relative);
+            }
+        }
+        let mut remote = crate::upload::provider::Provider {
+            uploads: &uploads,
+            engine: self,
+            folder: &folder,
+            config: &config,
+            cancel,
+            parents: checkpoint
+                .inventory
+                .entries
+                .iter()
+                .filter(|i| i.kind == crate::InventoryKind::Folder)
+                .map(|i| (i.id.clone(), i.parent_id.clone()))
+                .collect(),
+        };
+        crate::upload::run(
+            crate::upload::execution::Context {
+                client: &config.client_id,
+                root_path: &folder.local,
+                state_path: &path,
+                inventory: &checkpoint.inventory,
+                uploads: &uploads,
+                cancel,
+                excluded,
+            },
+            &mut remote,
+            &mut report,
+            progress,
+        )?;
+        Ok(report)
+    }
+
     /// Loads the current persisted plan for this account's configured root.
     /// It is historical observation only: executors must revalidate all preconditions.
     ///
@@ -433,8 +577,22 @@ impl DriveSyncEngine {
     /// Blocking local logout: forgets credentials and app settings, never user files.
     pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let folder = self.saved_folder(id)?;
         self.auth
-            .sign_out_then(&config, id, || self.accounts.forget(&config.client_id, id))
+            .sign_out_then(&config, id, || {
+                if let Some(folder) = &folder {
+                    crate::state::Uploads::open(
+                        &crate::state::default_path()
+                            .map_err(|_| AuthError::AccountStorage)?
+                            .with_file_name("uploads.sqlite3"),
+                        &config.client_id,
+                        folder,
+                    )
+                    .and_then(|store| store.enable(false))
+                    .map_err(|_| AuthError::AccountStorage)?;
+                }
+                self.accounts.forget(&config.client_id, id)
+            })
             .map_err(EngineError::Authentication)
     }
     /// Reserved sync entrypoint. File synchronization is not implemented.

@@ -21,6 +21,8 @@ pub struct PreviousPath {
 #[derive(Debug, Clone, Default)]
 pub struct DownloadReport {
     pub downloaded: usize,
+    pub uploaded: usize,
+    pub created_remote_folders: usize,
     pub updated: usize,
     /// Relative paths to prior versions retained beside updated files.
     pub preserved_copies: Vec<PathBuf>,
@@ -37,6 +39,7 @@ pub struct DownloadReport {
 pub enum DownloadStage {
     Checking,
     Downloading,
+    Uploading,
     Verifying,
     Installing,
 }
@@ -64,6 +67,10 @@ pub enum PreparationProgress {
         checked: usize,
     },
     SavingState,
+    ScanningUploads,
+    PreparingUpload {
+        current_path: PathBuf,
+    },
 }
 /// Cycle progress counts processed inventory items, including folders, skipped
 /// items and failures. It is not a measure of successful installation or time.

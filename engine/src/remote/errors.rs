@@ -10,7 +10,7 @@ use crate::{AuthError, EngineError};
 /// # Errors
 ///
 /// Returns a sanitized [`EngineError`] unless the response succeeded.
-pub(super) fn response_status(code: u16, body: &[u8]) -> Result<(), EngineError> {
+pub(crate) fn response_status(code: u16, body: &[u8]) -> Result<(), EngineError> {
     if code != 403 {
         return status(code);
     }

@@ -14,6 +14,8 @@ mod client;
 pub(crate) use changes::valid_token as valid_change_token;
 pub(crate) use changes::{change_page, change_start, Change, ChangePage};
 mod errors;
+pub(crate) use errors::response_status as upload_response_status;
+pub(crate) use inventory::decode_item as decode_upload_item;
 mod folders;
 mod inventory;
 mod media;

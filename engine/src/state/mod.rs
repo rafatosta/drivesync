@@ -1,5 +1,7 @@
 //! SQLite observations, plans and durable download-operation evidence.
 mod checkpoints;
+mod uploads;
+pub(crate) use uploads::Uploads;
 mod downloads;
 use crate::{DownloadPlan, EngineError, RemoteInventory};
 pub(crate) use checkpoints::{Checkpoints, Scope as CheckpointScope};

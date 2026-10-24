@@ -5,7 +5,7 @@
 //! here; internal modules are not exposed as independent public APIs.
 //! Manual binary downloads consume durable incremental remote observations,
 //! update intact managed copies and retain prior versions.
-//! Uploads and continuous synchronization are unavailable.
+//! Create-only uploads are optional per folder pair; remote overwrite and deletion are unavailable.
 mod accounts;
 mod auth;
 mod changes;
