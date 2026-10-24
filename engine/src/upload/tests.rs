@@ -226,6 +226,18 @@ fn opt_in_is_exactly_scoped_and_defaults_off() {
     assert!(!store.enabled().unwrap());
     store.enable(true).unwrap();
     assert!(f.uploads().enabled().unwrap());
+    let mut renamed = f.folder.clone();
+    renamed.remote.name = "Another display name".into();
+    renamed.local_display = f.base.join("display-only");
+    assert!(Uploads::open(
+        &f.path.with_file_name("uploads.sqlite3"),
+        "client",
+        &renamed
+    )
+    .unwrap()
+    .enabled()
+    .unwrap());
+
     let mut other = f.folder.clone();
     other.account_id = AccountId("other".into());
     for (client, folder) in [("other", &f.folder), ("client", &other)] {

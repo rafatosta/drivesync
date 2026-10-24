@@ -16,7 +16,9 @@ impl Uploads {
         client: &str,
         folder: &FolderConfiguration,
     ) -> Result<Self, EngineError> {
-        let scope = serde_json::to_string(&(client, folder)).map_err(failed)?;
+        let local: std::path::PathBuf = folder.local.components().collect();
+        let scope = serde_json::to_string(&(client, &folder.account_id, &folder.remote.id, &local))
+            .map_err(failed)?;
         Ok(Self {
             db: Store::open_format(path, 0x44535550, 1, SCHEMA)?,
             scope,
