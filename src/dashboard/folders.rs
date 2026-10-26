@@ -76,6 +76,7 @@ impl Widgets {
             } else {
                 draft.local.as_ref()
             };
+            row.set_activatable(draft.local.is_some());
             row.set_subtitle(
                 &path
                     .map(|p| p.to_string_lossy().into_owned())
@@ -164,10 +165,10 @@ pub(super) fn build(
         (&local, &local_button, "Choose folder on this computer"),
     ] {
         row.set_subtitle_lines(2);
+        row.set_subtitle_selectable(false);
         button.set_valign(gtk::Align::Center);
         button.set_tooltip_text(Some(tooltip));
         row.add_suffix(button);
-        row.set_activatable_widget(Some(button));
         group.add(row);
     }
     content.append(&group);
@@ -192,6 +193,26 @@ pub(super) fn build(
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
     ui.refresh(&draft.borrow(), false);
+    local.set_tooltip_text(Some("Open folder on this computer"));
+    {
+        let draft = draft.clone();
+        let ui = ui.clone();
+        local.connect_activated(move |row| {
+            let Some(path) = draft.borrow().local.clone() else {
+                return;
+            };
+            let launcher = gtk::FileLauncher::new(Some(&gtk::gio::File::for_path(path)));
+            let parent = row.root().and_downcast::<gtk::Window>();
+            let ui = ui.clone();
+            gtk::glib::spawn_future_local(async move {
+                if launcher.launch_future(parent.as_ref()).await.is_err() {
+                    ui.message(
+                        "Could not open the local folder. Check that it is still available.",
+                    );
+                }
+            });
+        });
+    }
     if let Some(folder) = &saved.folder {
         ui.refresh(&draft.borrow(), true);
         ui.message("Checking the saved local folder…");
