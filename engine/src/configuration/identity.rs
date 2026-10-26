@@ -13,7 +13,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const NAME: &str = ".drivesync-root.json";
+const DIRECTORY: &str = ".drivesync";
+const IDENTITY: &str = "identity.json";
+const STATE: &str = "state.sqlite3";
 const MAX_MARKER: usize = 16 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,13 +41,14 @@ pub(crate) fn ensure(folder: &FolderConfiguration, client: &str) -> Result<(), E
     if client.is_empty() || folder.account_id.0.is_empty() || folder.remote.id.is_empty() {
         return Err(EngineError::FolderIdentityStorage);
     }
-    let directory = open_root(&folder.local)?;
-    let metadata = directory
+    let root = open_root(&folder.local)?;
+    let metadata = root
         .metadata()
         .map_err(|_| EngineError::FolderIdentityStorage)?;
     if !metadata.is_dir() {
         return Err(EngineError::FolderIdentityStorage);
     }
+    let directory = open_state_dir(&root)?;
     match read_marker(&directory)? {
         Some(marker) => {
             if marker.format == 1
@@ -69,10 +72,7 @@ pub(crate) fn ensure(folder: &FolderConfiguration, client: &str) -> Result<(), E
         remote: folder.remote.id.clone(),
     };
     let bytes = serde_json::to_vec(&marker).map_err(|_| EngineError::FolderIdentityStorage)?;
-    let temporary = format!(
-        ".drivesync-root-{}.tmp",
-        oauth2::CsrfToken::new_random().secret()
-    );
+    let temporary = format!("identity-{}.tmp", oauth2::CsrfToken::new_random().secret());
     let mut file = fs::openat(
         &directory,
         temporary.as_str(),
@@ -90,7 +90,7 @@ pub(crate) fn ensure(folder: &FolderConfiguration, client: &str) -> Result<(), E
             &directory,
             temporary.as_str(),
             &directory,
-            NAME,
+            IDENTITY,
             fs::RenameFlags::NOREPLACE,
         ) {
             Ok(()) => {
@@ -127,7 +127,26 @@ pub(crate) fn state_path(
     client: &str,
 ) -> Result<PathBuf, EngineError> {
     ensure(folder, client)?;
-    Ok(folder.local.join(".drivesync-state.sqlite3"))
+    Ok(folder.local.join(DIRECTORY).join(STATE))
+}
+
+/// Creates or opens the private metadata directory without following symlinks.
+fn open_state_dir(root: &File) -> Result<File, EngineError> {
+    match fs::mkdirat(root, DIRECTORY, Mode::RWXU) {
+        Ok(()) => root
+            .sync_all()
+            .map_err(|_| EngineError::FolderIdentityStorage)?,
+        Err(rustix::io::Errno::EXIST) => {}
+        Err(_) => return Err(EngineError::FolderIdentityStorage),
+    }
+    fs::openat(
+        root,
+        DIRECTORY,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| EngineError::FolderIdentityStorage)
 }
 
 /// Opens every root component without following symlinks.
@@ -165,7 +184,7 @@ fn open_root(path: &Path) -> Result<File, EngineError> {
 fn read_marker(directory: &File) -> Result<Option<Marker>, EngineError> {
     let fd = match fs::openat(
         directory,
-        NAME,
+        IDENTITY,
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
         Mode::empty(),
     ) {
@@ -229,7 +248,7 @@ mod tests {
         let dir = Directory::new();
         let folder = dir.folder();
         ensure(&folder, "client-a").unwrap();
-        let path = dir.0.join(NAME);
+        let path = dir.0.join(DIRECTORY).join(IDENTITY);
         let first = fs::read(&path).unwrap();
         ensure(&folder, "client-a").unwrap();
         assert_eq!(fs::read(&path).unwrap(), first);
@@ -256,7 +275,7 @@ mod tests {
     #[test]
     fn marker_rejects_corruption_and_symlinks_without_replacing_them() {
         let dir = Directory::new();
-        let path = dir.0.join(NAME);
+        let path = dir.0.join(DIRECTORY).join(IDENTITY);
         fs::write(&path, b"{bad json").unwrap();
         assert_eq!(
             ensure(&dir.folder(), "client-a"),
@@ -264,15 +283,15 @@ mod tests {
         );
         assert_eq!(fs::read(&path).unwrap(), b"{bad json");
 
-        fs::remove_file(&path).unwrap();
+        fs::remove_dir_all(dir.0.join(DIRECTORY)).unwrap();
         let target = dir.0.join("target");
-        fs::write(&target, b"marker").unwrap();
-        std::os::unix::fs::symlink(&target, &path).unwrap();
+        fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, dir.0.join(DIRECTORY)).unwrap();
         assert_eq!(
             ensure(&dir.folder(), "client-a"),
             Err(EngineError::FolderIdentityStorage)
         );
-        assert!(fs::symlink_metadata(&path)
+        assert!(fs::symlink_metadata(dir.0.join(DIRECTORY))
             .unwrap()
             .file_type()
             .is_symlink());

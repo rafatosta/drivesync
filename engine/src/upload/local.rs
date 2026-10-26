@@ -25,7 +25,8 @@ pub(crate) fn check(cancel: &Cancellation) -> Result<(), EngineError> {
 pub(crate) fn ignored(path: &Path) -> bool {
     path.components().any(|c| {
         c.as_os_str().to_str().is_none_or(|s| {
-            s.starts_with(".drivesync-")
+            s == ".drivesync"
+                || s.starts_with(".drivesync-")
                 || (s.starts_with("DriveSync backup ") && s.ends_with(".bak"))
         })
     })
@@ -221,7 +222,8 @@ mod tests {
 
     #[test]
     fn root_identity_marker_is_not_uploaded() {
-        assert!(ignored(Path::new(".drivesync-root.json")));
-        assert!(ignored(Path::new(".drivesync-state.sqlite3")));
+        assert!(ignored(Path::new(".drivesync")));
+        assert!(ignored(Path::new(".drivesync/identity.json")));
+        assert!(ignored(Path::new(".drivesync/state.sqlite3")));
     }
 }

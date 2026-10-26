@@ -274,7 +274,7 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     fs::write(local.join("user-file.txt"), "keep my files").unwrap();
     let folder = configured("a", local.clone());
     accounts.configure(CLIENT, folder.clone()).unwrap();
-    let marker_path = local.join(".drivesync-root.json");
+    let marker_path = local.join(".drivesync/identity.json");
     assert!(marker_path.is_file());
     let marker_before_sign_out = fs::read(&marker_path).unwrap();
     let portable_state = crate::configuration::identity::state_path(&folder, CLIENT).unwrap();
