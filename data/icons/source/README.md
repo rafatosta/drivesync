@@ -29,6 +29,23 @@ The GNOME application icon source includes areas for both the full-color 128×12
 
 GNOME recommends a distinctive Nightly/Devel version, which **App Icon Preview can generate automatically**. Maintain one editable master design, not four independently designed symbols.
 
+## Planned variants
+
+Keep the editable master at `data/icons/source/drivesync.svg`. Treat
+`docs/mockups/icons/` as the location for standalone visual references and
+explorations; it is not an installable icon directory. Export the approved
+full-color artwork to the stable and development paths in the table above, and
+export the matching symbolic artwork to the two `hicolor/symbolic/apps/` paths.
+The development full-color variant should be generated from the same master
+with App Icon Preview's Devel/Nightly treatment, so stable and development
+remain recognizable as one app. Keep symbolic icons monochrome and suitable for
+small sizes; do not add the colored development treatment to them.
+
+The current files in the installable paths are working assets, not approved
+final variants. Update them only when the master artwork is approved and its
+exports are ready together. This plan does not require changes to application
+IDs, desktop files, or Flatpak manifests.
+
 Do **not** overwrite the current development SVG or change Flatpak manifests until an actual icon is designed and exported, so existing Builder builds keep working. The current development SVG is temporary artwork, not a GNOME template.
 
 ## References
