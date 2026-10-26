@@ -36,7 +36,7 @@ https://rafatosta.github.io/drivesync/.
 ## Content
 
 Application claims should track the current `main` README and verified behavior.
-Screenshots use fictional accounts and simulated states from the application UI.
+The application page includes a gallery of 28 screens grouped into first steps, accounts and navigation, transfers, and status messages. Visitors can select thumbnails, step through each group, switch between wide and compact captures when available, and enlarge the selected image. Screenshots use fictional accounts and simulated states from the application UI.
 Donation channels are not configured; do not add payment details without the
 maintainer's direction. Update the privacy policy when data practices change.
 No analytics, contact form, tracking cookies or payment processing are included.
