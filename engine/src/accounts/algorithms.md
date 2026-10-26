@@ -65,9 +65,9 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 
 Implementado para perfis de login; pastas e sincronização ficam fora deste algoritmo.
 
-1. Ler JSON versão 2 (aceitando versão 1) em `$XDG_DATA_HOME/drivesync/accounts.json`, com fallback para
-   `$HOME/.local/share/drivesync/accounts.json`; ignorar XDG relativo. No Flatpak,
-   usar o diretório XDG privado da aplicação. Selecionar o namespace do cliente OAuth.
+1. Ler somente o formato vigente do índice em `$XDG_DATA_HOME/drivesync/accounts.json`;
+   ignorar XDG relativo. No Flatpak, usar o diretório XDG privado da aplicação.
+   Selecionar o namespace do cliente OAuth.
 2. Validar versão, identidade estável, duplicatas e tamanho. Corrupção ou versão
    desconhecida gera erro e preserva o arquivo, sem reinicialização silenciosa.
 3. Após auth salvar credenciais no cofre, atualizar o perfil sob mutex e persistir

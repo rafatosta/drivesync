@@ -272,9 +272,13 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     let local = dir.0.join("downloads");
     fs::create_dir(&local).unwrap();
     fs::write(local.join("user-file.txt"), "keep my files").unwrap();
-    accounts
-        .configure(CLIENT, configured("a", local.clone()))
-        .unwrap();
+    let folder = configured("a", local.clone());
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    let marker_path = local.join(".drivesync-root.json");
+    assert!(marker_path.is_file());
+    let marker_before_sign_out = fs::read(&marker_path).unwrap();
+    let portable_state = crate::configuration::identity::state_path(&folder, CLIENT).unwrap();
+    drop(crate::state::Store::open(&portable_state).unwrap());
     let path = accounts.path.as_ref().unwrap();
     accounts
         .forget(CLIENT, &AccountId::from_subject("a"))
@@ -299,6 +303,10 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
         fs::read_to_string(local.join("user-file.txt")).unwrap(),
         "keep my files"
     );
+    assert_eq!(fs::read(&marker_path).unwrap(), marker_before_sign_out);
+    assert!(portable_state.is_file());
+    drop(crate::state::Store::open(&portable_state).unwrap());
+    crate::configuration::identity::ensure(&folder, CLIENT).unwrap();
     assert!(!fs::read_to_string(path)
         .unwrap()
         .contains("forgotten@example.com"));

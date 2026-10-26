@@ -222,6 +222,7 @@ impl Accounts {
                 }
             }
         }
+        crate::configuration::identity::ensure(&folder, client)?;
         let folders = index.folders.entry(client.into()).or_default();
         folders.retain(|f| f.account_id != folder.account_id);
         folders.push(folder);

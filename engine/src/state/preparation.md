@@ -1,13 +1,18 @@
 # Preparação durável de downloads (STATE-001 / PLAN-001)
 
-Escopo desta unidade: persistir observações remotas e um plano inicial, sem
-transferir bytes, registrar instalação confirmada, avançar cursores ou apagar
-arquivos. Um inventário anterior não é uma base de sincronização confirmada.
+O journal de cada raiz local fica em `.drivesync-state.sqlite3` dentro da pasta
+selecionada. `.drivesync-root.json` registra a associação ao cliente OAuth, ao
+subject estável da conta e à pasta remota; ambos sobrevivem à remoção dos dados
+privados do aplicativo e são excluídos do inventário de upload. Não armazenam
+tokens. Checkpoints de changes e preferências de upload continuam no diretório
+privado do aplicativo.
 
-SQLite privado em XDG_DATA_HOME/drivesync/state.sqlite3. Schema 2, application_id
-próprio, foreign_keys ON, synchronous FULL e journal DELETE. Transações IMMEDIATE
-publicam atomicamente uma nova geração de inventário e plano da raiz. Itens
-não observados permanecem como evidência antiga, sem gerar exclusões.
+O journal por raiz usa schema 2, application_id próprio, foreign_keys ON,
+synchronous FULL e journal DELETE. Transações IMMEDIATE publicam atomicamente uma
+nova geração de inventário e plano da raiz. Itens não observados permanecem como
+evidência antiga, sem gerar exclusões. O journal portátil preserva evidência
+operacional de downloads entre reinstalações, mas não restaura autenticação nem
+substitui a verificação de identidade e conteúdo feita pelo executor.
 Chaves compostas contêm cliente OAuth + conta + raiz remota + raiz local; itens
 referenciam essa identidade por chave estrangeira. Corrupção, schema estranho,
 symlink e banco de outra aplicação são erros: nunca apagar/recriar para recuperar.
@@ -19,8 +24,8 @@ locais tipadas. Sem base, destino ausente é candidato a download; destino
 preexistente é conflito. UNKNOWN adia. Com base verificada, local intacto e
 versão remota igual resultam em NoOp; remoto alterado com local intacto resulta
 em Download; divergência local bloqueia. Nunca produzir upload ou exclusão.
-Nesta unidade ainda não há gravador de bases confirmadas nem leitura segura de
-hashes locais: a integração inicial é conservadora e não adota arquivos existentes.
+Arquivos existentes sem evidência de instalação confirmada continuam sendo
+conflitos; a presença do marcador não autoriza sua adoção por si só.
 
 Resolver caminhos por IDs/pais; bloquear nomes repetidos no mesmo pai e toda a
 subárvore ambígua, nomes inseguros, ciclos, pais desconhecidos e componentes

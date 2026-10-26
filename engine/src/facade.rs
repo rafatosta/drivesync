@@ -236,7 +236,8 @@ impl DriveSyncEngine {
             return Err(EngineError::InvalidPlan);
         }
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        crate::state::Store::open(&crate::state::default_path()?)?.save(
+        let state_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
+        crate::state::Store::open(&state_path)?.save(
             &config.client_id,
             &inventory,
             &plan,
@@ -249,8 +250,10 @@ impl DriveSyncEngine {
     /// The first cycle reconciles an inventory with the change feed; subsequent
     /// cycles reuse the ID graph and consume new events. Local files are rechecked.
     /// Call off the UI thread.
-    /// Binary files are staged and verified. Managed intact copies can be updated
-    /// after preserving their prior version; concurrent destinations are never overwritten.
+    /// Binary files are staged and verified. The per-root operation journal is
+    /// stored beside the marker in the local root, so it survives app-data resets.
+    /// Managed intact copies can be updated after preserving their prior version;
+    /// concurrent destinations are never overwritten.
     /// Existing divergent data is reported per item. Partial staging is preserved.
     ///
     /// # Errors
@@ -270,8 +273,9 @@ impl DriveSyncEngine {
         self.check_local_folder(&folder.local)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let path = crate::state::default_path()?;
+        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
         // Validate both stores before collecting observations or changing user files.
-        let mut store = crate::state::Store::open(&path)?;
+        let mut store = crate::state::Store::open(&journal_path)?;
         let mut checkpoints =
             crate::state::Checkpoints::open(&path.with_file_name("changes.sqlite3"))?;
         let root = self.auth.with_access_config(&config, id, |token| {
@@ -453,7 +457,8 @@ impl DriveSyncEngine {
             .iter()
             .filter_map(|n| n.path.clone())
             .collect();
-        let journal = crate::state::Store::open(&path)?;
+        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
+        let journal = crate::state::Store::open(&journal_path)?;
         let plan = journal
             .load(&config.client_id, id, &folder.remote.id, &folder.local)?
             .ok_or(EngineError::StateStorage)?;
@@ -467,6 +472,7 @@ impl DriveSyncEngine {
                 excluded.insert(op.relative);
             }
         }
+        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
         let mut remote = crate::upload::provider::Provider {
             uploads: &uploads,
             engine: self,
@@ -485,7 +491,7 @@ impl DriveSyncEngine {
             crate::upload::execution::Context {
                 client: &config.client_id,
                 root_path: &folder.local,
-                state_path: &path,
+                state_path: &journal_path,
                 inventory: &checkpoint.inventory,
                 uploads: &uploads,
                 cancel,
@@ -509,7 +515,8 @@ impl DriveSyncEngine {
     ) -> Result<Option<crate::DownloadPlan>, EngineError> {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        crate::state::Store::open(&crate::state::default_path()?)?.load(
+        let state_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
+        crate::state::Store::open(&state_path)?.load(
             &config.client_id,
             id,
             &folder.remote.id,

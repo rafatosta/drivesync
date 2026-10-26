@@ -213,3 +213,15 @@ pub(crate) fn verify_file(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ignored;
+    use std::path::Path;
+
+    #[test]
+    fn root_identity_marker_is_not_uploaded() {
+        assert!(ignored(Path::new(".drivesync-root.json")));
+        assert!(ignored(Path::new(".drivesync-state.sqlite3")));
+    }
+}
