@@ -1,54 +1,43 @@
-# DriveSync
+# DriveSync website
 
-**A Google Drive client for Linux.**
+Public website for DriveSync, an independent Google Drive client for Linux.
+This standalone `web` branch contains the website; application development remains on `main`.
 
-DriveSync is an early-stage Linux application for keeping selected Google Drive folders available on this computer. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release. Test with files you can safely replace or recreate; DriveSync is not a backup service.
+## Development
 
-## Screenshots
+Requires Node.js 22.12+ (or a supported newer LTS) and npm.
 
-Manage multiple accounts and configure a separate Google Drive and local folder for each one.
+```sh
+npm ci
+npm run dev
+npm run lint
+npm run build
+npm run preview
+```
 
-![DriveSync dashboard with three fictional accounts and personal folder settings](data/screenshots/04-dashboard-pessoal-1200.png)
+Open the printed local URL under `/drivesync/`. Vite builds the application,
+development, donations and privacy pages as separate HTML entry points. Each URL
+can be opened directly on GitHub Pages.
 
-| Choose a Google Drive folder | Review synchronization activity |
-| --- | --- |
-| ![Google Drive folder chooser with fictional folders](data/screenshots/10-selecionar-pasta-drive-1200.png) | ![Synchronization activity showing remote moves and deletions while preserving local copies](data/screenshots/download-history-expanded-720.png) |
+## Components and appearance
 
-These screenshots use fictional data. Synchronization states are simulated using the current interface components.
+React, TypeScript, Vite and Tailwind CSS. The shadcn/ui components use Base UI
+and the `base-luma` style, following RSCFlow's component approach. Theme tokens in
+`src/index.css` define neutral surfaces and GNOME-inspired blue accents. System
+fonts and screenshots are served locally; no external font service is used.
 
-[View all screenshots, including welcome, connection, transfers, and compact layouts](data/screenshots/README.md) · [Regenerate screenshots](data/screenshots/README.md#gerar-novamente)
+## Publication
 
-## What you can do today
+The GitHub Actions workflow validates and builds pushes to `web`, then deploys
+`dist/` to GitHub Pages. Repository Settings → Pages must use GitHub Actions as
+the publishing source. The expected project URL is
+https://rafatosta.github.io/drivesync/.
 
-DriveSync focuses on keeping local copies up to date with Google Drive. It does not yet offer complete two-way synchronization.
+## Content
 
-| Feature | Current availability and limits |
-| --- | --- |
-| Google accounts | Connect and manage multiple accounts, each with its own settings and credentials. |
-| Folder selection | Choose one Google Drive folder and one local folder per account. Local folders for different accounts cannot overlap. |
-| Downloads | Download files and subfolders, update managed local copies when remote files change, and keep previous versions. |
-| Uploads | Optionally upload new files and folders. Changes to existing files and deletions are not sent to Google Drive. |
-| Automatic checks | Check for remote changes periodically, or sync on demand. |
-| Pause and resume | Pause a sync and resume later, preserving completed work. |
-| Background operation | Continue checking while the app is allowed to run in the background. Session startup depends on desktop permission. |
-| Conflicts and deletions | Preserve local files when changes conflict or remote files are removed. Conflicts need manual attention; there is no complete resolution interface yet. |
-| Recovery | Save progress for later runs and check interrupted work. Recovery after failures or missing sync data still needs broader testing. |
-| Google Docs, Sheets, and Slides | Create local links that open documents in the browser. Opening these links from GNOME Files still needs validation. |
-| Status and activity | Show progress, account status, and sync activity. Preferences and notifications remain limited. |
-| Shared Drives and special items | Shared Drives and some special Google Drive item types are not supported. |
-
-## Preview availability
-
-The full workflow still needs further testing on Linux desktops and in the development Flatpak before a stable release. Desktop-dependent features, including background operation and session startup, require validation in each environment. Google sign-in in testing builds may be restricted to approved test accounts. Public distribution requires further sign-in approval and packaging work.
-
-## What's next
-
-The immediate focus is clearer first-time setup, more reliable recovery, better conflict handling, and validation of background operation and document links across Linux desktop environments. Updating existing files on Google Drive and propagating deletions require additional safeguards before they can be enabled.
-
-Other possible improvements include selecting individual subfolders, faster detection of local changes, richer activity history and notifications, improved account management, support for shared content, file status indicators in GNOME Files, files on demand, and bandwidth or battery controls. These are candidate improvements, with no committed release schedule.
-
-## Feedback
-
-Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
-
-DriveSync is an independent project and is not affiliated with Google.
+Application claims should track the current `main` README and verified behavior.
+Screenshots use fictional accounts and simulated states from the application UI.
+Donation channels are not configured; do not add payment details without the
+maintainer's direction. Update the privacy policy when data practices change.
+No analytics, contact form, tracking cookies or payment processing are included.
+Theme preference alone is saved in the browser's local storage.

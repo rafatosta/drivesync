@@ -1,39 +1,5 @@
-# Rust / Cargo build artifacts (keep Cargo.lock versioned for this application).
-/target/
-**/target/
-**/*.rs.bk
+node_modules/
+dist/
+*.local
 
-# Flatpak Builder and GNOME Builder local build state.
-/.flatpak-builder/
-/flatpak/.flatpak-builder/
-/_build/
-/build-dir/
-/repo/
-/.buildconfig
-/.gnome-builder/
-/.cache/
-*.flatpak
-*.flatpakref
-
-# Local environment and OAuth credentials; retain shareable examples.
-.env
-.env.*
-!.env.example
-!.env.sample
-client_secret*.json
-oauth-client.json
-credentials.json
-token.json
-tokens.json
-
-# Editor and operating-system temporary files.
-/.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
-# Official public Desktop metadata staged by the distributor at build time.
-/data/oauth/*.json
-!/data/oauth/*.example.json
+*.tsbuildinfo
