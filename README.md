@@ -23,8 +23,8 @@ can be opened directly on GitHub Pages.
 
 React, TypeScript, Vite and Tailwind CSS. The shadcn/ui components use Base UI
 and the `base-luma` style, following RSCFlow's component approach. Theme tokens in
-`src/index.css` define neutral surfaces and GNOME-inspired blue accents. System
-fonts and screenshots are served locally; no external font service is used.
+`src/index.css` define neutral surfaces and GNOME-inspired blue accents. Cantarell
+fonts (Latin regular and bold, via Fontsource) and screenshots are served locally; no external font service is used.
 
 ## Publication
 
