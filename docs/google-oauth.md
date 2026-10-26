@@ -28,9 +28,10 @@ AUTH-003 remain unimplemented.
 3. Under Clients create **Desktop app** credentials. Download the Desktop client JSON. This is distribution metadata, not a user
    token. Supply it to the build as described below.
 4. Declare `openid`, `email`, and
-   `https://www.googleapis.com/auth/drive.readonly` in Data Access as applicable.
+   `https://www.googleapis.com/auth/drive` in Data Access as applicable.
    The application requests these scopes, offline access and an explicit account
-   choice/consent. Google may omit an email; the stable subject is sufficient.
+   choice/consent at account connection. Google may omit an email; the stable
+   subject is sufficient. Upload remains disabled until the user opts in.
 5. Desktop loopback redirects use
    `http://127.0.0.1:<ephemeral-port>/oauth/callback`. The application binds the
    port before opening the browser and sends the same URI when exchanging the
@@ -54,18 +55,19 @@ Reviewed on 2026-10-20.
 ## Scope decision for this delivery
 
 `openid` identifies the account; `email` enables an optional verified display
-address. For the download MVP's existing folders, `drive.readonly` permits reading
-existing file metadata and content without write permission. `drive.file` grants
-access only to files created/opened/shared with the app and does not by itself
-satisfy arbitrary existing-folder discovery. `drive.metadata.readonly` does not
-permit downloading file content. Full `drive` access is unnecessary here.
+address. The DriveSync requests the full `drive` scope at initial account
+connection because the implemented features read existing files and may create
+new files when the user explicitly enables upload. The upload preference remains
+off by default; disabling it prevents DriveSync from creating local-file upload
+operations, but does not narrow the OAuth grant. `drive.file` does not by itself
+satisfy discovery of arbitrary existing folders.
 
-`drive.readonly` is a restricted scope. Public distribution may require Google's
-verification and additional assessment depending on how restricted data is used.
-Testing restrictions and refresh-token lifetimes depend on Google's project
-status/policies. This implementation does not establish the F04 feasibility gate:
-real access to an existing test folder and publication requirements remain to be
-validated. See [Google's scope documentation](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+`drive` is a restricted scope and grants broader access than download-only use.
+Public distribution may require Google's verification and additional assessment
+depending on how restricted data is used. Testing restrictions and refresh-token
+lifetimes depend on Google's project status/policies. Real access to an existing
+test folder and publication requirements remain to be validated. See
+[Google's scope documentation](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
 ## End users
 

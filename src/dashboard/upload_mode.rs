@@ -1,12 +1,7 @@
-//! Native opt-in for create-only uploads, including account-specific OAuth consent.
+//! Native opt-in for create-only uploads using the account's existing OAuth grant.
 use adw::{gtk, prelude::*};
-use drivesync_engine::{AuthError, Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::{mpsc, Arc},
-    time::{Duration, Instant},
-};
+use drivesync_engine::{Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, guard: &Cell<bool>) {
     guard.set(true);
     row.set_active(active);
@@ -92,7 +87,7 @@ pub(super) fn build(
         row.set_sensitive(false);
         let cancel = Cancellation::new();
         let dialog = adw::Window::builder()
-            .title("Google Drive permission")
+            .title("Synchronization")
             .default_width(420)
             .default_height(180)
             .modal(true)
@@ -110,7 +105,7 @@ pub(super) fn build(
             .build();
         let label = gtk::Label::builder()
             .label(if enabled {
-                "Authorize upload for this account in your browser. Choose the same Google account."
+                "Enabling uploads…"
             } else {
                 "Switching to download only…"
             })
@@ -131,7 +126,6 @@ pub(super) fn build(
             gtk::glib::Propagation::Proceed
         });
         dialog.present();
-        let (tx, rx) = mpsc::channel::<(String, mpsc::Sender<bool>)>();
         let worker = engine.clone();
         let id = id.clone();
         let worker_cancel = cancel.clone();
@@ -144,34 +138,6 @@ pub(super) fn build(
                 let folder = worker
                     .saved_folder(&id)?
                     .ok_or(EngineError::InvalidFolder)?;
-                if enabled {
-                    match worker.set_upload_enabled(&folder, true) {
-                        Ok(()) => return Ok(folder),
-                        Err(EngineError::Authentication(AuthError::MissingPermissions)) => {}
-                        Err(e) => return Err(e),
-                    }
-                    worker.authorize_upload(&id, &worker_cancel, |url| {
-                        let (ack, reply) = mpsc::channel();
-                        tx.send((url.into(), ack))
-                            .map_err(|_| AuthError::BrowserUnavailable)?;
-                        let until = Instant::now() + Duration::from_secs(30);
-                        loop {
-                            if worker_cancel.is_cancelled() {
-                                return Err(AuthError::Cancelled);
-                            }
-                            if Instant::now() >= until {
-                                return Err(AuthError::BrowserUnavailable);
-                            }
-                            match reply.recv_timeout(Duration::from_millis(100)) {
-                                Ok(true) => return Ok(()),
-                                Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                    return Err(AuthError::BrowserUnavailable)
-                                }
-                                Err(_) => {}
-                            }
-                        }
-                    })?;
-                }
                 if worker_cancel.is_cancelled() {
                     return Err(EngineError::Authentication(AuthError::Cancelled));
                 }
@@ -199,22 +165,6 @@ pub(super) fn build(
                 }
             },
         );
-        gtk::glib::timeout_add_local(Duration::from_millis(50), move || match rx.try_recv() {
-            Ok((url, ack)) => {
-                gtk::glib::spawn_future_local(async move {
-                    let success = gtk::gio::AppInfo::launch_default_for_uri_future(
-                        &url,
-                        None::<&gtk::gio::AppLaunchContext>,
-                    )
-                    .await
-                    .is_ok();
-                    let _ = ack.send(success);
-                });
-                gtk::glib::ControlFlow::Continue
-            }
-            Err(mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => gtk::glib::ControlFlow::Break,
-        });
     });
     row
 }

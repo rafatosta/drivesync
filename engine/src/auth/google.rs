@@ -14,9 +14,8 @@ use reqwest::blocking::{Client, Response};
 use serde::Deserialize;
 use std::{io::Read, time::Duration};
 
-/// Read-only Drive permission requested during authorization.
-pub(super) const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
-pub(super) const WRITE_SCOPE: &str = "https://www.googleapis.com/auth/drive";
+/// Full Drive permission required by the currently available read and upload features.
+pub(super) const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const MAX_RESPONSE: u64 = 64 * 1024;
 

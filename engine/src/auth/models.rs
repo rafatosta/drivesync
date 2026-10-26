@@ -74,9 +74,7 @@ pub(super) fn validate_tokens(tokens: &Tokens) -> Result<(), AuthError> {
     }
     if let Some(scope) = &tokens.scope {
         let scopes: Vec<_> = scope.split_whitespace().collect();
-        if !scopes.contains(&"openid")
-            || !(scopes.contains(&google::DRIVE_SCOPE) || scopes.contains(&google::WRITE_SCOPE))
-        {
+        if !scopes.contains(&"openid") || !scopes.contains(&google::DRIVE_SCOPE) {
             return Err(AuthError::MissingPermissions);
         }
     }

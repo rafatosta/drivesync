@@ -35,9 +35,10 @@ HTTPS (`sub`, e-mail verificado opcional), sem tokens na API pública.
 
 1. Validar configuração; adquirir exclusão do login no motor; criar listener
    somente em 127.0.0.1 com porta efêmera, state aleatório e PKCE S256.
-2. Solicitar `openid email drive.readonly`, acesso offline e consentimento explícito.
-   O escopo Drive é necessário para pastas preexistentes no MVP; não há chamadas
-   de arquivos nesta entrega. Ver `docs/google-oauth.md`.
+2. Solicitar `openid email drive`, acesso offline e consentimento explícito no
+   cadastro da conta. O escopo completo cobre leitura e criação de arquivos; o
+   upload continua desativado por padrão e só é usado após opt-in. Ver
+   `docs/google-oauth.md`.
 3. Abrir navegador via porta da UI (GIO/portal); aguardar até cinco minutos.
    Cancelamento, erro do navegador e timeout nunca criam uma conta.
 4. Aceitar GET apenas no host/porta/path exatos, sem parâmetros duplicados,

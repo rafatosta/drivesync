@@ -130,33 +130,13 @@ impl AuthProvider {
         tokens: Tokens,
         cancel: &Cancellation,
     ) -> Result<AccountSummary, AuthError> {
-        self.complete_scoped(config, tokens, cancel, None)
-    }
-    /// Upload consent verifies the selected identity and granted write scope
-    /// before any credential can be replaced.
-    fn complete_scoped(
-        &self,
-        config: &OAuthConfig,
-        tokens: Tokens,
-        cancel: &Cancellation,
-        expected: Option<&AccountId>,
-    ) -> Result<AccountSummary, AuthError> {
         validate_tokens(&tokens)?;
         cancel.check()?;
         let identity = self.api.identify(&tokens.access_token)?;
         let account = identity.summary()?;
-        let write_access = tokens
-            .scope
-            .as_deref()
-            .is_some_and(|s| s.split_whitespace().any(|s| s == google::WRITE_SCOPE));
-        if let Some(expected) = expected {
-            if &account.id != expected {
-                return Err(AuthError::IdentityMismatch);
-            }
-            if !write_access {
-                return Err(AuthError::MissingPermissions);
-            }
-        }
+        let write_access = tokens.scope.as_deref().is_some_and(|scope| {
+            scope.split_whitespace().any(|granted| granted == google::DRIVE_SCOPE)
+        });
         let lock = self.account_lock(&account.id)?;
         let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
         let old = self.store.load(&config.client_id, &account.id)?;
@@ -184,47 +164,6 @@ impl AuthProvider {
         Ok(account)
     }
 
-    /// Requests additional write permission for exactly one existing account.
-    /// A declined or mismatched authorization leaves all stored credentials intact.
-    pub(crate) fn authorize_upload(
-        &self,
-        config: &OAuthConfig,
-        expected: &AccountId,
-        cancel: &Cancellation,
-        open: impl FnOnce(&str) -> Result<(), AuthError>,
-    ) -> Result<(), AuthError> {
-        if self.authorizing.swap(true, Ordering::AcqRel) {
-            return Err(AuthError::Busy);
-        }
-        let _guard = LoginGuard(&self.authorizing);
-        let listener = callback::Listener::bind()?;
-        let redirect = listener.redirect_uri();
-        let state = CsrfToken::new_random();
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let base = config.authorization_url(&redirect, &state, challenge)?;
-        let mut url = url::Url::parse(&base).map_err(|_| AuthError::Configuration)?;
-        let pairs: Vec<_> = url
-            .query_pairs()
-            .filter(|(k, _)| k != "scope")
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
-        url.set_query(None);
-        url.query_pairs_mut().extend_pairs(pairs).append_pair(
-            "scope",
-            &format!(
-                "openid email {} {}",
-                google::DRIVE_SCOPE,
-                google::WRITE_SCOPE
-            ),
-        );
-        open(url.as_str())?;
-        let code = listener.receive(&state, cancel, Duration::from_secs(300))?;
-        let tokens = self
-            .api
-            .exchange(config, &code, &redirect, verifier.secret())?;
-        self.complete_scoped(config, tokens, cancel, Some(expected))?;
-        Ok(())
-    }
     pub(crate) fn can_upload(
         &self,
         config: &OAuthConfig,
@@ -378,7 +317,7 @@ impl AuthProvider {
             validate_tokens(&tokens)?;
             if let Some(scope) = &tokens.scope {
                 credential.write_access =
-                    scope.split_whitespace().any(|s| s == google::WRITE_SCOPE);
+                    scope.split_whitespace().any(|s| s == google::DRIVE_SCOPE);
             }
             credential.access_token = tokens.access_token;
             if let Some(refresh) = tokens.refresh_token.filter(|s| !s.is_empty()) {

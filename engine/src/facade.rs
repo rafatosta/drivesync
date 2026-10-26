@@ -405,18 +405,6 @@ impl DriveSyncEngine {
         )?
         .enable(enabled)
     }
-    /// Requests browser consent for write access to precisely the selected account.
-    pub fn authorize_upload(
-        &self,
-        id: &AccountId,
-        cancel: &Cancellation,
-        open: impl FnOnce(&str) -> Result<(), AuthError>,
-    ) -> Result<(), EngineError> {
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        self.auth
-            .authorize_upload(&config, id, cancel, open)
-            .map_err(EngineError::Authentication)
-    }
     pub(crate) fn auth_upload_access<T>(
         &self,
         config: &auth::OAuthConfig,

@@ -42,11 +42,11 @@ A interface do Google Cloud pode apresentar nomes ligeiramente diferentes confor
 | --- | --- |
 | `openid` | Identifica a conta Google autenticada. |
 | `email` | Permite obter o endereço de e-mail da conta, quando disponibilizado pelo Google. |
-| `https://www.googleapis.com/auth/drive.readonly` | Permite ler metadados e baixar arquivos existentes do Drive, sem modificá-los no Google. |
+| `https://www.googleapis.com/auth/drive` | Permite ler os arquivos existentes e criar novos arquivos quando o upload opcional for ativado. |
 
 3. Salve as permissões selecionadas.
 
-**Atenção:** `drive.readonly` é uma permissão **restrita**. Ela é necessária para o objetivo de selecionar pastas já existentes e futuramente baixar seu conteúdo. O DriveSync não solicita `drive` (acesso de escrita) nem `drive.file` como substituto para explorar todas as pastas existentes. Para distribuição pública, o Google pode exigir verificação do aplicativo e requisitos adicionais. Consulte a [classificação oficial dos escopos](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+**Atenção:** `drive` é uma permissão **restrita** e ampla. O DriveSync solicita essa permissão já na conexão inicial para evitar uma segunda autorização ao ativar upload. A opção de upload continua desativada inicialmente, e nenhuma operação de upload ocorre até que o usuário a habilite. Para distribuição pública, o Google pode exigir verificação do aplicativo e requisitos adicionais. Consulte a [classificação oficial dos escopos](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
 ## 5. Adicionar usuários de teste
 

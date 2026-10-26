@@ -64,7 +64,8 @@ A real metadata-only test may rename a controlled remote file and rename it back
 before running a cycle. Identity/path/bytes remain unchanged while its server
 revision grows. Expect unchanged counts, no media requests and no new backup.
 Change remote fixtures through connected Drive tools or Drive UI; the production
-engine retains its read-only OAuth scope.
+engine requests the full Drive OAuth scope at account connection; uploads remain
+disabled unless explicitly enabled.
 
 ## Flatpak document-portal identity
 
