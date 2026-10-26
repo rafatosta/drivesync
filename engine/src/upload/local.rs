@@ -27,6 +27,7 @@ pub(crate) fn ignored(path: &Path) -> bool {
         c.as_os_str().to_str().is_none_or(|s| {
             s == ".drivesync"
                 || s.starts_with(".drivesync-")
+                || s.ends_with(".dslink")
                 || (s.starts_with("DriveSync backup ") && s.ends_with(".bak"))
         })
     })

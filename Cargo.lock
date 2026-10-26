@@ -419,6 +419,7 @@ dependencies = [
  "drivesync-engine",
  "gtk4",
  "libadwaita",
+ "url",
 ]
 
 [[package]]
