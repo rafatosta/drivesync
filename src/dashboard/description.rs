@@ -14,7 +14,6 @@ struct Presentation {
     user: gtk::glib::WeakRef<adw::ActionRow>,
     avatar: gtk::glib::WeakRef<adw::Avatar>,
     email: String,
-    state: String,
 }
 impl Presentation {
     fn display(&self, description: Option<String>) {
@@ -28,7 +27,6 @@ impl Presentation {
         }
         if let Some(user) = self.user.upgrade() {
             user.set_title(name);
-            user.set_subtitle(&self.state);
             user.set_tooltip_text(Some(&self.email));
         }
         if let Some(avatar) = self.avatar.upgrade() {
@@ -67,10 +65,6 @@ pub(super) fn bind(
             .email
             .clone()
             .unwrap_or_else(|| "Google Account".into()),
-        state: saved
-            .error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "Connected".into()),
     };
     entry.set_show_apply_button(true);
     entry.set_sensitive(false);

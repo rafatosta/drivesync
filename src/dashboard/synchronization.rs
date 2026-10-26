@@ -14,6 +14,9 @@ struct Widgets {
     folders: gtk::glib::WeakRef<gtk::Box>,
     menu: gtk::glib::WeakRef<gtk::MenuButton>,
     row: gtk::glib::WeakRef<adw::ActionRow>,
+    account_row: gtk::glib::WeakRef<adw::ActionRow>,
+    account_status: gtk::glib::WeakRef<gtk::Label>,
+    account_status_fallback: String,
     status: gtk::glib::WeakRef<gtk::Label>,
     menu_status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
@@ -249,7 +252,7 @@ impl Widgets {
             Phase::Unconfigured => "Not configured",
             Phase::Waiting => "Waiting",
             Phase::Running if snapshot.pausing => "Pausing",
-            Phase::Running => "Running",
+            Phase::Running => "Syncing",
             Phase::UpToDate => "Up to date",
             Phase::Attention | Phase::Blocked => "Needs attention",
             Phase::Offline => "Offline",
@@ -258,6 +261,17 @@ impl Widgets {
         };
         if let Some(status) = self.menu_status.upgrade() {
             status.set_label(&format!("Synchronization: {sync_status}"));
+        }
+        let account_status = if snapshot.phase == Phase::Unconfigured {
+            self.account_status_fallback.as_str()
+        } else {
+            sync_status
+        };
+        if let Some(row) = self.account_row.upgrade() {
+            row.set_subtitle(account_status);
+        }
+        if let Some(status) = self.account_status.upgrade() {
+            status.set_label(account_status);
         }
         if snapshot.phase == Phase::Running {
             if previous != Some(Phase::Running) {
@@ -536,6 +550,9 @@ pub(super) fn build(
     row: &adw::ActionRow,
     status: &gtk::Label,
     menu: &gtk::MenuButton,
+    account_row: &adw::ActionRow,
+    account_status: &gtk::Label,
+    account_status_fallback: &str,
     menu_status: &gtk::Label,
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -589,6 +606,9 @@ pub(super) fn build(
         folders: folders.downgrade(),
         menu: menu.downgrade(),
         row: row.downgrade(),
+        account_row: account_row.downgrade(),
+        account_status: account_status.downgrade(),
+        account_status_fallback: account_status_fallback.to_owned(),
         status: status.downgrade(),
         menu_status: menu_status.downgrade(),
         progress: progress.downgrade(),
@@ -650,7 +670,9 @@ pub(super) fn verify_worker_failure() {
     let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let start = gtk::Button::with_label("Synchronize Now");
     let row = adw::ActionRow::new();
+    let account_row = adw::ActionRow::new();
     let status = gtk::Label::new(None);
+    let account_status = gtk::Label::new(Some("Connected"));
     let menu = gtk::MenuButton::new();
     let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
     let footer = build(
@@ -661,6 +683,9 @@ pub(super) fn verify_worker_failure() {
         &row,
         &status,
         &menu,
+        &account_row,
+        &account_status,
+        "Connected",
         &menu_status,
     );
     start.emit_clicked();
@@ -714,6 +739,8 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .title("Synchronization")
             .use_markup(false)
             .build();
+        let account_row = adw::ActionRow::new();
+        let account_status = gtk::Label::new(Some("Connected"));
         let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
         let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
         let footer = build(
@@ -724,6 +751,9 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             &row,
             &status,
             &menu,
+            &account_row,
+            &account_status,
+            "Connected",
             &menu_status,
         );
         let mut controls = std::collections::HashMap::new();
@@ -761,6 +791,9 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             folders: folders.downgrade(),
             menu: menu.downgrade(),
             row: row.downgrade(),
+            account_row: account_row.downgrade(),
+            account_status: account_status.downgrade(),
+            account_status_fallback: "Connected".into(),
             status: status.downgrade(),
             menu_status: menu_status.downgrade(),
             progress: bar.downgrade(),

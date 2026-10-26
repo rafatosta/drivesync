@@ -46,15 +46,14 @@ pub(super) fn populate(
             .css_classes(["title-1"])
             .build();
         identity.append(&title);
-        identity.append(
-            &gtk::Label::builder()
-                .label(&state)
-                .use_markup(false)
-                .xalign(0.0)
-                .wrap(true)
-                .css_classes(["dim-label"])
-                .build(),
-        );
+        let account_status = gtk::Label::builder()
+            .label(&state)
+            .use_markup(false)
+            .xalign(0.0)
+            .wrap(true)
+            .css_classes(["dim-label"])
+            .build();
+        identity.append(&account_status);
         heading.append(&identity);
         let menu = gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
@@ -172,6 +171,9 @@ pub(super) fn populate(
             &sync_state,
             &status,
             &menu,
+            &user,
+            &account_status,
+            &state,
             &sync_menu_status,
         ));
         details.add_named(&content, Some(&saved.account.id.0));
