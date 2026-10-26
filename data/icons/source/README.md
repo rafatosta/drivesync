@@ -1,6 +1,6 @@
 # DriveSync — GNOME icon design sources
 
-This directory is reserved for the **editable GNOME App Icon Preview source SVG**. No final DriveSync artwork has been approved yet.
+This directory contains the **editable GNOME App Icon Preview source SVG** for the current DriveSync icon candidate. The installed icon files are candidate exports; final artwork approval is still a separate design decision.
 
 ## Start from GNOME's *original* template
 
@@ -8,13 +8,7 @@ GNOME publishes the authoritative SVG at:
 
 https://gitlab.gnome.org/Teams/Design/HIG-app-icons/-/blob/master/template.svg
 
-Download it via the helper in this directory:
-
-```sh
-sh data/icons/source/fetch-gnome-template.sh
-```
-
-The download is intentionally **not represented as an official template until successfully fetched from GNOME**. Open the downloaded `gnome-app-icon-template.svg` in Inkscape, or create a new design in GNOME App Icon Preview.
+The current editable master is `drivesync.svg`. It contains the template canvas and DriveSync artwork. For a fresh template, download the original SVG from GNOME's source above; this repository does not include a download helper.
 
 The GNOME application icon source includes areas for both the full-color 128×128 icon and its symbolic counterpart; do not confuse the symbolic 16×16 design with the colored app icon. Use App Icon Preview to inspect/export the results.
 
@@ -46,7 +40,7 @@ final variants. Update them only when the master artwork is approved and its
 exports are ready together. This plan does not require changes to application
 IDs, desktop files, or Flatpak manifests.
 
-Do **not** overwrite the current development SVG or change Flatpak manifests until an actual icon is designed and exported, so existing Builder builds keep working. The current development SVG is temporary artwork, not a GNOME template.
+Treat the installed files as working candidate exports until the artwork is approved. Keep the master and all outputs in sync when revising the design. Avoid changing application IDs or Flatpak manifests for artwork-only updates.
 
 ## References
 
