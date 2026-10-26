@@ -63,6 +63,16 @@ pub(super) fn populate(
             .build();
         let popover = gtk::Popover::new();
         let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        actions.append(
+            &gtk::Label::builder()
+                .label(format!("Status: {state}"))
+                .xalign(0.0)
+                .margin_start(12)
+                .margin_end(12)
+                .margin_top(8)
+                .margin_bottom(8)
+                .build(),
+        );
         actions.append(&crate::session::sign_out_button(
             engine.clone(),
             saved.account.id.clone(),
