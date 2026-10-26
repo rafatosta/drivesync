@@ -18,62 +18,34 @@ These screenshots use fictional data. Synchronization states are simulated using
 
 [View all screenshots, including welcome, connection, transfers, and compact layouts](data/screenshots/README.md) · [Regenerate screenshots](data/screenshots/README.md#gerar-novamente)
 
-## Features
+## What you can do today
 
-### Implemented
+DriveSync focuses on keeping local copies up to date with Google Drive. It does not yet offer complete two-way synchronization.
 
-- Connect and manage multiple Google accounts.
-- Choose one Google Drive folder and one local folder per account.
-- Download files and folders, check for changes, and sync on demand.
-- Pause and resume safely. Completed work is preserved.
-- Preserve local data when conflicts or remote deletions occur.
-- Store folder identity and sync state in `.drivesync/`.
-- Optionally upload new files and folders. Existing remote files are not replaced.
-- Save Google Docs, Sheets, and Slides as local `.desktop` links.
-- Run automatic checks while the app is open or allowed to run in the background.
+| Feature | Current availability and limits |
+| --- | --- |
+| Google accounts | Connect and manage multiple accounts, each with its own settings and credentials. |
+| Folder selection | Choose one Google Drive folder and one local folder per account. Local folders for different accounts cannot overlap. |
+| Downloads | Download files and subfolders, update managed local copies when remote files change, and keep previous versions. |
+| Uploads | Optionally upload new files and folders. Changes to existing files and deletions are not sent to Google Drive. |
+| Automatic checks | Check for remote changes periodically, or sync on demand. |
+| Pause and resume | Pause a sync and resume later, preserving completed work. |
+| Background operation | Continue checking while the app is allowed to run in the background. Session startup depends on desktop permission. |
+| Conflicts and deletions | Preserve local files when changes conflict or remote files are removed. Conflicts need manual attention; there is no complete resolution interface yet. |
+| Recovery | Save progress for later runs and check interrupted work. Recovery after failures or missing sync data still needs broader testing. |
+| Google Docs, Sheets, and Slides | Create local links that open documents in the browser. Opening these links from GNOME Files still needs validation. |
+| Status and activity | Show progress, account status, and sync activity. Preferences and notifications remain limited. |
+| Shared Drives and special items | Shared Drives and some special Google Drive item types are not supported. |
 
-### Planned (validation and release)
+## Preview availability
 
-- Update the welcome screen and onboarding text.
-- Validate the full workflow in GNOME and the development Flatpak.
-- Make `.desktop` links work reliably from GNOME Files.
-- Improve recovery for existing folders, missing state, and conflicts.
-- Define safe handling for edits to existing remote files and deletions.
-- Prepare OAuth and Flatpak packaging for public distribution.
+The full workflow still needs further testing in GNOME and the development Flatpak before a stable release. Google sign-in in testing builds may be restricted to approved test accounts. Public distribution requires further sign-in approval and packaging work.
 
-### Future features
+## What's next
 
-The following items are **candidate enhancements and design decisions** to be specified and prioritized separately. Some extend safeguards or capabilities already present in the technical preview.
+The immediate focus is clearer first-time setup, more reliable recovery, better conflict handling, and validation of background operation and document links on GNOME. Updating existing files on Google Drive and propagating deletions require additional safeguards before they can be enabled.
 
-| Priority | Capability | Intended direction |
-| --- | --- | --- |
-| P0 | Complete conflict resolution | Provide a clear flow for local/remote edit conflicts without silently overwriting either version. |
-| P0 | Safeguards for deletions | Define confirmation/authorization for destructive remote changes, protections for bulk deletions, and recovery options. |
-| P0 | Robust recovery and consistency | Resume safely after interruptions, disconnections, missing state, and partial operations. |
-| P1 | Selective synchronization | Let users include/exclude individual folders within a configured account's synchronization scope. |
-| P1 | Efficient background synchronization | Improve existing periodic checks with local filesystem events and incremental remote change detection where appropriate. |
-| P1 | Sync status and history | Expose pending transfers, errors, last successful sync, and a useful activity log. |
-| P1 | Enhanced multi-account experience | Improve status visibility and management across accounts; basic multi-account support already exists. |
-| P1 | Shared content | Evaluate syncing folders shared with the user and support for Shared Drives, subject to Google Drive API constraints. |
-| P2 | GNOME Files (Nautilus) integration | Explore file status emblems and relevant actions in the file manager. |
-| P2 | Files on demand | Evaluate access to remote content without downloading every file locally. |
-| P2 | Performance controls | Consider bandwidth limits and network/battery-aware behavior. |
-
-P0/P1/P2 are preliminary planning priorities, **not** a release schedule or a claim that every item is unimplemented. Data safety and correctness remain requirements for enabling more destructive or fully bidirectional operations.
-
-## Current limits
-
-- DriveSync is under active development and has no stable release. The full workflow still needs continued validation in GNOME and the development Flatpak.
-- Each account has one configured remote/local folder pair.
-- Upload is opt-in and only creates new remote files and folders. Editing an existing remote file and propagating deletions are not supported.
-- Conflict detection preserves data and reports attention; there is no complete UI for choosing between local and remote versions.
-- Google Workspace documents are local `.desktop` links. Opening those links from GNOME Files, including GNOME's first-open trust behavior, still needs validation.
-- Shared Drives and several other special or unsupported Drive item types are not synchronized as regular files.
-- OAuth testing builds may be limited to accounts approved in the configured Google Cloud project. Public distribution also requires completing OAuth and Flatpak release preparation.
-
-## Project approach
-
-DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Further development focuses on product decisions, usability, resilience, and edge cases while retaining the core integration with Google Drive. The app remains a technical preview and needs continued GNOME/Flatpak validation before a stable release.
+Other possible improvements include selecting individual subfolders, faster detection of local changes, richer activity history and notifications, improved account management, support for shared content, file status indicators in GNOME Files, files on demand, and bandwidth or battery controls. These are candidate improvements, with no committed release schedule.
 
 ## Feedback
 
