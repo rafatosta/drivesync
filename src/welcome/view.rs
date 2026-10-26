@@ -40,7 +40,7 @@ pub(super) fn build() -> WelcomeView {
 
     // Embed the existing project artwork so it also works from an uninstalled checkout.
     let bytes = gtk::glib::Bytes::from_static(include_bytes!(
-        "../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg"
+        "../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"
     ));
     let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
     let image = match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, None::<&gtk::gio::Cancellable>)
@@ -52,12 +52,12 @@ pub(super) fn build() -> WelcomeView {
     image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);
     image.update_property(&[gtk::accessible::Property::Label(
-        "DriveSync folder and cloud",
+        "DriveSync application icon",
     )]);
     content.append(&image);
     content.append(&text("Welcome to DriveSync", "title-1"));
     let description = text(
-        "Connect your Google account to choose folders for this computer.",
+        "Your Google Drive, a little closer.",
         "body",
     );
     description.set_max_width_chars(48);
@@ -72,31 +72,12 @@ pub(super) fn build() -> WelcomeView {
     connect.add_css_class("pill");
     connect.set_tooltip_text(Some("Sign in securely in your web browser"));
     actions.append(&connect);
-
-    let learn = gtk::ToggleButton::with_label("Learn More");
-    learn.add_css_class("flat");
-    actions.append(&learn);
     content.append(&actions);
 
-    let details = gtk::Revealer::new();
-    let explanation = text(
-        "DriveSync is in early development. Connect an account and choose folders to download files automatically from Google Drive. Local edits will not be uploaded, and remote deletions will not automatically delete local files. Google Workspace documents are outside this milestone.",
-        "body",
-    );
-    explanation.set_max_width_chars(70);
-    explanation.set_selectable(true);
-    details.set_child(Some(&explanation));
-    let details_clone = details.clone();
-    learn.connect_toggled(move |button| details_clone.set_reveal_child(button.is_active()));
-    content.append(&details);
-
-    let note = text(
-        "Sign in securely in your browser. DriveSync never asks for your Google password.",
-        "dim-label",
-    );
-    note.set_max_width_chars(80);
-    note.set_halign(gtk::Align::Center);
-    content.append(&note);
+    let footnote = text("A calmer place for the files that matter to you.", "dim-label");
+    footnote.set_max_width_chars(80);
+    footnote.set_halign(gtk::Align::Center);
+    content.append(&footnote);
 
     let clamp = adw::Clamp::builder()
         .maximum_size(760)
