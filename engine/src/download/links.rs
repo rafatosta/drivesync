@@ -1,4 +1,4 @@
-//! Local DriveSync link files for browser-based Google Workspace documents.
+//! Local GNOME link entries for browser-based Google Workspace documents.
 use super::filesystem::{self, Root};
 use crate::{remote::valid_workspace_link, Cancellation, EngineError};
 use rustix::fs::AtFlags;
@@ -10,18 +10,19 @@ use std::{
     path::Path,
 };
 
-/// Creates a verified `.dslink` data file without replacing an existing entry.
+/// Creates a verified `.desktop` link without replacing an existing local entry.
 /// Writes through an exclusive temporary file, rechecks the authorized root,
 /// and installs with no-clobber rename. An identical existing link is a no-op;
 /// divergent files, symlinks, and other entry types return a conflict.
 pub(super) fn ensure(
     root: &Root,
     path: &Path,
+    remote_name: &str,
     mime_type: &str,
     url: &str,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
-    let contents = entry(mime_type, url)?;
+    let contents = entry(remote_name, mime_type, url)?;
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
@@ -43,7 +44,7 @@ pub(super) fn ensure(
         let mut staged = filesystem::create(&parent, &temporary, contents.len() as u64)?;
         staged.write_all(&contents).map_err(filesystem::io)?;
         staged
-            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
             .map_err(filesystem::io)?;
         staged.sync_all().map_err(filesystem::io)?;
         parent.sync_all().map_err(filesystem::io)?;
@@ -71,7 +72,7 @@ pub(super) fn ensure(
     result
 }
 
-fn entry(mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError> {
+fn entry(name: &str, mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError> {
     let mime_path = match mime_type {
         "application/vnd.google-apps.document" => Some("/document/"),
         "application/vnd.google-apps.spreadsheet" => Some("/spreadsheets/"),
@@ -88,7 +89,20 @@ fn entry(mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError> {
     if !valid_workspace_link(url, mime_path) {
         return Err(EngineError::InvalidPlan);
     }
-    Ok(format!("DRIVESYNC-LINK/1\n{url}\n").into_bytes())
+    let name = escape(name);
+    let url = escape(url);
+    Ok(format!(
+        "[Desktop Entry]\nVersion=1.5\nType=Link\nName={name}\nURL={url}\n"
+    )
+    .into_bytes())
+}
+
+fn escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn matches_existing(

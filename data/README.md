@@ -4,7 +4,6 @@ This folder holds preliminary assets for application ID `com.rtosta.DriveSync.De
 
 - `icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg`: original SVG reconstruction of the blue-folder/cloud concept (not a vector export of the generated bitmap).
 - `com.rtosta.DriveSync.Devel.desktop`: launcher metadata, matching the `drivesync` Cargo binary.
-- `mime/packages/com.rtosta.DriveSync.Devel.xml`: the `.dslink` MIME type registered by the installed DriveSync launcher.
 - `com.rtosta.DriveSync.Devel.metainfo.xml`: initial AppStream metadata. The source license is still a placeholder and **must be replaced before publication**.
 - `../flatpak/com.rtosta.DriveSync.Devel.yml`: **GNOME Builder development-only manifest**. It uses the Rust SDK extension and allows Cargo to download crates *while compiling*.
 

@@ -197,6 +197,7 @@ pub(crate) fn run(
                     super::links::ensure(
                         &session.root,
                         path,
+                        &item.name,
                         &item.mime_type,
                         url,
                         session.context.cancel,

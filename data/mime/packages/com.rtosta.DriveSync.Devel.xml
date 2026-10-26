@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/vnd.drivesync.link">
-    <comment>DriveSync Google Workspace link</comment>
-    <generic-icon name="text-x-generic"/>
-    <glob pattern="*.dslink"/>
-  </mime-type>
-</mime-info>

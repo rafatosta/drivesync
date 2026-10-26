@@ -101,7 +101,7 @@ fn local_name(item: &crate::InventoryEntry) -> Option<String> {
     }
     // Keep browser shortcuts distinct from regular files with the same Drive name.
     let name = if item.kind == InventoryKind::GoogleWorkspaceLink {
-        format!("{}.dslink", item.name)
+        format!("{}.desktop", item.name)
     } else {
         item.name.clone()
     };

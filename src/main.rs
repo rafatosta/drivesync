@@ -12,7 +12,6 @@ mod connection;
 mod dashboard;
 mod flow;
 mod folder_picker;
-mod link_open;
 mod main_menu;
 mod restoration;
 mod session;
@@ -27,11 +26,6 @@ const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
 
 /// Launches the single-instance GTK application.
 fn main() -> adw::gtk::glib::ExitCode {
-    let mut arguments = std::env::args_os().skip(1);
-    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--open-link")) {
-        return link_open::launch(arguments.next().as_deref());
-    }
-
     let app = adw::Application::builder().application_id(APP_ID).build();
     background::configure_application(&app);
     // Startup runs once for the primary application, even on repeated activation.
