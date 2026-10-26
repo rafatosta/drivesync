@@ -4,17 +4,28 @@
 
 DriveSync is an early-stage Linux application for keeping selected Google Drive folders available on this computer. It is a technical preview, not a stable release. Test with files you can safely replace or recreate; DriveSync is not a backup service.
 
-## What works today
+## Features
 
-- Connect Google accounts through the system browser, restore saved accounts, and manage more than one account.
-- Choose one Google Drive folder and one local folder for each account.
-- Download regular files and nested folders, check for remote changes automatically, and run a cycle on demand.
-- Pause and resume synchronization per account. A pause waits for the current operation to stop at a safe point and preserves completed work.
-- Keep existing local data safe: conflicting or unsupported items are reported for attention, and remote deletions are not propagated to the local folder.
-- Keep synchronization state and the folder identity marker inside the selected local folder's `.drivesync/` directory.
-- Optionally enable **Upload new files and folders** for an account. This is create-only: existing remote files are not replaced, and local deletions are not sent.
-- Represent Google Docs, Sheets, and Slides as local `.desktop` links to the document in Google Drive.
-- Continue scheduled checks while the application runs. Hiding the window can keep the process active when the desktop's background permission is available.
+### Implemented
+
+- Connect and manage multiple Google accounts.
+- Choose one Google Drive folder and one local folder per account.
+- Download files and folders, check for changes, and sync on demand.
+- Pause and resume safely. Completed work is preserved.
+- Preserve local data when conflicts or remote deletions occur.
+- Store folder identity and sync state in `.drivesync/`.
+- Optionally upload new files and folders. Existing remote files are not replaced.
+- Save Google Docs, Sheets, and Slides as local `.desktop` links.
+- Run automatic checks while the app is open or allowed to run in the background.
+
+### Planned
+
+- Update the welcome screen and onboarding text.
+- Validate the full workflow in GNOME and the development Flatpak.
+- Make `.desktop` links work reliably from GNOME Files.
+- Improve recovery for existing folders, missing state, and conflicts.
+- Define safe handling for edits to existing remote files and deletions.
+- Prepare OAuth and Flatpak packaging for public distribution.
 
 ## Current limits
 
@@ -25,15 +36,6 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 - Google Workspace documents are local `.desktop` links. Opening those links from GNOME Files, including GNOME's first-open trust behavior, still needs validation.
 - Shared Drives and several other special or unsupported Drive item types are not synchronized as regular files.
 - OAuth testing builds may be limited to accounts approved in the configured Google Cloud project. Public distribution also requires completing OAuth and Flatpak release preparation.
-
-## Next updates
-
-1. Update the welcome screen and onboarding text so they describe the current download behavior and the optional create-only upload accurately.
-2. Validate the complete current workflow in GNOME and the development Flatpak: account setup, multiple accounts, initial and incremental downloads, upload opt-in, pause/resume, restart recovery, and background behavior.
-3. Verify how `.desktop` links behave in GNOME Files and document the supported opening flow.
-4. Improve recovery and guidance for existing local folders, missing `.drivesync/` metadata, and conflicts, while preserving local data.
-5. Define and implement any future updates to existing remote files or deletion handling only after the conflict and recovery policies are specified.
-6. Finish OAuth and reproducible Flatpak packaging work before considering a public release.
 
 ## Project approach
 
