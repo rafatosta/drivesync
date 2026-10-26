@@ -73,6 +73,15 @@ pub(super) fn populate(
                 .margin_bottom(8)
                 .build(),
         );
+        let sync_menu_status = gtk::Label::builder()
+            .label("Synchronization: Not started")
+            .xalign(0.0)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+        actions.append(&sync_menu_status);
         actions.append(&crate::session::sign_out_button(
             engine.clone(),
             saved.account.id.clone(),
@@ -163,6 +172,7 @@ pub(super) fn populate(
             &sync_state,
             &status,
             &menu,
+            &sync_menu_status,
         ));
         details.add_named(&content, Some(&saved.account.id.0));
     }

@@ -15,6 +15,7 @@ struct Widgets {
     menu: gtk::glib::WeakRef<gtk::MenuButton>,
     row: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
+    menu_status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
     issues: gtk::glib::WeakRef<gtk::Box>,
     activity: gtk::glib::WeakRef<gtk::Box>,
@@ -244,6 +245,20 @@ impl Widgets {
         previous: Option<crate::automatic::Phase>,
     ) {
         use crate::automatic::Phase;
+        let sync_status = match snapshot.phase {
+            Phase::Unconfigured => "Not configured",
+            Phase::Waiting => "Waiting",
+            Phase::Running if snapshot.pausing => "Pausing",
+            Phase::Running => "Running",
+            Phase::UpToDate => "Up to date",
+            Phase::Attention | Phase::Blocked => "Needs attention",
+            Phase::Offline => "Offline",
+            Phase::Retrying => "Retrying",
+            Phase::Paused => "Paused",
+        };
+        if let Some(status) = self.menu_status.upgrade() {
+            status.set_label(&format!("Synchronization: {sync_status}"));
+        }
         if snapshot.phase == Phase::Running {
             if previous != Some(Phase::Running) {
                 self.begin();
@@ -521,6 +536,7 @@ pub(super) fn build(
     row: &adw::ActionRow,
     status: &gtk::Label,
     menu: &gtk::MenuButton,
+    menu_status: &gtk::Label,
 ) -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
@@ -574,6 +590,7 @@ pub(super) fn build(
         menu: menu.downgrade(),
         row: row.downgrade(),
         status: status.downgrade(),
+        menu_status: menu_status.downgrade(),
         progress: progress.downgrade(),
         issues: issues.downgrade(),
         activity: activity.downgrade(),
@@ -635,6 +652,7 @@ pub(super) fn verify_worker_failure() {
     let row = adw::ActionRow::new();
     let status = gtk::Label::new(None);
     let menu = gtk::MenuButton::new();
+    let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
     let footer = build(
         Arc::new(DriveSyncEngine::new()),
         &saved,
@@ -643,6 +661,7 @@ pub(super) fn verify_worker_failure() {
         &row,
         &status,
         &menu,
+        &menu_status,
     );
     start.emit_clicked();
     assert_eq!(start.label().as_deref(), Some("Pause"));
@@ -696,6 +715,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .use_markup(false)
             .build();
         let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
+        let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
         let footer = build(
             Arc::new(DriveSyncEngine::new()),
             &saved,
@@ -704,6 +724,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             &row,
             &status,
             &menu,
+            &menu_status,
         );
         let mut controls = std::collections::HashMap::new();
         let mut child = footer.first_child();
@@ -741,6 +762,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             menu: menu.downgrade(),
             row: row.downgrade(),
             status: status.downgrade(),
+            menu_status: menu_status.downgrade(),
             progress: bar.downgrade(),
             issues: issues.downgrade(),
             activity: activity.downgrade(),
