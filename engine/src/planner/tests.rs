@@ -78,6 +78,14 @@ fn ambiguous_and_unsafe_names_never_reach_observer() {
             .relative_path
             .is_none()
     );
+    inv.entries[0].name = ".drivesync".into();
+    assert!(
+        plan(&inv, Path::new("/test"), |_| panic!("reserved path observed"))
+            .unwrap()
+            .entries[0]
+            .relative_path
+            .is_none()
+    );
 }
 #[test]
 fn metadata_observer_preserves_files_and_rejects_symlinks() {

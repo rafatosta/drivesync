@@ -272,12 +272,12 @@ impl DriveSyncEngine {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         self.check_local_folder(&folder.local)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let path = crate::state::default_path()?;
         let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
+        let checkpoint_path =
+            crate::configuration::identity::changes_path(&folder, &config.client_id)?;
         // Validate both stores before collecting observations or changing user files.
         let mut store = crate::state::Store::open(&journal_path)?;
-        let mut checkpoints =
-            crate::state::Checkpoints::open(&path.with_file_name("changes.sqlite3"))?;
+        let mut checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
         let root = self.auth.with_access_config(&config, id, |token| {
             remote::inventory_root(token, &folder.remote.id)
         })?;
@@ -377,7 +377,7 @@ impl DriveSyncEngine {
         };
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         crate::state::Uploads::open(
-            &crate::state::default_path()?.with_file_name("uploads.sqlite3"),
+            &crate::configuration::identity::uploads_path(&folder, &config.client_id)?,
             &config.client_id,
             &folder,
         )?
@@ -403,7 +403,7 @@ impl DriveSyncEngine {
             return Err(EngineError::Authentication(AuthError::MissingPermissions));
         }
         crate::state::Uploads::open(
-            &crate::state::default_path()?.with_file_name("uploads.sqlite3"),
+            &crate::configuration::identity::uploads_path(folder, &config.client_id)?,
             &config.client_id,
             folder,
         )?
@@ -438,8 +438,9 @@ impl DriveSyncEngine {
         }
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let path = crate::state::default_path()?;
-        let checkpoints = crate::state::Checkpoints::open(&path.with_file_name("changes.sqlite3"))?;
+        let checkpoint_path =
+            crate::configuration::identity::changes_path(&folder, &config.client_id)?;
+        let checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
         let scope = crate::state::CheckpointScope {
             client: &config.client_id,
             account: id,
@@ -448,7 +449,7 @@ impl DriveSyncEngine {
         };
         let (_, checkpoint) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
         let uploads = crate::state::Uploads::open(
-            &path.with_file_name("uploads.sqlite3"),
+            &crate::configuration::identity::uploads_path(&folder, &config.client_id)?,
             &config.client_id,
             &folder,
         )?;
@@ -577,9 +578,11 @@ impl DriveSyncEngine {
             .sign_out_then(&config, id, || {
                 if let Some(folder) = &folder {
                     crate::state::Uploads::open(
-                        &crate::state::default_path()
-                            .map_err(|_| AuthError::AccountStorage)?
-                            .with_file_name("uploads.sqlite3"),
+                        &crate::configuration::identity::uploads_path(
+                            folder,
+                            &config.client_id,
+                        )
+                        .map_err(|_| AuthError::AccountStorage)?,
                         &config.client_id,
                         folder,
                     )

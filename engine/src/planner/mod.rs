@@ -88,6 +88,7 @@ fn safe(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
+        && name != ".drivesync"
         && name.len() <= 255
         && !name.contains('/')
         && !name.contains('\\')

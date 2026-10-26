@@ -126,10 +126,38 @@ pub(crate) fn state_path(
     folder: &FolderConfiguration,
     client: &str,
 ) -> Result<PathBuf, EngineError> {
+    metadata_path(folder, client, STATE)
+}
+
+/// Returns the per-root remote change checkpoint path after validating its root.
+///
+/// # Errors
+/// Returns an error if the root identity cannot be created or verified safely.
+pub(crate) fn changes_path(
+    folder: &FolderConfiguration,
+    client: &str,
+) -> Result<PathBuf, EngineError> {
+    metadata_path(folder, client, "changes.sqlite3")
+}
+
+/// Returns the per-root upload settings and intent path after validating its root.
+///
+/// # Errors
+/// Returns an error if the root identity cannot be created or verified safely.
+pub(crate) fn uploads_path(
+    folder: &FolderConfiguration,
+    client: &str,
+) -> Result<PathBuf, EngineError> {
+    metadata_path(folder, client, "uploads.sqlite3")
+}
+
+fn metadata_path(
+    folder: &FolderConfiguration,
+    client: &str,
+    name: &str,
+) -> Result<PathBuf, EngineError> {
     ensure(folder, client)?;
-    // Keep the journal path stable: it contains inode and content evidence
-    // needed to recognize files already installed in this root.
-    Ok(folder.local.join(format!(".drivesync-{STATE}")))
+    Ok(folder.local.join(DIRECTORY).join(name))
 }
 
 /// Creates or opens the private metadata directory without following symlinks.
@@ -251,6 +279,18 @@ mod tests {
         let folder = dir.folder();
         ensure(&folder, "client-a").unwrap();
         let path = dir.0.join(DIRECTORY).join(IDENTITY);
+        assert_eq!(
+            state_path(&folder, "client-a").unwrap(),
+            dir.0.join(DIRECTORY).join(STATE)
+        );
+        assert_eq!(
+            changes_path(&folder, "client-a").unwrap(),
+            dir.0.join(DIRECTORY).join("changes.sqlite3")
+        );
+        assert_eq!(
+            uploads_path(&folder, "client-a").unwrap(),
+            dir.0.join(DIRECTORY).join("uploads.sqlite3")
+        );
         let first = fs::read(&path).unwrap();
         ensure(&folder, "client-a").unwrap();
         assert_eq!(fs::read(&path).unwrap(), first);

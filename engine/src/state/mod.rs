@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBeha
 use std::{
     fs::{self, DirBuilder, OpenOptions},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 const APP_ID: i64 = 0x4453594e;
@@ -205,21 +205,6 @@ impl Store {
             entries,
         }))
     }
-}
-
-/// Uses the same private application data directory as the account index.
-pub(crate) fn default_path() -> Result<PathBuf, EngineError> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .filter(|p| p.is_absolute())
-                .map(|p| p.join(".local/share"))
-        })
-        .ok_or(EngineError::StateStorage)?;
-    Ok(base.join("drivesync/state.sqlite3"))
 }
 
 #[cfg(test)]
