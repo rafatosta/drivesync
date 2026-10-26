@@ -35,15 +35,6 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 5. Define and implement any future updates to existing remote files or deletion handling only after the conflict and recovery policies are specified.
 6. Finish OAuth and reproducible Flatpak packaging work before considering a public release.
 
-## Try DriveSync
-
-The development build is intended for GNOME Builder. Google sign-in requires a configured desktop OAuth client, and the account may need to be approved as a test user. See [build profiles](docs/build-profiles.md) and the [Google OAuth guide](docs/google-oauth.md) before building.
-
-1. Clone this repository: <https://github.com/rafatosta/drivesync.git>.
-2. Open the project folder in GNOME Builder and select the development Flatpak configuration.
-3. Configure the development OAuth client if you want to test Google sign-in, then build and run the application.
-4. Use a test account and disposable folders while evaluating synchronization.
-
 ## Project approach
 
 DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. The [MVP plan](docs/MVP.md) describes the intended acceptance scope; implementation and live GNOME/Flatpak validation may not yet cover every planned item.
