@@ -11,6 +11,7 @@ use std::{sync::Arc, time::Duration};
 #[derive(Clone)]
 struct Widgets {
     start: gtk::glib::WeakRef<gtk::Button>,
+    account_toggle: gtk::glib::WeakRef<gtk::Button>,
     folders: gtk::glib::WeakRef<gtk::Box>,
     menu: gtk::glib::WeakRef<gtk::MenuButton>,
     row: gtk::glib::WeakRef<adw::ActionRow>,
@@ -27,6 +28,39 @@ struct Widgets {
     spinner: gtk::glib::WeakRef<gtk::Spinner>,
 }
 impl Widgets {
+    /// Mirrors the shared synchronization state in the account-header control.
+    fn present_account_toggle(&self, snapshot: &crate::automatic::Snapshot) {
+        let Some(button) = self.account_toggle.upgrade() else {
+            return;
+        };
+        match snapshot.phase {
+            crate::automatic::Phase::Running if snapshot.pausing => {
+                button.set_icon_name("process-working-symbolic");
+                button.set_tooltip_text(Some("Pausing safely…"));
+                button.set_sensitive(false);
+            }
+            crate::automatic::Phase::Running => {
+                button.set_icon_name("media-playback-pause-symbolic");
+                button.set_tooltip_text(Some("Pause synchronization"));
+                button.set_sensitive(true);
+            }
+            crate::automatic::Phase::Paused => {
+                button.set_icon_name("media-playback-start-symbolic");
+                button.set_tooltip_text(Some("Resume synchronization"));
+                button.set_sensitive(true);
+            }
+            crate::automatic::Phase::Unconfigured => {
+                button.set_icon_name("media-playback-start-symbolic");
+                button.set_tooltip_text(Some("Choose a folder to enable synchronization"));
+                button.set_sensitive(false);
+            }
+            _ => {
+                button.set_icon_name("media-playback-start-symbolic");
+                button.set_tooltip_text(Some("Start or resume synchronization"));
+                button.set_sensitive(true);
+            }
+        }
+    }
     fn progress(&self, event: &DownloadProgress) {
         if let Some(stage) = &event.preparation {
             let (title, detail) = preparation_text(stage);
@@ -248,6 +282,7 @@ impl Widgets {
         previous: Option<crate::automatic::Phase>,
     ) {
         use crate::automatic::Phase;
+        self.present_account_toggle(snapshot);
         let sync_status = match snapshot.phase {
             Phase::Unconfigured => "Not configured",
             Phase::Waiting => "Waiting",
@@ -550,6 +585,7 @@ pub(super) fn build(
     row: &adw::ActionRow,
     status: &gtk::Label,
     menu: &gtk::MenuButton,
+    account_toggle: &gtk::Button,
     account_row: &adw::ActionRow,
     account_status: &gtk::Label,
     account_status_fallback: &str,
@@ -603,6 +639,7 @@ pub(super) fn build(
     footer.append(start);
     let ui = Widgets {
         start: start.downgrade(),
+        account_toggle: account_toggle.downgrade(),
         folders: folders.downgrade(),
         menu: menu.downgrade(),
         row: row.downgrade(),
@@ -619,17 +656,19 @@ pub(super) fn build(
         spinner: spinner.downgrade(),
     };
     let job = crate::automatic::Controller::attach(engine, saved);
-    let click_job = job.clone();
-    let click_ui = ui.clone();
-    start.connect_clicked(move |_| {
-        let previous = click_job.snapshot().phase;
-        if click_job.running() {
-            click_job.pause();
-        } else {
-            click_job.request();
-        }
-        click_ui.present_job(&click_job.snapshot(), Some(previous));
-    });
+    for button in [start, account_toggle] {
+        let click_job = job.clone();
+        let click_ui = ui.clone();
+        button.connect_clicked(move |_| {
+            let previous = click_job.snapshot().phase;
+            if click_job.running() {
+                click_job.pause();
+            } else {
+                click_job.request();
+            }
+            click_ui.present_job(&click_job.snapshot(), Some(previous));
+        });
+    }
     let mut revision = u64::MAX;
     let mut phase = None;
     gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -674,6 +713,7 @@ pub(super) fn verify_worker_failure() {
     let status = gtk::Label::new(None);
     let account_status = gtk::Label::new(Some("Connected"));
     let menu = gtk::MenuButton::new();
+    let account_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
     let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
     let footer = build(
         Arc::new(DriveSyncEngine::new()),
@@ -683,6 +723,7 @@ pub(super) fn verify_worker_failure() {
         &row,
         &status,
         &menu,
+        &account_toggle,
         &account_row,
         &account_status,
         "Connected",
@@ -742,6 +783,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         let account_row = adw::ActionRow::new();
         let account_status = gtk::Label::new(Some("Connected"));
         let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
+        let account_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
         let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
         let footer = build(
             Arc::new(DriveSyncEngine::new()),
@@ -751,6 +793,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             &row,
             &status,
             &menu,
+            &account_toggle,
             &account_row,
             &account_status,
             "Connected",
@@ -788,6 +831,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .unwrap();
         let ui = Widgets {
             start: start.downgrade(),
+            account_toggle: account_toggle.downgrade(),
             folders: folders.downgrade(),
             menu: menu.downgrade(),
             row: row.downgrade(),

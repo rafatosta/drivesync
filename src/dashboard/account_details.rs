@@ -41,11 +41,20 @@ pub(super) fn populate(
             .label(name)
             .use_markup(false)
             .xalign(0.0)
+            .hexpand(true)
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::WordChar)
             .css_classes(["title-1"])
             .build();
-        identity.append(&title);
+        let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        title_row.append(&title);
+        let sync_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
+        sync_toggle.set_tooltip_text(Some("Start or resume synchronization"));
+        sync_toggle.set_valign(gtk::Align::Center);
+        sync_toggle.set_sensitive(false);
+        sync_toggle.set_widget_name("account-sync-toggle");
+        title_row.append(&sync_toggle);
+        identity.append(&title_row);
         let account_status = gtk::Label::builder()
             .label(&state)
             .use_markup(false)
@@ -171,6 +180,7 @@ pub(super) fn populate(
             &sync_state,
             &status,
             &menu,
+            &sync_toggle,
             &user,
             &account_status,
             &state,
