@@ -1,6 +1,6 @@
 //! Local GNOME link entries for browser-based Google Workspace documents.
 use super::filesystem::{self, Root};
-use crate::{remote::inventory::valid_workspace_link, Cancellation, EngineError};
+use crate::{remote::valid_workspace_link, Cancellation, EngineError};
 use rustix::fs::AtFlags;
 use std::{
     ffi::OsStr,
@@ -103,7 +103,7 @@ fn matches_existing(
     parent: &File,
     name: &OsStr,
     path: &Path,
-    parent_id: filesystem::Identity,
+    parent_id: super::models::Identity,
     expected: &[u8],
 ) -> Result<bool, EngineError> {
     let Some(mut current) = filesystem::read(parent, name)? else {
