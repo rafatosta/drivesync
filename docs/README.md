@@ -1,40 +1,14 @@
-# Documentação global DriveSync
+# Documentação do DriveSync
 
-## Mockups e interface
+A documentação anterior foi preservada integralmente em [`old/`](old/README.md), mantendo seus arquivos e subpastas como referência histórica para a revisão e consolidação da nova especificação de software.
 
-- [Galeria dos mockups e auditoria GNOME HIG / compatibilidade com o motor](ui-mockups.md)
+- [Índice original da documentação](old/README.md)
+- [Requisitos anteriores](old/requirements.md)
+- [Arquitetura anterior](old/architecture.md)
+- [Metodologia de desenvolvimento](old/development-methodology.md)
+- [Plano de publicação e verificação Google](old/google-publication-plan.md)
+- [Plano do site público](old/website-plan.md)
 
-## Configurar Google Cloud
+**Estado:** migração de organização, sem alteração do conteúdo original. Links relativos que partem dos documentos arquivados para código-fonte fora de `docs/` podem necessitar de atualização durante a revisão. Para consultar um documento por seu caminho antigo, use `docs/old/<caminho-original-em-docs>`.
 
-- [**Tutorial: criar projeto Google Cloud e testar o DriveSync com OAuth próprio**](google-cloud-setup.md)
-- [Perfis de compilação: Development e Production](build-profiles.md)
-
-## Publicação, autorização Google e site
-
-- [**Plano de publicação, builds e verificação Google OAuth (checklist)**](google-publication-plan.md)
-- [**Plano do site público, política de privacidade, termos e GitHub Pages**](website-plan.md)
-
-## Comece aqui
-
-**[MVP — escopo, roteiro progressivo, checklist e critérios de aceite](MVP.md)**. Esse é o plano de implementação em vigor. Seus gates dependem uns dos outros e podem ser reabertos após descobertas posteriores.
-
-
-- [Arquitetura](architecture.md)
-- [Requisitos](requirements.md)
-- [Invariantes](invariants.md)
-- [Modelos](data-model.md)
-- [Contratos](contracts.md)
-- [Máquinas de estado](state-machines.md)
-- [Dependências dos módulos](module-dependencies.md)
-- [Contexto de dados](shared-context.md)
-- [API pública](public-engine-api.md)
-- [Ciclo de vida e background](app-lifecycle.md)
-- [Integração Nautilus](nautilus-integration.md)
-- [**Método de desenvolvimento**](development-methodology.md)
-- [**Template de algoritmo**](algorithm-spec-template.md)
-- [**Diretrizes de IA**](ai-development-guidelines.md)
-- [**Catálogo de referências técnicas**](reference-catalog.md)
-- [**Estudo de viabilidade**](feasibility-validation.md)
-- [Estratégia de testes](testing-strategy.md)
-
-A documentação local dos 16 módulos fica junto de `mod.rs`, em `engine/src/<modulo>/`; não criar árvore `modules/` separada.
+A nova documentação de engenharia será criada após a revisão do acervo. O conteúdo arquivado não deve ser tratado automaticamente como a especificação vigente do aplicativo.
