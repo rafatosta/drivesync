@@ -16,7 +16,7 @@
   - [2.6 Funcionalidades excluídas e limitações](#26-funcionalidades-excluidas-e-limitacoes)
   - [2.7 Glossário e terminologia](#27-glossario-e-terminologia)
 - [3. Contexto e restrições](#3-contexto-e-restricoes)
-  - [3.1 Ambiente Linux e desktop GNOME](#31-ambiente-linux-e-desktop-gnome)
+  - [3.1 Ambiente Linux e diretrizes de design GNOME](#31-ambiente-linux-e-diretrizes-de-design-gnome)
   - [3.2 Sistemas e serviços externos](#32-sistemas-e-servicos-externos)
   - [3.3 Google Drive API e OAuth 2.0](#33-google-drive-api-e-oauth-20)
   - [3.4 Sistema de arquivos e armazenamento local](#34-sistema-de-arquivos-e-armazenamento-local)
@@ -118,6 +118,8 @@
 
 ### 2.1 Problema e motivação
 
+O DriveSync é um cliente independente do Google Drive para Linux. A interface usa GTK4 e Libadwaita e segue as diretrizes de design do GNOME, sem restringir o aplicativo a esse ambiente de desktop. Flatpak é uma tecnologia de distribuição, não parte da definição do produto. A compatibilidade das integrações com o desktop deve ser validada nos ambientes de destino.
+
 ### 2.2 Objetivos do produto
 
 ### 2.3 Público-alvo e partes interessadas
@@ -132,7 +134,7 @@
 
 ## 3. Contexto e restrições
 
-### 3.1 Ambiente Linux e desktop GNOME
+### 3.1 Ambiente Linux e diretrizes de design GNOME
 
 ### 3.2 Sistemas e serviços externos
 

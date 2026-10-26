@@ -1,8 +1,8 @@
 # DriveSync
 
-**Google Drive for the GNOME desktop.**
+**A Google Drive client for Linux.**
 
-DriveSync is an early-stage Linux application for keeping selected Google Drive folders available on this computer. It is a technical preview, not a stable release. Test with files you can safely replace or recreate; DriveSync is not a backup service.
+DriveSync is an early-stage Linux application for keeping selected Google Drive folders available on this computer. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release. Test with files you can safely replace or recreate; DriveSync is not a backup service.
 
 ## Screenshots
 
@@ -39,11 +39,11 @@ DriveSync focuses on keeping local copies up to date with Google Drive. It does 
 
 ## Preview availability
 
-The full workflow still needs further testing in GNOME and the development Flatpak before a stable release. Google sign-in in testing builds may be restricted to approved test accounts. Public distribution requires further sign-in approval and packaging work.
+The full workflow still needs further testing on Linux desktops and in the development Flatpak before a stable release. Desktop-dependent features, including background operation and session startup, require validation in each environment. Google sign-in in testing builds may be restricted to approved test accounts. Public distribution requires further sign-in approval and packaging work.
 
 ## What's next
 
-The immediate focus is clearer first-time setup, more reliable recovery, better conflict handling, and validation of background operation and document links on GNOME. Updating existing files on Google Drive and propagating deletions require additional safeguards before they can be enabled.
+The immediate focus is clearer first-time setup, more reliable recovery, better conflict handling, and validation of background operation and document links across Linux desktop environments. Updating existing files on Google Drive and propagating deletions require additional safeguards before they can be enabled.
 
 Other possible improvements include selecting individual subfolders, faster detection of local changes, richer activity history and notifications, improved account management, support for shared content, file status indicators in GNOME Files, files on demand, and bandwidth or battery controls. These are candidate improvements, with no committed release schedule.
 
