@@ -1,5 +1,7 @@
 # Documentação do DriveSync
 
+- [**Especificação de Software — DriveSync (estrutura inicial)**](SOFTWARE_SPECIFICATION.md)
+
 A documentação anterior foi preservada integralmente em [`old/`](old/README.md), mantendo seus arquivos e subpastas como referência histórica para a revisão e consolidação da nova especificação de software.
 
 - [Índice original da documentação](old/README.md)
