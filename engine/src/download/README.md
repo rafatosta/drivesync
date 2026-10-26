@@ -13,7 +13,8 @@ queue, coordinator.
 ## Saídas e compromissos
 Arquivos binários instalados por estágio temporário ou atalhos `.desktop` com o
 `webViewLink` validado do Drive. Os atalhos abrem Docs, Sheets e Slides no
-navegador; não exportam cópias nem enviam os arquivos `.desktop` de volta ao Drive.
+navegador, inclusive atalhos do Drive para esses tipos; não exportam cópias nem
+enviam os arquivos `.desktop` de volta ao Drive.
 Um atalho divergente já existente gera conflito e é preservado.
 
 ## Limites: o que NÃO faz

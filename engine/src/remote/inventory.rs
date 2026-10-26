@@ -8,7 +8,9 @@ use std::collections::{HashSet, VecDeque};
 pub enum SkipReason {
     UnsafeName,
     SharedDrive,
+    /// Retained so old checkpoints can request one fresh inventory scan.
     GoogleNativeOrShortcut,
+    UnsupportedGoogleType,
     DownloadNotAllowed,
     MissingIntegrityMetadata,
     InvalidWebViewLink,
@@ -57,8 +59,16 @@ struct Item {
     size: Option<String>,
     md5_checksum: Option<String>,
     web_view_link: Option<String>,
+    shortcut_details: Option<ShortcutDetails>,
     drive_id: Option<String>,
     capabilities: Option<Capabilities>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShortcutDetails {
+    target_id: Option<String>,
+    target_mime_type: Option<String>,
+    target_resource_key: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,25 +135,39 @@ impl Item {
             return Err(invalid());
         }
         let link_path = workspace_link_path(&self.mime_type);
-        let web_view_link = self
-            .web_view_link
-            .as_deref()
-            .filter(|link| valid_workspace_link(link, link_path))
-            .map(str::to_owned);
+        let shortcut_path = self
+            .shortcut_details
+            .as_ref()
+            .and_then(|details| details.target_mime_type.as_deref())
+            .and_then(workspace_link_path);
+        let web_view_link = if let Some(path) = link_path {
+            self.web_view_link
+                .as_deref()
+                .filter(|link| valid_workspace_link(link, Some(path)))
+                .map(str::to_owned)
+        } else if self.mime_type == "application/vnd.google-apps.shortcut" {
+            self.shortcut_details
+                .as_ref()
+                .and_then(|details| shortcut_workspace_link(details, shortcut_path))
+        } else {
+            None
+        };
         let kind = if !safe_name(&self.name) {
             InventoryKind::Skipped(SkipReason::UnsafeName)
         } else if self.drive_id.is_some() {
             InventoryKind::Skipped(SkipReason::SharedDrive)
         } else if self.mime_type == super::models::MIME {
             InventoryKind::Folder
-        } else if link_path.is_some() {
+        } else if link_path.is_some()
+            || (self.mime_type == "application/vnd.google-apps.shortcut" && shortcut_path.is_some())
+        {
             if web_view_link.is_some() {
                 InventoryKind::GoogleWorkspaceLink
             } else {
                 InventoryKind::Skipped(SkipReason::InvalidWebViewLink)
             }
         } else if self.mime_type.starts_with("application/vnd.google-apps.") {
-            InventoryKind::Skipped(SkipReason::GoogleNativeOrShortcut)
+            InventoryKind::Skipped(SkipReason::UnsupportedGoogleType)
         } else if self.capabilities.and_then(|c| c.can_download) != Some(true) {
             InventoryKind::Skipped(SkipReason::DownloadNotAllowed)
         } else if version.is_none() || size.is_none() || self.md5_checksum.is_none() {
@@ -172,6 +196,28 @@ fn workspace_link_path(mime: &str) -> Option<&'static str> {
         "application/vnd.google-apps.presentation" => Some("/presentation/"),
         _ => None,
     }
+}
+
+/// Builds an editor URL for a Drive shortcut whose target is a Workspace document.
+fn shortcut_workspace_link(details: &ShortcutDetails, path: Option<&str>) -> Option<String> {
+    let path = path?;
+    let target_id = details.target_id.as_deref()?;
+    if !valid_id(target_id) {
+        return None;
+    }
+    let mut url = url::Url::parse(&format!("https://docs.google.com{path}d/{target_id}/edit"))
+        .ok()?;
+    if let Some(resource_key) = details.target_resource_key.as_deref() {
+        if resource_key.is_empty()
+            || resource_key.len() > 1024
+            || resource_key.chars().any(char::is_control)
+        {
+            return None;
+        }
+        url.query_pairs_mut()
+            .append_pair("resourcekey", resource_key);
+    }
+    Some(url.to_string())
 }
 
 /// Accepts only HTTPS links on Google's Docs host with the expected product path.
@@ -320,7 +366,7 @@ pub(crate) fn page(
         return Err(invalid());
     }
     let query = format!("'{parent}' in parents and trashed = false");
-    let mut params = vec![("q",query.as_str()),("fields","nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,driveId,capabilities(canDownload))"),("pageSize","200"),("spaces","drive"),("corpora","user")];
+    let mut params = vec![("q",query.as_str()),("fields","nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,shortcutDetails(targetId,targetMimeType,targetResourceKey),driveId,capabilities(canDownload))"),("pageSize","200"),("spaces","drive"),("corpora","user")];
     if let Some(next) = continuation {
         params.push(("pageToken", next));
     }

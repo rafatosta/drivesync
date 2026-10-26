@@ -60,7 +60,15 @@ fn collect_mode(
     if let Some(old) = previous {
         validate(account, root, &old.inventory)?;
     }
-    let mut current = previous.filter(|_| !force_scan).cloned();
+    let reclassify_old_google_items = previous.is_some_and(|old| {
+        old.inventory.entries.iter().any(|item| {
+            item.kind
+                == crate::InventoryKind::Skipped(crate::SkipReason::GoogleNativeOrShortcut)
+        })
+    });
+    let mut current = previous
+        .filter(|_| !force_scan && !reclassify_old_google_items)
+        .cloned();
     let mut notices = previous.map(|old| old.notices.clone()).unwrap_or_default();
     let mut observed = previous.map(|old| old.inventory.clone());
     for _ in 0..3 {

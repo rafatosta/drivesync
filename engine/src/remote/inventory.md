@@ -20,13 +20,16 @@ Erros interrompem o inventário sem publicar um resultado parcial como completo.
 Políticas: 100.000 itens e 10.000 páginas por inventário; limites explícitos
 retornam erro, nunca truncamento silencioso. Pastas de nomes inseguros ou Drives
 compartilhados não são percorridas. Docs, Sheets e Slides com `webViewLink` HTTPS
-validado em `docs.google.com` são candidatos a atalhos locais para abrir no
-navegador; eles nunca são exportados como cópias. Atalhos do Drive e outros tipos
-Google especiais são classificados como ignorados. Arquivos sem permissão de
-download ou metadados mínimos de integridade não são candidatos a download.
-Nenhuma consulta de conteúdo, criação local, upload ou exclusão ocorre nesta
-unidade. O executor consulta novamente os metadados e valida conflitos; a árvore
-pode mudar enquanto o inventário é produzido.
+validado em `docs.google.com`, e atalhos do Drive para esses tipos, são candidatos
+a atalhos locais para abrir o documento no navegador; eles nunca são exportados
+como cópias. Outros atalhos e tipos Google especiais são classificados como
+ignorados. Arquivos sem permissão de download ou metadados mínimos de integridade
+não são candidatos a download.
+Um checkpoint com a classificação antiga de tipos Google força um inventário
+completo uma vez, para que documentos anteriormente ignorados possam receber
+seu atalho local. Nenhuma consulta de conteúdo, criação local, upload ou exclusão
+ocorre nesta unidade. O executor consulta novamente os metadados e valida
+conflitos; a árvore pode mudar enquanto o inventário é produzido.
 
 Testes: árvore aninhada, múltiplas páginas/página vazia, duplicatas de nomes,
 IDs/tokens repetidos, pais inconsistentes, tipos ignorados, metadados inválidos,

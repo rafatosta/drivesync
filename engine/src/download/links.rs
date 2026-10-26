@@ -77,6 +77,13 @@ fn entry(name: &str, mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError>
         "application/vnd.google-apps.document" => Some("/document/"),
         "application/vnd.google-apps.spreadsheet" => Some("/spreadsheets/"),
         "application/vnd.google-apps.presentation" => Some("/presentation/"),
+        "application/vnd.google-apps.shortcut" => [
+            "/document/",
+            "/spreadsheets/",
+            "/presentation/",
+        ]
+        .into_iter()
+        .find(|path| valid_workspace_link(url, Some(path))),
         _ => None,
     };
     if !valid_workspace_link(url, mime_path) {

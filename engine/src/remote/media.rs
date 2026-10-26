@@ -11,7 +11,7 @@ pub(crate) fn metadata(
     if !valid_id(&expected.id) {
         return Err(EngineError::InvalidPlan);
     }
-    let body=super::client::request(token,&format!("https://www.googleapis.com/drive/v3/files/{}",expected.id),&[("fields","id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,driveId,capabilities(canDownload)")])?;
+    let body=super::client::request(token,&format!("https://www.googleapis.com/drive/v3/files/{}",expected.id),&[("fields","id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,shortcutDetails(targetId,targetMimeType,targetResourceKey),driveId,capabilities(canDownload)")])?;
     super::inventory::decode_item(&body, &expected.parent_id)
 }
 /// No redirects or automatic decompression. Partial/error bodies are never media.
