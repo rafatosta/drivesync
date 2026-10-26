@@ -29,12 +29,15 @@ pub struct DownloadReport {
     pub recovered: usize,
     pub unchanged: usize,
     pub directories: usize,
+    /// Workspace browser shortcuts made available in the local tree.
+    pub linked: usize,
     pub skipped: usize,
     pub issues: Vec<DownloadIssue>,
     /// Historical path activity, independent of actionable download failures.
     pub previous_paths: Vec<PreviousPath>,
 }
-/// Current item stage. Receiving bytes is distinct from verification/installation.
+/// Current item stage. Receiving bytes, installing binaries, and linking remote
+/// Workspace documents are reported as separate operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadStage {
     Checking,
@@ -42,6 +45,7 @@ pub enum DownloadStage {
     Uploading,
     Verifying,
     Installing,
+    Linking,
 }
 /// Item-local details; byte totals never describe the complete cycle.
 #[derive(Debug, Clone)]

@@ -1,6 +1,7 @@
 //! Manual binary downloads and managed updates with preserved prior versions.
 mod execution;
 pub(crate) mod filesystem;
+mod links;
 mod models;
 mod stream;
 

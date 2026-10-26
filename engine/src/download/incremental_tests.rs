@@ -175,6 +175,7 @@ fn unchanged_directory_fast_path_never_creates_missing_directories() {
         version: Some(1),
         size: None,
         md5_checksum: None,
+        web_view_link: None,
         kind: InventoryKind::Folder,
     };
     inv.entries.insert(0, folder);
@@ -209,6 +210,7 @@ fn rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_re
         version: Some(1),
         size: None,
         md5_checksum: None,
+        web_view_link: None,
         kind: InventoryKind::Folder,
     };
     inv.entries.insert(0, folder);

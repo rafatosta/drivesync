@@ -12,6 +12,7 @@ fn inventory() -> RemoteInventory {
             version: Some(1),
             size: Some(3),
             md5_checksum: Some("hash".into()),
+            web_view_link: None,
             kind: InventoryKind::Binary,
         }],
     }

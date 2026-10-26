@@ -21,7 +21,7 @@ Conseguimos manter pasta local e pasta remota do Google Drive coerentes e recupe
 ## Experimentos de alto risco
 - Escopo `drive.file` permite a experiência desejada com arquivos anteriores ao DriveSync? Se não, avaliar `drive` e requisitos de verificação (ver R-SCOPES).
 - É possível executar atualização remota com garantia de revisão esperada? Não inferir atomicidade de uma verificação anterior.
-- Downloads do Workspace Google Docs/Sheets/Slides não equivalem a arquivos binários comuns; adiar ou definir estratégia explícita.
+- Docs/Sheets/Slides não são arquivos binários comuns: a estratégia definida é criar links locais `.desktop` para o `webViewLink`, sem exportar cópias.
 - Renomeações, arquivos com nomes duplicados, mudanças de compartilhamento e múltiplas revisões: validar identidade por ID, não por caminho apenas.
 
 ## Métricas e evidência

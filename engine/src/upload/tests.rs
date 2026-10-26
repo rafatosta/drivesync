@@ -47,6 +47,7 @@ fn entry(op: &Intent) -> InventoryEntry {
         } else {
             Some(op.md5.clone())
         },
+        web_view_link: None,
         kind: if op.directory {
             InventoryKind::Folder
         } else {

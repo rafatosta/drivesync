@@ -47,7 +47,7 @@ pub(crate) fn change_page(token: &str, page: &str) -> Result<ChangePage, EngineE
     let bytes = super::client::change_request(token, "https://www.googleapis.com/drive/v3/changes", &[
         ("pageToken", page), ("pageSize", "200"), ("spaces", "drive"),
         ("includeRemoved", "true"), ("includeItemsFromAllDrives", "false"),
-        ("fields", "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,parents,trashed,version,size,md5Checksum,driveId,capabilities(canDownload)))")])?;
+        ("fields", "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,driveId,capabilities(canDownload)))")])?;
     decode_page(&bytes)
 }
 fn decode_page(bytes: &[u8]) -> Result<ChangePage, EngineError> {

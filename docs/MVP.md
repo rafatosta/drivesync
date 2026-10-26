@@ -49,7 +49,7 @@ Uma execução que somente abre a janela, faz login ou baixa um arquivo avulso *
 | Upload e sincronização bidirecional | `RemoteProvider`, `SyncPlan`, `BaseVersion`, `queue` e `coordinator` não podem assumir fluxo unidirecional como regra permanente |
 | Exclusão/propagação de exclusões | Registrar observações `ABSENT/UNKNOWN` e tombstones, mas nunca executar deleção no MVP |
 | Resolução avançada de conflitos | Modelo e estados `Conflict` preservados; UI pode mostrar “ação manual necessária” |
-| Google Docs/Sheets/Slides | Detectar MIME nativo e **ignorar explicitamente**, sem baixar conteúdo inválido ou exportar silenciosamente |
+| Google Docs/Sheets/Slides | Criar um atalho local `.desktop` que abre o link oficial no navegador; não exportar cópias locais. Outros formatos nativos e atalhos do Drive continuam ignorados. |
 | Múltiplas pastas por conta e sincronização seletiva avançada | IDs de conta/raiz nos contratos e schema; o MVP já exige múltiplas **contas**, mas somente uma raiz configurável por conta |
 | Shared Drives, atalhos, arquivos especiais, symlinks remotos | Reconhecer tipos não suportados; não simular arquivos regulares |
 | Daemon separado, system tray e integração Nautilus/D-Bus | Manter biblioteca independente; `ipc` continua opcional e não é pré-requisito |

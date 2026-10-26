@@ -7,7 +7,8 @@ substituir arquivos locais. Não avança cursores nem grava estado de sincroniza
 Entrada: conta identificada, raiz remota configurada e token de cancelamento.
 A fachada obtém a credencial da própria conta e resolve a identidade real da raiz.
 Saída: observações tipadas com conta, raiz, IDs, pai, nome, versão, tamanho,
-checksum disponível e classificação. Nomes iguais preservam IDs distintos.
+checksum disponível, link de visualização validado e classificação. Nomes iguais
+preservam IDs distintos.
 
 Algoritmo: fila de pastas iniciada na raiz; para cada pasta percorrer todas as
 páginas, inclusive páginas vazias com continuação; validar referências, IDs,
@@ -18,12 +19,14 @@ Erros interrompem o inventário sem publicar um resultado parcial como completo.
 
 Políticas: 100.000 itens e 10.000 páginas por inventário; limites explícitos
 retornam erro, nunca truncamento silencioso. Pastas de nomes inseguros ou Drives
-compartilhados não são percorridas. Documentos Workspace, atalhos e tipos Google
-especiais são classificados como ignorados; arquivos sem permissão de download
-ou metadados mínimos de integridade não são candidatos a download. Nenhuma
-consulta de conteúdo, criação local, upload ou exclusão ocorre nesta unidade.
-A transferência futura deve consultar novamente metadados e validar conflitos;
-a árvore pode mudar enquanto o inventário é produzido.
+compartilhados não são percorridas. Docs, Sheets e Slides com `webViewLink` HTTPS
+validado em `docs.google.com` são candidatos a atalhos locais para abrir no
+navegador; eles nunca são exportados como cópias. Atalhos do Drive e outros tipos
+Google especiais são classificados como ignorados. Arquivos sem permissão de
+download ou metadados mínimos de integridade não são candidatos a download.
+Nenhuma consulta de conteúdo, criação local, upload ou exclusão ocorre nesta
+unidade. O executor consulta novamente os metadados e valida conflitos; a árvore
+pode mudar enquanto o inventário é produzido.
 
 Testes: árvore aninhada, múltiplas páginas/página vazia, duplicatas de nomes,
 IDs/tokens repetidos, pais inconsistentes, tipos ignorados, metadados inválidos,

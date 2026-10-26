@@ -32,6 +32,7 @@ pub enum ConflictReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanAction {
     Download,
+    CreateLink,
     NoOp,
     CreateDirectory,
     Blocked(ConflictReason),
@@ -94,6 +95,18 @@ fn safe(name: &str) -> bool {
         && !name.contains('\\')
         && !name.chars().any(char::is_control)
 }
+fn local_name(item: &crate::InventoryEntry) -> Option<String> {
+    if !safe(&item.name) {
+        return None;
+    }
+    // Keep browser shortcuts distinct from regular files with the same Drive name.
+    let name = if item.kind == InventoryKind::GoogleWorkspaceLink {
+        format!("{}.desktop", item.name)
+    } else {
+        item.name.clone()
+    };
+    safe(&name).then_some(name)
+}
 
 /// Builds paths by stable parent IDs and blocks ambiguity throughout descendants.
 /// The injected observer enables pure tests and cannot write through this API.
@@ -111,9 +124,9 @@ pub(crate) fn plan(
         if e.id == inventory.root_id || !ids.insert(e.id.as_str()) {
             return Err(EngineError::InvalidPlan);
         }
-        *siblings
-            .entry((e.parent_id.as_str(), e.name.as_str()))
-            .or_insert(0usize) += 1;
+        if let Some(name) = local_name(e) {
+            *siblings.entry((e.parent_id.clone(), name)).or_insert(0usize) += 1;
+        }
     }
     let mut children: HashMap<&str, Vec<usize>> = HashMap::new();
     for (index, e) in inventory.entries.iter().enumerate() {
@@ -130,15 +143,13 @@ pub(crate) fn plan(
                     return Err(EngineError::InvalidPlan);
                 }
                 let e = &inventory.entries[index];
-                let path =
-                    if safe(&e.name) && siblings[&(e.parent_id.as_str(), e.name.as_str())] == 1 {
-                        parent_path
-                            .as_ref()
-                            .map(|p| p.join(&e.name))
-                            .filter(|p| p.as_os_str().len() <= 4096)
-                    } else {
-                        None
-                    };
+                let path = local_name(e).and_then(|name| {
+                    let key = (e.parent_id.clone(), name.clone());
+                    (siblings.get(&key) == Some(&1))
+                        .then(|| parent_path.as_ref().map(|p| p.join(&name)))
+                        .flatten()
+                        .filter(|p| p.as_os_str().len() <= 4096)
+                });
                 paths[index] = path.clone();
                 if e.kind == InventoryKind::Folder {
                     queue.push_back((&e.id, path));
@@ -161,6 +172,7 @@ pub(crate) fn plan(
                 LocalObservation::Unknown => PlanAction::DeferredUnknown,
                 _ => PlanAction::Blocked(ConflictReason::LocalTypeMismatch),
             },
+            (InventoryKind::GoogleWorkspaceLink, Some(_)) => PlanAction::CreateLink,
             (InventoryKind::Binary, Some(_)) => match e.version {
                 Some(version) => decide(None, &local, version),
                 None => PlanAction::DeferredUnknown,

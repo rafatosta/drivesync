@@ -20,6 +20,7 @@ fn item(id: &str, parent: &str, folder: bool) -> InventoryEntry {
         version: Some(1),
         size: Some(3),
         md5_checksum: Some("900150983cd24fb0d6963f7d28e17f72".into()),
+        web_view_link: None,
         kind: if folder {
             InventoryKind::Folder
         } else {

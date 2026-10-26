@@ -102,6 +102,7 @@ impl Widgets {
                     DownloadStage::Uploading => "Uploading new file",
                     DownloadStage::Verifying => "Verifying file integrity",
                     DownloadStage::Installing => "Saving verified file",
+                    DownloadStage::Linking => "Creating browser shortcut",
                 });
                 row.set_subtitle(&current.relative_path.to_string_lossy());
             }
@@ -517,6 +518,9 @@ fn progress_text(event: &DownloadProgress) -> String {
         DownloadStage::Checking => "Checking this item and its existing local copy…".into(),
         DownloadStage::Verifying => "Download received. Verifying this file before saving…".into(),
         DownloadStage::Installing => "Integrity verified. Saving this file safely…".into(),
+        DownloadStage::Linking => {
+            "Creating a local link to open this Google document in your browser…".into()
+        }
         DownloadStage::Downloading | DownloadStage::Uploading => match item.total {
             Some(total) if total > 0 => format!(
                 "Current file: {} of {} ({:.0}%)",
@@ -533,6 +537,14 @@ fn progress_text(event: &DownloadProgress) -> String {
 }
 fn summary(report: &DownloadReport) -> String {
     let mut parts = Vec::new();
+    if report.linked > 0 {
+        let label = if report.linked == 1 {
+            "browser shortcut"
+        } else {
+            "browser shortcuts"
+        };
+        parts.push(format!("{} {label}", report.linked));
+    }
     for (count, label) in [
         (report.downloaded, "downloaded"),
         (report.uploaded, "uploaded"),

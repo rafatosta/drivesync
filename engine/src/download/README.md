@@ -1,7 +1,8 @@
 # Módulo download
 
 ## Objetivo
-Receber conteúdo remoto e instalar resultado local com segurança.
+Instalar conteúdo binário verificado e criar atalhos locais para documentos
+Google Workspace, preservando os arquivos locais existentes.
 
 ## Papel no sistema
 Atua como caixa-preta especializada do DriveSync, sujeita aos invariantes globais em `docs/invariants.md`.
@@ -10,13 +11,19 @@ Atua como caixa-preta especializada do DriveSync, sujeita aos invariantes globai
 queue, coordinator.
 
 ## Saídas e compromissos
-Arquivo verificado ou erro recuperável.
+Arquivos binários instalados por estágio temporário ou atalhos `.desktop` com o
+`webViewLink` validado do Drive. Os atalhos abrem Docs, Sheets e Slides no
+navegador; não exportam cópias nem enviam os arquivos `.desktop` de volta ao Drive.
+Um atalho divergente já existente gera conflito e é preservado.
 
 ## Limites: o que NÃO faz
 Não planejar qual arquivo sincronizar.
 
-## Algoritmos previstos
-DOWNLOAD-001 transferência temporária; DOWNLOAD-002 validação final.
+## Algoritmos
+Downloads binários usam transferência temporária e validação final. Atalhos são
+escritos como `Type=Link`, sem `Exec`, com instalação exclusiva sem substituição.
+No GNOME, o gerenciador de arquivos pode pedir que o usuário confie no atalho na
+primeira abertura.
 
 ## Erros e cenários a verificar
 Rede interrompida; disco cheio; remoto alterado; hash divergente.

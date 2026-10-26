@@ -107,6 +107,7 @@ fn retains_unobserved_items_without_turning_them_into_current_work() {
         version: Some(1),
         size: Some(3),
         md5_checksum: Some("hash".into()),
+        web_view_link: None,
         kind: crate::InventoryKind::Binary,
     });
     let plan = crate::planner::plan(&inv, Path::new("/local"), |_| {

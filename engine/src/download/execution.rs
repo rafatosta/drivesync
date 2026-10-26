@@ -180,6 +180,31 @@ pub(crate) fn run(
                         report.directories += 1;
                     })
             }
+            (InventoryKind::GoogleWorkspaceLink, Some(path), PlanAction::CreateLink) => {
+                validate_chain(source, item, &by_id, &inventory.root_id).and_then(|()| {
+                    let url = item.web_view_link.as_deref().ok_or(EngineError::InvalidPlan)?;
+                    progress(DownloadProgress {
+                        preparation: None,
+                        completed_items,
+                        total_items,
+                        current: Some(DownloadItemProgress {
+                            relative_path: path.clone(),
+                            stage: DownloadStage::Linking,
+                            received: 0,
+                            total: None,
+                        }),
+                    });
+                    super::links::ensure(
+                        &session.root,
+                        path,
+                        &item.name,
+                        &item.mime_type,
+                        url,
+                        session.context.cancel,
+                    )
+                    .map(|()| report.linked += 1)
+                })
+            }
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {

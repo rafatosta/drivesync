@@ -11,12 +11,14 @@ pub enum SkipReason {
     GoogleNativeOrShortcut,
     DownloadNotAllowed,
     MissingIntegrityMetadata,
+    InvalidWebViewLink,
 }
 /// Classification is observational, never proof that local installation is safe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InventoryKind {
     Folder,
     Binary,
+    GoogleWorkspaceLink,
     Skipped(SkipReason),
 }
 
@@ -30,6 +32,9 @@ pub struct InventoryEntry {
     pub version: Option<u64>,
     pub size: Option<u64>,
     pub md5_checksum: Option<String>,
+    /// Validated browser URL for Docs, Sheets, or Slides; never an export URL.
+    #[serde(default)]
+    pub web_view_link: Option<String>,
     pub kind: InventoryKind,
 }
 /// Successful observations scoped to one account/root, not a consistent snapshot.
@@ -51,6 +56,7 @@ struct Item {
     version: Option<String>,
     size: Option<String>,
     md5_checksum: Option<String>,
+    web_view_link: Option<String>,
     drive_id: Option<String>,
     capabilities: Option<Capabilities>,
 }
@@ -118,12 +124,24 @@ impl Item {
         {
             return Err(invalid());
         }
+        let link_path = workspace_link_path(&self.mime_type);
+        let web_view_link = self
+            .web_view_link
+            .as_deref()
+            .filter(|link| valid_workspace_link(link, link_path))
+            .map(str::to_owned);
         let kind = if !safe_name(&self.name) {
             InventoryKind::Skipped(SkipReason::UnsafeName)
         } else if self.drive_id.is_some() {
             InventoryKind::Skipped(SkipReason::SharedDrive)
         } else if self.mime_type == super::models::MIME {
             InventoryKind::Folder
+        } else if link_path.is_some() {
+            if web_view_link.is_some() {
+                InventoryKind::GoogleWorkspaceLink
+            } else {
+                InventoryKind::Skipped(SkipReason::InvalidWebViewLink)
+            }
         } else if self.mime_type.starts_with("application/vnd.google-apps.") {
             InventoryKind::Skipped(SkipReason::GoogleNativeOrShortcut)
         } else if self.capabilities.and_then(|c| c.can_download) != Some(true) {
@@ -141,9 +159,37 @@ impl Item {
             version,
             size,
             md5_checksum: self.md5_checksum,
+            web_view_link,
             kind,
         })
     }
+}
+
+fn workspace_link_path(mime: &str) -> Option<&'static str> {
+    match mime {
+        "application/vnd.google-apps.document" => Some("/document/"),
+        "application/vnd.google-apps.spreadsheet" => Some("/spreadsheets/"),
+        "application/vnd.google-apps.presentation" => Some("/presentation/"),
+        _ => None,
+    }
+}
+
+/// Accepts only HTTPS links on Google's Docs host with the expected product path.
+pub(crate) fn valid_workspace_link(link: &str, path: Option<&str>) -> bool {
+    let Some(path) = path else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(link) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("docs.google.com")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path().contains(path)
+        && url.path().contains("/d/")
+        && !link.chars().any(char::is_control)
 }
 
 /// Walks provider pages through an injectable read-only transport.
@@ -274,7 +320,7 @@ pub(crate) fn page(
         return Err(invalid());
     }
     let query = format!("'{parent}' in parents and trashed = false");
-    let mut params = vec![("q",query.as_str()),("fields","nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,md5Checksum,driveId,capabilities(canDownload))"),("pageSize","200"),("spaces","drive"),("corpora","user")];
+    let mut params = vec![("q",query.as_str()),("fields","nextPageToken,incompleteSearch,files(id,name,mimeType,parents,trashed,version,size,md5Checksum,webViewLink,driveId,capabilities(canDownload))"),("pageSize","200"),("spaces","drive"),("corpora","user")];
     if let Some(next) = continuation {
         params.push(("pageToken", next));
     }
