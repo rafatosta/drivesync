@@ -27,9 +27,9 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 - Define safe handling for edits to existing remote files and deletions.
 - Prepare OAuth and Flatpak packaging for public distribution.
 
-### Future features (post-MVP)
+### Future features
 
-The MVP has established the core application foundation: Google account connection, local/remote folder pairing, basic downloads and uploads, and synchronization. The following items are **candidate enhancements and design decisions**, not unfinished prerequisites for building that foundation. They will be specified and prioritized separately; some extend safeguards or capabilities already present in the technical preview.
+The following items are **candidate enhancements and design decisions** to be specified and prioritized separately. Some extend safeguards or capabilities already present in the technical preview.
 
 | Priority | Capability | Intended direction |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ P0/P1/P2 are preliminary planning priorities, **not** a release schedule or a cl
 
 ## Project approach
 
-DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Its MVP foundation is in place; subsequent features primarily involve application-level product decisions, UX, resilience, and edge cases rather than rebuilding the Google Drive integration. This does **not** mean the app is production-ready. The [MVP plan](docs/MVP.md) documents the intended acceptance scope; implementation and live GNOME/Flatpak validation may not yet cover every planned item.
+DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Further development focuses on product decisions, usability, resilience, and edge cases while retaining the core integration with Google Drive. The app remains a technical preview and needs continued GNOME/Flatpak validation before a stable release.
 
 ## Feedback
 
