@@ -77,13 +77,11 @@ fn entry(name: &str, mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError>
         "application/vnd.google-apps.document" => Some("/document/"),
         "application/vnd.google-apps.spreadsheet" => Some("/spreadsheets/"),
         "application/vnd.google-apps.presentation" => Some("/presentation/"),
-        "application/vnd.google-apps.shortcut" => [
-            "/document/",
-            "/spreadsheets/",
-            "/presentation/",
-        ]
-        .into_iter()
-        .find(|path| valid_workspace_link(url, Some(path))),
+        "application/vnd.google-apps.shortcut" => {
+            ["/document/", "/spreadsheets/", "/presentation/"]
+                .into_iter()
+                .find(|path| valid_workspace_link(url, Some(path)))
+        }
         _ => None,
     };
     if !valid_workspace_link(url, mime_path) {
@@ -91,10 +89,7 @@ fn entry(name: &str, mime_type: &str, url: &str) -> Result<Vec<u8>, EngineError>
     }
     let name = escape(name);
     let url = escape(url);
-    Ok(format!(
-        "[Desktop Entry]\nVersion=1.5\nType=Link\nName={name}\nURL={url}\n"
-    )
-    .into_bytes())
+    Ok(format!("[Desktop Entry]\nVersion=1.5\nType=Link\nName={name}\nURL={url}\n").into_bytes())
 }
 
 fn escape(value: &str) -> String {

@@ -125,7 +125,9 @@ pub(crate) fn plan(
             return Err(EngineError::InvalidPlan);
         }
         if let Some(name) = local_name(e) {
-            *siblings.entry((e.parent_id.clone(), name)).or_insert(0usize) += 1;
+            *siblings
+                .entry((e.parent_id.clone(), name))
+                .or_insert(0usize) += 1;
         }
     }
     let mut children: HashMap<&str, Vec<usize>> = HashMap::new();

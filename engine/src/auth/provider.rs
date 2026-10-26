@@ -135,7 +135,9 @@ impl AuthProvider {
         let identity = self.api.identify(&tokens.access_token)?;
         let account = identity.summary()?;
         let write_access = tokens.scope.as_deref().is_some_and(|scope| {
-            scope.split_whitespace().any(|granted| granted == google::DRIVE_SCOPE)
+            scope
+                .split_whitespace()
+                .any(|granted| granted == google::DRIVE_SCOPE)
         });
         let lock = self.account_lock(&account.id)?;
         let _guard = lock.lock().map_err(|_| AuthError::Internal)?;

@@ -175,16 +175,18 @@ pub(super) fn populate(
         content.append(&super::synchronization::build(
             engine.clone(),
             &saved,
-            &folders,
-            &start,
-            &sync_state,
-            &status,
-            &menu,
-            &sync_toggle,
-            &user,
-            &account_status,
-            &state,
-            &sync_menu_status,
+            super::synchronization::Controls {
+                folders: &folders,
+                start: &start,
+                row: &sync_state,
+                status: &status,
+                menu: &menu,
+                account_toggle: &sync_toggle,
+                account_row: &user,
+                account_status: &account_status,
+                account_status_fallback: &state,
+                menu_status: &sync_menu_status,
+            },
         ));
         details.add_named(&content, Some(&saved.account.id.0));
     }

@@ -320,9 +320,7 @@ impl Widgets {
                 }
                 if let Some(row) = self.row.upgrade() {
                     row.set_title("Pausing synchronization");
-                    row.set_subtitle(
-                        "The current operation will finish or stop at a safe point…",
-                    );
+                    row.set_subtitle("The current operation will finish or stop at a safe point…");
                 }
             } else if let Some(progress) = &snapshot.progress {
                 self.progress(progress);
@@ -587,22 +585,39 @@ fn preserved_text(report: &DownloadReport) -> String {
     }
     text
 }
+/// Existing account controls observed by the synchronization footer.
+pub(super) struct Controls<'a> {
+    pub folders: &'a gtk::Box,
+    pub start: &'a gtk::Button,
+    pub row: &'a adw::ActionRow,
+    pub status: &'a gtk::Label,
+    pub menu: &'a gtk::MenuButton,
+    pub account_toggle: &'a gtk::Button,
+    pub account_row: &'a adw::ActionRow,
+    pub account_status: &'a gtk::Label,
+    pub account_status_fallback: &'a str,
+    pub menu_status: &'a gtk::Label,
+}
+
 /// Observes the shared account job. Page disposal stops observation only; the
 /// application-owned worker continues while hidden or while pages are rebuilt.
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
-    folders: &gtk::Box,
-    start: &gtk::Button,
-    row: &adw::ActionRow,
-    status: &gtk::Label,
-    menu: &gtk::MenuButton,
-    account_toggle: &gtk::Button,
-    account_row: &adw::ActionRow,
-    account_status: &gtk::Label,
-    account_status_fallback: &str,
-    menu_status: &gtk::Label,
+    controls: Controls<'_>,
 ) -> gtk::Box {
+    let Controls {
+        folders,
+        start,
+        row,
+        status,
+        menu,
+        account_toggle,
+        account_row,
+        account_status,
+        account_status_fallback,
+        menu_status,
+    } = controls;
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
         .label("Automatic checks run every minute. Up-to-date files are not transferred again. Existing local edits and previous copies are preserved.")
@@ -730,16 +745,18 @@ pub(super) fn verify_worker_failure() {
     let footer = build(
         Arc::new(DriveSyncEngine::new()),
         &saved,
-        &folders,
-        &start,
-        &row,
-        &status,
-        &menu,
-        &account_toggle,
-        &account_row,
-        &account_status,
-        "Connected",
-        &menu_status,
+        Controls {
+            folders: &folders,
+            start: &start,
+            row: &row,
+            status: &status,
+            menu: &menu,
+            account_toggle: &account_toggle,
+            account_row: &account_row,
+            account_status: &account_status,
+            account_status_fallback: "Connected",
+            menu_status: &menu_status,
+        },
     );
     start.emit_clicked();
     assert_eq!(start.label().as_deref(), Some("Pause"));
@@ -800,16 +817,18 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         let footer = build(
             Arc::new(DriveSyncEngine::new()),
             &saved,
-            &folders,
-            &start,
-            &row,
-            &status,
-            &menu,
-            &account_toggle,
-            &account_row,
-            &account_status,
-            "Connected",
-            &menu_status,
+            Controls {
+                folders: &folders,
+                start: &start,
+                row: &row,
+                status: &status,
+                menu: &menu,
+                account_toggle: &account_toggle,
+                account_row: &account_row,
+                account_status: &account_status,
+                account_status_fallback: "Connected",
+                menu_status: &menu_status,
+            },
         );
         let mut controls = std::collections::HashMap::new();
         let mut child = footer.first_child();

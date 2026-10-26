@@ -182,7 +182,10 @@ pub(crate) fn run(
             }
             (InventoryKind::GoogleWorkspaceLink, Some(path), PlanAction::CreateLink) => {
                 validate_chain(source, item, &by_id, &inventory.root_id).and_then(|()| {
-                    let url = item.web_view_link.as_deref().ok_or(EngineError::InvalidPlan)?;
+                    let url = item
+                        .web_view_link
+                        .as_deref()
+                        .ok_or(EngineError::InvalidPlan)?;
                     progress(DownloadProgress {
                         preparation: None,
                         completed_items,

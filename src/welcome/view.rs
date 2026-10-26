@@ -56,10 +56,7 @@ pub(super) fn build() -> WelcomeView {
     )]);
     content.append(&image);
     content.append(&text("Welcome to DriveSync", "title-1"));
-    let description = text(
-        "Your Google Drive, a little closer.",
-        "body",
-    );
+    let description = text("Your Google Drive, a little closer.", "body");
     description.set_max_width_chars(48);
     description.set_halign(gtk::Align::Center);
     content.append(&description);
@@ -74,7 +71,10 @@ pub(super) fn build() -> WelcomeView {
     actions.append(&connect);
     content.append(&actions);
 
-    let footnote = text("A calmer place for the files that matter to you.", "dim-label");
+    let footnote = text(
+        "A calmer place for the files that matter to you.",
+        "dim-label",
+    );
     footnote.set_max_width_chars(80);
     footnote.set_halign(gtk::Align::Center);
     content.append(&footnote);

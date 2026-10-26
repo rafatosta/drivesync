@@ -205,8 +205,8 @@ fn shortcut_workspace_link(details: &ShortcutDetails, path: Option<&str>) -> Opt
     if !valid_id(target_id) {
         return None;
     }
-    let mut url = url::Url::parse(&format!("https://docs.google.com{path}d/{target_id}/edit"))
-        .ok()?;
+    let mut url =
+        url::Url::parse(&format!("https://docs.google.com{path}d/{target_id}/edit")).ok()?;
     if let Some(resource_key) = details.target_resource_key.as_deref() {
         if resource_key.is_empty()
             || resource_key.len() > 1024

@@ -49,19 +49,16 @@ pub(crate) fn ensure(folder: &FolderConfiguration, client: &str) -> Result<(), E
         return Err(EngineError::FolderIdentityStorage);
     }
     let directory = open_state_dir(&root)?;
-    match read_marker(&directory)? {
-        Some(marker) => {
-            if marker.format == 1
-                && !marker.id.is_empty()
-                && marker.client == client
-                && marker.account == folder.account_id
-                && marker.remote == folder.remote.id
-            {
-                return Ok(());
-            }
-            return Err(EngineError::FolderIdentityMismatch);
+    if let Some(marker) = read_marker(&directory)? {
+        if marker.format == 1
+            && !marker.id.is_empty()
+            && marker.client == client
+            && marker.account == folder.account_id
+            && marker.remote == folder.remote.id
+        {
+            return Ok(());
         }
-        None => {}
+        return Err(EngineError::FolderIdentityMismatch);
     }
 
     let marker = Marker {
@@ -318,6 +315,7 @@ mod tests {
     fn marker_rejects_corruption_and_symlinks_without_replacing_them() {
         let dir = Directory::new();
         let path = dir.0.join(DIRECTORY).join(IDENTITY);
+        fs::create_dir(dir.0.join(DIRECTORY)).unwrap();
         fs::write(&path, b"{bad json").unwrap();
         assert_eq!(
             ensure(&dir.folder(), "client-a"),

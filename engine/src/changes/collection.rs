@@ -62,8 +62,7 @@ fn collect_mode(
     }
     let reclassify_old_google_items = previous.is_some_and(|old| {
         old.inventory.entries.iter().any(|item| {
-            item.kind
-                == crate::InventoryKind::Skipped(crate::SkipReason::GoogleNativeOrShortcut)
+            item.kind == crate::InventoryKind::Skipped(crate::SkipReason::GoogleNativeOrShortcut)
         })
     });
     let mut current = previous

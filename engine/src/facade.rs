@@ -578,11 +578,8 @@ impl DriveSyncEngine {
             .sign_out_then(&config, id, || {
                 if let Some(folder) = &folder {
                     crate::state::Uploads::open(
-                        &crate::configuration::identity::uploads_path(
-                            folder,
-                            &config.client_id,
-                        )
-                        .map_err(|_| AuthError::AccountStorage)?,
+                        &crate::configuration::identity::uploads_path(folder, &config.client_id)
+                            .map_err(|_| AuthError::AccountStorage)?,
                         &config.client_id,
                         folder,
                     )

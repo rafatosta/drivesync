@@ -1,5 +1,6 @@
 use super::*;
 use crate::{AccountId, Cancellation};
+use std::path::PathBuf;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
