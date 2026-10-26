@@ -1,6 +1,6 @@
 //! Native opt-in for create-only uploads using the account's existing OAuth grant.
 use adw::{gtk, prelude::*};
-use drivesync_engine::{Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
+use drivesync_engine::{AuthError, Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, guard: &Cell<bool>) {
     guard.set(true);
