@@ -18,7 +18,7 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 - Save Google Docs, Sheets, and Slides as local `.desktop` links.
 - Run automatic checks while the app is open or allowed to run in the background.
 
-### Planned
+### Planned (validation and release)
 
 - Update the welcome screen and onboarding text.
 - Validate the full workflow in GNOME and the development Flatpak.
@@ -26,6 +26,26 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 - Improve recovery for existing folders, missing state, and conflicts.
 - Define safe handling for edits to existing remote files and deletions.
 - Prepare OAuth and Flatpak packaging for public distribution.
+
+### Future features (post-MVP)
+
+The MVP has established the core application foundation: Google account connection, local/remote folder pairing, basic downloads and uploads, and synchronization. The following items are **candidate enhancements and design decisions**, not unfinished prerequisites for building that foundation. They will be specified and prioritized separately; some extend safeguards or capabilities already present in the technical preview.
+
+| Priority | Capability | Intended direction |
+| --- | --- | --- |
+| P0 | Complete conflict resolution | Provide a clear flow for local/remote edit conflicts without silently overwriting either version. |
+| P0 | Safeguards for deletions | Define confirmation/authorization for destructive remote changes, protections for bulk deletions, and recovery options. |
+| P0 | Robust recovery and consistency | Resume safely after interruptions, disconnections, missing state, and partial operations. |
+| P1 | Selective synchronization | Let users include/exclude individual folders within a configured account's synchronization scope. |
+| P1 | Efficient background synchronization | Improve existing periodic checks with local filesystem events and incremental remote change detection where appropriate. |
+| P1 | Sync status and history | Expose pending transfers, errors, last successful sync, and a useful activity log. |
+| P1 | Enhanced multi-account experience | Improve status visibility and management across accounts; basic multi-account support already exists. |
+| P1 | Shared content | Evaluate syncing folders shared with the user and support for Shared Drives, subject to Google Drive API constraints. |
+| P2 | GNOME Files (Nautilus) integration | Explore file status emblems and relevant actions in the file manager. |
+| P2 | Files on demand | Evaluate access to remote content without downloading every file locally. |
+| P2 | Performance controls | Consider bandwidth limits and network/battery-aware behavior. |
+
+P0/P1/P2 are preliminary planning priorities, **not** a release schedule or a claim that every item is unimplemented. Data safety and correctness remain requirements for enabling more destructive or fully bidirectional operations.
 
 ## Current limits
 
@@ -39,7 +59,7 @@ DriveSync is an early-stage Linux application for keeping selected Google Drive 
 
 ## Project approach
 
-DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. The [MVP plan](docs/MVP.md) describes the intended acceptance scope; implementation and live GNOME/Flatpak validation may not yet cover every planned item.
+DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Its MVP foundation is in place; subsequent features primarily involve application-level product decisions, UX, resilience, and edge cases rather than rebuilding the Google Drive integration. This does **not** mean the app is production-ready. The [MVP plan](docs/MVP.md) documents the intended acceptance scope; implementation and live GNOME/Flatpak validation may not yet cover every planned item.
 
 ## Feedback
 
