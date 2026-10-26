@@ -1,8 +1,8 @@
 # Preparação durável de downloads (STATE-001 / PLAN-001)
 
-O journal de cada raiz local fica em `.drivesync/state.sqlite3` dentro da pasta
+O journal de cada raiz local fica em `.drivesync-state.sqlite3` dentro da pasta
 selecionada. `.drivesync/identity.json` registra a associação ao cliente OAuth, ao
-subject estável da conta e à pasta remota; ambos sobrevivem à remoção dos dados
+subject estável da conta e à pasta remota. Ambos sobrevivem à remoção dos dados
 privados do aplicativo e são excluídos do inventário de upload. Não armazenam
 tokens. Checkpoints de changes e preferências de upload continuam no diretório
 privado do aplicativo.

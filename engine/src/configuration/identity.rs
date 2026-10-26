@@ -127,7 +127,9 @@ pub(crate) fn state_path(
     client: &str,
 ) -> Result<PathBuf, EngineError> {
     ensure(folder, client)?;
-    Ok(folder.local.join(DIRECTORY).join(STATE))
+    // Keep the journal path stable: it contains inode and content evidence
+    // needed to recognize files already installed in this root.
+    Ok(folder.local.join(format!(".drivesync-{STATE}")))
 }
 
 /// Creates or opens the private metadata directory without following symlinks.
