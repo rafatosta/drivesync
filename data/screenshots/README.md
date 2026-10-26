@@ -58,7 +58,7 @@ Em um ambiente com Rust, GTK4, Libadwaita e uma sessão gráfica disponíveis, e
 
 ```sh
 XDG_DATA_HOME="$(mktemp -d /tmp/drivesync-ui-demo-XXXXXX)" \
-DRIVESYNC_UI_PREVIEW_DIR="$PWD/screenshots" \
+DRIVESYNC_UI_PREVIEW_DIR="$PWD/data/screenshots" \
 GSK_RENDERER=cairo \
 cargo test -p drivesync demonstration_screenshots -- --ignored --test-threads=1
 ```
