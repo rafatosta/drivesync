@@ -39,7 +39,7 @@ struct Service {
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     pub revision: u64,
-    pub cancelling: bool,
+    pub pausing: bool,
     pub phase: Phase,
     pub progress: Option<DownloadProgress>,
     pub result: Option<ResultReport>,
@@ -49,7 +49,7 @@ struct State {
     folder: Option<FolderConfiguration>,
     eligible: bool,
     cancel: Option<Cancellation>,
-    user_cancelled: bool,
+    user_paused: bool,
     generation: u64,
     revision: u64,
     progress: Option<DownloadProgress>,
@@ -77,7 +77,7 @@ impl Controller {
                 folder: None,
                 eligible: false,
                 cancel: None,
-                user_cancelled: false,
+                user_paused: false,
                 generation: 0,
                 revision: 0,
                 progress: None,
@@ -113,7 +113,7 @@ impl Controller {
         state.folder = folder;
         state.eligible = eligible;
         state.generation += 1;
-        state.user_cancelled = false;
+        state.user_paused = false;
         if let Some(cancel) = &state.cancel {
             cancel.cancel();
         }
@@ -133,7 +133,7 @@ impl Controller {
         let state = self.0.state.borrow();
         Snapshot {
             revision: state.revision,
-            cancelling: state
+            pausing: state
                 .cancel
                 .as_ref()
                 .is_some_and(Cancellation::is_cancelled),
@@ -149,13 +149,13 @@ impl Controller {
     pub fn running(&self) -> bool {
         self.0.state.borrow().cancel.is_some()
     }
-    /// Cancellation is acknowledged by the worker, never by prematurely clearing
-    /// the running guard. A cancelled cycle pauses until the user resumes it.
-    pub fn cancel(&self) {
+    /// Requests a safe pause. The worker retains its running guard until the
+    /// current engine operation reaches a cancellation checkpoint or safe commit.
+    pub fn pause(&self) {
         let mut state = self.0.state.borrow_mut();
         if let Some(cancel) = &state.cancel {
             cancel.cancel();
-            state.user_cancelled = true;
+            state.user_paused = true;
             state.revision += 1;
         }
     }
@@ -182,7 +182,7 @@ impl Controller {
             let cancel = Cancellation::new();
             state.cancel = Some(cancel.clone());
             state.generation += 1;
-            state.user_cancelled = false;
+            state.user_paused = false;
             state.progress = None;
             state.result = None;
             state.revision += 1;
@@ -224,7 +224,7 @@ impl Controller {
                 state.cancel = None;
                 state.progress = None;
                 if state.generation == generation {
-                    if state.user_cancelled {
+                    if state.user_paused {
                         state.schedule.finish(
                             &Err(EngineError::Authentication(
                                 drivesync_engine::AuthError::Cancelled,
@@ -236,7 +236,7 @@ impl Controller {
                     }
                     state.result = Some(result);
                 } else {
-                    // The old root/account must finish cancelling before its replacement starts.
+                    // The old root/account must reach a safe stop before replacement.
                     state.schedule.running = false;
                 }
                 state.revision += 1;
@@ -552,9 +552,9 @@ mod tests {
         release.store(false, Ordering::SeqCst);
         job.request();
         wait_until(&context, || calls.load(Ordering::SeqCst) == 3);
-        job.cancel();
+        job.pause();
         job.request();
-        assert!(job.snapshot().cancelling);
+        assert!(job.snapshot().pausing);
         wait_until(&context, || !job.running());
         assert_eq!(job.snapshot().phase, Phase::Paused);
         job.start(now() + 10000, true, false);
@@ -603,7 +603,7 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
-        fast.cancel();
+        fast.pause();
         wait_until(&context, || !fast.running());
         assert_eq!(fast.snapshot().phase, Phase::Paused);
         assert!(fast.snapshot().result.unwrap().is_ok());

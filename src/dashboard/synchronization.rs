@@ -200,7 +200,7 @@ impl Widgets {
     }
     fn begin(&self) {
         if let Some(button) = self.start.upgrade() {
-            button.set_label("Cancel");
+            button.set_label("Pause");
             button.set_sensitive(true);
             button.remove_css_class("suggested-action");
         }
@@ -248,14 +248,16 @@ impl Widgets {
             if previous != Some(Phase::Running) {
                 self.begin();
             }
-            if snapshot.cancelling {
+            if snapshot.pausing {
                 if let Some(button) = self.start.upgrade() {
-                    button.set_label("Cancelling…");
+                    button.set_label("Pausing…");
                     button.set_sensitive(false);
                 }
                 if let Some(row) = self.row.upgrade() {
-                    row.set_title("Cancelling downloads");
-                    row.set_subtitle("Waiting for the current operation to stop safely…");
+                    row.set_title("Pausing synchronization");
+                    row.set_subtitle(
+                        "The current operation will finish or stop at a safe point…",
+                    );
                 }
             } else if let Some(progress) = &snapshot.progress {
                 self.progress(progress);
@@ -294,7 +296,7 @@ impl Widgets {
                 ),
                 Phase::Paused => (
                     "Synchronization paused",
-                    "Start synchronization to resume automatic checks.",
+                    "Completed work is saved safely. Resume to continue synchronization.",
                 ),
                 Phase::Blocked => (
                     "Needs attention",
@@ -304,6 +306,16 @@ impl Widgets {
             };
             row.set_title(title);
             row.set_subtitle(subtitle);
+        }
+        if snapshot.phase == Phase::Paused {
+            if let Some(button) = self.start.upgrade() {
+                button.set_label("Resume");
+            }
+            if let Some(status) = self.status.upgrade() {
+                status.set_label(
+                    "Synchronization paused safely. Completed files were preserved; unfinished work can resume.",
+                );
+            }
         }
     }
     fn idle(&self) {
@@ -575,7 +587,7 @@ pub(super) fn build(
     start.connect_clicked(move |_| {
         let previous = click_job.snapshot().phase;
         if click_job.running() {
-            click_job.cancel();
+            click_job.pause();
         } else {
             click_job.request();
         }
@@ -633,7 +645,7 @@ pub(super) fn verify_worker_failure() {
         &menu,
     );
     start.emit_clicked();
-    assert_eq!(start.label().as_deref(), Some("Cancel"));
+    assert_eq!(start.label().as_deref(), Some("Pause"));
     assert!(!folders.is_sensitive());
     assert!(!menu.is_sensitive());
     let wait = gtk::glib::MainLoop::new(None, false);
@@ -675,7 +687,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             error: None,
             folder: None,
         };
-        let start = gtk::Button::with_label("Cancel");
+        let start = gtk::Button::with_label("Pause");
         start.set_halign(gtk::Align::End);
         let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let menu = gtk::MenuButton::new();
@@ -813,7 +825,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             ui.present_job(
                 &crate::automatic::Snapshot {
                     revision: 1,
-                    cancelling: false,
+                    pausing: false,
                     phase,
                     progress: None,
                     result: Some(Ok(report)),
@@ -926,7 +938,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             ui.present_job(
                 &crate::automatic::Snapshot {
                     revision: 1,
-                    cancelling: false,
+                    pausing: false,
                     phase,
                     progress: None,
                     result: None,
@@ -934,6 +946,9 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 None,
             );
             assert_eq!(row.title(), title);
+            if phase == crate::automatic::Phase::Paused {
+                assert_eq!(start.label().as_deref(), Some("Resume"));
+            }
             capture(&window, &format!("automatic-{name}-{width}"));
             assert!(window.width() <= width + 10);
         }
@@ -941,7 +956,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         ui.present_job(
             &crate::automatic::Snapshot {
                 revision: 2,
-                cancelling: false,
+                pausing: false,
                 phase: crate::automatic::Phase::Waiting,
                 progress: None,
                 result: None,
