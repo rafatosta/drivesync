@@ -34,7 +34,8 @@ fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
     None
 }
 /// A compositor may defer a frame after stack switches; retry capture, never skip it.
-fn rendered(window: &adw::Window) -> gtk::gsk::RenderNode {
+fn rendered(window: &impl IsA<gtk::Window>) -> gtk::gsk::RenderNode {
+    let window = window.as_ref();
     for _ in 0..20 {
         window.queue_draw();
         let frame = gtk::glib::MainLoop::new(None, false);
@@ -504,3 +505,6 @@ fn folder_setup_and_dashboard_layouts() {
         }
     }
 }
+
+#[path = "screenshot_demo.rs"]
+mod screenshot_demo;
