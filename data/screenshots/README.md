@@ -54,7 +54,11 @@ O upload é opcional e cria somente novos arquivos e pastas. As imagens de aten�
 
 ## Gerar novamente
 
-Em um ambiente com Rust, GTK4, Libadwaita e uma sessão gráfica disponíveis, execute a partir da raiz do projeto:
+O teste visual `demonstration_screenshots` gera novamente as capturas com dados fictícios, em tamanhos amplos e compactos. Ele é ignorado na execução normal dos testes.
+
+Requer Rust/Cargo, as bibliotecas de desenvolvimento GTK4 4.10 ou superior e Libadwaita 1.4 ou superior, além de uma sessão gráfica acessível. Em um ambiente Flatpak de desenvolvimento, execute dentro do SDK com acesso à sessão gráfica e ao diretório do projeto.
+
+Execute a partir da raiz do projeto:
 
 ```sh
 XDG_DATA_HOME="$(mktemp -d /tmp/drivesync-ui-demo-XXXXXX)" \
@@ -63,4 +67,11 @@ GSK_RENDERER=cairo \
 cargo test -p drivesync demonstration_screenshots -- --ignored --test-threads=1
 ```
 
-O perfil temporário é obrigatório. O gerador não instala tarefas automáticas, não inicia OAuth e não executa as ações de sincronizar ou sair da conta.
+- `XDG_DATA_HOME` cria um perfil temporário isolado. O prefixo `/tmp/drivesync-ui-demo-` é obrigatório e verificado pelo teste; não use o perfil real do aplicativo.
+- `DRIVESYNC_UI_PREVIEW_DIR` define o destino dos PNGs. O diretório é criado se necessário e as imagens com os mesmos nomes são substituídas. O destino padrão desta documentação é `data/screenshots`; para uma saída descartável, use outro caminho absoluto.
+- `GSK_RENDERER=cairo` seleciona o renderizador Cairo para as capturas.
+- `--ignored` inclui o teste visual opt-in; `--test-threads=1` executa os testes selecionados em uma única thread, conforme necessário para o GTK.
+
+Ao terminar, confira o resultado do teste no terminal e abra os PNGs ou os links deste índice. O perfil temporário permanece em `/tmp` e pode ser removido após a geração.
+
+O gerador não instala tarefas automáticas, não inicia OAuth e não executa as ações de sincronizar ou sair da conta. As capturas validam a apresentação dos componentes, sem comprovar uma sincronização real com o Google Drive.

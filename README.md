@@ -61,6 +61,10 @@ P0/P1/P2 are preliminary planning priorities, **not** a release schedule or a cl
 
 DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Further development focuses on product decisions, usability, resilience, and edge cases while retaining the core integration with Google Drive. The app remains a technical preview and needs continued GNOME/Flatpak validation before a stable release.
 
+## Demonstration screenshots
+
+Browse the [current interface screenshots and regeneration instructions](data/screenshots/README.md). The opt-in visual test uses fictional accounts and an isolated temporary profile, without Google authentication or transfers.
+
 ## Feedback
 
 Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
