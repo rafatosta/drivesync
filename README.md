@@ -4,6 +4,20 @@
 
 DriveSync is an early-stage Linux application for keeping selected Google Drive folders available on this computer. It is a technical preview, not a stable release. Test with files you can safely replace or recreate; DriveSync is not a backup service.
 
+## Screenshots
+
+Manage multiple accounts and configure a separate Google Drive and local folder for each one.
+
+![DriveSync dashboard with three fictional accounts and personal folder settings](data/screenshots/04-dashboard-pessoal-1200.png)
+
+| Choose a Google Drive folder | Review synchronization activity |
+| --- | --- |
+| ![Google Drive folder chooser with fictional folders](data/screenshots/10-selecionar-pasta-drive-1200.png) | ![Synchronization activity showing remote moves and deletions while preserving local copies](data/screenshots/download-history-expanded-720.png) |
+
+These screenshots use fictional data. Synchronization states are simulated using the current interface components.
+
+[View all screenshots, including welcome, connection, transfers, and compact layouts](data/screenshots/README.md) · [Regenerate screenshots](data/screenshots/README.md#gerar-novamente)
+
 ## Features
 
 ### Implemented
@@ -60,10 +74,6 @@ P0/P1/P2 are preliminary planning priorities, **not** a release schedule or a cl
 ## Project approach
 
 DriveSync is being developed around explicit contracts, conservative filesystem changes, and account-isolated state. Further development focuses on product decisions, usability, resilience, and edge cases while retaining the core integration with Google Drive. The app remains a technical preview and needs continued GNOME/Flatpak validation before a stable release.
-
-## Demonstration screenshots
-
-Browse the [current interface screenshots and regeneration instructions](data/screenshots/README.md). The opt-in visual test uses fictional accounts and an isolated temporary profile, without Google authentication or transfers.
 
 ## Feedback
 
