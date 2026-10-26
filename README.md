@@ -41,3 +41,9 @@ Donation channels are not configured; do not add payment details without the
 maintainer's direction. Update the privacy policy when data practices change.
 No analytics, contact form, tracking cookies or payment processing are included.
 Theme preference alone is saved in the browser's local storage.
+
+## Languages
+
+Portuguese (Brazil) and English use the same React Context approach as the ZapZap website. A valid saved selection takes priority; otherwise a Portuguese browser language selects Portuguese and all other browser languages select English. The header selector stores only explicit language choices in local storage. Pages, gallery captions, accessibility labels, document language, titles and descriptions update together. Screenshot pixels retain the language of the captured application UI. Translation entries live in `src/i18n/translations.ts`.
+
+Run `npm test` for locale selection and translation coverage checks.
