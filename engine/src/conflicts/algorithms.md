@@ -33,6 +33,10 @@ Timeout não é exclusão; nome não é identidade; sucesso HTTP isolado não co
 ## Invariante
 Não sobrescrever dados não preservados.
 
+## Cenários e dependências revisados
+
+Os algoritmos CONFLICT-001/002 devem considerar [56 casos e políticas](validation-checklist.md), [viabilidade](technical-feasibility.md) e [pesquisa de UX](ux-research.md). Em especial: não confundir erro com conflito, revalidar decisões obsoletas (N06), bloquear ações massivas (N08), suspender raízes inacessíveis (N03/N04) e reconciliar operações remotas ambíguas (N11). Não adicionar implementação com base nesta revisão.
+
 ## Testabilidade
 Executar nominal, entrada inválida, falha de rede, repetição, interrupção e concorrência. Os dados esperados são definidos antes da implementação.
 
