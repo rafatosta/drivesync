@@ -19,7 +19,7 @@ Nunca sobrescrever silenciosamente versões divergentes.
 CONFLICT-001 preservar ambas; CONFLICT-002 resolver após escolha.
 
 ## Erros e cenários a verificar
-Nomes colidentes; mudança enquanto resolve; falta de espaço.
+Consultar o [checklist de validação de conflitos e falhas](validation-checklist.md), com matriz B/L/R, cenários C01–C25, erros E01–E10 e políticas pendentes. Os itens não indicam implementação ou teste concluído.
 
 ## Contrato para implementação
 Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempotência e pré/pós-condições antes de gerar código. Não vincular a especificação a Rust ou Python.
