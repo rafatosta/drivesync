@@ -3,7 +3,7 @@
 **Estado:** proposta para revisão; cenários não validados.  
 **Escopo:** detecção, classificação, preservação e resolução de divergências na sincronização bidirecional DriveSync.  
 **Responsáveis funcionais:** `conflicts` (classificação/política), `planner` (decisão de operações), `state` (baseline, identidades e persistência), `coordinator` (execução/recuperação), adaptadores de arquivos/API e interface (resolução assistida).  
-**Referências locais:** [README](README.md), [algoritmos](algorithms.md). Esta lista é um **plano de validação**, não evidência de suporte atual.
+**Referências locais:** [README](README.md), [algoritmos](algorithms.md) e [análise de viabilidade técnica](technical-feasibility.md). Esta lista é um **plano de validação**, não evidência de suporte atual.
 
 ## Critério de conclusão
 
