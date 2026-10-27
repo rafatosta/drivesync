@@ -98,6 +98,25 @@
 | P08 | Reserva de nomes + vínculos por ID | planner, conflicts, state | Viável |
 | P09 | Auditoria e estado durável | state, coordinator | Viável |
 
+## Cenários adicionais — N01–N12
+
+| ID | Capacidade técnica e limite | Módulos envolvidos | Avaliação |
+|---|---|---|---|
+| N01 | Inventários iniciais + estado B ausente; não inferir equivalência por caminho | planner, state, changes | Viável; bloqueio conservador inicial |
+| N02 | SQLite integrity check, arquivo de estado e fail-closed | state, coordinator | Viável; nunca tratar base perdida como exclusão |
+| N03 | stat/mount e observação de raiz Linux | local, coordinator | Viável; diferenciar indisponível de vazio |
+| N04 | files.get/changes e permissões, sem prova universal da causa | remote, changes, coordinator | Condicional; raiz UNKNOWN e sincronização suspensa |
+| N05 | symlink_metadata, rustix e verificações por descritor | local, planner | Viável com política de links/hard links |
+| N06 | Revalidação de fingerprint/revisão antes de efeito | conflicts, planner, coordinator | Viável; decisão antiga deve expirar |
+| N07 | Escopo e geração de configuração persistidos | configuration, coordinator, state | Viável com cancelamento/replanejamento |
+| N08 | Contagem/percentual por lote e política anti-exclusão | planner, conflicts, coordinator | Viável; limiares/UX a decidir |
+| N09 | Lock por raiz e controle concorrente | coordinator, state | Viável; também considerar processo externo |
+| N10 | Arquivo temporário, estabilidade de leitura e validação final | local, upload | Condicional; formatos temporários variam |
+| N11 | Reconciliação após resultado HTTP ambíguo | remote, upload, state | Viável com identidade/idempotência; sem repetição cega |
+| N12 | Baseline, revisões e histórico de restauração | state, planner, conflicts | Condicional; intenção nem sempre inferível |
+
+**Interpretação:** 56 casos e políticas possuem estratégias investigáveis com a stack atual; nem todos admitem resolução automática. Viabilidade não comprova implementação, segurança operacional ou validação.
+
 ## Lacunas da implementação atual
 
 1. Persistir baseline **B** validado por item, vinculado ao ID remoto, fingerprint local e revisão observada; distinguir observação de transferência concluída.
@@ -107,6 +126,13 @@
 5. Definir semântica e UX de **manter local**, **manter remoto**, **manter ambos** e pendências, com revalidação imediata e recuperação.
 6. Revisar acesso OAuth, permissões e garantias de cada operação remota antes de habilitar atualização de existentes, lixo e exclusão.
 7. Especificar oráculos por caso, com testes de falha entre efeito remoto e commit local, colisão, offline e perda de acesso.
+
+## Ajustes transversais de arquitetura
+
+- Distinguir catálogo de cenários (C/N), erros (E) e políticas (P); números de validação não representam funcionalidades independentes.
+- Incluir proteção de exclusão/modificação em massa, disponibilidade da raiz e corrida de múltiplas instâncias.
+- Separar cópia de conflito, histórico recuperável e journal de execução com retenção documentada.
+- Atualizar status dos módulos a partir de código e testes: README genérico de rascunho não deve sobrepor implementações verificadas.
 
 ## Sequência recomendada
 
@@ -124,4 +150,4 @@
 - [Drive API — Handle errors](https://developers.google.com/workspace/drive/api/guides/handle-errors)
 - [Rust std::fs](https://doc.rust-lang.org/std/fs/index.html)
 
-**Resultado:** 44/44 cenários têm um caminho de tratamento conservador na stack atual, **não** 44 resoluções automáticas. Alguns resultados corretos são bloquear, preservar, solicitar decisão ou informar falha persistente. **Nenhum item do checklist foi marcado como validado.**
+**Resultado:** 56 itens catalogados possuem caminhos de investigação e tratamento conservador na stack atual, **não** 56 resoluções automáticas. Alguns resultados corretos são bloquear, preservar, solicitar decisão ou informar falha persistente. **Nenhum item do checklist foi marcado como validado.**
