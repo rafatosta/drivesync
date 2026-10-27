@@ -85,6 +85,16 @@
 
 As preferências são **hipóteses de produto**, não garantias nem substitutos para invariantes de segurança. Se a integridade, a origem ou a versão estiverem incertas, **bloquear e solicitar atenção** mesmo com regra automática ativa. Preservação antes de substituição não deve ser um toggle que permita perda silenciosa.
 
+## Aprimoramentos da experiência após a revisão
+
+- Apresentar grupos separados **Conflitos**, **Incompatibilidades** e **Problemas de sincronização**; o mesmo painel pode reunir as três situações.
+- Antes de qualquer escolha, mostrar **impacto da ação**: versão mantida, versão preservada, local de recuperação e limitações de reversibilidade.
+- Diferenciar **preservação concluída**, **preservação pendente** e **versão indisponível**; não declarar segurança sem evidência.
+- Permitir resolução em lote apenas para tipos homogêneos, com prévia do impacto e salvaguardas para operações destrutivas.
+- Para **N03/N04**, comunicar indisponibilidade da pasta-raiz sem chamar de exclusão; para **N06**, exigir nova comparação quando a versão mudar.
+- Para **N08**, suspender exclusões em massa e explicar quantidade, proporção e escopo afetado, sem estabelecer limiares arbitrários.
+- Manter registros distintos de **cópias de conflito**, **histórico de versões** e **decisões**.
+
 ## Questões abertas para engenharia de requisitos
 
 - Quais formatos ganharão comparação visual nativa na primeira versão?
