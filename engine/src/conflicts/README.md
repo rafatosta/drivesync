@@ -21,6 +21,9 @@ A [análise Rust/Linux × Google Drive API v3](technical-feasibility.md) mapeia 
 ## Pesquisa conceitual e experiência do usuário
 O [estudo comparativo de resolução de conflitos](ux-research.md) reúne referências a Git, Syncthing, Nextcloud, MEGAsync e Google Drive e propõe linguagem, comparação de versões, preferências e fluxo de interação. Trata-se de investigação de produto, **não de implementação aprovada**.
 
+## Revisão integrada de requisitos
+O [checklist revisado](validation-checklist.md) preserva 44 códigos originais e adiciona N01–N12 (56 itens rastreáveis), separando conflitos reais, diferenças conciliáveis, incompatibilidades e erros. A [viabilidade técnica](technical-feasibility.md) e a [pesquisa de UX](ux-research.md) foram atualizadas em conjunto. Nenhum desses itens está marcado como validado por esta revisão.
+
 ## Algoritmos previstos
 CONFLICT-001 preservar ambas; CONFLICT-002 resolver após escolha.
 
