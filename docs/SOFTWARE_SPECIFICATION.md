@@ -166,6 +166,8 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 4.9 Tratamento de conflitos e exclusões
 
+**Referência de requisitos em revisão:** [catálogo de 56 casos e políticas](../engine/src/conflicts/validation-checklist.md). Distinguir conflito, equivalência, incompatibilidade e falha; proteger versões e operações em massa. Os códigos não correspondem a 56 funcionalidades independentes.
+
 ### 4.10 Recuperação de falhas e reconciliação
 
 ### 4.11 Documentos nativos do Google Workspace
@@ -203,6 +205,8 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 ### 6.3 Política de upload e download
 
 ### 6.4 Política de conflitos e alterações concorrentes
+
+**Referências:** [viabilidade Rust/Drive API](../engine/src/conflicts/technical-feasibility.md) e [pesquisa de experiência e ferramentas existentes](../engine/src/conflicts/ux-research.md). Preferências automáticas somente por opção explícita e sem ignorar salvaguardas.
 
 ### 6.5 Política de exclusões e operações destrutivas
 
@@ -260,6 +264,8 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 9.5 Estados de erro e recuperação
 
+**Diretriz UX em estudo:** central de atenção com comparação e consequências das decisões, separando conflitos, incompatibilidades e erros. Ver [pesquisa de UX](../engine/src/conflicts/ux-research.md).
+
 ### 9.6 Integração com o ambiente GNOME
 
 ## 10. Verificação e validação
@@ -273,6 +279,8 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 ### 10.4 Testes com a API Google
 
 ### 10.5 Testes de sincronização, conflitos e falhas
+
+**Fonte de rastreabilidade:** [checklist C01–C25, E01–E10, P01–P09, N01–N12](../engine/src/conflicts/validation-checklist.md). Todos pendentes de evidência por cenário.
 
 ### 10.6 Testes de segurança e privacidade
 
