@@ -15,6 +15,9 @@ Decisão explícita com versões preservadas.
 ## Limites: o que NÃO faz
 Nunca sobrescrever silenciosamente versões divergentes.
 
+## Viabilidade técnica
+A [análise Rust/Linux × Google Drive API v3](technical-feasibility.md) mapeia os 44 casos do [checklist](validation-checklist.md) para evidências, módulos e limites; viabilidade não indica implementação ou validação.
+
 ## Algoritmos previstos
 CONFLICT-001 preservar ambas; CONFLICT-002 resolver após escolha.
 
