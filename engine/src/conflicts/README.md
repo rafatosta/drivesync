@@ -18,6 +18,9 @@ Nunca sobrescrever silenciosamente versões divergentes.
 ## Viabilidade técnica
 A [análise Rust/Linux × Google Drive API v3](technical-feasibility.md) mapeia os 44 casos do [checklist](validation-checklist.md) para evidências, módulos e limites; viabilidade não indica implementação ou validação.
 
+## Pesquisa conceitual e experiência do usuário
+O [estudo comparativo de resolução de conflitos](ux-research.md) reúne referências a Git, Syncthing, Nextcloud, MEGAsync e Google Drive e propõe linguagem, comparação de versões, preferências e fluxo de interação. Trata-se de investigação de produto, **não de implementação aprovada**.
+
 ## Algoritmos previstos
 CONFLICT-001 preservar ambas; CONFLICT-002 resolver após escolha.
 
