@@ -1,6 +1,6 @@
 # Checklist de validação — conflitos e falhas de sincronização
 
-**Estado:** proposta para revisão; cenários não validados.  
+**Estado:** catálogo revisado; cenários não validados. **Total:** 56 itens rastreáveis (C01–C25, E01–E10, P01–P09, N01–N12).  
 **Escopo:** detecção, classificação, preservação e resolução de divergências na sincronização bidirecional DriveSync.  
 **Responsáveis funcionais:** `conflicts` (classificação/política), `planner` (decisão de operações), `state` (baseline, identidades e persistência), `coordinator` (execução/recuperação), adaptadores de arquivos/API e interface (resolução assistida).  
 **Referências locais:** [README](README.md), [algoritmos](algorithms.md), [análise de viabilidade técnica](technical-feasibility.md) e [pesquisa conceitual de UX](ux-research.md). Esta lista é um **plano de validação**, não evidência de suporte atual.
@@ -33,6 +33,14 @@ Considerar 'inalterado', 'modificado' e 'excluído' sempre **em relação a B**,
 | Excluído | Excluído | Convergência confirmada; nenhuma exclusão adicional |
 
 Criação sem B, renomeação, movimentação e substituição precisam de análise por **identidade estável** e eventos; nome/caminho não identifica sozinho um arquivo. Um arquivo remoto pode ter nome duplicado e representações locais podem ser incompatíveis.
+
+## Classificação para implementação e interface
+
+- **Conflito real:** alterações concorrentes incompatíveis com versões identificáveis (ex.: C01, C03, C04).
+- **Diferença conciliável/equivalência:** operações independentes ou conteúdo equivalente não devem produzir conflito visível (ex.: C09, C12, C21).
+- **Incompatibilidade:** nomes, tipos, propriedades ou mapeamentos não representáveis devem ser bloqueados ou explicados sem escolher versão arbitrariamente (ex.: C13, C18, C23, C24).
+- **Indisponibilidade/erro:** permissões, autenticação, transporte ou estado remoto desconhecido não provam exclusão (C25, E01–E10).
+- Os códigos históricos C permanecem para rastreabilidade, mesmo quando não representam conflito de conteúdo.
 
 ## Casos de conflito de conteúdo
 
@@ -95,6 +103,32 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **P07** — Conflito pendente não bloqueia itens independentes; pendência persiste após fechamento/reinício.
 - [ ] **P08** — Nomes reservados para cópias preservadas, sem colisão; vínculo entre cópias, identidade original e origem.
 - [ ] **P09** — Auditoria das decisões: ação, versões observadas, efeitos parciais, estado final e recuperação.
+
+## Cenários complementares de segurança e ciclo de vida
+
+- [ ] **N01** — Primeira sincronização com arquivos preexistentes em ambos os lados: não inventar baseline confirmado nem sobrescrever.
+- [ ] **N02** — Banco local perdido, ilegível ou corrompido: impedir inferência de exclusão e preservar dados.
+- [ ] **N03** — Raiz local desmontada/inacessível: suspender operações, sem propagar exclusões.
+- [ ] **N04** — Raiz remota movida, excluída ou sem acesso: distinguir indisponibilidade e não executar ações destrutivas.
+- [ ] **N05** — Symlinks, hard links e arquivos especiais: definir suporte seguro, isolamento da raiz e prevenção de travessia.
+- [ ] **N06** — Arquivo muda enquanto o usuário compara ou confirma: invalidar decisão obsoleta e revalidar.
+- [ ] **N07** — Preferências/escopo alterados durante transferência: cancelar, reconciliar ou continuar somente sob regras explícitas.
+- [ ] **N08** — Exclusões/modificações em massa: detectar impacto, suspender ações potencialmente destrutivas e exigir política/consentimento.
+- [ ] **N09** — Duas instâncias/atores atuando sobre a mesma raiz local: bloqueio por escopo e proteção contra corrida.
+- [ ] **N10** — Arquivo parcial, temporário ou ainda gravado: não publicá-lo como versão definitiva.
+- [ ] **N11** — Resultado remoto desconhecido após timeout/crash: reconciliar por identidade antes de repetir operação.
+- [ ] **N12** — Restauração de backup/versão histórica: distinguir alteração legítima de inconsistência e preservar histórico.
+
+**Prioridade para avaliação inicial:** N01, N02, N03, N06, N08, N09 e N11. Todo N permanece pendente até teste com evidência.
+
+## Salvaguardas transversais
+
+- [ ] Separar cópia de conflito, histórico de versões e journal/auditoria; especificar local, retenção, limpeza e quota sem perda silenciosa.
+- [ ] Bloquear operações destrutivas em lote e apresentar quantidade, percentual, escopo e consequência; limiares a definir em requisito.
+- [ ] Não permitir política automática sobre exclusões, raízes indisponíveis, fontes ambíguas ou revisões desatualizadas.
+- [ ] Verificar bloqueios por raiz, symlinks e corridas entre verificação e escrita, inclusive no Linux/Flatpak.
+- [ ] UI deve distinguir conflito, incompatibilidade e erro operacional, indicando versões realmente preservadas e explicando ações irreversíveis.
+- [ ] Casos de teste devem cobrir acessibilidade, decisões adiadas, reabertura, mudanças durante resolução e lote.
 
 ## Procedimento de teste por caso
 
