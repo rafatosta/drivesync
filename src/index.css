@@ -49,3 +49,11 @@ a { text-decoration:none; } p { line-height:1.75; } h1,h2,h3,p,figure { margin:0
 @media(max-width:760px) { .desktop-nav { display:none; } .mobile-menu { display:inline-flex; } }
 @media(max-width:640px) { .site-header { gap:10px; } .brand { font-size:20px; gap:5px; } .brand img { width:30px; height:30px; } .header-actions { gap:3px; } .language-switcher>svg { display:none; } .language-switcher select { max-width:80px; } }
 @media(max-width:360px) { .site-header { gap:8px; } .brand { font-size:18px; gap:4px; } .brand img { width:26px; height:26px; } .language-switcher select { max-width:72px; } }
+
+.donation-panel>div { min-width:0; width:100%; }
+.donation-methods { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:24px; }
+.donation-method { display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid var(--border); border-radius:9px; padding:15px 17px; background:var(--popover); color:var(--foreground); font-size:15px; font-weight:600; transition:border-color .15s ease; }
+.donation-method:hover { border-color:var(--primary); }
+.donation-method svg { color:var(--primary); flex-shrink:0; }
+.donation-panel .donation-note { font-size:13px; margin:0; }
+@media(max-width:640px) { .donation-methods { grid-template-columns:1fr; } }
