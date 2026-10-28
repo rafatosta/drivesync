@@ -1,6 +1,11 @@
 # Algoritmos — download
 
-**Estado:** proposta v0.2, independente da linguagem.
+**Estado:** DOWNLOAD-001/002 implementados no recorte de instalação local de
+binários; DOWNLOAD-003 cobre atualização gerenciada. O roteiro conceitual abaixo
+não demonstra implementação de todos os tipos/operações. Contrato executável e
+recuperação em [execution.md](execution.md) e [updates.md](updates.md);
+[rastreabilidade do eixo B/L/R](../state/preparation.md#rastreabilidade-das-regras-do-eixo-1).
+A bateria com Google Drive real permanece pendente.
 
 ## Algoritmos
 DOWNLOAD-001,DOWNLOAD-002.
@@ -42,7 +47,7 @@ Para n arquivos, planejamento e varreduras O(n); lookup indexado típico O(log n
 
 ## Fundamentação técnica por algoritmo
 
-Separar **técnica consolidada**, **política própria**, **evidência de teste** e **hipótese não demonstrada**. Consulte [método](../../../docs/development-methodology.md), [fontes](../../../docs/reference-catalog.md) e [template](../../../docs/algorithm-spec-template.md).
+Separar **técnica consolidada**, **política própria**, **evidência de teste** e **hipótese não demonstrada**. Consulte [método](../../../docs/old/development-methodology.md), [fontes](../../../docs/old/reference-catalog.md) e [template](../../../docs/old/algorithm-spec-template.md).
 
 ### DOWNLOAD-001
 
@@ -51,7 +56,7 @@ Separar **técnica consolidada**, **política própria**, **evidência de teste*
 - **Política do DriveSync:** Criar temporário não visível como arquivo final; verificar destino e versões; rename controlado no mesmo volume; preservar arquivo anterior em conflitos.
 - **Testes/oráculos a detalhar:** Rede cortada no meio, falta de espaço, falha ao renomear, processo encerrado, destino alterado.
 - **Limitações / questões abertas:** Atomicidade de rename não cobre durabilidade em queda de energia; especificar sync_all do arquivo e diretório conforme plataforma.
-- **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
+- **Situação:** binários implementados e exercitados com filesystem/SQLite reais e provedor falso; efeitos e testes específicos em [execution.md](execution.md). Aceite real e operações fora desse recorte permanecem pendentes.
 
 ### DOWNLOAD-002
 
@@ -60,4 +65,4 @@ Separar **técnica consolidada**, **política própria**, **evidência de teste*
 - **Política do DriveSync:** Conferir tamanho/checksum quando disponíveis e aplicáveis; não assumir md5Checksum em Docs/Sheets/Slides; se garantia insuficiente, resultado permanece não validado.
 - **Testes/oráculos a detalhar:** Checksum ausente, hash diferente, export parcial, mudança da revisão remota durante download.
 - **Limitações / questões abertas:** Definir tratamento explícito de documentos nativos e suas limitações antes de permitir bidirecional.
-- **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
+- **Situação:** binários implementados e exercitados com filesystem/SQLite reais e provedor falso; efeitos e testes específicos em [execution.md](execution.md). Aceite real e operações fora desse recorte permanecem pendentes.

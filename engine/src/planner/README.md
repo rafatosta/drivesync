@@ -1,30 +1,14 @@
 # Módulo planner
 
-## Objetivo
-Comparar versão-base, estado local e remoto e propor plano seguro.
+Classifica B/L/R no fluxo de download de binários e constrói planos por IDs/pais.
+A classificação é pura; a construção recebe observador injetado e não escreve.
+O plano não autoriza efeitos sem revalidação no executor.
 
-## Papel no sistema
-Atua como caixa-preta especializada do DriveSync, sujeita aos invariantes globais em `docs/invariants.md`.
-
-## Quem utiliza
-coordinator, queue.
-
-## Saídas e compromissos
-Plano sem efeitos colaterais ou conflito explícito.
-
-## Limites: o que NÃO faz
-Não executar upload, download ou deletar dados.
-
-## Algoritmos previstos
-PLAN-001 comparação tripla; SYNC-002 pré-condições.
-
-## Erros e cenários a verificar
-Mudança simultânea; remoção; renomeação; dados incompletos.
-
-## Contrato para implementação
-Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempotência e pré/pós-condições antes de gerar código. Não vincular a especificação a Rust ou Python.
-
-## Testes mínimos
-Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
-
-**Estado:** rascunho v0.1; não implementado.
+O recorte PLAN-001 está implementado; comparação geral bidirecional, exclusões,
+renomeações e resolução permanecem fora dele. SYNC-002 para futuras escritas
+remotas continua pendente. Entradas, decisões, erros e limites estão em
+[algorithms.md](algorithms.md); [contrato](contract.md),
+[rastreabilidade e evidências](../state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+e [requisitos vigentes](../../../docs/SOFTWARE_SPECIFICATION.md#47-detecção-de-mudanças-e-sincronização)
+completam a referência. Testes locais não equivalem ao aceite A01–A12 com Google
+Drive real, que permanece pendente.

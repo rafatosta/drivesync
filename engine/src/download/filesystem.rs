@@ -19,6 +19,33 @@ pub(crate) fn identity(file: &File) -> Result<Identity, EngineError> {
         inode: m.ino(),
     })
 }
+/// Hashes a regular file through no-follow descriptors and verifies the path
+/// still names the same inode when the read completes.
+pub(crate) fn fingerprint(
+    root_path: &Path,
+    relative: &Path,
+    cancel: &crate::Cancellation,
+) -> Result<Option<String>, EngineError> {
+    let file = Root::open_path(root_path)?;
+    let root = Root {
+        file,
+        path: root_path.into(),
+    };
+    let (parent, name) = root.parent(relative)?;
+    let parent_id = identity(&parent)?;
+    let Some(mut file) = read(&parent, &name)? else {
+        return Ok(None);
+    };
+    let file_id = identity(&file)?;
+    let content_fingerprint = super::stream::fingerprint(&mut file, cancel)?;
+    root.validate_parent(relative, parent_id)?;
+    if identity(&file)? != file_id
+        || read(&parent, &name)?.as_ref().map(identity).transpose()? != Some(file_id)
+    {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(Some(file_id.fingerprint(&content_fingerprint)))
+}
 fn directory(parent: &File, name: &OsStr) -> Result<File, EngineError> {
     fs::openat(
         parent,

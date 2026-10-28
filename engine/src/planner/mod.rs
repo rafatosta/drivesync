@@ -14,17 +14,23 @@ pub enum LocalObservation {
     UnmanagedFile,
     SymlinkOrSpecial,
     Unknown,
+    /// Stable content hash and local device/inode from a descriptor-relative read.
     Verified(String),
 }
-/// A base may only come from a verified installation, never from an inventory.
+/// A base comes only from a durable installed journal entry, never an inventory.
+///
+/// `local_fingerprint` binds the installed SHA-256 to its local device/inode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmedBase {
     pub remote_version: u64,
     pub local_fingerprint: String,
 }
+/// A reason an item cannot be safely downloaded by the current plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictReason {
     ExistingLocalData,
+    LocalChanged,
+    ConcurrentChanges,
     UnsafeOrAmbiguousPath,
     LocalTypeMismatch,
 }
@@ -73,14 +79,20 @@ pub fn decide(
         LocalObservation::Unknown => PlanAction::DeferredUnknown,
         LocalObservation::Absent => PlanAction::Download,
         LocalObservation::Verified(fingerprint) => match base {
-            Some(base) if &base.local_fingerprint == fingerprint => {
-                if base.remote_version == remote_version {
-                    PlanAction::NoOp
+            Some(base) => {
+                if &base.local_fingerprint == fingerprint {
+                    if base.remote_version == remote_version {
+                        PlanAction::NoOp
+                    } else {
+                        PlanAction::Download
+                    }
+                } else if base.remote_version == remote_version {
+                    PlanAction::Blocked(ConflictReason::LocalChanged)
                 } else {
-                    PlanAction::Download
+                    PlanAction::Blocked(ConflictReason::ConcurrentChanges)
                 }
             }
-            _ => PlanAction::Blocked(ConflictReason::ExistingLocalData),
+            None => PlanAction::Blocked(ConflictReason::ExistingLocalData),
         },
         _ => PlanAction::Blocked(ConflictReason::ExistingLocalData),
     }
@@ -109,11 +121,34 @@ fn local_name(item: &crate::InventoryEntry) -> Option<String> {
 }
 
 /// Builds paths by stable parent IDs and blocks ambiguity throughout descendants.
-/// The injected observer enables pure tests and cannot write through this API.
+/// The planner performs no writes; the injected observer controls observation I/O.
 pub(crate) fn plan(
     inventory: &RemoteInventory,
     local_root: &Path,
     mut observe: impl FnMut(&Path) -> LocalObservation,
+) -> Result<DownloadPlan, EngineError> {
+    plan_with_bases(inventory, local_root, &HashMap::new(), |_, path, _| {
+        Ok(observe(path))
+    })
+}
+
+/// Builds a plan using only durable, item-scoped installation evidence as B.
+/// The observer supplies fresh local evidence and may perform reads or return
+/// errors. The planner itself does not write files or persist installation evidence.
+///
+/// # Errors
+///
+/// Returns [`EngineError::InvalidPlan`] for invalid inventory/path structure and
+/// propagates errors from the local observer.
+pub(crate) fn plan_with_bases(
+    inventory: &RemoteInventory,
+    local_root: &Path,
+    bases: &HashMap<String, ConfirmedBase>,
+    mut observe: impl FnMut(
+        &crate::InventoryEntry,
+        &Path,
+        Option<&ConfirmedBase>,
+    ) -> Result<LocalObservation, EngineError>,
 ) -> Result<DownloadPlan, EngineError> {
     if !local_root.is_absolute() || inventory.entries.len() > 100_000 {
         return Err(EngineError::InvalidPlan);
@@ -161,10 +196,11 @@ pub(crate) fn plan(
     }
     let mut entries = Vec::new();
     for (e, path) in inventory.entries.iter().zip(paths) {
-        let local = path
-            .as_ref()
-            .map(|p| observe(p))
-            .unwrap_or(LocalObservation::Unknown);
+        let base = bases.get(&e.id);
+        let local = match path.as_ref() {
+            Some(path) => observe(e, path, base)?,
+            None => LocalObservation::Unknown,
+        };
         let action = match (&e.kind, &path) {
             (InventoryKind::Skipped(reason), _) => PlanAction::Skipped(reason.clone()),
             (_, None) => PlanAction::Blocked(ConflictReason::UnsafeOrAmbiguousPath),
@@ -176,7 +212,7 @@ pub(crate) fn plan(
             },
             (InventoryKind::GoogleWorkspaceLink, Some(_)) => PlanAction::CreateLink,
             (InventoryKind::Binary, Some(_)) => match e.version {
-                Some(version) => decide(None, &local, version),
+                Some(version) => decide(base, &local, version),
                 None => PlanAction::DeferredUnknown,
             },
         };

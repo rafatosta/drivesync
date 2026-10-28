@@ -29,7 +29,7 @@
   - [4.4 Descoberta e inventário de arquivos](#44-descoberta-e-inventario-de-arquivos)
   - [4.5 Download e atualização local](#45-download-e-atualizacao-local)
   - [4.6 Upload e criação remota](#46-upload-e-criacao-remota)
-  - [4.7 Detecção de mudanças e sincronização](#47-deteccao-de-mudancas-e-sincronizacao)
+  - [4.7 Detecção de mudanças e sincronização](#47-detecção-de-mudanças-e-sincronização)
   - [4.8 Pausa, retomada e execução em segundo plano](#48-pausa-retomada-e-execucao-em-segundo-plano)
   - [4.9 Tratamento de conflitos e exclusões](#49-tratamento-de-conflitos-e-exclusoes)
   - [4.10 Recuperação de falhas e reconciliação](#410-recuperacao-de-falhas-e-reconciliacao)
@@ -215,6 +215,30 @@ Permissões, conectividade e disponibilidade de armazenamento podem mudar durant
 ### 4.6 Upload e criação remota
 
 ### 4.7 Detecção de mudanças e sincronização
+
+O eixo 1 da [SYNC-001](https://github.com/rafatosta/drivesync/issues/1) define a
+base confirmada B e sua comparação com L/R no fluxo de download de binários.
+Os requisitos abaixo não autorizam upload de atualizações, exclusões ou resolução
+assistida. Complementam RF-CON e RF-REC; os detalhes de decisão, persistência e
+recuperação ficam nos [algoritmos do planner](../engine/src/planner/algorithms.md),
+[state](../engine/src/state/algorithms.md) e [download](../engine/src/download/execution.md).
+
+| ID | Requisito e critério de aceite |
+| --- | --- |
+| RF-SYNC-01 | Persistir B por identidade do item, cliente, conta e raízes. Recuperar revisão remota e fingerprint local da instalação confirmada após reabertura. Mudança de inode, ID ou escopo não herda autorização por nome ou igualdade de bytes (A01/A12). |
+| RF-SYNC-02 | Distinguir inventário/plano de instalação confirmada. Ausência de B, inclusive banco perdido ou evidência incompleta, não autoriza adoção, sobrescrita ou exclusão de arquivo preexistente, seja seu conteúdo igual ou diferente do remoto (A02/A07/A08/A09; N01/N02). Estado inválido deve gerar erro seguro sem reset silencioso. |
+| RF-SYNC-03 | Comparar L/R com B confiável sem decidir por timestamps. Classificar mudança apenas local e mudanças concorrentes, preservando conteúdo e B ao repetir após reabertura (A04/A05/A06; C01/C06). Classificação não tem efeitos de escrita. |
+| RF-SYNC-04 | Permitir receber uma revisão remota mais nova com local intacto somente após revalidações; nova B deve refletir a instalação confirmada. Após V1 → V2, edição somente local deve ser classificada em relação a V2, sem falso trabalho pendente ou download redundante (A03/A11). |
+| RF-SYNC-05 | Intenção, transferência parcial e efeito sem confirmação não fornecem B. Operação posterior incompleta deve invalidar a candidata anterior para o planejamento até reconciliação; replay exige evidências verificadas e preserva destinos concorrentes. Repetição após confirmação deve ser idempotente (A10). |
+
+**Implementação:** parcial no fluxo download-only; não cobre a matriz geral de
+sincronização bidirecional. **Verificação:** testes puros e de integração local
+com provedor falso exercitam as regras; a
+[matriz de rastreabilidade](../engine/src/state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+identifica arquivos, testes e limites por cenário. **Aceite real:** a bateria
+[A01–A12](https://github.com/rafatosta/drivesync/issues/1#issuecomment-6480152816)
+com Google Drive real permanece pendente; nenhum requisito recebe validação
+completa apenas por essa cobertura local.
 
 ### 4.8 Pausa, retomada e execução em segundo plano
 
@@ -440,7 +464,30 @@ A existência de código ou a compilação bem-sucedida não bastam para declara
 
 ### 10.3 Testes unitários e de integração
 
+Para RF-SYNC-01–05, os testes puros do planner verificam decisões sem I/O;
+[baseline_tests.rs](../engine/src/download/baseline_tests.rs) combina planner,
+journal e executor com diretórios temporários e SQLite reais, reabrindo o estado
+entre ciclos e reutilizando o provedor remoto falso. Os testes de download e
+atualização complementam integridade, colisões e replay. A
+[rastreabilidade por regra](../engine/src/state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+é o índice dessa evidência. Resultados/comandos pontuais ficam nos commits, não
+constituem histórico cumulativo nesta especificação.
+
 ### 10.4 Testes com a API Google
+
+A bateria A01–A12 da SYNC-001 permanece pendente com Google Drive real e está
+registrada na [issue de acompanhamento #28](https://github.com/rafatosta/drivesync/issues/28). Exige
+conta/perfil e raízes isolados, arquivos dispensáveis, atualização do mesmo ID
+remoto e evidência de conteúdo, identidade, revisão, base/fase persistida e
+repetição após reinício. Deve também demonstrar a classificação usada, pela
+interface ou diagnóstico. Reabertura de conexões SQLite em testes locais não
+substitui reinício do aplicativo, nem simula queda de energia. O smoke test
+ignorado de navegação Google não satisfaz esses critérios.
+
+O [roteiro de baterias reais](../engine/src/download/tests/test-cases.md#baterias-com-google-drive-real)
+detalha preparação, procedimentos e oráculos de A01–A12, grupos complementares
+de integração/empacotamento e limitações das ferramentas disponíveis. Todos
+permanecem pendentes; a existência do roteiro não registra execução.
 
 ### 10.5 Testes de sincronização, conflitos e falhas
 
@@ -510,9 +557,9 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 
 | Área | Comportamento existente e referência | Lacuna frente à especificação |
 | --- | --- | --- |
-| Classificação | [planner](../engine/src/planner/mod.rs) distingue observação desconhecida, arquivo local preexistente, caminhos ambíguos e decisões conservadoras de download; contém comparação com base confirmada para esse escopo. | Não é o classificador bidirecional completo de RF-CON-01–02. |
+| Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | É uma classificação parcial do fluxo download-only: ausência remota, exclusões, equivalência de conteúdo entre revisões na classificação e a cobertura integral de RF-CON-01–02 continuam sem implementação/aceite. |
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
-| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; [checkpoints](../engine/src/state/checkpoints.rs) e registros de operações guardam evidências específicas. | Reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
+| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
 | Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Classificação geral, persistência de pendências e resolução assistida permanecem planejadas. |
 | Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
@@ -533,7 +580,7 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
 - **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
 
-A primeira unidade de implementação recomendada é a classificação pura de B/L/R com oráculos AC-CON-01–03, sem I/O nem autorização de operações. Preservação durável, execução e interface dependem de contratos adicionais e validação específica.
+A classificação inicial de B/L/R está implementada no planejador do fluxo download-only com leitura de fingerprint sem seguir symlinks e sem efeitos de escrita. O journal de downloads já fornece a confirmação durável usada como B; não há migração de schema. Preservação e execução bidirecionais, reconciliação de estado perdido, interface e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
 
 ### 12.4 Política de mudanças da especificação
 

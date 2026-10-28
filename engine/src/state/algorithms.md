@@ -1,63 +1,82 @@
 # Algoritmos — state
 
-**Status:** proposta v0.2, independente da linguagem.
+## Escopo e fontes de verdade
 
-## Identificadores
-STATE-001 gravar; STATE-002 recuperar.
+STATE-001 persiste observações e intenções; STATE-002 lê evidências e rejeita
+estado inválido. O recorte implementado da SYNC-001 é o journal de downloads,
+não uma recuperação geral de sincronização bidirecional. Requisitos na
+[especificação](../../../docs/SOFTWARE_SPECIFICATION.md#47-detecção-de-mudanças-e-sincronização),
+organização da raiz e [rastreabilidade](preparation.md) complementam este contrato.
 
-## Objetivo
-Persistência transacional e journal SQLite.
+## STATE-001 — gravação
 
-## Pré-condições
-Configuração validada, dependências disponíveis ou erro explícito, estado prévio recuperável.
+Entradas: caminho absoluto do banco, cliente OAuth, conta, raízes remota/local,
+inventário/plano consistentes e cancelamento; para o journal, `Operation` com
+ID de operação, item remoto, caminho relativo, temporário, identidades da raiz/pai
+e fase. Implementação: [mod.rs](mod.rs), [downloads.rs](downloads.rs) e
+[modelo das fases](../download/models.rs).
 
-## Algoritmo conceitual
-1. Validar schema.
-2. persistir intenção antes de efeito externo.
-3. confirmar resultados de forma atômica.
-4. persistir cursor apenas após eventos.
-5. ao corromper preservar banco e suspender destrutivas.
+1. `Store::open` cria estado novo com permissões privadas, schema 2 e
+   application_id próprio. Banco existente deve passar versão/application_id,
+   `quick_check`, `foreign_key_check` e modo de journal esperado. Symlink, banco
+   existente vazio, corrompido, incompatível ou ilegível causam `StateStorage`;
+   não apagar, migrar ou reinicializar automaticamente.
+2. Ativar foreign keys, synchronous FULL e journal DELETE. Chaves de escopo:
+   cliente + conta + raiz remota + raiz local. ID remoto é chave de item dentro
+   desse escopo, nunca identidade global entre contas.
+3. `save` publica inventário/plano em transação IMMEDIATE por geração.
+   Observações antigas podem permanecer, mas não se tornam trabalho atual ou B.
+   Cancelamento antes do commit e falha SQL preservam a geração anterior.
+4. `put_operation` valida a estrutura serializada e persiste intenção/fase antes
+   de o executor avançar para o efeito seguinte. Colisão de ID de operação com
+   outro arquivo é erro, não sucesso silencioso. Uma gravação SQLite não engloba
+   atomicamente rede e filesystem.
 
-## Pós-condições
-Estado confirmado e persistido, ou erro tipado com efeitos parciais identificáveis.
+O retorno é confirmação de gravação local ou erro; salvar plano nunca significa
+instalação. Tokens não pertencem a esses registros.
 
-## Possíveis erros
-Entrada inválida; perda de conectividade; autorização negada; falta de espaço; versão alterada; erro de I/O; estado desconhecido; falha entre efeito externo e commit.
+## STATE-002 — leitura da base e recuperação
 
-## O que verificar
-IDs e revisões; pré-condições imediatamente antes de ações destrutivas; retorno e efeitos persistidos; invariantes globais e limites desta caixa-preta.
+`operations_for` consulta apenas o escopo solicitado, ordena por `rowid`, valida
+IDs da linha contra o registro e rejeita JSON/fases inválidos. Há limites de
+quantidade e volume serializado. `confirmed_bases` percorre as operações nessa
+ordem e substitui o candidato de cada ID remoto a cada registro:
 
-## O que não verificar nem inferir
-Não inferir ausência por timeout/erro HTTP, nem identidade apenas pelo nome, nem sucesso pela ausência de exceções. Não inspecionar conteúdo do usuário sem necessidade da operação.
+| Última operação do item | B retornada |
+| --- | --- |
+| `Installed` ou `Updated`, binário, ID não vazio e revisão positiva | Revisão remota + SHA-256/device/inode da instalação |
+| `Started`, `Ready`, `Updating`, `UpdateReady`, `UpdateAbandoned` ou evidência sem revisão válida | Nenhuma |
+| Registro estruturalmente inválido | Erro de armazenamento; não retornar mapa vazio como recuperação |
 
-## Invariantes
-Banco corrompido não é banco vazio. Aplicam-se também os invariantes globais de `docs/invariants.md`.
+Uma operação posterior incompleta mascara a candidata anterior daquele item,
+sem apagar o histórico nem inventar convergência. O marcador da raiz, inventário,
+plano e arquivos existentes não reconstroem B. Banco ausente pode ser criado como
+estado novo, mas os arquivos locais permanecem não gerenciados.
 
-## Complexidade
-Consultas pontuais tipicamente O(1) em metadados; inventário e planejamento O(n); transferências de B bytes O(B). Latência de rede, disco e consistência entre operações dominam o custo real.
+B carregada é evidência histórica. O planner precisa da fingerprint atual; o
+executor precisa revalidar identidade/conteúdo e reconciliar operações pendentes.
+A confirmação após efeito no filesystem pertence a
+[DOWNLOAD-001/002](../download/execution.md) e
+[DOWNLOAD-003](../download/updates.md). `Store` não instala nem restaura arquivos.
+Se a confirmação falhar, a fase recuperável persiste; o ciclo seguinte verifica
+as evidências antes de concluir. Ambiguidade mantém dados e bloqueia o efeito.
 
-## Critérios de aceitação
-Caso nominal, cancelamento, repetição sem duplicação indevida, erro transitório, erro definitivo, falha parcial e reinicialização. Revisar as decisões pendentes antes de codificar.
+## Evidência e limites
 
+[tests.rs](tests.rs) verifica reabertura/isolamento, rollback de geração,
+corrupção/symlink, permissões, schema incompatível e retenção de observações.
+A [matriz por regra](preparation.md#rastreabilidade-das-regras-do-eixo-1)
+vincula perda/incompletude de B e recuperação aos testes de download com
+filesystem/SQLite reais e provedor falso. Reabrir conexões não demonstra queda
+real do processo, energia interrompida ou durabilidade em todos os filesystems.
 
-## Fundamentação técnica por algoritmo
+Reconstrução geral após perda de estado, quarentena automatizada, critérios de
+saída de modo degradado e recuperação bidirecional permanecem decisões futuras.
+Não reconstruir B por inventário enquanto essas políticas não forem definidas.
+WAL é referência técnica alternativa, não o modo deste journal; não há migradores
+entre formatos internos. A bateria A01–A12 com Google Drive real permanece pendente.
 
-Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **teste verificável** e **hipótese ainda aberta**. Consulte [método de desenvolvimento](../../../docs/development-methodology.md) e [catálogo de fontes](../../../docs/reference-catalog.md). Os links são referências de projeto, não provas de que a implementação esteja pronta.
-
-### STATE-001
-
-- **Técnica conhecida:** Transações locais SQLite e journal de intenção.
-- **Referências primárias:** [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html), [SQLite WAL](https://www.sqlite.org/wal.html).
-- **Política do DriveSync:** Persistir intenção antes de efeito externo; confirmar base somente após efeito verificado; transação SQLite NÃO é transação distribuída Google+disco.
-- **Testes/oráculos a detalhar:** Crash antes/depois do commit, WAL, energia interrompida, fsync falho.
-- **Limitações / questões abertas:** Escolha de synchronous, WAL e local do DB precisam de testes reais.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
-
-### STATE-002
-
-- **Técnica conhecida:** Corrupção e recuperação conservadora.
-- **Referências primárias:** [SQLite integrity_check](https://www.sqlite.org/pragma.html#pragma_integrity_check), [SQLite WAL](https://www.sqlite.org/wal.html).
-- **Política do DriveSync:** Preservar banco corrompido e quarentenar; bloquear destrutivas; reconstruir apenas por inventário controlado.
-- **Testes/oráculos a detalhar:** Falha ao abrir DB, página corrompida, cursor parcial, operação em trânsito.
-- **Limitações / questões abertas:** Critérios explícitos de retorno do modo degradado.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+Referências de projeto: [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html),
+[SQLite pragmas](https://www.sqlite.org/pragma.html) e
+[SQLite WAL](https://www.sqlite.org/wal.html). Essas referências não demonstram
+validação de quedas de energia ou integração Google.

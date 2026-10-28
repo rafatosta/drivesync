@@ -35,4 +35,8 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** instalação local de binários e atualização gerenciada implementadas
+no recorte de [execution.md](execution.md) e [updates.md](updates.md).
+O contrato geral acima inclui intenções além desse recorte. Evidências e limites
+na [matriz do eixo B/L/R](../state/preparation.md#rastreabilidade-das-regras-do-eixo-1);
+a bateria A01–A12 com Google Drive real permanece pendente.

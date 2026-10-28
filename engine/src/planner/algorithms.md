@@ -1,63 +1,92 @@
 # Algoritmos — planner
 
-**Status:** proposta v0.2, independente da linguagem.
+## Escopo e estado
 
-## Identificadores
-PLAN-001 planejar; SYNC-002 revalidar.
+PLAN-001 implementa a classificação parcial B/L/R do fluxo de download de
+binários da [SYNC-001](https://github.com/rafatosta/drivesync/issues/1).
+Os requisitos e critérios vigentes estão na
+[especificação, seção 4.7](../../../docs/SOFTWARE_SPECIFICATION.md#47-detecção-de-mudanças-e-sincronização).
+A [matriz de rastreabilidade](../state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+liga regras, implementação e testes; não representa aceite com Google real.
 
-## Objetivo
-Comparação tripla B/L/R e plano puro.
+## PLAN-001 — entradas e identidade
 
-## Pré-condições
-Configuração validada, dependências disponíveis ou erro explícito, estado prévio recuperável.
+[mod.rs](mod.rs) recebe inventário com conta, raiz remota, IDs/pais, nomes,
+tipos e revisões; raiz local absoluta; bases opcionais por ID remoto; e um
+observador local injetado. O chamador deve carregar B no escopo correto de
+cliente OAuth, conta e raízes, conforme [STATE-001/002](../state/algorithms.md).
 
-## Algoritmo conceitual
-1. Carregar base B e observações L/R por ID.
-2. classificar modificações, ausência ou desconhecido.
-3. unilateral gera transferência.
-4. divergência bilateral gera conflito.
-5. anexar pré-condições ao plano.
+`ConfirmedBase` contém revisão remota positiva e fingerprint local
+`SHA-256:device:inode`. A fingerprint não é somente igualdade de bytes.
+`LocalObservation` distingue ausência, diretório, arquivo não gerenciado,
+symlink/especial, desconhecido e arquivo verificado. O observador da
+[fachada](../facade.rs), `observe_with_base`, lê a fingerprint atual somente
+quando há B e o caminho observado é um arquivo regular. Erros de leitura não
+são convertidos em ausência.
 
-## Pós-condições
-Estado confirmado e persistido, ou erro tipado com efeitos parciais identificáveis.
+O algoritmo puro `decide` não acessa disco/rede nem persiste estado.
+`plan_with_bases` chama o observador fornecido; sua implementação de produção
+faz leituras locais. Nenhuma dessas funções instala arquivos ou confirma B.
 
-## Possíveis erros
-Entrada inválida; perda de conectividade; autorização negada; falta de espaço; versão alterada; erro de I/O; estado desconhecido; falha entre efeito externo e commit.
+## Decisões para binários
 
-## O que verificar
-IDs e revisões; pré-condições imediatamente antes de ações destrutivas; retorno e efeitos persistidos; invariantes globais e limites desta caixa-preta.
+Aplicar primeiro: revisão remota zero, regressão em relação a B ou fingerprint
+vazia em B resultam em `DeferredUnknown`. Depois:
 
-## O que não verificar nem inferir
-Não inferir ausência por timeout/erro HTTP, nem identidade apenas pelo nome, nem sucesso pela ausência de exceções. Não inspecionar conteúdo do usuário sem necessidade da operação.
+| Evidência local L | B | Revisão R em relação a B | Decisão |
+| --- | --- | --- | --- |
+| Desconhecida | Qualquer | Não regressiva | `DeferredUnknown` |
+| Ausente | Com ou sem B | Válida e não regressiva | `Download` |
+| Verificada | Ausente | Válida | `Blocked(ExistingLocalData)` |
+| Igual à fingerprint de B | Confirmada | Igual | `NoOp` |
+| Igual à fingerprint de B | Confirmada | Maior | `Download` |
+| Diferente da fingerprint de B | Confirmada | Igual | `Blocked(LocalChanged)` |
+| Diferente da fingerprint de B | Confirmada | Maior | `Blocked(ConcurrentChanges)` |
+| Arquivo não gerenciado, diretório ou tipo especial | Qualquer | Válida | `Blocked(ExistingLocalData)` |
 
-## Invariantes
-Sem efeitos colaterais, sem exclusões com UNKNOWN. Aplicam-se também os invariantes globais de `docs/invariants.md`.
+Ausência local permite propor reposição, não propagar exclusão. Não existe
+entrada de ausência remota em `decide`; a matriz geral de exclusões não está
+implementada aqui. Igualdade local/remota sem B não autoriza adoção. Timestamps
+não participam da decisão. Revisão maior sozinha não prova mudança de bytes:
+a continuação por metadados é decisão revalidada do
+[executor](../download/updates.md), não equivalência inferida pelo planner.
 
-## Complexidade
-Consultas pontuais tipicamente O(1) em metadados; inventário e planejamento O(n); transferências de B bytes O(B). Latência de rede, disco e consistência entre operações dominam o custo real.
+## Construção do plano e erros
 
-## Critérios de aceitação
-Caso nominal, cancelamento, repetição sem duplicação indevida, erro transitório, erro definitivo, falha parcial e reinicialização. Revisar as decisões pendentes antes de codificar.
+Resolver caminhos pelo grafo de IDs/pais, bloquear nomes inseguros/reservados,
+colisões entre irmãos e seus descendentes. Itens sem caminho seguro ficam
+bloqueados; binários sem revisão ficam desconhecidos. Diretórios e links têm
+regras próprias, fora da comparação B/L/R de binários.
 
+`InvalidPlan` sinaliza estrutura inválida, raiz não absoluta ou limites de
+entrada excedidos; erros do observador são propagados. O retorno é um
+`DownloadPlan` com escopo, ID, caminho, revisão esperada, observação e ação.
+O plano não é autorização de escrita: o executor revalida journal, identidade,
+conteúdo, configuração e metadados antes dos efeitos.
 
-## Fundamentação técnica por algoritmo
+Testes puros: `three_way_requires_confirmed_local_evidence` e
+`three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint`
+em [tests.rs](tests.rs). Caminhos: `ambiguous_and_unsafe_names_never_reach_observer`,
+`folder_ambiguity_blocks_descendants_and_missing_versions_defer` e
+`metadata_observer_preserves_files_and_rejects_symlinks`. Os testes integrados
+com B durável estão na matriz de rastreabilidade citada acima.
 
-Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **teste verificável** e **hipótese ainda aberta**. Consulte [método de desenvolvimento](../../../docs/development-methodology.md) e [catálogo de fontes](../../../docs/reference-catalog.md). Os links são referências de projeto, não provas de que a implementação esteja pronta.
+## Limites e decisões futuras
 
-### PLAN-001
+Classificação geral de exclusões, renomeações, equivalência de revisões e
+resolução bidirecional permanecem propostas dos contratos de conflitos.
+`LocalChanged` e `ConcurrentChanges` são saídas distintas do planner; o relatório
+de execução pode expor somente `DownloadConflict`. Não há evidência de aceite
+da apresentação dessas classificações na interface.
 
-- **Técnica conhecida:** Reconciliação de três estados (base, local, remoto).
-- **Referências primárias:** [Unison file synchronizer](https://www.cis.upenn.edu/~bcpierce/unison/), [Google Drive changes](https://developers.google.com/workspace/drive/api/guides/manage-changes).
-- **Política do DriveSync:** Planejar sem efeitos; divergências de dois lados viram CONFLICT; UNKNOWN bloqueia operações destrutivas.
-- **Testes/oráculos a detalhar:** Tabela completa B/L/R (alterado, excluído, igual e unknown), tipos especiais, renomeação.
-- **Limitações / questões abertas:** Mapear versões e IDs reais da Drive API, inclusive múltiplos pais e nomes iguais.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+SYNC-002 continua como contrato de revalidação para operações futuras, incluindo
+atualização remota: comparar antes de escrever não elimina TOCTOU. Não autorizar
+substituição remota sem demonstrar precondição atômica ou política conservadora
+aprovada de preservação. Os testes de download não validam GET/PATCH concorrentes
+nem comprovam capacidades de escrita condicional da API Google.
 
-### SYNC-002
-
-- **Técnica conhecida:** Revalidação de precondição e controle de corrida.
-- **Referências primárias:** [HTTP RFC 9110](https://www.rfc-editor.org/rfc/rfc9110), [Drive files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
-- **Política do DriveSync:** Verificar identidade/versão antes de alterar; comparar antes do write sozinho NÃO elimina TOCTOU; se não houver update condicional comprovado, adotar política conservadora de preservação.
-- **Testes/oráculos a detalhar:** Alteração remota entre GET e PATCH, falha antes da confirmação, perda de acesso.
-- **Limitações / questões abertas:** **Bloqueio de viabilidade:** verificar suporte concreto a precondição atômica da Drive API antes de autorizar substituições.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+Referências de projeto preservadas: [reconciliação Unison](https://www.cis.upenn.edu/~bcpierce/unison/),
+[Drive changes](https://developers.google.com/workspace/drive/api/guides/manage-changes),
+[HTTP RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) e
+[Drive files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
+São fundamentação, não evidência de integração real.

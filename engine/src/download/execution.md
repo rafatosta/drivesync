@@ -33,6 +33,47 @@ execução automática ou exportação de documentos Google nesta unidade.
   sucesso global quando houver itens pendentes. Cancelamento é cooperativo;
   leituras HTTP têm prazo finito e o commit já iniciado é reconciliável.
 
+## Base confirmada, entradas e recuperação
+
+O ciclo recebe inventário remoto, plano com escopo e observações, journal,
+cancelamento, fonte de metadados/bytes e callback de progresso.
+[execution.rs](execution.rs) implementa validação, instalação e replay inicial;
+[execution/updates.rs](execution/updates.rs) implementa atualização e restauração;
+[filesystem.rs](filesystem.rs), [stream.rs](stream.rs) e [models.rs](models.rs)
+implementam operações locais, verificação dos bytes e fases persistidas.
+Requisitos em [RF-SYNC-01–05](../../../docs/SOFTWARE_SPECIFICATION.md#47-detecção-de-mudanças-e-sincronização).
+
+| Fase persistida | Significado e decisão na recuperação |
+| --- | --- |
+| `Started` | Intenção inicial; temporário parcial não fornece B. Preservar staging, podendo repetir transferência. |
+| `Ready` | Staging íntegro/sincronizado e identidade registrada, mas instalação não confirmada. Se destino já é a identidade esperada, verificar tamanho/SHA-256 e sincronizar diretório antes de `Installed`. Se só staging existe, verificar evidência, configuração/remoto e instalar sem substituir destino. |
+| `Installed` | Evidência durável da instalação inicial; somente revalidação atual autoriza reconhecer repetição ou propor atualização. |
+| `Updating` | Intenção de atualizar com evidência anterior; não autoriza mover destino nem fornece B ao planner. |
+| `UpdateReady` | Staging novo e base anterior registrados; reconciliar destino, backup e staging conforme [DOWNLOAD-003](updates.md), sem substituir entradas inesperadas. |
+| `Updated` | Nova instalação confirmada; fornece a base renovada, independentemente da retenção de backups antigos. |
+| `UpdateAbandoned` | Atualização anterior retirada da execução; preservar evidências e replanejar em novo ciclo. Não fornece B ao planner. |
+
+No replay `Ready` com destino já instalado, confirmar a instalação histórica
+verificada não equivale a aceitar uma revisão remota nova: se o item do inventário
+mudou, o executor relata `RemoteChanged` depois dessa confirmação. Não afirmar
+que a base confirmada representa a observação remota mais recente.
+
+O planner não substitui essas verificações. O executor pode recuperar uma fase
+pendente mesmo quando o plano não possui B. Destino ocupado sem evidência de
+instalação é conflito, inclusive com bytes iguais. Erro de confirmação SQLite
+após rename deixa uma fase recuperável; não apagar dados para forçar uma repetição.
+A regra de extração de B e o mascaramento da base antiga estão em
+[state](../state/algorithms.md).
+
+**Evidência:** a [matriz do eixo 1](../state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+liga cada regra a testes de decisão, persistência, interrupção e isolamento.
+Os testes de confirmação usam triggers SQLite que falham depois do efeito no
+filesystem; os testes de fronteiras de rename também usam estados reconstruídos.
+Isso verifica replay local, não queda real do processo/energia. O relatório pode
+trazer `DownloadConflict` sem distinguir os motivos do planner; o aceite da
+classificação na interface/diagnóstico continua pendente. A bateria A01–A12 com
+Google Drive real permanece pendente.
+
 ## Progresso observável
 
 A barra do ciclo mede itens processados (arquivos, diretórios, itens ignorados e
