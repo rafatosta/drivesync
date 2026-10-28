@@ -1,4 +1,9 @@
 export const english = {
+  "Escolha como apoiar o DriveSync": "Choose how to support DriveSync",
+  "As doações são realizadas em plataformas externas. Escolha um dos meios abaixo para contribuir voluntariamente.": "Donations are handled by external platforms. Choose one of the methods below to contribute voluntarily.",
+  "Abre em uma nova aba": "Opens in a new tab",
+  "Ao escolher um meio de doação, você será direcionado ao respectivo serviço, sujeito à política de privacidade dele. O DriveSync não processa pagamentos.": "When you choose a donation method, you will be redirected to that service, which has its own privacy policy. DriveSync does not process payments.",
+  "Você também pode ajudar com testes, relatos de problemas e contribuições ao código.": "You can also help with testing, bug reports, and code contributions.",
   "Aplicativo": "Application",
   "Desenvolvimento": "Development",
   "Doações": "Donations",
