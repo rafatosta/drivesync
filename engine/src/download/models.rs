@@ -90,6 +90,12 @@ pub(crate) struct Identity {
     pub device: u64,
     pub inode: u64,
 }
+impl Identity {
+    /// Binds a content hash to the installed file's stable local identity.
+    pub(crate) fn fingerprint(&self, sha256: &str) -> String {
+        format!("{sha256}:{}:{}", self.device, self.inode)
+    }
+}
 /// Verified prior installation used only to authorize a managed-file update.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Previous {

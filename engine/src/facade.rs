@@ -7,6 +7,24 @@ use crate::{
     EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount, SyncRootId,
 };
 
+fn observe_with_base(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+    base: Option<&crate::ConfirmedBase>,
+    cancel: &Cancellation,
+) -> Result<crate::LocalObservation, EngineError> {
+    let observation = crate::planner::observe(root, relative);
+    if base.is_some() && observation == crate::LocalObservation::UnmanagedFile {
+        return crate::download::filesystem::fingerprint(root, relative, cancel)
+            .map(|fingerprint| {
+                fingerprint
+                    .map(crate::LocalObservation::Verified)
+                    .unwrap_or(crate::LocalObservation::Unknown)
+            });
+    }
+    Ok(observation)
+}
+
 /// Public boundary for account authorization, restoration and folder setup.
 ///
 /// Blocking calls must be dispatched off the GTK main thread. Internal
@@ -204,8 +222,9 @@ impl DriveSyncEngine {
     }
 
     /// Inventories and prepares download candidates, then persists observations and
-    /// decisions atomically. Existing local files are conflicts, never adopted as
-    /// confirmed bases. No user files are created, replaced or deleted.
+    /// decisions atomically. Existing local files without a confirmed installation
+    /// remain conflicts; observations alone never become a base. No user files are
+    /// created, replaced or deleted.
     ///
     /// # Errors
     /// Propagates inventory/local errors; rejects changed configurations and corrupt
@@ -226,9 +245,6 @@ impl DriveSyncEngine {
         {
             return Err(EngineError::InvalidFolder);
         }
-        let plan = crate::planner::plan(&inventory, &folder.local, |relative| {
-            crate::planner::observe(&folder.local, relative)
-        })?;
         if cancel.is_cancelled() {
             return Err(EngineError::Authentication(AuthError::Cancelled));
         }
@@ -237,7 +253,22 @@ impl DriveSyncEngine {
         }
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let state_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
-        crate::state::Store::open(&state_path)?.save(
+        let mut store = crate::state::Store::open(&state_path)?;
+        let bases =
+            store.confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?;
+        let plan = crate::planner::plan_with_bases(
+            &inventory,
+            &folder.local,
+            &bases,
+            |_, relative, base| observe_with_base(&folder.local, relative, base, cancel),
+        )?;
+        if cancel.is_cancelled() {
+            return Err(EngineError::Authentication(AuthError::Cancelled));
+        }
+        if self.saved_folder(id)?.as_ref() != Some(&folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        store.save(
             &config.client_id,
             &inventory,
             &plan,
@@ -304,6 +335,8 @@ impl DriveSyncEngine {
             &mut source,
         )?;
         let inventory = &checkpoint.inventory;
+        let bases =
+            store.confirmed_bases(&config.client_id, id, &root, &folder.local)?;
         if let Some((_, old)) = &previous {
             let old: std::collections::HashMap<_, _> = old
                 .inventory
@@ -320,14 +353,18 @@ impl DriveSyncEngine {
         }
         let mut checked = 0;
         preparation(crate::PreparationProgress::CheckingLocal { checked });
-        let plan = crate::planner::plan(inventory, &folder.local, |path| {
-            let observation = crate::planner::observe(&folder.local, path);
-            checked += 1;
-            if checked % 128 == 0 {
-                preparation(crate::PreparationProgress::CheckingLocal { checked });
-            }
-            observation
-        })?;
+        let plan = crate::planner::plan_with_bases(
+            inventory,
+            &folder.local,
+            &bases,
+            |_, path, base| {
+                checked += 1;
+                if checked % 128 == 0 {
+                    preparation(crate::PreparationProgress::CheckingLocal { checked });
+                }
+                observe_with_base(&folder.local, path, base, cancel)
+            },
+        )?;
         preparation(crate::PreparationProgress::SavingState);
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);

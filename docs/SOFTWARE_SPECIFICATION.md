@@ -510,9 +510,9 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 
 | Área | Comportamento existente e referência | Lacuna frente à especificação |
 | --- | --- | --- |
-| Classificação | [planner](../engine/src/planner/mod.rs) distingue observação desconhecida, arquivo local preexistente, caminhos ambíguos e decisões conservadoras de download; contém comparação com base confirmada para esse escopo. | Não é o classificador bidirecional completo de RF-CON-01–02. |
+| Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | É uma classificação parcial do fluxo download-only: ausência remota, exclusões, equivalência de conteúdo entre revisões na classificação e a cobertura integral de RF-CON-01–02 continuam sem implementação/aceite. |
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
-| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; [checkpoints](../engine/src/state/checkpoints.rs) e registros de operações guardam evidências específicas. | Reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
+| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
 | Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Classificação geral, persistência de pendências e resolução assistida permanecem planejadas. |
 | Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
@@ -533,7 +533,7 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
 - **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
 
-A primeira unidade de implementação recomendada é a classificação pura de B/L/R com oráculos AC-CON-01–03, sem I/O nem autorização de operações. Preservação durável, execução e interface dependem de contratos adicionais e validação específica.
+A classificação inicial de B/L/R está implementada no planejador do fluxo download-only com leitura de fingerprint sem seguir symlinks e sem efeitos de escrita. O journal de downloads já fornece a confirmação durável usada como B; não há migração de schema. Preservação e execução bidirecionais, reconciliação de estado perdido, interface e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
 
 ### 12.4 Política de mudanças da especificação
 

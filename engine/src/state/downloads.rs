@@ -2,9 +2,10 @@
 use super::{failed, Store};
 use crate::{
     download::{Operation, Phase},
-    DownloadPlan, EngineError,
+    AccountId, ConfirmedBase, DownloadPlan, EngineError,
 };
 use rusqlite::params;
+use std::{collections::HashMap, path::Path};
 impl Store {
     /// Persists intent/ready/installed evidence before the caller advances effects.
     pub(crate) fn put_operation(
@@ -30,11 +31,67 @@ impl Store {
         client: &str,
         scope: &DownloadPlan,
     ) -> Result<Vec<Operation>, EngineError> {
-        let local = scope.local_root.to_str().ok_or(EngineError::InvalidPlan)?;
+        self.operations_for(
+            client,
+            &scope.account_id,
+            &scope.remote_root,
+            &scope.local_root,
+        )
+    }
+
+    /// Returns only each item's latest durably installed version as its base.
+    /// Later incomplete operations invalidate the previous candidate until replay.
+    pub(crate) fn confirmed_bases(
+        &self,
+        client: &str,
+        account: &AccountId,
+        remote: &str,
+        local: &Path,
+    ) -> Result<HashMap<String, ConfirmedBase>, EngineError> {
+        if client.is_empty() || account.0.is_empty() || remote.is_empty() || !local.is_absolute() {
+            return Err(EngineError::InvalidPlan);
+        }
+        let operations = self.operations_for(client, account, remote, local)?;
+        let mut latest = HashMap::new();
+        for operation in operations {
+            let base = match &operation.phase {
+                Phase::Installed {
+                    identity, sha256, ..
+                }
+                | Phase::Updated {
+                    identity, sha256, ..
+                }
+                    if operation.item.kind == crate::InventoryKind::Binary
+                        && !operation.item.id.is_empty()
+                        && operation.item.version.is_some_and(|version| version > 0) =>
+                {
+                    operation.item.version.map(|version| ConfirmedBase {
+                        remote_version: version,
+                        local_fingerprint: identity.fingerprint(sha256),
+                    })
+                }
+                _ => None,
+            };
+            latest.insert(operation.item.id, base);
+        }
+        Ok(latest
+            .into_iter()
+            .filter_map(|(id, base)| base.map(|base| (id, base)))
+            .collect())
+    }
+
+    fn operations_for(
+        &self,
+        client: &str,
+        account: &AccountId,
+        remote: &str,
+        local: &Path,
+    ) -> Result<Vec<Operation>, EngineError> {
+        let local = local.to_str().ok_or(EngineError::InvalidPlan)?;
         let mut stmt=self.0.prepare("SELECT operation,file,record FROM downloads WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4 ORDER BY rowid").map_err(failed)?;
         let rows = stmt
             .query_map(
-                params![client, scope.account_id.0, scope.remote_root, local],
+                params![client, account.0, remote, local],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,

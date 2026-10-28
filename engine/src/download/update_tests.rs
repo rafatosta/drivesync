@@ -34,6 +34,14 @@ fn updates_reopens_and_preserves_prior_versions_including_empty_updates() {
         fs::read(f.root.join(&report.preserved_copies[0])).unwrap(),
         b"abc"
     );
+    let updated_base = crate::state::Store::open(&f.db())
+        .unwrap()
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap();
+    assert_eq!(updated_base["file"].remote_version, 2);
+    assert!(updated_base["file"]
+        .local_fingerprint
+        .starts_with(&format!("{:x}:", sha2::Sha256::digest(b"new content"))));
     assert_eq!(
         f.execute(&next, &mut source, &Cancellation::new(), |_| {})
             .unwrap()
@@ -52,6 +60,14 @@ fn updates_reopens_and_preserves_prior_versions_including_empty_updates() {
         fs::read(f.root.join(&report.preserved_copies[0])).unwrap(),
         b"new content"
     );
+    let empty_base = crate::state::Store::open(&f.db())
+        .unwrap()
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap();
+    assert_eq!(empty_base["file"].remote_version, 3);
+    assert!(empty_base["file"]
+        .local_fingerprint
+        .starts_with(&format!("{:x}:", sha2::Sha256::digest(b""))));
 }
 #[test]
 fn edited_local_files_are_not_downloaded_over() {

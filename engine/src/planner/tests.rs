@@ -1,5 +1,7 @@
 use super::*;
 use crate::InventoryEntry;
+use sha2::Digest;
+use std::os::unix::fs::MetadataExt;
 fn inventory() -> RemoteInventory {
     RemoteInventory {
         account_id: AccountId("test".into()),
@@ -45,7 +47,15 @@ fn three_way_requires_confirmed_local_evidence() {
             &LocalObservation::Verified("changed".into()),
             3
         ),
-        PlanAction::Blocked(ConflictReason::ExistingLocalData)
+        PlanAction::Blocked(ConflictReason::ConcurrentChanges)
+    );
+    assert_eq!(
+        decide(
+            Some(&base),
+            &LocalObservation::Verified("changed".into()),
+            2
+        ),
+        PlanAction::Blocked(ConflictReason::LocalChanged)
     );
     assert_eq!(
         decide(Some(&base), &LocalObservation::Absent, 1),
@@ -55,6 +65,73 @@ fn three_way_requires_confirmed_local_evidence() {
         decide(None, &LocalObservation::Unknown, 3),
         PlanAction::DeferredUnknown
     );
+}
+
+#[test]
+fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint() {
+    let base = ConfirmedBase {
+        remote_version: 2,
+        local_fingerprint: "baseline".into(),
+    };
+    let cases = [
+        (
+            Some(&base),
+            LocalObservation::Verified("baseline".into()),
+            2,
+            PlanAction::NoOp,
+        ),
+        (
+            Some(&base),
+            LocalObservation::Verified("baseline".into()),
+            3,
+            PlanAction::Download,
+        ),
+        (
+            Some(&base),
+            LocalObservation::Absent,
+            2,
+            PlanAction::Download,
+        ),
+        (
+            Some(&base),
+            LocalObservation::Verified("local-change".into()),
+            2,
+            PlanAction::Blocked(ConflictReason::LocalChanged),
+        ),
+        (
+            Some(&base),
+            LocalObservation::Verified("local-change".into()),
+            3,
+            PlanAction::Blocked(ConflictReason::ConcurrentChanges),
+        ),
+        (
+            None,
+            LocalObservation::Verified("preexisting".into()),
+            3,
+            PlanAction::Blocked(ConflictReason::ExistingLocalData),
+        ),
+        (
+            None,
+            LocalObservation::Absent,
+            3,
+            PlanAction::Download,
+        ),
+        (
+            Some(&base),
+            LocalObservation::Unknown,
+            2,
+            PlanAction::DeferredUnknown,
+        ),
+        (
+            Some(&base),
+            LocalObservation::Verified("baseline".into()),
+            1,
+            PlanAction::DeferredUnknown,
+        ),
+    ];
+    for (base, local, remote, expected) in cases {
+        assert_eq!(decide(base, &local, remote), expected);
+    }
 }
 #[test]
 fn ambiguous_and_unsafe_names_never_reach_observer() {
@@ -110,6 +187,40 @@ fn metadata_observer_preserves_files_and_rejects_symlinks() {
     assert_eq!(
         observe(&root, Path::new("missing/child")),
         LocalObservation::Absent
+    );
+    assert_eq!(
+        crate::download::filesystem::fingerprint(
+            &root,
+            Path::new("file.txt"),
+            &crate::Cancellation::new()
+        )
+        .unwrap(),
+        Some({
+            let metadata = std::fs::metadata(root.join("file.txt")).unwrap();
+            format!(
+                "{:x}:{}:{}",
+                sha2::Sha256::digest(b"keep"),
+                metadata.dev(),
+                metadata.ino()
+            )
+        })
+    );
+    assert_eq!(
+        crate::download::filesystem::fingerprint(
+            &root,
+            Path::new("missing.txt"),
+            &crate::Cancellation::new()
+        )
+        .unwrap(),
+        None
+    );
+    assert_eq!(
+        crate::download::filesystem::fingerprint(
+            &root,
+            Path::new("link/file.txt"),
+            &crate::Cancellation::new()
+        ),
+        Err(crate::EngineError::DownloadConflict)
     );
     std::fs::remove_dir_all(root).unwrap();
 }

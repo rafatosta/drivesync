@@ -16,6 +16,17 @@ pub(super) fn cancelled(cancel: &Cancellation) -> Result<(), EngineError> {
         Ok(())
     }
 }
+fn signature(metadata: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64) {
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
 /// Reads at most expected+1 bytes; writes only bounded verified-size prefixes.
 /// The caller owns staging and does not expose it as the final file on failure.
 pub(super) fn copy(
@@ -59,6 +70,39 @@ pub(super) fn copy(
     }
     Ok(format!("{:x}", local.finalize()))
 }
+/// Hashes one open regular file and rejects changes observed while it is read.
+pub(super) fn fingerprint(
+    file: &mut File,
+    cancel: &Cancellation,
+) -> Result<String, EngineError> {
+    let before = file.metadata().map_err(io)?;
+    if !before.is_file() {
+        return Err(EngineError::DownloadConflict);
+    }
+    let mut hash = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        cancelled(cancel)?;
+        let n = file.read(&mut buffer).map_err(io)?;
+        cancelled(cancel)?;
+        if n == 0 {
+            break;
+        }
+        bytes = bytes
+            .checked_add(n as u64)
+            .ok_or(EngineError::DownloadConflict)?;
+        if bytes > before.len() {
+            return Err(EngineError::DownloadConflict);
+        }
+        hash.update(&buffer[..n]);
+    }
+    let after = file.metadata().map_err(io)?;
+    if bytes != before.len() || signature(&before) != signature(&after) {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
 /// Fingerprints the open regular file and rejects metadata changes during reading.
 pub(super) fn verify(
     file: &mut File,
@@ -84,16 +128,5 @@ pub(super) fn verify(
         hash.update(&buffer[..n]);
     }
     let after = file.metadata().map_err(io)?;
-    let signature = |m: &std::fs::Metadata| {
-        (
-            m.dev(),
-            m.ino(),
-            m.len(),
-            m.mtime(),
-            m.mtime_nsec(),
-            m.ctime(),
-            m.ctime_nsec(),
-        )
-    };
     Ok(signature(&before) == signature(&after) && format!("{:x}", hash.finalize()) == sha256)
 }

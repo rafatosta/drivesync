@@ -5,11 +5,13 @@ use crate::AccountId;
 use crate::{
     state::Store, Cancellation, EngineError, InventoryEntry, InventoryKind, RemoteInventory,
 };
+use sha2::Digest;
 use std::io::Read;
 use std::{
     collections::HashMap,
     fs,
     io::{self, Cursor},
+    os::unix::fs::MetadataExt,
     path::PathBuf,
 };
 
@@ -216,6 +218,136 @@ fn installs_verifies_reopens_and_never_overwrites_local_changes() {
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"xyz");
     assert_eq!(source.media_calls, 1);
 }
+
+#[test]
+fn confirmed_installation_drives_item_scoped_three_way_planning() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut source = Fake::new(&inv);
+    f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+
+    let store = Store::open(&f.db()).unwrap();
+    let bases = store
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap();
+    let metadata = fs::metadata(f.root.join("file.txt")).unwrap();
+    assert_eq!(
+        bases.get("file"),
+        Some(&crate::ConfirmedBase {
+            remote_version: 1,
+            local_fingerprint: format!(
+                "{:x}:{}:{}",
+                sha2::Sha256::digest(b"abc"),
+                metadata.dev(),
+                metadata.ino()
+            ),
+        })
+    );
+    assert!(store
+        .confirmed_bases("other-client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .confirmed_bases("client", &inv.account_id, "other-root", &f.root)
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .confirmed_bases("client", &AccountId("other-account".into()), &inv.root_id, &f.root)
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.base.join("other-root"))
+        .unwrap()
+        .is_empty());
+
+    let make_plan = |inventory: &RemoteInventory| {
+        crate::planner::plan_with_bases(
+            inventory,
+            &f.root,
+            &bases,
+            |_, path, base| {
+                let observed = crate::planner::observe(&f.root, path);
+                if base.is_some() && observed == crate::LocalObservation::UnmanagedFile {
+                    Ok(crate::download::filesystem::fingerprint(
+                        &f.root,
+                        path,
+                        &Cancellation::new(),
+                    )?
+                    .map(crate::LocalObservation::Verified)
+                    .unwrap_or(crate::LocalObservation::Unknown))
+                } else {
+                    Ok(observed)
+                }
+            },
+        )
+    };
+    assert_eq!(
+        make_plan(&inv).unwrap().entries[0].action,
+        PlanAction::NoOp
+    );
+
+    let mut remote_changed = inv.clone();
+    remote_changed.entries[0].version = Some(2);
+    assert_eq!(
+        make_plan(&remote_changed).unwrap().entries[0].action,
+        PlanAction::Download
+    );
+
+    fs::write(f.root.join("file.txt"), b"xyz").unwrap();
+    assert_eq!(
+        make_plan(&inv).unwrap().entries[0].action,
+        PlanAction::Blocked(crate::ConflictReason::LocalChanged)
+    );
+    assert_eq!(
+        make_plan(&remote_changed).unwrap().entries[0].action,
+        PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges)
+    );
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"xyz");
+}
+
+#[test]
+fn interrupted_operation_does_not_advance_the_confirmed_baseline() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut source = Fake::new(&inv);
+    f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+
+    f.reset_to_ready(false);
+    let store = Store::open(&f.db()).unwrap();
+    assert!(store
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn missing_journal_never_adopts_or_removes_preexisting_local_data() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let mut source = Fake::new(&inv);
+    f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+
+    fs::remove_file(f.db()).unwrap();
+    let store = Store::open(&f.db()).unwrap();
+    let bases = store
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap();
+    assert!(bases.is_empty());
+    let plan = crate::planner::plan_with_bases(&inv, &f.root, &bases, |_, path, _| {
+        Ok(crate::planner::observe(&f.root, path))
+    })
+    .unwrap();
+    assert_eq!(
+        plan.entries[0].action,
+        PlanAction::Blocked(crate::ConflictReason::ExistingLocalData)
+    );
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+}
+
 #[test]
 fn rejects_short_long_and_corrupt_streams_without_final_file() {
     for bytes in [b"ab".to_vec(), b"abcd".to_vec(), b"xyz".to_vec()] {
