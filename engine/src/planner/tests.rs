@@ -110,12 +110,7 @@ fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprin
             3,
             PlanAction::Blocked(ConflictReason::ExistingLocalData),
         ),
-        (
-            None,
-            LocalObservation::Absent,
-            3,
-            PlanAction::Download,
-        ),
+        (None, LocalObservation::Absent, 3, PlanAction::Download),
         (
             Some(&base),
             LocalObservation::Unknown,

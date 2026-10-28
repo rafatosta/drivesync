@@ -71,10 +71,7 @@ pub(super) fn copy(
     Ok(format!("{:x}", local.finalize()))
 }
 /// Hashes one open regular file and rejects changes observed while it is read.
-pub(super) fn fingerprint(
-    file: &mut File,
-    cancel: &Cancellation,
-) -> Result<String, EngineError> {
+pub(super) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<String, EngineError> {
     let before = file.metadata().map_err(io)?;
     if !before.is_file() {
         return Err(EngineError::DownloadConflict);

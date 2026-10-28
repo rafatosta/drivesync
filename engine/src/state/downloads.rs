@@ -60,10 +60,9 @@ impl Store {
                 }
                 | Phase::Updated {
                     identity, sha256, ..
-                }
-                    if operation.item.kind == crate::InventoryKind::Binary
-                        && !operation.item.id.is_empty()
-                        && operation.item.version.is_some_and(|version| version > 0) =>
+                } if operation.item.kind == crate::InventoryKind::Binary
+                    && !operation.item.id.is_empty()
+                    && operation.item.version.is_some_and(|version| version > 0) =>
                 {
                     operation.item.version.map(|version| ConfirmedBase {
                         remote_version: version,
@@ -90,16 +89,13 @@ impl Store {
         let local = local.to_str().ok_or(EngineError::InvalidPlan)?;
         let mut stmt=self.0.prepare("SELECT operation,file,record FROM downloads WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4 ORDER BY rowid").map_err(failed)?;
         let rows = stmt
-            .query_map(
-                params![client, account.0, remote, local],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                    ))
-                },
-            )
+            .query_map(params![client, account.0, remote, local], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
             .map_err(failed)?;
         let mut result = Vec::new();
         let mut bytes = 0usize;

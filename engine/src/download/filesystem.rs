@@ -40,11 +40,7 @@ pub(crate) fn fingerprint(
     let content_fingerprint = super::stream::fingerprint(&mut file, cancel)?;
     root.validate_parent(relative, parent_id)?;
     if identity(&file)? != file_id
-        || read(&parent, &name)?
-            .as_ref()
-            .map(|current| identity(current))
-            .transpose()?
-            != Some(file_id)
+        || read(&parent, &name)?.as_ref().map(identity).transpose()? != Some(file_id)
     {
         return Err(EngineError::DownloadConflict);
     }

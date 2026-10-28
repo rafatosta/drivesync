@@ -15,12 +15,13 @@ fn observe_with_base(
 ) -> Result<crate::LocalObservation, EngineError> {
     let observation = crate::planner::observe(root, relative);
     if base.is_some() && observation == crate::LocalObservation::UnmanagedFile {
-        return crate::download::filesystem::fingerprint(root, relative, cancel)
-            .map(|fingerprint| {
+        return crate::download::filesystem::fingerprint(root, relative, cancel).map(
+            |fingerprint| {
                 fingerprint
                     .map(crate::LocalObservation::Verified)
                     .unwrap_or(crate::LocalObservation::Unknown)
-            });
+            },
+        );
     }
     Ok(observation)
 }
@@ -268,12 +269,7 @@ impl DriveSyncEngine {
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
         }
-        store.save(
-            &config.client_id,
-            &inventory,
-            &plan,
-            cancel,
-        )?;
+        store.save(&config.client_id, &inventory, &plan, cancel)?;
         Ok(plan)
     }
 
@@ -335,8 +331,7 @@ impl DriveSyncEngine {
             &mut source,
         )?;
         let inventory = &checkpoint.inventory;
-        let bases =
-            store.confirmed_bases(&config.client_id, id, &root, &folder.local)?;
+        let bases = store.confirmed_bases(&config.client_id, id, &root, &folder.local)?;
         if let Some((_, old)) = &previous {
             let old: std::collections::HashMap<_, _> = old
                 .inventory
@@ -353,18 +348,14 @@ impl DriveSyncEngine {
         }
         let mut checked = 0;
         preparation(crate::PreparationProgress::CheckingLocal { checked });
-        let plan = crate::planner::plan_with_bases(
-            inventory,
-            &folder.local,
-            &bases,
-            |_, path, base| {
+        let plan =
+            crate::planner::plan_with_bases(inventory, &folder.local, &bases, |_, path, base| {
                 checked += 1;
                 if checked % 128 == 0 {
                     preparation(crate::PreparationProgress::CheckingLocal { checked });
                 }
                 observe_with_base(&folder.local, path, base, cancel)
-            },
-        )?;
+            })?;
         preparation(crate::PreparationProgress::SavingState);
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);

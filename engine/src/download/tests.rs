@@ -3,7 +3,8 @@ use super::filesystem::Root;
 use super::*;
 use crate::AccountId;
 use crate::{
-    state::Store, Cancellation, EngineError, InventoryEntry, InventoryKind, PlanAction, RemoteInventory,
+    state::Store, Cancellation, EngineError, InventoryEntry, InventoryKind, PlanAction,
+    RemoteInventory,
 };
 use sha2::Digest;
 use std::io::Read;
@@ -253,39 +254,39 @@ fn confirmed_installation_drives_item_scoped_three_way_planning() {
         .unwrap()
         .is_empty());
     assert!(store
-        .confirmed_bases("client", &AccountId("other-account".into()), &inv.root_id, &f.root)
+        .confirmed_bases(
+            "client",
+            &AccountId("other-account".into()),
+            &inv.root_id,
+            &f.root
+        )
         .unwrap()
         .is_empty());
     assert!(store
-        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.base.join("other-root"))
+        .confirmed_bases(
+            "client",
+            &inv.account_id,
+            &inv.root_id,
+            &f.base.join("other-root")
+        )
         .unwrap()
         .is_empty());
 
     let make_plan = |inventory: &RemoteInventory| {
-        crate::planner::plan_with_bases(
-            inventory,
-            &f.root,
-            &bases,
-            |_, path, base| {
-                let observed = crate::planner::observe(&f.root, path);
-                if base.is_some() && observed == crate::LocalObservation::UnmanagedFile {
-                    Ok(crate::download::filesystem::fingerprint(
-                        &f.root,
-                        path,
-                        &Cancellation::new(),
-                    )?
-                    .map(crate::LocalObservation::Verified)
-                    .unwrap_or(crate::LocalObservation::Unknown))
-                } else {
-                    Ok(observed)
-                }
-            },
-        )
+        crate::planner::plan_with_bases(inventory, &f.root, &bases, |_, path, base| {
+            let observed = crate::planner::observe(&f.root, path);
+            if base.is_some() && observed == crate::LocalObservation::UnmanagedFile {
+                Ok(
+                    crate::download::filesystem::fingerprint(&f.root, path, &Cancellation::new())?
+                        .map(crate::LocalObservation::Verified)
+                        .unwrap_or(crate::LocalObservation::Unknown),
+                )
+            } else {
+                Ok(observed)
+            }
+        })
     };
-    assert_eq!(
-        make_plan(&inv).unwrap().entries[0].action,
-        PlanAction::NoOp
-    );
+    assert_eq!(make_plan(&inv).unwrap().entries[0].action, PlanAction::NoOp);
 
     let mut remote_changed = inv.clone();
     remote_changed.entries[0].version = Some(2);
