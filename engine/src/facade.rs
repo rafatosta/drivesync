@@ -7,6 +7,9 @@ use crate::{
     EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount, SyncRootId,
 };
 
+/// Reads current local evidence without adopting files that lack a confirmed base.
+/// Fingerprints bind bytes to device/inode; read errors propagate instead of
+/// becoming absence or permission to replace a destination.
 fn observe_with_base(
     root: &std::path::Path,
     relative: &std::path::Path,

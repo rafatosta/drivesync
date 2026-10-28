@@ -121,7 +121,7 @@ fn local_name(item: &crate::InventoryEntry) -> Option<String> {
 }
 
 /// Builds paths by stable parent IDs and blocks ambiguity throughout descendants.
-/// The injected observer enables pure tests and cannot write through this API.
+/// The planner performs no writes; the injected observer controls observation I/O.
 pub(crate) fn plan(
     inventory: &RemoteInventory,
     local_root: &Path,
@@ -133,7 +133,8 @@ pub(crate) fn plan(
 }
 
 /// Builds a plan using only durable, item-scoped installation evidence as B.
-/// The observer supplies fresh local evidence; this function has no I/O effects.
+/// The observer supplies fresh local evidence and may perform reads or return
+/// errors. The planner itself does not write files or persist installation evidence.
 ///
 /// # Errors
 ///

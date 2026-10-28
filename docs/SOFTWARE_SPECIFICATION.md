@@ -475,7 +475,8 @@ constituem histórico cumulativo nesta especificação.
 
 ### 10.4 Testes com a API Google
 
-A bateria A01–A12 da SYNC-001 permanece pendente com Google Drive real. Exige
+A bateria A01–A12 da SYNC-001 permanece pendente com Google Drive real e está
+registrada na [issue de acompanhamento #28](https://github.com/rafatosta/drivesync/issues/28). Exige
 conta/perfil e raízes isolados, arquivos dispensáveis, atualização do mesmo ID
 remoto e evidência de conteúdo, identidade, revisão, base/fase persistida e
 repetição após reinício. Deve também demonstrar a classificação usada, pela
