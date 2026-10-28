@@ -37,7 +37,8 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [remote/inventory/tests.rs](../../remote/inventory/tests.rs), **I** =
 [identity_tests.rs](../identity_tests.rs), **C** =
 [collision_tests.rs](../collision_tests.rs), **H** =
-[restoration_tests.rs](../restoration_tests.rs).
+[restoration_tests.rs](../restoration_tests.rs), **T** =
+[concurrency_tests.rs](../concurrency_tests.rs).
 A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
 
 | Caso | Teste existente relacionado | Variantes e complemento exigidos |
@@ -63,9 +64,9 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I19 / N12 | H `i19_historical_and_independent_edits_conflict_against_the_last_confirmed_base` | Histórico em um lado e edição independente no outro, inclusive offline; comparar com última B e preservar. |
 | I20 / N12 | H `i20_known_historical_content_without_provenance_has_only_observable_diagnostics` | Sem proveniência, diagnosticar alteração/ambiguidade sem afirmar intenção. Variante com prova somente se houver suporte real especificado; hash antigo não basta. |
 | I21 / N12 | H `i21_restored_or_missing_state_never_adopts_divergent_current_files` ; H `i21_joint_local_rollback_without_an_independent_anchor_looks_like_remote_change` | Banco antigo + arquivos atuais; arquivos antigos + banco atual; banco ausente + arquivos. Revalidar; explicitar impossibilidade de detectar reversão conjunta consistente sem âncora externa. |
-| I22 / C05 | U `edits_and_inode_swaps_during_download_remain_untouched` | Troca após plano e durante streaming, bytes iguais/diferentes; identidade divergente impede instalação mesmo com plano antigo. |
-| I23 / C05 | U `remote_change_during_update_preserves_old_file`; D `remote_version_changes_and_concurrent_local_creation_are_conflicts` | Revisão muda, ID desaparece, homônimo novo aparece; conferir IDs consultados e impedir troca por nome/instalação sob revisão errada. |
-| I24 | U `network_checksum_and_cancellation_keep_old_file_at_its_path`; E `removal_is_durable_unavailability_and_preserves_user_bytes` | Indisponibilidade → substituição local/remota → retorno; reconciliar com B, sem inferir exclusão nem adoção. |
+| I22 / C05 | T `i22_equal_and_different_byte_swaps_invalidate_plans_and_installation` | Troca após plano e durante streaming, bytes iguais/diferentes; identidade divergente impede instalação mesmo com plano antigo. |
+| I23 / C05 | T `i23_revision_removal_and_new_homonym_during_media_cannot_change_planned_identity` | Revisão muda, ID desaparece, homônimo novo aparece; conferir IDs consultados e impedir troca por nome/instalação sob revisão errada. |
+| I24 | T `i24_unavailability_then_local_or_remote_substitution_revalidates_the_old_base` | Indisponibilidade → substituição local/remota → retorno; reconciliar com B, sem inferir exclusão nem adoção. |
 | I25 | B `cancellation_during_initial_or_update_transfer_does_not_confirm_partial_bytes`; B `later_incomplete_transfer_masks_old_base_until_verified_recovery` | Interrupção/cancelamento no streaming e após staging; nenhuma nova identidade/B confirmada, reabrir/repetir. |
 | I26 | B `filesystem_effect_without_confirmation_never_exposes_old_or_new_base`; U `confirmation_failure_leaves_both_versions_and_recovers`; U `new_destination_after_backup_is_not_replaced_or_restored_over` | Efeito sem confirmação, replay normal/com substituto; comprovar identidade/bytes antes de confirmar, preservar substituto e evidenciar pendência. |
 | I27 | B `corrupt_database_or_malformed_installation_evidence_stops_before_effects`; B `unreadable_database_is_an_error_and_is_not_reinitialized`; B `installed_phase_without_remote_revision_is_not_a_confirmed_base` | SQLite corrompido/incompatível e identidade incompleta; erro ou B desconhecida, sem reset/adotar por hash. Auditar validação de device/inode além de hash/revisão. |
@@ -95,7 +96,17 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
   executor, mantendo diagnóstico desconhecido no plano; não gera mídia.
 - O intervalo offline de I19 representa ausência de observações entre ciclos,
   com reconstrução de instâncias na volta. Não é simulação de falha de rede.
-- I22–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
+- I22–I24 usam planos anteriores à intervenção, progresso durante streaming e
+  antes da instalação, além de um leitor que altera a observação remota após
+  leitura positiva. Troca de inode com bytes iguais também invalida a execução.
+  Antes de transferir, o diagnóstico é de identidade divergente; depois de uma
+  intenção durável, B pode ficar ausente até replay, e o journal conserva a
+  identidade anterior para comprovar o bloqueio. O teste não inventa B para
+  recuperar um diagnóstico.
+- I24 injeta erro tipado de rede no provedor, sem inferir ausência. No retorno,
+  testa separadamente troca local/remota e ambas; o controle sem substituição
+  permite atualização segura. Não é ensaio de conectividade real.
+- I25–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
   representam conclusão automática dessas baterias.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.

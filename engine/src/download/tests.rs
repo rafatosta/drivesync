@@ -901,3 +901,6 @@ mod collision_tests;
 
 #[path = "restoration_tests.rs"]
 mod restoration_tests;
+
+#[path = "concurrency_tests.rs"]
+mod concurrency_tests;
