@@ -895,3 +895,6 @@ fn provider_uses_requested_identity_and_reports_missing_objects() {
 
 #[path = "identity_tests.rs"]
 mod identity_tests;
+
+#[path = "collision_tests.rs"]
+mod collision_tests;

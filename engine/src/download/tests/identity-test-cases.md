@@ -35,7 +35,8 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [incremental_tests.rs](../incremental_tests.rs), **P** =
 [planner/tests.rs](../../planner/tests.rs), **R** =
 [remote/inventory/tests.rs](../../remote/inventory/tests.rs), **I** =
-[identity_tests.rs](../identity_tests.rs).
+[identity_tests.rs](../identity_tests.rs), **C** =
+[collision_tests.rs](../collision_tests.rs).
 A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
 
 | Caso | Teste existente relacionado | Variantes e complemento exigidos |
@@ -49,11 +50,11 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I07 | E `i07_same_id_path_changes_preserve_association_and_occupied_destinations` | Renomear/mover mesmo ID, destinos livre/ocupado; conferir diagnóstico anterior/atual, associação e B. Teste existente permite receber no destino livre e conserva origem. |
 | I08 | I `i08_each_scope_component_requires_its_own_base` | Variar separadamente cliente, conta, raiz local/remota com nomes/bytes/IDs repetidos; nenhum vínculo alheio autoriza efeito. |
 | I09 | I `i09_nonregular_or_unreadable_identity_never_becomes_absence`; I `i09_incomplete_persisted_identity_does_not_authorize_media_or_confirmation`; P `incomplete_identity_evidence_is_unknown_even_when_fingerprints_match` | Leitura falha, identidade incompleta, diretório e symlink; motivo/erro explícito, desconhecido não vira ausente, alvo externo intacto. |
-| I10 / C20 | P `ambiguous_and_unsafe_names_never_reach_observer`; R `traverses_nested_pages_and_preserves_same_names_by_identity` | Dois IDs mesmo pai/nome, bytes iguais/diferentes, sem L; integrar inventário/plano/execução, zero mídia e nenhum vencedor. |
-| I11 / C20 | Mesmos verificadores de I10, sem sequência após B | Instalar A e adicionar B homônimo; preservar B de A e ambos remotos, sem transferência/avanço durante colisão. |
-| I12 / C20 | P `folder_ambiguity_blocks_descendants_and_missing_versions_defer` | Duas pastas homônimas com filhos distintos; integrar execução e conferir IDs/árvores sem mistura. |
-| I13 / C20 | R `traverses_nested_pages_and_preserves_same_names_by_identity` (homônimos na mesma página) | Separar colisões entre páginas, inverter ordem de I10–I12; controle com nomes iguais em pais/caminhos distintos. |
-| I14 / C20 | Sem teste dedicado identificado | Desfazer colisão por remoção/renomeação: restante A revalida B; restante B não adota local de A; repetir após reabertura. |
+| I10 / C20 | C `i10_i11_i13_homonyms_block_before_and_after_installation_across_pages` | Dois IDs mesmo pai/nome, bytes iguais/diferentes, sem L; integrar inventário/plano/execução, zero mídia e nenhum vencedor. |
+| I11 / C20 | C `i10_i11_i13_homonyms_block_before_and_after_installation_across_pages` | Instalar A e adicionar B homônimo; preservar B de A e ambos remotos, sem transferência/avanço durante colisão. |
+| I12 / C20 | C `i12_i13_folder_homonyms_block_distinct_descendants_in_every_order` | Duas pastas homônimas com filhos distintos; integrar execução e conferir IDs/árvores sem mistura. |
+| I13 / C20 | C `i13_same_names_under_distinct_paths_install_the_correct_objects` | Separar colisões entre páginas, inverter ordem de I10–I12; controle com nomes iguais em pais/caminhos distintos. |
+| I14 / C20 | C `i14_removed_or_renamed_homonym_revalidates_the_remaining_object` | Desfazer colisão por remoção/renomeação: restante A revalida B; restante B não adota local de A; repetir após reabertura. |
 | I15 / N12 | U `updates_reopens_and_preserves_prior_versions_including_empty_updates` (atualizações gerais) | V1 → V2 → bytes V1 com revisão maior; continuidade, instalação durável e preservação de V2, sem afirmar intenção. |
 | I16 / N12 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority` (outro ID) | Após V2, V1 em novo ID; distinguir objeto e preservar local sem herdar B. |
 | I17 / N12 | B `updated_base_survives_reopen_and_classifies_later_local_edit_against_v2` (edição geral) | Restaurar V1 após V2 com mesmo/outro inode; distinguir conteúdo/identidade e conservar B de V2. |
@@ -81,7 +82,11 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 - O executor revalida binários independentemente da ação planejada. O diagnóstico
   é verificável no plano; o relatório pode reduzir o erro a `DownloadConflict`.
   Não se exige alteração da GUI.
-- I10–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
+- I10–I14 usam o scanner real com páginas JSON por pai, ordenação direta/inversa
+  e uma/todas as entradas por página. Conferem IDs e planos reabertos, zero mídia
+  e nenhuma nova B durante ambiguidade; remoção/renomeação de cada homônimo exige
+  reavaliação. Os testes relacionados não representam integração com Google.
+- I15–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
   representam conclusão automática dessas baterias.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.
