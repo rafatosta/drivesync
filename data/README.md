@@ -31,7 +31,14 @@ dialog. GNOME background status distinguishes active cycles, connection failures
 pending issues and automatic checks. Saved configured accounts are checked
 automatically while the application is running, including with its window hidden.
 
-The launcher and notifications require installing the Flatpak, not merely running
+The production profile must be installed before running it. On GNOME 50,
+GdkPixbuf uses Glycin to load the welcome SVG through `flatpak-spawn --sandbox`.
+That helper requires an installed application; running an uninstalled production
+build can fail with “app … not installed”. Glycin skips its loader sandbox for
+application IDs ending in `Devel`, so use the development manifest for direct
+GNOME Builder runs. Export and install the production Flatpak to test that profile.
+
+The launcher and notifications also require installing the Flatpak, not merely running
 its build directory in Builder. Installed desktop identity must match the binary's
 `DRIVESYNC_APP_ID`. Reopening the launcher activates the existing window.
 

@@ -38,13 +38,23 @@ pub(super) fn build() -> WelcomeView {
     content.set_margin_start(24);
     content.set_margin_end(24);
 
-    // Embed a PNG export so welcome artwork does not require an SVG loader/portal.
+    // Embed the existing artwork; uninstalled Builder runs use the Devel profile.
     let bytes = gtk::glib::Bytes::from_static(include_bytes!(
-        "../../data/icons/welcome/com.rtosta.DriveSync.png"
+        "../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"
     ));
-    let texture = gtk::gdk::Texture::from_bytes(&bytes)
-        .expect("embedded DriveSync welcome PNG must be valid");
-    let image = gtk::Image::from_paintable(Some(&texture));
+    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
+    let image = match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, None::<&gtk::gio::Cancellable>)
+    {
+        Ok(pixbuf) => gtk::Image::from_paintable(Some(&gtk::gdk::Texture::for_pixbuf(&pixbuf))),
+        Err(error) => {
+            gtk::glib::g_warning!(
+                "drivesync",
+                "Could not load welcome SVG: {error}. Install the production Flatpak before \
+                 running it; use the Devel manifest for uninstalled Builder runs."
+            );
+            gtk::Image::from_icon_name("folder-download-symbolic")
+        }
+    };
     image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);
     image.update_property(&[gtk::accessible::Property::Label(
