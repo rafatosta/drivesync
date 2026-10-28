@@ -904,3 +904,6 @@ mod restoration_tests;
 
 #[path = "concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[path = "recovery_tests.rs"]
+mod recovery_tests;

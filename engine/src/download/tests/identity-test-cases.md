@@ -38,7 +38,8 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [identity_tests.rs](../identity_tests.rs), **C** =
 [collision_tests.rs](../collision_tests.rs), **H** =
 [restoration_tests.rs](../restoration_tests.rs), **T** =
-[concurrency_tests.rs](../concurrency_tests.rs).
+[concurrency_tests.rs](../concurrency_tests.rs), **K** =
+[recovery_tests.rs](../recovery_tests.rs).
 A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
 
 | Caso | Teste existente relacionado | Variantes e complemento exigidos |
@@ -68,7 +69,7 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I23 / C05 | T `i23_revision_removal_and_new_homonym_during_media_cannot_change_planned_identity` | Revisão muda, ID desaparece, homônimo novo aparece; conferir IDs consultados e impedir troca por nome/instalação sob revisão errada. |
 | I24 | T `i24_unavailability_then_local_or_remote_substitution_revalidates_the_old_base` | Indisponibilidade → substituição local/remota → retorno; reconciliar com B, sem inferir exclusão nem adoção. |
 | I25 | B `cancellation_during_initial_or_update_transfer_does_not_confirm_partial_bytes`; B `later_incomplete_transfer_masks_old_base_until_verified_recovery` | Interrupção/cancelamento no streaming e após staging; nenhuma nova identidade/B confirmada, reabrir/repetir. |
-| I26 | B `filesystem_effect_without_confirmation_never_exposes_old_or_new_base`; U `confirmation_failure_leaves_both_versions_and_recovers`; U `new_destination_after_backup_is_not_replaced_or_restored_over` | Efeito sem confirmação, replay normal/com substituto; comprovar identidade/bytes antes de confirmar, preservar substituto e evidenciar pendência. |
+| I26 | K `i26_actual_effect_without_confirmation_replays_only_the_verified_identity` | Efeito sem confirmação, replay normal/com substituto; comprovar identidade/bytes antes de confirmar, preservar substituto e evidenciar pendência. |
 | I27 | B `corrupt_database_or_malformed_installation_evidence_stops_before_effects`; B `unreadable_database_is_an_error_and_is_not_reinitialized`; B `installed_phase_without_remote_revision_is_not_a_confirmed_base` | SQLite corrompido/incompatível e identidade incompleta; erro ou B desconhecida, sem reset/adotar por hash. Auditar validação de device/inode além de hash/revisão. |
 | I28 | E `restart_no_changes_local_deletion_and_local_edit_are_reconciled`; E `historical_activity_never_suppresses_a_current_local_conflict` | Repetir após substituições/colisões/restaurações; duplicar/reordenar eventos, não ressuscitar associação, gerar backups extras ou perder pendências. |
 
@@ -106,7 +107,12 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 - I24 injeta erro tipado de rede no provedor, sem inferir ausência. No retorno,
   testa separadamente troca local/remota e ambas; o controle sem substituição
   permite atualização segura. Não é ensaio de conectividade real.
-- I25–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
+- I26 provoca recusa SQLite na confirmação final após o efeito real no filesystem.
+  O replay confirma somente o mesmo inode/bytes; substitutos com bytes iguais ou
+  diferentes mantêm B ausente, journal pendente e todas as cópias intactas, com
+  conflito explícito e sem mídia adicional. Não reconstrói fase pendente a partir
+  de uma instalação confirmada para demonstrar essa janela.
+- I25/I27/I28 continuam sujeitos às variantes do catálogo; testes relacionados não
   representam conclusão automática dessas baterias.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.
