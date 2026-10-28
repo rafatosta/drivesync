@@ -11,7 +11,7 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 ## Escopo e segurança
 
 - Trabalhar em tarefas pequenas, com mudanças justificadas e verificáveis.
-- Ler `docs/invariants.md`, `docs/development-methodology.md` e os contratos relevantes antes de alterar comportamento.
+- Ler `docs/old/invariants.md`, `docs/old/development-methodology.md` e os contratos relevantes antes de alterar comportamento.
 - Preservar isolamento por conta, credenciais, dados locais e garantias contra operações destrutivas.
 - Não desenvolver funcionalidades adicionais, criar dependências ou refatorar módulos alheios sem necessidade demonstrável.
 - Não interpretar compilar/testar como prova de validação real com Google Drive ou Flatpak.
@@ -20,14 +20,14 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 
 - **Git é o histórico de alterações.** Não criar nem ampliar documentos com diários cronológicos, listas de arquivos modificados, relatos de cada commit, totais de testes de etapas anteriores ou narrativas do processo de implementação.
 - Manter documentação voltada a contratos, requisitos, uso, invariantes, decisões duradouras e critérios de aceite; evidências de execução pontuais pertencem ao commit ou PR correspondente.
-- **Durante o MVP:** manter `docs/MVP.md` como plano temporário. Não reescrever preventivamente arquitetura, contratos ou documentação dos módulos a cada implementação. Ao concluir o MVP, confrontar o código efetivamente entregue com o escopo planejado, consolidar a documentação e avaliar a remoção do plano temporário.
+- **Especificação vigente:** detalhar requisitos e critérios de aceite em `docs/SOFTWARE_SPECIFICATION.md`, distinguindo intenção, implementação e validação. Consultar `docs/README.md` para a organização documental. O plano `docs/old/MVP.md` é referência histórica, não um plano ativo a manter. Reaproveitar o acervo somente após conferir sua vigência no código e nas decisões atuais; não reescrever preventivamente toda a documentação a cada alteração.
 - Uma mudança crítica que torne uma orientação operacional ou de segurança perigosa/inválida deve ser corrigida imediatamente; não manter instruções enganosas em nome do congelamento documental.
 - Não apagar contratos e decisões de projeto apenas porque a implementação ainda não chegou àquela etapa.
-- Evitar informações duplicadas; a reorganização documental ampla será tratada separadamente.
+- Evitar informações duplicadas; manter requisitos na especificação e detalhamentos nos contratos relevantes, com referências explícitas. O arquivamento em `docs/old/` não revoga as invariantes de segurança nem as convenções de desenvolvimento citadas nestas instruções.
 
 ## Convenção de organização dos módulos Rust
 
-Aplicar as diretrizes de `docs/development-methodology.md` sobre coesão,
+Aplicar as diretrizes de `docs/old/development-methodology.md` sobre coesão,
 visibilidade e modularização. Preferir `mod.rs` como ponto de organização e
 reexportação, agrupar modelos relacionados em um `models.rs` quando apropriado
 e separar implementações por responsabilidade real. Não impor arquivo por
@@ -36,7 +36,7 @@ estrutura, classe equivalente ou método, nem criar abstrações artificiais.
 ## Documentação do código Rust (rustdoc)
 
 Em novas implementações e refatorações, seguir o padrão em
-`docs/development-methodology.md` (seção **Documentação do código com rustdoc**):
+`docs/old/development-methodology.md` (seção **Documentação do código com rustdoc**):
 
 - Documentar módulos com `//!` e contratos relevantes de tipos, traits e
   métodos com `///`, no próprio código. Documentar também itens internos
