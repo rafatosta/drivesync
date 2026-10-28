@@ -97,3 +97,20 @@ Other possible improvements include selecting individual subfolders, faster dete
 Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
 
 DriveSync is an independent project and is not affiliated with Google.
+
+## Build identification
+
+About, Welcome, and the account sidebar display the package version and source
+revision, for example `0.1.0 (a1b2c3d)`. About's troubleshooting information
+contains the full revision. Both Flatpak application IDs use the same format.
+`-modified` indicates changes to tracked files; untracked and ignored files are
+not included in this check. The revision identifies source code, not a unique
+build invocation.
+
+The build detects Git metadata automatically, including the local directory
+sources copied by the current Flatpak manifests. When packaging sources without
+Git metadata, set `DRIVESYNC_BUILD_REVISION` in the build environment to the full
+commit hash (optionally followed by `-modified`) before running Cargo. In a
+Flatpak manifest, set it under the module's `build-options.env`. Without Git or
+an explicit revision, the app displays `unknown`. No Git access is needed at
+runtime.

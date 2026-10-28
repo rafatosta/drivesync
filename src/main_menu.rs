@@ -32,7 +32,8 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
                 .modal(true)
                 .application_name("DriveSync")
                 .application_icon(crate::APP_ID)
-                .version(env!("CARGO_PKG_VERSION"))
+                .version(crate::build_info::VERSION)
+                .debug_info(format!("Source revision: {}", crate::build_info::REVISION))
                 .comments("Download files from Google Drive. Local edits are preserved.")
                 .build();
             about.present();

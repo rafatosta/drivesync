@@ -61,6 +61,17 @@ pub fn build_selected(
         .build();
     side_content.append(&scroller);
     sidebar.set_content(Some(&side_content));
+    let version = gtk::Label::builder()
+        .label(crate::build_info::VERSION)
+        .css_classes(["caption", "dim-label"])
+        .selectable(true)
+        .margin_top(8)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .tooltip_text(crate::build_info::REVISION)
+        .build();
+    sidebar.add_bottom_bar(&version);
     split.set_sidebar(Some(&adw::NavigationPage::new(&sidebar, "Accounts")));
 
     let toolbar = adw::ToolbarView::new();

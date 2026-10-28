@@ -84,6 +84,11 @@ pub(super) fn build() -> WelcomeView {
     footnote.set_max_width_chars(80);
     footnote.set_halign(gtk::Align::Center);
     content.append(&footnote);
+    let version = text(crate::build_info::VERSION, "caption");
+    version.add_css_class("dim-label");
+    version.set_selectable(true);
+    version.set_tooltip_text(Some(crate::build_info::REVISION));
+    content.append(&version);
 
     let clamp = adw::Clamp::builder()
         .maximum_size(760)

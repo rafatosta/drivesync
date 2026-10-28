@@ -8,6 +8,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 mod automatic;
 mod background;
+mod build_info;
 mod connection;
 mod dashboard;
 mod flow;
