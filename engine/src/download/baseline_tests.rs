@@ -52,7 +52,7 @@ fn changed(inv: &RemoteInventory) -> (RemoteInventory, Fake) {
     next.entries[0].version = Some(2);
     next.entries[0].md5_checksum = Some("4ed9407630eb1000c0f6b63842defa7d".into());
     let mut source = Fake::new(&next);
-    source.bytes = b"def".to_vec();
+    source.content.insert("file".into(), b"def".to_vec());
     (next, source)
 }
 
@@ -271,7 +271,10 @@ fn filesystem_effect_without_confirmation_never_exposes_old_or_new_base() {
             cycle(&f, &next, &mut source).unwrap_err(),
             EngineError::StateStorage
         );
-        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), source.bytes);
+        assert_eq!(
+            fs::read(f.root.join("file.txt")).unwrap(),
+            source.content["file"]
+        );
         assert!(base(&f, &next).is_none());
         conn.execute_batch("DROP TRIGGER fail_confirm").unwrap();
         drop(conn);

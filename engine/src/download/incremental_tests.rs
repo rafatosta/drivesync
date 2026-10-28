@@ -106,7 +106,7 @@ fn observed_update_survives_failed_transfer_and_retries_without_another_event() 
     newer.version = Some(2);
     newer.md5_checksum = Some("4ed9407630eb1000c0f6b63842defa7d".into());
     source.entries.insert(newer.id.clone(), newer.clone());
-    source.bytes = b"def".to_vec();
+    source.content.insert("file".into(), b"def".to_vec());
     source.fail_stream = true;
     feed.events.push(Change {
         id: newer.id.clone(),
