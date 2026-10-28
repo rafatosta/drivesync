@@ -70,7 +70,7 @@ jobs:
 
       - name: Validate, build and export production application
         run: |
-          flatpak-builder --user --noninteractive --force-clean --disable-rofiles-fuse \
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
             --state-dir="$RUNNER_TEMP/flatpak-state" \
             --repo="$RUNNER_TEMP/flatpak-repo" \
             "$RUNNER_TEMP/flatpak-build" source/flatpak/production-ci.json
