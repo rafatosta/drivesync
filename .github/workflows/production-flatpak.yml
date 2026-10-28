@@ -1,0 +1,105 @@
+name: Production Flatpak
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak:
+    if: github.repository == 'rafatosta/drivesync'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Provision production Desktop OAuth metadata
+        env:
+          OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_PRODUCTION_JSON }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          raw = os.environ.get("OAUTH_JSON", "")
+          if not raw:
+              raise SystemExit("Missing repository secret GOOGLE_OAUTH_PRODUCTION_JSON")
+          try:
+              data = json.loads(raw)
+          except ValueError:
+              raise SystemExit("OAuth secret is not valid JSON") from None
+          client = data.get("installed") if isinstance(data, dict) else None
+          if not isinstance(client, dict) or not client.get("client_id"):
+              raise SystemExit("Expected downloaded Desktop OAuth JSON with installed.client_id")
+          path = pathlib.Path("source/data/oauth/production.json")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(raw)
+          path.chmod(0o600)
+          PY
+
+      - name: Install Flatpak tools and runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.gnome.Platform//50 org.gnome.Sdk//50 org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+      - name: Prepare validation manifest
+        run: |
+          flatpak-builder --show-manifest source/flatpak/com.rtosta.DriveSync.yml > "$RUNNER_TEMP/production-manifest.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          manifest = json.loads(pathlib.Path(os.environ["RUNNER_TEMP"], "production-manifest.json").read_text())
+          module = next(m for m in manifest["modules"] if m["name"] == "drivesync")
+          module["build-commands"] = [
+              "cargo fmt --all --check",
+              "cargo clippy --locked --workspace --all-targets -- -D warnings",
+              "cargo test --locked --workspace",
+              "cargo doc --locked --workspace --no-deps --document-private-items",
+              "cargo test --locked --workspace --doc",
+          ] + module["build-commands"]
+          pathlib.Path("source/flatpak/production-ci.json").write_text(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Validate, build and export production application
+        run: |
+          flatpak-builder --user --noninteractive --force-clean --disable-rofiles-fuse \
+            --state-dir="$RUNNER_TEMP/flatpak-state" \
+            --repo="$RUNNER_TEMP/flatpak-repo" \
+            "$RUNNER_TEMP/flatpak-build" source/flatpak/production-ci.json
+          test -x "$RUNNER_TEMP/flatpak-build/files/bin/drivesync"
+          grep -Fx 'name=com.rtosta.DriveSync' "$RUNNER_TEMP/flatpak-build/metadata"
+          grep -Fx 'runtime=org.gnome.Platform/x86_64/50' "$RUNNER_TEMP/flatpak-build/metadata"
+
+      - name: Generate installable bundle and checksum
+        run: |
+          mkdir -p artifacts
+          bundle="DriveSync-experimental-x86_64-${GITHUB_SHA:0:12}.flatpak"
+          flatpak build-bundle --arch=x86_64 \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            "$RUNNER_TEMP/flatpak-repo" "artifacts/$bundle" com.rtosta.DriveSync master
+          cd artifacts
+          sha256sum "$bundle" > "$bundle.sha256"
+          printf 'Experimental DriveSync build\nCommit: %s\nInstall: flatpak install --user ./%s\nRun: flatpak run com.rtosta.DriveSync\nOAuth verification is pending. No automatic updates are provided.\n' \
+            "$GITHUB_SHA" "$bundle" > INSTALL.txt
+
+      - name: Upload experimental installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DriveSync-experimental-x86_64-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Remove temporary OAuth configuration
+        if: always()
+        run: |
+          rm -f source/data/oauth/production.json
