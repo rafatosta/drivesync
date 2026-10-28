@@ -831,3 +831,6 @@ fn deleted_local_copy_requires_reconciliation_of_silent_metadata_revision() {
     assert_eq!(result.unchanged, 1);
     assert_eq!(source.media_calls, 2);
 }
+
+#[path = "baseline_tests.rs"]
+mod baseline_tests;
