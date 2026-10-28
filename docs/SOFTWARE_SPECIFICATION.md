@@ -220,9 +220,36 @@ Permissões, conectividade e disponibilidade de armazenamento podem mudar durant
 
 ### 4.9 Tratamento de conflitos e exclusões
 
-**Referência de requisitos em revisão:** [catálogo de 56 casos e políticas](../engine/src/conflicts/validation-checklist.md). Distinguir conflito, equivalência, incompatibilidade e falha; proteger versões e operações em massa. Os códigos não correspondem a 56 funcionalidades independentes.
+Os requisitos RF-CON abaixo definem o comportamento pretendido. Não habilitam atualização remota de arquivos existentes, propagação de exclusões ou resolução automática. A situação da implementação está em 12.1; os critérios de aceite e vínculos com o catálogo estão em 10.5 e 10.8.
+
+**Entradas comuns:** conta e raiz, identidade do item, estado-base confirmado B (ou ausência explícita), observações local L e remota R, revisões/fingerprints disponíveis, tipo, caminho, disponibilidade e política autorizada. Ausente, inacessível e desconhecido são estados distintos. Nome, caminho e timestamp isolados não comprovam identidade, equivalência ou precedência.
+
+**Saída comum:** classificação, motivo, evidências usadas, escopo bloqueado e ações candidatas sujeitas à política. Classificar não transfere, renomeia, exclui nem concede autorização para executar. Dados insuficientes produzem resultado inconclusivo e bloqueio das alterações dependentes dessa evidência.
+
+| ID | Requisito |
+| --- | --- |
+| RF-CON-01 | Comparar B/L/R e distinguir ausência de mudança, mudança unilateral, divergência concorrente, equivalência, incompatibilidade e indisponibilidade/erro. Sem B confiável, não inventar uma sincronização anterior nem deduzir exclusão. |
+| RF-CON-02 | Reconhecer identidade separadamente de localização e conteúdo. Colisões de nomes, substituições, renomeações e movimentos devem considerar ancestralidade e dependências; não escolher arbitrariamente um item remoto homônimo. |
+| RF-CON-03 | Bloquear substituição de conteúdo divergente até preservar as versões disponíveis e registrar sua origem e identidade. Distinguir preservação concluída, pendente e versão inacessível; falta de espaço ou colisão não autoriza descarte. |
+| RF-CON-04 | Manter pendência durável por conta, raiz, item e revisões observadas. Adiar ou fechar a interface não resolve o conflito; itens comprovadamente independentes podem continuar. Descendentes de diretório ambíguo não são independentes. |
+| RF-CON-05 | Oferecer resolução assistida somente para ações suportadas: manter local, manter remoto, manter ambas ou adiar. Explicar destino e preservação de cada versão; revalidar identidade, conteúdo, revisão, escopo e autorização imediatamente antes dos efeitos. Uma mudança invalida a decisão anterior. |
+| RF-CON-06 | Tratar exclusão confirmada separadamente de perda de acesso e ausência de observação. A primeira entrega deste tratamento não propagará exclusões nem escolherá automaticamente a versão mais recente; pedidos destrutivos permanecem bloqueados. |
+
+O [catálogo de 56 cenários e políticas](../engine/src/conflicts/validation-checklist.md) fornece casos de cobertura, não 56 funcionalidades implementadas. A matriz B/L/R desse catálogo orienta a classificação; uma ação candidata, como enviar mudança local, continua bloqueada se o executor ou a política não a suportar.
 
 ### 4.10 Recuperação de falhas e reconciliação
+
+**Entradas comuns:** identidade da conta/raiz, configuração autorizada, registros duráveis de operações e pendências, evidências atuais dos destinos, staging e cópias preservadas. **Saídas:** efeito confirmado, retomada segura, replanejamento, espera por condição externa ou bloqueio explícito. Recuperação não pode assumir que timeout significa ausência de efeito.
+
+| ID | Requisito |
+| --- | --- |
+| RF-REC-01 | Antes de repetir operação interrompida, confrontar sua identidade e efeitos observáveis com o registro persistente. Confirmar o efeito existente quando comprovado; repetir somente quando comprovadamente seguro. Ambiguidade mantém a operação pendente, sem criar duplicatas por repetição cega. |
+| RF-REC-02 | Em banco ausente para uma raiz anteriormente gerenciada, inválido, corrompido ou incompatível, preservar arquivos e impedir decisões que dependam do estado perdido. Não reinicializar silenciosamente nem converter inventário em baseline confirmado. |
+| RF-REC-03 | Suspender alterações no escopo de raiz inacessível, identidade divergente ou autorização perdida. Mudança de conta, raiz ou configuração invalida trabalho cuja autorização deixou de valer; reconciliar efeitos já iniciados antes de replanejar. Atores concorrentes não podem receber autorização conflitante para a mesma raiz. |
+| RF-REC-04 | Distinguir falha transitória, impedimento que exige usuário, conflito, incompatibilidade e resultado incerto. Tentativas devem ser limitadas por política explícita e canceláveis; reconexão não desfaz pausa solicitada pelo usuário. |
+| RF-REC-05 | Confirmar conclusão apenas após verificar integridade, identidade e persistência do resultado. Recuperar ou abandonar staging sem tocar em conteúdo de origem desconhecida; preservar versões anteriores e trabalho confirmado após cancelamento ou reinício. |
+
+Os tipos concretos de erro, limites de tentativas e mecanismos de persistência serão definidos nos contratos de implementação. Nenhum nome de estado aqui obriga um formato de banco ou uma API interna.
 
 ### 4.11 Documentos nativos do Google Workspace
 
@@ -304,13 +331,26 @@ Raízes locais ativas não devem coincidir nem se sobrepor. A verificação deve
 
 ### 6.4 Política de conflitos e alterações concorrentes
 
-**Referências:** [viabilidade Rust/Drive API](../engine/src/conflicts/technical-feasibility.md) e [pesquisa de experiência e ferramentas existentes](../engine/src/conflicts/ux-research.md). Preferências automáticas somente por opção explícita e sem ignorar salvaguardas.
+RF-CON-01–05 orientam a classificação e a resolução. A política inicial é solicitar decisão em divergência real, preservando conteúdo; equivalência comprovada não deve gerar uma falsa escolha entre versões. Datas podem informar a comparação, mas não decidem qual conteúdo é correto.
+
+| Escolha | Efeito pretendido e restrição |
+| --- | --- |
+| Manter local | Tornar a versão local a escolhida para convergência, preservando a divergente. Se exigir atualizar arquivo remoto existente, permanecer indisponível até haver executor e salvaguardas aprovados. Não equivale a autorizar upload irrestrito. |
+| Manter remoto | Receber a revisão remota revalidada e preservar a versão local divergente antes de substituí-la. Se preservação ou acesso falharem, bloquear. |
+| Manter ambas | Preservar conteúdos distintos sob identidades e nomes sem colisão, com destinos explicados. A convergência de ambas só termina quando os efeitos autorizados forem confirmados; não basta gerar uma cópia temporária. |
+| Adiar | Não aplicar a resolução e manter a pendência. Continuar somente trabalho independente. |
+
+Não executar mesclagem automática nem preferências por timestamp na primeira entrega. Preferências automáticas, comparação visual por formato e operações em lote permanecem propostas. Cópia de conflito, histórico de versões e registro de execução têm finalidades distintas; o registro não substitui os bytes preservados. Nenhuma limpeza automática de cópias de conflitos pendentes será habilitada sem política explícita de retenção e recuperação.
+
+Os estudos de [viabilidade](../engine/src/conflicts/technical-feasibility.md) e [UX](../engine/src/conflicts/ux-research.md) são referências de investigação. Sua existência não comprova garantias de concorrência nem aprova as opções futuras.
 
 ### 6.5 Política de exclusões e operações destrutivas
 
 Falhas de acesso, comunicação ou autenticação não constituem evidência suficiente de exclusão. Uma operação destrutiva exige identidade, estado e autorização compatíveis com a política definida para o recurso.
 
 Diante de inconsistência ou resultado incerto de uma operação anterior, novas operações destrutivas devem permanecer bloqueadas até reconciliação. A conveniência de automatizar uma ação não justifica ignorar a preservação de versões ou o controle do usuário.
+
+Na primeira entrega de conflitos, RF-CON-06 bloqueia toda propagação de exclusão, inclusive em lote. O tamanho do lote nunca concede autorização. Para habilitar essa capacidade no futuro, especificar limiares de impacto, quantidade e proporção afetadas, confirmação de escopo, retenção, recuperação e testes de concorrência; limiares indefinidos mantêm a funcionalidade bloqueada.
 
 ### 6.6 Política de falhas, retries e retomadas
 
@@ -374,7 +414,13 @@ Dados inconsistentes ou incompatíveis não devem ser descartados ou reinicializ
 
 ### 9.5 Estados de erro e recuperação
 
-**Diretriz UX em estudo:** central de atenção com comparação e consequências das decisões, separando conflitos, incompatibilidades e erros. Ver [pesquisa de UX](../engine/src/conflicts/ux-research.md).
+A interface deverá representar os resultados de RF-CON e RF-REC em linguagem comum, distinguindo conflito, incompatibilidade, problema operacional e verificação inconclusiva. Para cada pendência, mostrar conta, item, localização, motivo, ação possível e estado real da preservação.
+
+Antes de uma resolução, apresentar as versões disponíveis, suas origens, consequências da escolha e destino da cópia preservada. Informação ausente deve aparecer como desconhecida; ações não suportadas ou sem autorização não podem ser executadas. Se o item mudar durante a comparação, solicitar nova análise, sem reaplicar a escolha anterior.
+
+Adiar e reabrir devem recuperar a mesma pendência. Uma raiz suspensa deve aparecer como indisponível, sem sugerir que seus arquivos foram excluídos. O resumo não pode declarar sincronização completa enquanto houver itens bloqueados ou inconclusivos. O fluxo deve funcionar por teclado e leitor de tela, sem depender apenas de cor.
+
+A disposição visual de uma central de atenção e comparadores por formato continua em estudo na [pesquisa de UX](../engine/src/conflicts/ux-research.md); esta seção define comportamento observável, não um desenho de tela aprovado.
 
 ### 9.6 Integração com o ambiente GNOME
 
@@ -398,13 +444,49 @@ A existência de código ou a compilação bem-sucedida não bastam para declara
 
 ### 10.5 Testes de sincronização, conflitos e falhas
 
-**Fonte de rastreabilidade:** [checklist C01–C25, E01–E10, P01–P09, N01–N12](../engine/src/conflicts/validation-checklist.md). Todos pendentes de evidência por cenário.
+Os critérios abaixo são oráculos de aceite propostos, não resultados de execução. Cada fixture deve fixar conta/raiz, B/L/R, identidades, revisões, conteúdos e autorização. Conferir tanto o resultado quanto os efeitos proibidos e os bytes preservados. Os casos C/E/P/N são definidos no [catálogo](../engine/src/conflicts/validation-checklist.md).
+
+| Critério / requisitos | Condição e evento | Resultado exigido e efeitos proibidos |
+| --- | --- | --- |
+| AC-CON-01 / RF-CON-01 | B confirmado; variar L/R entre inalterado, modificado e ausente confirmado nas nove combinações da matriz do catálogo. Repetir com observação desconhecida. | Classificação determinística conforme a matriz; nenhuma escrita na classificação. Ausência confirmada não se confunde com desconhecido; exclusão candidata permanece bloqueada. |
+| AC-CON-02 / RF-CON-01 | Sem B, apresentar arquivos preexistentes; depois apresentar conteúdo equivalente com timestamps distintos e evidência suficiente de identidade. | Sem baseline inventado ou sobrescrita inicial. Equivalência comprovada não produz conflito de conteúdo; evidência insuficiente não é equivalência. |
+| AC-CON-03 / RF-CON-02 | Itens diferentes disputam um caminho, ou um ancestral muda de identidade; incluir renomeação e modificação independentes. | Colisão bloqueia item e dependentes sem eleger vencedor por nome. Mudanças independentes só são conciliáveis com identidade e destino demonstrados. |
+| AC-CON-04 / RF-CON-03 | Duas versões divergentes; interromper preservação, esgotar espaço e ocupar o nome reservado. | Conteúdo original intacto; nenhuma versão declarada preservada sem verificação. Repetição não sobrescreve cópia alheia nem cria cópias indefinidamente. |
+| AC-CON-05 / RF-CON-04 | Adiar conflito de um item, sincronizar outro independente e reiniciar. | Mesma pendência reaparece com identidade e revisões; trabalho independente progride. Descendentes dependentes permanecem bloqueados. |
+| AC-CON-06 / RF-CON-05 | Escolher cada resolução com versões estáveis; repetir após mudança de conteúdo, identidade, autorização ou escopo. | Ação suportada segue os efeitos de 6.4 com preservação; ação não suportada é recusada. Decisão obsoleta não altera conteúdo nem é aplicada a outra conta/raiz. |
+| AC-CON-07 / RF-CON-06 | Simular remoção confirmada, perda de acesso, inventário incompleto e grande conjunto de ausências; solicitar preferência por data ou mesclagem automática. | Causas distintas na saída; nenhuma exclusão propagada, escolha por timestamp, mesclagem automática ou ação destrutiva em lote. |
+| AC-REC-01 / RF-REC-01 | Interromper antes e depois do efeito externo e antes/depois da confirmação durável; tornar a resposta remota incerta. | Reinício confirma efeito demonstrado ou mantém pendência; repetir não duplica item nem perde versão. Sem evidência suficiente, nenhuma repetição com efeito incerto. |
+| AC-REC-02 / RF-REC-02 | Remover, corromper ou substituir por formato incompatível o estado de uma raiz antes gerenciada. | Arquivos e evidências restantes preservados; erro explícito e bloqueio de decisões dependentes. Nenhum reset silencioso ou inferência de exclusão. |
+| AC-REC-03 / RF-REC-03 | Desmontar raiz, revogar acesso, trocar identidade/configuração ou iniciar ator concorrente na mesma raiz durante trabalho. | Escopo afetado suspenso; nenhum acesso fora da raiz ou entre contas. Efeitos anteriores reconciliados antes de novo plano; ator concorrente não recebe autorização conflitante. |
+| AC-REC-04 / RF-REC-04 | Injetar erro transitório, permanente e ambíguo; pausar durante espera e restaurar conectividade. | Categoria correta, tentativas dentro do limite definido pelo contrato, pausa mantida e nenhum retry cego de resultado ambíguo. |
+| AC-REC-05 / RF-REC-05 | Alterar arquivo durante transferência, produzir checksum divergente, cancelar ou falhar na gravação do estado final. | Nenhuma confirmação falsa ou baseline avançado; arquivo parcial não publicado como definitivo e conteúdo previamente confirmado preservado. |
+| AC-UX-01 / RF-CON-03–05, RF-REC-03–04 | Abrir, adiar e reabrir pendências por teclado e leitor de tela; incluir cópia inacessível e decisão invalidada. | Origem, motivo, consequência e preservação real compreensíveis; ações impossíveis indisponíveis; nenhuma indicação de sucesso global com pendências. |
+
+Executar primeiro classificação com entradas simuladas; depois efeitos com filesystem/estado isolados e provedor controlado, incluindo injeção de falhas e reinício. Testes com API real e desktop são evidências adicionais, exigindo conta e pasta exclusivas com dados dispensáveis. Só declarar um requisito validado com referência ao teste, ambiente e resultado; os 56 itens permanecem pendentes até evidência específica.
 
 ### 10.6 Testes de segurança e privacidade
 
 ### 10.7 Testes GNOME e Flatpak
 
 ### 10.8 Matriz de rastreabilidade
+
+Esta matriz vincula requisitos ao catálogo e aos critérios novos; não atribui cobertura executada. Os agrupamentos são relacionados, não equivalências entre um teste e todos os cenários do grupo.
+
+| Requisitos | Casos relacionados | Critérios de aceite |
+| --- | --- | --- |
+| RF-CON-01 | C01, C03–C06, C21, C25, N01, N12, P01 | AC-CON-01–02 |
+| RF-CON-02 | C02, C05, C07–C20, C22–C24, N05 | AC-CON-03 |
+| RF-CON-03 | P02, P08, E02, E05, E10 | AC-CON-04 |
+| RF-CON-04 | P07, C16–C17 | AC-CON-05 |
+| RF-CON-05 | P03, P09, N06–N07 | AC-CON-06, AC-UX-01 |
+| RF-CON-06 | P04–P06, C03–C04, C08, C11, C16, C25, N08 | AC-CON-07 |
+| RF-REC-01 | N11, E04–E05, P09 | AC-REC-01 |
+| RF-REC-02 | N01–N02, N12 | AC-REC-02 |
+| RF-REC-03 | N03–N05, N07, N09, C19, C25 | AC-REC-03 |
+| RF-REC-04 | E01–E04, E07–E09 | AC-REC-04, AC-UX-01 |
+| RF-REC-05 | E05–E06, E10, N10 | AC-REC-05 |
+
+Cada caso relacionado ainda requer fixture e evidência próprias. P04 (preferência por data), P05 (mesclagem) e P06 (propagação de exclusões) são cobertos aqui por critérios de bloqueio/exclusão de escopo, não por implementação dessas capacidades. Particularidades de nomes, links, atributos, tipos e restaurações continuam exigindo detalhamento nos contratos antes de sua execução.
 
 ## 11. Distribuição e operação
 
@@ -424,9 +506,34 @@ A existência de código ou a compilação bem-sucedida não bastam para declara
 
 ### 12.1 Situação atual dos requisitos
 
+A inspeção de código permite localizar comportamento existente, mas não demonstra aceite dos requisitos completos. A evidência de execução deve acompanhar os commits ou testes correspondentes.
+
+| Área | Comportamento existente e referência | Lacuna frente à especificação |
+| --- | --- | --- |
+| Classificação | [planner](../engine/src/planner/mod.rs) distingue observação desconhecida, arquivo local preexistente, caminhos ambíguos e decisões conservadoras de download; contém comparação com base confirmada para esse escopo. | Não é o classificador bidirecional completo de RF-CON-01–02. |
+| Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
+| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; [checkpoints](../engine/src/state/checkpoints.rs) e registros de operações guardam evidências específicas. | Reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
+| Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
+| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Classificação geral, persistência de pendências e resolução assistida permanecem planejadas. |
+| Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
+
+RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
+
 ### 12.2 Propostas de funcionalidades futuras
 
 ### 12.3 Riscos, pendências e dívida técnica
+
+Para conflitos e recuperação, as decisões seguintes condicionam futuras implementações. Enquanto abertas, manter o bloqueio conservador correspondente:
+
+- **Preservação:** definir armazenamento, reserva de nomes, quota, retenção e recuperação das cópias; não habilitar limpeza automática de pendências.
+- **Concorrência:** detalhar contratos de revalidação local/remota, identidade e exclusão mútua por raiz; não presumir que uma consulta anterior elimina a corrida antes da escrita.
+- **Estado perdido:** definir como reconhecer raiz anteriormente gerenciada e reconstruir evidências sem inventar baseline; nunca tratar ausência de banco como autorização para sobrescrever.
+- **Resultado remoto ambíguo:** definir evidências de confirmação por operação e comportamento quando o provedor não permite concluir; manter resultado desconhecido sem repetição cega.
+- **Tentativas e lotes:** definir limites e política de retry. Propagação de exclusões, limiares de impacto e resolução em lote exigem especificação e revisão próprias.
+- **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
+- **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
+
+A primeira unidade de implementação recomendada é a classificação pura de B/L/R com oráculos AC-CON-01–03, sem I/O nem autorização de operações. Preservação durável, execução e interface dependem de contratos adicionais e validação específica.
 
 ### 12.4 Política de mudanças da especificação
 
