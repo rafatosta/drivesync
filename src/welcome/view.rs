@@ -38,17 +38,13 @@ pub(super) fn build() -> WelcomeView {
     content.set_margin_start(24);
     content.set_margin_end(24);
 
-    // Embed the existing project artwork so it also works from an uninstalled checkout.
+    // Embed a PNG export so welcome artwork does not require an SVG loader/portal.
     let bytes = gtk::glib::Bytes::from_static(include_bytes!(
-        "../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"
+        "../../data/icons/welcome/com.rtosta.DriveSync.png"
     ));
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
-    let image = match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, None::<&gtk::gio::Cancellable>)
-    {
-        Ok(pixbuf) => gtk::Image::from_paintable(Some(&gtk::gdk::Texture::for_pixbuf(&pixbuf))),
-        // Restricted environments may not provide an SVG loader/portal.
-        Err(_) => gtk::Image::from_icon_name("folder-download-symbolic"),
-    };
+    let texture = gtk::gdk::Texture::from_bytes(&bytes)
+        .expect("embedded DriveSync welcome PNG must be valid");
+    let image = gtk::Image::from_paintable(Some(&texture));
     image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);
     image.update_property(&[gtk::accessible::Property::Label(
