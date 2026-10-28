@@ -3,7 +3,7 @@ use super::filesystem::Root;
 use super::*;
 use crate::AccountId;
 use crate::{
-    state::Store, Cancellation, EngineError, InventoryEntry, InventoryKind, RemoteInventory,
+    state::Store, Cancellation, EngineError, InventoryEntry, InventoryKind, PlanAction, RemoteInventory,
 };
 use sha2::Digest;
 use std::io::Read;
