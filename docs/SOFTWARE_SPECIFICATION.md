@@ -108,11 +108,25 @@
 
 ### 1.1 Identificação do produto
 
+O DriveSync é um cliente independente do Google Drive para Linux, destinado à sincronização de conteúdo entre contas Google e pastas locais. O projeto não é um produto oficial do Google nem implica vínculo ou endosso dessa empresa.
+
+Esta especificação reúne a definição do produto, seus requisitos, políticas e critérios de qualidade, servindo de referência para desenvolvimento, revisão e validação.
+
 ### 1.2 Versão e estado da especificação
+
+Documento em elaboração. As seções conceituais definem a intenção do produto e as regras que devem orientar sua evolução; não constituem declaração de funcionalidades entregues ou de requisitos já validados.
+
+Seções sem conteúdo permanecem pendentes de especificação. A revisão do documento é identificada pelo controle de versão do repositório, independentemente da versão do aplicativo.
 
 ### 1.3 Histórico de revisões
 
+O histórico de revisões é mantido no Git. Commits e revisões de código registram a motivação e o alcance das alterações, evitando duplicar neste documento um diário de desenvolvimento.
+
 ### 1.4 Fontes e referências
+
+A especificação deve distinguir decisões próprias do produto, restrições impostas por serviços externos e hipóteses ainda em estudo. Afirmações sobre interfaces externas devem ser fundamentadas em documentação oficial aplicável e revisadas quando essas interfaces mudarem.
+
+O acervo em [`old/`](old/README.md) preserva requisitos, princípios e estudos anteriores. Seu conteúdo é fonte de consulta, não confirmação automática de vigência. As referências específicas devem acompanhar a seção a que dão suporte.
 
 ## 2. Visão geral do produto
 
@@ -122,19 +136,55 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 2.2 Objetivos do produto
 
+- Facilitar o acesso local ao conteúdo escolhido pelo usuário no Google Drive.
+- Reduzir o trabalho manual de manter conteúdo local e remoto coerente, dentro das políticas de sincronização autorizadas.
+- Preservar dados e tornar alterações, limitações e situações de conflito compreensíveis.
+- Permitir o uso de contas distintas com separação de identidade, configuração e dados.
+- Oferecer uma experiência integrada ao desktop Linux, com controle claro sobre a execução do aplicativo.
+
 ### 2.3 Público-alvo e partes interessadas
 
+O público-alvo é formado por usuários de Linux que utilizam o Google Drive e precisam trabalhar com conteúdo em pastas locais, incluindo pessoas que mantêm contas pessoais e institucionais distintas.
+
+As partes interessadas incluem os usuários, os mantenedores e colaboradores do projeto e os responsáveis por ambientes institucionais cujas políticas condicionem o acesso às contas. A experiência deve atender ao uso cotidiano sem exigir conhecimento dos mecanismos internos de sincronização.
+
 ### 2.4 Escopo do produto
+
+O domínio do DriveSync compreende a associação entre contas Google, conteúdo remoto e pastas locais, a identificação de mudanças e a execução de operações autorizadas para manter esse conteúdo coerente. Inclui a comunicação de progresso, impedimentos e decisões que exigem participação do usuário.
+
+O escopo de cada entrega deve ser declarado separadamente. A finalidade geral do produto não implica que todas as direções de transferência, tipos de arquivo ou políticas de sincronização estejam disponíveis em uma determinada versão.
 
 ### 2.5 Funcionalidades incluídas
 
 ### 2.6 Funcionalidades excluídas e limitações
 
+O DriveSync não substitui uma solução de backup independente. Sincronização e preservação de versões durante operações não equivalem a uma política de retenção, restauração histórica ou recuperação de desastre.
+
+A integração com outros provedores de armazenamento e a edição de documentos são externas ao escopo definido para o produto. O acesso ao conteúdo remoto depende das permissões concedidas e das condições do serviço. Limitações específicas de uma entrega devem ser documentadas sem transformá-las automaticamente em restrições permanentes do produto.
+
 ### 2.7 Glossário e terminologia
+
+| Termo | Significado |
+| --- | --- |
+| Conta | Identidade do usuário no provedor, à qual pertencem permissões e configurações. |
+| Pasta local | Diretório do computador escolhido para receber ou fornecer conteúdo no escopo autorizado. |
+| Pasta remota | Pasta do Google Drive associada ao conteúdo acompanhado pelo aplicativo. |
+| Raiz de sincronização | Associação que delimita a conta e o conteúdo local e remoto abrangidos pela sincronização. |
+| Sincronização | Processo de observar, comparar e aplicar mudanças segundo uma política definida. |
+| Download / upload | Transferência de conteúdo do serviço para o computador / do computador para o serviço. |
+| Estado-base | Evidência de uma condição previamente confirmada, usada para comparar alterações posteriores. |
+| Conflito | Situação em que alterações ou identidades concorrentes impedem uma decisão automática segura. |
+| Reconciliação | Reavaliação das evidências disponíveis para esclarecer divergências ou efeitos de operações interrompidas. |
+| Estado desconhecido | Ausência de evidência suficiente para concluir a condição de um item; não equivale à sua ausência. |
+| Operação destrutiva | Operação capaz de remover conteúdo ou substituir uma versão que precisa ser preservada. |
 
 ## 3. Contexto e restrições
 
 ### 3.1 Ambiente Linux e diretrizes de design GNOME
+
+Linux é a plataforma de destino do produto. As diretrizes de design do GNOME orientam a experiência visual e de interação, sem tornar esse ambiente de desktop um requisito de uso.
+
+Integrações dependentes do ambiente devem ter suas condições de disponibilidade explicitadas. A indisponibilidade de uma integração deve ser comunicada de forma compreensível, sem sugerir que uma operação foi realizada quando não foi.
 
 ### 3.2 Sistemas e serviços externos
 
@@ -143,6 +193,10 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 ### 3.4 Sistema de arquivos e armazenamento local
 
 ### 3.5 Premissas e dependências
+
+O uso do serviço remoto pressupõe uma conta autorizada e conectividade nas operações que dependem dele. O armazenamento local deve estar acessível e dispor das permissões e dos recursos necessários à operação solicitada.
+
+Permissões, conectividade e disponibilidade de armazenamento podem mudar durante o uso. O aplicativo deve tratar essas condições como verificações necessárias, e não como garantias permanentes. Políticas de organizações e decisões do usuário sobre permissões devem ser respeitadas.
 
 ### 3.6 Restrições tecnológicas e operacionais
 
@@ -180,27 +234,71 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 5.1 Segurança e controle de acesso
 
+O aplicativo deve operar somente no escopo autorizado pelo usuário e com as permissões necessárias a cada operação. Credenciais devem ser protegidas contra exposição em interfaces, diagnósticos e registros.
+
+A identidade da conta e a vinculação do conteúdo devem ser verificadas antes de operações que possam alterar dados. A perda de autorização deve impedir novas operações dependentes dessa autorização, sem ser interpretada como exclusão de conteúdo.
+
 ### 5.2 Privacidade e tratamento de dados
+
+O tratamento de conteúdo e metadados deve limitar-se às finalidades necessárias ao funcionamento do produto. Informações de diagnóstico devem evitar exposição desnecessária de nomes, caminhos, identificadores pessoais e conteúdo de arquivos.
+
+Qualquer coleta ou compartilhamento adicional de dados deve ter finalidade e condições claramente informadas. Solicitações de suporte não devem exigir o envio de credenciais ou de arquivos privados.
 
 ### 5.3 Integridade e prevenção de perda de dados
 
+A preservação dos dados deve prevalecer sobre a conclusão automática de uma sincronização. Arquivos modificados ou de origem desconhecida não devem ser substituídos ou excluídos silenciosamente.
+
+Uma operação somente deve ser considerada concluída após a confirmação de seus efeitos e do estado necessário para reconhecê-los posteriormente. Diante de evidência insuficiente, o aplicativo deve preservar o conteúdo e indicar o impedimento.
+
 ### 5.4 Confiabilidade, resiliência e disponibilidade
+
+Falhas de rede, interrupções do processo e indisponibilidade de recursos devem ser tratadas como condições esperadas de operação. O produto deve permitir identificar trabalho concluído, pendente e de resultado incerto, evitando repetição que produza perda ou duplicação indevida.
+
+A disponibilidade do aplicativo não implica disponibilidade do serviço remoto. Falhas restritas a uma conta devem permanecer isoladas sempre que isso não comprometer a integridade de recursos compartilhados.
 
 ### 5.5 Desempenho e consumo de recursos
 
+O aplicativo deve manter a interface responsiva durante operações de sincronização e evitar trabalho repetido quando houver evidência suficiente de que o conteúdo permanece inalterado. O uso de rede, armazenamento, memória e processamento deve ser compatível com a execução em um computador de uso cotidiano.
+
+Metas quantitativas e limites de capacidade devem ser definidos com cargas de referência e condições de medição explícitas. Esta diretriz não estabelece valores nem afirma resultados de desempenho.
+
 ### 5.6 Usabilidade e acessibilidade
+
+A interface deve apresentar ações, estados e consequências em linguagem compreensível, distinguindo progresso, conclusão, pausa e necessidade de intervenção. Decisões com impacto sobre dados devem informar o conteúdo afetado e o efeito esperado.
+
+As interações devem considerar navegação por teclado, tecnologias assistivas, legibilidade e diferentes dimensões de janela. Informações essenciais não devem depender exclusivamente de cor ou de elementos visuais sem descrição.
 
 ### 5.7 Compatibilidade e portabilidade
 
+Os ambientes suportados devem ser declarados com base em validação. O uso das diretrizes GNOME não deve ser confundido com garantia de funcionamento de todas as integrações em qualquer desktop Linux.
+
+Diferenças do sistema de arquivos, das permissões e dos serviços de desktop devem ser consideradas na definição de suporte. Limitações conhecidas devem ser informadas ao usuário.
+
 ### 5.8 Observabilidade e diagnósticos
 
+O produto deve fornecer informações suficientes para compreender o estado das operações e investigar falhas, preservando a privacidade. Uma mensagem de erro deve distinguir, quando houver evidência, impedimentos de autorização, comunicação, armazenamento, integridade e conflito.
+
+Indicadores de conclusão devem refletir o escopo efetivamente verificado. Itens ignorados, bloqueados ou pendentes não devem desaparecer em um estado agregado de sucesso.
+
 ### 5.9 Manutenibilidade e testabilidade
+
+As responsabilidades e os contratos devem ser claros, permitindo revisar decisões e verificar comportamentos de forma independente. Regras de negócio devem ser distinguíveis de detalhes de apresentação e de integração externa.
+
+Mudanças devem ser pequenas, justificadas e verificáveis. A documentação deve explicar requisitos, invariantes e decisões duradouras, enquanto evidências pontuais de execução permanecem associadas às alterações correspondentes.
 
 ## 6. Regras de negócio e políticas operacionais
 
 ### 6.1 Identidade e isolamento de contas
 
+A identidade de uma conta deve permanecer independente de seu nome de exibição. Credenciais, configurações, observações e operações devem conservar a associação com a conta de origem.
+
+Uma operação não deve utilizar autorização ou estado pertencente a outra conta. Falhas de autenticação de uma conta não devem autorizar mudanças nos dados de outra.
+
 ### 6.2 Vinculação de pastas e escopo de sincronização
+
+A sincronização deve atuar em um escopo explicitamente escolhido pelo usuário. Alterar esse escopo exige reavaliar a associação entre o conteúdo local e remoto; dados existentes não devem ser assumidos como pertencentes à nova associação.
+
+Raízes locais ativas não devem coincidir nem se sobrepor. A verificação deve considerar caminhos que representem o mesmo diretório, evitando que associações distintas disputem os mesmos dados.
 
 ### 6.3 Política de upload e download
 
@@ -210,9 +308,21 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 6.5 Política de exclusões e operações destrutivas
 
+Falhas de acesso, comunicação ou autenticação não constituem evidência suficiente de exclusão. Uma operação destrutiva exige identidade, estado e autorização compatíveis com a política definida para o recurso.
+
+Diante de inconsistência ou resultado incerto de uma operação anterior, novas operações destrutivas devem permanecer bloqueadas até reconciliação. A conveniência de automatizar uma ação não justifica ignorar a preservação de versões ou o controle do usuário.
+
 ### 6.6 Política de falhas, retries e retomadas
 
+Falhas transitórias podem permitir novas tentativas, desde que sua repetição seja segura e limitada por uma política explícita. Falhas permanentes ou que dependam de decisão do usuário devem ser apresentadas como impedimentos.
+
+Quando houver dúvida sobre o efeito de uma tentativa anterior, o estado deve ser reconciliado antes de repeti-la. Uma pausa solicitada pelo usuário deve ser respeitada; recuperação de conectividade não deve anulá-la silenciosamente.
+
 ### 6.7 Política de consistência e persistência de estado
+
+O estado persistente deve refletir evidências suficientes para reconhecer o que foi observado e executado. Seu avanço não deve ultrapassar alterações que possam ser recuperadas ou reconciliadas após interrupção.
+
+Dados inconsistentes ou incompatíveis não devem ser descartados ou reinicializados silenciosamente. A ausência de estado confiável deve reduzir a autorização para alterar conteúdo, e não ampliá-la.
 
 ### 6.8 Limites e formatos de arquivos suportados
 
@@ -272,7 +382,15 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 10.1 Estratégia de testes
 
+A verificação deve partir dos requisitos, das invariantes e dos efeitos observáveis esperados. Deve combinar avaliação de regras isoladas, integração entre responsabilidades e cenários de ponta a ponta nos ambientes declarados como suportados.
+
+Cenários de falha, interrupção, concorrência e isolamento de contas devem acompanhar os fluxos de sucesso. Testes simulados e testes com serviços reais fornecem evidências diferentes e devem ser identificados separadamente.
+
 ### 10.2 Critérios de aceite dos requisitos
+
+Cada requisito deve ter critérios que descrevam condições iniciais, ação ou evento, resultado esperado e efeitos proibidos. Critérios de preservação devem verificar também o conteúdo que não pode ser alterado.
+
+A existência de código ou a compilação bem-sucedida não bastam para declarar aceite. A validação deve identificar cenário, ambiente, resultado observado e limitações da evidência.
 
 ### 10.3 Testes unitários e de integração
 
@@ -312,6 +430,18 @@ O DriveSync é um cliente independente do Google Drive para Linux. A interface u
 
 ### 12.4 Política de mudanças da especificação
 
+Mudanças devem explicitar o problema tratado, o comportamento esperado e o impacto sobre requisitos, políticas e critérios de aceite. Alterações que afetem preservação de dados, autorização ou operações destrutivas exigem revisão dessas garantias.
+
+Decisões vigentes, propostas e hipóteses devem permanecer distinguíveis. Contratos não devem ser eliminados apenas por ainda não terem implementação, e propostas não devem ser apresentadas como funcionalidades disponíveis.
+
 ### 12.5 Rastreabilidade com código, testes e decisões
 
+Requisitos devem receber identificadores estáveis quando detalhados e manter vínculos com as decisões que os justificam e os critérios que permitem verificá-los. Referências à implementação e aos testes devem ser acrescentadas na consolidação das seções técnicas.
+
+O estado de implementação e o estado de validação devem ser registrados separadamente. A rastreabilidade deve permitir identificar tanto requisitos sem evidência quanto comportamentos que necessitem de especificação.
+
 ### 12.6 Referências documentais e acervo histórico
+
+O acervo em [`old/`](old/README.md) deve permanecer identificável como documentação anterior. Seu aproveitamento exige revisão de contexto, coerência e vigência, preservando decisões relevantes sem transportar automaticamente descrições de versões passadas.
+
+Esta especificação deve concentrar a definição vigente do produto. Documentos complementares podem detalhar assuntos específicos, evitando duplicação de regras e mantendo referências claras entre as fontes.
