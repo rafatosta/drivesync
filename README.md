@@ -37,9 +37,54 @@ DriveSync focuses on keeping local copies up to date with Google Drive. It does 
 | Status and activity | Show progress, account status, and sync activity. Preferences and notifications remain limited. |
 | Shared Drives and special items | Shared Drives and some special Google Drive item types are not supported. |
 
-## Preview availability
+## Download and install the experimental Flatpak
 
-The full workflow still needs further testing on Linux desktops and in the development Flatpak before a stable release. Desktop-dependent features, including background operation and session startup, require validation in each environment. Google sign-in in testing builds may be restricted to approved test accounts. Public distribution requires further sign-in approval and packaging work.
+Prebuilt packages are available for **x86_64 Linux systems** (64-bit Intel/AMD) through [Production Flatpak on GitHub Actions](https://github.com/rafatosta/drivesync/actions/workflows/production-flatpak.yml). Each successful build from `main` provides an experimental installer; these packages are not stable releases.
+
+### Download
+
+1. Sign in to GitHub. GitHub requires an account to download workflow artifacts.
+2. Open [Production Flatpak](https://github.com/rafatosta/drivesync/actions/workflows/production-flatpak.yml) and select the newest successful run on `main` (green check mark).
+3. Scroll to **Artifacts** and download `DriveSync-experimental-x86_64-<commit>`.
+4. Extract the downloaded ZIP. It contains the `.flatpak` installer, a `.sha256` checksum, and `INSTALL.txt`.
+
+The commit identifier in the filename identifies the source used to build the package. Artifacts are retained for 30 days and may expire. If the latest run failed or is still running, use an earlier successful run with an available artifact.
+
+### Install and run
+
+Install Flatpak using your Linux distribution's package manager, or follow the [Flatpak setup guide](https://flatpak.org/setup/). Then add Flathub for the required GNOME runtime:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+```
+
+Open a terminal in the extracted folder. Replace `<commit>` below with the identifier in your downloaded filename:
+
+```sh
+sha256sum -c DriveSync-experimental-x86_64-<commit>.flatpak.sha256
+flatpak install --user ./DriveSync-experimental-x86_64-<commit>.flatpak
+flatpak run com.rtosta.DriveSync
+```
+
+Continue with installation only if the checksum reports `OK`. Flatpak may download the required runtime during installation. You can also launch **DriveSync** from your desktop's application menu.
+
+Connect your Google account, then choose a Google Drive folder and a local destination. Start with a dedicated folder containing disposable test files. The prebuilt application already includes its OAuth client configuration: you do not need to create a Google Cloud project or provide a JSON file.
+
+### Google sign-in status
+
+The production OAuth project accepts external accounts without adding them to a test-user list. **Google verification is still pending**, so an unverified-app warning and a limit of 100 users currently apply. Institutional Google Workspace accounts may also be restricted by their administrator. Review the permissions before granting access.
+
+### Update or uninstall
+
+These standalone bundles do not provide automatic updates. To update, download and extract a newer successful build, verify its checksum, and run the same `flatpak install --user ./...flatpak` command with the new filename. Accept the update prompt.
+
+To uninstall:
+
+```sh
+flatpak uninstall --user com.rtosta.DriveSync
+```
+
+To report a problem, include the commit identifier from the installer filename and your Linux distribution and desktop environment. Do not attach OAuth tokens or private files.
 
 ## What's next
 
