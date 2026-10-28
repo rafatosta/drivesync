@@ -127,9 +127,32 @@ Criar cada commit ao concluir sua unidade lógica, quando o ambiente e as permis
 - Rejeitar dados incompatíveis sem apagá-los automaticamente.
 - Preservar escrita atômica, integridade, permissões e isolamento de credenciais e pastas.
 
+## Ambiente obrigatório para ferramentas Rust
+
+- Executar toda compilação e verificação Rust exclusivamente dentro do ambiente
+  Flatpak configurado por `flatpak/com.rtosta.DriveSync.Devel.yml`, incluindo
+  `cargo build`, `cargo check`, `cargo fmt`, `cargo clippy`, `cargo test`,
+  `cargo doc` e doctests. Isso também se aplica a scripts que invoquem essas
+  ferramentas.
+- O manifesto é a fonte de verdade para o SDK, sua versão, extensões e opções
+  de ambiente. Usar as ferramentas Rust da extensão definida pelo projeto;
+  não executar Cargo, rustc, rustfmt ou Clippy do host como alternativa.
+- Se o SDK, a extensão ou alguma ferramenta necessária estiver indisponível,
+  informar o impedimento e as verificações não executadas. Não instalar ou
+  atualizar SDKs e extensões automaticamente.
+- Usar o Flathub como origem do SDK e das extensões. Um remote Flatpak próprio
+  para testes só deve ser introduzido quando houver necessidade de distribuir
+  builds experimentais e validar instalação e atualização do aplicativo.
+  Um remote separado não garante isolamento dos testes nem substitui o
+  ambiente definido pelo manifesto.
+- Registrar no commit os comandos efetivamente executados e o ambiente Flatpak
+  utilizado. A execução dentro do SDK não comprova integração real com Google
+  Drive nem funcionamento do aplicativo empacotado.
+
 ## Verificação
 
-Antes de concluir, executar quando disponível:
+Antes de concluir, executar quando disponível, sempre dentro do ambiente
+Flatpak definido acima (os comandos abaixo não devem ser executados no host):
 
 ```sh
 cargo fmt --all --check
