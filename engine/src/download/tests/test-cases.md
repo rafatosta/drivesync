@@ -16,7 +16,7 @@ para o aceite com serviço real, seguir as baterias abaixo.
 ## Aceite local de identidade — SYNC-002
 
 Consultar os [oráculos I01–I28](identity-test-cases.md), vinculados ao contrato
-proposto RF-ID-01–07 na especificação. O catálogo distingue verificadores
+RF-ID-01–07 na especificação. O catálogo distingue verificadores
 existentes de variantes necessárias e não representa testes aprovados.
 
 ## Baterias com Google Drive real

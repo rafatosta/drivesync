@@ -892,3 +892,6 @@ fn provider_uses_requested_identity_and_reports_missing_objects() {
     assert_eq!(source.media_ids.last().unwrap(), "missing");
     assert_eq!(source.metadata_ids.last().unwrap(), "file");
 }
+
+#[path = "identity_tests.rs"]
+mod identity_tests;

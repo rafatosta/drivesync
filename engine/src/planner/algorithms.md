@@ -31,7 +31,7 @@ faz leituras locais. Nenhuma dessas funções instala arquivos ou confirma B.
 ## Decisões para binários
 
 Aplicar primeiro: revisão remota zero, regressão em relação a B ou fingerprint
-vazia em B resultam em `DeferredUnknown`. Depois:
+inválida/incompleta em B resultam em `DeferredUnknown`. Depois:
 
 | Evidência local L | B | Revisão R em relação a B | Decisão |
 | --- | --- | --- | --- |
@@ -40,9 +40,13 @@ vazia em B resultam em `DeferredUnknown`. Depois:
 | Verificada | Ausente | Válida | `Blocked(ExistingLocalData)` |
 | Igual à fingerprint de B | Confirmada | Igual | `NoOp` |
 | Igual à fingerprint de B | Confirmada | Maior | `Download` |
-| Diferente da fingerprint de B | Confirmada | Igual | `Blocked(LocalChanged)` |
-| Diferente da fingerprint de B | Confirmada | Maior | `Blocked(ConcurrentChanges)` |
-| Arquivo não gerenciado, diretório ou tipo especial | Qualquer | Válida | `Blocked(ExistingLocalData)` |
+| Mesmo device/inode, hash diferente | Confirmada | Igual | `Blocked(LocalChanged)` |
+| Mesmo device/inode, hash diferente | Confirmada | Maior | `Blocked(ConcurrentChanges)` |
+| Device/inode diferente, qualquer hash | Confirmada | Igual | `Blocked(LocalIdentityChanged)` |
+| Device/inode diferente, qualquer hash | Confirmada | Maior | `Blocked(ConcurrentIdentityChanges)` |
+| Fingerprint verificada incompleta | Confirmada | Não regressiva | `DeferredUnknown` |
+| Arquivo não gerenciado | Qualquer | Válida | `Blocked(ExistingLocalData)` |
+| Diretório ou tipo especial | Qualquer | Válida | `Blocked(LocalTypeMismatch)` |
 
 Ausência local permite propor reposição, não propagar exclusão. Não existe
 entrada de ausência remota em `decide`; a matriz geral de exclusões não está
@@ -90,3 +94,28 @@ Referências de projeto preservadas: [reconciliação Unison](https://www.cis.up
 [HTTP RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) e
 [Drive files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
 São fundamentação, não evidência de integração real.
+
+## SYNC-002 — diagnóstico de identidade local
+
+Contrato RF-ID-01–07 aprovado na revisão humana da etapa 1. Para binários com B:
+
+1. Rejeitar revisão zero/regressiva e fingerprint inválida como `DeferredUnknown`.
+   Decodificar exatamente SHA-256 hexadecimal, device e inode; inode zero não
+   oferece evidência utilizável. Erro de observação continua sendo erro/desconhecido.
+2. Se L for regular verificado, comparar device/inode antes dos bytes. Par diferente
+   resulta em `LocalIdentityChanged` ou `ConcurrentIdentityChanges`, conforme R
+   permaneça igual ou avance em relação a B. Hash igual não elimina essa diferença.
+3. Com mesmo par, hash diferente mantém `LocalChanged`/`ConcurrentChanges`;
+   hash e par iguais mantêm `NoOp`/`Download`. Tipo incompatível é `LocalTypeMismatch`.
+4. Sem B, não adotar arquivo existente. Somente a execução revalidada confirma B.
+
+O diagnóstico é verificável no plano persistido por item/escopo. O relatório
+continua podendo expor `DownloadConflict`; não se exige alteração da GUI.
+A função de comparação não escreve nem consulta rede; repetir entradas produz
+mesmo resultado. O executor mantém a revalidação independente antes dos efeitos.
+
+Fundamentação consultada em 2026-10-28: [Rust MetadataExt](https://doc.rust-lang.org/std/os/unix/fs/trait.MetadataExt.html)
+expõe device/inode; [Linux inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html)
+limita a unicidade do inode ao filesystem. A separação dos motivos é política
+DriveSync. Esse par é evidência observável, não identificador eterno; não demonstra
+continuidade contra reutilização acompanhada de bytes iguais ou rollback conjunto.

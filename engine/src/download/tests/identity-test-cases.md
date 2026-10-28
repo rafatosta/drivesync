@@ -1,6 +1,6 @@
 # Oráculos de identidade — SYNC-002
 
-**Proposta para revisão humana.** Requisitos e limites: [RF-ID-01–07](../../../../docs/SOFTWARE_SPECIFICATION.md#contrato-proposto-de-identidade--sync-002).
+**Contrato acordado; catálogo de verificadores e variantes.** Requisitos e limites: [RF-ID-01–07](../../../../docs/SOFTWARE_SPECIFICATION.md#contrato-de-identidade--sync-002).
 Fonte dos IDs: [proposta de aceite I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
 Este catálogo relaciona testes existentes e variantes exigidas; não registra
 execuções nem declara cenários aprovados. Resultados e comandos pertencem aos
@@ -16,9 +16,10 @@ locais mantêm o original em outro caminho e verificam device/inode diferentes.
 O remoto falso precisa fornecer metadados e mídia por ID, falhas explícitas,
 registro dos IDs consultados, inventário paginado/eventos controlados e hooks
 nas janelas de observação, metadados, transferência e instalação. O `Fake` em
-[tests.rs](../tests.rs) usa mídia única e ignora o ID de mídia: precisa ser
-ampliado antes de demonstrar cenários com múltiplos objetos. ID inexistente deve
-produzir erro controlado, sem panic por indexação do mapa.
+[tests.rs](../tests.rs) fornece conteúdo por ID e registra IDs consultados;
+`provider_uses_requested_identity_and_reports_missing_objects` verifica dois
+objetos distintos e erros controlados para IDs ausentes. Eventos/paginação têm
+fixtures próprias. Hooks adicionais ficam limitados às janelas necessárias.
 
 Em todos os cenários verificar ação e motivo, IDs/revisões/caminhos/device/inode,
 bytes locais/remotos/backups, B e fase durável, chamadas ao provedor, reabertura e
@@ -33,20 +34,21 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [tests.rs](../tests.rs), **U** = [update_tests.rs](../update_tests.rs), **E** =
 [incremental_tests.rs](../incremental_tests.rs), **P** =
 [planner/tests.rs](../../planner/tests.rs), **R** =
-[remote/inventory/tests.rs](../../remote/inventory/tests.rs).
+[remote/inventory/tests.rs](../../remote/inventory/tests.rs), **I** =
+[identity_tests.rs](../identity_tests.rs).
 A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
 
 | Caso | Teste existente relacionado | Variantes e complemento exigidos |
 | --- | --- | --- |
-| I01 | D `installs_verifies_reopens_and_never_overwrites_local_changes` | Confirmar continuidade de vínculo e identidade, reabrir/repetir sem mídia, instalação ou backup redundantes. |
-| I02 | B `reopened_base_classifies_local_and_offline_concurrent_edits_without_advancing` | Comprovar mesmo device/inode e hash diferente; motivo de conteúdo, não substituição; B intacta. |
-| I03 / C05 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority` | Bytes iguais/diferentes × remoto igual/atualizado; motivo explícito de identidade, ambas as versões preservadas. |
-| I04 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority` (parcial) | Igualar nome/tamanho/timestamp, variar bytes; comprovar inode diferente e nenhuma adoção. |
-| I05 / C05 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority` (outro ID) | Retirar A e inserir B no mesmo nome/pai, bytes iguais/diferentes; B sem base herdada, A/local preservados. |
-| I06 | U `updates_reopens_and_preserves_prior_versions_including_empty_updates` | Mesmo ID, nova revisão/bytes, local íntegro; nova B somente após confirmação e V anterior preservada. |
-| I07 | E `rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_restart`; E `historical_activity_never_suppresses_a_current_local_conflict` | Renomear/mover mesmo ID, destinos livre/ocupado; conferir diagnóstico anterior/atual, associação e B. Teste existente permite receber no destino livre e conserva origem. |
-| I08 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority`; U `another_scope_cannot_update_a_managed_file` | Variar separadamente cliente, conta, raiz local/remota com nomes/bytes/IDs repetidos; nenhum vínculo alheio autoriza efeito. |
-| I09 | P `metadata_observer_preserves_files_and_rejects_symlinks`; D `symlinks_never_redirect_downloads` | Leitura falha, identidade incompleta, diretório e symlink; motivo/erro explícito, desconhecido não vira ausente, alvo externo intacto. |
+| I01 | I `i01_continuity_reopens_without_media_or_identity_changes` | Confirmar continuidade de vínculo e identidade, reabrir/repetir sem mídia, instalação ou backup redundantes. |
+| I02 | I `i02_content_edit_retains_identity_and_confirmed_base` | Comprovar mesmo device/inode e hash diferente; motivo de conteúdo, não substituição; B intacta. |
+| I03 / C05 | I `i03_i04_replacements_keep_identity_diagnostic_despite_equal_metadata_or_bytes` | Bytes iguais/diferentes × remoto igual/atualizado; motivo explícito de identidade, ambas as versões preservadas. |
+| I04 | I `i03_i04_replacements_keep_identity_diagnostic_despite_equal_metadata_or_bytes` | Igualar nome/tamanho/timestamp, variar bytes; comprovar inode diferente e nenhuma adoção. |
+| I05 / C05 | I `i05_new_remote_id_never_inherits_the_old_installation` | Retirar A e inserir B no mesmo nome/pai, bytes iguais/diferentes; B sem base herdada, A/local preservados. |
+| I06 | I `i06_same_remote_id_updates_only_after_durable_installation` | Mesmo ID, nova revisão/bytes, local íntegro; nova B somente após confirmação e V anterior preservada. |
+| I07 | E `i07_same_id_path_changes_preserve_association_and_occupied_destinations` | Renomear/mover mesmo ID, destinos livre/ocupado; conferir diagnóstico anterior/atual, associação e B. Teste existente permite receber no destino livre e conserva origem. |
+| I08 | I `i08_each_scope_component_requires_its_own_base` | Variar separadamente cliente, conta, raiz local/remota com nomes/bytes/IDs repetidos; nenhum vínculo alheio autoriza efeito. |
+| I09 | I `i09_nonregular_or_unreadable_identity_never_becomes_absence`; I `i09_incomplete_persisted_identity_does_not_authorize_media_or_confirmation`; P `incomplete_identity_evidence_is_unknown_even_when_fingerprints_match` | Leitura falha, identidade incompleta, diretório e symlink; motivo/erro explícito, desconhecido não vira ausente, alvo externo intacto. |
 | I10 / C20 | P `ambiguous_and_unsafe_names_never_reach_observer`; R `traverses_nested_pages_and_preserves_same_names_by_identity` | Dois IDs mesmo pai/nome, bytes iguais/diferentes, sem L; integrar inventário/plano/execução, zero mídia e nenhum vencedor. |
 | I11 / C20 | Mesmos verificadores de I10, sem sequência após B | Instalar A e adicionar B homônimo; preservar B de A e ambos remotos, sem transferência/avanço durante colisão. |
 | I12 / C20 | P `folder_ambiguity_blocks_descendants_and_missing_versions_defer` | Duas pastas homônimas com filhos distintos; integrar execução e conferir IDs/árvores sem mistura. |
@@ -67,18 +69,20 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I27 | B `corrupt_database_or_malformed_installation_evidence_stops_before_effects`; B `unreadable_database_is_an_error_and_is_not_reinitialized`; B `installed_phase_without_remote_revision_is_not_a_confirmed_base` | SQLite corrompido/incompatível e identidade incompleta; erro ou B desconhecida, sem reset/adotar por hash. Auditar validação de device/inode além de hash/revisão. |
 | I28 | E `restart_no_changes_local_deletion_and_local_edit_are_reconciled`; E `historical_activity_never_suppresses_a_current_local_conflict` | Repetir após substituições/colisões/restaurações; duplicar/reordenar eventos, não ressuscitar associação, gerar backups extras ou perder pendências. |
 
-## Decisões necessárias para implementação
+## Contrato de diagnóstico e limites
 
-- Separar identidade/conteúdo no diagnóstico; hoje `Verified(String)` e a
-  comparação integral de `SHA-256:device:inode` geram `LocalChanged` ou
-  `ConcurrentChanges` para ambos. O relatório pode reduzir isso a `DownloadConflict`.
-  O aceite exige um diagnóstico verificável, sem exigir alteração da GUI.
-- Recuperar localização anterior da evidência durável/checkpoint. `ConfirmedBase`
-  entrega somente revisão/fingerprint; o fluxo incremental já expõe `previous_paths`.
-  Reaproveitar essa evidência antes de duplicar persistência.
-- Escolher a representação do motivo e sua recuperação após reabertura. Plano não
-  é autorização: o executor revalida binários independentemente da ação planejada;
-  os testes devem conferir as duas camadas e a ausência de mídia quando bloqueado.
+- `Verified(String)` conserva o formato SHA-256:device:inode; o planner decodifica
+  componentes e compara identidade antes dos bytes. Fingerprint incompleta não
+  autoriza ação. Os motivos separados estão nos algoritmos do planner.
+- I01–I09 verificam planos persistidos, bytes/B e ausência de mídia nos bloqueios.
+  I07 usa checkpoint real para localização anterior/atual; não duplica persistência.
+  I09 combina filesystem real (permissão negada, diretório/symlink), erro injetado
+  no observador e evidência SQLite incompleta. Não demonstra falha real de disco.
+- O executor revalida binários independentemente da ação planejada. O diagnóstico
+  é verificável no plano; o relatório pode reduzir o erro a `DownloadConflict`.
+  Não se exige alteração da GUI.
+- I10–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
+  representam conclusão automática dessas baterias.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.
   Não introduzir nova dependência ou serviço de histórico para simular essa prova.

@@ -20,6 +20,8 @@ pub enum LocalObservation {
 /// A base comes only from a durable installed journal entry, never an inventory.
 ///
 /// `local_fingerprint` binds the installed SHA-256 to its local device/inode.
+/// The planner decodes these components independently. Device/inode equality is
+/// observable evidence, not a permanent identity guarantee against inode reuse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmedBase {
     pub remote_version: u64,
@@ -29,7 +31,12 @@ pub struct ConfirmedBase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictReason {
     ExistingLocalData,
+    /// Content differs while the observed device/inode still matches B.
     LocalChanged,
+    /// The local device/inode differs from B, even if the content is equal.
+    LocalIdentityChanged,
+    /// Both the local identity and remote revision differ from B.
+    ConcurrentIdentityChanges,
     ConcurrentChanges,
     UnsafeOrAmbiguousPath,
     LocalTypeMismatch,
@@ -70,7 +77,8 @@ pub fn decide(
 ) -> PlanAction {
     if remote_version == 0
         || base.is_some_and(|base| {
-            base.local_fingerprint.is_empty() || remote_version < base.remote_version
+            fingerprint_parts(&base.local_fingerprint).is_none()
+                || remote_version < base.remote_version
         })
     {
         return PlanAction::DeferredUnknown;
@@ -80,7 +88,23 @@ pub fn decide(
         LocalObservation::Absent => PlanAction::Download,
         LocalObservation::Verified(fingerprint) => match base {
             Some(base) => {
-                if &base.local_fingerprint == fingerprint {
+                let Some((local_hash, local_device, local_inode)) = fingerprint_parts(fingerprint)
+                else {
+                    return PlanAction::DeferredUnknown;
+                };
+                let Some((base_hash, base_device, base_inode)) =
+                    fingerprint_parts(&base.local_fingerprint)
+                else {
+                    return PlanAction::DeferredUnknown;
+                };
+                if (local_device, local_inode) != (base_device, base_inode) {
+                    return PlanAction::Blocked(if base.remote_version == remote_version {
+                        ConflictReason::LocalIdentityChanged
+                    } else {
+                        ConflictReason::ConcurrentIdentityChanges
+                    });
+                }
+                if local_hash.eq_ignore_ascii_case(base_hash) {
                     if base.remote_version == remote_version {
                         PlanAction::NoOp
                     } else {
@@ -94,8 +118,33 @@ pub fn decide(
             }
             None => PlanAction::Blocked(ConflictReason::ExistingLocalData),
         },
-        _ => PlanAction::Blocked(ConflictReason::ExistingLocalData),
+        LocalObservation::Directory | LocalObservation::SymlinkOrSpecial => {
+            PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
+        }
+        LocalObservation::UnmanagedFile => PlanAction::Blocked(ConflictReason::ExistingLocalData),
     }
+}
+
+/// Decodes the current internal evidence format without inferring identity from
+/// malformed or incomplete data. Zero is valid for a device, but not an inode.
+fn fingerprint_parts(value: &str) -> Option<(&str, u64, u64)> {
+    let mut parts = value.split(':');
+    let hash = parts.next()?;
+    let device = parts.next()?;
+    let inode = parts.next()?;
+    if parts.next().is_some()
+        || hash.len() != 64
+        || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+        || device.is_empty()
+        || !device.bytes().all(|b| b.is_ascii_digit())
+        || inode.is_empty()
+        || !inode.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let device = device.parse().ok()?;
+    let inode = inode.parse().ok()?;
+    (inode != 0).then_some((hash, device, inode))
 }
 fn safe(name: &str) -> bool {
     !name.is_empty()

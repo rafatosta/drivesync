@@ -240,17 +240,18 @@ identifica arquivos, testes e limites por cenário. **Aceite real:** a bateria
 com Google Drive real permanece pendente; nenhum requisito recebe validação
 completa apenas por essa cobertura local.
 
-#### Contrato proposto de identidade — SYNC-002
+#### Contrato de identidade — SYNC-002
 
-**Estado: proposta para revisão humana; não representa comportamento integralmente
-implementado nem aceite executado.** Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
+**Estado: contrato acordado; implementação parcial no fluxo de download.**
+I01–I09 possuem verificadores locais específicos; I10–I28 mantêm variantes a
+completar. Execuções e resultados pertencem aos commits/PR, não a esta seção. Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
 O recorte é download de binários com remoto falso, filesystem/SQLite reais e
 reabertura entre ciclos. Não exige upload, propagação de exclusões, resolução
 assistida ou execução geral de movimentos. Complementa RF-SYNC-01–05,
 RF-CON-02 e RF-REC; os oráculos e vínculos com testes estão no
 [catálogo I01–I28](../engine/src/download/tests/identity-test-cases.md).
 
-| ID | Requisito proposto e critério observável |
+| ID | Requisito e critério observável |
 | --- | --- |
 | RF-ID-01 | Comparar separadamente identidade local (device/inode), conteúdo (SHA-256), localização (caminho e ancestralidade) e revisão remota. Mesmo objeto local com bytes diferentes é alteração de conteúdo; device/inode diferente é divergência de identidade, inclusive com bytes iguais. Expor motivo verificável, isolado ou combinado com mudança remota, sem exigir nomes específicos de enums (I02–I04/I17/I22). |
 | RF-ID-02 | B pertence a cliente OAuth, conta, raízes e ID remoto. Outro ID não herda B nem autorização, mesmo com nome/pai/hash iguais. Evidência ausente ou inválida não é ausência de arquivo. Observação e transferência incompleta não confirmam vínculo (I01/I05/I08–I09/I25–I27). |
@@ -277,10 +278,14 @@ restauração comprovada. Neste recorte, testar obrigatoriamente a ausência de
 prova, sem fabricar uma indicação de restauração no falso provedor sem consumidor
 real correspondente.
 
-**Decisões para acordo:** aprovar a separação dos diagnósticos de RF-ID-01,
-o recebimento conservador no destino livre de RF-ID-04 e o limite de I20 em
-RF-ID-06. A proposta não aprova novas operações destrutivas. Os nomes e a
-representação interna dos diagnósticos ficam para o projeto dos algoritmos.
+**Implementação e limites:** o planner separa divergência de device/inode
+(`LocalIdentityChanged`/`ConcurrentIdentityChanges`) de alteração de bytes no
+mesmo objeto (`LocalChanged`/`ConcurrentChanges`). Fingerprint incompleta é
+`DeferredUnknown`; tipo incompatível é `LocalTypeMismatch`. Esses motivos são
+verificáveis no plano persistido, sem prometer sua apresentação na GUI. O fluxo
+incremental expõe localização anterior/atual e permite receber em destino livre
+preservando a origem. O relatório de execução pode manter `DownloadConflict`.
+O contrato não autoriza novas operações destrutivas nem comprova integração real.
 
 ### 4.8 Pausa, retomada e execução em segundo plano
 
