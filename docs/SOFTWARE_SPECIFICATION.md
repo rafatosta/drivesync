@@ -483,6 +483,11 @@ interface ou diagnóstico. Reabertura de conexões SQLite em testes locais não
 substitui reinício do aplicativo, nem simula queda de energia. O smoke test
 ignorado de navegação Google não satisfaz esses critérios.
 
+O [roteiro de baterias reais](../engine/src/download/tests/test-cases.md#baterias-com-google-drive-real)
+detalha preparação, procedimentos e oráculos de A01–A12, grupos complementares
+de integração/empacotamento e limitações das ferramentas disponíveis. Todos
+permanecem pendentes; a existência do roteiro não registra execução.
+
 ### 10.5 Testes de sincronização, conflitos e falhas
 
 Os critérios abaixo são oráculos de aceite propostos, não resultados de execução. Cada fixture deve fixar conta/raiz, B/L/R, identidades, revisões, conteúdos e autorização. Conferir tanto o resultado quanto os efeitos proibidos e os bytes preservados. Os casos C/E/P/N são definidos no [catálogo](../engine/src/conflicts/validation-checklist.md).
