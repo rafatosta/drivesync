@@ -37,10 +37,8 @@ modules:
       - cargo build --release --locked
       - install -Dm755 target/release/drivesync /app/bin/drivesync
       - install -Dm644 data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg /app/share/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg
-      - sed 's/com\.rtosta\.DriveSync\.Devel/com.rtosta.DriveSync/g' data/com.rtosta.DriveSync.Devel.desktop > com.rtosta.DriveSync.desktop
-      - install -Dm644 com.rtosta.DriveSync.desktop /app/share/applications/com.rtosta.DriveSync.desktop
-      - sed 's/com\.rtosta\.DriveSync\.Devel/com.rtosta.DriveSync/g' data/com.rtosta.DriveSync.Devel.metainfo.xml > com.rtosta.DriveSync.metainfo.xml
-      - install -Dm644 com.rtosta.DriveSync.metainfo.xml /app/share/metainfo/com.rtosta.DriveSync.metainfo.xml
+      - install -Dm644 data/com.rtosta.DriveSync.desktop /app/share/applications/com.rtosta.DriveSync.desktop
+      - install -Dm644 data/com.rtosta.DriveSync.metainfo.xml /app/share/metainfo/com.rtosta.DriveSync.metainfo.xml
     sources:
       - type: dir
         path: ..

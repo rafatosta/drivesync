@@ -1,6 +1,6 @@
-# Desktop and Flatpak integration (development)
+# Desktop and Flatpak integration
 
-This folder holds preliminary assets for application ID `com.rtosta.DriveSync.Devel` in `src/main.rs`.
+This folder holds desktop integration assets for development (`com.rtosta.DriveSync.Devel`) and production (`com.rtosta.DriveSync`). Each Flatpak manifest installs its matching `.desktop` and `.metainfo.xml` files directly from this folder.
 
 - `icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg`: original SVG reconstruction of the blue-folder/cloud concept (not a vector export of the generated bitmap).
 - `com.rtosta.DriveSync.Devel.desktop`: launcher metadata, matching the `drivesync` Cargo binary.

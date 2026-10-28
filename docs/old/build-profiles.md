@@ -7,9 +7,9 @@ The same Rust application is built for two distinct Flatpak IDs:
 | Development / GNOME Builder | `flatpak/com.rtosta.DriveSync.Devel.yml` | `com.rtosta.DriveSync.Devel` | `data/oauth/development.json` (optional) |
 | Production candidate | `flatpak/com.rtosta.DriveSync.yml` | `com.rtosta.DriveSync` | `data/oauth/production.json` (required) |
 
-Both profiles compile the same binary and reuse the same source icon,
-desktop entry and metainfo templates. The production manifest installs
-desktop integration under the production app ID.
+Both profiles compile the same binary. Each manifest installs its matching
+desktop entry and metainfo files directly from `data/`, using the corresponding
+application ID.
 
 ## Google OAuth
 
