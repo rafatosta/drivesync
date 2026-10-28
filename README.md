@@ -37,8 +37,7 @@ https://rafatosta.github.io/drivesync/.
 
 Application claims should track the current `main` README and verified behavior.
 The application page includes a gallery of 28 screens grouped into first steps, accounts and navigation, transfers, and status messages. Visitors can select thumbnails, step through each group, switch between wide and compact captures when available, and enlarge the selected image. Screenshots use fictional accounts and simulated states from the application UI.
-Donation channels are not configured; do not add payment details without the
-maintainer's direction. Update the privacy policy when data practices change.
+Donation channels are configured on the donations page using the established links from ZapZap (GitHub Sponsors, Ko-fi, PayPal, Wise and Pix). Payments are handled externally. Update the privacy policy when data practices change.
 No analytics, contact form, tracking cookies or payment processing are included.
 Theme preference alone is saved in the browser's local storage.
 
