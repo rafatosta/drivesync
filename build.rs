@@ -31,7 +31,7 @@ fn main() {
     }
     let revision = env::var("DRIVESYNC_BUILD_REVISION").ok().or_else(|| {
         // Never attribute an unpacked source tree to an unrelated parent repository.
-        if git(&["rev-parse", "--show-prefix"])? != "" {
+        if !git(&["rev-parse", "--show-prefix"])?.is_empty() {
             return None;
         }
         let commit = git(&["rev-parse", "HEAD"])?;
