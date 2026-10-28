@@ -29,7 +29,7 @@
   - [4.4 Descoberta e inventário de arquivos](#44-descoberta-e-inventario-de-arquivos)
   - [4.5 Download e atualização local](#45-download-e-atualizacao-local)
   - [4.6 Upload e criação remota](#46-upload-e-criacao-remota)
-  - [4.7 Detecção de mudanças e sincronização](#47-deteccao-de-mudancas-e-sincronizacao)
+  - [4.7 Detecção de mudanças e sincronização](#47-detecção-de-mudanças-e-sincronização)
   - [4.8 Pausa, retomada e execução em segundo plano](#48-pausa-retomada-e-execucao-em-segundo-plano)
   - [4.9 Tratamento de conflitos e exclusões](#49-tratamento-de-conflitos-e-exclusoes)
   - [4.10 Recuperação de falhas e reconciliação](#410-recuperacao-de-falhas-e-reconciliacao)
@@ -215,6 +215,30 @@ Permissões, conectividade e disponibilidade de armazenamento podem mudar durant
 ### 4.6 Upload e criação remota
 
 ### 4.7 Detecção de mudanças e sincronização
+
+O eixo 1 da [SYNC-001](https://github.com/rafatosta/drivesync/issues/1) define a
+base confirmada B e sua comparação com L/R no fluxo de download de binários.
+Os requisitos abaixo não autorizam upload de atualizações, exclusões ou resolução
+assistida. Complementam RF-CON e RF-REC; os detalhes de decisão, persistência e
+recuperação ficam nos [algoritmos do planner](../engine/src/planner/algorithms.md),
+[state](../engine/src/state/algorithms.md) e [download](../engine/src/download/execution.md).
+
+| ID | Requisito e critério de aceite |
+| --- | --- |
+| RF-SYNC-01 | Persistir B por identidade do item, cliente, conta e raízes. Recuperar revisão remota e fingerprint local da instalação confirmada após reabertura. Mudança de inode, ID ou escopo não herda autorização por nome ou igualdade de bytes (A01/A12). |
+| RF-SYNC-02 | Distinguir inventário/plano de instalação confirmada. Ausência de B, inclusive banco perdido ou evidência incompleta, não autoriza adoção, sobrescrita ou exclusão de arquivo preexistente, seja seu conteúdo igual ou diferente do remoto (A02/A07/A08/A09; N01/N02). Estado inválido deve gerar erro seguro sem reset silencioso. |
+| RF-SYNC-03 | Comparar L/R com B confiável sem decidir por timestamps. Classificar mudança apenas local e mudanças concorrentes, preservando conteúdo e B ao repetir após reabertura (A04/A05/A06; C01/C06). Classificação não tem efeitos de escrita. |
+| RF-SYNC-04 | Permitir receber uma revisão remota mais nova com local intacto somente após revalidações; nova B deve refletir a instalação confirmada. Após V1 → V2, edição somente local deve ser classificada em relação a V2, sem falso trabalho pendente ou download redundante (A03/A11). |
+| RF-SYNC-05 | Intenção, transferência parcial e efeito sem confirmação não fornecem B. Operação posterior incompleta deve invalidar a candidata anterior para o planejamento até reconciliação; replay exige evidências verificadas e preserva destinos concorrentes. Repetição após confirmação deve ser idempotente (A10). |
+
+**Implementação:** parcial no fluxo download-only; não cobre a matriz geral de
+sincronização bidirecional. **Verificação:** testes puros e de integração local
+com provedor falso exercitam as regras; a
+[matriz de rastreabilidade](../engine/src/state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+identifica arquivos, testes e limites por cenário. **Aceite real:** a bateria
+[A01–A12](https://github.com/rafatosta/drivesync/issues/1#issuecomment-6480152816)
+com Google Drive real permanece pendente; nenhum requisito recebe validação
+completa apenas por essa cobertura local.
 
 ### 4.8 Pausa, retomada e execução em segundo plano
 
@@ -440,7 +464,24 @@ A existência de código ou a compilação bem-sucedida não bastam para declara
 
 ### 10.3 Testes unitários e de integração
 
+Para RF-SYNC-01–05, os testes puros do planner verificam decisões sem I/O;
+[baseline_tests.rs](../engine/src/download/baseline_tests.rs) combina planner,
+journal e executor com diretórios temporários e SQLite reais, reabrindo o estado
+entre ciclos e reutilizando o provedor remoto falso. Os testes de download e
+atualização complementam integridade, colisões e replay. A
+[rastreabilidade por regra](../engine/src/state/preparation.md#rastreabilidade-das-regras-do-eixo-1)
+é o índice dessa evidência. Resultados/comandos pontuais ficam nos commits, não
+constituem histórico cumulativo nesta especificação.
+
 ### 10.4 Testes com a API Google
+
+A bateria A01–A12 da SYNC-001 permanece pendente com Google Drive real. Exige
+conta/perfil e raízes isolados, arquivos dispensáveis, atualização do mesmo ID
+remoto e evidência de conteúdo, identidade, revisão, base/fase persistida e
+repetição após reinício. Deve também demonstrar a classificação usada, pela
+interface ou diagnóstico. Reabertura de conexões SQLite em testes locais não
+substitui reinício do aplicativo, nem simula queda de energia. O smoke test
+ignorado de navegação Google não satisfaz esses critérios.
 
 ### 10.5 Testes de sincronização, conflitos e falhas
 

@@ -24,23 +24,55 @@ symlink e banco de outra aplicação são erros: nunca apagar/recriar para recup
 Falhas de inventário/plano não publicam uma geração; cancelamento observado
 antes do commit provoca rollback.
 
-Planejamento puro: recebe inventário, base confirmada opcional e observações
-locais tipadas. Sem base, destino ausente é candidato a download; destino
-preexistente é conflito. UNKNOWN adia. Com base verificada, local intacto e
-versão remota igual resultam em NoOp; remoto alterado com local intacto resulta
-em Download; divergência local bloqueia. Nunca produzir upload ou exclusão.
-Arquivos existentes sem evidência de instalação confirmada continuam sendo
-conflitos; a presença do marcador não autoriza sua adoção por si só.
+O [planner](../planner/algorithms.md) classifica usando somente a base confirmada
+extraída do [journal](algorithms.md). A fachada combina essas bases com observação
+atual: metadados para destinos sem B e fingerprint por descritores para arquivos
+com B. O plano persistido não é autorização de escrita. O executor implementado
+reabre/revalida destinos antes de instalar e faz replay conforme
+[download inicial](../download/execution.md) e [atualizações](../download/updates.md).
 
-Resolver caminhos por IDs/pais; bloquear nomes repetidos no mesmo pai e toda a
-subárvore ambígua, nomes inseguros, ciclos, pais desconhecidos e componentes
-simbólicos. A observação inicial lê somente metadados. Ela NÃO elimina TOCTOU;
-o executor futuro terá de abrir/revalidar destinos por capacidade e pré-condições
-atômicas antes de escrever. O plano persistido não é uma autorização de escrita.
+## Rastreabilidade das regras do eixo 1
 
-Testes: isolamento de cliente/conta/raiz, reinício, atomicidade/rollback,
-corrupção e versão incompatível preservadas, permissões, nomes iguais, pastas
-aninhadas, symlinks, UNKNOWN e tabela B/L/R, cancelamento sem avanço do estado.
+Requisitos e aceite: [RF-SYNC-01–05](../../../docs/SOFTWARE_SPECIFICATION.md#47-detecção-de-mudanças-e-sincronização).
+A01–A12 referem-se ao [comentário de aceite da issue #1](https://github.com/rafatosta/drivesync/issues/1#issuecomment-6480152816).
+Os nomes abaixo identificam funções de teste nos arquivos vinculados, não resultados
+de execução com Google. Detalhes de comandos/resultados pertencem aos commits.
+
+| Regra / cenário | Implementação | Testes verificadores |
+| --- | --- | --- |
+| A01: instalação confirmada, reabertura e repetição sem download redundante | [executor](../download/execution.rs), [bases](downloads.rs) | `installs_verifies_reopens_and_never_overwrites_local_changes` em [download/tests.rs](../download/tests.rs); `updated_base_survives_reopen_and_classifies_later_local_edit_against_v2` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A02: observar/preparar não confirma instalação | [save](mod.rs), [confirmed_bases](downloads.rs) | `observed_only_and_first_sync_never_adopt_equal_or_different_local_bytes` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A03: mudança remota permite atualização, B nova só após confirmação | [executor](../download/execution.rs), [atualizações](../download/execution/updates.rs) | `updates_reopens_and_preserves_prior_versions_including_empty_updates` em [update_tests.rs](../download/update_tests.rs); `filesystem_effect_without_confirmation_never_exposes_old_or_new_base` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A04: mudança local isolada bloqueia download e preserva B | [decide](../planner/mod.rs), [executor](../download/execution.rs) | `reopened_base_classifies_local_and_offline_concurrent_edits_without_advancing` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A05/C01 e A06/C06: divergência após reabertura é concorrência em relação a B, sem timestamps | [planner](../planner/mod.rs), [fingerprint](../download/filesystem.rs) | `three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint` em [planner/tests.rs](../planner/tests.rs); `reopened_base_classifies_local_and_offline_concurrent_edits_without_advancing` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A07/N01: arquivo preexistente, igual ou diferente, não é adotado | [planner](../planner/mod.rs), [executor](../download/execution.rs) | `observed_only_and_first_sync_never_adopt_equal_or_different_local_bytes` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A08/N02: perda do banco preserva dados, sem reconstruir B | [state](mod.rs), [planner](../planner/mod.rs) | `missing_or_observation_only_state_cannot_reconstruct_a_base` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A09/N02: estado inválido gera erro; evidência incompleta não fornece B | [abertura](mod.rs), [validação do journal](downloads.rs) | `corrupt_database_or_malformed_installation_evidence_stops_before_effects`, `unreadable_database_is_an_error_and_is_not_reinitialized`, `installed_phase_without_remote_revision_is_not_a_confirmed_base`, `missing_or_observation_only_state_cannot_reconstruct_a_base` em [baseline_tests.rs](../download/baseline_tests.rs); `cancellation_and_foreign_schema_preserve_state_and_private_permissions` em [state/tests.rs](tests.rs) |
+| A10: transferência parcial/cancelada não confirma B; operação posterior incompleta mascara B antiga | [fases](../download/models.rs), [bases](downloads.rs), [stream](../download/stream.rs) | `later_incomplete_transfer_masks_old_base_until_verified_recovery`, `cancellation_during_initial_or_update_transfer_does_not_confirm_partial_bytes` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A10: efeito no filesystem sem confirmação exige replay verificado | [instalação](../download/execution.rs), [replay da atualização](../download/execution/updates.rs) | `filesystem_effect_without_confirmation_never_exposes_old_or_new_base` em [baseline_tests.rs](../download/baseline_tests.rs); `ready_replays_before_and_after_atomic_rename` em [download/tests.rs](../download/tests.rs); `recovery_covers_both_renames_and_does_not_redownload`, `new_destination_after_backup_is_not_replaced_or_restored_over` em [update_tests.rs](../download/update_tests.rs) |
+| A11: V2 confirmada passa a ser a base da edição local posterior | [bases](downloads.rs), [planner](../planner/mod.rs) | `updated_base_survives_reopen_and_classifies_later_local_edit_against_v2` em [baseline_tests.rs](../download/baseline_tests.rs) |
+| A12: mesmo hash com outro inode ou outro escopo não herda autorização | [fingerprint](../download/filesystem.rs), [consulta por escopo](downloads.rs), [executor](../download/execution.rs) | `inode_replacement_and_foreign_scopes_never_inherit_write_authority` em [baseline_tests.rs](../download/baseline_tests.rs); `confirmed_installation_drives_item_scoped_three_way_planning`, `existing_identical_file_is_not_adopted_and_accounts_are_isolated` em [download/tests.rs](../download/tests.rs) |
+| Sem exclusão inferida de ausência de B/evento remoto | [ações sem delete](../planner/mod.rs), [ciclo incremental](../changes/mod.rs) | `missing_or_observation_only_state_cannot_reconstruct_a_base` em [baseline_tests.rs](../download/baseline_tests.rs); `removal_is_durable_unavailability_and_preserves_user_bytes` em [incremental_tests.rs](../download/incremental_tests.rs) |
+
+## Natureza da evidência e limitações
+
+- **Implementado:** B por item/escopo, classificação parcial sem escrita,
+  observações separadas de instalações e replay local de downloads/atualizações.
+- **Verificado pelos testes automatizados:** decisões puras e efeitos com
+  arquivos/SQLite reais em diretórios temporários. `Fake` fornece bytes/metadados;
+  `Feed` simula eventos. As fixtures reabrem bancos entre ciclos e injetam erros
+  de leitura, cancelamento e triggers SQLite que recusam a confirmação final.
+  Algumas janelas de rename são reconstruídas a partir de uma instalação válida.
+- **Não demonstrado:** reinício real do aplicativo/processo, queda de energia,
+  falha real de fsync, comportamento do empacotamento/portal e apresentação das
+  classificações na interface. Preservação de bytes sozinha não demonstra a
+  classificação; os testes de planejamento a verificam separadamente.
+- **Google Drive real:** a bateria A01–A12 permanece pendente. O smoke test
+  ignorado `saved_account_can_browse_drive_folders` em
+  [live_google_tests.rs](../facade/live_google_tests.rs) cobre apenas navegação e
+  metadados; não demonstra B nem aceite de sincronização. Não foi habilitado na
+  bateria com provedor falso. N01/N02 e C01/C06 não recebem aceite real por esses
+  testes locais.
 
 Referências oficiais consultadas em 2026-10-23:
 - https://www.sqlite.org/atomiccommit.html
