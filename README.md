@@ -58,11 +58,11 @@ Install Flatpak using your Linux distribution's package manager, or follow the [
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 ```
 
-Open a terminal in the extracted folder. Replace `<commit>` below with the identifier in your downloaded filename:
+Open a terminal in the extracted folder, containing only one extracted build. The `*` in the commands below automatically matches the commit identifier in the filename:
 
 ```sh
-sha256sum -c DriveSync-experimental-x86_64-<commit>.flatpak.sha256
-flatpak install --user ./DriveSync-experimental-x86_64-<commit>.flatpak
+sha256sum -c DriveSync-experimental-x86_64-*.flatpak.sha256
+flatpak install --user ./DriveSync-experimental-x86_64-*.flatpak
 flatpak run com.rtosta.DriveSync
 ```
 
