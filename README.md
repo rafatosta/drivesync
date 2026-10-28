@@ -92,6 +92,20 @@ The immediate focus is clearer first-time setup, more reliable recovery, better 
 
 Other possible improvements include selecting individual subfolders, faster detection of local changes, richer activity history and notifications, improved account management, support for shared content, file status indicators in GNOME Files, files on demand, and bandwidth or battery controls. These are candidate improvements, with no committed release schedule.
 
+## Support development
+
+DriveSync is free and open source, developed and maintained in my spare time. If you find the project useful, you can support its development using the same donation channels as ZapZap:
+
+| Method | Link |
+| --- | --- |
+| GitHub Sponsors | [Sponsor on GitHub](https://github.com/sponsors/rafatosta) |
+| Ko-fi | [Support on Ko-fi](https://ko-fi.com/rafaeltosta) |
+| PayPal | [Donate with PayPal](https://www.paypal.com/donate/?business=E7R4BVR45GRC2) |
+| Wise | [Donate with Wise](https://wise.com/pay/me/rafaelt2487) |
+| Pix (Brazil) | [Donate with Pix](https://nubank.com.br/pagar/3c3r2/LS2hiJJKzv) |
+
+All contributions are voluntary. DriveSync remains free and open source.
+
 ## Feedback
 
 Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
