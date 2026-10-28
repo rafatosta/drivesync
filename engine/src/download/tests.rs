@@ -898,3 +898,6 @@ mod identity_tests;
 
 #[path = "collision_tests.rs"]
 mod collision_tests;
+
+#[path = "restoration_tests.rs"]
+mod restoration_tests;

@@ -243,7 +243,7 @@ completa apenas por essa cobertura local.
 #### Contrato de identidade — SYNC-002
 
 **Estado: contrato acordado; implementação parcial no fluxo de download.**
-I01–I14 possuem verificadores locais específicos; I15–I28 mantêm variantes a
+I01–I21 possuem verificadores locais específicos; I22–I28 mantêm variantes a
 completar. Execuções e resultados pertencem aos commits/PR, não a esta seção. Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
 O recorte é download de binários com remoto falso, filesystem/SQLite reais e
 reabertura entre ciclos. Não exige upload, propagação de exclusões, resolução

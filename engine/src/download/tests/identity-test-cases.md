@@ -36,7 +36,8 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [planner/tests.rs](../../planner/tests.rs), **R** =
 [remote/inventory/tests.rs](../../remote/inventory/tests.rs), **I** =
 [identity_tests.rs](../identity_tests.rs), **C** =
-[collision_tests.rs](../collision_tests.rs).
+[collision_tests.rs](../collision_tests.rs), **H** =
+[restoration_tests.rs](../restoration_tests.rs).
 A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
 
 | Caso | Teste existente relacionado | Variantes e complemento exigidos |
@@ -55,13 +56,13 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I12 / C20 | C `i12_i13_folder_homonyms_block_distinct_descendants_in_every_order` | Duas pastas homônimas com filhos distintos; integrar execução e conferir IDs/árvores sem mistura. |
 | I13 / C20 | C `i13_same_names_under_distinct_paths_install_the_correct_objects` | Separar colisões entre páginas, inverter ordem de I10–I12; controle com nomes iguais em pais/caminhos distintos. |
 | I14 / C20 | C `i14_removed_or_renamed_homonym_revalidates_the_remaining_object` | Desfazer colisão por remoção/renomeação: restante A revalida B; restante B não adota local de A; repetir após reabertura. |
-| I15 / N12 | U `updates_reopens_and_preserves_prior_versions_including_empty_updates` (atualizações gerais) | V1 → V2 → bytes V1 com revisão maior; continuidade, instalação durável e preservação de V2, sem afirmar intenção. |
-| I16 / N12 | B `inode_replacement_and_foreign_scopes_never_inherit_write_authority` (outro ID) | Após V2, V1 em novo ID; distinguir objeto e preservar local sem herdar B. |
-| I17 / N12 | B `updated_base_survives_reopen_and_classifies_later_local_edit_against_v2` (edição geral) | Restaurar V1 após V2 com mesmo/outro inode; distinguir conteúdo/identidade e conservar B de V2. |
-| I18 / N12 | P `three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint`; U `regressed_versions_and_changed_bytes_without_new_revision_are_blocked` | Revisão menor/zero/ausente; diagnóstico desconhecido/inconsistente e zero mídia/efeito indevido. |
-| I19 / N12 | B `reopened_base_classifies_local_and_offline_concurrent_edits_without_advancing` | Histórico em um lado e edição independente no outro, inclusive offline; comparar com última B e preservar. |
-| I20 / N12 | Sem teste dedicado identificado | Sem proveniência, diagnosticar alteração/ambiguidade sem afirmar intenção. Variante com prova somente se houver suporte real especificado; hash antigo não basta. |
-| I21 / N12 | B `missing_or_observation_only_state_cannot_reconstruct_a_base` | Banco antigo + arquivos atuais; arquivos antigos + banco atual; banco ausente + arquivos. Revalidar; explicitar impossibilidade de detectar reversão conjunta consistente sem âncora externa. |
+| I15 / N12 | H `i15_historical_bytes_at_a_newer_revision_preserve_the_current_version` | V1 → V2 → bytes V1 com revisão maior; continuidade, instalação durável e preservação de V2, sem afirmar intenção. |
+| I16 / N12 | H `i16_historical_bytes_in_a_new_remote_object_never_inherit_base` | Após V2, V1 em novo ID; distinguir objeto e preservar local sem herdar B. |
+| I17 / N12 | H `i17_local_history_distinguishes_content_from_identity_without_rewinding_base` | Restaurar V1 após V2 com mesmo/outro inode; distinguir conteúdo/identidade e conservar B de V2. |
+| I18 / N12 | H `i18_regressive_zero_and_missing_revisions_are_not_historical_authority` | Revisão menor/zero/ausente; diagnóstico desconhecido/inconsistente e zero mídia/efeito indevido. |
+| I19 / N12 | H `i19_historical_and_independent_edits_conflict_against_the_last_confirmed_base` | Histórico em um lado e edição independente no outro, inclusive offline; comparar com última B e preservar. |
+| I20 / N12 | H `i20_known_historical_content_without_provenance_has_only_observable_diagnostics` | Sem proveniência, diagnosticar alteração/ambiguidade sem afirmar intenção. Variante com prova somente se houver suporte real especificado; hash antigo não basta. |
+| I21 / N12 | H `i21_restored_or_missing_state_never_adopts_divergent_current_files` ; H `i21_joint_local_rollback_without_an_independent_anchor_looks_like_remote_change` | Banco antigo + arquivos atuais; arquivos antigos + banco atual; banco ausente + arquivos. Revalidar; explicitar impossibilidade de detectar reversão conjunta consistente sem âncora externa. |
 | I22 / C05 | U `edits_and_inode_swaps_during_download_remain_untouched` | Troca após plano e durante streaming, bytes iguais/diferentes; identidade divergente impede instalação mesmo com plano antigo. |
 | I23 / C05 | U `remote_change_during_update_preserves_old_file`; D `remote_version_changes_and_concurrent_local_creation_are_conflicts` | Revisão muda, ID desaparece, homônimo novo aparece; conferir IDs consultados e impedir troca por nome/instalação sob revisão errada. |
 | I24 | U `network_checksum_and_cancellation_keep_old_file_at_its_path`; E `removal_is_durable_unavailability_and_preserves_user_bytes` | Indisponibilidade → substituição local/remota → retorno; reconciliar com B, sem inferir exclusão nem adoção. |
@@ -86,11 +87,26 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
   e uma/todas as entradas por página. Conferem IDs e planos reabertos, zero mídia
   e nenhuma nova B durante ambiguidade; remoção/renomeação de cada homônimo exige
   reavaliação. Os testes relacionados não representam integração com Google.
-- I15–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
+- I15–I21 criam V1/V2 pelo executor e usam bytes históricos no mesmo/novo ID,
+  edição/troca de inode, revisões menores/zero/ausentes e bancos/arquivos antigos.
+  Os bloqueios comparam todos os bytes/inodes da raiz (incluindo backups), B e
+  plano reaberto; a atualização histórica legítima confirma uma revisão maior e
+  preserva V2. Zero/revisão ausente no modelo de binário produz erro seguro no
+  executor, mantendo diagnóstico desconhecido no plano; não gera mídia.
+- O intervalo offline de I19 representa ausência de observações entre ciclos,
+  com reconstrução de instâncias na volta. Não é simulação de falha de rede.
+- I22–I28 continuam sujeitos às variantes do catálogo; testes relacionados não
   representam conclusão automática dessas baterias.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.
-  Não introduzir nova dependência ou serviço de histórico para simular essa prova.
+  A variante com prova não é aplicável à interface atual; a ausência de prova
+  é exercitada explicitamente. Não introduzir nova dependência ou serviço de
+  histórico para simular essa prova.
+- I21 também exercita B/L antigos consistentes, com inode original restaurado e
+  R atual mais novo: a observação equivale a atualização remota comum, sem sinal
+  que comprove rollback local. O efeito seguro ainda preserva a versão anterior.
+  Se R e todos os vestígios também coincidirem com o passado, não há detecção
+  prometida sem âncora independente (RF-ID-07).
 
 O aceite local exige as variantes aplicáveis e regressões da #1 no SDK/Rust do
 manifesto Flatpak, incluindo fmt, Clippy, workspace tests, documentação e doctests.
