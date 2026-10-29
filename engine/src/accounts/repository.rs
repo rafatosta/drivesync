@@ -234,7 +234,14 @@ impl Accounts {
         }
         let roots = self.roots()?;
         let _association_lock = roots.lock(client, &folder)?;
-        if roots.marker(client, &folder)?.is_some() {
+        let existing_pair = index.folders.get(client).is_some_and(|folders| {
+            folders.iter().any(|saved| {
+                saved.account_id == folder.account_id
+                    && saved.remote.id == folder.remote.id
+                    && saved.local == folder.local
+            })
+        });
+        if existing_pair || roots.marker(client, &folder)?.is_some() {
             crate::configuration::identity::verify(&folder, client)?;
         } else {
             crate::configuration::identity::ensure(&folder, client)?;

@@ -345,3 +345,41 @@ fn configured_root_cannot_be_reinitialized_after_volume_or_marker_loss() {
     assert!(accounts.configure(CLIENT, folder).is_err());
     assert!(!local.join(".drivesync/identity.json").exists());
 }
+
+#[test]
+fn missing_external_binding_does_not_recreate_a_saved_pairs_missing_marker() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "a@example.com"))
+        .unwrap();
+    let local = dir.0.join("volume");
+    fs::create_dir(&local).unwrap();
+    let folder = configured("a", local.clone());
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    let marker = local.join(".drivesync/identity.json");
+    let original = fs::read(&marker).unwrap();
+    let registry = accounts
+        .path
+        .as_ref()
+        .unwrap()
+        .with_file_name("roots.sqlite3");
+    fs::remove_file(&registry).unwrap();
+    // Explicit reselection can recover the external binding from existing identity.
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    assert_eq!(fs::read(&marker).unwrap(), original);
+    fs::remove_file(&registry).unwrap();
+    fs::remove_file(&marker).unwrap();
+    let profiles = fs::read(accounts.path.as_ref().unwrap()).unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            accounts.configure(CLIENT, folder.clone()),
+            Err(EngineError::RootSuspended(
+                crate::RootSuspension::IdentityUnverified
+            ))
+        );
+        assert!(!marker.exists());
+        assert_eq!(fs::read(accounts.path.as_ref().unwrap()).unwrap(), profiles);
+        assert_eq!(fs::read_dir(local.join(".drivesync")).unwrap().count(), 0);
+    }
+}
