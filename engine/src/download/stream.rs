@@ -36,6 +36,7 @@ pub(super) fn copy(
     md5: &str,
     cancel: &Cancellation,
     mut progress: impl FnMut(u64),
+    mut check: impl FnMut() -> Result<(), EngineError>,
 ) -> Result<String, EngineError> {
     let mut buffer = [0u8; 65536];
     let mut bytes = 0u64;
@@ -60,6 +61,7 @@ pub(super) fn copy(
         if bytes > expected {
             return Err(EngineError::DownloadIntegrity);
         }
+        check()?;
         output.write_all(&buffer[..n]).map_err(io)?;
         provider.update(&buffer[..n]);
         local.update(&buffer[..n]);

@@ -23,6 +23,7 @@ impl Provider<'_> {
 impl Remote for Provider<'_> {
     fn configured(&mut self) -> Result<(), EngineError> {
         super::local::check(self.cancel)?;
+        self.engine.verify_root(self.folder, self.config)?;
         if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder)
             || !self.uploads.enabled()?
         {
@@ -106,6 +107,7 @@ impl Remote for Provider<'_> {
             current = expected;
         }
         self.access(|t| crate::remote::inventory_root(t, &self.folder.remote.id))
+            .map_err(crate::coordinator::remote)
             .map(|_| ())
     }
 }

@@ -172,6 +172,16 @@ impl Accounts {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
         Ok(self.read()?.folders.remove(client).unwrap_or_default())
     }
+    /// Opens availability metadata independently of the selected volume.
+    pub(crate) fn roots(&self) -> Result<crate::state::Roots, EngineError> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or(EngineError::StateStorage)?
+            .with_file_name("roots.sqlite3");
+        crate::state::Roots::open(&path)
+    }
+
     /// Configures one remote/local folder pair for an existing account.
     ///
     /// `client` scopes the account namespace. `folder` supplies the remote
@@ -222,7 +232,13 @@ impl Accounts {
                 }
             }
         }
-        crate::configuration::identity::ensure(&folder, client)?;
+        if self.roots()?.marker(client, &folder)?.is_some() {
+            crate::configuration::identity::verify(&folder, client)?;
+        } else {
+            crate::configuration::identity::ensure(&folder, client)?;
+        }
+        let marker = crate::configuration::identity::verify(&folder, client)?;
+        self.roots()?.bind(client, &folder, &marker)?;
         let folders = index.folders.entry(client.into()).or_default();
         folders.retain(|f| f.account_id != folder.account_id);
         folders.push(folder);

@@ -27,6 +27,7 @@ pub(crate) fn content_fingerprint(
             .ok_or(EngineError::InvalidPlan)?,
         cancel,
         |_| {},
+        || source.check_configuration(),
     )?;
     source.check_configuration()?;
     if source.metadata(item)? != *item {

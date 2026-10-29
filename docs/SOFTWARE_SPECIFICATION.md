@@ -695,3 +695,32 @@ O estado de implementação e o estado de validação devem ser registrados sepa
 O acervo em [`old/`](old/README.md) deve permanecer identificável como documentação anterior. Seu aproveitamento exige revisão de contexto, coerência e vigência, preservando decisões relevantes sem transportar automaticamente descrições de versões passadas.
 
 Esta especificação deve concentrar a definição vigente do produto. Documentos complementares podem detalhar assuntos específicos, evitando duplicação de regras e mantendo referências claras entre as fontes.
+
+### Proteção de disponibilidade de raízes — SYNC-004
+
+Uma associação existente exige marcador local previamente vinculado ao cliente,
+conta e ID remoto. O caminho existir ou estar vazio não prova identidade. A
+verificação de uma associação existente não cria marcador, banco ou arquivo de
+sondagem na raiz. Metadados incompatíveis não são migrados nem apagados.
+
+Antes de inventariar ou executar efeitos, o motor verifica disponibilidade e
+identidade da raiz. Mantém exclusão mútua local durante preparação e transferências;
+revalida a associação e os acessos antes dos efeitos. Perda de acesso suspende o
+escopo afetado, preservando base, journals e arquivos; não autoriza exclusão.
+
+A identidade esperada e o motivo de suspensão ficam no armazenamento privado do
+aplicativo, fora do volume selecionado. Sua perda não autoriza adotar outra raiz.
+Uma retomada verifica novamente as raízes e produz plano novo, reconciliando fases
+interrompidas antes de repetir efeitos. Pausa do usuário não é anulada por eventos
+de rede. Apenas falhas transitórias de conexão permitem tentativas automáticas;
+identidade divergente ou acesso negado exigem correção explícita e nova tentativa.
+
+Uma resposta 404 não comprova exclusão: pode representar perda de acesso. Uma
+pasta remota movida que conserva ID e acesso mantém sua associação. Falhas de item
+não suspendem automaticamente itens independentes, salvo evidência de falha da raiz.
+
+Aceite: N03 (volume ausente, substituído ou inacessível), N04 (raiz remota movida,
+removida ou inacessível), C25 (perda de compartilhamento) e E09 (item indisponível)
+exigem zero exclusões, preservação dos bytes e da base confirmada, diagnóstico
+acionável, reinício e repetição sem adoção ou publicação indevida. Testes locais
+com provedor simulado e validação real com Drive/Flatpak são evidências distintas.

@@ -29,6 +29,7 @@ mod upload;
 pub use auth::{AuthError, Cancellation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
+pub use coordinator::RootSuspension;
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncRootId};

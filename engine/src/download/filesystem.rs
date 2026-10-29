@@ -99,8 +99,12 @@ impl Root {
         Ok(file)
     }
     pub fn validate(&self) -> Result<(), EngineError> {
-        if identity(&Self::open_path(&self.path)?)? != identity(&self.file)? {
-            return Err(EngineError::DownloadConflict);
+        let unavailable = || EngineError::RootSuspended(crate::RootSuspension::LocalUnavailable);
+        let current = Self::open_path(&self.path).map_err(|_| unavailable())?;
+        if identity(&current).map_err(|_| unavailable())?
+            != identity(&self.file).map_err(|_| unavailable())?
+        {
+            return Err(unavailable());
         }
         Ok(())
     }

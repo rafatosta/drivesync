@@ -40,19 +40,34 @@ pub(crate) struct Context<'a> {
 }
 struct Session<'a> {
     context: Context<'a>,
-    root: Root,
+    root: &'a Root,
     operations: HashMap<std::path::PathBuf, Vec<Operation>>,
     preserved: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
 /// Executes a freshly built plan. Installed evidence is reverified, never trusted
 /// by name alone. Fatal state/configuration errors stop before further effects.
+#[cfg(test)]
 pub(crate) fn run(
     context: Context<'_>,
     inventory: &RemoteInventory,
     source: &mut impl Source,
-    mut progress: impl FnMut(DownloadProgress),
+    progress: impl FnMut(DownloadProgress),
 ) -> Result<DownloadReport, EngineError> {
+    let root = Root::open(&context.scope.local_root)?;
+    run_with_root(context, inventory, source, progress, &root)
+}
+
+/// Executes with the lock and descriptor retained from preparation.
+pub(crate) fn run_with_root<'a>(
+    context: Context<'a>,
+    inventory: &RemoteInventory,
+    source: &mut impl Source,
+    mut progress: impl FnMut(DownloadProgress),
+    root: &'a Root,
+) -> Result<DownloadReport, EngineError> {
+    root.validate()?;
+    source.configured()?;
     stream::cancelled(context.cancel)?;
     if context.scope.account_id != inventory.account_id
         || context.scope.remote_root != inventory.root_id
@@ -60,7 +75,6 @@ pub(crate) fn run(
     {
         return Err(EngineError::InvalidPlan);
     }
-    let root = Root::open(&context.scope.local_root)?;
     let mut operations: HashMap<std::path::PathBuf, Vec<Operation>> = HashMap::new();
     for operation in context.store.operations(context.client, context.scope)? {
         operations
@@ -154,7 +168,7 @@ pub(crate) fn run(
             }),
         });
         stream::cancelled(session.context.cancel)?;
-        source.check_configuration()?;
+        source.configured()?;
         session.root.validate()?;
         if item.id != decision.remote_id {
             return Err(EngineError::InvalidPlan);
@@ -198,7 +212,7 @@ pub(crate) fn run(
                         }),
                     });
                     super::links::ensure(
-                        &session.root,
+                        session.root,
                         path,
                         &item.name,
                         &item.mime_type,
@@ -258,6 +272,7 @@ pub(crate) fn run(
         if let Err(error) = result {
             match error {
                 EngineError::StateStorage
+                | EngineError::RootSuspended(_)
                 | EngineError::InvalidPlan
                 | EngineError::Authentication(crate::AuthError::Cancelled) => return Err(error),
                 _ => report.issues.push(DownloadIssue {
@@ -368,7 +383,7 @@ impl Session<'_> {
             crate::LocalObservation::Verified(value) => value,
             _ => return Err(EngineError::ObservationUnknown),
         };
-        if filesystem::fingerprint_root(&self.root, path, self.context.cancel)?.as_ref()
+        if filesystem::fingerprint_root(self.root, path, self.context.cancel)?.as_ref()
             != Some(expected)
         {
             return Err(EngineError::LocalWriting);
@@ -378,7 +393,7 @@ impl Session<'_> {
         if expected.split(':').next() != Some(remote.as_str()) {
             return Err(EngineError::DownloadConflict);
         }
-        if filesystem::fingerprint_root(&self.root, path, self.context.cancel)?.as_ref()
+        if filesystem::fingerprint_root(self.root, path, self.context.cancel)?.as_ref()
             != Some(expected)
         {
             return Err(EngineError::LocalWriting);
@@ -605,6 +620,10 @@ impl Session<'_> {
                     received,
                     total: Some(size),
                 })
+            },
+            || {
+                self.root.validate()?;
+                source.check_configuration()
             },
         )?;
         progress(DownloadItemProgress {
