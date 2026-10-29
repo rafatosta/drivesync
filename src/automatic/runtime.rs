@@ -106,6 +106,8 @@ impl Controller {
         let job = Self::new(saved.account.id.clone(), execute, desktop);
         job.configure(saved.folder.clone(), super::eligible(saved));
         if saved.folder.is_some() {
+            // Do not dispatch automatically before durable suspension is restored.
+            job.0.state.borrow_mut().schedule.due = None;
             let restore = job.clone();
             let generation = job.0.state.borrow().generation;
             let id = saved.account.id.clone();
@@ -117,16 +119,14 @@ impl Controller {
                         Ok(None) => None,
                         Err(error) => Some(error),
                     };
-                    if let Some(error) = error {
-                        restore.restore_suspension(generation, error);
-                    }
+                    restore.restore_availability(generation, error);
                 },
             );
         }
         job
     }
     /// A late disk read cannot replace a manual cycle or a newer configuration.
-    fn restore_suspension(&self, generation: u64, error: EngineError) {
+    fn restore_availability(&self, generation: u64, error: Option<EngineError>) {
         let mut state = self.0.state.borrow_mut();
         if state.generation != generation
             || state.cancel.is_some()
@@ -135,9 +135,13 @@ impl Controller {
         {
             return;
         }
-        let result = Err(error);
-        state.schedule.finish(&result, now());
-        state.result = Some(result);
+        if let Some(error) = error {
+            let result = Err(error);
+            state.schedule.finish(&result, now());
+            state.result = Some(result);
+        } else {
+            state.schedule.configure(true, now());
+        }
         state.revision += 1;
     }
     fn configure(&self, folder: Option<FolderConfiguration>, eligible: bool) {
@@ -651,15 +655,25 @@ mod tests {
         let generation = restored.0.state.borrow().generation;
         let unavailable =
             EngineError::RootSuspended(drivesync_engine::RootSuspension::LocalUnavailable);
-        restored.restore_suspension(generation, unavailable.clone());
+        restored.restore_availability(generation, Some(unavailable.clone()));
         assert_eq!(restored.snapshot().phase, Phase::Blocked);
         assert!(
             matches!(restored.snapshot().result, Some(Err(ref error)) if error == &unavailable)
         );
         restored.configure(Some(folder("restored", "replacement")), true);
-        restored.restore_suspension(generation, unavailable);
+        restored.restore_availability(generation, Some(unavailable));
         assert_eq!(restored.snapshot().phase, Phase::Waiting);
         assert!(restored.snapshot().result.is_none());
+        let generation = restored.0.state.borrow().generation;
+        restored.0.state.borrow_mut().schedule.due = None;
+        assert!(!restored
+            .0
+            .state
+            .borrow_mut()
+            .schedule
+            .start(now() + 10000, true, false));
+        restored.restore_availability(generation, None);
+        assert!(restored.0.state.borrow().schedule.due.is_some());
         SERVICE.with(|slot| slot.borrow_mut().take());
         // Drain retired progress sources before releasing the default context.
         let until = Instant::now() + Duration::from_millis(120);
