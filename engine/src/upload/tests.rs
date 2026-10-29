@@ -18,6 +18,7 @@ use std::{
 struct Fake {
     generated: usize,
     change_on_generate: Option<PathBuf>,
+    change_after_chunk: Option<PathBuf>,
     creates: usize,
     chunks: usize,
     begins: usize,
@@ -119,6 +120,9 @@ impl Remote for Fake {
         assert_eq!(offset.unwrap(), self.data[&op.id].len() as u64);
         self.data.get_mut(&op.id).unwrap().extend(bytes);
         self.chunks += 1;
+        if let Some(path) = self.change_after_chunk.take() {
+            fs::write(path, b"writer resumed during upload").unwrap();
+        }
         if self.data[&op.id].len() as u64 == op.size {
             self.creates += 1;
             self.items.insert(op.id.clone(), entry(op));
@@ -651,4 +655,27 @@ fn temporary_item_does_not_stop_independent_ready_uploads() {
     assert_eq!(remote.generated, 1);
     assert_eq!(remote.creates, 1);
     assert_eq!(fs::read(f.root.join("a.part")).unwrap(), b"partial");
+}
+
+#[test]
+fn n10_resumed_writer_stops_before_final_upload_publication_and_keeps_intent() {
+    let f = Fixture::new();
+    let path = f.root.join("large.bin");
+    fs::write(&path, vec![b'a'; 2 * 1024 * 1024]).unwrap();
+    let mut remote = Fake {
+        change_after_chunk: Some(path.clone()),
+        ..Default::default()
+    };
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalWriting);
+    assert_eq!(remote.chunks, 1);
+    assert_eq!(remote.creates, 0);
+    assert!(remote.items.is_empty());
+    let op = f.uploads().load(Path::new("large.bin")).unwrap().unwrap();
+    assert!(!op.confirmed);
+    assert!(f.path.with_file_name(&op.snapshot).is_file());
+    assert_eq!(fs::read(&path).unwrap(), b"writer resumed during upload");
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 0);
 }

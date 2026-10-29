@@ -44,6 +44,16 @@ pub(crate) fn snapshot(
     stage: &Path,
     cancel: &Cancellation,
 ) -> Result<(u64, String, String, crate::download::Identity), EngineError> {
+    snapshot_with_progress(root, path, stage, cancel, |_| {})
+}
+/// The progress seam supports deterministic interruption and concurrent-writer tests.
+fn snapshot_with_progress(
+    root: &Root,
+    path: &Path,
+    stage: &Path,
+    cancel: &Cancellation,
+    mut copied: impl FnMut(u64),
+) -> Result<(u64, String, String, crate::download::Identity), EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
@@ -74,6 +84,7 @@ pub(crate) fn snapshot(
         sha.update(&buffer[..n]);
         md5.update(&buffer[..n]);
         size += n as u64;
+        copied(size);
         if size > before.2 {
             return Err(EngineError::DownloadConflict);
         }
@@ -94,6 +105,34 @@ pub(crate) fn snapshot(
         format!("{:x}", sha.finalize()),
         filesystem::identity(&file)?,
     ))
+}
+/// Revalidates the original source, not only the immutable staging bytes.
+/// Returns its signature so chunk boundaries can detect resumed external writes.
+pub(crate) fn verify_source(
+    root: &Root,
+    path: &Path,
+    op: &Intent,
+    cancel: &Cancellation,
+) -> Result<crate::local::Stamp, EngineError> {
+    let before = crate::local::stamp(root, path)?;
+    let (parent, name) = root.parent(path)?;
+    let parent_id = filesystem::identity(&parent)?;
+    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    if op.source != Some(filesystem::identity(&file)?) {
+        return Err(EngineError::DownloadConflict);
+    }
+    verify_file(&mut file, op, cancel).map_err(|error| {
+        if error == EngineError::StateStorage {
+            EngineError::DownloadConflict
+        } else {
+            error
+        }
+    })?;
+    root.validate_parent(path, parent_id)?;
+    if crate::local::stamp(root, path)? != before {
+        return Err(EngineError::LocalWriting);
+    }
+    Ok(before)
 }
 pub(crate) fn verify_stage(
     path: &Path,
@@ -149,5 +188,60 @@ mod tests {
         assert!(ignored(Path::new(".drivesync")));
         assert!(ignored(Path::new(".drivesync/identity.json")));
         assert!(ignored(Path::new(".drivesync/state.sqlite3")));
+    }
+    #[test]
+    fn n10_write_or_replacement_during_snapshot_discards_only_partial_staging() {
+        for replacement in [false, true] {
+            let base = std::env::temp_dir().join(format!(
+                "drivesync-snapshot-{}",
+                oauth2::CsrfToken::new_random().secret()
+            ));
+            let root_path = base.join("root");
+            std::fs::create_dir_all(&root_path).unwrap();
+            let bytes = vec![b'a'; 2 * 1024 * 1024];
+            let path = root_path.join("file");
+            std::fs::write(&path, &bytes).unwrap();
+            let stage = base.join("private.snapshot");
+            let root = super::Root::open(&root_path).unwrap();
+            let mut changed = false;
+            let result = super::snapshot_with_progress(
+                &root,
+                Path::new("file"),
+                &stage,
+                &crate::Cancellation::new(),
+                |_| {
+                    if !changed {
+                        changed = true;
+                        if replacement {
+                            std::fs::write(root_path.join("replacement"), &bytes).unwrap();
+                            std::fs::rename(root_path.join("replacement"), &path).unwrap();
+                        } else {
+                            std::fs::write(&path, b"writer resumed").unwrap();
+                        }
+                    }
+                },
+            );
+            assert_eq!(result, Err(crate::EngineError::DownloadConflict));
+            assert!(!stage.exists());
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                if replacement {
+                    bytes
+                } else {
+                    b"writer resumed".to_vec()
+                }
+            );
+            std::fs::write(&stage, b"preexisting").unwrap();
+            assert!(super::snapshot(
+                &root,
+                Path::new("file"),
+                &stage,
+                &crate::Cancellation::new()
+            )
+            .is_err());
+            assert_eq!(std::fs::read(&stage).unwrap(), b"preexisting");
+            drop(root);
+            std::fs::remove_dir_all(base).unwrap();
+        }
     }
 }

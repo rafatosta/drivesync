@@ -235,22 +235,11 @@ pub(crate) fn run(
                 }
                 return Ok(());
             }
-            if !directory {
-                let (parent_fd, name) = root.parent(&path)?;
-                let mut file =
-                    filesystem::read(&parent_fd, &name)?.ok_or(EngineError::DownloadConflict)?;
-                if op.source != Some(filesystem::identity(&file)?) {
-                    return Err(EngineError::DownloadConflict);
-                }
-                local::verify_file(&mut file, &op, cancel).map_err(|e| {
-                    if e == EngineError::StateStorage {
-                        EngineError::DownloadConflict
-                    } else {
-                        e
-                    }
-                })?;
-                root.validate_parent(&path, filesystem::identity(&parent_fd)?)?;
-            }
+            let source_stamp = if !directory {
+                Some(local::verify_source(&root, &path, &op, cancel)?)
+            } else {
+                None
+            };
             remote.validate_parent(&parent)?;
             let siblings = remote.children(&parent, name)?;
             if siblings.iter().any(|s| s.id != op.id) {
@@ -293,6 +282,15 @@ pub(crate) fn run(
                         let count = (op.size - offset).min(1024 * 1024) as usize;
                         let mut bytes = vec![0; count];
                         file.read_exact(&mut bytes).map_err(filesystem::io)?;
+                        if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                            return Err(EngineError::LocalWriting);
+                        }
+                        if offset + count as u64 == op.size {
+                            local::verify_source(&root, &path, &op, cancel)?;
+                            if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                                return Err(EngineError::LocalWriting);
+                            }
+                        }
                         let next = remote.send(&op, Some(offset), bytes)?;
                         if matches!(next,Position::Offset(n) if n<=offset || n>offset+count as u64)
                         {

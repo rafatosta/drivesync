@@ -23,7 +23,9 @@ For each scoped client/account/folder pair:
 4. Query the persisted remote ID before replay. Verify parent, name, type, size
    and MD5 before confirmation. Never generate a replacement ID for an intent.
 5. Persist the resumable session URI privately. On restart query the server's
-   offset; send aligned bounded chunks, validating ranges. An expired session
+   offset; send aligned bounded chunks, validating ranges. Recheck the source
+   signature before each chunk and its identity/hash before the final chunk;
+   a detected resumed writer leaves the intent pending without final publication. An expired session
    may restart creation with the SAME ID after checking completion. Never log
    tokens, session URIs or raw provider responses.
 6. Confirm only verified remote content. If the current local identity/content
@@ -40,3 +42,9 @@ Primary references verified 2026-10-24:
 - https://developers.google.com/workspace/drive/api/guides/manage-uploads
 - https://developers.google.com/workspace/drive/api/guides/create-file
 - https://developers.google.com/workspace/drive/api/reference/rest/v3/files/generateIds
+
+Source revalidation is not a filesystem lock against other applications. A writer
+can still change the source after the last check or after remote completion;
+final confirmation rechecks local identity/bytes and never advances B over such
+a divergent source. The private snapshot preserves exactly the previously
+verified candidate; no cross-system atomic writer/publication guarantee is made.
