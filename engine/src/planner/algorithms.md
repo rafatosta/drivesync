@@ -97,7 +97,7 @@ São fundamentação, não evidência de integração real.
 
 ## SYNC-002 — diagnóstico de identidade local
 
-Contrato RF-ID-01–07 aprovado na revisão humana da etapa 1. Para binários com B:
+Contrato RF-ID-01–07 da especificação. Para binários com B:
 
 1. Rejeitar revisão zero/regressiva e fingerprint inválida como `DeferredUnknown`.
    Decodificar exatamente SHA-256 hexadecimal, device e inode; inode zero não

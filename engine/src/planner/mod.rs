@@ -14,7 +14,9 @@ pub enum LocalObservation {
     UnmanagedFile,
     SymlinkOrSpecial,
     Unknown,
-    /// Stable content hash and local device/inode from a descriptor-relative read.
+    /// SHA-256 and device/inode from a descriptor-relative verified read,
+    /// encoded as `64 hexadecimal digits:decimal device:decimal inode`.
+    /// The inode must be nonzero; this is not a permanent object identifier.
     Verified(String),
 }
 /// A base comes only from a durable installed journal entry, never an inventory.
@@ -69,7 +71,15 @@ pub struct DownloadPlan {
     pub entries: Vec<PlanEntry>,
 }
 
-/// Three-way rule with explicit verified evidence; no filesystem/provider effects.
+/// Classifies a binary against durable B and current local/remote evidence.
+///
+/// Identity differences take precedence over content equality. A content edit
+/// at the same device/inode remains distinct from a substituted local object.
+/// Invalid base fingerprints, invalid current fingerprints with B, zero remote
+/// revisions and revision regressions produce [`PlanAction::DeferredUnknown`].
+/// Without B, existing files remain blocked even when their bytes are equal.
+/// This function performs no I/O and its result never authorizes installation;
+/// the executor independently revalidates scope, identity, bytes and revision.
 pub fn decide(
     base: Option<&ConfirmedBase>,
     local: &LocalObservation,

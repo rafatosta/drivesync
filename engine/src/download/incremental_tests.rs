@@ -326,6 +326,12 @@ fn i07_same_id_path_changes_preserve_association_and_occupied_destinations() {
             let mut source = Fake::new(&inv);
             cycle(&f, &mut feed, &mut source).unwrap();
             let original_base = super::baseline_tests::base(&f, &inv).unwrap();
+            let original_identity = filesystem::fingerprint(
+                &f.root,
+                std::path::Path::new("file.txt"),
+                &Cancellation::new(),
+            )
+            .unwrap();
             let mut current = inv.entries[0].clone();
             let destination = if moved {
                 "folder/renamed.txt"
@@ -372,6 +378,45 @@ fn i07_same_id_path_changes_preserve_association_and_occupied_destinations() {
                     current_path: Some(destination.into()),
                 }));
                 assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+                assert_eq!(
+                    filesystem::fingerprint(
+                        &f.root,
+                        std::path::Path::new("file.txt"),
+                        &Cancellation::new()
+                    )
+                    .unwrap(),
+                    original_identity
+                );
+                assert!(report.preserved_copies.is_empty());
+                let diagnostic = super::baseline_tests::prepare(&f, &checkpoint.inventory).unwrap();
+                let expected = if occupied {
+                    PlanAction::Blocked(crate::ConflictReason::ConcurrentIdentityChanges)
+                } else {
+                    PlanAction::NoOp
+                };
+                assert_eq!(
+                    diagnostic
+                        .entries
+                        .iter()
+                        .find(|entry| entry.remote_id == "file")
+                        .unwrap()
+                        .action,
+                    expected
+                );
+                let persisted = Store::open(&f.db())
+                    .unwrap()
+                    .load("client", &inv.account_id, &inv.root_id, &f.root)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    persisted
+                        .entries
+                        .iter()
+                        .find(|entry| entry.remote_id == "file")
+                        .unwrap()
+                        .action,
+                    expected
+                );
                 assert!(checkpoint
                     .inventory
                     .entries

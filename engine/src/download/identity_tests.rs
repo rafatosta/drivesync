@@ -242,7 +242,15 @@ fn i08_each_scope_component_requires_its_own_base() {
                 plan.entries[0].action,
                 PlanAction::Blocked(ConflictReason::ExistingLocalData)
             );
+            let persisted = Store::open(&f.db())
+                .unwrap()
+                .load(client, &inv.account_id, &inv.root_id, &f.root)
+                .unwrap()
+                .unwrap();
+            assert_eq!(persisted, plan);
+            let remote_before = source.content.clone();
             let report = cycle_client(&f, &inv, &mut source, client).unwrap();
+            assert_eq!(source.content, remote_before);
             assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
             assert!(source.media_ids.is_empty());
             assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V1);
