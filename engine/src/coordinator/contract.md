@@ -49,3 +49,16 @@ A raiz Drive exige `capabilities.canListChildren == true`; upload exige também
 `canAddChildren == true` no pai efetivo, sem exigir escrita em ancestrais apenas
 percorridos. Campo ausente não é permissão concedida. Referência:
 [Files capabilities](https://developers.google.com/workspace/drive/api/reference/rest/v3/files).
+
+Um lock de associação no diretório privado do aplicativo serializa a mesma chave
+cliente/conta/ID remoto/caminho local, mesmo quando o inode montado é substituído.
+É adquirido antes do lock físico e retido até persistir o resultado do ciclo.
+Configuração explícita da mesma associação também o respeita. O lock é advisory,
+liberado ao fechar o descritor/encerrar o processo; não coordena programas externos
+que não adotam o protocolo. Arquivos de lock não são removidos durante a operação,
+pois recriá-los permitiria dois locks em inodes diferentes para a mesma chave.
+
+Uma falha de transporte devolvida no relatório de transferência é promovida a
+suspensão antes de liberar o ciclo ou iniciar upload após download. Não prova
+indisponibilidade definitiva nem exclusão de um item. Suspensão tipada durante
+prova de equivalência aborta a preparação, em vez de virar apenas item desconhecido.

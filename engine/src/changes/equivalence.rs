@@ -6,7 +6,7 @@ use crate::{
 use std::collections::HashMap;
 
 /// Refines only concurrent content changes with continuous local identity and B.
-/// A failed read leaves the item unknown, while cancellation stops preparation.
+/// An item read failure leaves it unknown; cancellation and root suspension stop preparation.
 pub(crate) fn refine(
     plan: &mut DownloadPlan,
     inventory: &RemoteInventory,
@@ -33,9 +33,11 @@ pub(crate) fn refine(
             Err(EngineError::Authentication(crate::AuthError::Cancelled)) => {
                 return Err(EngineError::Authentication(crate::AuthError::Cancelled))
             }
-            Err(error @ (EngineError::InvalidPlan | EngineError::StateStorage)) => {
-                return Err(error)
-            }
+            Err(
+                error @ (EngineError::InvalidPlan
+                | EngineError::StateStorage
+                | EngineError::RootSuspended(_)),
+            ) => return Err(error),
             Err(_) => entry.action = PlanAction::DeferredUnknown,
         }
     }

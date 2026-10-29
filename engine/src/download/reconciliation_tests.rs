@@ -231,3 +231,49 @@ fn unknown_remote_proof_never_authorizes_download_after_local_reversion() {
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
     assert_eq!(baseline_tests::base(&f, &inv), Some(base));
 }
+
+#[test]
+fn root_suspension_during_equivalence_is_fatal_instead_of_an_item_unknown() {
+    struct Suspended;
+    impl Source for Suspended {
+        fn configured(&mut self) -> Result<(), EngineError> {
+            Err(EngineError::RootSuspended(
+                crate::RootSuspension::RemoteAccessDenied,
+            ))
+        }
+        fn metadata(&mut self, _: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
+            panic!("suspended root cannot query item metadata")
+        }
+        fn media(&mut self, _: &str) -> Result<Box<dyn Read>, EngineError> {
+            panic!("suspended root cannot read media")
+        }
+    }
+    let f = Fixture::new();
+    let inv = inventory();
+    baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+    let confirmed = baseline_tests::base(&f, &inv).unwrap();
+    fs::write(f.root.join("file.txt"), b"equivalent").unwrap();
+    let (next, _) = v2(&inv, b"equivalent");
+    let store = Store::open(&f.db()).unwrap();
+    let bases = store
+        .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+        .unwrap();
+    let root = Root::open(&f.root).unwrap();
+    let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
+    let result = crate::changes::prepare(
+        &next,
+        &f.root,
+        &bases,
+        &local,
+        &mut Suspended,
+        &Cancellation::new(),
+    );
+    assert_eq!(
+        result,
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::RemoteAccessDenied
+        ))
+    );
+    assert_eq!(baseline_tests::base(&f, &inv), Some(confirmed));
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"equivalent");
+}

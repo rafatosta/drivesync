@@ -251,3 +251,71 @@ fn concurrent_binding_cannot_accept_a_different_marker() {
         Some(winner)
     );
 }
+
+#[test]
+fn association_lock_survives_root_replacement_and_isolates_unrelated_work() {
+    let f = Fixture::new();
+    let registry = f.registry();
+    let lock = registry.lock("client", &f.folder).unwrap();
+    fs::rename(&f.folder.local, f.base.join("detached")).unwrap();
+    fs::create_dir(&f.folder.local).unwrap();
+    assert!(matches!(
+        f.registry().lock("client", &f.folder),
+        Err(EngineError::SyncBusy)
+    ));
+    let mut other = f.folder.clone();
+    other.account_id = AccountId("independent".into());
+    assert!(f.registry().lock("client", &other).is_ok());
+    drop(lock);
+    assert!(f.registry().lock("client", &f.folder).is_ok());
+}
+
+#[test]
+fn association_lock_refuses_symlinks_without_touching_the_target() {
+    let f = Fixture::new();
+    let registry = f.registry();
+    drop(registry.lock("client", &f.folder).unwrap());
+    let path = fs::read_dir(f.base.join("app"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "lock"))
+        .unwrap();
+    let target = f.base.join("user-file");
+    fs::write(&target, b"preserve").unwrap();
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    assert!(matches!(
+        registry.lock("client", &f.folder),
+        Err(EngineError::StateStorage)
+    ));
+    assert_eq!(fs::read(target).unwrap(), b"preserve");
+}
+
+#[test]
+fn transfer_transport_failure_cannot_clear_suspension_or_authorize_upload() {
+    for error in [
+        EngineError::Authentication(AuthError::Network),
+        EngineError::RemoteRateLimited,
+        EngineError::RootSuspended(RootSuspension::LocalUnavailable),
+    ] {
+        let report = crate::DownloadReport {
+            issues: vec![crate::DownloadIssue {
+                relative_path: Some("item".into()),
+                error,
+            }],
+            ..Default::default()
+        };
+        assert!(matches!(
+            super::report(&report),
+            Err(EngineError::RootSuspended(_))
+        ));
+    }
+    let report = crate::DownloadReport {
+        issues: vec![crate::DownloadIssue {
+            relative_path: Some("item".into()),
+            error: EngineError::RemoteFolderUnavailable,
+        }],
+        ..Default::default()
+    };
+    assert!(super::report(&report).is_ok());
+}

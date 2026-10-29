@@ -32,7 +32,7 @@ impl std::fmt::Display for RootSuspension {
     }
 }
 impl RootSuspension {
-    /// Only transient connection loss permits automatic availability probes.
+    /// Only transient connection or provider failures permit automatic probes.
     pub fn retryable(self) -> bool {
         matches!(self, Self::Offline | Self::RemoteRetry)
     }
@@ -70,13 +70,9 @@ pub(crate) fn verify(
     }
     Ok(())
 }
-/// Classifies root-level failures only. Item 404s must remain item diagnostics.
-pub(crate) fn remote(error: EngineError) -> EngineError {
+/// Transport failures suspend work without claiming that a particular item vanished.
+pub(crate) fn connection(error: EngineError) -> EngineError {
     let reason = match error {
-        EngineError::RemoteFolderUnavailable | EngineError::RemoteChanged => {
-            RootSuspension::RemoteUnavailable
-        }
-        EngineError::RemoteForbidden => RootSuspension::RemoteAccessDenied,
         EngineError::Authentication(AuthError::Network | AuthError::TimedOut) => {
             RootSuspension::Offline
         }
@@ -88,6 +84,30 @@ pub(crate) fn remote(error: EngineError) -> EngineError {
         other => return other,
     };
     EngineError::RootSuspended(reason)
+}
+
+/// Classifies root-level failures only. Item 404s must remain item diagnostics.
+pub(crate) fn remote(error: EngineError) -> EngineError {
+    let reason = match connection(error) {
+        EngineError::RemoteFolderUnavailable
+        | EngineError::RemoteChanged
+        | EngineError::Authentication(AuthError::InvalidResponse) => {
+            RootSuspension::RemoteUnavailable
+        }
+        EngineError::RemoteForbidden => RootSuspension::RemoteAccessDenied,
+        other => return other,
+    };
+    EngineError::RootSuspended(reason)
+}
+
+/// A failed transfer cannot fall through into another direction or clear suspension.
+pub(crate) fn report(report: &crate::DownloadReport) -> Result<(), EngineError> {
+    for issue in &report.issues {
+        if let error @ EngineError::RootSuspended(_) = connection(issue.error.clone()) {
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

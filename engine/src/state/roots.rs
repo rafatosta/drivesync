@@ -6,10 +6,54 @@ use std::path::Path;
 
 const SCHEMA: &str = "CREATE TABLE bindings(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,marker TEXT NOT NULL,reason TEXT,PRIMARY KEY(client,account,remote,local));";
 /// Does not contain inventory, credentials or confirmed installation evidence.
-pub(crate) struct Roots(Store);
+pub(crate) struct Roots(Store, std::path::PathBuf);
+/// An association lock survives physical-root replacement and releases on process exit.
+pub(crate) struct RootLock {
+    _file: std::fs::File,
+}
 impl Roots {
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, 0x44535254, 1, SCHEMA)?))
+        Ok(Self(
+            Store::open_format(path, 0x44535254, 1, SCHEMA)?,
+            path.parent().ok_or(EngineError::StateStorage)?.into(),
+        ))
+    }
+    /// Serializes one logical association independently of the mounted inode.
+    /// Lock files contain no data and are never deleted while workers may exist.
+    pub(crate) fn lock(
+        &self,
+        client: &str,
+        folder: &FolderConfiguration,
+    ) -> Result<RootLock, EngineError> {
+        use sha2::Digest;
+        let scope =
+            serde_json::to_vec(&(client, &folder.account_id, &folder.remote.id, &folder.local))
+                .map_err(failed)?;
+        let name = format!("root-{:x}.lock", sha2::Sha256::digest(scope));
+        let file = rustix::fs::open(
+            self.1.join(name),
+            rustix::fs::OFlags::RDWR
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .map(std::fs::File::from)
+        .map_err(failed)?;
+        if !file.metadata().map_err(failed)?.is_file() {
+            return Err(EngineError::StateStorage);
+        }
+        rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive).map_err(
+            |error| {
+                if error == rustix::io::Errno::WOULDBLOCK {
+                    EngineError::SyncBusy
+                } else {
+                    EngineError::StateStorage
+                }
+            },
+        )?;
+        Ok(RootLock { _file: file })
     }
     /// Explicit configuration is the only operation that can establish a binding.
     /// An existing binding cannot silently adopt a replacement marker.

@@ -232,7 +232,9 @@ impl Accounts {
                 }
             }
         }
-        if self.roots()?.marker(client, &folder)?.is_some() {
+        let roots = self.roots()?;
+        let _association_lock = roots.lock(client, &folder)?;
+        if roots.marker(client, &folder)?.is_some() {
             crate::configuration::identity::verify(&folder, client)?;
         } else {
             crate::configuration::identity::ensure(&folder, client)?;

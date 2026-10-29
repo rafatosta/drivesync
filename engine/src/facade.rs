@@ -23,6 +23,11 @@ impl DriveSyncEngine {
         Self::default()
     }
     /// Reads durable suspension without accessing the selected volume or Drive.
+    /// Missing external identity is unverified, never implicit permission to bind.
+    /// Call off the GTK main thread.
+    ///
+    /// # Errors
+    /// Returns configuration or storage errors without resetting existing state.
     pub fn root_suspension(
         &self,
         id: &AccountId,
@@ -49,11 +54,12 @@ impl DriveSyncEngine {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let roots = self.accounts.roots()?;
+        let _association_lock = roots.lock(&config.client_id, &folder)?;
         let expected = roots.marker(&config.client_id, &folder)?;
         let opened = crate::coordinator::open(&config.client_id, &folder, expected.as_deref());
         let result = match &opened {
             Ok(root) => {
-                let result = f(&folder, &config, root);
+                let result = f(&folder, &config, root).map_err(crate::coordinator::connection);
                 crate::coordinator::verify(root, &config.client_id, &folder, expected.as_deref())
                     .and(result)
             }
@@ -353,6 +359,7 @@ impl DriveSyncEngine {
                 return Err(EngineError::InvalidPlan);
             }
             self.verify_root(folder, config)?;
+            crate::download::Source::configured(&mut source)?;
             local_root.validate()?;
             store.save(&config.client_id, &inventory, &plan, cancel)?;
             local_root.validate()?;
@@ -489,6 +496,7 @@ impl DriveSyncEngine {
             return Err(EngineError::InvalidPlan);
         }
         self.verify_root(folder, config)?;
+        crate::download::Source::configured(&mut source)?;
         local_root.validate()?;
         checkpoints.save(
             &scope,
@@ -519,6 +527,7 @@ impl DriveSyncEngine {
             |event| (progress.borrow_mut())(event),
             local_root,
         )?;
+        crate::coordinator::report(&report)?;
         if report
             .issues
             .iter()
@@ -607,14 +616,7 @@ impl DriveSyncEngine {
         self.with_root(id, |folder, config, root| {
             let mut report =
                 self.download_locked(id, cancel, &mut progress, folder, config, root)?;
-            // A root suspension must never fall through into uploads.
-            if let Some(error) = report
-                .issues
-                .iter()
-                .find(|issue| matches!(issue.error, EngineError::RootSuspended(_)))
-            {
-                return Err(error.error.clone());
-            }
+            crate::coordinator::report(&report)?;
             if !self.upload_enabled(id)? {
                 return Ok(report);
             }
@@ -685,6 +687,7 @@ impl DriveSyncEngine {
                 &mut progress,
                 root,
             )?;
+            crate::coordinator::report(&report)?;
             Ok(report)
         })
     }
@@ -842,6 +845,7 @@ impl crate::download::Source for DownloadSource<'_> {
             .with_access_config(self.config, &self.folder.account_id, |token| {
                 remote::file_metadata(token, item)
             })
+            .map_err(crate::coordinator::connection)
     }
     fn media(&mut self, id: &str) -> Result<Box<dyn std::io::Read>, EngineError> {
         self.engine
@@ -849,6 +853,7 @@ impl crate::download::Source for DownloadSource<'_> {
             .with_access_config(self.config, &self.folder.account_id, |token| {
                 Ok(Box::new(remote::file_media(token, id)?) as Box<dyn std::io::Read>)
             })
+            .map_err(crate::coordinator::connection)
     }
     fn configured(&mut self) -> Result<(), EngineError> {
         self.engine.verify_root(self.folder, self.config)?;
