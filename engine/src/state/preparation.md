@@ -1,7 +1,7 @@
 # Preparação durável de downloads (STATE-001 / PLAN-001)
 
-Toda a persistência necessária para identificar e controlar uma raiz local fica
-em `.drivesync/`, dentro da pasta selecionada. `identity.json` vincula a raiz ao
+A evidência portátil de operações e observações da raiz local fica em
+`.drivesync/`, dentro da pasta selecionada. `identity.json` vincula a raiz ao
 cliente OAuth, à conta e à pasta remota; `state.sqlite3` registra o journal de
 operações e evidências de arquivos instalados; `changes.sqlite3` mantém o
 checkpoint remoto; `uploads.sqlite3` guarda preferências e intents de upload;
@@ -11,8 +11,16 @@ Esses arquivos sobrevivem à remoção dos dados privados do aplicativo e não
 armazenam tokens. A pasta `.drivesync` é excluída do inventário de upload e é um
 caminho reservado que o inventário remoto não pode usar como destino.
 
-O estado global de contas e autenticação continua no diretório privado do
-aplicativo; ele não identifica nem controla uma raiz local específica.
+O estado de contas e autenticação continua no diretório privado do aplicativo.
+SYNC-004 mantém também nesse diretório `roots.sqlite3`: identidade esperada do
+marcador e motivo de suspensão por cliente, conta e raízes. Locks de associação
+ficam ao lado desse banco para serializar ciclos mesmo quando o volume muda.
+Esses registros externos não contêm credenciais, não confirmam instalação e não
+substituem o journal portátil. Permitem apresentar uma suspensão com a raiz ausente.
+Perder esse vínculo externo não autoriza reconstrução automática: a seleção
+explícita da associação original verifica o marcador existente, sem recriar
+marcador perdido ou aceitar um diferente. Contrato e oráculos:
+[disponibilidade de raízes](../coordinator/contract.md).
 
 O journal por raiz usa schema 2, application_id próprio, foreign_keys ON,
 synchronous FULL e journal DELETE. Transações IMMEDIATE publicam atomicamente uma

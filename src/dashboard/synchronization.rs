@@ -139,18 +139,28 @@ impl Widgets {
         if let Some(container) = self.issues.upgrade() {
             let group = adw::PreferencesGroup::builder().title(title).build();
             let attention = report.attention();
+            let root_problem = report
+                .issues
+                .iter()
+                .any(|issue| matches!(issue.error, EngineError::RootSuspended(_)));
             for issue in attention.iter().take(5) {
                 let path = issue.relative_path.as_deref();
                 let name = path
                     .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Item".into());
+                    .unwrap_or_else(|| {
+                        if root_problem {
+                            "Synchronization folders".into()
+                        } else {
+                            "Item".into()
+                        }
+                    });
                 let row = adw::ActionRow::builder()
                     .title(&name)
                     .subtitle(&issue.message)
                     .use_markup(false)
                     .build();
                 row.set_title_lines(0);
-                row.set_subtitle_lines(3);
+                row.set_subtitle_lines(if root_problem && path.is_none() { 0 } else { 3 });
                 row.set_tooltip_text(Some(&format!(
                     "{}\n{}",
                     path.map(|p| p.to_string_lossy().into_owned())
@@ -323,12 +333,17 @@ impl Widgets {
     ) {
         use crate::automatic::Phase;
         self.present_account_toggle(snapshot);
+        let root_suspended = snapshot
+            .result
+            .as_ref()
+            .is_some_and(|result| matches!(result, Err(EngineError::RootSuspended(_))));
         let sync_status = match snapshot.phase {
             Phase::Unconfigured => "Not configured",
             Phase::Waiting => "Waiting",
             Phase::Running if snapshot.pausing => "Pausing",
             Phase::Running => "Syncing",
             Phase::UpToDate => "Up to date",
+            Phase::Blocked if root_suspended => "Folder unavailable",
             Phase::Attention | Phase::Blocked => "Needs attention",
             Phase::Offline => "Offline",
             Phase::Retrying => "Retrying",
@@ -399,6 +414,10 @@ impl Widgets {
                 Phase::Paused => (
                     "Synchronization paused",
                     "Completed work is saved safely. Resume to continue synchronization.",
+                ),
+                Phase::Blocked if root_suspended => (
+                    "Synchronization suspended",
+                    "Restore folder access, then try synchronization again.",
                 ),
                 Phase::Blocked => (
                     "Needs attention",
@@ -659,7 +678,7 @@ pub(super) fn build(
     } = controls;
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
-        .label("Automatic checks run every minute. Up-to-date files are not transferred again. Existing local edits and previous copies are preserved.")
+        .label("Automatic checks wait while synchronization is paused or blocked. Up-to-date files are not transferred again. Existing local edits and previous copies are preserved.")
         .wrap(true)
         .xalign(0.0)
         .css_classes(["dim-label"])
@@ -1193,6 +1212,43 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 assert_eq!(start.label().as_deref(), Some("Resume"));
             }
             capture(&window, &format!("automatic-{name}-{width}"));
+            assert!(window.width() <= width + 10);
+        }
+        for (reason, name) in [
+            (
+                drivesync_engine::RootSuspension::LocalUnavailable,
+                "local-unavailable",
+            ),
+            (
+                drivesync_engine::RootSuspension::IdentityUnverified,
+                "identity-unverified",
+            ),
+            (
+                drivesync_engine::RootSuspension::RemoteUnavailable,
+                "remote-unavailable",
+            ),
+            (
+                drivesync_engine::RootSuspension::RemoteAccessDenied,
+                "access-denied",
+            ),
+        ] {
+            let error = EngineError::RootSuspended(reason);
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 2,
+                    pausing: false,
+                    phase: crate::automatic::Phase::Blocked,
+                    progress: None,
+                    result: Some(Err(error.clone())),
+                },
+                None,
+            );
+            assert_eq!(row.title(), "Synchronization suspended");
+            assert_eq!(account_status.label(), "Folder unavailable");
+            assert_eq!(status.label(), "The cycle could not finish.");
+            assert!(issues.is_visible());
+            assert!(start.is_sensitive());
+            capture(&window, &format!("root-{name}-{width}"));
             assert!(window.width() <= width + 10);
         }
         ui.begin();

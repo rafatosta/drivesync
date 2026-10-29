@@ -9,6 +9,7 @@ pub enum EngineError {
     NotImplemented(&'static str),
     Authentication(AuthError),
     InvalidFolder,
+    RootSuspended(crate::RootSuspension),
     InventoryLimit,
     StateStorage,
     InvalidPlan,
@@ -35,6 +36,7 @@ pub enum EngineError {
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::RootSuspended(reason) => reason.fmt(f),
             Self::NotImplemented(operation) => write!(f, "{operation} is not implemented"),
             Self::Authentication(error) => error.fmt(f),
             Self::LocalFolderIdentity => f.write_str("Could not verify this folder’s location. Check that your desktop portal is up to date and choose the folder again."),

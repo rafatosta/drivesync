@@ -115,9 +115,49 @@ pub(crate) fn ensure(folder: &FolderConfiguration, client: &str) -> Result<(), E
     result
 }
 
+/// Reads an existing association without creating metadata or probing writes.
+/// Missing, corrupt or mismatched markers never authorize a new association.
+pub(crate) fn verify(folder: &FolderConfiguration, client: &str) -> Result<String, EngineError> {
+    let root = open_root(&folder.local)
+        .map_err(|_| EngineError::RootSuspended(crate::RootSuspension::LocalUnavailable))?;
+    verify_at(&root, folder, client)
+}
+
+/// Verifies the marker through the same descriptor used by the active cycle.
+pub(crate) fn verify_at(
+    root: &File,
+    folder: &FolderConfiguration,
+    client: &str,
+) -> Result<String, EngineError> {
+    let directory = fs::openat(
+        root,
+        DIRECTORY,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| EngineError::RootSuspended(crate::RootSuspension::IdentityUnverified))?;
+    let marker = read_marker(&directory)
+        .map_err(|_| EngineError::RootSuspended(crate::RootSuspension::IdentityUnverified))?
+        .ok_or(EngineError::RootSuspended(
+            crate::RootSuspension::IdentityUnverified,
+        ))?;
+    if marker.format != 1
+        || marker.id.is_empty()
+        || marker.client != client
+        || marker.account != folder.account_id
+        || marker.remote != folder.remote.id
+    {
+        return Err(EngineError::RootSuspended(
+            crate::RootSuspension::IdentityUnverified,
+        ));
+    }
+    Ok(marker.id)
+}
+
 /// Returns the operation-journal path carried with this root.
 ///
-/// Verifies or initializes the root marker before returning the location. The
+/// Verifies the existing root marker before returning the location. The
 /// journal contains no credentials and is stored in a file ignored by uploads.
 pub(crate) fn state_path(
     folder: &FolderConfiguration,
@@ -129,7 +169,7 @@ pub(crate) fn state_path(
 /// Returns the per-root remote change checkpoint path after validating its root.
 ///
 /// # Errors
-/// Returns an error if the root identity cannot be created or verified safely.
+/// Returns an error if the existing root identity cannot be verified safely.
 pub(crate) fn changes_path(
     folder: &FolderConfiguration,
     client: &str,
@@ -140,7 +180,7 @@ pub(crate) fn changes_path(
 /// Returns the per-root upload settings and intent path after validating its root.
 ///
 /// # Errors
-/// Returns an error if the root identity cannot be created or verified safely.
+/// Returns an error if the existing root identity cannot be verified safely.
 pub(crate) fn uploads_path(
     folder: &FolderConfiguration,
     client: &str,
@@ -153,7 +193,7 @@ fn metadata_path(
     client: &str,
     name: &str,
 ) -> Result<PathBuf, EngineError> {
-    ensure(folder, client)?;
+    verify(folder, client)?;
     Ok(folder.local.join(DIRECTORY).join(name))
 }
 

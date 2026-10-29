@@ -22,6 +22,78 @@ impl DriveSyncEngine {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Reads durable suspension without accessing the selected volume or Drive.
+    /// Missing external identity is unverified, never implicit permission to bind.
+    /// Call off the GTK main thread.
+    ///
+    /// # Errors
+    /// Returns configuration or storage errors without resetting existing state.
+    pub fn root_suspension(
+        &self,
+        id: &AccountId,
+    ) -> Result<Option<crate::RootSuspension>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        if roots.marker(&config.client_id, &folder)?.is_none() {
+            return Ok(Some(crate::RootSuspension::IdentityUnverified));
+        }
+        roots.reason(&config.client_id, &folder)
+    }
+
+    /// Runs one association under a continuous local lock, recording root failures.
+    fn with_root<T>(
+        &self,
+        id: &AccountId,
+        f: impl FnOnce(
+            &FolderConfiguration,
+            &auth::OAuthConfig,
+            &crate::download::filesystem::Root,
+        ) -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _association_lock = roots.lock(&config.client_id, &folder)?;
+        let expected = roots.marker(&config.client_id, &folder)?;
+        let opened = crate::coordinator::open(&config.client_id, &folder, expected.as_deref());
+        let result = match &opened {
+            Ok(root) => {
+                let result = f(&folder, &config, root).map_err(crate::coordinator::connection);
+                crate::coordinator::verify(root, &config.client_id, &folder, expected.as_deref())
+                    .and(result)
+            }
+            Err(error) => Err(error.clone()),
+        };
+        match &result {
+            Err(EngineError::RootSuspended(reason)) if expected.is_some() => {
+                roots.suspend(&config.client_id, &folder, Some(*reason))?
+            }
+            Ok(_) => roots.suspend(&config.client_id, &folder, None)?,
+            _ => {}
+        }
+        result
+    }
+
+    /// Revalidates identity and configuration during transfers, without creating metadata.
+    pub(crate) fn verify_root(
+        &self,
+        folder: &FolderConfiguration,
+        config: &auth::OAuthConfig,
+    ) -> Result<(), EngineError> {
+        if self.saved_folder(&folder.account_id)?.as_ref() != Some(folder) {
+            return Err(EngineError::InvalidPlan);
+        }
+        let expected = self.accounts.roots()?.marker(&config.client_id, folder)?;
+        let actual = configuration::identity::verify(folder, &config.client_id)?;
+        if expected.as_deref() != Some(actual.as_str()) {
+            return Err(EngineError::RootSuspended(
+                crate::RootSuspension::IdentityUnverified,
+            ));
+        }
+        Ok(())
+    }
+
     /// Returns the reserved coarse configuration placeholder.
     ///
     /// This does not describe download jobs. Callers must use cycle results and
@@ -216,87 +288,89 @@ impl DriveSyncEngine {
         id: &AccountId,
         cancel: &crate::Cancellation,
     ) -> Result<crate::DownloadPlan, EngineError> {
-        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
-        let inventory = self.inventory(id, cancel)?;
-        if std::fs::symlink_metadata(&folder.local)
-            .map_err(|_| EngineError::InvalidFolder)?
-            .file_type()
-            .is_symlink()
-            || std::fs::canonicalize(&folder.local).map_err(|_| EngineError::InvalidFolder)?
-                != folder.local
-        {
-            return Err(EngineError::InvalidFolder);
-        }
-        if cancel.is_cancelled() {
-            return Err(EngineError::Authentication(AuthError::Cancelled));
-        }
-        if self.saved_folder(id)?.as_ref() != Some(&folder) {
-            return Err(EngineError::InvalidPlan);
-        }
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let state_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
-        let mut store = crate::state::Store::open(&state_path)?;
-        let bases =
-            store.confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?;
-        let local_root = crate::download::filesystem::Root::open(&folder.local)?;
-        let local = crate::local::scan(&local_root, cancel)?;
-        let mut source = DownloadSource {
-            engine: self,
-            folder: &folder,
-            config: &config,
-            cancel,
-            unchanged: std::collections::HashSet::new(),
-            preparation: &|_| {},
-        };
-        let plan = crate::changes::prepare(
-            &inventory,
-            &folder.local,
-            &bases,
-            &local,
-            &mut source,
-            cancel,
-        )?;
-        let scope = crate::state::CheckpointScope {
-            client: &config.client_id,
-            account: id,
-            remote: &folder.remote.id,
-            local: &folder.local,
-        };
-        let mut reconciliations = crate::state::Reconciliations::open(
-            &state_path.with_file_name("reconciliation.sqlite3"),
-        )?;
-        let previous = reconciliations.load(&scope)?;
-        let history = store
-            .operations(&config.client_id, &plan)?
-            .into_iter()
-            .map(|op| crate::changes::Notice {
-                id: op.item.id,
-                path: Some(op.relative),
-            })
-            .collect();
-        let record = crate::state::Reconciliation::new(
-            local,
-            inventory.clone(),
-            plan.clone(),
-            bases,
-            history,
-            previous.as_ref().map(|(_, record)| record),
-        );
-        if cancel.is_cancelled() {
-            return Err(EngineError::Authentication(AuthError::Cancelled));
-        }
-        if self.saved_folder(id)?.as_ref() != Some(&folder) {
-            return Err(EngineError::InvalidPlan);
-        }
-        store.save(&config.client_id, &inventory, &plan, cancel)?;
-        local_root.validate()?;
-        reconciliations.save(
-            &scope,
-            previous.as_ref().map(|(revision, _)| revision.as_str()),
-            &record,
-            cancel,
-        )?;
-        Ok(plan)
+        self.with_root(id, |folder, config, local_root| {
+            let inventory = self.inventory(id, cancel)?;
+            if std::fs::symlink_metadata(&folder.local)
+                .map_err(|_| EngineError::InvalidFolder)?
+                .file_type()
+                .is_symlink()
+                || std::fs::canonicalize(&folder.local).map_err(|_| EngineError::InvalidFolder)?
+                    != folder.local
+            {
+                return Err(EngineError::InvalidFolder);
+            }
+            if cancel.is_cancelled() {
+                return Err(EngineError::Authentication(AuthError::Cancelled));
+            }
+            if self.saved_folder(id)?.as_ref() != Some(folder) {
+                return Err(EngineError::InvalidPlan);
+            }
+            let state_path = crate::configuration::identity::state_path(folder, &config.client_id)?;
+            let mut store = crate::state::Store::open(&state_path)?;
+            let bases =
+                store.confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?;
+            let local = crate::local::scan(local_root, cancel)?;
+            let mut source = DownloadSource {
+                engine: self,
+                folder,
+                config,
+                cancel,
+                unchanged: std::collections::HashSet::new(),
+                preparation: &|_| {},
+            };
+            let plan = crate::changes::prepare(
+                &inventory,
+                &folder.local,
+                &bases,
+                &local,
+                &mut source,
+                cancel,
+            )?;
+            let scope = crate::state::CheckpointScope {
+                client: &config.client_id,
+                account: id,
+                remote: &folder.remote.id,
+                local: &folder.local,
+            };
+            let mut reconciliations = crate::state::Reconciliations::open(
+                &state_path.with_file_name("reconciliation.sqlite3"),
+            )?;
+            let previous = reconciliations.load(&scope)?;
+            let history = store
+                .operations(&config.client_id, &plan)?
+                .into_iter()
+                .map(|op| crate::changes::Notice {
+                    id: op.item.id,
+                    path: Some(op.relative),
+                })
+                .collect();
+            let record = crate::state::Reconciliation::new(
+                local,
+                inventory.clone(),
+                plan.clone(),
+                bases,
+                history,
+                previous.as_ref().map(|(_, record)| record),
+            );
+            if cancel.is_cancelled() {
+                return Err(EngineError::Authentication(AuthError::Cancelled));
+            }
+            if self.saved_folder(id)?.as_ref() != Some(folder) {
+                return Err(EngineError::InvalidPlan);
+            }
+            self.verify_root(folder, config)?;
+            crate::download::Source::configured(&mut source)?;
+            local_root.validate()?;
+            store.save(&config.client_id, &inventory, &plan, cancel)?;
+            local_root.validate()?;
+            reconciliations.save(
+                &scope,
+                previous.as_ref().map(|(revision, _)| revision.as_str()),
+                &record,
+                cancel,
+            )?;
+            Ok(plan)
+        })
     }
 
     /// Runs one download-only cycle using durable incremental remote observations.
@@ -318,22 +392,36 @@ impl DriveSyncEngine {
         cancel: &crate::Cancellation,
         progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
+        self.with_root(id, |folder, config, root| {
+            self.download_locked(id, cancel, progress, folder, config, root)
+        })
+    }
+
+    fn download_locked(
+        &self,
+        id: &AccountId,
+        cancel: &crate::Cancellation,
+        progress: impl FnMut(crate::DownloadProgress),
+        folder: &FolderConfiguration,
+        config: &auth::OAuthConfig,
+        local_root: &crate::download::filesystem::Root,
+    ) -> Result<crate::DownloadReport, EngineError> {
         let progress = std::cell::RefCell::new(progress);
         let preparation =
             |stage| (progress.borrow_mut())(crate::DownloadProgress::preparing(stage));
         preparation(crate::PreparationProgress::Connecting);
-        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
-        self.check_local_folder(&folder.local)?;
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
+        let journal_path = crate::configuration::identity::state_path(folder, &config.client_id)?;
         let checkpoint_path =
-            crate::configuration::identity::changes_path(&folder, &config.client_id)?;
+            crate::configuration::identity::changes_path(folder, &config.client_id)?;
         // Validate both stores before collecting observations or changing user files.
         let mut store = crate::state::Store::open(&journal_path)?;
         let mut checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
-        let root = self.auth.with_access_config(&config, id, |token| {
-            remote::inventory_root(token, &folder.remote.id)
-        })?;
+        let root = self
+            .auth
+            .with_access_config(config, id, |token| {
+                remote::inventory_root(token, &folder.remote.id)
+            })
+            .map_err(crate::coordinator::remote)?;
         let scope = crate::state::CheckpointScope {
             client: &config.client_id,
             account: id,
@@ -343,8 +431,8 @@ impl DriveSyncEngine {
         let previous = checkpoints.load(&scope)?;
         let mut source = DownloadSource {
             engine: self,
-            folder: &folder,
-            config: &config,
+            folder,
+            config,
             cancel,
             unchanged: std::collections::HashSet::new(),
             preparation: &preparation,
@@ -372,8 +460,7 @@ impl DriveSyncEngine {
                 .map(|item| item.id.clone())
                 .collect();
         }
-        let local_root = crate::download::filesystem::Root::open(&folder.local)?;
-        let local = crate::local::scan(&local_root, cancel)?;
+        let local = crate::local::scan(local_root, cancel)?;
         preparation(crate::PreparationProgress::CheckingLocal {
             checked: local.entries.len(),
         });
@@ -405,15 +492,19 @@ impl DriveSyncEngine {
             previous_reconciliation.as_ref().map(|(_, record)| record),
         );
         preparation(crate::PreparationProgress::SavingState);
-        if self.saved_folder(id)?.as_ref() != Some(&folder) {
+        if self.saved_folder(id)?.as_ref() != Some(folder) {
             return Err(EngineError::InvalidPlan);
         }
+        self.verify_root(folder, config)?;
+        crate::download::Source::configured(&mut source)?;
+        local_root.validate()?;
         checkpoints.save(
             &scope,
             previous.as_ref().map(|(revision, _)| revision.as_str()),
             &checkpoint,
             cancel,
         )?;
+        local_root.validate()?;
         store.save(&config.client_id, inventory, &plan, cancel)?;
         local_root.validate()?;
         reconciliations.save(
@@ -424,8 +515,7 @@ impl DriveSyncEngine {
             &reconciliation,
             cancel,
         )?;
-        drop(local_root);
-        let mut report = crate::download::run(
+        let mut report = crate::download::run_with_root(
             crate::download::Context {
                 client: &config.client_id,
                 scope: &plan,
@@ -435,7 +525,9 @@ impl DriveSyncEngine {
             inventory,
             &mut source,
             |event| (progress.borrow_mut())(event),
+            local_root,
         )?;
+        crate::coordinator::report(&report)?;
         if report
             .issues
             .iter()
@@ -446,12 +538,14 @@ impl DriveSyncEngine {
             // files which must pass exact provider validation before downloading.
             let (revision, latest) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
             let refreshed = crate::changes::reconcile(id, &root, &latest, cancel, &mut source)?;
-            if self.saved_folder(id)?.as_ref() != Some(&folder) {
+            if self.saved_folder(id)?.as_ref() != Some(folder) {
                 return Err(EngineError::InvalidPlan);
             }
             checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
             checkpoint = refreshed;
         }
+        crate::download::Source::configured(&mut source)?;
+        local_root.validate()?;
         report.reconciliation = reconciliation.entries;
         report.previous_paths = crate::changes::previous_paths(&checkpoint)?;
         Ok(report)
@@ -519,77 +613,83 @@ impl DriveSyncEngine {
         cancel: &Cancellation,
         mut progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
-        let mut report = self.download_once(id, cancel, &mut progress)?;
-        if !self.upload_enabled(id)? {
-            return Ok(report);
-        }
-        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let checkpoint_path =
-            crate::configuration::identity::changes_path(&folder, &config.client_id)?;
-        let checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
-        let scope = crate::state::CheckpointScope {
-            client: &config.client_id,
-            account: id,
-            remote: &folder.remote.id,
-            local: &folder.local,
-        };
-        let (_, checkpoint) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
-        let uploads = crate::state::Uploads::open(
-            &crate::configuration::identity::uploads_path(&folder, &config.client_id)?,
-            &config.client_id,
-            &folder,
-        )?;
-        let mut excluded: std::collections::HashSet<_> = checkpoint
-            .notices
-            .iter()
-            .filter_map(|n| n.path.clone())
-            .collect();
-        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
-        let journal = crate::state::Store::open(&journal_path)?;
-        let plan = journal
-            .load(&config.client_id, id, &folder.remote.id, &folder.local)?
-            .ok_or(EngineError::StateStorage)?;
-        let current: std::collections::HashSet<_> = plan
-            .entries
-            .iter()
-            .filter_map(|e| e.relative_path.clone())
-            .collect();
-        for op in journal.operations(&config.client_id, &plan)? {
-            if !current.contains(&op.relative) {
-                excluded.insert(op.relative);
+        self.with_root(id, |folder, config, root| {
+            let mut report =
+                self.download_locked(id, cancel, &mut progress, folder, config, root)?;
+            crate::coordinator::report(&report)?;
+            if !self.upload_enabled(id)? {
+                return Ok(report);
             }
-        }
-        let journal_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
-        let mut remote = crate::upload::provider::Provider {
-            uploads: &uploads,
-            engine: self,
-            folder: &folder,
-            config: &config,
-            cancel,
-            parents: checkpoint
-                .inventory
+            let checkpoint_path =
+                crate::configuration::identity::changes_path(folder, &config.client_id)?;
+            let checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
+            let scope = crate::state::CheckpointScope {
+                client: &config.client_id,
+                account: id,
+                remote: &folder.remote.id,
+                local: &folder.local,
+            };
+            let (_, checkpoint) = checkpoints.load(&scope)?.ok_or(EngineError::StateStorage)?;
+            let uploads = crate::state::Uploads::open(
+                &crate::configuration::identity::uploads_path(folder, &config.client_id)?,
+                &config.client_id,
+                folder,
+            )?;
+            let mut excluded: std::collections::HashSet<_> = checkpoint
+                .notices
+                .iter()
+                .filter_map(|n| n.path.clone())
+                .collect();
+            let journal_path =
+                crate::configuration::identity::state_path(folder, &config.client_id)?;
+            let journal = crate::state::Store::open(&journal_path)?;
+            let plan = journal
+                .load(&config.client_id, id, &folder.remote.id, &folder.local)?
+                .ok_or(EngineError::StateStorage)?;
+            let current: std::collections::HashSet<_> = plan
                 .entries
                 .iter()
-                .filter(|i| i.kind == crate::InventoryKind::Folder)
-                .map(|i| (i.id.clone(), i.parent_id.clone()))
-                .collect(),
-        };
-        crate::upload::run(
-            crate::upload::execution::Context {
-                client: &config.client_id,
-                root_path: &folder.local,
-                state_path: &journal_path,
-                inventory: &checkpoint.inventory,
+                .filter_map(|e| e.relative_path.clone())
+                .collect();
+            for op in journal.operations(&config.client_id, &plan)? {
+                if !current.contains(&op.relative) {
+                    excluded.insert(op.relative);
+                }
+            }
+            let journal_path =
+                crate::configuration::identity::state_path(folder, &config.client_id)?;
+            let mut remote = crate::upload::provider::Provider {
                 uploads: &uploads,
+                engine: self,
+                folder,
+                config,
                 cancel,
-                excluded,
-            },
-            &mut remote,
-            &mut report,
-            progress,
-        )?;
-        Ok(report)
+                parents: checkpoint
+                    .inventory
+                    .entries
+                    .iter()
+                    .filter(|i| i.kind == crate::InventoryKind::Folder)
+                    .map(|i| (i.id.clone(), i.parent_id.clone()))
+                    .collect(),
+            };
+            crate::upload::execution::run_with_root(
+                crate::upload::execution::Context {
+                    client: &config.client_id,
+                    root_path: &folder.local,
+                    state_path: &journal_path,
+                    inventory: &checkpoint.inventory,
+                    uploads: &uploads,
+                    cancel,
+                    excluded,
+                },
+                &mut remote,
+                &mut report,
+                &mut progress,
+                root,
+            )?;
+            crate::coordinator::report(&report)?;
+            Ok(report)
+        })
     }
 
     /// Reads the last complete reconciliation without contacting Google.
@@ -730,6 +830,7 @@ impl crate::download::Source for DownloadSource<'_> {
         self.unchanged.contains(&item.id)
     }
     fn check_configuration(&mut self) -> Result<(), EngineError> {
+        self.engine.verify_root(self.folder, self.config)?;
         if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder) {
             return Err(EngineError::InvalidPlan);
         }
@@ -744,6 +845,7 @@ impl crate::download::Source for DownloadSource<'_> {
             .with_access_config(self.config, &self.folder.account_id, |token| {
                 remote::file_metadata(token, item)
             })
+            .map_err(crate::coordinator::connection)
     }
     fn media(&mut self, id: &str) -> Result<Box<dyn std::io::Read>, EngineError> {
         self.engine
@@ -751,17 +853,20 @@ impl crate::download::Source for DownloadSource<'_> {
             .with_access_config(self.config, &self.folder.account_id, |token| {
                 Ok(Box::new(remote::file_media(token, id)?) as Box<dyn std::io::Read>)
             })
+            .map_err(crate::coordinator::connection)
     }
     fn configured(&mut self) -> Result<(), EngineError> {
+        self.engine.verify_root(self.folder, self.config)?;
         if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder) {
             return Err(EngineError::InvalidPlan);
         }
-        let root =
-            self.engine
-                .auth
-                .with_access_config(self.config, &self.folder.account_id, |token| {
-                    remote::inventory_root(token, &self.folder.remote.id)
-                })?;
+        let root = self
+            .engine
+            .auth
+            .with_access_config(self.config, &self.folder.account_id, |token| {
+                remote::inventory_root(token, &self.folder.remote.id)
+            })
+            .map_err(crate::coordinator::remote)?;
         if root != self.folder.remote.id {
             return Err(EngineError::RemoteChanged);
         }
@@ -785,12 +890,13 @@ impl crate::changes::Provider for DownloadSource<'_> {
             folders: 0,
             current_path: std::path::PathBuf::new(),
         });
-        let root =
-            self.engine
-                .auth
-                .with_access_config(self.config, &self.folder.account_id, |token| {
-                    remote::inventory_root(token, &self.folder.remote.id)
-                })?;
+        let root = self
+            .engine
+            .auth
+            .with_access_config(self.config, &self.folder.account_id, |token| {
+                remote::inventory_root(token, &self.folder.remote.id)
+            })
+            .map_err(crate::coordinator::remote)?;
         remote::inventory_scan_with_progress(
             &self.folder.account_id,
             &root,

@@ -60,11 +60,24 @@ pub(crate) struct Context<'a> {
     pub cancel: &'a Cancellation,
     pub excluded: HashSet<PathBuf>,
 }
+#[cfg(test)]
 pub(crate) fn run(
     context: Context<'_>,
     remote: &mut impl Remote,
     report: &mut DownloadReport,
+    progress: impl FnMut(DownloadProgress),
+) -> Result<(), EngineError> {
+    let root = Root::open(context.root_path)?;
+    run_with_root(context, remote, report, progress, &root)
+}
+
+/// Keeps the preparation lock for the entire upload pass.
+pub(crate) fn run_with_root(
+    context: Context<'_>,
+    remote: &mut impl Remote,
+    report: &mut DownloadReport,
     mut progress: impl FnMut(DownloadProgress),
+    root: &Root,
 ) -> Result<(), EngineError> {
     let Context {
         client,
@@ -78,9 +91,10 @@ pub(crate) fn run(
     progress(DownloadProgress::preparing(
         crate::PreparationProgress::ScanningUploads,
     ));
-    let root = Root::open(root_path)?;
-    uploads.validate_root(&root)?;
-    let observed = crate::local::scan(&root, cancel)?;
+    root.validate()?;
+    remote.configured()?;
+    uploads.validate_root(root)?;
+    let observed = crate::local::scan(root, cancel)?;
     let mut paths: Vec<_> = observed.entries.iter().collect();
     paths.sort_by_key(|(path, _)| (path.components().count(), (*path).clone()));
     let plan = crate::planner::plan(inventory, root_path, |_| crate::LocalObservation::Unknown)?;
@@ -136,7 +150,7 @@ pub(crate) fn run(
                 None => {
                     match evidence {
                         crate::local::Evidence::Stable { stamp, .. } => {
-                            if crate::local::stamp(&root, &path)? != *stamp {
+                            if crate::local::stamp(root, &path)? != *stamp {
                                 return Err(EngineError::LocalWriting);
                             }
                         }
@@ -181,18 +195,18 @@ pub(crate) fn run(
                         (0, String::new(), String::new(), None)
                     } else {
                         if let crate::local::Evidence::Stable { stamp, .. } = evidence {
-                            if crate::local::stamp(&root, &path)? != *stamp {
+                            if crate::local::stamp(root, &path)? != *stamp {
                                 return Err(EngineError::LocalWriting);
                             }
                         }
                         let (size, md5, sha, identity) = local::snapshot(
-                            &root,
+                            root,
                             &path,
                             &state_path.with_file_name(&snapshot),
                             cancel,
                         )?;
                         if let crate::local::Evidence::Stable { stamp, fingerprint } = evidence {
-                            let current = crate::local::stamp(&root, &path);
+                            let current = crate::local::stamp(root, &path);
                             if current.as_ref() != Ok(stamp)
                                 || identity.fingerprint(&sha) != *fingerprint
                             {
@@ -236,7 +250,7 @@ pub(crate) fn run(
                 return Ok(());
             }
             let source_stamp = if !directory {
-                Some(local::verify_source(&root, &path, &op, cancel)?)
+                Some(local::verify_source(root, &path, &op, cancel)?)
             } else {
                 None
             };
@@ -282,12 +296,12 @@ pub(crate) fn run(
                         let count = (op.size - offset).min(1024 * 1024) as usize;
                         let mut bytes = vec![0; count];
                         file.read_exact(&mut bytes).map_err(filesystem::io)?;
-                        if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                        if source_stamp.as_ref() != Some(&crate::local::stamp(root, &path)?) {
                             return Err(EngineError::LocalWriting);
                         }
                         if offset + count as u64 == op.size {
-                            local::verify_source(&root, &path, &op, cancel)?;
-                            if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                            local::verify_source(root, &path, &op, cancel)?;
+                            if source_stamp.as_ref() != Some(&crate::local::stamp(root, &path)?) {
                                 return Err(EngineError::LocalWriting);
                             }
                         }
@@ -398,7 +412,10 @@ pub(crate) fn run(
             }
             if matches!(
                 error,
-                EngineError::StateStorage | EngineError::InvalidPlan | EngineError::DownloadIo
+                EngineError::StateStorage
+                    | EngineError::InvalidPlan
+                    | EngineError::DownloadIo
+                    | EngineError::RootSuspended(_)
             ) {
                 return Err(error);
             }

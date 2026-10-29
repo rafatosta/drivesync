@@ -23,6 +23,7 @@ impl Provider<'_> {
 impl Remote for Provider<'_> {
     fn configured(&mut self) -> Result<(), EngineError> {
         super::local::check(self.cancel)?;
+        self.engine.verify_root(self.folder, self.config)?;
         if self.engine.saved_folder(&self.folder.account_id)?.as_ref() != Some(self.folder)
             || !self.uploads.enabled()?
         {
@@ -71,6 +72,14 @@ impl Remote for Provider<'_> {
     }
     fn validate_parent(&mut self, parent: &str) -> Result<(), EngineError> {
         self.configured()?;
+        self.access(|t| crate::remote::writable_root(t, parent))
+            .map_err(|error| {
+                if parent == self.folder.remote.id {
+                    crate::coordinator::remote(error)
+                } else {
+                    error
+                }
+            })?;
         let mut current = parent.to_string();
         let mut seen = std::collections::HashSet::new();
         while current != self.folder.remote.id {
@@ -106,6 +115,7 @@ impl Remote for Provider<'_> {
             current = expected;
         }
         self.access(|t| crate::remote::inventory_root(t, &self.folder.remote.id))
+            .map_err(crate::coordinator::remote)
             .map(|_| ())
     }
 }

@@ -351,3 +351,172 @@ fn i24_unavailability_then_local_or_remote_substitution_revalidates_the_old_base
         }
     }
 }
+
+#[test]
+fn n03_root_replacement_during_media_stops_before_staging_write_or_installation() {
+    let (f, _old) = installed();
+    let next = remote(V2, 2);
+    let plan = prepare(&f, &next).unwrap();
+    let mut source = Controlled::new(&next, V2);
+    let path = f.root.clone();
+    let detached = f.base.join("detached-volume");
+    let parked = detached.clone();
+    source.on_read = Some(Box::new(move || {
+        fs::rename(&path, &parked).unwrap();
+        fs::create_dir(&path).unwrap();
+    }));
+    let result = execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {});
+    assert!(matches!(
+        result,
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::LocalUnavailable
+        ))
+    ));
+    assert_eq!(fs::read_dir(&f.root).unwrap().count(), 0);
+    assert_eq!(fs::read(detached.join("dados.db")).unwrap(), V1);
+    // The detached staging descriptor received no bytes after root replacement.
+    for entry in fs::read_dir(&detached).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() != "dados.db" {
+            assert_eq!(entry.metadata().unwrap().len(), 0);
+        }
+    }
+    fs::remove_dir(&f.root).unwrap();
+    fs::rename(detached, &f.root).unwrap();
+    let operations = journal(&f, &next);
+    assert!(!matches!(
+        operations.last().unwrap().phase,
+        Phase::Installed { .. } | Phase::Updated { .. }
+    ));
+    // Rebuild the plan and reconcile the pending operation after restoration.
+    let mut recovered = fake(&next, V2);
+    let plan = prepare(&f, &next).unwrap();
+    let report = execute_plan(
+        &f,
+        &next,
+        &plan,
+        &mut recovered,
+        &Cancellation::new(),
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.issues.is_empty());
+    assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V2);
+    let count = journal(&f, &next).len();
+    let plan = prepare(&f, &next).unwrap();
+    assert!(execute_plan(
+        &f,
+        &next,
+        &plan,
+        &mut recovered,
+        &Cancellation::new(),
+        |_| {}
+    )
+    .unwrap()
+    .issues
+    .is_empty());
+    assert_eq!(journal(&f, &next).len(), count);
+}
+
+#[test]
+fn n04_c25_revoked_root_during_media_stops_without_confirming_or_touching_other_items() {
+    struct Gate(Controlled);
+    impl Source for Gate {
+        fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
+            self.0.metadata(item)
+        }
+        fn media(&mut self, id: &str) -> Result<Box<dyn Read>, EngineError> {
+            self.0.media(id)
+        }
+        fn configured(&mut self) -> Result<(), EngineError> {
+            if self.0.state.borrow().available {
+                Ok(())
+            } else {
+                Err(EngineError::RootSuspended(
+                    crate::RootSuspension::RemoteAccessDenied,
+                ))
+            }
+        }
+    }
+    let (f, old) = installed();
+    let next = remote(V2, 2);
+    let plan = prepare(&f, &next).unwrap();
+    let mut source = Gate(Controlled::new(&next, V2));
+    let state = source.0.state.clone();
+    source.0.on_read = Some(Box::new(move || state.borrow_mut().available = false));
+    assert!(matches!(
+        execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {}),
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::RemoteAccessDenied
+        ))
+    ));
+    assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V1);
+    assert!(!matches!(
+        journal(&f, &next).last().unwrap().phase,
+        Phase::Installed { .. } | Phase::Updated { .. }
+    ));
+    let count = journal(&f, &next).len();
+    for _ in 0..2 {
+        let plan = prepare(&f, &next).unwrap();
+        assert!(execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {}).is_err());
+        assert_eq!(journal(&f, &next).len(), count);
+    }
+    source.0.state.borrow_mut().available = true;
+    let plan = prepare(&f, &next).unwrap();
+    assert!(
+        execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {})
+            .unwrap()
+            .issues
+            .is_empty()
+    );
+    assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V2);
+    assert!(base(&f, &old).is_some());
+}
+
+#[test]
+fn e09_missing_remote_item_is_not_root_deletion_and_independent_download_continues() {
+    let f = Fixture::new();
+    let mut inv = remote(V1, 1);
+    let mut second = inv.entries[0].clone();
+    second.id = "independent".into();
+    second.name = "independent.db".into();
+    inv.entries.push(second);
+    let plan = prepare(&f, &inv).unwrap();
+    let mut source = fake(&inv, V1);
+    source.content.insert("independent".into(), V1.to_vec());
+    source.entries.remove("file");
+    let report = execute_plan(&f, &inv, &plan, &mut source, &Cancellation::new(), |_| {}).unwrap();
+    assert_eq!(report.downloaded, 1);
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].error, EngineError::RemoteChanged);
+    assert!(!f.root.join("dados.db").exists());
+    assert_eq!(fs::read(f.root.join("independent.db")).unwrap(), V1);
+}
+
+#[test]
+fn n03_write_permission_revoked_during_read_stops_an_already_open_staging_descriptor() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, _) = installed();
+    let next = remote(V2, 2);
+    let plan = prepare(&f, &next).unwrap();
+    let mut source = Controlled::new(&next, V2);
+    let path = f.root.clone();
+    source.on_read = Some(Box::new(move || {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap()
+    }));
+    let result = execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {});
+    fs::set_permissions(&f.root, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(
+        result,
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::LocalUnavailable
+        ))
+    ));
+    assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V1);
+    let operations = journal(&f, &next);
+    let pending = operations.last().unwrap();
+    assert_eq!(
+        fs::metadata(f.root.join(&pending.temporary)).unwrap().len(),
+        0
+    );
+}

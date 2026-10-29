@@ -626,7 +626,8 @@ fn stream_write_failure_never_claims_integrity() {
             3,
             "900150983cd24fb0d6963f7d28e17f72",
             &Cancellation::new(),
-            |_| {}
+            |_| {},
+            || Ok(())
         )
         .unwrap_err(),
         EngineError::DownloadIo

@@ -7,7 +7,9 @@ mod links;
 mod models;
 mod stream;
 
-pub(crate) use execution::{run, Context, Source};
+#[cfg(test)]
+pub(crate) use execution::run;
+pub(crate) use execution::{run_with_root, Context, Source};
 pub use models::{
     DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
     DownloadStage, PreparationProgress, PreviousPath,

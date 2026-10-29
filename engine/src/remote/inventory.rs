@@ -381,11 +381,44 @@ pub(crate) fn root(token: &str, configured: &str) -> Result<String, EngineError>
     let body = super::client::request(
         token,
         &format!("https://www.googleapis.com/drive/v3/files/{configured}"),
-        &[("fields", "id,mimeType,trashed,driveId")],
+        &[(
+            "fields",
+            "id,mimeType,trashed,driveId,capabilities(canListChildren,canAddChildren)",
+        )],
     )?;
     decode_root(&body, configured)
 }
+
+/// Root uploads require explicit current permission, independently of OAuth consent.
+pub(crate) fn writable_root(token: &str, configured: &str) -> Result<(), EngineError> {
+    if !valid_id(configured) {
+        return Err(EngineError::RemoteFolderUnavailable);
+    }
+    let body = super::client::request(
+        token,
+        &format!("https://www.googleapis.com/drive/v3/files/{configured}"),
+        &[(
+            "fields",
+            "id,mimeType,trashed,driveId,capabilities(canListChildren,canAddChildren)",
+        )],
+    )?;
+    decode_root_access(&body, configured, true).map(|_| ())
+}
+
 fn decode_root(body: &[u8], configured: &str) -> Result<String, EngineError> {
+    decode_root_access(body, configured, false)
+}
+fn decode_root_access(
+    body: &[u8],
+    configured: &str,
+    writable: bool,
+) -> Result<String, EngineError> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Capabilities {
+        can_list_children: Option<bool>,
+        can_add_children: Option<bool>,
+    }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Root {
@@ -393,6 +426,7 @@ fn decode_root(body: &[u8], configured: &str) -> Result<String, EngineError> {
         mime_type: String,
         trashed: bool,
         drive_id: Option<String>,
+        capabilities: Option<Capabilities>,
     }
     let root: Root = serde_json::from_slice(body).map_err(|_| invalid())?;
     if !valid_id(&root.id)
@@ -402,6 +436,11 @@ fn decode_root(body: &[u8], configured: &str) -> Result<String, EngineError> {
         || root.drive_id.is_some()
     {
         return Err(EngineError::RemoteFolderUnavailable);
+    }
+    if !root.capabilities.is_some_and(|caps| {
+        caps.can_list_children == Some(true) && (!writable || caps.can_add_children == Some(true))
+    }) {
+        return Err(EngineError::RemoteForbidden);
     }
     Ok(root.id)
 }

@@ -658,7 +658,7 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 | Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
 | Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Diagnósticos restritos e pendências de SYNC-003 existem em `changes` e no banco de reconciliação; resolução assistida e a matriz geral de conflitos permanecem planejadas. |
-| Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
+| Coordenação | [coordinator](../engine/src/coordinator/mod.rs) verifica identidade/disponibilidade da raiz e classifica suspensões; a fachada retém bloqueio por ciclo e `state::Roots` persiste vínculo e motivo fora do volume. | A coordenação geral continua na fachada; validação real de desmontagem, permissões Google, portal e reinício do aplicativo permanece pendente. |
 
 RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
 
@@ -695,3 +695,46 @@ O estado de implementação e o estado de validação devem ser registrados sepa
 O acervo em [`old/`](old/README.md) deve permanecer identificável como documentação anterior. Seu aproveitamento exige revisão de contexto, coerência e vigência, preservando decisões relevantes sem transportar automaticamente descrições de versões passadas.
 
 Esta especificação deve concentrar a definição vigente do produto. Documentos complementares podem detalhar assuntos específicos, evitando duplicação de regras e mantendo referências claras entre as fontes.
+
+### Proteção de disponibilidade de raízes — SYNC-004
+
+O escopo de aceite desta entrega é offline: decisões e efeitos com provedor
+remoto simulado, filesystem e SQLite reais isolados, falhas determinísticas,
+reabertura de estado e idempotência. Segue a separação de evidências das entregas
+locais SYNC-001/SYNC-003. Testes Google, desmontagem física, reinício real do
+aplicativo, portal instalado e leitor de tela são validações posteriores; não são
+pré-condição do aceite offline nem recebem aceite por simulação.
+
+Uma associação existente exige marcador local previamente vinculado ao cliente,
+conta e ID remoto. O caminho existir ou estar vazio não prova identidade. A
+verificação de uma associação existente não cria marcador, banco ou arquivo de
+sondagem na raiz. Metadados incompatíveis não são migrados nem apagados.
+
+Antes de inventariar ou executar efeitos, o motor verifica disponibilidade e
+identidade da raiz. Mantém exclusão mútua local durante preparação e transferências;
+revalida a associação e os acessos antes dos efeitos. Perda de acesso suspende o
+escopo afetado, preservando base, journals e arquivos; não autoriza exclusão.
+
+A identidade esperada e o motivo de suspensão ficam no armazenamento privado do
+aplicativo, fora do volume selecionado. Sua perda não autoriza adotar outra raiz.
+Uma retomada verifica novamente as raízes e produz plano novo, reconciliando fases
+interrompidas antes de repetir efeitos. Pausa do usuário não é anulada por eventos
+de rede. Apenas falhas transitórias de conexão permitem tentativas automáticas;
+identidade divergente ou acesso negado exigem correção explícita e nova tentativa.
+
+Uma resposta 404 não comprova exclusão: pode representar perda de acesso. Uma
+pasta remota movida que conserva ID e acesso mantém sua associação. Falhas de item
+não suspendem automaticamente itens independentes, salvo evidência de falha da raiz.
+
+Aceite: N03 (volume ausente, substituído ou inacessível), N04 (raiz remota movida,
+removida ou inacessível), C25 (perda de compartilhamento) e E09 (item indisponível)
+exigem zero exclusões, preservação dos bytes e da base confirmada, diagnóstico
+acionável, reinício e repetição sem adoção ou publicação indevida. Testes locais
+com provedor simulado e validação real com Drive/Flatpak são evidências distintas.
+
+A implementação de SYNC-004 e os oráculos locais são rastreáveis na
+[matriz de disponibilidade](../engine/src/coordinator/tests/test-cases.md).
+O registro externo ausente não é reconstruído automaticamente: selecionar
+explicitamente a associação original permite verificar seu marcador; marcador
+perdido ou diferente continua bloqueado. Resultados locais e capturas de fixtures
+não conferem aceite da bateria real descrita nessa matriz.

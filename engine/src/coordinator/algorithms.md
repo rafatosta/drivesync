@@ -58,3 +58,29 @@ Separar **técnica consolidada**, **política própria**, **evidência de teste*
 - **Testes/oráculos a detalhar:** Crash após upload antes do commit SQLite; arquivo local renomeado sem gravar base; restarts repetidos.
 - **Limitações / questões abertas:** Especificar tabela de recuperação por operação e ponto de falha antes de ativar exclusões.
 - **Situação:** DRAFT; revisar e concluir os oráculos antes de gerar Rust.
+
+## COORD-004 — gate de disponibilidade implementado
+
+Entradas: associação persistida, cliente OAuth e ID esperado de marcador no
+registro privado externo. Sem vínculo externo, a associação fica não verificada;
+somente configuração explícita pode estabelecer vínculo, com marcador compatível.
+
+1. Abrir e validar registro externo; adquirir lock não bloqueante da associação.
+2. Abrir e bloquear raiz física por descritor sem seguir symlinks. Comparar caminho,
+   identidade atual, acesso efetivo e marcador com vínculo esperado.
+3. Verificar raiz remota pelo ID, tipo, lixeira e capacidade de listar. Falha não
+   produz inventário vazio. HTTP 404 permanece inconclusivo.
+4. Preparar observações/plano completos. Revalidar antes de persistir e executar.
+   Manter descritor/bloqueios através do download e upload opcional.
+5. Antes de efeitos, revalidar associação/raiz e versões segundo contratos dos
+   executores; upload exige capacidade de criar no pai efetivo. Durante streaming,
+   perda local observada interrompe escrita antes do próximo bloco.
+6. Revalidar ao encerrar. Persistir motivo tipado se a raiz falhou; limpar suspensão
+   somente após ciclo concluído e revalidação. Liberar locks após gravar resultado.
+7. Retomada começa novamente na verificação, sem reaplicar plano antigo. Fases
+   interrompidas são reconciliadas pelos journals existentes antes de confirmação.
+
+O registro externo não confirma transferência e não avança B. Falha de gravação
+impede sucesso. Não existe transação distribuída com Google ou exclusão mútua com
+processos externos; os limites de corrida e a bateria real constam no contrato e
+nos [casos de teste](tests/test-cases.md).
