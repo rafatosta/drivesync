@@ -289,6 +289,48 @@ incremental expõe localização anterior/atual e permite receber em destino liv
 preservando a origem. O relatório de execução pode manter `DownloadConflict`.
 O contrato não autoriza novas operações destrutivas nem comprova integração real.
 
+#### SYNC-003 — inventário e reconciliação
+
+Contrato de implementação autorizado pela demanda SYNC-003; o aceite depende
+ dos testes e níveis de evidência abaixo, não da existência desta especificação.
+
+- Inventariar a árvore local inteira em cada ciclo, inclusive depois de offline
+  ou aplicativo fechado. Não depender de notificações para descobrir mudanças.
+  Falha de varredura não produz um inventário completo nem autoriza inferir ausência.
+- Separar arquivos estáveis, temporários reconhecidos, em gravação, tipos
+  incompatíveis e evidência desconhecida. Observar identidade, tamanho, mtime e
+  ctime antes/depois de uma janela de quiescência de 500 ms compartilhada pela
+  varredura; revalidar leitura e caminho. Datas servem para detectar instabilidade,
+  nunca para escolher uma versão vencedora. Uma pausa maior que a janela não
+  comprova encerramento do escritor; esta limitação também vale para snapshots.
+- Reservar arquivos internos do DriveSync. Adiar padrões explícitos de temporários
+  de editores e downloads (`.swp`, `.swo`, `~`, `.part`, `.crdownload`, `.goutputstream-*`,
+  `.~lock.*#` e `~$*`). Não excluir universalmente arquivos ocultos nem `.tmp`.
+- Conciliar B, inventário local e feed remoto por identidade/escopo. Hash igual
+  não elimina substituição de inode ou ID; sem B, não adotar preexistentes.
+  Item remoto indisponível, inventário incompleto e erro não equivalem a exclusão.
+- Para versões concorrentes do mesmo objeto com B, comprovar equivalência por
+  SHA-256 local e dos bytes remotos com tamanho/checksum e metadados revalidados.
+  Falha/alteração durante a verificação adia o item. Equivalência não instala,
+  adota ou avança B automaticamente; o executor continua revalidando o destino.
+- Persistir observações/classificações por cliente, conta e raízes em transação
+  independente do checkpoint remoto e do journal de instalação. Após reinício,
+  observações antigas não autorizam escrita e devem ser substituídas por nova
+  varredura. Falhas não apagam a geração anterior; formatos incompatíveis são
+  rejeitados sem migração ou reset automático.
+- Antes de criar upload, revalidar o candidato estável e o snapshot. Manter
+  opt-in create-only, intents duráveis e reconciliação de efeitos ambíguos.
+- Expor pendências e suas causas no relatório/interface existente. Alteração
+  local ou concorrente não habilita atualização remota, exclusão ou resolução
+  assistida completa nesta entrega.
+
+Aceite: C06 (mudanças offline locais/remotas/concorrentes com B reaberta), C21
+(timestamps diferentes, bytes equivalentes, revisão maior e identidade substituída)
+e N10 (temporários, gravação durante quiescência/leitura/snapshot e retomada).
+Repetição, cancelamento, falhas de persistência e isolamento devem preservar bytes
+ e B. Filesystem/SQLite reais com remoto simulado são evidência local; Google
+Drive real, reinício de processo e aplicativo empacotado exigem validação própria.
+
 ### 4.8 Pausa, retomada e execução em segundo plano
 
 ### 4.9 Tratamento de conflitos e exclusões
