@@ -240,12 +240,48 @@ impl DriveSyncEngine {
             store.confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?;
         let local_root = crate::download::filesystem::Root::open(&folder.local)?;
         let local = crate::local::scan(&local_root, cancel)?;
-        let plan = crate::planner::plan_with_bases(
+        let mut source = DownloadSource {
+            engine: self,
+            folder: &folder,
+            config: &config,
+            cancel,
+            unchanged: std::collections::HashSet::new(),
+            preparation: &|_| {},
+        };
+        let plan = crate::changes::prepare(
             &inventory,
             &folder.local,
             &bases,
-            |_, relative, _| Ok(local.observe(relative)),
+            &local,
+            &mut source,
+            cancel,
         )?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        let mut reconciliations = crate::state::Reconciliations::open(
+            &state_path.with_file_name("reconciliation.sqlite3"),
+        )?;
+        let previous = reconciliations.load(&scope)?;
+        let history = store
+            .operations(&config.client_id, &plan)?
+            .into_iter()
+            .map(|op| crate::changes::Notice {
+                id: op.item.id,
+                path: Some(op.relative),
+            })
+            .collect();
+        let record = crate::state::Reconciliation::new(
+            local,
+            inventory.clone(),
+            plan.clone(),
+            bases,
+            history,
+            previous.as_ref().map(|(_, record)| record),
+        );
         if cancel.is_cancelled() {
             return Err(EngineError::Authentication(AuthError::Cancelled));
         }
@@ -253,6 +289,13 @@ impl DriveSyncEngine {
             return Err(EngineError::InvalidPlan);
         }
         store.save(&config.client_id, &inventory, &plan, cancel)?;
+        local_root.validate()?;
+        reconciliations.save(
+            &scope,
+            previous.as_ref().map(|(revision, _)| revision.as_str()),
+            &record,
+            cancel,
+        )?;
         Ok(plan)
     }
 
@@ -349,7 +392,18 @@ impl DriveSyncEngine {
                 path: Some(operation.relative),
             });
         }
-        let reconciliation = crate::changes::classify(&local, &plan, &history);
+        let mut reconciliations = crate::state::Reconciliations::open(
+            &journal_path.with_file_name("reconciliation.sqlite3"),
+        )?;
+        let previous_reconciliation = reconciliations.load(&scope)?;
+        let reconciliation = crate::state::Reconciliation::new(
+            local,
+            inventory.clone(),
+            plan.clone(),
+            bases,
+            history,
+            previous_reconciliation.as_ref().map(|(_, record)| record),
+        );
         preparation(crate::PreparationProgress::SavingState);
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
@@ -361,6 +415,15 @@ impl DriveSyncEngine {
             cancel,
         )?;
         store.save(&config.client_id, inventory, &plan, cancel)?;
+        local_root.validate()?;
+        reconciliations.save(
+            &scope,
+            previous_reconciliation
+                .as_ref()
+                .map(|(revision, _)| revision.as_str()),
+            &reconciliation,
+            cancel,
+        )?;
         drop(local_root);
         let mut report = crate::download::run(
             crate::download::Context {
@@ -389,7 +452,7 @@ impl DriveSyncEngine {
             checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
             checkpoint = refreshed;
         }
-        report.reconciliation = reconciliation;
+        report.reconciliation = reconciliation.entries;
         report.previous_paths = crate::changes::previous_paths(&checkpoint)?;
         Ok(report)
     }
@@ -527,6 +590,31 @@ impl DriveSyncEngine {
             progress,
         )?;
         Ok(report)
+    }
+
+    /// Reads the last complete reconciliation without contacting Google.
+    /// These historical diagnoses do not authorize writes; every cycle observes anew.
+    ///
+    /// # Errors
+    /// Returns configuration, identity or storage errors without resetting data.
+    pub fn saved_reconciliation(
+        &self,
+        id: &AccountId,
+    ) -> Result<Vec<crate::ReconciliationEntry>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let path = crate::configuration::identity::state_path(&folder, &config.client_id)?
+            .with_file_name("reconciliation.sqlite3");
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        Ok(crate::state::Reconciliations::open(&path)?
+            .load(&scope)?
+            .map(|(_, record)| record.entries)
+            .unwrap_or_default())
     }
 
     /// Loads the current persisted plan for this account's configured root.

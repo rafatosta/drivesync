@@ -129,13 +129,11 @@ pub(crate) fn classify(
     for notice in history {
         if let Some(path) = &notice.path {
             if !represented.contains(path) {
-                historical
-                    .entry(path.clone())
-                    .or_insert_with(|| notice.id.clone());
+                historical.insert((path.clone(), notice.id.clone()), ());
             }
         }
     }
-    for (path, id) in &historical {
+    for (path, id) in historical.keys() {
         result.push(ReconciliationEntry {
             relative_path: Some(path.clone()),
             remote_id: Some(id.clone()),

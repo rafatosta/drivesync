@@ -29,6 +29,9 @@ impl Inventory {
     /// Missing descendants of inaccessible/special ancestors remain unknown.
     pub(crate) fn observe(&self, path: &std::path::Path) -> crate::LocalObservation {
         use crate::LocalObservation as L;
+        if super::ignored(path) || super::inventory::temporary(path) {
+            return L::Unknown;
+        }
         match self.entries.get(path) {
             Some(Evidence::Directory) => L::Directory,
             Some(Evidence::Stable { fingerprint, .. }) => L::Verified(fingerprint.clone()),

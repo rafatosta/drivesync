@@ -40,7 +40,7 @@ pub struct InventoryEntry {
     pub kind: InventoryKind,
 }
 /// Successful observations scoped to one account/root, not a consistent snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteInventory {
     pub account_id: AccountId,
     pub root_id: String,
