@@ -19,10 +19,9 @@ cliente OAuth, conta e raízes, conforme [STATE-001/002](../state/algorithms.md)
 `ConfirmedBase` contém revisão remota positiva e fingerprint local
 `SHA-256:device:inode`. A fingerprint não é somente igualdade de bytes.
 `LocalObservation` distingue ausência, diretório, arquivo não gerenciado,
-symlink/especial, desconhecido e arquivo verificado. O observador da
-[fachada](../facade.rs), `observe_with_base`, lê a fingerprint atual somente
-quando há B e o caminho observado é um arquivo regular. Erros de leitura não
-são convertidos em ausência.
+symlink/especial, desconhecido e arquivo verificado. A [fachada](../facade.rs) usa o [inventário local completo](../local/reconciliation.md),
+com fingerprint de arquivos estáveis e evidência desconhecida para arquivos em
+alteração. Erros de leitura não são convertidos em ausência.
 
 O algoritmo puro `decide` não acessa disco/rede nem persiste estado.
 `plan_with_bases` chama o observador fornecido; sua implementação de produção
@@ -119,3 +118,24 @@ expõe device/inode; [Linux inode(7)](https://man7.org/linux/man-pages/man7/inod
 limita a unicidade do inode ao filesystem. A separação dos motivos é política
 DriveSync. Esse par é evidência observável, não identificador eterno; não demonstra
 continuidade contra reutilização acompanhada de bytes iguais ou rollback conjunto.
+
+## SYNC-003 — equivalência e observações locais completas
+
+`changes::prepare` constrói o plano com o inventário local completo e refina
+somente `ConcurrentChanges`, após a classificação de identidade de `decide`.
+Para o mesmo objeto com B, bytes remotos são lidos para um sink, limitados ao
+tamanho esperado, com MD5 do provedor e SHA-256 calculados. Metadados exatos são
+verificados antes/depois; SHA-256 igual ao local permite `Equivalent`.
+Erro de leitura ou revisão alterada resulta em `DeferredUnknown`; cancelamento,
+configuração alterada e falha de estado interrompem a preparação.
+
+`Equivalent` não autoriza escrita. O executor verifica B atual, vínculo de
+caminho/identidade/parent/root, versões, cadeia remota e conteúdo local/remoto
+novamente. Somente conta um resultado sem efeito; não registra instalação nem
+avança B. Repetição pode reler o conteúdo, mantendo a mesma decisão e os bytes.
+Sem B ou com inode diferente, a equivalência não é tentada. O caso de revisão
+maior com L intacto mantém a atualização revalidada do executor existente.
+
+O relatório carrega classificações anteriores à execução; não representam
+confirmação de que as operações propostas terminaram. Ausência remota e caminhos
+históricos são indisponibilidade observada, sem propagação de exclusão.

@@ -208,6 +208,33 @@ pub(crate) fn run(
                     .map(|()| report.linked += 1)
                 })
             }
+            (InventoryKind::Binary, Some(path), PlanAction::Equivalent) => session
+                .equivalent(item, path, decision, &by_id, source)
+                .map(|()| report.unchanged += 1),
+            (InventoryKind::Binary, Some(_), PlanAction::DeferredUnknown) => {
+                let version = item
+                    .version
+                    .filter(|v| *v > 0)
+                    .ok_or(EngineError::InvalidPlan)?;
+                let bases = session.context.store.confirmed_bases(
+                    session.context.client,
+                    &session.context.scope.account_id,
+                    &session.context.scope.remote_root,
+                    &session.context.scope.local_root,
+                )?;
+                Err(
+                    if bases
+                        .get(&item.id)
+                        .is_some_and(|b| version < b.remote_version)
+                    {
+                        EngineError::RemoteChanged
+                    } else if decision.expected_local == crate::LocalObservation::Unknown {
+                        EngineError::ObservationUnknown
+                    } else {
+                        EngineError::DownloadConflict
+                    },
+                )
+            }
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {
@@ -295,6 +322,69 @@ impl Session<'_> {
         self.context
             .store
             .put_operation(self.context.client, self.context.scope, op)
+    }
+    /// Equal bytes never bypass identity, latest-operation or scope checks.
+    fn equivalent(
+        &self,
+        item: &InventoryEntry,
+        path: &Path,
+        decision: &crate::PlanEntry,
+        by_id: &HashMap<&str, &InventoryEntry>,
+        source: &mut impl Source,
+    ) -> Result<(), EngineError> {
+        let base = self
+            .context
+            .store
+            .confirmed_bases(
+                self.context.client,
+                &self.context.scope.account_id,
+                &self.context.scope.remote_root,
+                &self.context.scope.local_root,
+            )?
+            .remove(&item.id)
+            .ok_or(EngineError::DownloadConflict)?;
+        let root_id = identity(&self.root.file)?;
+        let parent_id = identity(&self.root.parent(path)?.0)?;
+        let valid_binding = self.operations.get(path).into_iter().flatten().any(|op| {
+            op.item.id == item.id
+                && op.item.parent_id == item.parent_id
+                && op.item.name == item.name
+                && op.item.kind == item.kind
+                && op.root == root_id
+                && op.parent == parent_id
+                && op.item.mime_type == item.mime_type
+                && matches!(op.phase, Phase::Installed { .. } | Phase::Updated { .. })
+        });
+        if !valid_binding
+            || crate::planner::decide(
+                Some(&base),
+                &decision.expected_local,
+                item.version.ok_or(EngineError::InvalidPlan)?,
+            ) != PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges)
+        {
+            return Err(EngineError::DownloadConflict);
+        }
+        let expected = match &decision.expected_local {
+            crate::LocalObservation::Verified(value) => value,
+            _ => return Err(EngineError::ObservationUnknown),
+        };
+        if filesystem::fingerprint_root(&self.root, path, self.context.cancel)?.as_ref()
+            != Some(expected)
+        {
+            return Err(EngineError::LocalWriting);
+        }
+        validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
+        let remote = super::content_fingerprint(item, source, self.context.cancel)?;
+        if expected.split(':').next() != Some(remote.as_str()) {
+            return Err(EngineError::DownloadConflict);
+        }
+        if filesystem::fingerprint_root(&self.root, path, self.context.cancel)?.as_ref()
+            != Some(expected)
+        {
+            return Err(EngineError::LocalWriting);
+        }
+        validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
+        self.root.validate_parent(path, parent_id)
     }
     fn file(
         &self,

@@ -118,3 +118,13 @@ Referências oficiais consultadas em 2026-10-23:
 - https://man7.org/linux/man-pages/man2/fsync.2.html
 - https://www.sqlite.org/atomiccommit.html
 - https://docs.rs/md-5/0.10.6/md5/
+
+## Planos de reconciliação SYNC-003
+
+`DeferredUnknown` nunca chega à transferência: o executor mantém o item pendente,
+preservando os motivos de revisão inválida/regressiva e identidade incompleta.
+Uma reversão local posterior à preparação não converte o plano desconhecido em
+autorização para instalar. `Equivalent` é um caminho sem efeitos: revalida B,
+vínculo de caminho/identidade, cadeia remota e SHA-256 de ambas as versões;
+não cria staging, cópia, instalação nem nova B. Detalhes e oráculos no
+[contrato de reconciliação](../changes/reconciliation.md).

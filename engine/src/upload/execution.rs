@@ -80,7 +80,9 @@ pub(crate) fn run(
     ));
     let root = Root::open(root_path)?;
     uploads.validate_root(&root)?;
-    let paths = local::list(&root, cancel)?;
+    let observed = crate::local::scan(&root, cancel)?;
+    let mut paths: Vec<_> = observed.entries.iter().collect();
+    paths.sort_by_key(|(path, _)| (path.components().count(), (*path).clone()));
     let plan = crate::planner::plan(inventory, root_path, |_| crate::LocalObservation::Unknown)?;
     let mut parents = HashMap::from([(PathBuf::new(), inventory.root_id.clone())]);
     let mut blocked = HashSet::<PathBuf>::new();
@@ -92,7 +94,9 @@ pub(crate) fn run(
     }
     let journal = Store::open(state_path)?;
     let total = paths.len();
-    for (index, (path, directory)) in paths.into_iter().enumerate() {
+    for (index, (path, evidence)) in paths.into_iter().enumerate() {
+        let path = path.clone();
+        let directory = *evidence == crate::local::Evidence::Directory;
         local::check(cancel)?;
         remote.configured()?;
         root.validate()?;
@@ -130,6 +134,24 @@ pub(crate) fn run(
             let mut op = match existing {
                 Some(op) => op,
                 None => {
+                    match evidence {
+                        crate::local::Evidence::Stable { stamp, .. } => {
+                            if crate::local::stamp(&root, &path)? != *stamp {
+                                return Err(EngineError::LocalWriting);
+                            }
+                        }
+                        crate::local::Evidence::Directory => {}
+                        crate::local::Evidence::Temporary => {
+                            return Err(EngineError::LocalTemporary)
+                        }
+                        crate::local::Evidence::Writing => return Err(EngineError::LocalWriting),
+                        crate::local::Evidence::Unknown => {
+                            return Err(EngineError::ObservationUnknown)
+                        }
+                        crate::local::Evidence::Unsupported => {
+                            return Err(EngineError::DownloadConflict)
+                        }
+                    }
                     remote.validate_parent(&parent)?;
                     let siblings = remote.children(&parent, name)?;
                     if !siblings.is_empty() {
@@ -158,12 +180,26 @@ pub(crate) fn run(
                         root.check_directory(&path)?;
                         (0, String::new(), String::new(), None)
                     } else {
+                        if let crate::local::Evidence::Stable { stamp, .. } = evidence {
+                            if crate::local::stamp(&root, &path)? != *stamp {
+                                return Err(EngineError::LocalWriting);
+                            }
+                        }
                         let (size, md5, sha, identity) = local::snapshot(
                             &root,
                             &path,
                             &state_path.with_file_name(&snapshot),
                             cancel,
                         )?;
+                        if let crate::local::Evidence::Stable { stamp, fingerprint } = evidence {
+                            let current = crate::local::stamp(&root, &path);
+                            if current.as_ref() != Ok(stamp)
+                                || identity.fingerprint(&sha) != *fingerprint
+                            {
+                                let _ = std::fs::remove_file(state_path.with_file_name(&snapshot));
+                                return Err(EngineError::LocalWriting);
+                            }
+                        }
                         (size, md5, sha, Some(identity))
                     };
                     let op = Intent {
@@ -199,22 +235,11 @@ pub(crate) fn run(
                 }
                 return Ok(());
             }
-            if !directory {
-                let (parent_fd, name) = root.parent(&path)?;
-                let mut file =
-                    filesystem::read(&parent_fd, &name)?.ok_or(EngineError::DownloadConflict)?;
-                if op.source != Some(filesystem::identity(&file)?) {
-                    return Err(EngineError::DownloadConflict);
-                }
-                local::verify_file(&mut file, &op, cancel).map_err(|e| {
-                    if e == EngineError::StateStorage {
-                        EngineError::DownloadConflict
-                    } else {
-                        e
-                    }
-                })?;
-                root.validate_parent(&path, filesystem::identity(&parent_fd)?)?;
-            }
+            let source_stamp = if !directory {
+                Some(local::verify_source(&root, &path, &op, cancel)?)
+            } else {
+                None
+            };
             remote.validate_parent(&parent)?;
             let siblings = remote.children(&parent, name)?;
             if siblings.iter().any(|s| s.id != op.id) {
@@ -257,6 +282,15 @@ pub(crate) fn run(
                         let count = (op.size - offset).min(1024 * 1024) as usize;
                         let mut bytes = vec![0; count];
                         file.read_exact(&mut bytes).map_err(filesystem::io)?;
+                        if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                            return Err(EngineError::LocalWriting);
+                        }
+                        if offset + count as u64 == op.size {
+                            local::verify_source(&root, &path, &op, cancel)?;
+                            if source_stamp.as_ref() != Some(&crate::local::stamp(&root, &path)?) {
+                                return Err(EngineError::LocalWriting);
+                            }
+                        }
                         let next = remote.send(&op, Some(offset), bytes)?;
                         if matches!(next,Position::Offset(n) if n<=offset || n>offset+count as u64)
                         {
@@ -344,6 +378,9 @@ pub(crate) fn run(
             }
             op.confirmed = true;
             uploads.save(&op)?;
+            report
+                .reconciliation
+                .retain(|entry| entry.relative_path.as_ref() != Some(&path));
             if !directory {
                 let _ = std::fs::remove_file(state_path.with_file_name(&op.snapshot));
             }
@@ -365,7 +402,13 @@ pub(crate) fn run(
             ) {
                 return Err(error);
             }
-            let stop = !matches!(error, EngineError::DownloadConflict);
+            let stop = !matches!(
+                error,
+                EngineError::DownloadConflict
+                    | EngineError::LocalWriting
+                    | EngineError::LocalTemporary
+                    | EngineError::ObservationUnknown
+            );
             if !report
                 .issues
                 .iter()

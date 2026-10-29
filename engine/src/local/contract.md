@@ -1,22 +1,11 @@
 # Contrato — local
 
-## Propósito
-Inventário e eventos do filesystem.
+O contrato vigente de LOCAL-001/002 está em
+[inventário e estabilização](reconciliation.md), com limites, entradas, saídas,
+erros, concorrência, cancelamento e oráculos. Consumidores: preparação de
+downloads, reconciliação e criação de uploads.
 
-## Consumidores
-changes,upload,download.
-
-## Entrada
-Objetos conceituais validados, identificadores estáveis, contexto de cancelamento e, quando pertinente, versões esperadas.
-
-## Saída
-Resultado tipado ou erro explícito e classificável: temporário, definitivo, conflito ou resultado ambíguo.
-
-## Responsabilidade e limites
-Inventário e eventos do filesystem. Não assumir responsabilidades de outros módulos nem depender da implementação gráfica.
-
-## Invariante
-Symlink não deve escapar da raiz autorizada.
-
-## Qualidade de contrato
-Toda operação deverá especificar efeitos colaterais, idempotência, concorrência permitida, pré/pós-condições e recuperação após interrupções. Nenhuma falha pode ser interpretada como sucesso.
+O módulo observa a árvore elegível por descritores, não chama Google e não
+instala, publica ou exclui conteúdo. Evidência desconhecida não é ausência;
+assinaturas são detectores de mudança, não prova de precedência temporal.
+Monitor contínuo permanece proposta e não é pré-condição da varredura por ciclo.

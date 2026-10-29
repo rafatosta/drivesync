@@ -24,7 +24,7 @@ pub enum LocalObservation {
 /// `local_fingerprint` binds the installed SHA-256 to its local device/inode.
 /// The planner decodes these components independently. Device/inode equality is
 /// observable evidence, not a permanent identity guarantee against inode reuse.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfirmedBase {
     pub remote_version: u64,
     pub local_fingerprint: String,
@@ -49,6 +49,9 @@ pub enum PlanAction {
     Download,
     CreateLink,
     NoOp,
+    /// Verified equal bytes with B and continuous identity; execution is read-only
+    /// and independently revalidates both versions without advancing B.
+    Equivalent,
     CreateDirectory,
     Blocked(ConflictReason),
     DeferredUnknown,
@@ -137,7 +140,7 @@ pub fn decide(
 
 /// Decodes the current internal evidence format without inferring identity from
 /// malformed or incomplete data. Zero is valid for a device, but not an inode.
-fn fingerprint_parts(value: &str) -> Option<(&str, u64, u64)> {
+pub(crate) fn fingerprint_parts(value: &str) -> Option<(&str, u64, u64)> {
     let mut parts = value.split(':');
     let hash = parts.next()?;
     let device = parts.next()?;
@@ -160,7 +163,7 @@ fn safe(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && name != ".drivesync"
+        && !crate::local::ignored(Path::new(name))
         && name.len() <= 255
         && !name.contains('/')
         && !name.contains('\\')
@@ -269,7 +272,13 @@ pub(crate) fn plan_with_bases(
                 LocalObservation::Unknown => PlanAction::DeferredUnknown,
                 _ => PlanAction::Blocked(ConflictReason::LocalTypeMismatch),
             },
-            (InventoryKind::GoogleWorkspaceLink, Some(_)) => PlanAction::CreateLink,
+            (InventoryKind::GoogleWorkspaceLink, Some(_)) => {
+                if local == LocalObservation::Unknown {
+                    PlanAction::DeferredUnknown
+                } else {
+                    PlanAction::CreateLink
+                }
+            }
             (InventoryKind::Binary, Some(_)) => match e.version {
                 Some(version) => decide(base, &local, version),
                 None => PlanAction::DeferredUnknown,
@@ -293,6 +302,7 @@ pub(crate) fn plan_with_bases(
 
 /// Metadata-only observation. Static symlinks/special files block all descendants.
 /// This does not remove races; the future executor must revalidate before writing.
+#[cfg(test)]
 pub(crate) fn observe(root: &Path, relative: &Path) -> LocalObservation {
     if !root.is_absolute()
         || relative.is_absolute()

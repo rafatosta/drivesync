@@ -1,6 +1,7 @@
 # Algoritmos — local
 
-**Status:** proposta v0.2, independente da linguagem.
+**Status:** varredura e estabilização implementadas conforme
+[contrato vigente](reconciliation.md). Monitoramento contínuo permanece proposta.
 
 ## Identificadores
 LOCAL-001 monitorar; LOCAL-002 estabilizar.
@@ -13,7 +14,7 @@ Configuração validada, dependências disponíveis ou erro explícito, estado p
 
 ## Algoritmo conceitual
 1. Validar raiz.
-2. observar identidade,tamanho,mtime e hash sob demanda.
+2. observar identidade, tamanho, mtime/ctime e hash dos candidatos estáveis.
 3. reagrupar eventos de editores.
 4. rescan após overflow.
 5. testar estabilidade antes de upload.
@@ -34,7 +35,10 @@ Não inferir ausência por timeout/erro HTTP, nem identidade apenas pelo nome, n
 Symlink não deve escapar da raiz autorizada. Aplicam-se também os invariantes globais de `docs/invariants.md`.
 
 ## Complexidade
-Consultas pontuais tipicamente O(1) em metadados; inventário e planejamento O(n); transferências de B bytes O(B). Latência de rede, disco e consistência entre operações dominam o custo real.
+O inventário local percorre n itens e lê B bytes de arquivos regulares estáveis:
+O(n+B), com armazenamento O(n) de evidências e buffers limitados. A janela de
+500 ms é compartilhada por toda a varredura. Metadados e leituras são observações,
+não um snapshot atômico de toda a árvore.
 
 ## Critérios de aceitação
 Caso nominal, cancelamento, repetição sem duplicação indevida, erro transitório, erro definitivo, falha parcial e reinicialização. Revisar as decisões pendentes antes de codificar.
@@ -51,7 +55,8 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Política do DriveSync:** Eventos são pistas; varredura completa reconcilia perda de eventos; manter segurança de caminhos e symlinks.
 - **Testes/oráculos a detalhar:** Renomeação, editor com arquivo temporário, diretórios grandes, overflow/monitor indisponível.
 - **Limitações / questões abertas:** Monitor recursivo e comportamento de mounts/permissões Flatpak requerem prova em Fedora.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+- **Situação:** varredura por ciclo implementada; monitor contínuo permanece proposta.
+  Oráculos locais em [tests.rs](tests.rs); aceitação de portal/mount instalado pendente.
 
 ### LOCAL-002
 
@@ -59,5 +64,5 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Referências primárias:** [GIO FileMonitor](https://docs.gtk.org/gio/class.FileMonitor.html), [Rust std::fs metadata](https://doc.rust-lang.org/std/fs/fn.metadata.html).
 - **Política do DriveSync:** Aguardar quiescência é heurística, não prova de arquivo fechado; revalidar tamanho, mtime e identidade após leitura; replanejar se mudou.
 - **Testes/oráculos a detalhar:** Gravação lenta, edição simultânea, arquivo trocado mantendo nome.
-- **Limitações / questões abertas:** Avaliar estratégia de snapshot/stream para origem modificada durante upload.
-- **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+- **Limitações / questões abertas:** quiescência e snapshot não bloqueiam escritores externos; assinatura é revalidada por bloco e identidade/hash antes do bloco final, sem transação entre filesystem e Google.
+- **Situação:** estabilização, snapshot privado e revalidações implementados; ver [upload](../upload/create-only.md). Aceite real permanece pendente.

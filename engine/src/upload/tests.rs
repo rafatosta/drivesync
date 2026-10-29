@@ -17,6 +17,8 @@ use std::{
 #[derive(Default)]
 struct Fake {
     generated: usize,
+    change_on_generate: Option<PathBuf>,
+    change_after_chunk: Option<PathBuf>,
     creates: usize,
     chunks: usize,
     begins: usize,
@@ -64,6 +66,9 @@ impl Remote for Fake {
     }
     fn generate(&mut self) -> Result<String, EngineError> {
         self.generated += 1;
+        if let Some(path) = self.change_on_generate.take() {
+            fs::write(path, b"changed after inventory").unwrap();
+        }
         Ok(format!("generated_{}", self.generated))
     }
     fn children(&mut self, parent: &str, name: &str) -> Result<Vec<InventoryEntry>, EngineError> {
@@ -115,6 +120,9 @@ impl Remote for Fake {
         assert_eq!(offset.unwrap(), self.data[&op.id].len() as u64);
         self.data.get_mut(&op.id).unwrap().extend(bytes);
         self.chunks += 1;
+        if let Some(path) = self.change_after_chunk.take() {
+            fs::write(path, b"writer resumed during upload").unwrap();
+        }
         if self.data[&op.id].len() as u64 == op.size {
             self.creates += 1;
             self.items.insert(op.id.clone(), entry(op));
@@ -600,4 +608,90 @@ fn ambiguous_remote_names_cannot_be_adopted_after_a_lost_confirmation() {
     assert_eq!(report.uploaded, 0);
     assert_eq!(report.issues.len(), 1);
     assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn temporary_uploads_are_deferred_and_final_rename_uploads_once() {
+    let f = Fixture::new();
+    fs::write(f.root.join("report.part"), b"abc").unwrap();
+    let mut remote = Fake::default();
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalTemporary);
+    assert_eq!(remote.generated, 0);
+    assert_eq!(remote.begins, 0);
+    fs::rename(f.root.join("report.part"), f.root.join("report.txt")).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn local_write_after_inventory_never_starts_remote_upload() {
+    let f = Fixture::new();
+    let path = f.root.join("file");
+    fs::write(&path, b"abc").unwrap();
+    let mut remote = Fake {
+        change_on_generate: Some(path.clone()),
+        ..Default::default()
+    };
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalWriting);
+    assert_eq!(remote.begins, 0);
+    assert_eq!(remote.creates, 0);
+    assert!(f.uploads().load(Path::new("file")).unwrap().is_none());
+    assert_eq!(fs::read(path).unwrap(), b"changed after inventory");
+}
+
+#[test]
+fn temporary_item_does_not_stop_independent_ready_uploads() {
+    let f = Fixture::new();
+    fs::write(f.root.join("a.part"), b"partial").unwrap();
+    fs::write(f.root.join("z.txt"), b"abc").unwrap();
+    let mut remote = Fake::default();
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].error, EngineError::LocalTemporary);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(fs::read(f.root.join("a.part")).unwrap(), b"partial");
+}
+
+#[test]
+fn n10_resumed_writer_stops_before_final_upload_publication_and_keeps_intent() {
+    let f = Fixture::new();
+    let path = f.root.join("large.bin");
+    fs::write(&path, vec![b'a'; 2 * 1024 * 1024]).unwrap();
+    let mut remote = Fake {
+        change_after_chunk: Some(path.clone()),
+        ..Default::default()
+    };
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalWriting);
+    assert_eq!(remote.chunks, 1);
+    assert_eq!(remote.creates, 0);
+    assert!(remote.items.is_empty());
+    let op = f.uploads().load(Path::new("large.bin")).unwrap().unwrap();
+    assert!(!op.confirmed);
+    assert!(f.path.with_file_name(&op.snapshot).is_file());
+    assert_eq!(fs::read(&path).unwrap(), b"writer resumed during upload");
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 0);
+}
+
+#[test]
+fn source_growth_is_rejected_before_reading_beyond_the_snapshot_size() {
+    let f = Fixture::new();
+    let path = f.root.join("file");
+    fs::write(&path, b"abc").unwrap();
+    f.run(&mut Fake::default(), HashSet::new()).unwrap();
+    let op = f.uploads().load(Path::new("file")).unwrap().unwrap();
+    fs::write(&path, vec![b'x'; 2 * 1024 * 1024]).unwrap();
+    let mut file = fs::File::open(&path).unwrap();
+    assert_eq!(
+        super::local::verify_file(&mut file, &op, &Cancellation::new()),
+        Err(EngineError::StateStorage)
+    );
+    assert_eq!(std::io::Seek::stream_position(&mut file).unwrap(), 0);
 }

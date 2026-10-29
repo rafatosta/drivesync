@@ -1,107 +1,18 @@
 //! Descriptor-relative local discovery and immutable private upload snapshots.
 use super::Intent;
+pub(crate) use crate::local::check;
 use crate::{
     download::filesystem::{self, Root},
-    AuthError, Cancellation, EngineError,
+    Cancellation, EngineError,
 };
 use md5::Md5;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt},
-    },
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
-pub(crate) fn check(cancel: &Cancellation) -> Result<(), EngineError> {
-    if cancel.is_cancelled() {
-        Err(EngineError::Authentication(AuthError::Cancelled))
-    } else {
-        Ok(())
-    }
-}
-pub(crate) fn ignored(path: &Path) -> bool {
-    path.components().any(|c| {
-        c.as_os_str().to_str().is_none_or(|s| {
-            s == ".drivesync"
-                || s.starts_with(".drivesync-")
-                || (s.starts_with("DriveSync backup ") && s.ends_with(".bak"))
-        })
-    })
-}
-pub(crate) fn list(
-    root: &Root,
-    cancel: &Cancellation,
-) -> Result<Vec<(PathBuf, bool)>, EngineError> {
-    let mut result = Vec::new();
-    let mut pending = vec![PathBuf::new()];
-    while let Some(path) = pending.pop() {
-        check(cancel)?;
-        root.validate()?;
-        let dir = if path.as_os_str().is_empty() {
-            root.file.try_clone().map_err(filesystem::io)?
-        } else {
-            let (p, n) = root.parent(&path)?;
-            rustix::fs::openat(
-                &p,
-                &n,
-                rustix::fs::OFlags::RDONLY
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::NOFOLLOW,
-                rustix::fs::Mode::empty(),
-            )
-            .map(File::from)
-            .map_err(filesystem::io)?
-        };
-        for entry in rustix::fs::Dir::read_from(&dir).map_err(filesystem::io)? {
-            check(cancel)?;
-            let entry = entry.map_err(filesystem::io)?;
-            let name = std::ffi::OsStr::from_bytes(entry.file_name().to_bytes());
-            if name == "." || name == ".." {
-                continue;
-            }
-            let child = path.join(name);
-            if ignored(&child) {
-                continue;
-            }
-            let stat = rustix::fs::statat(&dir, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
-                .map_err(filesystem::io)?;
-            let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
-            let directory = kind == rustix::fs::FileType::Directory;
-            if directory {
-                pending.push(child.clone());
-            }
-            // Special files remain visible to the executor, which rejects them
-            // through the regular-file nofollow reader without blocking on FIFOs.
-            result.push((child, directory));
-            if result.len() > 100000 {
-                return Err(EngineError::InventoryLimit);
-            }
-        }
-    }
-    result.sort_by(|a, b| {
-        a.0.components()
-            .count()
-            .cmp(&b.0.components().count())
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    Ok(result)
-}
-type Stamp = (u64, u64, u64, i64, i64, i64, i64);
-fn stamp(file: &File) -> Result<Stamp, EngineError> {
-    let m = file.metadata().map_err(filesystem::io)?;
-    Ok((
-        m.dev(),
-        m.ino(),
-        m.len(),
-        m.mtime(),
-        m.mtime_nsec(),
-        m.ctime(),
-        m.ctime_nsec(),
-    ))
-}
 /// Removes only an incomplete staging file created by this invocation.
 struct PartialSnapshot {
     path: PathBuf,
@@ -120,11 +31,21 @@ pub(crate) fn snapshot(
     stage: &Path,
     cancel: &Cancellation,
 ) -> Result<(u64, String, String, crate::download::Identity), EngineError> {
+    snapshot_with_progress(root, path, stage, cancel, |_| {})
+}
+/// The progress seam supports deterministic interruption and concurrent-writer tests.
+fn snapshot_with_progress(
+    root: &Root,
+    path: &Path,
+    stage: &Path,
+    cancel: &Cancellation,
+    mut copied: impl FnMut(u64),
+) -> Result<(u64, String, String, crate::download::Identity), EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
     let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
-    let before = stamp(&file)?;
+    let before = crate::local::Stamp::read(&file)?;
     let mut target = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -150,7 +71,8 @@ pub(crate) fn snapshot(
         sha.update(&buffer[..n]);
         md5.update(&buffer[..n]);
         size += n as u64;
-        if size > before.2 {
+        copied(size);
+        if size > before.size {
             return Err(EngineError::DownloadConflict);
         }
     }
@@ -160,7 +82,10 @@ pub(crate) fn snapshot(
         .map_err(filesystem::io)?;
     root.validate_parent(path, parent_id)?;
     let current = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
-    if stamp(&file)? != before || stamp(&current)? != before || size != before.2 {
+    if crate::local::Stamp::read(&file)? != before
+        || crate::local::Stamp::read(&current)? != before
+        || size != before.size
+    {
         return Err(EngineError::DownloadConflict);
     }
     cleanup.complete = true;
@@ -170,6 +95,34 @@ pub(crate) fn snapshot(
         format!("{:x}", sha.finalize()),
         filesystem::identity(&file)?,
     ))
+}
+/// Revalidates the original source, not only the immutable staging bytes.
+/// Returns its signature so chunk boundaries can detect resumed external writes.
+pub(crate) fn verify_source(
+    root: &Root,
+    path: &Path,
+    op: &Intent,
+    cancel: &Cancellation,
+) -> Result<crate::local::Stamp, EngineError> {
+    let before = crate::local::stamp(root, path)?;
+    let (parent, name) = root.parent(path)?;
+    let parent_id = filesystem::identity(&parent)?;
+    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    if op.source != Some(filesystem::identity(&file)?) {
+        return Err(EngineError::DownloadConflict);
+    }
+    verify_file(&mut file, op, cancel).map_err(|error| {
+        if error == EngineError::StateStorage {
+            EngineError::DownloadConflict
+        } else {
+            error
+        }
+    })?;
+    root.validate_parent(path, parent_id)?;
+    if crate::local::stamp(root, path)? != before {
+        return Err(EngineError::LocalWriting);
+    }
+    Ok(before)
 }
 pub(crate) fn verify_stage(
     path: &Path,
@@ -190,8 +143,8 @@ pub(crate) fn verify_file(
     op: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
-    let before = stamp(file)?;
-    if !file.metadata().map_err(filesystem::io)?.is_file() {
+    let before = crate::local::Stamp::read(file)?;
+    if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {
         return Err(EngineError::StateStorage);
     }
     let mut sha = Sha256::new();
@@ -199,17 +152,27 @@ pub(crate) fn verify_file(
     let mut size = 0;
     loop {
         check(cancel)?;
-        let n = file.read(&mut buffer).map_err(filesystem::io)?;
+        let limit = op
+            .size
+            .saturating_sub(size)
+            .saturating_add(1)
+            .min(buffer.len() as u64) as usize;
+        let n = file.read(&mut buffer[..limit]).map_err(filesystem::io)?;
         if n == 0 {
             break;
         }
-        size += n as u64;
+        size = size
+            .checked_add(n as u64)
+            .ok_or(EngineError::StateStorage)?;
+        if size > op.size {
+            return Err(EngineError::StateStorage);
+        }
         sha.update(&buffer[..n]);
     }
     if size != op.size || format!("{:x}", sha.finalize()) != op.sha {
         return Err(EngineError::StateStorage);
     }
-    if stamp(file)? != before {
+    if crate::local::Stamp::read(file)? != before {
         return Err(EngineError::StateStorage);
     }
     Ok(())
@@ -217,7 +180,7 @@ pub(crate) fn verify_file(
 
 #[cfg(test)]
 mod tests {
-    use super::ignored;
+    use crate::local::ignored;
     use std::path::Path;
 
     #[test]
@@ -225,5 +188,60 @@ mod tests {
         assert!(ignored(Path::new(".drivesync")));
         assert!(ignored(Path::new(".drivesync/identity.json")));
         assert!(ignored(Path::new(".drivesync/state.sqlite3")));
+    }
+    #[test]
+    fn n10_write_or_replacement_during_snapshot_discards_only_partial_staging() {
+        for replacement in [false, true] {
+            let base = std::env::temp_dir().join(format!(
+                "drivesync-snapshot-{}",
+                oauth2::CsrfToken::new_random().secret()
+            ));
+            let root_path = base.join("root");
+            std::fs::create_dir_all(&root_path).unwrap();
+            let bytes = vec![b'a'; 2 * 1024 * 1024];
+            let path = root_path.join("file");
+            std::fs::write(&path, &bytes).unwrap();
+            let stage = base.join("private.snapshot");
+            let root = super::Root::open(&root_path).unwrap();
+            let mut changed = false;
+            let result = super::snapshot_with_progress(
+                &root,
+                Path::new("file"),
+                &stage,
+                &crate::Cancellation::new(),
+                |_| {
+                    if !changed {
+                        changed = true;
+                        if replacement {
+                            std::fs::write(root_path.join("replacement"), &bytes).unwrap();
+                            std::fs::rename(root_path.join("replacement"), &path).unwrap();
+                        } else {
+                            std::fs::write(&path, b"writer resumed").unwrap();
+                        }
+                    }
+                },
+            );
+            assert_eq!(result, Err(crate::EngineError::DownloadConflict));
+            assert!(!stage.exists());
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                if replacement {
+                    bytes
+                } else {
+                    b"writer resumed".to_vec()
+                }
+            );
+            std::fs::write(&stage, b"preexisting").unwrap();
+            assert!(super::snapshot(
+                &root,
+                Path::new("file"),
+                &stage,
+                &crate::Cancellation::new()
+            )
+            .is_err());
+            assert_eq!(std::fs::read(&stage).unwrap(), b"preexisting");
+            drop(root);
+            std::fs::remove_dir_all(base).unwrap();
+        }
     }
 }

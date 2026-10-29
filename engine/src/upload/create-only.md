@@ -11,14 +11,21 @@ For each scoped client/account/folder pair:
 2. Lock and validate the local root against its persisted opt-in inode. Traverse descriptor-relative directories;
    reject symlinks/special files and bound traversal. Resolve remote parents by
    unique name and validated identity. Exclude historical downloaded paths.
-3. For each absent destination, generate a provider ID and persist intent BEFORE
+3. Complete a descriptor-relative local inventory with one shared 500 ms
+   quiescence window. Defer recognized editor/download temporaries, changing files
+   and unknown evidence; ordinary hidden files and `.tmp` are not blanket exclusions.
+   Revalidate the observed signature before snapshotting and compare the snapshot
+   hash/identity and current signature with that observation. A quiescent pause
+   cannot prove an external writer has finished. For each absent destination, generate a provider ID and persist intent BEFORE
    creation. Snapshot a regular local file into private staging, verifying inode,
    size and timestamps across the copy. Persist the original source identity;
    a replaced source must not be silently adopted even with identical content. Persist hashes and immutable staging ID.
 4. Query the persisted remote ID before replay. Verify parent, name, type, size
    and MD5 before confirmation. Never generate a replacement ID for an intent.
 5. Persist the resumable session URI privately. On restart query the server's
-   offset; send aligned bounded chunks, validating ranges. An expired session
+   offset; send aligned bounded chunks, validating ranges. Recheck the source
+   signature before each chunk and its identity/hash before the final chunk;
+   a detected resumed writer leaves the intent pending without final publication. An expired session
    may restart creation with the SAME ID after checking completion. Never log
    tokens, session URIs or raw provider responses.
 6. Confirm only verified remote content. If the current local identity/content
@@ -35,3 +42,9 @@ Primary references verified 2026-10-24:
 - https://developers.google.com/workspace/drive/api/guides/manage-uploads
 - https://developers.google.com/workspace/drive/api/guides/create-file
 - https://developers.google.com/workspace/drive/api/reference/rest/v3/files/generateIds
+
+Source revalidation is not a filesystem lock against other applications. A writer
+can still change the source after the last check or after remote completion;
+final confirmation rechecks local identity/bytes and never advances B over such
+a divergent source. The private snapshot preserves exactly the previously
+verified candidate; no cross-system atomic writer/publication guarantee is made.

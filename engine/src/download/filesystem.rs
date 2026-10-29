@@ -21,6 +21,7 @@ pub(crate) fn identity(file: &File) -> Result<Identity, EngineError> {
 }
 /// Hashes a regular file through no-follow descriptors and verifies the path
 /// still names the same inode when the read completes.
+#[cfg(test)]
 pub(crate) fn fingerprint(
     root_path: &Path,
     relative: &Path,
@@ -31,6 +32,14 @@ pub(crate) fn fingerprint(
         file,
         path: root_path.into(),
     };
+    fingerprint_root(&root, relative, cancel)
+}
+/// Uses an already validated root without acquiring another advisory lock.
+pub(crate) fn fingerprint_root(
+    root: &Root,
+    relative: &Path,
+    cancel: &crate::Cancellation,
+) -> Result<Option<String>, EngineError> {
     let (parent, name) = root.parent(relative)?;
     let parent_id = identity(&parent)?;
     let Some(mut file) = read(&parent, &name)? else {

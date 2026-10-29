@@ -1,5 +1,7 @@
 //! SQLite observations, plans and durable download-operation evidence.
 mod checkpoints;
+mod reconciliation;
+pub(crate) use reconciliation::{Reconciliation, Reconciliations};
 mod uploads;
 pub(crate) use uploads::Uploads;
 mod downloads;

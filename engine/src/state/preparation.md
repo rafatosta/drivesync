@@ -4,7 +4,9 @@ Toda a persistência necessária para identificar e controlar uma raiz local fic
 em `.drivesync/`, dentro da pasta selecionada. `identity.json` vincula a raiz ao
 cliente OAuth, à conta e à pasta remota; `state.sqlite3` registra o journal de
 operações e evidências de arquivos instalados; `changes.sqlite3` mantém o
-checkpoint remoto; `uploads.sqlite3` guarda preferências e intents de upload.
+checkpoint remoto; `uploads.sqlite3` guarda preferências e intents de upload;
+`reconciliation.sqlite3` registra o inventário local completo, observações remotas,
+B consultada e diagnósticos anteriores à execução.
 Esses arquivos sobrevivem à remoção dos dados privados do aplicativo e não
 armazenam tokens. A pasta `.drivesync` é excluída do inventário de upload e é um
 caminho reservado que o inventário remoto não pode usar como destino.
@@ -26,8 +28,8 @@ antes do commit provoca rollback.
 
 O [planner](../planner/algorithms.md) classifica usando somente a base confirmada
 extraída do [journal](algorithms.md). A fachada combina essas bases com observação
-atual: metadados para destinos sem B e fingerprint por descritores para arquivos
-com B. O plano persistido não é autorização de escrita. O executor implementado
+atual de um inventário local completo, com estabilização e fingerprint por
+descritores para arquivos regulares. Sem B, os bytes observados não autorizam adoção. O plano persistido não é autorização de escrita. O executor implementado
 reabre/revalida destinos antes de instalar e faz replay conforme
 [download inicial](../download/execution.md) e [atualizações](../download/updates.md).
 
@@ -78,3 +80,25 @@ Referências oficiais consultadas em 2026-10-23:
 - https://www.sqlite.org/atomiccommit.html
 - https://www.sqlite.org/pragma.html#pragma_integrity_check
 - https://docs.rs/rusqlite/0.37.0/rusqlite/struct.OpenFlags.html
+
+## SYNC-003 — observações de reconciliação
+
+[reconciliation.rs](reconciliation.rs) mantém formato próprio 1, application_id
+próprio e as mesmas garantias de abertura privada, integridade e rejeição sem
+reset dos demais bancos. Uma transação publica B/L/R, plano e diagnósticos juntos
+por cliente, conta e raízes, usando CAS para recusar trabalhador obsoleto.
+`save` não altera o journal de instalação nem o cursor remoto. Falha de commit
+ou cancelamento preserva o registro anterior; o próximo ciclo sempre observa de
+novo. Não existe atomicidade entre os três bancos e o filesystem.
+
+Preparação e ciclos com feed usam o mesmo classificador. Paths históricos do
+feed/journal não viram arquivos novos para upload. Arquivo local desaparecido
+sem representação remota fica ausente observado; descendentes de ancestral
+inacessível/especial continuam desconhecidos. `saved_reconciliation` permite
+ler os diagnósticos sem rede, inclusive após reabertura, sem executar o plano.
+
+Oráculos de persistência estão em [reconciliation/tests.rs](reconciliation/tests.rs):
+reabertura integral de evidências, isolamento, CAS, cancelamento, rollback por
+trigger, formato incompatível, JSON inválido, banco estrangeiro, symlink e
+ancestral inacessível. Os testes C06/C21 integrados ficam em
+[download/reconciliation_tests.rs](../download/reconciliation_tests.rs).

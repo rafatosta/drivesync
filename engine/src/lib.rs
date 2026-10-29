@@ -27,6 +27,7 @@ mod ui;
 mod upload;
 
 pub use auth::{AuthError, Cancellation};
+pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
@@ -38,6 +39,6 @@ pub use planner::{
 };
 
 pub use download::{
-    DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
-    PreparationProgress, PreviousPath,
+    DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
+    DownloadStage, PreparationProgress, PreviousPath,
 };
