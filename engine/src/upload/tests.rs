@@ -30,6 +30,8 @@ struct Fake {
     expire: bool,
     lost_folder: bool,
     cancel_after_chunk: bool,
+    suspend_after_chunk: Option<crate::RootSuspension>,
+    replace_root_after_chunk: Option<PathBuf>,
 }
 fn entry(op: &Intent) -> InventoryEntry {
     InventoryEntry {
@@ -59,6 +61,11 @@ fn entry(op: &Intent) -> InventoryEntry {
 }
 impl Remote for Fake {
     fn configured(&mut self) -> Result<(), EngineError> {
+        if self.chunks > 0 {
+            if let Some(reason) = self.suspend_after_chunk {
+                return Err(EngineError::RootSuspended(reason));
+            }
+        }
         if self.cancel_after_chunk && self.chunks > 0 {
             return Err(EngineError::Authentication(crate::AuthError::Cancelled));
         }
@@ -120,6 +127,10 @@ impl Remote for Fake {
         assert_eq!(offset.unwrap(), self.data[&op.id].len() as u64);
         self.data.get_mut(&op.id).unwrap().extend(bytes);
         self.chunks += 1;
+        if let Some(path) = self.replace_root_after_chunk.take() {
+            fs::rename(&path, path.with_file_name("detached-volume")).unwrap();
+            fs::create_dir(path).unwrap();
+        }
         if let Some(path) = self.change_after_chunk.take() {
             fs::write(path, b"writer resumed during upload").unwrap();
         }
@@ -694,4 +705,64 @@ fn source_growth_is_rejected_before_reading_beyond_the_snapshot_size() {
         Err(EngineError::StateStorage)
     );
     assert_eq!(std::io::Seek::stream_position(&mut file).unwrap(), 0);
+}
+
+#[test]
+fn n04_c25_upload_revocation_keeps_intent_and_resumes_same_remote_id_once() {
+    let f = Fixture::new();
+    let bytes = vec![42; 2 * 1024 * 1024];
+    fs::write(f.root.join("large.bin"), &bytes).unwrap();
+    let mut remote = Fake {
+        suspend_after_chunk: Some(crate::RootSuspension::RemoteAccessDenied),
+        ..Default::default()
+    };
+    for _ in 0..2 {
+        assert!(matches!(
+            f.run(&mut remote, HashSet::new()),
+            Err(EngineError::RootSuspended(
+                crate::RootSuspension::RemoteAccessDenied
+            ))
+        ));
+        assert_eq!(remote.chunks, 1);
+        assert_eq!(remote.creates, 0);
+        assert_eq!(fs::read(f.root.join("large.bin")).unwrap(), bytes);
+    }
+    let op = f.uploads().load(Path::new("large.bin")).unwrap().unwrap();
+    assert!(!op.confirmed);
+    let id = op.id;
+    remote.suspend_after_chunk = None;
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(remote.data[&id], bytes);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn n03_upload_root_replacement_stops_before_final_remote_publication() {
+    let f = Fixture::new();
+    let bytes = vec![17; 2 * 1024 * 1024];
+    fs::write(f.root.join("large.bin"), &bytes).unwrap();
+    let mut remote = Fake {
+        replace_root_after_chunk: Some(f.root.clone()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        f.run(&mut remote, HashSet::new()),
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::LocalUnavailable
+        ))
+    ));
+    assert_eq!(remote.chunks, 1);
+    assert_eq!(remote.creates, 0);
+    assert_eq!(fs::read_dir(&f.root).unwrap().count(), 0);
+    assert_eq!(
+        fs::read(f.root.with_file_name("detached-volume").join("large.bin")).unwrap(),
+        bytes
+    );
+    fs::remove_dir(&f.root).unwrap();
+    fs::rename(f.root.with_file_name("detached-volume"), &f.root).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.generated, 1);
 }

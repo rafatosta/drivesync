@@ -311,3 +311,37 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
         .unwrap()
         .contains("forgotten@example.com"));
 }
+
+#[test]
+fn configured_root_cannot_be_reinitialized_after_volume_or_marker_loss() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "a@example.com"))
+        .unwrap();
+    let local = dir.0.join("volume");
+    fs::create_dir(&local).unwrap();
+    let folder = configured("a", local.clone());
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    let marker = fs::read(local.join(".drivesync/identity.json")).unwrap();
+    let parked = dir.0.join("parked");
+    fs::rename(&local, &parked).unwrap();
+    fs::create_dir(&local).unwrap();
+    assert!(matches!(
+        accounts.configure(CLIENT, folder.clone()),
+        Err(EngineError::RootSuspended(
+            crate::RootSuspension::IdentityUnverified
+        ))
+    ));
+    assert_eq!(fs::read_dir(&local).unwrap().count(), 0);
+    fs::remove_dir(&local).unwrap();
+    fs::rename(&parked, &local).unwrap();
+    accounts.configure(CLIENT, folder.clone()).unwrap();
+    assert_eq!(
+        fs::read(local.join(".drivesync/identity.json")).unwrap(),
+        marker
+    );
+    fs::remove_file(local.join(".drivesync/identity.json")).unwrap();
+    assert!(accounts.configure(CLIENT, folder).is_err());
+    assert!(!local.join(".drivesync/identity.json").exists());
+}

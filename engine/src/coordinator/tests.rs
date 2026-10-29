@@ -171,3 +171,83 @@ fn n04_c25_root_causes_are_conservative_and_e09_item_errors_remain_unclassified(
         EngineError::DownloadConflict
     );
 }
+
+#[test]
+fn n03_revoked_local_access_does_not_probe_or_recreate_user_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let marker = f.marker();
+    let before = fs::read(f.folder.local.join(".drivesync/identity.json")).unwrap();
+    let root = open("client", &f.folder, Some(&marker)).unwrap();
+    fs::set_permissions(&f.folder.local, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = verify(&root, "client", &f.folder, Some(&marker));
+    fs::set_permissions(&f.folder.local, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        result,
+        Err(EngineError::RootSuspended(RootSuspension::LocalUnavailable))
+    );
+    assert_eq!(
+        fs::read(f.folder.local.join(".drivesync/identity.json")).unwrap(),
+        before
+    );
+    assert_eq!(fs::read_dir(&f.folder.local).unwrap().count(), 1);
+}
+
+#[test]
+fn external_registry_corruption_incompatibility_and_failed_updates_preserve_evidence() {
+    let f = Fixture::new();
+    let marker = f.marker();
+    f.registry()
+        .suspend("client", &f.folder, Some(RootSuspension::Offline))
+        .unwrap();
+    let db = f.base.join("app/roots.sqlite3");
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_availability BEFORE UPDATE ON bindings BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
+    assert_eq!(
+        f.registry().suspend("client", &f.folder, None),
+        Err(EngineError::StateStorage)
+    );
+    assert_eq!(
+        f.registry().reason("client", &f.folder).unwrap(),
+        Some(RootSuspension::Offline)
+    );
+    assert_eq!(
+        f.registry().marker("client", &f.folder).unwrap(),
+        Some(marker)
+    );
+    connection.pragma_update(None, "user_version", 99).unwrap();
+    drop(connection);
+    let before = fs::read(&db).unwrap();
+    assert!(Roots::open(&db).is_err());
+    assert_eq!(fs::read(&db).unwrap(), before);
+    fs::write(&db, b"corrupt registry").unwrap();
+    assert!(Roots::open(&db).is_err());
+    assert_eq!(fs::read(&db).unwrap(), b"corrupt registry");
+}
+
+#[test]
+fn concurrent_binding_cannot_accept_a_different_marker() {
+    let f = Fixture::new();
+    // Initialize the file first; workers race on a new scope, not schema creation.
+    let mut other = f.folder.clone();
+    other.remote.id = "second-root".into();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let mut workers = Vec::new();
+    for marker in ["one", "two"] {
+        let path = f.base.join("app/roots.sqlite3");
+        let folder = other.clone();
+        let barrier = barrier.clone();
+        workers.push(std::thread::spawn(move || {
+            let registry = Roots::open(&path).unwrap();
+            barrier.wait();
+            registry.bind("client", &folder, marker).map(|()| marker)
+        }));
+    }
+    let outcomes: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+    assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
+    let winner = outcomes.into_iter().find_map(Result::ok).unwrap();
+    assert_eq!(
+        f.registry().marker("client", &other).unwrap().as_deref(),
+        Some(winner)
+    );
+}

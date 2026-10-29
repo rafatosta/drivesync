@@ -72,6 +72,14 @@ impl Remote for Provider<'_> {
     }
     fn validate_parent(&mut self, parent: &str) -> Result<(), EngineError> {
         self.configured()?;
+        self.access(|t| crate::remote::writable_root(t, parent))
+            .map_err(|error| {
+                if parent == self.folder.remote.id {
+                    crate::coordinator::remote(error)
+                } else {
+                    error
+                }
+            })?;
         let mut current = parent.to_string();
         let mut seen = std::collections::HashSet::new();
         while current != self.folder.remote.id {

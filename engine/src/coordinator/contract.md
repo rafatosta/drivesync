@@ -40,3 +40,12 @@ não prometer rollback remoto nem ausência absoluta de efeitos durante revogaç
 Descritores locais mantêm identidade durante renomeações, mas não são sinal
 universal de montagem: reabrir o caminho e comparar sua identidade durante o ciclo,
 conforme [open/openat](https://man7.org/linux/man-pages/man2/open.2.html).
+
+A verificação de acesso local usa `faccessat` relativo ao descritor com IDs efetivos,
+sem arquivo de sondagem. É uma observação, não uma autorização duradoura; ACLs,
+read-only mounts e revogação posterior ainda podem causar falha no efeito. Nenhuma
+falha permite fallback para outro caminho.
+A raiz Drive exige `capabilities.canListChildren == true`; upload exige também
+`canAddChildren == true` no pai efetivo, sem exigir escrita em ancestrais apenas
+percorridos. Campo ausente não é permissão concedida. Referência:
+[Files capabilities](https://developers.google.com/workspace/drive/api/reference/rest/v3/files).

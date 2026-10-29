@@ -16,7 +16,7 @@ pub(crate) use changes::{change_page, change_start, Change, ChangePage};
 mod errors;
 pub(crate) use errors::response_status as upload_response_status;
 pub(crate) use inventory::decode_item as decode_upload_item;
-pub(crate) use inventory::valid_workspace_link;
+pub(crate) use inventory::{valid_workspace_link, writable_root};
 mod folders;
 mod inventory;
 mod media;

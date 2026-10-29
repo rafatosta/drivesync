@@ -174,7 +174,7 @@ fn errors_cancellation_and_limits_never_publish_partial_results() {
 #[test]
 fn resolves_root_alias_and_rejects_shared_or_mismatched_roots() {
     let body =
-        br#"{"id":"actual","mimeType":"application/vnd.google-apps.folder","trashed":false}"#;
+        br#"{"id":"actual","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#;
     assert_eq!(decode_root(body, "root").unwrap(), "actual");
     assert!(decode_root(body, "other").is_err());
     assert!(decode_root(br#"{"id":"actual","mimeType":"application/vnd.google-apps.folder","trashed":false,"driveId":"shared"}"#,"root").is_err());
@@ -247,4 +247,33 @@ fn preparation_observations_do_not_bypass_cancellation_or_provider_errors() {
         Err(EngineError::RemoteRateLimited)
     ));
     assert_eq!(observations, 1);
+}
+
+#[test]
+fn n04_c25_root_read_and_write_permissions_are_independent_and_unknown_is_blocked() {
+    for (list, add, readable, writable) in [
+        (Some(true), Some(true), true, true),
+        (Some(true), Some(false), true, false),
+        (Some(false), Some(true), false, false),
+        (None, None, false, false),
+    ] {
+        let body = serde_json::to_vec(&json!({"id":"actual","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":list,"canAddChildren":add}})).unwrap();
+        assert_eq!(decode_root_access(&body, "actual", false).is_ok(), readable);
+        assert_eq!(decode_root_access(&body, "actual", true).is_ok(), writable);
+    }
+    // Names and parent locations do not replace the stable selected identity.
+    let moved = br#"{"id":"actual","name":"Renamed","parents":["different"],"mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#;
+    assert_eq!(decode_root(moved, "actual").unwrap(), "actual");
+    for field in ["trashed", "mimeType", "id"] {
+        let mut root: serde_json::Value = serde_json::from_slice(moved).unwrap();
+        root[field] = match field {
+            "trashed" => json!(true),
+            "mimeType" => json!("text/plain"),
+            _ => json!("replacement"),
+        };
+        assert_eq!(
+            decode_root(&serde_json::to_vec(&root).unwrap(), "actual"),
+            Err(EngineError::RemoteFolderUnavailable)
+        );
+    }
 }

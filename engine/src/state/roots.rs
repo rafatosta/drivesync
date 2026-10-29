@@ -26,6 +26,11 @@ impl Roots {
             ));
         }
         self.0.0.execute("INSERT INTO bindings VALUES(?1,?2,?3,?4,?5,NULL) ON CONFLICT(client,account,remote,local) DO NOTHING", params![client,folder.account_id.0,folder.remote.id,folder.local.to_str().ok_or(EngineError::InvalidPlan)?,marker]).map_err(failed)?;
+        if self.marker(client, folder)?.as_deref() != Some(marker) {
+            return Err(EngineError::RootSuspended(
+                RootSuspension::IdentityUnverified,
+            ));
+        }
         Ok(())
     }
     pub(crate) fn marker(

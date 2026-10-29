@@ -106,6 +106,13 @@ impl Root {
         {
             return Err(unavailable());
         }
+        fs::accessat(
+            &self.file,
+            ".",
+            fs::Access::READ_OK | fs::Access::WRITE_OK | fs::Access::EXEC_OK,
+            fs::AtFlags::EACCESS,
+        )
+        .map_err(|_| unavailable())?;
         Ok(())
     }
     /// Resolves only existing safe directory components. Creation is explicit.
