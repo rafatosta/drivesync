@@ -679,3 +679,19 @@ fn n10_resumed_writer_stops_before_final_upload_publication_and_keeps_intent() {
     assert_eq!(remote.generated, 1);
     assert_eq!(remote.creates, 0);
 }
+
+#[test]
+fn source_growth_is_rejected_before_reading_beyond_the_snapshot_size() {
+    let f = Fixture::new();
+    let path = f.root.join("file");
+    fs::write(&path, b"abc").unwrap();
+    f.run(&mut Fake::default(), HashSet::new()).unwrap();
+    let op = f.uploads().load(Path::new("file")).unwrap().unwrap();
+    fs::write(&path, vec![b'x'; 2 * 1024 * 1024]).unwrap();
+    let mut file = fs::File::open(&path).unwrap();
+    assert_eq!(
+        super::local::verify_file(&mut file, &op, &Cancellation::new()),
+        Err(EngineError::StateStorage)
+    );
+    assert_eq!(std::io::Seek::stream_position(&mut file).unwrap(), 0);
+}

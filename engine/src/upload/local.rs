@@ -144,7 +144,7 @@ pub(crate) fn verify_file(
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
     let before = crate::local::Stamp::read(file)?;
-    if !file.metadata().map_err(filesystem::io)?.is_file() {
+    if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {
         return Err(EngineError::StateStorage);
     }
     let mut sha = Sha256::new();
@@ -152,11 +152,21 @@ pub(crate) fn verify_file(
     let mut size = 0;
     loop {
         check(cancel)?;
-        let n = file.read(&mut buffer).map_err(filesystem::io)?;
+        let limit = op
+            .size
+            .saturating_sub(size)
+            .saturating_add(1)
+            .min(buffer.len() as u64) as usize;
+        let n = file.read(&mut buffer[..limit]).map_err(filesystem::io)?;
         if n == 0 {
             break;
         }
-        size += n as u64;
+        size = size
+            .checked_add(n as u64)
+            .ok_or(EngineError::StateStorage)?;
+        if size > op.size {
+            return Err(EngineError::StateStorage);
+        }
         sha.update(&buffer[..n]);
     }
     if size != op.size || format!("{:x}", sha.finalize()) != op.sha {
