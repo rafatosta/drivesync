@@ -6,7 +6,8 @@ Entradas: raiz autorizada, cancelamento. Saída: inventário completo, ordenado,
 com caminhos relativos e evidências; ou erro explícito sem publicação parcial.
 Varredura limitada a 100.000 itens, sem symlinks, por descritores relativos.
 Diretórios inacessíveis invalidam a varredura; arquivos inacessíveis permanecem
-UNKNOWN. Arquivos internos são excluídos; temporários conhecidos ficam visíveis
+UNKNOWN. Arquivos internos, backups do downloader e nomes sem representação
+UTF-8 são excluídos da árvore elegível; temporários conhecidos ficam visíveis
 como pendência. Arquivos regulares recebem assinatura device/inode/tamanho/
 mtime/ctime, comparação após quiescência e SHA-256 de leitura revalidada.
 

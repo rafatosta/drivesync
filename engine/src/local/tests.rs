@@ -121,3 +121,25 @@ fn symlink_descendants_and_cancelled_scans_are_not_absence() {
         ))
     );
 }
+
+#[test]
+fn unreadable_files_are_unknown_and_unreadable_directories_fail_the_complete_scan() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Tree::new();
+    fs::write(t.0.join("file"), b"preserved").unwrap();
+    fs::set_permissions(t.0.join("file"), fs::Permissions::from_mode(0o000)).unwrap();
+    let inv = t.scan(|| Ok(()));
+    assert_eq!(inv.entries[Path::new("file")], Evidence::Unknown);
+    assert_eq!(inv.observe(Path::new("file")), LocalObservation::Unknown);
+    fs::set_permissions(t.0.join("file"), fs::Permissions::from_mode(0o600)).unwrap();
+    fs::create_dir(t.0.join("locked")).unwrap();
+    fs::write(t.0.join("locked/child"), b"preserved child").unwrap();
+    fs::set_permissions(t.0.join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+    let root = Root::open(&t.0).unwrap();
+    assert!(scan_with_wait(&root, &Cancellation::new(), || Ok(())).is_err());
+    fs::set_permissions(t.0.join("locked"), fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        fs::read(t.0.join("locked/child")).unwrap(),
+        b"preserved child"
+    );
+}

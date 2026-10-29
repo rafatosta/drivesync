@@ -910,3 +910,6 @@ mod recovery_tests;
 
 #[path = "reconciliation_tests.rs"]
 mod reconciliation_tests;
+
+#[path = "sync003_acceptance.rs"]
+mod sync003_acceptance;

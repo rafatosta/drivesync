@@ -28,8 +28,8 @@ antes do commit provoca rollback.
 
 O [planner](../planner/algorithms.md) classifica usando somente a base confirmada
 extraída do [journal](algorithms.md). A fachada combina essas bases com observação
-atual: metadados para destinos sem B e fingerprint por descritores para arquivos
-com B. O plano persistido não é autorização de escrita. O executor implementado
+atual de um inventário local completo, com estabilização e fingerprint por
+descritores para arquivos regulares. Sem B, os bytes observados não autorizam adoção. O plano persistido não é autorização de escrita. O executor implementado
 reabre/revalida destinos antes de instalar e faz replay conforme
 [download inicial](../download/execution.md) e [atualizações](../download/updates.md).
 

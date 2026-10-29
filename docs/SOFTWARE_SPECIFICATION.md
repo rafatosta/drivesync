@@ -292,7 +292,7 @@ O contrato não autoriza novas operações destrutivas nem comprova integração
 #### SYNC-003 — inventário e reconciliação
 
 Contrato de implementação autorizado pela demanda SYNC-003; o aceite depende
- dos testes e níveis de evidência abaixo, não da existência desta especificação.
+dos testes e níveis de evidência abaixo, não da existência desta especificação.
 
 - Inventariar a árvore local inteira em cada ciclo, inclusive depois de offline
   ou aplicativo fechado. Não depender de notificações para descobrir mudanças.
@@ -328,8 +328,13 @@ Aceite: C06 (mudanças offline locais/remotas/concorrentes com B reaberta), C21
 (timestamps diferentes, bytes equivalentes, revisão maior e identidade substituída)
 e N10 (temporários, gravação durante quiescência/leitura/snapshot e retomada).
 Repetição, cancelamento, falhas de persistência e isolamento devem preservar bytes
- e B. Filesystem/SQLite reais com remoto simulado são evidência local; Google
+e B. Filesystem/SQLite reais com remoto simulado são evidência local; Google
 Drive real, reinício de processo e aplicativo empacotado exigem validação própria.
+
+A implementação está em `local`, `changes`, `state/reconciliation` e nos
+executores existentes. A [matriz local de aceite](../engine/src/changes/reconciliation.md)
+liga C06/C21/N10 aos testes determinísticos. O aceite com Drive real e o aplicativo
+empacotado permanecem pendentes; executar ferramentas no SDK não os substitui.
 
 ### 4.8 Pausa, retomada e execução em segundo plano
 
@@ -648,11 +653,11 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 
 | Área | Comportamento existente e referência | Lacuna frente à especificação |
 | --- | --- | --- |
-| Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | É uma classificação parcial do fluxo download-only: ausência remota, exclusões, equivalência de conteúdo entre revisões na classificação e a cobertura integral de RF-CON-01–02 continuam sem implementação/aceite. |
+| Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | [SYNC-003](../engine/src/changes/reconciliation.rs) integra inventário local completo, diagnóstico de indisponibilidade remota e equivalência forte para mudanças concorrentes do mesmo objeto com B. Exclusões, atualização remota e cobertura integral de RF-CON-01–02 continuam sem aceite completo. |
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
 | Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
-| Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
-| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Classificação geral, persistência de pendências e resolução assistida permanecem planejadas. |
+| Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
+| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Diagnósticos restritos e pendências de SYNC-003 existem em `changes` e no banco de reconciliação; resolução assistida e a matriz geral de conflitos permanecem planejadas. |
 | Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
 
 RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
@@ -671,7 +676,7 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
 - **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
 
-A classificação inicial de B/L/R está implementada no planejador do fluxo download-only com leitura de fingerprint sem seguir symlinks e sem efeitos de escrita. O journal de downloads já fornece a confirmação durável usada como B; não há migração de schema. Preservação e execução bidirecionais, reconciliação de estado perdido, interface e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
+A classificação B/L/R do fluxo download-only usa inventário local com estabilização e fingerprint sem seguir symlinks. SYNC-003 acrescenta equivalência forte revalidada, observações persistidas separadamente de B e apresentação de pendências na interface existente. O journal de downloads fornece B somente após confirmação durável. Preservação e execução bidirecionais, reconstrução de B perdida, resolução assistida e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
 
 ### 12.4 Política de mudanças da especificação
 
