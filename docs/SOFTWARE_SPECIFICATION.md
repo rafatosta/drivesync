@@ -243,8 +243,10 @@ completa apenas por essa cobertura local.
 #### Contrato de identidade — SYNC-002
 
 **Estado: contrato acordado; implementação parcial no fluxo de download.**
-I01–I24 possuem verificadores locais específicos; I25–I28 mantêm variantes a
-completar. Execuções e resultados pertencem aos commits/PR, não a esta seção. Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
+I01–I28 possuem verificadores locais para o recorte acordado. A variante de I20
+com proveniência explícita não se aplica à interface atual. A auditoria de aceite
+é separada da existência dos testes; execuções e resultados pertencem aos
+commits/PR, não a esta seção. Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
 O recorte é download de binários com remoto falso, filesystem/SQLite reais e
 reabertura entre ciclos. Não exige upload, propagação de exclusões, resolução
 assistida ou execução geral de movimentos. Complementa RF-SYNC-01–05,

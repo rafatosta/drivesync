@@ -40,9 +40,9 @@ Abreviações: **B** = [baseline_tests.rs](../baseline_tests.rs), **D** =
 [restoration_tests.rs](../restoration_tests.rs), **T** =
 [concurrency_tests.rs](../concurrency_tests.rs), **K** =
 [recovery_tests.rs](../recovery_tests.rs).
-A coluna final define o complemento necessário ao oráculo, não um resultado de execução.
+A coluna final define variantes e oráculos exigidos, não resultados de execução.
 
-| Caso | Teste existente relacionado | Variantes e complemento exigidos |
+| Caso | Teste existente relacionado | Variantes e oráculos exigidos |
 | --- | --- | --- |
 | I01 | I `i01_continuity_reopens_without_media_or_identity_changes` | Confirmar continuidade de vínculo e identidade, reabrir/repetir sem mídia, instalação ou backup redundantes. |
 | I02 | I `i02_content_edit_retains_identity_and_confirmed_base` | Comprovar mesmo device/inode e hash diferente; motivo de conteúdo, não substituição; B intacta. |
@@ -68,10 +68,10 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
 | I22 / C05 | T `i22_equal_and_different_byte_swaps_invalidate_plans_and_installation` | Troca após plano e durante streaming, bytes iguais/diferentes; identidade divergente impede instalação mesmo com plano antigo. |
 | I23 / C05 | T `i23_revision_removal_and_new_homonym_during_media_cannot_change_planned_identity` | Revisão muda, ID desaparece, homônimo novo aparece; conferir IDs consultados e impedir troca por nome/instalação sob revisão errada. |
 | I24 | T `i24_unavailability_then_local_or_remote_substitution_revalidates_the_old_base` | Indisponibilidade → substituição local/remota → retorno; reconciliar com B, sem inferir exclusão nem adoção. |
-| I25 | B `cancellation_during_initial_or_update_transfer_does_not_confirm_partial_bytes`; B `later_incomplete_transfer_masks_old_base_until_verified_recovery` | Interrupção/cancelamento no streaming e após staging; nenhuma nova identidade/B confirmada, reabrir/repetir. |
+| I25 | K `i25_incomplete_stream_and_verified_staging_never_confirm_a_base` | Interrupção/cancelamento no streaming e após staging; nenhuma nova identidade/B confirmada, reabrir/repetir. |
 | I26 | K `i26_actual_effect_without_confirmation_replays_only_the_verified_identity` | Efeito sem confirmação, replay normal/com substituto; comprovar identidade/bytes antes de confirmar, preservar substituto e evidenciar pendência. |
-| I27 | B `corrupt_database_or_malformed_installation_evidence_stops_before_effects`; B `unreadable_database_is_an_error_and_is_not_reinitialized`; B `installed_phase_without_remote_revision_is_not_a_confirmed_base` | SQLite corrompido/incompatível e identidade incompleta; erro ou B desconhecida, sem reset/adotar por hash. Auditar validação de device/inode além de hash/revisão. |
-| I28 | E `restart_no_changes_local_deletion_and_local_edit_are_reconciled`; E `historical_activity_never_suppresses_a_current_local_conflict` | Repetir após substituições/colisões/restaurações; duplicar/reordenar eventos, não ressuscitar associação, gerar backups extras ou perder pendências. |
+| I27 | K `i27_corrupt_incompatible_and_incomplete_state_never_resets_or_authorizes_media` | SQLite corrompido/incompatível e identidade incompleta; erro ou B desconhecida, sem reset/adotar por hash. Identidade incompleta não autoriza ação, além das verificações de hash/revisão. |
+| I28 | K `i28_duplicate_and_stale_events_preserve_bindings_after_conflict_history_and_replay` | Repetir após substituições/colisões/restaurações; duplicar/reordenar eventos, não ressuscitar associação, gerar backups extras ou perder pendências. |
 
 ## Contrato de diagnóstico e limites
 
@@ -112,8 +112,21 @@ A coluna final define o complemento necessário ao oráculo, não um resultado d
   diferentes mantêm B ausente, journal pendente e todas as cópias intactas, com
   conflito explícito e sem mídia adicional. Não reconstrói fase pendente a partir
   de uma instalação confirmada para demonstrar essa janela.
-- I25/I27/I28 continuam sujeitos às variantes do catálogo; testes relacionados não
-  representam conclusão automática dessas baterias.
+- I25 cruza instalação inicial/atualização com erro de leitura, cancelamento em
+  streaming, cancelamento na verificação e recusa SQLite de Ready/UpdateReady
+  após staging verificado. Nenhum caso confirma B; nova tentativa válida pode
+  concluir e repetir sem mídia, backups ou alterações de journal adicionais.
+- I27 preserva banco corrompido/incompatível e registros com identidade/hash
+  incompletos. Ausência de inode gera erro de estado; inode zero não oferece
+  evidência utilizável ao planner e mantém diagnóstico desconhecido. O teste
+  distingue gravações permitidas de observação de confirmação indevida de B.
+- I28 reabre cursor, plano e journal após troca local, colisão, conteúdo histórico,
+  troca de ID remoto e efeito sem confirmação com destino substituído. Entrega
+  eventos duplicados/antigos em ordens distintas; regressão rejeitada não avança
+  cursor, e os vínculos confirmados/pendentes, bytes/inodes e backups permanecem.
+  Um ID antigo pode reaparecer como observação ambígua, nunca como nova instalação;
+  uma reconciliação explícita com inventário atual remove essa observação sem
+  adotar outro ID. Não se afirma política automática de rescan por ambiguidade.
 - Para I20, aplicar RF-ID-06: não há proveniência explícita de restauração no
   inventário atual. Histórico de hashes prova conteúdo conhecido, não intenção.
   A variante com prova não é aplicável à interface atual; a ausência de prova

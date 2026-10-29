@@ -290,8 +290,8 @@ impl Session<'_> {
             }
             return Ok(Outcome::Recovered);
         }
-        // The backup proves cutover started. An occupied destination that did
-        // not match the installed effect is a concurrent entry, not bad staging.
+        // An occupied backup path and an unrecognized destination must remain
+        // untouched. Check before staging, which an installed effect may consume.
         if backup_exists && filesystem::exists(&parent, &name)? {
             return Err(EngineError::DownloadConflict);
         }
