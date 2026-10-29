@@ -698,6 +698,13 @@ Esta especificação deve concentrar a definição vigente do produto. Documento
 
 ### Proteção de disponibilidade de raízes — SYNC-004
 
+O escopo de aceite desta entrega é offline: decisões e efeitos com provedor
+remoto simulado, filesystem e SQLite reais isolados, falhas determinísticas,
+reabertura de estado e idempotência. Segue a separação de evidências das entregas
+locais SYNC-001/SYNC-003. Testes Google, desmontagem física, reinício real do
+aplicativo, portal instalado e leitor de tela são validações posteriores; não são
+pré-condição do aceite offline nem recebem aceite por simulação.
+
 Uma associação existente exige marcador local previamente vinculado ao cliente,
 conta e ID remoto. O caminho existir ou estar vazio não prova identidade. A
 verificação de uma associação existente não cria marcador, banco ou arquivo de

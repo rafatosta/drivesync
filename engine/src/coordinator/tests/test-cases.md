@@ -1,5 +1,17 @@
 # Disponibilidade e suspensão de raízes — SYNC-004
 
+## Escopo de aceite da entrega
+
+O aceite atual de SYNC-004 é offline, seguindo a separação adotada em SYNC-001 e
+SYNC-003: provedor Google simulado, filesystem e SQLite reais em diretórios
+temporários, injeção determinística de falhas, reabertura de estado e repetição.
+Não exige conta Google, credenciais nem acesso à internet. A execução opcional de
+fixtures GTK também é local e usa perfil isolado.
+
+A bateria real ao final é uma etapa futura fora deste aceite offline. Sua ausência
+não bloqueia a entrega local nem transforma simulações em evidência de Google,
+desmontagem física, reinício real de processo ou empacotamento instalado.
+
 ## Oráculos locais
 
 Fixtures usam diretórios temporários e SQLite reais, sem conta ou rede Google.
@@ -9,7 +21,7 @@ não instalados. Falha após efeito externo mantém journal para reconciliação
 | Cenário | Fixture/evento e resultado obrigatório | Testes |
 | --- | --- | --- |
 | N03 / vazio versus ausente | Raiz válida vazia permite inventário vazio; caminho ausente não é recriado; substituto vazio não recebe marcador ou arquivos. Repor a raiz original permite nova verificação. | `coordinator::tests::n03_empty_is_available_but_absent_or_replaced_volume_never_becomes_empty_inventory` |
-| N03 / identidade | Retirar/corromper/trocar marcador, trocar cliente ou perder vínculo externo bloqueia acesso sem recriação; reconfigurar associação existente não recria marcador perdido. | `coordinator::tests::missing_corrupt_foreign_and_replaced_markers_do_not_rebind_or_write`; `accounts::tests::configured_root_cannot_be_reinitialized_after_volume_or_marker_loss` |
+| N03 / identidade | Retirar/corromper/trocar marcador, trocar cliente ou perder vínculo externo bloqueia acesso sem recriação; reconfigurar associação existente não recria marcador perdido. | `coordinator::tests::missing_corrupt_foreign_and_replaced_markers_do_not_rebind_or_write`; `accounts::tests::configured_root_cannot_be_reinitialized_after_volume_or_marker_loss`; `accounts::tests::missing_external_binding_does_not_recreate_a_saved_pairs_missing_marker` |
 | N03 / acesso e concorrência | Revogar acesso de escrita sem modificar conteúdo; segundo ciclo recebe `SyncBusy`; substituição ou revogação durante leitura impede escrever até em staging já aberto. | `coordinator::tests::n03_revoked_local_access_does_not_probe_or_recreate_user_files`; `download::tests::concurrency_tests::n03_*` |
 | N04 / C25 | Capacidade de listar deve ser explícita; mover/renomear conservando ID e acesso não troca associação. Lixeira, tipo/ID divergente ou acesso desconhecido impedem trabalho. Escrita exige capacidade no pai efetivo. | `remote::inventory::tests::n04_c25_root_read_and_write_permissions_are_independent_and_unknown_is_blocked` |
 | N04 / C25 durante download | Revogar raiz durante leitura interrompe ciclo, preserva conteúdo anterior e fase incompleta; repetir bloqueado não cria novas operações; restaurar acesso permite reconciliação. | `download::tests::concurrency_tests::n04_c25_revoked_root_during_media_stops_without_confirming_or_touching_other_items` |
@@ -27,7 +39,7 @@ os de upload em [tests.rs](../../upload/tests.rs) e os gates em [tests.rs](../te
 Resultados de execução e comandos pertencem aos commits; esta matriz define
 rastreabilidade, não substitui a evidência de cada ambiente.
 
-## Bateria real adicional — pendente até execução específica
+## Bateria real futura — fora do aceite offline atual
 
 Usar conta/perfil e pastas exclusivamente de teste, com arquivos dispensáveis.
 Registrar IDs, hashes locais/remotos, motivo apresentado, baseline/journal antes e
