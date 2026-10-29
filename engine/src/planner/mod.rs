@@ -49,6 +49,9 @@ pub enum PlanAction {
     Download,
     CreateLink,
     NoOp,
+    /// Verified equal bytes with B and continuous identity; execution is read-only
+    /// and independently revalidates both versions without advancing B.
+    Equivalent,
     CreateDirectory,
     Blocked(ConflictReason),
     DeferredUnknown,

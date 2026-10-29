@@ -35,6 +35,8 @@ pub struct DownloadReport {
     pub issues: Vec<DownloadIssue>,
     /// Historical path activity, independent of actionable download failures.
     pub previous_paths: Vec<PreviousPath>,
+    /// Pre-execution observations; these are not confirmation that planned work ran.
+    pub reconciliation: Vec<crate::ReconciliationEntry>,
 }
 /// Current item stage. Receiving bytes, installing binaries, and linking remote
 /// Workspace documents are reported as separate operations.

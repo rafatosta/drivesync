@@ -1,5 +1,7 @@
 //! Manual binary downloads and managed updates with preserved prior versions.
+mod equivalence;
 mod execution;
+pub(crate) use equivalence::content_fingerprint;
 pub(crate) mod filesystem;
 mod links;
 mod models;

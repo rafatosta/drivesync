@@ -331,16 +331,25 @@ impl DriveSyncEngine {
         }
         let local_root = crate::download::filesystem::Root::open(&folder.local)?;
         let local = crate::local::scan(&local_root, cancel)?;
-        let mut checked = 0;
-        preparation(crate::PreparationProgress::CheckingLocal { checked });
-        let plan =
-            crate::planner::plan_with_bases(inventory, &folder.local, &bases, |_, path, _| {
-                checked += 1;
-                if checked % 128 == 0 {
-                    preparation(crate::PreparationProgress::CheckingLocal { checked });
-                }
-                Ok(local.observe(path))
-            })?;
+        preparation(crate::PreparationProgress::CheckingLocal {
+            checked: local.entries.len(),
+        });
+        let plan = crate::changes::prepare(
+            inventory,
+            &folder.local,
+            &bases,
+            &local,
+            &mut source,
+            cancel,
+        )?;
+        let mut history = checkpoint.notices.clone();
+        for operation in store.operations(&config.client_id, &plan)? {
+            history.push(crate::changes::Notice {
+                id: operation.item.id,
+                path: Some(operation.relative),
+            });
+        }
+        let reconciliation = crate::changes::classify(&local, &plan, &history);
         preparation(crate::PreparationProgress::SavingState);
         if self.saved_folder(id)?.as_ref() != Some(&folder) {
             return Err(EngineError::InvalidPlan);
@@ -380,6 +389,7 @@ impl DriveSyncEngine {
             checkpoints.save(&scope, Some(&revision), &refreshed, cancel)?;
             checkpoint = refreshed;
         }
+        report.reconciliation = reconciliation;
         report.previous_paths = crate::changes::previous_paths(&checkpoint)?;
         Ok(report)
     }

@@ -27,4 +27,6 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** CHANGES-002 implementado para ciclos manuais de download; ver [contrato executável e oráculos](incremental.md). CHANGES-001 (monitoramento local) permanece rascunho.
+**Estado:** CHANGES-002 implementado para ciclos manuais de download; ver [contrato executável e oráculos](incremental.md). SYNC-003 combina inventário local completo, plano B/L/R e equivalência forte em
+`reconciliation.rs`/`equivalence.rs`. Monitoramento local contínuo permanece proposta;
+a correção dos ciclos não depende de eventos.

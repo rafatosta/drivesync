@@ -907,3 +907,6 @@ mod concurrency_tests;
 
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[path = "reconciliation_tests.rs"]
+mod reconciliation_tests;
