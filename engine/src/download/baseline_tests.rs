@@ -3,9 +3,16 @@ use super::*;
 use crate::{ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation};
 
 /// Reopens durable state and uses fresh descriptor-based evidence as the facade does.
-fn prepare(f: &Fixture, inv: &RemoteInventory) -> Result<DownloadPlan, EngineError> {
+pub(super) fn prepare(f: &Fixture, inv: &RemoteInventory) -> Result<DownloadPlan, EngineError> {
+    prepare_client(f, inv, "client")
+}
+pub(super) fn prepare_client(
+    f: &Fixture,
+    inv: &RemoteInventory,
+    client: &str,
+) -> Result<DownloadPlan, EngineError> {
     let mut store = Store::open(&f.db())?;
-    let bases = store.confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)?;
+    let bases = store.confirmed_bases(client, &inv.account_id, &inv.root_id, &f.root)?;
     let plan = crate::planner::plan_with_bases(inv, &f.root, &bases, |_, path, base| {
         let observed = crate::planner::observe(&f.root, path);
         if base.is_some() && observed == LocalObservation::UnmanagedFile {
@@ -18,26 +25,34 @@ fn prepare(f: &Fixture, inv: &RemoteInventory) -> Result<DownloadPlan, EngineErr
             Ok(observed)
         }
     })?;
-    store.save("client", inv, &plan, &Cancellation::new())?;
+    store.save(client, inv, &plan, &Cancellation::new())?;
     Ok(plan)
 }
-fn base(f: &Fixture, inv: &RemoteInventory) -> Option<ConfirmedBase> {
+pub(super) fn base(f: &Fixture, inv: &RemoteInventory) -> Option<ConfirmedBase> {
     Store::open(&f.db())
         .unwrap()
         .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
         .unwrap()
         .remove(&inv.entries[0].id)
 }
-fn cycle(
+pub(super) fn cycle(
     f: &Fixture,
     inv: &RemoteInventory,
     source: &mut Fake,
 ) -> Result<DownloadReport, EngineError> {
-    let plan = prepare(f, inv)?;
+    cycle_client(f, inv, source, "client")
+}
+pub(super) fn cycle_client(
+    f: &Fixture,
+    inv: &RemoteInventory,
+    source: &mut Fake,
+    client: &str,
+) -> Result<DownloadReport, EngineError> {
+    let plan = prepare_client(f, inv, client)?;
     let store = Store::open(&f.db())?;
     run(
         Context {
-            client: "client",
+            client,
             scope: &plan,
             store: &store,
             cancel: &Cancellation::new(),
@@ -52,7 +67,7 @@ fn changed(inv: &RemoteInventory) -> (RemoteInventory, Fake) {
     next.entries[0].version = Some(2);
     next.entries[0].md5_checksum = Some("4ed9407630eb1000c0f6b63842defa7d".into());
     let mut source = Fake::new(&next);
-    source.bytes = b"def".to_vec();
+    source.content.insert("file".into(), b"def".to_vec());
     (next, source)
 }
 
@@ -271,7 +286,10 @@ fn filesystem_effect_without_confirmation_never_exposes_old_or_new_base() {
             cycle(&f, &next, &mut source).unwrap_err(),
             EngineError::StateStorage
         );
-        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), source.bytes);
+        assert_eq!(
+            fs::read(f.root.join("file.txt")).unwrap(),
+            source.content["file"]
+        );
         assert!(base(&f, &next).is_none());
         conn.execute_batch("DROP TRIGGER fail_confirm").unwrap();
         drop(conn);
@@ -314,7 +332,7 @@ fn inode_replacement_and_foreign_scopes_never_inherit_write_authority() {
         let mut source = Fake::new(&inv);
         for _ in 0..2 {
             let expected = if scope == 0 {
-                ConflictReason::LocalChanged
+                ConflictReason::LocalIdentityChanged
             } else {
                 ConflictReason::ExistingLocalData
             };

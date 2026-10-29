@@ -240,6 +240,55 @@ identifica arquivos, testes e limites por cenário. **Aceite real:** a bateria
 com Google Drive real permanece pendente; nenhum requisito recebe validação
 completa apenas por essa cobertura local.
 
+#### Contrato de identidade — SYNC-002
+
+**Estado: contrato acordado; implementação parcial no fluxo de download.**
+I01–I28 possuem verificadores locais para o recorte acordado. A variante de I20
+com proveniência explícita não se aplica à interface atual. A auditoria de aceite
+é separada da existência dos testes; execuções e resultados pertencem aos
+commits/PR, não a esta seção. Origem: [issue #2 e proposta I01–I28](https://github.com/rafatosta/drivesync/issues/2#issuecomment-6483197201).
+O recorte é download de binários com remoto falso, filesystem/SQLite reais e
+reabertura entre ciclos. Não exige upload, propagação de exclusões, resolução
+assistida ou execução geral de movimentos. Complementa RF-SYNC-01–05,
+RF-CON-02 e RF-REC; os oráculos e vínculos com testes estão no
+[catálogo I01–I28](../engine/src/download/tests/identity-test-cases.md).
+
+| ID | Requisito e critério observável |
+| --- | --- |
+| RF-ID-01 | Comparar separadamente identidade local (device/inode), conteúdo (SHA-256), localização (caminho e ancestralidade) e revisão remota. Mesmo objeto local com bytes diferentes é alteração de conteúdo; device/inode diferente é divergência de identidade, inclusive com bytes iguais. Expor motivo verificável, isolado ou combinado com mudança remota, sem exigir nomes específicos de enums (I02–I04/I17/I22). |
+| RF-ID-02 | B pertence a cliente OAuth, conta, raízes e ID remoto. Outro ID não herda B nem autorização, mesmo com nome/pai/hash iguais. Evidência ausente ou inválida não é ausência de arquivo. Observação e transferência incompleta não confirmam vínculo (I01/I05/I08–I09/I25–I27). |
+| RF-ID-03 | Preservar IDs homônimos e bloquear o caminho ambíguo e descendentes, sem mídia nem avanço de B nesses itens. Resultado independente de ordem/paginação; caminhos distintos não colidem apenas por nome. Reavaliar após desfazer colisão sem adotar o objeto restante pelo caminho (I10–I14). |
+| RF-ID-04 | Mesmo ID com caminho novo conserva sua associação e produz diagnóstico de localização anterior/atual. Preservar origem e destino ocupado; não transferir ao destino uma autorização baseada apenas no caminho anterior. Recebimento no destino livre pode seguir o contrato de instalação inicial, com nova confirmação durável; não implica mover/apagar a origem (I07). |
+| RF-ID-05 | Bytes históricos no mesmo ID e revisão atual maior representam nova alteração remota, elegível à atualização segura se L permanece íntegro. Novo ID representa outro objeto. Restauração local deve distinguir conteúdo alterado e identidade substituída; revisão regressiva/zero/ausente suspende ação como desconhecida/inconsistente (I15–I19). |
+| RF-ID-06 | Não afirmar intenção de restauração por hash, timestamp ou regressão de revisão. Sem proveniência explícita, registrar alteração observável e sua causa ou pendência por evidência insuficiente. Essa incerteza sobre intenção não bloqueia, por si só, uma atualização segura do mesmo objeto com revisão maior. A variante de restauração comprovada depende de suporte explícito a essa evidência; não exige construir serviço de histórico nesta entrega (I20). |
+| RF-ID-07 | Revalidar escopo, identidade, conteúdo e revisão antes dos efeitos e no replay. Preservar substitutos concorrentes, versões anteriores e B confirmada; confirmar somente efeito demonstrado. Indisponibilidade não significa exclusão; repetição/eventos antigos não ressuscitam vínculo nem duplicam efeitos. Estado restaurado exige confronto com evidências atuais (I21–I28). |
+
+**Limites da evidência:** device/inode não é identidade eterna. Reutilização pode
+ocorrer; igualdade desse par e dos bytes não prova continuidade universal.
+Os testes de substituição devem manter o original vivo em outro caminho e
+comprovar a diferença de identidade. Se banco, arquivos e demais vestígios
+observáveis forem revertidos juntos a um estado consistente, este recorte não
+promete detectar o rollback sem âncora independente.
+
+**Restauração comprovável (I20):** requer evidência de origem explícita, vinculada
+ao objeto/escopo, à versão histórica de origem e à versão/efeito atual, com
+proveniência verificável. O journal de downloads comprova instalações passadas,
+mas a repetição de um hash não comprova a operação de restauração. A interface
+atual de inventário não fornece essa proveniência. Se tal suporte for introduzido,
+seu contrato de aquisição e validação precisa ser especificado antes de alegar
+restauração comprovada. Neste recorte, testar obrigatoriamente a ausência de
+prova, sem fabricar uma indicação de restauração no falso provedor sem consumidor
+real correspondente.
+
+**Implementação e limites:** o planner separa divergência de device/inode
+(`LocalIdentityChanged`/`ConcurrentIdentityChanges`) de alteração de bytes no
+mesmo objeto (`LocalChanged`/`ConcurrentChanges`). Fingerprint incompleta é
+`DeferredUnknown`; tipo incompatível é `LocalTypeMismatch`. Esses motivos são
+verificáveis no plano persistido, sem prometer sua apresentação na GUI. O fluxo
+incremental expõe localização anterior/atual e permite receber em destino livre
+preservando a origem. O relatório de execução pode manter `DownloadConflict`.
+O contrato não autoriza novas operações destrutivas nem comprova integração real.
+
 ### 4.8 Pausa, retomada e execução em segundo plano
 
 ### 4.9 Tratamento de conflitos e exclusões

@@ -106,7 +106,7 @@ fn observed_update_survives_failed_transfer_and_retries_without_another_event() 
     newer.version = Some(2);
     newer.md5_checksum = Some("4ed9407630eb1000c0f6b63842defa7d".into());
     source.entries.insert(newer.id.clone(), newer.clone());
-    source.bytes = b"def".to_vec();
+    source.content.insert("file".into(), b"def".to_vec());
     source.fail_stream = true;
     feed.events.push(Change {
         id: newer.id.clone(),
@@ -309,5 +309,145 @@ fn historical_activity_never_suppresses_a_current_local_conflict() {
             b"my own data"
         );
         assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+    }
+}
+
+#[test]
+fn i07_same_id_path_changes_preserve_association_and_occupied_destinations() {
+    for moved in [false, true] {
+        for occupied in [false, true] {
+            let f = Fixture::new();
+            let inv = inventory();
+            let mut feed = Feed {
+                inventory: inv.clone(),
+                events: vec![],
+                scans: 0,
+            };
+            let mut source = Fake::new(&inv);
+            cycle(&f, &mut feed, &mut source).unwrap();
+            let original_base = super::baseline_tests::base(&f, &inv).unwrap();
+            let original_identity = filesystem::fingerprint(
+                &f.root,
+                std::path::Path::new("file.txt"),
+                &Cancellation::new(),
+            )
+            .unwrap();
+            let mut current = inv.entries[0].clone();
+            let destination = if moved {
+                "folder/renamed.txt"
+            } else {
+                "renamed.txt"
+            };
+            if moved {
+                let folder = InventoryEntry {
+                    id: "folder".into(),
+                    parent_id: "root".into(),
+                    name: "folder".into(),
+                    mime_type: "application/vnd.google-apps.folder".into(),
+                    version: Some(1),
+                    size: None,
+                    md5_checksum: None,
+                    web_view_link: None,
+                    kind: InventoryKind::Folder,
+                };
+                current.parent_id = "folder".into();
+                source.entries.insert("folder".into(), folder.clone());
+                feed.events.push(Change {
+                    id: "folder".into(),
+                    removed: false,
+                    item: Some(folder),
+                });
+                fs::create_dir(f.root.join("folder")).unwrap();
+            }
+            current.name = "renamed.txt".into();
+            current.version = Some(2);
+            if occupied {
+                fs::write(f.root.join(destination), b"USER-DATA").unwrap();
+            }
+            source.entries.insert("file".into(), current.clone());
+            feed.events.push(Change {
+                id: "file".into(),
+                removed: false,
+                item: Some(current),
+            });
+            feed.inventory.entries = source.entries.values().cloned().collect();
+            for _ in 0..2 {
+                let (report, checkpoint) = cycle(&f, &mut feed, &mut source).unwrap();
+                assert!(report.previous_paths.contains(&crate::PreviousPath {
+                    previous_path: Some("file.txt".into()),
+                    current_path: Some(destination.into()),
+                }));
+                assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+                assert_eq!(
+                    filesystem::fingerprint(
+                        &f.root,
+                        std::path::Path::new("file.txt"),
+                        &Cancellation::new()
+                    )
+                    .unwrap(),
+                    original_identity
+                );
+                assert!(report.preserved_copies.is_empty());
+                let diagnostic = super::baseline_tests::prepare(&f, &checkpoint.inventory).unwrap();
+                let expected = if occupied {
+                    PlanAction::Blocked(crate::ConflictReason::ConcurrentIdentityChanges)
+                } else {
+                    PlanAction::NoOp
+                };
+                assert_eq!(
+                    diagnostic
+                        .entries
+                        .iter()
+                        .find(|entry| entry.remote_id == "file")
+                        .unwrap()
+                        .action,
+                    expected
+                );
+                let persisted = Store::open(&f.db())
+                    .unwrap()
+                    .load("client", &inv.account_id, &inv.root_id, &f.root)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    persisted
+                        .entries
+                        .iter()
+                        .find(|entry| entry.remote_id == "file")
+                        .unwrap()
+                        .action,
+                    expected
+                );
+                assert!(checkpoint
+                    .inventory
+                    .entries
+                    .iter()
+                    .any(|e| e.id == "file" && e.name == "renamed.txt"));
+                let bases = Store::open(&f.db())
+                    .unwrap()
+                    .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+                    .unwrap();
+                if occupied {
+                    assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+                    assert_eq!(fs::read(f.root.join(destination)).unwrap(), b"USER-DATA");
+                    assert_eq!(bases["file"], original_base);
+                    assert_eq!(source.media_ids, ["file"]);
+                } else {
+                    assert!(report.issues.is_empty());
+                    assert_eq!(fs::read(f.root.join(destination)).unwrap(), b"abc");
+                    assert_eq!(bases["file"].remote_version, 2);
+                    assert_eq!(
+                        bases["file"].local_fingerprint,
+                        filesystem::fingerprint(
+                            &f.root,
+                            std::path::Path::new(destination),
+                            &Cancellation::new()
+                        )
+                        .unwrap()
+                        .unwrap()
+                    );
+                    assert_eq!(source.media_ids, ["file", "file"]);
+                }
+            }
+        }
     }
 }

@@ -61,7 +61,12 @@ confirmar Updated. Destino ausente + backup intacto + staging novo intacto:
 revalidar remoto/configuração e concluir. Destino antigo intacto + staging intacto
 + backup ausente: revalidar e retomar. Se o remoto mudou, restaurar primeiro o
 backup quando necessário, marcar UpdateAbandoned e exigir novo ciclo. Um destino
-inesperado ou backup divergente é conflito; manter todas as cópias. Updating sem
+inesperado ou backup divergente é conflito; manter todas as cópias. No replay,
+se o backup existe e o destino ocupado não corresponde à identidade/hash do
+novo efeito, retornar conflito antes de tentar usar staging. Isso também cobre
+staging já consumido pela instalação sem confirmação SQLite e substituto com
+bytes iguais, sem confundir troca de identidade com falha de integridade.
+Updating sem
 UpdateReady não autoriza mover o destino. Updated fornece a nova base para o
 ciclo seguinte; o backup não é pré-condição para verificar essa nova base.
 

@@ -13,6 +13,12 @@ A tabela acima é um catálogo genérico. Para a cobertura local implementada,
 consultar a [matriz do eixo B/L/R](../../state/preparation.md#rastreabilidade-das-regras-do-eixo-1);
 para o aceite com serviço real, seguir as baterias abaixo.
 
+## Aceite local de identidade — SYNC-002
+
+Consultar os [oráculos I01–I28](identity-test-cases.md), vinculados ao contrato
+RF-ID-01–07 na especificação. O catálogo distingue verificadores
+existentes de variantes necessárias e não representa testes aprovados.
+
 ## Baterias com Google Drive real
 
 **Estado: pendentes de execução.** Este roteiro define o que demonstrar; não é

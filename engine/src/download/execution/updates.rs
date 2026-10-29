@@ -290,6 +290,11 @@ impl Session<'_> {
             }
             return Ok(Outcome::Recovered);
         }
+        // An occupied backup path and an unrecognized destination must remain
+        // untouched. Check before staging, which an installed effect may consume.
+        if backup_exists && filesystem::exists(&parent, &name)? {
+            return Err(EngineError::DownloadConflict);
+        }
         let validation = if op.item != *item {
             Err(EngineError::RemoteChanged)
         } else {

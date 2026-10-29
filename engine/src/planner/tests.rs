@@ -23,7 +23,7 @@ fn inventory() -> RemoteInventory {
 fn three_way_requires_confirmed_local_evidence() {
     let base = ConfirmedBase {
         remote_version: 2,
-        local_fingerprint: "hash".into(),
+        local_fingerprint: format!("{}:1:2", "a".repeat(64)),
     };
     assert_eq!(
         decide(None, &LocalObservation::Absent, 3),
@@ -34,17 +34,25 @@ fn three_way_requires_confirmed_local_evidence() {
         PlanAction::Blocked(ConflictReason::ExistingLocalData)
     );
     assert_eq!(
-        decide(Some(&base), &LocalObservation::Verified("hash".into()), 2),
+        decide(
+            Some(&base),
+            &LocalObservation::Verified(format!("{}:1:2", "a".repeat(64))),
+            2
+        ),
         PlanAction::NoOp
     );
     assert_eq!(
-        decide(Some(&base), &LocalObservation::Verified("hash".into()), 3),
+        decide(
+            Some(&base),
+            &LocalObservation::Verified(format!("{}:1:2", "a".repeat(64))),
+            3
+        ),
         PlanAction::Download
     );
     assert_eq!(
         decide(
             Some(&base),
-            &LocalObservation::Verified("changed".into()),
+            &LocalObservation::Verified(format!("{}:1:2", "b".repeat(64))),
             3
         ),
         PlanAction::Blocked(ConflictReason::ConcurrentChanges)
@@ -52,7 +60,7 @@ fn three_way_requires_confirmed_local_evidence() {
     assert_eq!(
         decide(
             Some(&base),
-            &LocalObservation::Verified("changed".into()),
+            &LocalObservation::Verified(format!("{}:1:2", "b".repeat(64))),
             2
         ),
         PlanAction::Blocked(ConflictReason::LocalChanged)
@@ -71,18 +79,18 @@ fn three_way_requires_confirmed_local_evidence() {
 fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint() {
     let base = ConfirmedBase {
         remote_version: 2,
-        local_fingerprint: "baseline".into(),
+        local_fingerprint: format!("{}:1:2", "a".repeat(64)),
     };
     let cases = [
         (
             Some(&base),
-            LocalObservation::Verified("baseline".into()),
+            LocalObservation::Verified(format!("{}:1:2", "a".repeat(64))),
             2,
             PlanAction::NoOp,
         ),
         (
             Some(&base),
-            LocalObservation::Verified("baseline".into()),
+            LocalObservation::Verified(format!("{}:1:2", "a".repeat(64))),
             3,
             PlanAction::Download,
         ),
@@ -94,13 +102,13 @@ fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprin
         ),
         (
             Some(&base),
-            LocalObservation::Verified("local-change".into()),
+            LocalObservation::Verified(format!("{}:1:2", "b".repeat(64))),
             2,
             PlanAction::Blocked(ConflictReason::LocalChanged),
         ),
         (
             Some(&base),
-            LocalObservation::Verified("local-change".into()),
+            LocalObservation::Verified(format!("{}:1:2", "b".repeat(64))),
             3,
             PlanAction::Blocked(ConflictReason::ConcurrentChanges),
         ),
@@ -119,7 +127,7 @@ fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprin
         ),
         (
             Some(&base),
-            LocalObservation::Verified("baseline".into()),
+            LocalObservation::Verified(format!("{}:1:2", "a".repeat(64))),
             1,
             PlanAction::DeferredUnknown,
         ),
@@ -251,4 +259,41 @@ fn folder_ambiguity_blocks_descendants_and_missing_versions_defer() {
             .action,
         PlanAction::DeferredUnknown
     );
+}
+
+#[test]
+fn incomplete_identity_evidence_is_unknown_even_when_fingerprints_match() {
+    for fingerprint in [
+        "".into(),
+        "hash".into(),
+        format!("{}:1", "a".repeat(64)),
+        format!("{}:1:0", "a".repeat(64)),
+        format!("{}:x:2", "a".repeat(64)),
+        format!("{}:1:2:3", "a".repeat(64)),
+    ] {
+        let base = ConfirmedBase {
+            remote_version: 1,
+            local_fingerprint: fingerprint.clone(),
+        };
+        assert_eq!(
+            decide(
+                Some(&base),
+                &LocalObservation::Verified(fingerprint.clone()),
+                1
+            ),
+            PlanAction::DeferredUnknown
+        );
+        assert_eq!(
+            decide(Some(&base), &LocalObservation::Absent, 2),
+            PlanAction::DeferredUnknown
+        );
+        let valid = ConfirmedBase {
+            remote_version: 1,
+            local_fingerprint: format!("{}:1:2", "a".repeat(64)),
+        };
+        assert_eq!(
+            decide(Some(&valid), &LocalObservation::Verified(fingerprint), 2),
+            PlanAction::DeferredUnknown
+        );
+    }
 }

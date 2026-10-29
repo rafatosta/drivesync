@@ -111,7 +111,9 @@ fn inventory() -> RemoteInventory {
 }
 struct Fake {
     entries: HashMap<String, InventoryEntry>,
-    bytes: Vec<u8>,
+    content: HashMap<String, Vec<u8>>,
+    media_ids: Vec<String>,
+    metadata_ids: Vec<String>,
     media_calls: usize,
     metadata_calls: usize,
     cached: bool,
@@ -129,7 +131,14 @@ impl Fake {
                 .iter()
                 .map(|e| (e.id.clone(), e.clone()))
                 .collect(),
-            bytes: b"abc".to_vec(),
+            content: inv
+                .entries
+                .iter()
+                .filter(|e| e.kind == InventoryKind::Binary)
+                .map(|e| (e.id.clone(), b"abc".to_vec()))
+                .collect(),
+            media_ids: Vec::new(),
+            metadata_ids: Vec::new(),
             media_calls: 0,
             metadata_calls: 0,
             cached: false,
@@ -147,24 +156,35 @@ impl Source for Fake {
     }
     fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
         self.metadata_calls += 1;
+        self.metadata_ids.push(item.id.clone());
         if let Some(callback) = &mut self.on_metadata {
             callback();
         }
-        let mut value = self.entries[&item.id].clone();
+        let mut value = self
+            .entries
+            .get(&item.id)
+            .cloned()
+            .ok_or(EngineError::RemoteChanged)?;
         if self.changed && self.media_calls > 0 {
             value.version = value.version.map(|version| version + 1);
         }
         Ok(value)
     }
-    fn media(&mut self, _: &str) -> Result<Box<dyn Read>, EngineError> {
+    fn media(&mut self, id: &str) -> Result<Box<dyn Read>, EngineError> {
         self.media_calls += 1;
+        self.media_ids.push(id.to_owned());
         if let Some(f) = &mut self.on_media {
             f();
         }
         if self.fail_stream {
             Ok(Box::new(BrokenReader(false)))
         } else {
-            Ok(Box::new(Cursor::new(self.bytes.clone())))
+            Ok(Box::new(Cursor::new(
+                self.content
+                    .get(id)
+                    .cloned()
+                    .ok_or(EngineError::RemoteChanged)?,
+            )))
         }
     }
     fn configured(&mut self) -> Result<(), EngineError> {
@@ -355,7 +375,7 @@ fn rejects_short_long_and_corrupt_streams_without_final_file() {
         let f = Fixture::new();
         let inv = inventory();
         let mut source = Fake::new(&inv);
-        source.bytes = bytes;
+        source.content.insert("file".into(), bytes);
         let result = f
             .execute(&inv, &mut source, &Cancellation::new(), |_| {})
             .unwrap();
@@ -376,7 +396,7 @@ fn accepts_empty_binary_and_creates_nested_folders() {
     inv.entries[0].md5_checksum = Some("d41d8cd98f00b204e9800998ecf8427e".into());
     inv.entries.push(folder);
     let mut source = Fake::new(&inv);
-    source.bytes.clear();
+    source.content.insert("file".into(), Vec::new());
     let result = f
         .execute(&inv, &mut source, &Cancellation::new(), |_| {})
         .unwrap();
@@ -771,7 +791,7 @@ fn corrupt_bytes_never_emit_a_verified_or_installing_stage() {
     let f = Fixture::new();
     let inv = inventory();
     let mut source = Fake::new(&inv);
-    source.bytes = b"bad".to_vec();
+    source.content.insert("file".into(), b"bad".to_vec());
     let mut events = Vec::new();
     let report = f
         .execute(&inv, &mut source, &Cancellation::new(), |p| events.push(p))
@@ -835,3 +855,55 @@ fn deleted_local_copy_requires_reconciliation_of_silent_metadata_revision() {
 
 #[path = "baseline_tests.rs"]
 mod baseline_tests;
+
+#[test]
+fn provider_uses_requested_identity_and_reports_missing_objects() {
+    let f = Fixture::new();
+    let mut inv = inventory();
+    let mut second = inv.entries[0].clone();
+    second.id = "second".into();
+    second.name = "second.txt".into();
+    second.md5_checksum = Some("4ed9407630eb1000c0f6b63842defa7d".into());
+    inv.entries.push(second);
+    let mut source = Fake::new(&inv);
+    source.content.insert("second".into(), b"def".to_vec());
+    let report = f
+        .execute(&inv, &mut source, &Cancellation::new(), |_| {})
+        .unwrap();
+    assert!(report.issues.is_empty());
+    assert_eq!(report.downloaded, 2);
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+    assert_eq!(fs::read(f.root.join("second.txt")).unwrap(), b"def");
+    assert_eq!(source.media_ids, ["file", "second"]);
+    assert!(source.metadata_ids.iter().any(|id| id == "second"));
+    assert!(source
+        .metadata_ids
+        .iter()
+        .all(|id| id == "file" || id == "second"));
+    assert!(matches!(
+        source.media("missing"),
+        Err(EngineError::RemoteChanged)
+    ));
+    source.entries.remove("file");
+    assert!(matches!(
+        source.metadata(&inv.entries[0]),
+        Err(EngineError::RemoteChanged)
+    ));
+    assert_eq!(source.media_ids.last().unwrap(), "missing");
+    assert_eq!(source.metadata_ids.last().unwrap(), "file");
+}
+
+#[path = "identity_tests.rs"]
+mod identity_tests;
+
+#[path = "collision_tests.rs"]
+mod collision_tests;
+
+#[path = "restoration_tests.rs"]
+mod restoration_tests;
+
+#[path = "concurrency_tests.rs"]
+mod concurrency_tests;
+
+#[path = "recovery_tests.rs"]
+mod recovery_tests;

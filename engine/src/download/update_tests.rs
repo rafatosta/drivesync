@@ -8,7 +8,7 @@ fn changed(inv: &RemoteInventory, bytes: &[u8]) -> (RemoteInventory, Fake) {
     entry.size = Some(bytes.len() as u64);
     entry.md5_checksum = Some(format!("{:x}", md5::Md5::digest(bytes)));
     let mut source = Fake::new(&next);
-    source.bytes = bytes.to_vec();
+    source.content.insert("file".into(), bytes.to_vec());
     (next, source)
 }
 fn installed() -> (Fixture, RemoteInventory) {
@@ -116,7 +116,9 @@ fn network_checksum_and_cancellation_keep_old_file_at_its_path() {
         let (next, mut source) = changed(&inv, b"remote edit");
         source.fail_stream = failure == 0;
         if failure == 1 {
-            source.bytes = b"wrong bytes".to_vec();
+            source
+                .content
+                .insert("file".into(), b"wrong bytes".to_vec());
         }
         let cancel = Cancellation::new();
         let result = f.execute(&next, &mut source, &cancel, |p| {
@@ -298,7 +300,9 @@ fn regressed_versions_and_changed_bytes_without_new_revision_are_blocked() {
         let (mut next, _) = changed(&inv, b"new content");
         next.entries[0].version = Some(remote_version);
         let mut source = Fake::new(&next);
-        source.bytes = b"new content".to_vec();
+        source
+            .content
+            .insert("file".into(), b"new content".to_vec());
         let report = f
             .execute(&next, &mut source, &Cancellation::new(), |_| {})
             .unwrap();
@@ -527,7 +531,7 @@ fn empty_binary_metadata_change_does_not_download_again() {
     inv.entries[0].size = Some(0);
     inv.entries[0].md5_checksum = Some("d41d8cd98f00b204e9800998ecf8427e".into());
     let mut source = Fake::new(&inv);
-    source.bytes.clear();
+    source.content.insert("file".into(), Vec::new());
     f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
         .unwrap();
     inv.entries[0].version = Some(5);
