@@ -84,7 +84,11 @@ impl Schedule {
             let delay = 30 * (1u64 << self.failures.min(4));
             self.failures = self.failures.saturating_add(1);
             self.due = Some(now + delay.min(300));
-            self.phase = if matches!(error, EngineError::Authentication(AuthError::Network)) {
+            self.phase = if matches!(
+                error,
+                EngineError::Authentication(AuthError::Network)
+                    | EngineError::RootSuspended(drivesync_engine::RootSuspension::Offline)
+            ) {
                 Phase::Offline
             } else {
                 Phase::Retrying
@@ -122,6 +126,9 @@ impl Schedule {
     }
 }
 fn transient(error: &EngineError) -> bool {
+    if let EngineError::RootSuspended(reason) = error {
+        return reason.retryable();
+    }
     matches!(
         error,
         EngineError::Authentication(
@@ -332,5 +339,51 @@ mod tests {
         s.finish(&network(), 6);
         assert_eq!(s.phase, Phase::Unconfigured);
         assert!(!s.start(100, true, true));
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use drivesync_engine::RootSuspension;
+    #[test]
+    fn root_suspension_retries_only_transient_failures_and_preserves_user_pause() {
+        let mut schedule = Schedule::new(true, 0);
+        for reason in [
+            RootSuspension::LocalUnavailable,
+            RootSuspension::IdentityUnverified,
+            RootSuspension::RemoteUnavailable,
+            RootSuspension::RemoteAccessDenied,
+            RootSuspension::AuthenticationRequired,
+        ] {
+            schedule.finish(&Err(EngineError::RootSuspended(reason)), 10);
+            assert_eq!(schedule.phase, Phase::Blocked);
+            schedule.network_changed(true, 20);
+            assert!(!schedule.start(10000, true, false));
+            assert!(schedule.start(10001, true, true));
+        }
+        schedule.finish(
+            &Err(EngineError::RootSuspended(RootSuspension::RemoteRetry)),
+            10002,
+        );
+        assert_eq!(schedule.phase, Phase::Retrying);
+        let due = schedule.due;
+        schedule.network_changed(false, 10003);
+        schedule.network_changed(true, 10004);
+        assert_eq!(schedule.due, due);
+        schedule.finish(
+            &Err(EngineError::RootSuspended(RootSuspension::Offline)),
+            10005,
+        );
+        assert_eq!(schedule.phase, Phase::Offline);
+        schedule.network_changed(true, 10006);
+        assert_eq!(schedule.due, Some(10006));
+        schedule.finish(
+            &Err(EngineError::Authentication(AuthError::Cancelled)),
+            10007,
+        );
+        schedule.network_changed(true, 10008);
+        assert_eq!(schedule.phase, Phase::Paused);
+        assert_eq!(schedule.due, None);
     }
 }

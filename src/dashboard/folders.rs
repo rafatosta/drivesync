@@ -298,7 +298,8 @@ pub(super) fn build(
     content
 }
 
-/// Validates and persists a complete changed pair off the GTK thread.
+/// Revalidates a complete explicitly selected pair off the GTK thread.
+/// Reselecting the same pair can establish a missing external identity binding.
 /// Partial selections remain local; failures preserve the last saved pair.
 fn autosave(
     engine: Arc<DriveSyncEngine>,
@@ -312,10 +313,6 @@ fn autosave(
     }
     if !draft.borrow().ready() {
         ui.message("Choose both a Google Drive folder and a folder on this computer.");
-        return;
-    }
-    if !draft.borrow().dirty() && draft.borrow().local_available {
-        ui.message("");
         return;
     }
     let (Some(remote), Some(local)) = (draft.borrow().remote.clone(), draft.borrow().local.clone())

@@ -323,12 +323,17 @@ impl Widgets {
     ) {
         use crate::automatic::Phase;
         self.present_account_toggle(snapshot);
+        let root_suspended = snapshot
+            .result
+            .as_ref()
+            .is_some_and(|result| matches!(result, Err(EngineError::RootSuspended(_))));
         let sync_status = match snapshot.phase {
             Phase::Unconfigured => "Not configured",
             Phase::Waiting => "Waiting",
             Phase::Running if snapshot.pausing => "Pausing",
             Phase::Running => "Syncing",
             Phase::UpToDate => "Up to date",
+            Phase::Blocked if root_suspended => "Folder unavailable",
             Phase::Attention | Phase::Blocked => "Needs attention",
             Phase::Offline => "Offline",
             Phase::Retrying => "Retrying",
@@ -399,6 +404,10 @@ impl Widgets {
                 Phase::Paused => (
                     "Synchronization paused",
                     "Completed work is saved safely. Resume to continue synchronization.",
+                ),
+                Phase::Blocked if root_suspended => (
+                    "Synchronization suspended",
+                    "Restore folder access, then try synchronization again.",
                 ),
                 Phase::Blocked => (
                     "Needs attention",

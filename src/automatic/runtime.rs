@@ -99,11 +99,46 @@ impl Controller {
         Self::for_engine(engine, saved, false)
     }
     fn for_engine(engine: Arc<DriveSyncEngine>, saved: &RestoredAccount, desktop: bool) -> Self {
-        let execute: Execute =
-            Arc::new(move |id, cancel, progress| engine.synchronize_once(id, cancel, progress));
+        let worker_engine = engine.clone();
+        let execute: Execute = Arc::new(move |id, cancel, progress| {
+            worker_engine.synchronize_once(id, cancel, progress)
+        });
         let job = Self::new(saved.account.id.clone(), execute, desktop);
         job.configure(saved.folder.clone(), super::eligible(saved));
+        if saved.folder.is_some() {
+            let restore = job.clone();
+            let generation = job.0.state.borrow().generation;
+            let id = saved.account.id.clone();
+            crate::flow::work(
+                move || engine.root_suspension(&id),
+                move |result| {
+                    let error = match result {
+                        Ok(Some(reason)) => Some(EngineError::RootSuspended(reason)),
+                        Ok(None) => None,
+                        Err(error) => Some(error),
+                    };
+                    if let Some(error) = error {
+                        restore.restore_suspension(generation, error);
+                    }
+                },
+            );
+        }
         job
+    }
+    /// A late disk read cannot replace a manual cycle or a newer configuration.
+    fn restore_suspension(&self, generation: u64, error: EngineError) {
+        let mut state = self.0.state.borrow_mut();
+        if state.generation != generation
+            || state.cancel.is_some()
+            || state.result.is_some()
+            || !state.eligible
+        {
+            return;
+        }
+        let result = Err(error);
+        state.schedule.finish(&result, now());
+        state.result = Some(result);
+        state.revision += 1;
     }
     fn configure(&self, folder: Option<FolderConfiguration>, eligible: bool) {
         let mut state = self.0.state.borrow_mut();
@@ -607,6 +642,24 @@ mod tests {
         wait_until(&context, || !fast.running());
         assert_eq!(fast.snapshot().phase, Phase::Paused);
         assert!(fast.snapshot().result.unwrap().is_ok());
+        let restored = Controller::new(
+            AccountId("restored".into()),
+            Arc::new(|_, _, _| Ok(DownloadReport::default())),
+            false,
+        );
+        restored.configure(Some(folder("restored", "volume")), true);
+        let generation = restored.0.state.borrow().generation;
+        let unavailable =
+            EngineError::RootSuspended(drivesync_engine::RootSuspension::LocalUnavailable);
+        restored.restore_suspension(generation, unavailable.clone());
+        assert_eq!(restored.snapshot().phase, Phase::Blocked);
+        assert!(
+            matches!(restored.snapshot().result, Some(Err(ref error)) if error == &unavailable)
+        );
+        restored.configure(Some(folder("restored", "replacement")), true);
+        restored.restore_suspension(generation, unavailable);
+        assert_eq!(restored.snapshot().phase, Phase::Waiting);
+        assert!(restored.snapshot().result.is_none());
         SERVICE.with(|slot| slot.borrow_mut().take());
         // Drain retired progress sources before releasing the default context.
         let until = Instant::now() + Duration::from_millis(120);
