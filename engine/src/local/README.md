@@ -27,4 +27,7 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** inventário completo e estabilização implementados em `inventory.rs`.
+Contrato vigente e oráculos: [inventário e estabilização](reconciliation.md).
+Monitor contínuo permanece proposta; cada ciclo varre a árvore para recuperar
+mudanças ocorridas sem eventos ou com o aplicativo fechado.

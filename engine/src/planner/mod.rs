@@ -293,6 +293,7 @@ pub(crate) fn plan_with_bases(
 
 /// Metadata-only observation. Static symlinks/special files block all descendants.
 /// This does not remove races; the future executor must revalidate before writing.
+#[cfg(test)]
 pub(crate) fn observe(root: &Path, relative: &Path) -> LocalObservation {
     if !root.is_absolute()
         || relative.is_absolute()

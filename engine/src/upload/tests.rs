@@ -17,6 +17,7 @@ use std::{
 #[derive(Default)]
 struct Fake {
     generated: usize,
+    change_on_generate: Option<PathBuf>,
     creates: usize,
     chunks: usize,
     begins: usize,
@@ -64,6 +65,9 @@ impl Remote for Fake {
     }
     fn generate(&mut self) -> Result<String, EngineError> {
         self.generated += 1;
+        if let Some(path) = self.change_on_generate.take() {
+            fs::write(path, b"changed after inventory").unwrap();
+        }
         Ok(format!("generated_{}", self.generated))
     }
     fn children(&mut self, parent: &str, name: &str) -> Result<Vec<InventoryEntry>, EngineError> {
@@ -600,4 +604,36 @@ fn ambiguous_remote_names_cannot_be_adopted_after_a_lost_confirmation() {
     assert_eq!(report.uploaded, 0);
     assert_eq!(report.issues.len(), 1);
     assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn temporary_uploads_are_deferred_and_final_rename_uploads_once() {
+    let f = Fixture::new();
+    fs::write(f.root.join("report.part"), b"abc").unwrap();
+    let mut remote = Fake::default();
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalTemporary);
+    assert_eq!(remote.generated, 0);
+    assert_eq!(remote.begins, 0);
+    fs::rename(f.root.join("report.part"), f.root.join("report.txt")).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn local_write_after_inventory_never_starts_remote_upload() {
+    let f = Fixture::new();
+    let path = f.root.join("file");
+    fs::write(&path, b"abc").unwrap();
+    let mut remote = Fake {
+        change_on_generate: Some(path.clone()),
+        ..Default::default()
+    };
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.issues[0].error, EngineError::LocalWriting);
+    assert_eq!(remote.begins, 0);
+    assert_eq!(remote.creates, 0);
+    assert!(f.uploads().load(Path::new("file")).unwrap().is_none());
+    assert_eq!(fs::read(path).unwrap(), b"changed after inventory");
 }

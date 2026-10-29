@@ -11,7 +11,12 @@ For each scoped client/account/folder pair:
 2. Lock and validate the local root against its persisted opt-in inode. Traverse descriptor-relative directories;
    reject symlinks/special files and bound traversal. Resolve remote parents by
    unique name and validated identity. Exclude historical downloaded paths.
-3. For each absent destination, generate a provider ID and persist intent BEFORE
+3. Complete a descriptor-relative local inventory with one shared 500 ms
+   quiescence window. Defer recognized editor/download temporaries, changing files
+   and unknown evidence; ordinary hidden files and `.tmp` are not blanket exclusions.
+   Revalidate the observed signature before snapshotting and compare the snapshot
+   hash/identity and current signature with that observation. A quiescent pause
+   cannot prove an external writer has finished. For each absent destination, generate a provider ID and persist intent BEFORE
    creation. Snapshot a regular local file into private staging, verifying inode,
    size and timestamps across the copy. Persist the original source identity;
    a replaced source must not be silently adopted even with identical content. Persist hashes and immutable staging ID.

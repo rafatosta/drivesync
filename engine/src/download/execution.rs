@@ -208,6 +208,11 @@ pub(crate) fn run(
                     .map(|()| report.linked += 1)
                 })
             }
+            (InventoryKind::Binary, Some(_), PlanAction::DeferredUnknown)
+                if decision.expected_local == crate::LocalObservation::Unknown =>
+            {
+                Err(EngineError::ObservationUnknown)
+            }
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {

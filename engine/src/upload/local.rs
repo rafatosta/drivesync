@@ -1,94 +1,18 @@
 //! Descriptor-relative local discovery and immutable private upload snapshots.
 use super::Intent;
+pub(crate) use crate::local::check;
 use crate::{
     download::filesystem::{self, Root},
-    AuthError, Cancellation, EngineError,
+    Cancellation, EngineError,
 };
 use md5::Md5;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt},
-    },
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
-pub(crate) fn check(cancel: &Cancellation) -> Result<(), EngineError> {
-    if cancel.is_cancelled() {
-        Err(EngineError::Authentication(AuthError::Cancelled))
-    } else {
-        Ok(())
-    }
-}
-pub(crate) fn ignored(path: &Path) -> bool {
-    path.components().any(|c| {
-        c.as_os_str().to_str().is_none_or(|s| {
-            s == ".drivesync"
-                || s.starts_with(".drivesync-")
-                || (s.starts_with("DriveSync backup ") && s.ends_with(".bak"))
-        })
-    })
-}
-pub(crate) fn list(
-    root: &Root,
-    cancel: &Cancellation,
-) -> Result<Vec<(PathBuf, bool)>, EngineError> {
-    let mut result = Vec::new();
-    let mut pending = vec![PathBuf::new()];
-    while let Some(path) = pending.pop() {
-        check(cancel)?;
-        root.validate()?;
-        let dir = if path.as_os_str().is_empty() {
-            root.file.try_clone().map_err(filesystem::io)?
-        } else {
-            let (p, n) = root.parent(&path)?;
-            rustix::fs::openat(
-                &p,
-                &n,
-                rustix::fs::OFlags::RDONLY
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::NOFOLLOW,
-                rustix::fs::Mode::empty(),
-            )
-            .map(File::from)
-            .map_err(filesystem::io)?
-        };
-        for entry in rustix::fs::Dir::read_from(&dir).map_err(filesystem::io)? {
-            check(cancel)?;
-            let entry = entry.map_err(filesystem::io)?;
-            let name = std::ffi::OsStr::from_bytes(entry.file_name().to_bytes());
-            if name == "." || name == ".." {
-                continue;
-            }
-            let child = path.join(name);
-            if ignored(&child) {
-                continue;
-            }
-            let stat = rustix::fs::statat(&dir, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
-                .map_err(filesystem::io)?;
-            let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
-            let directory = kind == rustix::fs::FileType::Directory;
-            if directory {
-                pending.push(child.clone());
-            }
-            // Special files remain visible to the executor, which rejects them
-            // through the regular-file nofollow reader without blocking on FIFOs.
-            result.push((child, directory));
-            if result.len() > 100000 {
-                return Err(EngineError::InventoryLimit);
-            }
-        }
-    }
-    result.sort_by(|a, b| {
-        a.0.components()
-            .count()
-            .cmp(&b.0.components().count())
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    Ok(result)
-}
 type Stamp = (u64, u64, u64, i64, i64, i64, i64);
 fn stamp(file: &File) -> Result<Stamp, EngineError> {
     let m = file.metadata().map_err(filesystem::io)?;
@@ -217,7 +141,7 @@ pub(crate) fn verify_file(
 
 #[cfg(test)]
 mod tests {
-    use super::ignored;
+    use crate::local::ignored;
     use std::path::Path;
 
     #[test]
