@@ -219,7 +219,8 @@ fn folder_setup_and_dashboard_layouts() {
                         .unwrap()
                         .downcast::<adw::ActionRow>()
                         .unwrap();
-                    assert_eq!(account_row.subtitle().as_deref(), Some("Connected"));
+                    // The synchronization observer has already presented the waiting job.
+                    assert_eq!(account_row.subtitle().as_deref(), Some("Waiting"));
                     assert_eq!(
                         account_row.tooltip_text().as_deref(),
                         Some("preview@example.com")
