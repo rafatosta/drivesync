@@ -211,10 +211,29 @@ pub(crate) fn run(
             (InventoryKind::Binary, Some(path), PlanAction::Equivalent) => session
                 .equivalent(item, path, decision, &by_id, source)
                 .map(|()| report.unchanged += 1),
-            (InventoryKind::Binary, Some(_), PlanAction::DeferredUnknown)
-                if decision.expected_local == crate::LocalObservation::Unknown =>
-            {
-                Err(EngineError::ObservationUnknown)
+            (InventoryKind::Binary, Some(_), PlanAction::DeferredUnknown) => {
+                let version = item
+                    .version
+                    .filter(|v| *v > 0)
+                    .ok_or(EngineError::InvalidPlan)?;
+                let bases = session.context.store.confirmed_bases(
+                    session.context.client,
+                    &session.context.scope.account_id,
+                    &session.context.scope.remote_root,
+                    &session.context.scope.local_root,
+                )?;
+                Err(
+                    if bases
+                        .get(&item.id)
+                        .is_some_and(|b| version < b.remote_version)
+                    {
+                        EngineError::RemoteChanged
+                    } else if decision.expected_local == crate::LocalObservation::Unknown {
+                        EngineError::ObservationUnknown
+                    } else {
+                        EngineError::DownloadConflict
+                    },
+                )
             }
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {

@@ -209,3 +209,25 @@ fn cancellation_during_equivalence_proof_never_publishes_a_plan() {
     );
     assert_eq!(baseline_tests::base(&f, &inv), Some(base));
 }
+
+#[test]
+fn unknown_remote_proof_never_authorizes_download_after_local_reversion() {
+    let f = Fixture::new();
+    let inv = inventory();
+    baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+    let base = baseline_tests::base(&f, &inv).unwrap();
+    fs::write(f.root.join("file.txt"), b"same edit").unwrap();
+    let (next, mut remote) = v2(&inv, b"same edit");
+    remote.fail_stream = true;
+    let plan = prepare(&f, &next, &mut remote);
+    assert_eq!(plan.entries[0].action, PlanAction::DeferredUnknown);
+    remote.fail_stream = false;
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let calls = remote.media_calls;
+    let report = execute_plan(&f, &next, &plan, &mut remote);
+    assert_eq!(report.updated + report.downloaded + report.unchanged, 0);
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(remote.media_calls, calls);
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+    assert_eq!(baseline_tests::base(&f, &inv), Some(base));
+}
