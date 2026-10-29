@@ -508,3 +508,27 @@ fn folder_setup_and_dashboard_layouts() {
 
 #[path = "screenshot_demo.rs"]
 mod screenshot_demo;
+
+/// Exercises synchronization diagnoses without the account setup fixture.
+#[test]
+#[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
+fn reconciliation_status_layouts() {
+    adw::init().unwrap();
+    let output =
+        std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
+    let data = std::env::var("XDG_DATA_HOME").expect("isolated profile directory");
+    assert!(data.starts_with("/tmp/drivesync-ui-"));
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_icon_theme_name(Some("Adwaita"));
+        settings.set_gtk_enable_animations(false);
+    }
+    crate::dashboard::verify_download_progress(|window, name| {
+        let node = rendered(window);
+        window
+            .renderer()
+            .unwrap()
+            .render_texture(&node, None)
+            .save_to_png(format!("{output}/{name}.png"))
+            .unwrap();
+    });
+}

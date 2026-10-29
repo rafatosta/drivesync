@@ -637,3 +637,18 @@ fn local_write_after_inventory_never_starts_remote_upload() {
     assert!(f.uploads().load(Path::new("file")).unwrap().is_none());
     assert_eq!(fs::read(path).unwrap(), b"changed after inventory");
 }
+
+#[test]
+fn temporary_item_does_not_stop_independent_ready_uploads() {
+    let f = Fixture::new();
+    fs::write(f.root.join("a.part"), b"partial").unwrap();
+    fs::write(f.root.join("z.txt"), b"abc").unwrap();
+    let mut remote = Fake::default();
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].error, EngineError::LocalTemporary);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(fs::read(f.root.join("a.part")).unwrap(), b"partial");
+}

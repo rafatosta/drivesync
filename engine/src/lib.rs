@@ -39,6 +39,6 @@ pub use planner::{
 };
 
 pub use download::{
-    DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport, DownloadStage,
-    PreparationProgress, PreviousPath,
+    DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
+    DownloadStage, PreparationProgress, PreviousPath,
 };

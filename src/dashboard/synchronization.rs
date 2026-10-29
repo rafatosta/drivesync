@@ -132,19 +132,21 @@ impl Widgets {
         }
     }
     fn show_issues(&self, report: &DownloadReport) {
+        self.show_issues_title(report, "Needs attention");
+    }
+    fn show_issues_title(&self, report: &DownloadReport, title: &str) {
         self.clear_issues();
         if let Some(container) = self.issues.upgrade() {
-            let group = adw::PreferencesGroup::builder()
-                .title("Needs attention")
-                .build();
-            for issue in report.issues.iter().take(5) {
+            let group = adw::PreferencesGroup::builder().title(title).build();
+            let attention = report.attention();
+            for issue in attention.iter().take(5) {
                 let path = issue.relative_path.as_deref();
                 let name = path
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "Item".into());
                 let row = adw::ActionRow::builder()
                     .title(&name)
-                    .subtitle(issue.error.to_string())
+                    .subtitle(&issue.message)
                     .use_markup(false)
                     .build();
                 row.set_title_lines(0);
@@ -153,25 +155,22 @@ impl Widgets {
                     "{}\n{}",
                     path.map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "Item".into()),
-                    issue.error
+                    issue.message
                 )));
                 let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
                 icon.add_css_class("warning");
                 row.add_prefix(&icon);
                 group.add(&row);
             }
-            if report.issues.len() > 5 {
+            if attention.len() > 5 {
                 group.add(
                     &adw::ActionRow::builder()
-                        .title(format!(
-                            "{} more items need attention",
-                            report.issues.len() - 5
-                        ))
+                        .title(format!("{} more items need attention", attention.len() - 5))
                         .build(),
                 );
             }
             container.append(&group);
-            container.set_visible(!report.issues.is_empty());
+            container.set_visible(!attention.is_empty());
         }
     }
     /// Normal remote path changes belong in optional activity details. They
@@ -183,14 +182,29 @@ impl Widgets {
         while let Some(child) = container.first_child() {
             container.remove(&child);
         }
-        container.set_visible(!report.previous_paths.is_empty());
-        if report.previous_paths.is_empty() {
+        let equivalent: Vec<_> = report
+            .reconciliation
+            .iter()
+            .filter(|entry| {
+                entry.kind == drivesync_engine::ChangeKind::Equivalent
+                    && !report
+                        .issues
+                        .iter()
+                        .any(|issue| issue.relative_path == entry.relative_path)
+            })
+            .collect();
+        container.set_visible(!report.previous_paths.is_empty() || !equivalent.is_empty());
+        if report.previous_paths.is_empty() && equivalent.is_empty() {
             return;
         }
         let group = adw::PreferencesGroup::new();
         let details = adw::ExpanderRow::builder()
             .title("View activity")
-            .subtitle("Previous local copies are kept. No action is needed.")
+            .subtitle(if report.previous_paths.is_empty() {
+                "Equivalent content was verified. No replacement was needed."
+            } else {
+                "Previous local copies are kept. No action is needed."
+            })
             .use_markup(false)
             .build();
         details.set_subtitle_lines(0);
@@ -223,6 +237,31 @@ impl Widgets {
             row.set_tooltip_text(Some(&format!("{name}\n{subtitle}")));
             row.add_prefix(&gtk::Image::from_icon_name("document-open-recent-symbolic"));
             details.add_row(&row);
+        }
+        for entry in equivalent.iter().take(50) {
+            let name = entry
+                .relative_path
+                .as_deref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Item".into());
+            let row = adw::ActionRow::builder()
+                .title(&name)
+                .subtitle(entry.kind.description())
+                .use_markup(false)
+                .build();
+            row.set_title_lines(0);
+            row.set_subtitle_lines(0);
+            details.add_row(&row);
+        }
+        if equivalent.len() > 50 {
+            details.add_row(
+                &adw::ActionRow::builder()
+                    .title(format!(
+                        "{} additional equivalent files observed",
+                        equivalent.len() - 50
+                    ))
+                    .build(),
+            );
         }
         if report.previous_paths.len() > 50 {
             details.add_row(
@@ -550,7 +589,7 @@ fn summary(report: &DownloadReport) -> String {
         (report.updated, "updated"),
         (report.recovered, "recovered"),
         (report.skipped, "skipped"),
-        (report.issues.len(), "need attention"),
+        (report.attention().len(), "need attention"),
     ] {
         if count > 0 {
             parts.push(format!("{count} {label}"));
@@ -682,7 +721,50 @@ pub(super) fn build(
         preserved: preserved.downgrade(),
         spinner: spinner.downgrade(),
     };
+    let restore = if saved.folder.is_some() {
+        let (send, receive) = std::sync::mpsc::channel();
+        let engine = engine.clone();
+        let id = saved.account.id.clone();
+        std::thread::spawn(move || {
+            let _ = send.send(engine.saved_reconciliation(&id));
+        });
+        Some(receive)
+    } else {
+        None
+    };
     let job = crate::automatic::Controller::attach(engine, saved);
+    if let Some(receive) = restore {
+        let restore_ui = ui.clone();
+        let restore_job = job.clone();
+        let folder = saved.folder.clone();
+        gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
+            if restore_ui.start.upgrade().is_none() || restore_job.folder() != folder {
+                return gtk::glib::ControlFlow::Break;
+            }
+            match receive.try_recv() {
+                Ok(Ok(entries)) => {
+                    let snapshot = restore_job.snapshot();
+                    if snapshot.result.is_none()
+                        && snapshot.progress.is_none()
+                        && !restore_job.running()
+                    {
+                        restore_ui.show_issues_title(
+                            &DownloadReport {
+                                reconciliation: entries,
+                                ..Default::default()
+                            },
+                            "Previous scan — awaiting a new check",
+                        );
+                    }
+                    gtk::glib::ControlFlow::Break
+                }
+                Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    gtk::glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => gtk::glib::ControlFlow::Continue,
+            }
+        });
+    }
     for button in [start, account_toggle] {
         let click_job = job.clone();
         let click_ui = ui.clone();
@@ -994,6 +1076,37 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         assert!(!bar.is_visible());
         assert!(!spinner.is_spinning());
         capture(&window, &format!("download-result-{width}"));
+        assert!(window.width() <= width + 10);
+        let reconciliation_report = DownloadReport {
+            reconciliation: vec![
+                drivesync_engine::ReconciliationEntry {
+                    relative_path: Some("Reports/draft.part".into()),
+                    remote_id: None,
+                    kind: drivesync_engine::ChangeKind::Temporary,
+                },
+                drivesync_engine::ReconciliationEntry {
+                    relative_path: Some("Reports/writing.txt".into()),
+                    remote_id: None,
+                    kind: drivesync_engine::ChangeKind::Writing,
+                },
+                drivesync_engine::ReconciliationEntry {
+                    relative_path: Some("Reports/concurrent.txt".into()),
+                    remote_id: Some("concurrent".into()),
+                    kind: drivesync_engine::ChangeKind::ConcurrentChanges,
+                },
+                drivesync_engine::ReconciliationEntry {
+                    relative_path: Some("Reports/equivalent.txt".into()),
+                    remote_id: Some("equivalent".into()),
+                    kind: drivesync_engine::ChangeKind::Equivalent,
+                },
+            ],
+            ..Default::default()
+        };
+        completed(reconciliation_report, crate::automatic::Phase::Attention);
+        assert!(issues.is_visible());
+        assert!(activity.is_visible());
+        assert_eq!(status.text(), "3 need attention");
+        capture(&window, &format!("reconciliation-pending-{width}"));
         assert!(window.width() <= width + 10);
         let history_report = DownloadReport {
             unchanged: 8,

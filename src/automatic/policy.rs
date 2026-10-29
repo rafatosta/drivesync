@@ -94,12 +94,15 @@ impl Schedule {
             self.due = None;
         } else {
             self.failures = 0;
-            self.phase =
-                if errors.is_empty() && result.as_ref().is_ok_and(|report| report.skipped == 0) {
-                    Phase::UpToDate
-                } else {
-                    Phase::Attention
-                };
+            self.phase = if errors.is_empty()
+                && result
+                    .as_ref()
+                    .is_ok_and(|report| report.skipped == 0 && report.attention().is_empty())
+            {
+                Phase::UpToDate
+            } else {
+                Phase::Attention
+            };
             self.due = Some(now + INTERVAL);
         }
     }
@@ -132,7 +135,14 @@ fn transient(error: &EngineError) -> bool {
     )
 }
 fn blocking(error: &EngineError) -> bool {
-    !transient(error) && !matches!(error, EngineError::DownloadConflict)
+    !transient(error)
+        && !matches!(
+            error,
+            EngineError::DownloadConflict
+                | EngineError::LocalWriting
+                | EngineError::LocalTemporary
+                | EngineError::ObservationUnknown
+        )
 }
 
 #[cfg(test)]
@@ -140,6 +150,43 @@ mod tests {
     use super::*;
     fn network() -> Result<DownloadReport, EngineError> {
         Err(EngineError::Authentication(AuthError::Network))
+    }
+    #[test]
+    fn unstable_and_unknown_items_keep_periodic_checks_enabled() {
+        let mut schedule = Schedule::new(true, 0);
+        for kind in [
+            drivesync_engine::ChangeKind::Writing,
+            drivesync_engine::ChangeKind::Temporary,
+            drivesync_engine::ChangeKind::Unknown,
+        ] {
+            let report = DownloadReport {
+                reconciliation: vec![drivesync_engine::ReconciliationEntry {
+                    relative_path: Some("pending".into()),
+                    remote_id: None,
+                    kind,
+                }],
+                ..Default::default()
+            };
+            schedule.finish(&Ok(report), 10);
+            assert_eq!(schedule.phase, Phase::Attention);
+            assert_eq!(schedule.due, Some(70));
+        }
+        for error in [
+            EngineError::LocalWriting,
+            EngineError::LocalTemporary,
+            EngineError::ObservationUnknown,
+        ] {
+            let report = DownloadReport {
+                issues: vec![drivesync_engine::DownloadIssue {
+                    relative_path: Some("pending".into()),
+                    error,
+                }],
+                ..Default::default()
+            };
+            schedule.finish(&Ok(report), 20);
+            assert_eq!(schedule.phase, Phase::Attention);
+            assert_eq!(schedule.due, Some(80));
+        }
     }
     #[test]
     fn historical_activity_is_success_but_current_conflicts_and_network_errors_remain_visible() {

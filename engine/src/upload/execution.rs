@@ -380,6 +380,9 @@ pub(crate) fn run(
             }
             op.confirmed = true;
             uploads.save(&op)?;
+            report
+                .reconciliation
+                .retain(|entry| entry.relative_path.as_ref() != Some(&path));
             if !directory {
                 let _ = std::fs::remove_file(state_path.with_file_name(&op.snapshot));
             }
@@ -401,7 +404,13 @@ pub(crate) fn run(
             ) {
                 return Err(error);
             }
-            let stop = !matches!(error, EngineError::DownloadConflict);
+            let stop = !matches!(
+                error,
+                EngineError::DownloadConflict
+                    | EngineError::LocalWriting
+                    | EngineError::LocalTemporary
+                    | EngineError::ObservationUnknown
+            );
             if !report
                 .issues
                 .iter()
