@@ -658,7 +658,7 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 | Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
 | Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Diagnósticos restritos e pendências de SYNC-003 existem em `changes` e no banco de reconciliação; resolução assistida e a matriz geral de conflitos permanecem planejadas. |
-| Coordenação geral | [coordinator](../engine/src/coordinator/mod.rs) permanece sem lógica de negócio implementada. | Isso não significa ausência de orquestração nos fluxos existentes; reconciliação geral e integração dos novos requisitos continuam pendentes. |
+| Coordenação | [coordinator](../engine/src/coordinator/mod.rs) verifica identidade/disponibilidade da raiz e classifica suspensões; a fachada retém bloqueio por ciclo e `state::Roots` persiste vínculo e motivo fora do volume. | A coordenação geral continua na fachada; validação real de desmontagem, permissões Google, portal e reinício do aplicativo permanece pendente. |
 
 RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
 
@@ -724,3 +724,10 @@ removida ou inacessível), C25 (perda de compartilhamento) e E09 (item indispon�
 exigem zero exclusões, preservação dos bytes e da base confirmada, diagnóstico
 acionável, reinício e repetição sem adoção ou publicação indevida. Testes locais
 com provedor simulado e validação real com Drive/Flatpak são evidências distintas.
+
+A implementação de SYNC-004 e os oráculos locais são rastreáveis na
+[matriz de disponibilidade](../engine/src/coordinator/tests/test-cases.md).
+O registro externo ausente não é reconstruído automaticamente: selecionar
+explicitamente a associação original permite verificar seu marcador; marcador
+perdido ou diferente continua bloqueado. Resultados locais e capturas de fixtures
+não conferem aceite da bateria real descrita nessa matriz.
