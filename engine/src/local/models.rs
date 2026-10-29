@@ -11,6 +11,20 @@ pub(crate) struct Stamp {
     pub mtime: (i64, i64),
     pub ctime: (i64, i64),
 }
+impl Stamp {
+    /// Samples change detectors from one open descriptor; it does not prove closure.
+    pub(crate) fn read(file: &std::fs::File) -> Result<Self, crate::EngineError> {
+        use std::os::unix::fs::MetadataExt;
+        let m = file.metadata().map_err(crate::download::filesystem::io)?;
+        Ok(Self {
+            device: m.dev(),
+            inode: m.ino(),
+            size: m.len(),
+            mtime: (m.mtime(), m.mtime_nsec()),
+            ctime: (m.ctime(), m.ctime_nsec()),
+        })
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Evidence {
     Directory,

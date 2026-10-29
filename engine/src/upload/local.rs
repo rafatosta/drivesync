@@ -10,22 +10,9 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
-type Stamp = (u64, u64, u64, i64, i64, i64, i64);
-fn stamp(file: &File) -> Result<Stamp, EngineError> {
-    let m = file.metadata().map_err(filesystem::io)?;
-    Ok((
-        m.dev(),
-        m.ino(),
-        m.len(),
-        m.mtime(),
-        m.mtime_nsec(),
-        m.ctime(),
-        m.ctime_nsec(),
-    ))
-}
 /// Removes only an incomplete staging file created by this invocation.
 struct PartialSnapshot {
     path: PathBuf,
@@ -58,7 +45,7 @@ fn snapshot_with_progress(
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
     let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
-    let before = stamp(&file)?;
+    let before = crate::local::Stamp::read(&file)?;
     let mut target = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -85,7 +72,7 @@ fn snapshot_with_progress(
         md5.update(&buffer[..n]);
         size += n as u64;
         copied(size);
-        if size > before.2 {
+        if size > before.size {
             return Err(EngineError::DownloadConflict);
         }
     }
@@ -95,7 +82,10 @@ fn snapshot_with_progress(
         .map_err(filesystem::io)?;
     root.validate_parent(path, parent_id)?;
     let current = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
-    if stamp(&file)? != before || stamp(&current)? != before || size != before.2 {
+    if crate::local::Stamp::read(&file)? != before
+        || crate::local::Stamp::read(&current)? != before
+        || size != before.size
+    {
         return Err(EngineError::DownloadConflict);
     }
     cleanup.complete = true;
@@ -153,7 +143,7 @@ pub(crate) fn verify_file(
     op: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
-    let before = stamp(file)?;
+    let before = crate::local::Stamp::read(file)?;
     if !file.metadata().map_err(filesystem::io)?.is_file() {
         return Err(EngineError::StateStorage);
     }
@@ -172,7 +162,7 @@ pub(crate) fn verify_file(
     if size != op.size || format!("{:x}", sha.finalize()) != op.sha {
         return Err(EngineError::StateStorage);
     }
-    if stamp(file)? != before {
+    if crate::local::Stamp::read(file)? != before {
         return Err(EngineError::StateStorage);
     }
     Ok(())

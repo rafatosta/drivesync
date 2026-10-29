@@ -7,7 +7,7 @@ use crate::{
 use std::{
     collections::BTreeMap,
     fs::File,
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    os::unix::ffi::OsStrExt,
     path::Path,
     time::{Duration, Instant},
 };
@@ -44,21 +44,12 @@ pub(crate) fn temporary(path: &Path) -> bool {
         })
     })
 }
-fn metadata_stamp(m: &std::fs::Metadata) -> Stamp {
-    Stamp {
-        device: m.dev(),
-        inode: m.ino(),
-        size: m.len(),
-        mtime: (m.mtime(), m.mtime_nsec()),
-        ctime: (m.ctime(), m.ctime_nsec()),
-    }
-}
 /// Reads one regular-file signature through a validated descriptor chain.
 pub(crate) fn stamp(root: &Root, path: &Path) -> Result<Stamp, EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     let file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
-    let stamp = metadata_stamp(&file.metadata().map_err(filesystem::io)?);
+    let stamp = Stamp::read(&file)?;
     root.validate_parent(path, parent_id)?;
     Ok(stamp)
 }
