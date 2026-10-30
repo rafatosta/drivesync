@@ -1009,3 +1009,10 @@ limitação de atomicidade por banco descrita em [SQLite Atomic Commit](https://
 Falhas de acesso continuam inconclusivas conforme [Drive: resolve errors](https://developers.google.com/workspace/drive/api/guides/handle-errors).
 Referências verificadas em 2026-10-30. Contagem, proporção e confirmação por lote
 são política DriveSync; não são capacidades de exclusão transacional da API.
+
+A população protetiva mantém a última base confirmada observada por identidade,
+separada da base que o journal autoriza usar na execução. Operações incompletas
+não reduzem essa população. A revisão SQLite usa formato interno 4, sem migração;
+formato anterior é rejeitado preservando o banco. A recuperação explícita existente
+pode reconstruir observações; arquivos e credenciais permanecem preservados.
+Bases sem localização conhecida contam conservadoramente no escopo da raiz.

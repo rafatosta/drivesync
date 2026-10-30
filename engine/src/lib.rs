@@ -43,8 +43,8 @@ pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncR
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 
 pub use planner::{
-    decide, ConfirmedBase, ConfirmedLocation, ConflictReason, DownloadPlan, LocalObservation,
-    PlanAction, PlanEntry,
+    decide, BulkImpact, BulkPolicy, BulkReview, ConfirmedBase, ConfirmedLocation, ConflictReason,
+    DownloadPlan, LocalObservation, PlanAction, PlanEntry,
 };
 
 pub use download::{
