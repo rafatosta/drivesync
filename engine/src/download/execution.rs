@@ -42,6 +42,9 @@ struct Session<'a> {
     context: Context<'a>,
     root: &'a Root,
     operations: HashMap<std::path::PathBuf, Vec<Operation>>,
+    /// Fresh durable evidence captured under the retained root lock. Each inventory
+    /// ID is processed once; this avoids rescanning the entire journal per new file.
+    bases: HashMap<String, crate::ConfirmedBase>,
     preserved: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
@@ -82,7 +85,14 @@ pub(crate) fn run_with_root<'a>(
             .or_default()
             .push(operation);
     }
+    let bases = context.store.confirmed_bases(
+        context.client,
+        &context.scope.account_id,
+        &context.scope.remote_root,
+        &context.scope.local_root,
+    )?;
     let session = Session {
+        bases,
         context,
         root,
         operations,
@@ -222,6 +232,9 @@ pub(crate) fn run_with_root<'a>(
                     .map(|()| report.linked += 1)
                 })
             }
+            (InventoryKind::Binary, Some(_), PlanAction::Classified { .. }) => {
+                Err(EngineError::DownloadConflict)
+            }
             (InventoryKind::Binary, Some(path), PlanAction::Equivalent) => session
                 .equivalent(item, path, decision, &by_id, source)
                 .map(|()| report.unchanged += 1),
@@ -249,6 +262,11 @@ pub(crate) fn run_with_root<'a>(
                     },
                 )
             }
+            (
+                InventoryKind::Binary,
+                Some(_),
+                PlanAction::Blocked(crate::ConflictReason::LocalMissingRemoteChanged),
+            ) => Err(EngineError::DownloadConflict),
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {
@@ -580,6 +598,24 @@ impl Session<'_> {
                 size: old_size,
                 version: old_version,
             });
+        } else {
+            // A local removal after planning invalidates a candidate remote update.
+            // The executor's durable snapshot is fresh and protected by the root lock.
+            let bases = &self.bases;
+            if bases.get(&item.id).is_some_and(|base| {
+                base.location
+                    .as_ref()
+                    .is_none_or(|location| location.relative_path == path)
+            }) && matches!(
+                crate::conflicts::binary_decision(
+                    bases.get(&item.id),
+                    &crate::LocalObservation::Absent,
+                    item.version.ok_or(EngineError::InvalidPlan)?,
+                ),
+                PlanAction::Blocked(_) | PlanAction::DeferredUnknown
+            ) {
+                return Err(EngineError::DownloadConflict);
+            }
         }
         validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
         let id = oauth2::CsrfToken::new_random().secret().clone();

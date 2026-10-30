@@ -2,6 +2,7 @@
 //! A terminal feed cursor and its projected inventory form one checkpoint.
 mod collection;
 mod equivalence;
+mod locations;
 mod models;
 mod reconciliation;
 pub(crate) use collection::validate;

@@ -256,6 +256,11 @@ fn confirmed_installation_drives_item_scoped_three_way_planning() {
     assert_eq!(
         bases.get("file"),
         Some(&crate::ConfirmedBase {
+            location: Some(crate::ConfirmedLocation {
+                relative_path: "file.txt".into(),
+                remote_name: "file.txt".into(),
+                remote_parent: "root".into(),
+            }),
             remote_version: 1,
             local_fingerprint: format!(
                 "{:x}:{}:{}",
@@ -815,7 +820,7 @@ mod update_tests;
 mod incremental_tests;
 
 /// A metadata-only revision can be absent from the feed. Deleted local copies
-/// must not bypass the version check, and a fresh inventory must permit recovery.
+/// must not bypass the version check; a newer revision requires explicit review.
 #[test]
 fn deleted_local_copy_requires_reconciliation_of_silent_metadata_revision() {
     let fixture = Fixture::new();
@@ -844,14 +849,15 @@ fn deleted_local_copy_requires_reconciliation_of_silent_metadata_revision() {
     let result = fixture
         .execute(&refreshed, &mut source, &cancel, |_| {})
         .unwrap();
-    assert_eq!(result.downloaded, 1);
-    assert!(result.issues.is_empty());
-    assert_eq!(fs::read(fixture.root.join("file.txt")).unwrap(), b"abc");
+    assert_eq!(result.downloaded, 0);
+    assert_eq!(result.issues[0].error, EngineError::DownloadConflict);
+    assert!(!fixture.root.join("file.txt").exists());
     let result = fixture
         .execute(&refreshed, &mut source, &cancel, |_| {})
         .unwrap();
-    assert_eq!(result.unchanged, 1);
-    assert_eq!(source.media_calls, 2);
+    assert_eq!(result.downloaded + result.unchanged, 0);
+    assert_eq!(result.issues[0].error, EngineError::DownloadConflict);
+    assert_eq!(source.media_calls, 1);
 }
 
 #[path = "baseline_tests.rs"]
@@ -914,3 +920,6 @@ mod reconciliation_tests;
 
 #[path = "sync003_acceptance.rs"]
 mod sync003_acceptance;
+
+#[path = "sync006_acceptance.rs"]
+mod sync006_acceptance;

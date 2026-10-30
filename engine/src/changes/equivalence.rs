@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub(crate) fn refine(
     plan: &mut DownloadPlan,
     inventory: &RemoteInventory,
+    bases: &HashMap<String, ConfirmedBase>,
     source: &mut impl Source,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
@@ -25,11 +26,27 @@ pub(crate) fn refine(
             .split(':')
             .next()
             .ok_or(EngineError::InvalidPlan)?;
+        let Some((base_sha, _, _)) = bases
+            .get(&entry.remote_id)
+            .and_then(|base| crate::planner::fingerprint_parts(&base.local_fingerprint))
+        else {
+            entry.action = PlanAction::DeferredUnknown;
+            continue;
+        };
         match crate::download::content_fingerprint(item, source, cancel) {
-            Ok(remote_sha) if remote_sha.eq_ignore_ascii_case(local_sha) => {
-                entry.action = PlanAction::Equivalent
+            Ok(remote_sha) => {
+                let comparison = if remote_sha.eq_ignore_ascii_case(local_sha) {
+                    crate::ContentComparison::Equal
+                } else {
+                    crate::ContentComparison::Different
+                };
+                let remote_change = if remote_sha.eq_ignore_ascii_case(base_sha) {
+                    crate::ContentComparison::Equal
+                } else {
+                    crate::ContentComparison::Different
+                };
+                entry.action = crate::conflicts::refine_content(remote_change, comparison);
             }
-            Ok(_) => {}
             Err(EngineError::Authentication(crate::AuthError::Cancelled)) => {
                 return Err(EngineError::Authentication(crate::AuthError::Cancelled))
             }
@@ -38,7 +55,12 @@ pub(crate) fn refine(
                 | EngineError::StateStorage
                 | EngineError::RootSuspended(_)),
             ) => return Err(error),
-            Err(_) => entry.action = PlanAction::DeferredUnknown,
+            Err(_) => {
+                entry.action = crate::conflicts::refine_content(
+                    crate::ContentComparison::Unknown,
+                    crate::ContentComparison::Unknown,
+                )
+            }
         }
     }
     Ok(())
@@ -56,6 +78,7 @@ pub(crate) fn prepare(
     let mut plan = crate::planner::plan_with_bases(inventory, root, bases, |_, path, _| {
         Ok(local.observe(path))
     })?;
-    refine(&mut plan, inventory, source, cancel)?;
+    super::locations::refine_locations(&mut plan, inventory, bases, local, source, cancel)?;
+    refine(&mut plan, inventory, bases, source, cancel)?;
     Ok(plan)
 }

@@ -29,6 +29,11 @@ mod upload;
 pub use auth::{AuthError, Cancellation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
+pub use conflicts::{
+    classify_differences, AttributeChange, BaseEvidence, ContentComparison, DifferenceDecision,
+    DifferenceInput, DifferenceKind, DifferenceReason, Disposition, ObservationFailure,
+    SideDifference,
+};
 pub use coordinator::RootSuspension;
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
@@ -36,7 +41,8 @@ pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncR
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 
 pub use planner::{
-    decide, ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation, PlanAction, PlanEntry,
+    decide, ConfirmedBase, ConfirmedLocation, ConflictReason, DownloadPlan, LocalObservation,
+    PlanAction, PlanEntry,
 };
 
 pub use download::{

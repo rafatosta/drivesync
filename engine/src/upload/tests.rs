@@ -766,3 +766,24 @@ fn n03_upload_root_replacement_stops_before_final_remote_publication() {
     assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
     assert_eq!(remote.generated, 1);
 }
+
+#[test]
+fn relocated_managed_identity_is_not_uploaded_as_a_new_file() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake::default();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    let creates = remote.creates;
+    fs::rename(f.root.join("file.txt"), f.root.join("renamed.txt")).unwrap();
+    for _ in 0..2 {
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.uploaded, 0);
+        assert_eq!(remote.creates, creates);
+        assert_eq!(fs::read(f.root.join("renamed.txt")).unwrap(), b"abc");
+        assert!(f
+            .uploads()
+            .load(Path::new("renamed.txt"))
+            .unwrap()
+            .is_none());
+    }
+}

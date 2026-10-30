@@ -72,7 +72,7 @@ impl Reconciliation {
 pub(crate) struct Reconciliations(Store);
 impl Reconciliations {
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, 0x44535243, 1, SCHEMA)?))
+        Ok(Self(Store::open_format(path, 0x44535243, 2, SCHEMA)?))
     }
     pub(crate) fn load(
         &self,
@@ -148,7 +148,10 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
     }
     crate::changes::validate(scope.account, scope.remote, &record.remote)?;
     for (item, entry) in record.remote.entries.iter().zip(&plan.entries) {
-        if item.id != entry.remote_id || entry.relative_path.as_ref().is_some_and(|p| !safe(p)) {
+        if item.id != entry.remote_id
+            || entry.relative_path.as_ref().is_some_and(|p| !safe(p))
+            || matches!(&entry.action, crate::PlanAction::Classified { local_path, .. } if !safe(local_path))
+        {
             return Err(EngineError::InvalidPlan);
         }
     }
@@ -168,6 +171,12 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
         if !crate::configuration::valid_id(id)
             || base.remote_version == 0
             || crate::planner::fingerprint_parts(&base.local_fingerprint).is_none()
+            || base.location.as_ref().is_some_and(|location| {
+                !safe(&location.relative_path)
+                    || location.relative_path.file_name().and_then(|n| n.to_str())
+                        != Some(location.remote_name.as_str())
+                    || !crate::configuration::valid_id(&location.remote_parent)
+            })
         {
             return Err(EngineError::InvalidPlan);
         }

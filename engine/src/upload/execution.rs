@@ -107,10 +107,23 @@ pub(crate) fn run_with_root(
         }
     }
     let journal = Store::open(state_path)?;
+    // A relocated managed identity is pending reconciliation, not a new upload.
+    let managed: HashSet<_> = journal
+        .confirmed_bases(client, &inventory.account_id, &inventory.root_id, root_path)?
+        .values()
+        .filter_map(|base| {
+            crate::planner::fingerprint_parts(&base.local_fingerprint).map(|(_, d, i)| (d, i))
+        })
+        .collect();
     let total = paths.len();
     for (index, (path, evidence)) in paths.into_iter().enumerate() {
         let path = path.clone();
         let directory = *evidence == crate::local::Evidence::Directory;
+        if let crate::local::Evidence::Stable { stamp, .. } = evidence {
+            if !known.contains_key(&path) && managed.contains(&(stamp.device, stamp.inode)) {
+                continue;
+            }
+        }
         local::check(cancel)?;
         remote.configured()?;
         root.validate()?;

@@ -1,6 +1,6 @@
 # Algoritmos — conflicts
 
-**Estado:** proposta v0.2, independente da linguagem.
+**Estado:** classificação SYNC-006 implementada; preservação geral e resolução assistida propostas.
 
 ## Algoritmos
 CONFLICT-001,CONFLICT-002.
@@ -65,3 +65,27 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Testes/oráculos a detalhar:** Usuário escolhe após arquivo mudar de novo, reinicia com decisão pendente.
 - **Limitações / questões abertas:** Sem auto-merge na primeira versão; definir UX apenas após contrato seguro.
 - **Situação:** DRAFT; implementar somente após completar os oráculos e revisão humana.
+
+## Classificação SYNC-006
+
+Contrato e precedência: [contract.md](contract.md). A decisão pura compara deltas
+normalizados de L/R em relação a B; o adaptador retém as evidências no escopo.
+Não há transferência, mutação ou confirmação de B na classificação. A coleta
+pode ler conteúdo remoto em sink para comprovar igualdade/diferença, validando
+metadados antes/depois. A prova compara R com B e com L: revisão remota de
+metadados não transforma uma edição exclusivamente local em conflito de conteúdo.
+
+| Cenário | Oráculo e referência |
+| --- | --- |
+| C01 | `c01_c03_c04_and_p01_three_way_matrix` em [tests.rs](tests.rs); divergência real integrada em `c06_reopened_offline_local_remote_and_divergent_changes_preserve_bases` de [download/reconciliation_tests.rs](../download/reconciliation_tests.rs). |
+| C03 | Matriz pura distingue exclusão confirmada versus edição. `c03_unlisted_remote_with_local_edit_is_unavailable_not_confirmed_deletion` em [sync006_acceptance.rs](../download/sync006_acceptance.rs) cobre o limite real do inventário: não listado não prova exclusão. |
+| C04 | Matriz pura para exclusão confirmada; `c04_missing_local_and_new_remote_revision_require_review_after_reopen` e `local_removal_after_remote_update_planning_invalidates_the_candidate` em [reconciliation_tests.rs](../download/reconciliation_tests.rs) preservam R/B e não recriam L silenciosamente. |
+| C09/C12 | `c09_c12_independent_changes_are_conciliable_in_both_directions` em [tests.rs](tests.rs); `c09_c12_classify_both_directions_persist_and_repeat_without_duplicate_copies` em [sync006_acceptance.rs](../download/sync006_acceptance.rs) usa inventários reais, B reaberta e prova remota simulada nos dois sentidos. Aplicação da combinação permanece pendente. |
+| C21 | `c21_equal_content_and_matching_locations_converge_without_false_conflict` em [tests.rs](tests.rs); os testes C21 de [reconciliation_tests.rs](../download/reconciliation_tests.rs) verificam timestamps, identidades, revalidação e repetição; `metadata_only_remote_revision_does_not_turn_local_edit_into_content_conflict` impede conflito falso por revisão de metadados. |
+| P01 | Matriz pura; testes de baseline/download mantêm criação/atualização segura para mudanças unilaterais suportadas e nenhuma escrita para ausência de mudança. Atualização remota continua bloqueada. |
+| Falha/reinício/offline | `location_content_proof_offline_or_stale_remains_unknown_and_preserves_base`, `failed_observation_commit_and_cancellation_keep_the_previous_classification` em [sync006_acceptance.rs](../download/sync006_acceptance.rs); provedores simulados, arquivos e SQLite reais isolados. |
+| Independência e identidade | `conciliable_item_does_not_block_independent_downloads`, `equal_bytes_in_a_different_identity_never_prove_a_local_relocation` e `conflicting_names_or_content_remain_real_conflicts_not_conciliable` em [sync006_acceptance.rs](../download/sync006_acceptance.rs); `relocated_managed_identity_is_not_uploaded_as_a_new_file` em [upload/tests.rs](../upload/tests.rs). |
+
+Essas referências definem oráculos e limites, não resultados de execução com
+Google Drive real, teste manual de interface, queda real de processo/energia ou
+aplicação de operações ainda não suportadas. Evidências/comandos ficam no commit/PR.

@@ -2,7 +2,7 @@
 use super::Notice;
 use crate::{
     local::{Evidence, Inventory},
-    ConflictReason, DownloadPlan, PlanAction,
+    DownloadPlan,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,10 +18,13 @@ pub enum ChangeKind {
     LocalChanged,
     ConcurrentChanges,
     Equivalent,
+    Conciliable,
+    LocationConflict,
     LocalIdentityChanged,
     ConcurrentIdentityChanges,
     ExistingLocalData,
     LocalMissing,
+    LocalMissingRemoteChanged,
     LocalNew,
     RemoteUnavailable,
     Temporary,
@@ -37,9 +40,12 @@ impl ChangeKind {
             Self::RemoteChanged => "A Google Drive version is available. Local installation still requires verification.",
             Self::LocalChanged => "Local changes were preserved. Updating an existing Drive file is not available yet.",
             Self::ConcurrentChanges => "The local and Drive versions differ. Decide which content to keep; no version was selected.",
+            Self::Conciliable => "The name, location or content changes can be reconciled. Applying this combination is not available yet; the available versions were left intact.",
+            Self::LocationConflict => "This file has incompatible name or location changes. Review the destinations; no version was selected.",
             Self::Equivalent => "The same content was verified on this computer and Google Drive. No copy or replacement was needed.",
             Self::LocalIdentityChanged | Self::ConcurrentIdentityChanges => "This local file was replaced. Its contents were preserved; matching names or content do not authorize adoption.",
             Self::ExistingLocalData => "This file already exists locally and has no confirmed synchronization history. Its contents were preserved.",
+            Self::LocalMissingRemoteChanged => "The local copy is missing and Google Drive has changed since the last confirmed synchronization. The Drive version was preserved; review this item before restoring a local copy.",
             Self::LocalMissing => "No local copy was observed. This does not request deletion on Google Drive.",
             Self::LocalNew => "A local item was found. Upload requires this folder’s upload setting and a verified available destination.",
             Self::RemoteUnavailable => "This item is no longer listed in the selected Drive folder. This may reflect a move or lost access; local data was preserved.",
@@ -54,7 +60,10 @@ impl ChangeKind {
         matches!(
             self,
             Self::LocalChanged
+                | Self::Conciliable
+                | Self::LocationConflict
                 | Self::ConcurrentChanges
+                | Self::LocalMissingRemoteChanged
                 | Self::LocalIdentityChanged
                 | Self::ConcurrentIdentityChanges
                 | Self::ExistingLocalData
@@ -94,30 +103,15 @@ pub(crate) fn classify(
         if let Some(path) = &entry.relative_path {
             represented.insert(path.clone());
         }
+        if let crate::PlanAction::Classified { local_path, .. } = &entry.action {
+            represented.insert(local_path.clone());
+        }
         let evidence = entry
             .relative_path
             .as_ref()
             .and_then(|p| local.entries.get(p));
-        let kind = evidence_kind(evidence).unwrap_or_else(|| match &entry.action {
-            PlanAction::Equivalent => ChangeKind::Equivalent,
-            PlanAction::NoOp => ChangeKind::Unchanged,
-            PlanAction::Download | PlanAction::CreateDirectory | PlanAction::CreateLink => {
-                if entry.expected_local == crate::LocalObservation::Absent {
-                    ChangeKind::LocalMissing
-                } else {
-                    ChangeKind::RemoteChanged
-                }
-            }
-            PlanAction::DeferredUnknown => ChangeKind::Unknown,
-            PlanAction::Skipped(_) => ChangeKind::Unsupported,
-            PlanAction::Blocked(reason) => match reason {
-                ConflictReason::LocalChanged => ChangeKind::LocalChanged,
-                ConflictReason::ConcurrentChanges => ChangeKind::ConcurrentChanges,
-                ConflictReason::LocalIdentityChanged => ChangeKind::LocalIdentityChanged,
-                ConflictReason::ConcurrentIdentityChanges => ChangeKind::ConcurrentIdentityChanges,
-                ConflictReason::ExistingLocalData => ChangeKind::ExistingLocalData,
-                _ => ChangeKind::Unsupported,
-            },
+        let kind = evidence_kind(evidence).unwrap_or_else(|| {
+            crate::conflicts::plan_diagnosis(&entry.action, &entry.expected_local)
         });
         result.push(ReconciliationEntry {
             relative_path: entry.relative_path.clone(),

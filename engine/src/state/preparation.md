@@ -89,9 +89,19 @@ Referências oficiais consultadas em 2026-10-23:
 - https://www.sqlite.org/pragma.html#pragma_integrity_check
 - https://docs.rs/rusqlite/0.37.0/rusqlite/struct.OpenFlags.html
 
+## Evidência de localização — SYNC-006
+
+B extraída de instalação confirmada inclui caminho relativo, nome e pai remoto
+da operação durável. Esses dados não são inferidos de inventários posteriores.
+Observações de localização e diagnósticos conciliáveis não alteram B.
+O formato atual de reconciliação inclui essa localização e o plano classificado
+não executável. Registros de formato anterior são rejeitados sem apagar dados
+nem migrar automaticamente; recuperação explícita deve preservar os bancos e
+arquivos originais conforme o contrato STATE-003.
+
 ## SYNC-003 — observações de reconciliação
 
-[reconciliation.rs](reconciliation.rs) mantém formato próprio 1, application_id
+[reconciliation.rs](reconciliation.rs) mantém formato próprio 2, application_id
 próprio e as mesmas garantias de abertura privada, integridade e rejeição sem
 reset dos demais bancos. Uma transação publica B/L/R, plano e diagnósticos juntos
 por cliente, conta e raízes, usando CAS para recusar trabalhador obsoleto.
