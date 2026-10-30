@@ -7,6 +7,7 @@ name = "drivesync"
 version = "0.1.0"
 edition = "2021"
 description = "DriveSync GNOME prototype"
+license = "GPL-3.0-only"
 
 [dependencies]
 gtk = { package = "gtk4", version = "0.10", features = ["v4_10"] }
