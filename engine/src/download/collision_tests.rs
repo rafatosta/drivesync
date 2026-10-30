@@ -366,3 +366,39 @@ fn sync009_file_folder_mismatches_preserve_real_local_data() {
         }
     }
 }
+
+#[test]
+fn sync009_concurrent_destination_type_change_preserves_data_and_replans() {
+    for directory in [false, true] {
+        let f = Fixture::new();
+        let inv = scanned(&[binary("item", "root", "target", b"REMOTE")], false, false);
+        let plan = prepare(&f, &inv).unwrap();
+        assert_eq!(plan.entries[0].action, PlanAction::Download);
+        if directory {
+            fs::create_dir(f.root.join("target")).unwrap();
+            fs::write(f.root.join("target/child"), b"KEEP").unwrap();
+        } else {
+            fs::write(f.root.join("target"), b"KEEP").unwrap();
+        }
+        let mut source = Fake::new(&inv);
+        let report = super::concurrency_tests::execute_plan(
+            &f,
+            &inv,
+            &plan,
+            &mut source,
+            &Cancellation::new(),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(report.downloaded, 0);
+        assert_eq!(report.issues.len(), 1);
+        assert!(bases(&f, &inv).is_empty());
+        assert!(source.media_ids.is_empty());
+        let path = if directory { "target/child" } else { "target" };
+        assert_eq!(fs::read(f.root.join(path)).unwrap(), b"KEEP");
+        assert!(matches!(
+            prepare(&f, &inv).unwrap().entries[0].action,
+            PlanAction::Blocked(_)
+        ));
+    }
+}

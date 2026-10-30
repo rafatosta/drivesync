@@ -148,7 +148,9 @@ fn safe(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
+        && !crate::local::ignored(Path::new(name))
         && !crate::local::ignored(Path::new(&folded))
+        && !(folded.starts_with("drivesync backup ") && folded.ends_with(".bak"))
         && name.len() <= 255
         && name.encode_utf16().count() <= 255
         && !name.ends_with(['.', ' '])

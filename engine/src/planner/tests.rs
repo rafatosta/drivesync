@@ -305,6 +305,8 @@ fn incomplete_identity_evidence_is_unknown_even_when_fingerprints_match() {
 #[test]
 fn portable_names_lengths_and_workspace_types() {
     for name in [
+        "DriveSync backup test.bak",
+        "DRIVESYNC BACKUP test.BAK",
         "CON",
         "nul.txt",
         "COM1.log",
