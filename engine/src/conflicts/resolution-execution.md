@@ -7,6 +7,8 @@ aplicativo ainda não executa essas resoluções. O experimento de precondiçõe
 abaixo é executável, mas não constitui um executor nem habilita mutações no
 sincronizador.
 
+A implementação compartilhada é acompanhada pela [issue #48](https://github.com/rafatosta/drivesync/issues/48).
+
 Uma consulta de revisão seguida de escrita incondicional não protege a janela
 entre as duas operações. Não usar `version` como se fosse um token CAS aceito
 pelo servidor. Enquanto a proteção da atualização do mesmo ID não for
@@ -24,13 +26,23 @@ da versão mais recente.
 | C07: nomes diferentes | Preservar e solicitar decisão; nenhuma escolha implícita por data ou ordem de observação. |
 | P03: manter local | Conteúdo local escolhido é o resultado ativo; preservar a versão remota necessária antes da substituição. |
 | P03: manter remoto | Conteúdo remoto escolhido é o resultado ativo; preservar a versão local necessária antes da substituição. |
-| P03: manter ambas | Preservar ambas as versões com destinos distintos e verificados; não sobrescrever um nome ocupado. A confirmação deve informar qual versão permanece no caminho original e quais cópias serão sincronizadas. |
+| P03: manter ambas | Proposta de política: manter a versão local no caminho original e no ID remoto original; publicar a versão remota observada como outro arquivo sincronizado, com nome distinto e ID próprio reservado na intenção. A confirmação explica essa distribuição antes de autorizar efeitos. |
 | P03: decidir depois | Nenhum efeito; a pendência e as versões permanecem disponíveis. |
 
 As escolhas de conteúdo não autorizam exclusões, mudanças de permissões,
 tratamento de tipos especiais ou movimentações arbitrárias de árvores. Cada
 ação precisa de pré-condições próprias; indisponibilidade de acesso não é
 evidência de exclusão nem uma versão selecionável.
+
+Para “manter ambas”, propor o nome `<stem> (DriveSync remote conflict
+<operation-id>)<extension>` no mesmo pai, com o identificador durável completo.
+Validar limites e colisões locais/remotas antes de reservar; destino ocupado,
+nome irrepresentável ou mudança da árvore exige nova proposta, nunca substituição.
+Materializar e verificar a cópia da versão remota antes de substituir o conteúdo
+do ID original. Os dois arquivos participam da sincronização normal; backups
+internos `.bak` continuam separados dessas cópias ativas. Essa criação de um
+novo ID decorre da escolha explícita de manter ambas e não se aplica a C09.
+Esta política faz parte da especificação a revisar antes da implementação.
 
 ## Entrada e autoridade
 
@@ -91,6 +103,27 @@ Os aceites originais de #15/#16 continuam nessas issues até serem atendidos.
 
 ## Experimento de precondições diretas
 
+### Adaptador candidato e revisão do contrato
+
+O candidato de implementação usa **v2 somente nas operações que precisam de
+ETag condicional**, mantendo inventário/feed v3. Não é fallback automático em
+produção. Essa introdução precisa da revisão humana da especificação prevista
+em `docs/old/development-methodology.md`, etapa 5, antes de conectar efeitos
+destrutivos ao coordinator. As autorizações de teste e de publicação não
+constituem evidência de revisão técnica desse novo contrato.
+
+| Porta candidata | Requisito |
+|---|---|
+| Consulta v2 de `id,title,version,etag` | Identidade e versão devem concordar com a observação v3 estabilizada; diferença é evidência insuficiente. ETag forte é opaco e não pode ser derivado de `version`. |
+| `PATCH /drive/v2/files/{id}` | Alterar somente `title` sob `If-Match`; 412 exige nova comparação, nunca escrita incondicional. |
+| `PUT /upload/drive/v2/files/{id}?uploadType=media` | Conteúdo sob `If-Match` para o mesmo ID; confirmar hash, tamanho, localização e revisão após o efeito. |
+| Upload resumível v2 | Precondição na criação da sessão e na publicação; validar origem da URI, guardar sessão como dado sensível e reconciliar resultado incerto antes de repetir. |
+| Fronteira v2/v3 | Coletar novamente se há propagação de revisão; somente leituras têm repetição limitada. Nunca avançar B usando observações divergentes. |
+
+Mesmo com ensaios positivos, faltam os contratos implementados de intenção,
+preservação, recuperação e confirmação descritos acima. Não conectar diretamente
+o experimento Python ao sincronizador; ele é uma ferramenta de pesquisa isolada.
+
 Referências oficiais consultadas em 2026-10-30:
 
 - [files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)
@@ -104,14 +137,29 @@ Referências oficiais consultadas em 2026-10-30:
 - [HTTP If-Match, RFC 9110 §13.1.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.1)
   define a semântica esperada quando a precondição é implementada. Não demonstra
   que um serviço específico a implementa.
+- [File v2](https://developers.google.com/workspace/drive/api/reference/rest/v2/files)
+  documenta `etag`; o [mapeamento v2/v3](https://developers.google.com/workspace/drive/api/guides/v2-to-v3-reference)
+  distingue `title`/`name` e os métodos. Esse recurso não autoriza reutilizar uma
+  tag v2 numa escrita v3 nem generalizar comportamento entre endpoints.
 
-`scripts/check-drive-preconditions.py` cria dois arquivos binários novos de teste,
-um para atualização de nome e outro para upload direto de conteúdo. Nunca aceita
+`scripts/check-drive-preconditions.py` cria arquivos binários novos de teste,
+um por endpoint selecionado. Nunca aceita
 ID de arquivo existente, não remove fixtures nem repete uma mutação incerta.
 O teste exige ETag forte, confirma escrita com tag atual, tenta duas vezes a tag
 obsoleta e exige HTTP 412 com nome, bytes, versão e ETag inalterados. Repete a
 sequência com a tag seguinte. Cada snapshot delimita a leitura dos bytes por duas
-consultas de metadados iguais. Credenciais e ETags não entram nas evidências.
+consultas de metadados iguais. Consultas iniciais ou posteriores a uma escrita
+confirmada podem ser repetidas até três vezes para obter observações estáveis;
+a verificação após rejeição obsoleta é estrita, sem esconder alterações por
+repetição. Credenciais, ETags e URIs de sessão não entram nas evidências.
+
+O modo `--write-api v2` consulta a tag v2 e exige concordância com identidade,
+nome e versão observados em v3; o padrão é v3. `--kind name` e `--kind media`
+isolam cada endpoint; `--kind all` executa esses dois. `--kind resumable` cria
+uma sessão condicional, confirma uma edição concorrente depois da criação e
+exige 412 sem alteração ao concluir a sessão obsoleta. Uma nova sessão com a
+tag atual deve publicar bytes corretos, como controle positivo. A variante v2
+é apenas experimental e não altera a API do aplicativo.
 
 Execução assistida por cofre, dentro do SDK do manifesto:
 
@@ -125,6 +173,8 @@ Execução assistida por cofre, dentro do SDK do manifesto:
    -- --ignored --exact`.
    O teste exige exatamente uma conta no perfil e envia o token de curta duração
    ao processo Python por pipe privado, nunca por argumentos ou ambiente.
+   `DRIVESYNC_PROBE_WRITE_API` seleciona `v3` (padrão) ou `v2`;
+   `DRIVESYNC_PROBE_KIND` seleciona `all`, `name`, `media` ou `resumable`.
 4. Inspecionar `evidence.jsonl`; cada ID criado fica registrado assim que
    confirmado. Se a criação teve resultado incerto, procurar as fixtures pelo
    prefixo `DriveSync precondition experiment` na conta de teste, sem recriar
@@ -136,8 +186,8 @@ pelo chat, argumentos de shell ou arquivos versionados.
 
 Os testes de `scripts/tests/test_drive_preconditions.py` são simulados e verificam
 os oráculos e recusas do experimento; não validam a semântica Google. Um resultado
-positivo do experimento real cobre apenas escritas **diretas**, na conta/build
-testados. Upload resumível, concorrência local, durabilidade SQLite/filesystem,
+positivo do experimento real cobre apenas o endpoint e modo selecionados,
+na conta/build testados. Outros modos, concorrência local, durabilidade SQLite/filesystem,
 resultado incerto, permissões e integração do executor continuam exigindo testes
 próprios antes de habilitar a funcionalidade. Não há habilitação automática.
 
