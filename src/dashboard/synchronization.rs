@@ -760,7 +760,8 @@ pub(super) fn build(
     } else {
         None
     };
-    let job = crate::automatic::Controller::attach(engine, saved);
+    let job = crate::automatic::Controller::attach(engine.clone(), saved);
+    footer.append(&super::problems::button(engine, saved, job.clone()));
     footer.append(&super::bulk_review::button(job.clone()));
     if let Some(receive) = restore {
         let restore_ui = ui.clone();
