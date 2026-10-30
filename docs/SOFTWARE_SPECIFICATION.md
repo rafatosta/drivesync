@@ -964,7 +964,8 @@ o algoritmo. Configuração persistida e editor de limiares não fazem parte des
 entrega. Não existe preferência para desativar a proteção nem consentimento global.
 
 **Contrato de implementação.** A população é formada pelas identidades com base
-confirmada e localização conhecida, contadas uma vez por escopo ancestral. Ausência
+confirmada, contadas uma vez por escopo ancestral da localização conhecida;
+localização desconhecida conta conservadoramente na raiz. Ausência
 local, indisponibilidade/exclusão remota, edição, substituição e mudança de localização
 contam como impacto; itens novos e equivalentes não contam. Evidência inconclusiva
 em item confirmado também conta conservadoramente, sem se transformar em exclusão.

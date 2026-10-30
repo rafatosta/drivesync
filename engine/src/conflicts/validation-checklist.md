@@ -100,6 +100,7 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **P04** — Prioridade por versão mais recente: **não assumir que timestamp implica precedência confiável**; decidir se política será suportada e em quais condições.
 - [ ] **P05** — Mesclagem automática: somente se formato e algoritmo confiável forem definidos; **fora do escopo inicial**.
 - [ ] **P06** — Exclusões locais/remotas, inclusive em lote: definir autorização, retenção, recuperação e prevenção de perda antes de habilitar propagação destrutiva.
+  Proteção prévia implementada por BULK-001: ausências em lote exigem revisão, e confirmação não habilita exclusão local/remota. `p06_remote_trash_confirmation_never_authorizes_local_deletion` e `n08_p06_missing_batch_blocks_before_effects_survives_restart_and_requires_explicit_retry` verificam preservação. A propagação destrutiva continua indisponível.
 - [ ] **P07** — Conflito pendente não bloqueia itens independentes; pendência persiste após fechamento/reinício.
 - [ ] **P08** — Nomes reservados para cópias preservadas, sem colisão; vínculo entre cópias, identidade original e origem.
 - [ ] **P09** — Auditoria das decisões: ação, versões observadas, efeitos parciais, estado final e recuperação.
@@ -113,7 +114,7 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **N05** — Symlinks, hard links e arquivos especiais: definir suporte seguro, isolamento da raiz e prevenção de travessia.
 - [ ] **N06** — Arquivo muda enquanto o usuário compara ou confirma: invalidar decisão obsoleta e revalidar.
 - [ ] **N07** — Preferências/escopo alterados durante transferência: cancelar, reconciliar ou continuar somente sob regras explícitas.
-- [ ] **N08** — Exclusões/modificações em massa: detectar impacto, suspender ações potencialmente destrutivas e exigir política/consentimento.
+- [x] **N08** — Proteção BULK-001 por raiz/pasta, revisão vinculada às evidências e suspensão antes de efeitos. Contrato em [SYNC-014](../../../docs/SOFTWARE_SPECIFICATION.md#proteção-de-lotes--sync-014); oráculos automatizados em `download/bulk_tests.rs`, com filesystem/SQLite reais e remoto simulado. Isso não certifica Drive real nem interação visual no aplicativo instalado.
 - [ ] **N09** — Duas instâncias/atores atuando sobre a mesma raiz local: bloqueio por escopo e proteção contra corrida.
 - [ ] **N10** — Arquivo parcial, temporário ou ainda gravado: não publicá-lo como versão definitiva.
 - [ ] **N11** — Resultado remoto desconhecido após timeout/crash: reconciliar por identidade antes de repetir operação.

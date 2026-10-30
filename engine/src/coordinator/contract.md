@@ -80,3 +80,12 @@ do seletor e revalidação final. Configurar consentimento de upload também usa
 esses locks. Falha no registro externo bloqueia o trabalho, sem reinicializá-lo.
 O [protocolo STATE-003](../state/algorithms.md#state-003--reconstrução-explícita-sync-005)
 define o que pode voltar a funcionar e quais incertezas permanecem pendentes.
+
+## Revisão de lotes — SYNC-014
+
+Após persistir a reconciliação, `bulk_gate` bloqueia o ciclo antes de efeitos se
+houver impacto suspeito sem confirmação idêntica. Downloads isolados e ciclos
+com upload usam esse mesmo ponto de controle. A confirmação só acompanha o worker
+iniciado pela ação explícita; timers, retry, conectividade e reinício não a herdam.
+Locks e validações por item continuam obrigatórios, e nenhuma exclusão é habilitada.
+Contrato e limites em [proteção de lotes](../../../docs/SOFTWARE_SPECIFICATION.md#proteção-de-lotes--sync-014).

@@ -18,7 +18,12 @@ use std::{
 
 type ResultReport = Result<DownloadReport, EngineError>;
 type Execute = Arc<
-    dyn Fn(&AccountId, &Cancellation, &mut dyn FnMut(DownloadProgress)) -> ResultReport
+    dyn Fn(
+            &AccountId,
+            &Cancellation,
+            &mut dyn FnMut(DownloadProgress),
+            Option<&drivesync_engine::BulkReview>,
+        ) -> ResultReport
         + Send
         + Sync,
 >;
@@ -100,8 +105,8 @@ impl Controller {
     }
     fn for_engine(engine: Arc<DriveSyncEngine>, saved: &RestoredAccount, desktop: bool) -> Self {
         let worker_engine = engine.clone();
-        let execute: Execute = Arc::new(move |id, cancel, progress| {
-            worker_engine.synchronize_once(id, cancel, progress)
+        let execute: Execute = Arc::new(move |id, cancel, progress, approval| {
+            worker_engine.synchronize_reviewed(id, cancel, approval, progress)
         });
         let job = Self::new(saved.account.id.clone(), execute, desktop);
         job.configure(saved.folder.clone(), super::eligible(saved));
@@ -210,12 +215,32 @@ impl Controller {
             SERVICE.with(|service| service.borrow().as_ref().is_none_or(|s| *s.online.borrow()));
         self.start(now(), online, true);
     }
+    /// Consumes a user-confirmed proposal for this dispatch only. A stale dialog
+    /// cannot approve a newer result, and automatic starts always receive None.
+    pub fn request_reviewed(&self, review: drivesync_engine::BulkReview) {
+        if !matches!(&self.0.state.borrow().result, Some(Err(EngineError::BulkReviewRequired(pending))) if pending == &review)
+        {
+            return;
+        }
+        let online =
+            SERVICE.with(|service| service.borrow().as_ref().is_none_or(|s| *s.online.borrow()));
+        self.start_reviewed(now(), online, true, Some(review));
+    }
     fn network_changed(&self, online: bool) {
         let mut state = self.0.state.borrow_mut();
         state.schedule.network_changed(online, now());
         state.revision += 1;
     }
     fn start(&self, timestamp: u64, online: bool, manual: bool) {
+        self.start_reviewed(timestamp, online, manual, None);
+    }
+    fn start_reviewed(
+        &self,
+        timestamp: u64,
+        online: bool,
+        manual: bool,
+        approval: Option<drivesync_engine::BulkReview>,
+    ) {
         let (cancel, generation) = {
             let mut state = self.0.state.borrow_mut();
             let previous = state.schedule.phase;
@@ -256,11 +281,16 @@ impl Controller {
         let completion = self.clone();
         crate::flow::work(
             move || {
-                worker(&id, &cancel, &mut |event| {
-                    if let Ok(mut slot) = latest.lock() {
-                        *slot = Some(event);
-                    }
-                })
+                worker(
+                    &id,
+                    &cancel,
+                    &mut |event| {
+                        if let Ok(mut slot) = latest.lock() {
+                            *slot = Some(event);
+                        }
+                    },
+                    approval.as_ref(),
+                )
             },
             move |result| {
                 if completion.0.desktop {
@@ -435,7 +465,7 @@ mod tests {
     fn idle_recovery_pause_prevents_timer_and_connectivity_restart() {
         let job = Controller::new(
             AccountId("recovery".into()),
-            Arc::new(|_, _, _| panic!("paused recovery dispatched a worker")),
+            Arc::new(|_, _, _, _| panic!("paused recovery dispatched a worker")),
             false,
         );
         job.configure(Some(folder("recovery", "recovery-root")), true);
@@ -478,7 +508,7 @@ mod tests {
             install(app);
             SERVICE.with(|slot| *slot.borrow().as_ref().unwrap().online.borrow_mut() = true);
             let calls = calls_check.clone();
-            let execute: Execute = Arc::new(move |_, _, _| {
+            let execute: Execute = Arc::new(move |_, _, _, _| {
                 if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     Err(EngineError::Authentication(AuthError::Network))
                 } else {
@@ -547,7 +577,11 @@ mod tests {
         let release = Arc::new(AtomicBool::new(false));
         let calls_worker = calls.clone();
         let release_worker = release.clone();
-        let execute: Execute = Arc::new(move |_, cancel, progress| {
+        let execute: Execute = Arc::new(move |_, cancel, progress, approval| {
+            assert!(
+                approval.is_none(),
+                "automatic, ordinary manual and retry dispatches cannot inherit approval"
+            );
             let n = calls_worker.fetch_add(1, Ordering::SeqCst);
             progress(DownloadProgress {
                 preparation: None,
@@ -653,7 +687,7 @@ mod tests {
         let ready = returned.clone();
         let fast = Controller::new(
             AccountId("second".into()),
-            Arc::new(move |_, _, _| {
+            Arc::new(move |_, _, _, _| {
                 ready.store(true, Ordering::SeqCst);
                 Ok(DownloadReport::default())
             }),
@@ -672,7 +706,7 @@ mod tests {
         assert!(fast.snapshot().result.unwrap().is_ok());
         let restored = Controller::new(
             AccountId("restored".into()),
-            Arc::new(|_, _, _| Ok(DownloadReport::default())),
+            Arc::new(|_, _, _, _| Ok(DownloadReport::default())),
             false,
         );
         restored.configure(Some(folder("restored", "volume")), true);
