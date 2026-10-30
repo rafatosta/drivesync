@@ -16,7 +16,7 @@ ID de operação, item remoto, caminho relativo, temporário, identidades da rai
 e fase. Implementação: [mod.rs](mod.rs), [downloads.rs](downloads.rs) e
 [modelo das fases](../download/models.rs).
 
-1. `Store::open` cria estado novo com permissões privadas, schema 2 e
+1. `Store::open` cria estado novo com permissões privadas, schema 3 e
    application_id próprio. Banco existente deve passar versão/application_id,
    `quick_check`, `foreign_key_check` e modo de journal esperado. Symlink, banco
    existente vazio, corrompido, incompatível ou ilegível causam `StateStorage`;
