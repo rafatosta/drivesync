@@ -42,8 +42,9 @@ O nome é opaco e limitado; o vínculo legível fica no journal e no relatório.
    colisão mantêm originais e a pendência com erro específico.
 
 Uma revisão remota posterior ganha outro registro/nome; os anteriores continuam
-recuperáveis. Reinício recupera a operação da versão observada quando ela volta
-a ser processada; não aplica versões obsoletas ao caminho original. Um estágio
+recuperáveis. Reinício recupera snapshots `Ready` inclusive quando a revisão remota mudou ou
+saiu do inventário, sem rede: a prova foi revalidada antes de `Ready`. Nunca
+aplica versões obsoletas ao caminho original. Um estágio
 antigo não confirmado nunca é anunciado como cópia íntegra. Alterações externas
 posteriores em cópias são detectadas na revalidação, sem reparo destrutivo.
 

@@ -79,3 +79,39 @@ impl Store {
         .transpose()
     }
 }
+
+impl Store {
+    /// Returns incomplete verified snapshots, including versions no longer listed.
+    /// A later remote revision must not strand a previously journaled snapshot.
+    pub(crate) fn pending_preservations(
+        &self,
+        client: &str,
+        scope: &DownloadPlan,
+    ) -> Result<Vec<Preservation>, EngineError> {
+        let local = scope.local_root.to_str().ok_or(EngineError::InvalidPlan)?;
+        let mut stmt = self.0.prepare("SELECT operation,record FROM conflict_copies WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4").map_err(failed)?;
+        let rows = stmt
+            .query_map(
+                params![client, scope.account_id.0, scope.remote_root, local],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(failed)?;
+        let mut result = Vec::new();
+        let mut bytes = 0usize;
+        for (index, row) in rows.enumerate() {
+            let (id, json) = row.map_err(failed)?;
+            bytes = bytes.saturating_add(json.len());
+            if index >= 100_000 || bytes > 64 * 1024 * 1024 {
+                return Err(EngineError::StateStorage);
+            }
+            let record: Preservation = serde_json::from_str(&json).map_err(failed)?;
+            if !valid(&record) || record.operation.id != id {
+                return Err(EngineError::StateStorage);
+            }
+            if matches!(record.operation.phase, crate::download::Phase::Ready { .. }) {
+                result.push(record);
+            }
+        }
+        Ok(result)
+    }
+}

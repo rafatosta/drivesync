@@ -393,3 +393,62 @@ fn p02_conflict_preservation_does_not_block_independent_downloads() {
     assert_eq!(fs::read(f.root.join("independent.txt")).unwrap(), b"def");
     originals(&f, &source);
 }
+
+#[test]
+fn p02_restart_recovers_verified_snapshot_when_remote_revision_changes_or_disappears() {
+    for removed in [false, true] {
+        for published in [false, true] {
+            let (f, mut inv, mut source, plan) = setup();
+            execute(&f, &inv, &mut source, &plan).unwrap();
+            let base = baseline_tests::base(&f, &inv);
+            let mut saved = record(&f, &inv, &plan);
+            let Phase::Installed { identity, sha256 } = saved.operation.phase.clone() else {
+                panic!()
+            };
+            saved.operation.phase = Phase::Ready { identity, sha256 };
+            if !published {
+                fs::rename(
+                    f.root.join(&saved.operation.relative),
+                    f.root.join(&saved.operation.temporary),
+                )
+                .unwrap();
+            }
+            rewrite(&f, &saved);
+            if removed {
+                inv.entries.clear();
+            } else {
+                inv.entries[0].version = Some(3);
+                source.entries.insert("file".into(), inv.entries[0].clone());
+            }
+            let plan = baseline_tests::prepare(&f, &inv).unwrap();
+            source.fail_stream = true;
+            let calls = source.media_calls;
+            let result = execute(&f, &inv, &mut source, &plan).unwrap();
+            assert_eq!(result.conflict_copies.len(), 1);
+            assert_eq!(result.conflict_copies[0].remote_version, 2);
+            assert_eq!(
+                fs::read(f.root.join(&saved.operation.relative)).unwrap(),
+                b"def"
+            );
+            assert_eq!(result.downloaded + result.updated + result.recovered, 0);
+            if removed {
+                assert_eq!(source.media_calls, calls);
+            }
+            let original = inventory();
+            assert_eq!(baseline_tests::base(&f, &original), base);
+            originals(&f, &source);
+            assert!(matches!(
+                Store::open(&f.db())
+                    .unwrap()
+                    .preservation("client", &plan, &saved.operation.id)
+                    .unwrap()
+                    .unwrap()
+                    .operation
+                    .phase,
+                Phase::Installed { .. }
+            ));
+            let repeated = execute(&f, &inv, &mut source, &plan).unwrap();
+            assert!(repeated.conflict_copies.is_empty());
+        }
+    }
+}

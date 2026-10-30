@@ -4,6 +4,64 @@ use crate::download::{ConflictCopy, Preservation};
 use std::io::{Seek, SeekFrom};
 
 impl Session<'_> {
+    /// Finishes a verified historical snapshot without applying it to the local
+    /// origin or requiring the old remote revision to remain accessible.
+    pub(super) fn recover_preservation(
+        &self,
+        mut record: Preservation,
+    ) -> Result<ConflictCopy, EngineError> {
+        let op = &record.operation;
+        let Phase::Ready {
+            identity: file_id,
+            sha256,
+        } = &op.phase
+        else {
+            return Err(EngineError::StateStorage);
+        };
+        let file_id = *file_id;
+        let sha256 = sha256.clone();
+        let size = op.item.size.ok_or(EngineError::StateStorage)?;
+        let (parent, name) = self.root.parent(&op.relative)?;
+        if op.root != identity(&self.root.file)? || op.parent != identity(&parent)? {
+            return Err(EngineError::DownloadConflict);
+        }
+        self.root.validate_parent(&op.relative, op.parent)?;
+        if !filesystem::exists(&parent, &name)? {
+            if !self.intact(
+                &parent,
+                OsStr::new(&op.temporary),
+                file_id,
+                size,
+                &sha256,
+                self.context.cancel,
+            )? {
+                return Err(EngineError::DownloadIntegrity);
+            }
+            self.root.validate_parent(&op.relative, op.parent)?;
+            stream::cancelled(self.context.cancel)?;
+            filesystem::install(&parent, &op.temporary, &name)?;
+        }
+        if !self.intact(&parent, &name, file_id, size, &sha256, self.context.cancel)? {
+            return Err(EngineError::DownloadConflict);
+        }
+        self.root.validate_parent(&op.relative, op.parent)?;
+        parent.sync_all().map_err(filesystem::io)?;
+        let copy = ConflictCopy {
+            original_path: record.original.clone(),
+            copy_path: op.relative.clone(),
+            remote_id: op.item.id.clone(),
+            remote_version: op.item.version.ok_or(EngineError::StateStorage)?,
+        };
+        record.operation.phase = Phase::Installed {
+            identity: file_id,
+            sha256,
+        };
+        self.context
+            .store
+            .put_preservation(self.context.client, self.context.scope, &record)?;
+        Ok(copy)
+    }
+
     /// Preserves only a revalidated same-path content divergence. The original is
     /// never renamed, written or used as a synchronization baseline here.
     pub(super) fn preserve_conflict(
@@ -164,6 +222,14 @@ impl Session<'_> {
             if !stream::verify(&mut staged, size, &hash, self.context.cancel)? {
                 return Err(EngineError::DownloadIntegrity);
             }
+            source.configured()?;
+            validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
+            if filesystem::fingerprint_root(self.root, path, self.context.cancel)?.as_ref()
+                != Some(expected)
+            {
+                return Err(EngineError::LocalWriting);
+            }
+            self.root.validate_parent(path, parent_id)?;
             op.phase = Phase::Ready {
                 identity: identity(&staged)?,
                 sha256: hash,
