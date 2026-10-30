@@ -39,7 +39,7 @@ impl ChangeKind {
             Self::Unchanged => "No content change was detected.",
             Self::RemoteChanged => "A Google Drive version is available. Local installation still requires verification.",
             Self::LocalChanged => "Local changes were preserved. Updating an existing Drive file is not available yet.",
-            Self::ConcurrentChanges => "The local and Drive versions differ. Decide which content to keep; no version was selected.",
+            Self::ConcurrentChanges => "Different edits were verified in the local file and the Google Drive file. Both were left in place; no conflict backup was created. Review both versions. Choosing a version in DriveSync is not available yet.",
             Self::Conciliable => "The name, location or content changes can be reconciled. Applying this combination is not available yet; the available versions were left intact.",
             Self::LocationConflict => "This file has incompatible name or location changes. Review the destinations; no version was selected.",
             Self::Equivalent => "The same content was verified on this computer and Google Drive. No copy or replacement was needed.",

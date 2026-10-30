@@ -346,7 +346,7 @@ impl DriveSyncEngine {
             };
             let plan = crate::changes::prepare(
                 &inventory,
-                &folder.local,
+                local_root,
                 &bases,
                 &local,
                 &mut source,
@@ -494,14 +494,8 @@ impl DriveSyncEngine {
         preparation(crate::PreparationProgress::CheckingLocal {
             checked: local.entries.len(),
         });
-        let plan = crate::changes::prepare(
-            inventory,
-            &folder.local,
-            &bases,
-            &local,
-            &mut source,
-            cancel,
-        )?;
+        let plan =
+            crate::changes::prepare(inventory, local_root, &bases, &local, &mut source, cancel)?;
         let mut history = checkpoint.notices.clone();
         for operation in store.operations(&config.client_id, &plan)? {
             history.push(crate::changes::Notice {

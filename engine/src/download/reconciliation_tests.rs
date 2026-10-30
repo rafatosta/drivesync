@@ -8,7 +8,7 @@ fn prepare(f: &Fixture, inv: &RemoteInventory, source: &mut Fake) -> DownloadPla
         .unwrap();
     let root = Root::open(&f.root).unwrap();
     let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
-    crate::changes::prepare(inv, &f.root, &bases, &local, source, &Cancellation::new()).unwrap()
+    crate::changes::prepare(inv, &root, &bases, &local, source, &Cancellation::new()).unwrap()
 }
 fn execute_plan(
     f: &Fixture,
@@ -204,7 +204,7 @@ fn cancellation_during_equivalence_proof_never_publishes_a_plan() {
     let cancellation = cancel.clone();
     remote.on_media = Some(Box::new(move || cancellation.cancel()));
     assert_eq!(
-        crate::changes::prepare(&next, &f.root, &bases, &local, &mut remote, &cancel),
+        crate::changes::prepare(&next, &root, &bases, &local, &mut remote, &cancel),
         Err(EngineError::Authentication(crate::AuthError::Cancelled))
     );
     assert_eq!(baseline_tests::base(&f, &inv), Some(base));
@@ -262,7 +262,7 @@ fn root_suspension_during_equivalence_is_fatal_instead_of_an_item_unknown() {
     let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
     let result = crate::changes::prepare(
         &next,
-        &f.root,
+        &root,
         &bases,
         &local,
         &mut Suspended,
@@ -345,5 +345,44 @@ fn metadata_only_remote_revision_does_not_turn_local_edit_into_content_conflict(
         assert_eq!(report.downloaded + report.updated, 0);
         assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
         assert_eq!(baseline_tests::base(&f, &next), Some(base.clone()));
+    }
+}
+
+#[test]
+fn c01_local_changes_during_remote_proof_suspend_stale_diagnosis() {
+    for equal in [false, true] {
+        for replacement in [false, true] {
+            let f = Fixture::new();
+            let inv = inventory();
+            baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+            let base = baseline_tests::base(&f, &inv).unwrap();
+            fs::write(f.root.join("file.txt"), b"local edit").unwrap();
+            let bytes: &[u8] = if equal { b"local edit" } else { b"remote edit" };
+            let (next, mut remote) = v2(&inv, bytes);
+            let path = f.root.join("file.txt");
+            remote.on_media = Some(Box::new(move || {
+                if replacement {
+                    let other = path.with_file_name("replacement");
+                    fs::write(&other, b"local edit").unwrap();
+                    fs::rename(other, &path).unwrap();
+                } else {
+                    fs::write(&path, b"new local edit").unwrap();
+                }
+            }));
+            let plan = prepare(&f, &next, &mut remote);
+            assert_eq!(plan.entries[0].action, PlanAction::DeferredUnknown);
+            let report = execute_plan(&f, &next, &plan, &mut remote);
+            assert_eq!(report.updated + report.downloaded + report.unchanged, 0);
+            assert_eq!(baseline_tests::base(&f, &next), Some(base));
+            assert_eq!(remote.content["file"], bytes);
+            assert_eq!(
+                fs::read(f.root.join("file.txt")).unwrap(),
+                if replacement {
+                    b"local edit".as_slice()
+                } else {
+                    b"new local edit".as_slice()
+                }
+            );
+        }
     }
 }
