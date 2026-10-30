@@ -146,7 +146,9 @@ históricos são indisponibilidade observada, sem propagação de exclusão.
 conteúdo também compara R com B, para não confundir revisão de metadados com
 edição remota. `LocalMissingRemoteChanged` impede recriar silenciosamente L ausente
 no caminho instalado quando R avançou. Um novo caminho remoto comprovado pela
-localização instalada é tratado como relocação observada, preservando a cópia antiga.
+localização instalada é tratado como relocação observada pendente, sem baixar
+outra cópia nem avançar B. Mudança projetada somente por ancestral permanece
+desconhecida sem prova de identidade do pai.
 O executor verifica novamente B quando L desaparece depois do planejamento.
 
 A coleta pode emitir `Classified`, com decisão tipada e caminho local associado,
