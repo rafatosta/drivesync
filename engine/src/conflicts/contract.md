@@ -238,6 +238,10 @@ Os registros continuam sendo observações, não autorizações de resolução.
 
 ## SYNC-016 — proteção de renomeações
 
+O [contrato do executor compartilhado](resolution-execution.md) define a condição
+de habilitação, as transições recuperáveis e o experimento de concorrência
+necessários para concluir a aplicação de SYNC-015/SYNC-016.
+
 ### Entrada, política e efeitos permitidos
 
 Usar a base instalada por ID remoto e o inventário completo da mesma conta/raiz.

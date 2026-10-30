@@ -480,6 +480,13 @@ renomeação local sem substituição e recuperação de cada efeito interrompid
 Somente após conferir os efeitos e persistir a confirmação pode B avançar.
 Conflito de nomes continua aguardando decisão revalidada do usuário.
 
+O [contrato compartilhado de execução](../engine/src/conflicts/resolution-execution.md)
+especifica a sequência de efeitos e recuperação para SYNC-015/SYNC-016 e o
+experimento opt-in da proteção de escrita remota. A existência do experimento
+não habilita atualizações no aplicativo nem conclui C09/P03. Garantias pertinentes
+de SYNC-020/021/023 devem ser demonstradas no executor; SYNC-025 acrescenta
+comparação visual, sem assumir o aceite da resolução básica de SYNC-015.
+
 Oráculos: [contrato de renomeações](../engine/src/conflicts/contract.md#sync-016--proteção-de-renomeações).
 Testes de diagnóstico/preservação não comprovam aplicação da combinação,
 integração com Google Drive real, UI ou queda real de energia/processo.
