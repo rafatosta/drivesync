@@ -32,8 +32,9 @@ pub use configuration::{DriveFolder, FolderConfiguration};
 pub use conflicts::{
     classify_differences, AttributeChange, BaseEvidence, ConflictFailure, ConflictHistoryEvent,
     ConflictHistoryKind, ConflictOutcome, ConflictRecord, ConflictStatus, ContentComparison,
-    DifferenceDecision, DifferenceInput, DifferenceKind, DifferenceReason, Disposition,
-    ObservationFailure, SideDifference,
+    DifferenceDecision, DifferenceInput, DifferenceKind, DifferenceReason, Disposition, LocalState,
+    ObservationFailure, RemoteState, ResolutionObservation, ResolutionProposal, SideDifference,
+    StaleResolutionReason,
 };
 pub use coordinator::RootSuspension;
 pub use error::EngineError;

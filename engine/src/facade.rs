@@ -852,6 +852,43 @@ impl DriveSyncEngine {
         crate::state::ConflictHistory::open(&path)?.records(&scope)
     }
 
+    /// Revalidates a saved conflict decision against fresh evidence before it is applied.
+    ///
+    /// Callers collect `current` immediately before acting. A stale or unverifiable
+    /// proposal is aborted, audited and returned as `Err(reason)`; the conflict stays
+    /// pending and a new comparison is required. `Ok(Ok(()))` is not a write permission:
+    /// executors must still enforce their own preconditions.
+    ///
+    /// # Errors
+    /// Returns configuration, identity or storage errors without resetting evidence.
+    pub fn revalidate_resolution(
+        &self,
+        id: &AccountId,
+        conflict_id: &str,
+        current: &crate::ResolutionObservation,
+    ) -> Result<Result<(), crate::StaleResolutionReason>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
+        let path = crate::configuration::identity::metadata_path(
+            &folder,
+            &config.client_id,
+            "conflict-history.sqlite3",
+        )?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        crate::state::ConflictHistory::open(&path)?.revalidate_resolution(
+            &scope,
+            conflict_id,
+            current,
+        )
+    }
+
     /// Reads the scoped append-only conflict audit without contacting Drive.
     ///
     /// # Errors

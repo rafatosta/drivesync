@@ -894,6 +894,15 @@ explicitamente a associação original permite verificar seu marcador; marcador
 perdido ou diferente continua bloqueado. Resultados locais e capturas de fixtures
 não conferem aceite da bateria real descrita nessa matriz.
 
+### SYNC-012 — revalidação antes de aplicar resolução (N06/E06)
+
+Requisito: uma decisão baseada em comparação antiga nunca age sobre versões
+modificadas. Antes da ação, identidade remota, revisão e fingerprint local são
+revalidados; divergência ou evidência ausente aborta a proposta, preserva a
+pendência, audita o motivo e exige nova comparação. Contrato em
+[conflitos](../engine/src/conflicts/contract.md#sync-012--revalidação-antes-de-aplicar-resolução-n06e06).
+Validado com SQLite real e entradas simuladas; sem Google Drive real.
+
 ### SYNC-010 — cópias de conteúdo divergente (P02/P08)
 
 Requisito: nenhuma escolha pode eliminar silenciosamente uma versão divergente.
