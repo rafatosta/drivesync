@@ -35,7 +35,7 @@ impl Reconciliation {
         history: Vec<Notice>,
         previous: Option<&Self>,
     ) -> Self {
-        let mut entries = crate::changes::classify(&local, &plan, &history);
+        let mut entries = crate::changes::classify(&local, &plan, &history, &bases);
         let represented: HashSet<_> = entries
             .iter()
             .filter_map(|e| e.relative_path.clone())

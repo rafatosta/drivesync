@@ -216,13 +216,11 @@ fn c06_c21_n10_reconnect_after_observation_commit_failure_and_repeat_without_new
         item: None,
     });
     let report = observed_cycle(&f, &mut feed, &mut remote).unwrap();
-    assert!(
-        report
-            .reconciliation
-            .iter()
-            .any(|e| e.remote_id.as_deref() == Some("file")
-                && e.kind == ChangeKind::RemoteUnavailable)
-    );
+    assert!(report
+        .reconciliation
+        .iter()
+        .any(|e| e.remote_id.as_deref() == Some("file")
+            && e.kind == ChangeKind::LocalChangedRemoteUnavailable));
     assert!(!report
         .reconciliation
         .iter()

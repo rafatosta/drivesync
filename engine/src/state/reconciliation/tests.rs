@@ -198,8 +198,8 @@ fn historical_remote_absence_never_becomes_a_new_upload_candidate() {
         id: "old".into(),
         path: Some(PathBuf::from("new.txt")),
     }];
-    let a = crate::changes::classify(&record.local, &record.plan, &record.history);
-    let b = crate::changes::classify(&record.local, &record.plan, &record.history);
+    let a = crate::changes::classify(&record.local, &record.plan, &record.history, &record.bases);
+    let b = crate::changes::classify(&record.local, &record.plan, &record.history, &record.bases);
     assert_eq!(a, b);
     assert_eq!(a.len(), 1);
     assert_eq!(a[0].remote_id.as_deref(), Some("old"));

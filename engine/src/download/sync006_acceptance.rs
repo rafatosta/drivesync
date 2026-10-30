@@ -289,7 +289,7 @@ fn c03_unlisted_remote_with_local_edit_is_unavailable_not_confirmed_deletion() {
             .entries
             .iter()
             .any(|entry| entry.remote_id.as_deref() == Some("file")
-                && entry.kind == ChangeKind::RemoteUnavailable));
+                && entry.kind == ChangeKind::LocalChangedRemoteUnavailable));
         let report = execute(&f, &unavailable, &record.plan, &mut remote);
         assert_eq!(report.downloaded + report.updated, 0);
         assert_eq!(
@@ -409,5 +409,92 @@ fn c01_c06_divergence_offline_and_recovery_persist_without_selecting_a_version()
             assert_eq!(remote.content["file"], bytes);
         }
         assert_eq!(fs::read_dir(&f.root).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart() {
+    for action in ["edit", "rename", "move", "replace", "unchanged", "missing"] {
+        let f = Fixture::new();
+        let inv = inventory();
+        baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+        let base = baseline_tests::base(&f, &inv).unwrap();
+        let path = match action {
+            "edit" => {
+                fs::write(f.root.join("file.txt"), b"local edit").unwrap();
+                "file.txt"
+            }
+            "rename" | "move" => {
+                let path = if action == "move" {
+                    fs::create_dir(f.root.join("destination")).unwrap();
+                    "destination/file.txt"
+                } else {
+                    "renamed.txt"
+                };
+                fs::rename(f.root.join("file.txt"), f.root.join(path)).unwrap();
+                path
+            }
+            "replace" => {
+                fs::rename(f.root.join("file.txt"), f.base.join("held-original")).unwrap();
+                fs::write(f.root.join("file.txt"), b"replacement").unwrap();
+                "file.txt"
+            }
+            "missing" => {
+                fs::remove_file(f.root.join("file.txt")).unwrap();
+                "file.txt"
+            }
+            _ => "file.txt",
+        };
+        let expected = match action {
+            "edit" | "rename" | "move" => ChangeKind::LocalChangedRemoteUnavailable,
+            "replace" => ChangeKind::LocalIdentityChanged,
+            _ => ChangeKind::RemoteUnavailable,
+        };
+        let bytes = fs::read(f.root.join(path)).ok();
+        let mut unavailable = inv.clone();
+        unavailable.entries.clear();
+        let mut remote = Fake::new(&unavailable);
+        let scope = CheckpointScope {
+            client: "client",
+            account: &inv.account_id,
+            remote: "root",
+            local: &f.root,
+        };
+        let db = f.db().with_file_name("reconciliation.sqlite3");
+        for _ in 0..3 {
+            let record = prepare_record(&f, &unavailable, &mut remote);
+            assert!(record.entries.iter().any(|e| e.relative_path.as_deref()
+                == Some(std::path::Path::new(path))
+                && e.remote_id.as_deref() == Some("file")
+                && e.kind == expected));
+            assert!(!record.entries.iter().any(|e| e.relative_path.as_deref()
+                == Some(std::path::Path::new(path))
+                && e.kind == ChangeKind::LocalNew));
+            let mut store = Reconciliations::open(&db).unwrap();
+            let previous = store.load(&scope).unwrap();
+            store
+                .save(
+                    &scope,
+                    previous.as_ref().map(|(r, _)| r.as_str()),
+                    &record,
+                    &Cancellation::new(),
+                )
+                .unwrap();
+            drop(store);
+            assert_eq!(
+                Reconciliations::open(&db)
+                    .unwrap()
+                    .load(&scope)
+                    .unwrap()
+                    .unwrap()
+                    .1,
+                record
+            );
+            let report = execute(&f, &unavailable, &record.plan, &mut remote);
+            assert_eq!(report.downloaded + report.updated, 0);
+            assert_eq!(fs::read(f.root.join(path)).ok(), bytes);
+            assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
+        }
+        assert_eq!(remote.media_calls, 0);
     }
 }

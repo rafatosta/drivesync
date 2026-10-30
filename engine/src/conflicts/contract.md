@@ -105,3 +105,19 @@ filesystem/SQLite reais temporários. Reabertura não simula perda de energia.
 Referência primária: [Files](https://developers.google.com/workspace/drive/api/reference/rest/v3/files),
 consultada em 2026-10-30: revisão não é prova de mudança de conteúdo; checksums e
 metadados têm limites de disponibilidade. Nenhuma nova capacidade remota é presumida.
+
+## SYNC-008 — edição e indisponibilidade
+
+A reconciliação compara observações históricas com a localização e fingerprint
+de B confirmada, inclusive quando a identidade remota saiu do inventário.
+Conteúdo alterado na mesma identidade local gera
+`LocalChangedRemoteUnavailable`; identidade substituída continua incompatível.
+Uma relocação local só é associada quando o caminho de B está ausente e existe
+um único fingerprint completo igual (hash/dispositivo/inode). Essa associação
+não transforma o item em upload novo. Relocação com edição simultânea permanece
+ambígua, sem inferência de exclusão.
+
+Pendências de descendentes elevam a atenção dos diretórios históricos
+indisponíveis, por componentes de caminho. Nenhuma análise permite excluir,
+substituir, recriar o remoto ou avançar B. A observação e suas evidências persistem
+no SQLite de reconciliação; reabertura não concede autorização para efeitos.
