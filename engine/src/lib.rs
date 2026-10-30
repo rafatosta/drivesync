@@ -41,7 +41,8 @@ pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncR
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 
 pub use planner::{
-    decide, ConfirmedBase, ConflictReason, DownloadPlan, LocalObservation, PlanAction, PlanEntry,
+    decide, ConfirmedBase, ConfirmedLocation, ConflictReason, DownloadPlan, LocalObservation,
+    PlanAction, PlanEntry,
 };
 
 pub use download::{

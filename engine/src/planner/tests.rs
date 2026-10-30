@@ -22,6 +22,7 @@ fn inventory() -> RemoteInventory {
 #[test]
 fn three_way_requires_confirmed_local_evidence() {
     let base = ConfirmedBase {
+        location: None,
         remote_version: 2,
         local_fingerprint: format!("{}:1:2", "a".repeat(64)),
     };
@@ -78,6 +79,7 @@ fn three_way_requires_confirmed_local_evidence() {
 #[test]
 fn three_way_classification_requires_a_confirmed_base_and_fresh_local_fingerprint() {
     let base = ConfirmedBase {
+        location: None,
         remote_version: 2,
         local_fingerprint: format!("{}:1:2", "a".repeat(64)),
     };
@@ -272,6 +274,7 @@ fn incomplete_identity_evidence_is_unknown_even_when_fingerprints_match() {
         format!("{}:1:2:3", "a".repeat(64)),
     ] {
         let base = ConfirmedBase {
+            location: None,
             remote_version: 1,
             local_fingerprint: fingerprint.clone(),
         };
@@ -288,6 +291,7 @@ fn incomplete_identity_evidence_is_unknown_even_when_fingerprints_match() {
             PlanAction::DeferredUnknown
         );
         let valid = ConfirmedBase {
+            location: None,
             remote_version: 1,
             local_fingerprint: format!("{}:1:2", "a".repeat(64)),
         };

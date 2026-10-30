@@ -67,6 +67,11 @@ impl Store {
                     operation.item.version.map(|version| ConfirmedBase {
                         remote_version: version,
                         local_fingerprint: identity.fingerprint(sha256),
+                        location: Some(crate::ConfirmedLocation {
+                            relative_path: operation.relative.clone(),
+                            remote_name: operation.item.name.clone(),
+                            remote_parent: operation.item.parent_id.clone(),
+                        }),
                     })
                 }
                 _ => None,

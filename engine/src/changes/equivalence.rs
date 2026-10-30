@@ -26,10 +26,14 @@ pub(crate) fn refine(
             .next()
             .ok_or(EngineError::InvalidPlan)?;
         match crate::download::content_fingerprint(item, source, cancel) {
-            Ok(remote_sha) if remote_sha.eq_ignore_ascii_case(local_sha) => {
-                entry.action = PlanAction::Equivalent
+            Ok(remote_sha) => {
+                let comparison = if remote_sha.eq_ignore_ascii_case(local_sha) {
+                    crate::ContentComparison::Equal
+                } else {
+                    crate::ContentComparison::Different
+                };
+                entry.action = crate::conflicts::refine_content(comparison);
             }
-            Ok(_) => {}
             Err(EngineError::Authentication(crate::AuthError::Cancelled)) => {
                 return Err(EngineError::Authentication(crate::AuthError::Cancelled))
             }
@@ -38,7 +42,9 @@ pub(crate) fn refine(
                 | EngineError::StateStorage
                 | EngineError::RootSuspended(_)),
             ) => return Err(error),
-            Err(_) => entry.action = PlanAction::DeferredUnknown,
+            Err(_) => {
+                entry.action = crate::conflicts::refine_content(crate::ContentComparison::Unknown)
+            }
         }
     }
     Ok(())

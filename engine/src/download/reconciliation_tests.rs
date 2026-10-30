@@ -277,3 +277,45 @@ fn root_suspension_during_equivalence_is_fatal_instead_of_an_item_unknown() {
     assert_eq!(baseline_tests::base(&f, &inv), Some(confirmed));
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"equivalent");
 }
+
+#[test]
+fn c04_missing_local_and_new_remote_revision_require_review_after_reopen() {
+    let f = Fixture::new();
+    let inv = inventory();
+    baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+    let base = baseline_tests::base(&f, &inv).unwrap();
+    fs::remove_file(f.root.join("file.txt")).unwrap();
+    let (next, mut remote) = v2(&inv, b"remote edit");
+    for _ in 0..2 {
+        let plan = prepare(&f, &next, &mut remote);
+        assert_eq!(
+            plan.entries[0].action,
+            PlanAction::Blocked(ConflictReason::LocalMissingRemoteChanged)
+        );
+        let report = execute_plan(&f, &next, &plan, &mut remote);
+        assert_eq!(report.downloaded + report.updated, 0);
+        assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+        assert!(!f.root.join("file.txt").exists());
+        assert_eq!(baseline_tests::base(&f, &next), Some(base.clone()));
+        assert_eq!(remote.content["file"], b"remote edit");
+    }
+    assert_eq!(remote.media_calls, 0);
+}
+
+#[test]
+fn local_removal_after_remote_update_planning_invalidates_the_candidate() {
+    let f = Fixture::new();
+    let inv = inventory();
+    baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+    let base = baseline_tests::base(&f, &inv).unwrap();
+    let (next, mut remote) = v2(&inv, b"remote edit");
+    let plan = prepare(&f, &next, &mut remote);
+    assert_eq!(plan.entries[0].action, PlanAction::Download);
+    fs::remove_file(f.root.join("file.txt")).unwrap();
+    let report = execute_plan(&f, &next, &plan, &mut remote);
+    assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+    assert_eq!(report.downloaded + report.updated, 0);
+    assert!(!f.root.join("file.txt").exists());
+    assert_eq!(baseline_tests::base(&f, &next), Some(base));
+    assert_eq!(remote.media_calls, 0);
+}

@@ -25,9 +25,17 @@ pub enum LocalObservation {
 /// The planner decodes these components independently. Device/inode equality is
 /// observable evidence, not a permanent identity guarantee against inode reuse.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfirmedLocation {
+    pub relative_path: PathBuf,
+    pub remote_name: String,
+    pub remote_parent: String,
+}
+/// Durable content/identity evidence, with location only when supplied by the journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfirmedBase {
     pub remote_version: u64,
     pub local_fingerprint: String,
+    pub location: Option<ConfirmedLocation>,
 }
 /// A reason an item cannot be safely downloaded by the current plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +48,8 @@ pub enum ConflictReason {
     /// Both the local identity and remote revision differ from B.
     ConcurrentIdentityChanges,
     ConcurrentChanges,
+    /// Local absence plus a newer remote revision requires review, not silent recreation.
+    LocalMissingRemoteChanged,
     UnsafeOrAmbiguousPath,
     LocalTypeMismatch,
 }
@@ -88,54 +98,7 @@ pub fn decide(
     local: &LocalObservation,
     remote_version: u64,
 ) -> PlanAction {
-    if remote_version == 0
-        || base.is_some_and(|base| {
-            fingerprint_parts(&base.local_fingerprint).is_none()
-                || remote_version < base.remote_version
-        })
-    {
-        return PlanAction::DeferredUnknown;
-    }
-    match local {
-        LocalObservation::Unknown => PlanAction::DeferredUnknown,
-        LocalObservation::Absent => PlanAction::Download,
-        LocalObservation::Verified(fingerprint) => match base {
-            Some(base) => {
-                let Some((local_hash, local_device, local_inode)) = fingerprint_parts(fingerprint)
-                else {
-                    return PlanAction::DeferredUnknown;
-                };
-                let Some((base_hash, base_device, base_inode)) =
-                    fingerprint_parts(&base.local_fingerprint)
-                else {
-                    return PlanAction::DeferredUnknown;
-                };
-                if (local_device, local_inode) != (base_device, base_inode) {
-                    return PlanAction::Blocked(if base.remote_version == remote_version {
-                        ConflictReason::LocalIdentityChanged
-                    } else {
-                        ConflictReason::ConcurrentIdentityChanges
-                    });
-                }
-                if local_hash.eq_ignore_ascii_case(base_hash) {
-                    if base.remote_version == remote_version {
-                        PlanAction::NoOp
-                    } else {
-                        PlanAction::Download
-                    }
-                } else if base.remote_version == remote_version {
-                    PlanAction::Blocked(ConflictReason::LocalChanged)
-                } else {
-                    PlanAction::Blocked(ConflictReason::ConcurrentChanges)
-                }
-            }
-            None => PlanAction::Blocked(ConflictReason::ExistingLocalData),
-        },
-        LocalObservation::Directory | LocalObservation::SymlinkOrSpecial => {
-            PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
-        }
-        LocalObservation::UnmanagedFile => PlanAction::Blocked(ConflictReason::ExistingLocalData),
-    }
+    crate::conflicts::binary_decision(base, local, remote_version)
 }
 
 /// Decodes the current internal evidence format without inferring identity from
@@ -280,7 +243,20 @@ pub(crate) fn plan_with_bases(
                 }
             }
             (InventoryKind::Binary, Some(_)) => match e.version {
-                Some(version) => decide(base, &local, version),
+                Some(version) => {
+                    let action = decide(base, &local, version);
+                    if action == PlanAction::Blocked(ConflictReason::LocalMissingRemoteChanged)
+                        && base
+                            .and_then(|b| b.location.as_ref())
+                            .is_some_and(|b| Some(&b.relative_path) != path.as_ref())
+                    {
+                        // A new remote location does not prove deletion at the old path.
+                        // The download-only executor retains the old local version.
+                        PlanAction::Download
+                    } else {
+                        action
+                    }
+                }
                 None => PlanAction::DeferredUnknown,
             },
         };

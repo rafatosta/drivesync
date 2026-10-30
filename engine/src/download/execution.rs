@@ -249,6 +249,11 @@ pub(crate) fn run_with_root<'a>(
                     },
                 )
             }
+            (
+                InventoryKind::Binary,
+                Some(_),
+                PlanAction::Blocked(crate::ConflictReason::LocalMissingRemoteChanged),
+            ) => Err(EngineError::DownloadConflict),
             (InventoryKind::Binary, Some(path), _) => session
                 .file(item, path, &by_id, source, &mut |current| {
                     progress(DownloadProgress {
@@ -580,6 +585,29 @@ impl Session<'_> {
                 size: old_size,
                 version: old_version,
             });
+        } else {
+            // A local removal after planning invalidates a candidate remote update.
+            // Read durable B again; absence is not permission to undo a deletion.
+            let bases = self.context.store.confirmed_bases(
+                self.context.client,
+                &self.context.scope.account_id,
+                &self.context.scope.remote_root,
+                &self.context.scope.local_root,
+            )?;
+            if bases.get(&item.id).is_some_and(|base| {
+                base.location
+                    .as_ref()
+                    .is_none_or(|location| location.relative_path == path)
+            }) && matches!(
+                crate::conflicts::binary_decision(
+                    bases.get(&item.id),
+                    &crate::LocalObservation::Absent,
+                    item.version.ok_or(EngineError::InvalidPlan)?,
+                ),
+                PlanAction::Blocked(_) | PlanAction::DeferredUnknown
+            ) {
+                return Err(EngineError::DownloadConflict);
+            }
         }
         validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
         let id = oauth2::CsrfToken::new_random().secret().clone();
