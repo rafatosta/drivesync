@@ -282,3 +282,87 @@ fn i14_removed_or_renamed_homonym_revalidates_the_remaining_object() {
         }
     }
 }
+
+#[test]
+fn sync009_unicode_case_type_and_generated_destinations_survive_restart() {
+    for (left, right) in [
+        ("Report.pdf", "report.PDF"),
+        ("Straße", "STRASSE"),
+        ("café", "cafe\u{301}"),
+        ("Σ", "ς"),
+    ] {
+        for reverse in [false, true] {
+            let f = Fixture::new();
+            let inv = scanned(
+                &[
+                    folder("dir", left),
+                    binary("other", "root", right, b"OTHER"),
+                    binary("child", "dir", "child", b"CHILD"),
+                ],
+                reverse,
+                true,
+            );
+            blocked_cycle(&f, &inv, &mut Fake::new(&inv));
+            assert_eq!(fs::read_dir(&f.root).unwrap().count(), 0);
+        }
+    }
+    let f = Fixture::new();
+    let mut link = binary("link", "root", "report", b"");
+    link.kind = InventoryKind::GoogleWorkspaceLink;
+    let inv = RemoteInventory {
+        entries: vec![link, binary("binary", "root", "REPORT.desktop", b"KEEP")],
+        ..inventory()
+    };
+    blocked_cycle(&f, &inv, &mut Fake::new(&inv));
+}
+
+#[test]
+fn sync009_invalid_destinations_are_durable_and_do_not_read_remote() {
+    for name in [
+        "CON.txt".to_owned(),
+        "trailing.".into(),
+        "bad:name".into(),
+        "é".repeat(128),
+    ] {
+        let f = Fixture::new();
+        let inv = RemoteInventory {
+            entries: vec![binary("invalid", "root", &name, b"KEEP")],
+            ..inventory()
+        };
+        blocked_cycle(&f, &inv, &mut Fake::new(&inv));
+        assert_eq!(fs::read_dir(&f.root).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn sync009_file_folder_mismatches_preserve_real_local_data() {
+    for remote_folder in [false, true] {
+        let f = Fixture::new();
+        let item = if remote_folder {
+            fs::write(f.root.join("target"), b"KEEP").unwrap();
+            folder("item", "target")
+        } else {
+            fs::create_dir(f.root.join("target")).unwrap();
+            fs::write(f.root.join("target/child"), b"KEEP").unwrap();
+            binary("item", "root", "target", b"REMOTE")
+        };
+        let inv = scanned(&[item], false, false);
+        let mut source = Fake::new(&inv);
+        for _ in 0..2 {
+            let plan = prepare(&f, &inv).unwrap();
+            assert_eq!(
+                plan.entries[0].action,
+                PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
+            );
+            assert_eq!(cycle(&f, &inv, &mut source).unwrap().issues.len(), 1);
+            let path = if remote_folder {
+                "target"
+            } else {
+                "target/child"
+            };
+            assert_eq!(fs::read(f.root.join(path)).unwrap(), b"KEEP");
+            assert!(bases(&f, &inv).is_empty());
+            assert!(source.media_ids.is_empty());
+        }
+    }
+}
