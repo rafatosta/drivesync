@@ -82,6 +82,32 @@ pub(crate) fn prepare(
     let mut plan = crate::planner::plan_with_bases(inventory, root.path(), bases, |_, path, _| {
         Ok(local.observe(path))
     })?;
+    // Index once: local aliases must not be mistaken for an absent destination.
+    // None marks multiple local spellings, including an exact requested spelling.
+    let mut names: HashMap<String, Option<&std::path::Path>> = HashMap::new();
+    for path in local.entries.keys() {
+        if let Some(name) = path.to_str() {
+            names
+                .entry(crate::planner::path_key(name))
+                .and_modify(|value| *value = None)
+                .or_insert(Some(path));
+        }
+    }
+    for entry in &mut plan.entries {
+        let Some(path) = entry.relative_path.as_ref() else {
+            continue;
+        };
+        let ambiguous = path.ancestors().any(|ancestor| {
+            ancestor
+                .to_str()
+                .and_then(|name| names.get(&crate::planner::path_key(name)))
+                .is_some_and(|existing| existing.is_none_or(|p| p != ancestor))
+        });
+        if ambiguous {
+            entry.relative_path = None;
+            entry.action = PlanAction::Blocked(ConflictReason::UnsafeOrAmbiguousPath);
+        }
+    }
     super::locations::refine_locations(&mut plan, inventory, bases, local, source, cancel)?;
     refine(&mut plan, inventory, bases, source, cancel)?;
     // Network reads may outlive the scan. Never publish stale content evidence.
