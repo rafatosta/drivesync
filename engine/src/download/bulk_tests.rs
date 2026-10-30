@@ -365,3 +365,37 @@ fn n08_proposal_is_bound_to_remote_revision_scope_and_current_local_identity() {
         Ok(())
     );
 }
+
+#[test]
+fn n08_stale_approval_aborts_even_when_restored_files_reduce_impact_below_threshold() {
+    let (f, mut feed, mut remote) = setup(50);
+    for i in 0..12 {
+        fs::rename(
+            f.root.join(format!("file-{i}.txt")),
+            f.base.join(format!("retained-{i}")),
+        )
+        .unwrap();
+    }
+    let pending = review(observed_cycle(&f, &mut feed, &mut remote));
+    for i in 0..11 {
+        fs::rename(
+            f.base.join(format!("retained-{i}")),
+            f.root.join(format!("file-{i}.txt")),
+        )
+        .unwrap();
+    }
+    let calls = remote.media_calls;
+    assert_eq!(
+        observed_cycle_reviewed(&f, &mut feed, &mut remote, Some(&pending)).unwrap_err(),
+        EngineError::BulkReviewChanged
+    );
+    assert_eq!(remote.media_calls, calls);
+    assert!(!f.root.join("file-11.txt").exists());
+    assert_eq!(
+        observed_cycle(&f, &mut feed, &mut remote)
+            .unwrap()
+            .downloaded,
+        1
+    );
+    assert_eq!(fs::read(f.base.join("retained-11")).unwrap(), b"abc");
+}

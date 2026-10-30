@@ -122,11 +122,13 @@ pub(crate) fn bulk_gate(
     record: &crate::state::Reconciliation,
     approval: Option<&crate::BulkReview>,
 ) -> Result<(), EngineError> {
-    if let Some(review) = crate::planner::bulk_impact(client, record, crate::BulkPolicy::default())?
-    {
-        if approval != Some(&review) {
-            return Err(EngineError::BulkReviewRequired(review));
-        }
+    match (
+        crate::planner::bulk_impact(client, record, crate::BulkPolicy::default())?,
+        approval,
+    ) {
+        (Some(review), Some(approved)) if &review == approved => Ok(()),
+        (Some(review), _) => Err(EngineError::BulkReviewRequired(review)),
+        (None, Some(_)) => Err(EngineError::BulkReviewChanged),
+        (None, None) => Ok(()),
     }
-    Ok(())
 }

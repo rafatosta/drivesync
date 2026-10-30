@@ -11,6 +11,8 @@ pub enum EngineError {
     InvalidFolder,
     /// No transfer started; review this exact batch before an explicit retry.
     BulkReviewRequired(crate::BulkReview),
+    /// An explicit proposal became stale even though impact is now below policy.
+    BulkReviewChanged,
     RootSuspended(crate::RootSuspension),
     InventoryLimit,
     StateStorage,
@@ -44,6 +46,7 @@ impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BulkReviewRequired(review) => review.fmt(f),
+            Self::BulkReviewChanged => f.write_str("The reviewed batch changed and this attempt was cancelled. Start a new check before continuing. Existing data was preserved."),
             Self::RootSuspended(reason) => reason.fmt(f),
             Self::NotImplemented(operation) => write!(f, "{operation} is not implemented"),
             Self::Authentication(error) => error.fmt(f),

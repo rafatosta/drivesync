@@ -151,6 +151,10 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
         || record.local.entries.len() > 100_000
         || record.bases.len() > 100_000
         || record.bulk_population.len() > 100_000
+        || record
+            .bases
+            .iter()
+            .any(|(id, base)| record.bulk_population.get(id) != Some(base))
         || record.entries.len() > 300_000
         || record.history.len() > 200_000
     {

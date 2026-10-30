@@ -230,3 +230,36 @@ fn inaccessible_ancestor_does_not_turn_previous_descendants_into_missing_files()
         ChangeKind::Unknown
     );
 }
+
+#[test]
+fn protective_population_cannot_omit_current_confirmed_evidence() {
+    let f = Fixture::new();
+    let account = AccountId("account".into());
+    let scope = scope(&account);
+    let mut store = Reconciliations::open(&f.0).unwrap();
+    let mut record = record();
+    let base = ConfirmedBase {
+        remote_version: 1,
+        local_fingerprint: format!("{}:1:2", "a".repeat(64)),
+        location: None,
+    };
+    record.bases.insert("file".into(), base.clone());
+    assert_eq!(
+        store.save(&scope, None, &record, &Cancellation::new()),
+        Err(EngineError::InvalidPlan)
+    );
+    record.bulk_population.insert("file".into(), base);
+    store
+        .save(&scope, None, &record, &Cancellation::new())
+        .unwrap();
+    record.bulk_population.clear();
+    store
+        .0
+         .0
+        .execute(
+            "UPDATE snapshots SET record=?1",
+            [serde_json::to_string(&record).unwrap()],
+        )
+        .unwrap();
+    assert_eq!(store.load(&scope), Err(EngineError::StateStorage));
+}

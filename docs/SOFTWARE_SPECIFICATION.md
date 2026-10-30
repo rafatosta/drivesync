@@ -982,7 +982,9 @@ sem autorizar exclusões, sobrescritas remotas ou resoluções ainda não implem
 
 A proposta contém um resumo e um digest determinístico das evidências B/L/R,
 plano e escopo cliente/conta/raiz/caminho. A nova tentativa recolhe observações;
-qualquer diferença invalida a proposta e exige revisão nova. Consentimento não é
+qualquer diferença invalida a proposta e exige revisão nova. Se o impacto cair
+abaixo dos limiares, a tentativa confirmada também é cancelada; uma nova checagem
+sem proposta pode então seguir a política normal. Consentimento não é
 persistido nem reutilizado por timers, conectividade, reinício ou nova tentativa.
 As observações duráveis permitem reconstruir a revisão após reinício; cada efeito
 continua sujeito às verificações individuais existentes. Não há transação atômica
