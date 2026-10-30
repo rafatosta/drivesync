@@ -16,7 +16,7 @@ npm run preview
 ```
 
 Open the printed local URL under `/drivesync/`. Vite builds the application,
-development, donations and privacy pages as separate HTML entry points. Each URL
+development, donations, privacy and terms pages as separate HTML entry points. Each URL
 can be opened directly on GitHub Pages.
 
 ## Components and appearance
@@ -46,3 +46,7 @@ Theme preference alone is saved in the browser's local storage.
 Portuguese (Brazil) and English use the same React Context approach as the ZapZap website. A valid saved selection takes priority; otherwise a Portuguese browser language selects Portuguese and all other browser languages select English. The header selector stores only explicit language choices in local storage. Pages, gallery captions, accessibility labels, document language, titles and descriptions update together. Screenshot pixels retain the language of the captured application UI. Translation entries live in `src/i18n/translations.ts`.
 
 Run `npm test` for locale selection and translation coverage checks.
+
+## Terms of service
+
+The bilingual terms of service are published at `/drivesync/termos/` and reuse the existing language selector and translation dictionary. The site's legal text describes the current technical preview and links to the GPL-3.0-only license in the `main` branch.
