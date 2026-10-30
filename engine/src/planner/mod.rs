@@ -124,14 +124,38 @@ pub(crate) fn fingerprint_parts(value: &str) -> Option<(&str, u64, u64)> {
     let inode = inode.parse().ok()?;
     (inode != 0).then_some((hash, device, inode))
 }
+/// Conservative portable key; never used as a replacement filename or identity.
+/// Canonical decomposition plus full Unicode folding deliberately also blocks
+/// aliases on case-sensitive destinations. No destination probing writes occur.
+pub(crate) fn path_key(name: &str) -> String {
+    use caseless::Caseless;
+    use unicode_normalization::UnicodeNormalization;
+    name.nfd().default_case_fold().nfd().collect()
+}
+
 fn safe(name: &str) -> bool {
+    let folded = path_key(name);
+    let stem = folded.split('.').next().unwrap_or("");
+    let device = matches!(stem, "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|n| {
+                matches!(
+                    n,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
     !name.is_empty()
         && name != "."
         && name != ".."
         && !crate::local::ignored(Path::new(name))
+        && !crate::local::ignored(Path::new(&folded))
+        && !(folded.starts_with("drivesync backup ") && folded.ends_with(".bak"))
         && name.len() <= 255
-        && !name.contains('/')
-        && !name.contains('\\')
+        && name.encode_utf16().count() <= 255
+        && !name.ends_with(['.', ' '])
+        && !device
+        && !name.contains(['/', '\\', '<', '>', ':', '"', '|', '?', '*'])
         && !name.chars().any(char::is_control)
 }
 fn local_name(item: &crate::InventoryEntry) -> Option<String> {
@@ -188,7 +212,7 @@ pub(crate) fn plan_with_bases(
         }
         if let Some(name) = local_name(e) {
             *siblings
-                .entry((e.parent_id.clone(), name))
+                .entry((e.parent_id.clone(), path_key(&name)))
                 .or_insert(0usize) += 1;
         }
     }
@@ -208,11 +232,11 @@ pub(crate) fn plan_with_bases(
                 }
                 let e = &inventory.entries[index];
                 let path = local_name(e).and_then(|name| {
-                    let key = (e.parent_id.clone(), name.clone());
+                    let key = (e.parent_id.clone(), path_key(&name));
                     (siblings.get(&key) == Some(&1))
                         .then(|| parent_path.as_ref().map(|p| p.join(&name)))
                         .flatten()
-                        .filter(|p| p.as_os_str().len() <= 4096)
+                        .filter(|p| local_root.join(p).as_os_str().len() < 4096)
                 });
                 paths[index] = path.clone();
                 if e.kind == InventoryKind::Folder {
@@ -237,13 +261,13 @@ pub(crate) fn plan_with_bases(
                 LocalObservation::Unknown => PlanAction::DeferredUnknown,
                 _ => PlanAction::Blocked(ConflictReason::LocalTypeMismatch),
             },
-            (InventoryKind::GoogleWorkspaceLink, Some(_)) => {
-                if local == LocalObservation::Unknown {
-                    PlanAction::DeferredUnknown
-                } else {
-                    PlanAction::CreateLink
+            (InventoryKind::GoogleWorkspaceLink, Some(_)) => match local {
+                LocalObservation::Unknown => PlanAction::DeferredUnknown,
+                LocalObservation::Directory | LocalObservation::SymlinkOrSpecial => {
+                    PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
                 }
-            }
+                _ => PlanAction::CreateLink,
+            },
             (InventoryKind::Binary, Some(_)) => match e.version {
                 Some(version) => {
                     let action = decide(base, &local, version);

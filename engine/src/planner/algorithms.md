@@ -153,3 +153,56 @@ A coleta pode emitir `Classified`, com decisão tipada e caminho local associado
 para combinações de localização/conteúdo. O executor recusa esse candidato sem
 transferência ou avanço de B; o diagnóstico diferencia conciliação pendente de
 conflito real. Não se habilitam renomeações, movimentos ou atualização remota.
+
+## SYNC-009 — destinos representáveis e sem ambiguidades
+
+Política DriveSync: bloquear ambiguidades, sem escolher vencedor, sanitizar nomes
+ou inventar sufixos. Não há mapeamento alternativo a persistir: caminhos aceitos
+continuam associados ao ID no plano/journal existente. A decisão é conservadora
+inclusive em filesystems sensíveis a caixa.
+
+1. Validar cada componente antes/depois de acrescentar `.desktop` a Workspace.
+   Rejeitar vazio, pontos, separadores, controles, `< > : " | ? *`, ponto/espaço
+   final, dispositivos Windows (também com extensão), nomes internos sem distinção
+   de caixa e componentes acima de 255 bytes ou unidades UTF-16.
+2. Produzir chave `NFD(full_case_fold(NFD(nome)))` com `caseless` e
+   `unicode-normalization`. As dependências evitam implementar tabelas Unicode
+   manualmente; a chave só detecta colisões, nunca substitui o nome ou o ID.
+3. Contar chaves por ID do pai após conversão para nome local. Só uma ocorrência
+   permite caminho; propagar bloqueio por toda subárvore ambígua. Recusar caminho
+   absoluto com 4096 bytes ou mais, incluindo a raiz local.
+4. Na preparação completa, indexar também os caminhos do inventário local.
+   Grafia equivalente diferente, ou várias grafias equivalentes, bloqueiam o
+   destino e descendentes antes das provas remotas. Arquivo/diretório incompatível
+   resulta em `LocalTypeMismatch`, incluindo diretórios no destino de links.
+5. Persistir os diagnósticos pelo mecanismo existente; executar somente após as
+   revalidações independentes do executor. Reabrir e repetir não autoriza efeitos.
+
+Oráculos: colisões deixam todos os IDs bloqueados sem ler conteúdo/metadados
+remotos; bytes locais e bases permanecem iguais após repetição/reabertura.
+Nomes iguais em pais distintos permanecem independentes. Os testes `sync009_*`
+cobrem C02/C13/C14/C15/C18/C20 junto aos testes `i10_i11_i13_*`, `i12_i13_*`,
+`i13_same_names_*` e `i14_*` existentes.
+
+Limites: esta política não identifica todas as regras proprietárias de cada
+filesystem/mount. Limites efetivos menores e erros de acesso continuam falhando
+sem substituição silenciosa no executor. Não se faz probe destrutivo para descobrir
+sensibilidade a caixa. Não há teste em volume case-insensitive real: os testes
+exercitam deterministicamente a proteção conservadora em diretórios Linux reais.
+Colisões remotas surgidas depois do snapshot são observadas na próxima varredura;
+a execução mantém suas proteções de identidade, versão e instalação sem clobber.
+Não se adiciona resolução, upload, exclusão nem decisão automática de vencedor.
+
+Fundamentação consultada em 2026-10-30:
+[Drive File.name](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
+não garante unicidade no pai;
+[Linux pathname(7)](https://man7.org/linux/man-pages/man7/pathname.7.html)
+distingue limites por componente e caminho;
+[Caseless](https://docs.rs/caseless/0.2.2/caseless/trait.Caseless.html)
+fornece full case folding. A escolha de bloqueio portátil é política do produto,
+não uma alegação de equivalência exata a todos os filesystems.
+[Windows naming conventions](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)
+fundamenta caracteres e dispositivos reservados;
+[Unicode canonical caseless matching](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/#G1459)
+fundamenta decomposição e folding. As tabelas efetivas são as versões das crates
+fixadas no lockfile; não se promete suporte antecipado a caracteres futuros.

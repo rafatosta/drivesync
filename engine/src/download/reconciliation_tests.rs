@@ -386,3 +386,57 @@ fn c01_local_changes_during_remote_proof_suspend_stale_diagnosis() {
         }
     }
 }
+
+#[test]
+fn sync009_local_aliases_and_ancestors_block_without_remote_reads_after_reopen() {
+    for (local_name, remote_name) in [
+        ("FILE.txt", "file.txt"),
+        ("Straße", "STRASSE"),
+        ("café", "cafe\u{301}"),
+    ] {
+        for directory in [false, true] {
+            let f = Fixture::new();
+            if directory {
+                fs::create_dir(f.root.join(local_name)).unwrap();
+                fs::write(f.root.join(local_name).join("child"), b"KEEP").unwrap();
+            } else {
+                fs::write(f.root.join(local_name), b"KEEP").unwrap();
+            }
+            let mut inv = inventory();
+            inv.entries[0].name = remote_name.into();
+            if directory {
+                let mut parent = inv.entries[0].clone();
+                parent.id = "folder".into();
+                parent.kind = InventoryKind::Folder;
+                inv.entries[0].parent_id = parent.id.clone();
+                inv.entries[0].name = "child".into();
+                inv.entries.push(parent);
+            }
+            let mut remote = Fake::new(&inv);
+            for _ in 0..2 {
+                let plan = prepare(&f, &inv, &mut remote);
+                assert!(plan.entries.iter().all(
+                    |e| e.action == PlanAction::Blocked(ConflictReason::UnsafeOrAmbiguousPath)
+                ));
+                assert_eq!(
+                    execute_plan(&f, &inv, &plan, &mut remote).issues.len(),
+                    inv.entries.len()
+                );
+                assert!(remote.media_ids.is_empty());
+                assert!(remote.metadata_ids.is_empty());
+                assert!(Store::open(&f.db())
+                    .unwrap()
+                    .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+                    .unwrap()
+                    .is_empty());
+                let preserved = if directory {
+                    f.root.join(local_name).join("child")
+                } else {
+                    f.root.join(local_name)
+                };
+                assert_eq!(fs::read(preserved).unwrap(), b"KEEP");
+                assert!(!f.root.join(remote_name).exists());
+            }
+        }
+    }
+}

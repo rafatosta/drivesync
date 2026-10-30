@@ -301,3 +301,72 @@ fn incomplete_identity_evidence_is_unknown_even_when_fingerprints_match() {
         );
     }
 }
+
+#[test]
+fn portable_names_lengths_and_workspace_types() {
+    for name in [
+        "DriveSync backup test.bak",
+        "DRIVESYNC BACKUP test.BAK",
+        "CON",
+        "nul.txt",
+        "COM1.log",
+        "LPT²",
+        "name.",
+        "name ",
+        "a:b",
+        "a?b",
+        "a*b",
+        "a|b",
+        "a<b",
+        "a>b",
+        "a\"b",
+        "a\0b",
+        ".DRIVESYNC",
+        ".DriveSync-tmp",
+    ] {
+        assert!(!safe(name), "{name:?}");
+    }
+    assert!(safe(&"a".repeat(255)));
+    assert!(!safe(&"a".repeat(256)));
+    assert!(safe(&"é".repeat(127)));
+    assert!(!safe(&"é".repeat(128)));
+    for name in [
+        "console.txt",
+        "com10",
+        ".hidden",
+        "normal.tmp",
+        "relatório.pdf",
+    ] {
+        assert!(safe(name), "{name}");
+    }
+    let mut inv = inventory();
+    inv.entries[0].kind = InventoryKind::GoogleWorkspaceLink;
+    for local in [
+        LocalObservation::Directory,
+        LocalObservation::SymlinkOrSpecial,
+    ] {
+        assert_eq!(
+            plan(&inv, Path::new("/local"), |_| local.clone())
+                .unwrap()
+                .entries[0]
+                .action,
+            PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
+        );
+    }
+    inv.entries[0].name = "a".repeat(248);
+    assert!(plan(&inv, Path::new("/local"), |_| panic!(
+        "expanded name too long"
+    ))
+    .unwrap()
+    .entries[0]
+        .relative_path
+        .is_none());
+    inv.entries[0].kind = InventoryKind::Binary;
+    inv.entries[0].name = "a".repeat(255);
+    let root = PathBuf::from(format!("/{}", "b".repeat(3840)));
+    assert!(plan(&inv, &root, |_| panic!("absolute path too long"))
+        .unwrap()
+        .entries[0]
+        .relative_path
+        .is_none());
+}

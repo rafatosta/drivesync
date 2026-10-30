@@ -10,6 +10,8 @@ name = "drivesync_engine"
 path = "src/lib.rs"
 
 [dependencies]
+caseless = "0.2.2"
+unicode-normalization = "0.1"
 dbus = { version = "0.9", features = ["vendored"] }
 oauth2 = { version = "5", default-features = false, features = ["timing-resistant-secret-traits"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
