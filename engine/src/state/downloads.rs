@@ -119,7 +119,7 @@ impl Store {
         Ok(result)
     }
 }
-fn valid(op: &Operation) -> bool {
+pub(super) fn valid(op: &Operation) -> bool {
     !op.id.is_empty()
         && !op.relative.as_os_str().is_empty()
         && op

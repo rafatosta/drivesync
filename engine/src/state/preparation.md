@@ -22,7 +22,7 @@ explícita da associação original verifica o marcador existente, sem recriar
 marcador perdido ou aceitar um diferente. Contrato e oráculos:
 [disponibilidade de raízes](../coordinator/contract.md).
 
-O journal por raiz usa schema 2, application_id próprio, foreign_keys ON,
+O journal por raiz usa schema 3, application_id próprio, foreign_keys ON,
 synchronous FULL e journal DELETE. Transações IMMEDIATE publicam atomicamente uma
 nova geração de inventário e plano da raiz. Itens não observados permanecem como
 evidência antiga, sem gerar exclusões. O journal portátil preserva evidência

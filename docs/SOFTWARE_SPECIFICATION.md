@@ -893,3 +893,19 @@ O registro externo ausente não é reconstruído automaticamente: selecionar
 explicitamente a associação original permite verificar seu marcador; marcador
 perdido ou diferente continua bloqueado. Resultados locais e capturas de fixtures
 não conferem aceite da bateria real descrita nessa matriz.
+
+### SYNC-010 — cópias de conteúdo divergente (P02/P08)
+
+Requisito: nenhuma escolha pode eliminar silenciosamente uma versão divergente.
+Preservar a versão remota binária comprovada em cópia local sem sobrescrita,
+manter o original local e registrar vínculo com origem/ID/revisão e integridade.
+Falhas ou evidência insuficiente mantêm pendência explícita, sem avançar a base.
+Reserva de nome, journal separado, recuperação e oráculos estão no
+[contrato de preservação](../engine/src/conflicts/preservation.md).
+Resolução assistida e políticas de retenção não fazem parte desta operação.
+Implementado no executor de download com journal de preservação separado no
+SQLite principal v3, nome determinístico reservado e publicação NOREPLACE.
+A matriz de testes automatizados está em `download/preservation_tests.rs`;
+os resultados executados ficam na PR. Simulação não comprova Google Drive real
+nem queda de energia. O formato v2 é rejeitado sem apagar dados; a recuperação
+explícita de estado existente permite reconstrução conservadora.

@@ -46,8 +46,8 @@ pub use planner::{
 };
 
 pub use download::{
-    DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
-    DownloadStage, PreparationProgress, PreviousPath,
+    ConflictCopy, DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress,
+    DownloadReport, DownloadStage, PreparationProgress, PreviousPath,
 };
 
 pub use state::recovery::StateRecovery;

@@ -1,4 +1,5 @@
 //! Manual downloads and managed updates with durable replay evidence.
+mod preservation;
 mod updates;
 
 use super::filesystem::{identity, Root};
@@ -99,6 +100,43 @@ pub(crate) fn run_with_root<'a>(
         preserved: Default::default(),
     };
     let mut report = DownloadReport::default();
+    // Replay historical verified snapshots before their remote revision disappears
+    // from the current work list. Current conflict entries retain their own replay.
+    for record in session
+        .context
+        .store
+        .pending_preservations(session.context.client, session.context.scope)?
+    {
+        let current = inventory
+            .entries
+            .iter()
+            .zip(&session.context.scope.entries)
+            .any(|(item, entry)| {
+                item == &record.operation.item
+                    && entry.relative_path.as_ref() == Some(&record.original)
+                    && matches!(
+                        entry.action,
+                        PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges)
+                    )
+            });
+        if current {
+            continue;
+        }
+        let path = record.original.clone();
+        match session.recover_preservation(record) {
+            Ok(copy) => report.conflict_copies.push(copy),
+            Err(
+                error @ (EngineError::StateStorage
+                | EngineError::RootSuspended(_)
+                | EngineError::Authentication(crate::AuthError::Cancelled)),
+            ) => return Err(error),
+            Err(error) => report.issues.push(DownloadIssue {
+                relative_path: Some(path),
+                error,
+            }),
+        }
+    }
+
     let by_id: HashMap<_, _> = inventory
         .entries
         .iter()
@@ -232,6 +270,16 @@ pub(crate) fn run_with_root<'a>(
                     .map(|()| report.linked += 1)
                 })
             }
+            (
+                InventoryKind::Binary,
+                Some(path),
+                PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges),
+            ) => session
+                .preserve_conflict(item, path, decision, &by_id, source)
+                .and_then(|copy| {
+                    report.conflict_copies.push(copy);
+                    Err(EngineError::DownloadConflict)
+                }),
             (InventoryKind::Binary, Some(_), PlanAction::Classified { .. }) => {
                 Err(EngineError::DownloadConflict)
             }

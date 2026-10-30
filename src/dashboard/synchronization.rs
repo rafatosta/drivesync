@@ -468,7 +468,9 @@ impl Widgets {
                 }
                 if let Some(preserved) = self.preserved.upgrade() {
                     preserved.set_label(&preserved_text(report));
-                    preserved.set_visible(!report.preserved_copies.is_empty());
+                    preserved.set_visible(
+                        !report.preserved_copies.is_empty() || !report.conflict_copies.is_empty(),
+                    );
                 }
                 self.show_issues(report);
                 self.show_activity(report);
@@ -622,24 +624,26 @@ fn summary(report: &DownloadReport) -> String {
 }
 /// Shows bounded relative paths without implying old versions were deleted.
 fn preserved_text(report: &DownloadReport) -> String {
-    if report.preserved_copies.is_empty() {
+    let total = report.preserved_copies.len() + report.conflict_copies.len();
+    if total == 0 {
         return String::new();
     }
-    let mut text = String::from("Previous versions kept beside the updated files:\n");
-    text.push_str(
-        &report
-            .preserved_copies
-            .iter()
-            .take(3)
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
-    if report.preserved_copies.len() > 3 {
-        text.push_str(&format!(
-            "\n{} additional copies kept.",
-            report.preserved_copies.len() - 3
-        ));
+    let mut text = String::from("Recoverable copies kept beside the original files:\n");
+    let paths = report
+        .preserved_copies
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .chain(report.conflict_copies.iter().map(|copy| {
+            format!(
+                "{} (Drive version {} of {})",
+                copy.copy_path.display(),
+                copy.remote_version,
+                copy.original_path.display()
+            )
+        }));
+    text.push_str(&paths.take(3).collect::<Vec<_>>().join("\n"));
+    if total > 3 {
+        text.push_str(&format!("\n{} additional copies kept.", total - 3));
     }
     text
 }
@@ -1300,6 +1304,21 @@ mod tests {
         assert!(summary(&report).contains("2 updated"));
         assert!(preserved_text(&report).contains("Folder/DriveSync backup example.bak"));
         assert!(preserved_text(&DownloadReport::default()).is_empty());
+    }
+    #[test]
+    fn recovered_conflict_copy_is_visible_without_a_current_execution_issue() {
+        let report = DownloadReport {
+            conflict_copies: vec![drivesync_engine::ConflictCopy {
+                original_path: "Folder/sheet.xlsx".into(),
+                copy_path: "Folder/DriveSync backup conflict-example.bak".into(),
+                remote_id: "remote-id".into(),
+                remote_version: 7,
+            }],
+            ..Default::default()
+        };
+        let text = preserved_text(&report);
+        assert!(text.contains("Folder/DriveSync backup conflict-example.bak"));
+        assert!(text.contains("Drive version 7 of Folder/sheet.xlsx"));
     }
     #[test]
     fn cycle_count_and_current_file_bytes_have_separate_meanings() {

@@ -108,14 +108,22 @@ fn blocked(f: &Fixture, inv: &RemoteInventory, expected: PlanAction) {
                 (0, 0, 0)
             );
         }
-        assert!(source.media_ids.is_empty());
+        if expected != PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges) {
+            assert!(source.media_ids.is_empty());
+        }
         assert!(source
             .metadata_ids
             .iter()
             .all(|id| id == &inv.entries[0].id));
         assert_eq!(source.content, remote_before);
         assert_eq!(base(f, inv), old_base);
-        assert_eq!(files(f), old_files);
+        let current = files(f);
+        for (path, evidence) in &old_files {
+            assert_eq!(current.get(path), Some(evidence));
+        }
+        for path in current.keys().filter(|path| !old_files.contains_key(*path)) {
+            assert!(crate::local::ignored(path));
+        }
     }
 }
 

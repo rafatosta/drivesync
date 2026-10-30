@@ -129,7 +129,7 @@ fn reopened_base_classifies_local_and_offline_concurrent_edits_without_advancing
             assert_eq!(base(&f, &inv), Some(confirmed.clone()));
             assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
         }
-        assert_eq!(source.media_calls, 0);
+        assert_eq!(source.media_calls, usize::from(concurrent));
         assert_eq!(source.entries["file"], next.entries[0]);
     }
 }
