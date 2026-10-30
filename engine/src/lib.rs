@@ -30,9 +30,10 @@ pub use auth::{AuthError, Cancellation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use conflicts::{
-    classify_differences, AttributeChange, BaseEvidence, ContentComparison, DifferenceDecision,
-    DifferenceInput, DifferenceKind, DifferenceReason, Disposition, ObservationFailure,
-    SideDifference,
+    classify_differences, AttributeChange, BaseEvidence, ConflictFailure, ConflictHistoryEvent,
+    ConflictHistoryKind, ConflictOutcome, ConflictRecord, ConflictStatus, ContentComparison,
+    DifferenceDecision, DifferenceInput, DifferenceKind, DifferenceReason, Disposition,
+    ObservationFailure, SideDifference,
 };
 pub use coordinator::RootSuspension;
 pub use error::EngineError;

@@ -1,5 +1,6 @@
 //! Evidence-normalized differences; callers retain the scoped B/L/R observations.
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Only durable completed work establishes B; invalid state is not a fresh start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,4 +119,80 @@ pub struct DifferenceDecision {
     pub kind: DifferenceKind,
     pub disposition: Disposition,
     pub reason: DifferenceReason,
+}
+
+/// A durable, non-authorizing snapshot of an item that needs review.
+///
+/// The record contains identifiers and verified observations only; it never
+/// stores file contents, OAuth credentials, or permission to apply a decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConflictRecord {
+    /// Stable key derived from the remote identity and observed path.
+    pub conflict_id: String,
+    pub remote_id: Option<String>,
+    pub remote_parent_id: Option<String>,
+    pub remote_name: Option<String>,
+    pub relative_path: Option<PathBuf>,
+    pub diagnosis: crate::ChangeKind,
+    pub status: ConflictStatus,
+    pub local_fingerprint: Option<String>,
+    pub remote_version: Option<u64>,
+    pub outcomes: Vec<ConflictOutcome>,
+}
+
+/// Whether the latest verified observation still requires user attention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ConflictStatus {
+    Pending,
+    NoLongerConflicting,
+}
+
+/// Verified effects or sanitized failures from supported conflict handling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ConflictOutcome {
+    /// The remote version was verified and retained as a separate local copy.
+    CopyPreserved {
+        copy_path: PathBuf,
+        remote_version: u64,
+    },
+    /// A retry stopped without claiming success or changing the conflict status.
+    RetryBlocked { reason: ConflictFailure },
+}
+
+/// Safe error categories suitable for durable audit without raw provider text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ConflictFailure {
+    LocalConflict,
+    LocalWriting,
+    LocalTemporary,
+    ObservationUnknown,
+    Integrity,
+    LocalIo,
+    RemoteChanged,
+    RemoteUnavailable,
+    StateUnavailable,
+}
+
+/// Append-only lifecycle event for a conflict item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConflictHistoryEvent {
+    /// Monotonic sequence within the scoped SQLite journal.
+    pub sequence: u64,
+    pub record: ConflictRecord,
+    pub kind: ConflictHistoryKind,
+}
+
+/// Audited state transition; repeated identical observations are deduplicated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ConflictHistoryKind {
+    PendingObserved,
+    NoLongerConflicting,
+    CopyPreserved,
+    RetryBlocked { reason: ConflictFailure },
 }

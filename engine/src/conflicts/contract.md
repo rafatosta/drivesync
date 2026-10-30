@@ -184,6 +184,26 @@ e apresenta o local recuperável. Falhas específicas não anunciam cópia ínte
 `conflict_copies` no SQLite principal v3 é separado de `downloads`: não fornece
 base nem histórico de exclusão. Formato v2 é rejeitado sem reset/migração.
 
+## SYNC-011 — pendências e auditoria duráveis
+
+`ConflictHistory` persiste um registro pendente por chave de item/caminho e
+eventos append-only para mudanças verificadas de diagnóstico, cópias de conflito
+publicadas e falhas classificadas. Uma observação posterior `Unchanged` ou
+`Equivalent` retira o registro da lista atual de pendências sem apagar eventos;
+uma ausência de evidência não fecha a pendência. Cada entrada mantém escopo da conta/raízes,
+origem observada (ID/pasta/nome remoto e caminho local), versão remota e
+fingerprint local quando disponíveis. O
+journal não armazena bytes, tokens ou mensagens cruas do provedor. Repetir uma
+observação ou resultado idêntico não duplica o evento; uma alteração observada
+gera novo evento e mantém as versões anteriores no histórico.
+
+A reabertura fornece registros e eventos sem rede, mas não permite reaplicar uma
+decisão. Só efeitos comprovados são descritos como preservados; falha/ausência
+permanece pendente. Resolução assistida e fechamento de conflitos não estão
+implementados. Os testes de persistência usam SQLite real temporário e cobrem
+reabertura, idempotência, isolamento de escopo e rollback; não demonstram queda
+real de energia ou integração com Google Drive.
+
 Oráculos P02/P08: `download/preservation_tests.rs` cobre reabertura, repetição,
 revisões seguintes, offline de mídia, falha de integridade/revisão, edição local,
 colisão de arquivo/symlink/diretório e criação concorrente, replay antes/depois

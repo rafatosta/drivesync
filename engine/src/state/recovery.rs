@@ -3,7 +3,9 @@
 //! A durable selector switches filenames only after replacement stores validate.
 //! Originals and SQLite sidecars never move. The caller holds association and
 //! physical-root locks throughout, including selector publication and fsync.
-use super::{failed, CheckpointScope, Checkpoints, Reconciliations, Store, Uploads};
+use super::{
+    failed, CheckpointScope, Checkpoints, ConflictHistory, Reconciliations, Store, Uploads,
+};
 use crate::{AuthError, Cancellation, EngineError, FolderConfiguration};
 use rustix::fs::{self, Mode, OFlags};
 use serde::{Deserialize, Serialize};
@@ -16,10 +18,11 @@ use std::{
 
 const SELECTOR: &str = "recovery.json";
 const REQUIRED: &str = "recovery-required";
-const NAMES: [&str; 4] = [
+const NAMES: [&str; 5] = [
     "state.sqlite3",
     "changes.sqlite3",
     "reconciliation.sqlite3",
+    "conflict-history.sqlite3",
     "uploads.sqlite3",
 ];
 
@@ -219,6 +222,11 @@ fn validate(
         }
         "reconciliation.sqlite3" => {
             Reconciliations::open(path)?.load(&scope)?;
+        }
+        "conflict-history.sqlite3" => {
+            let history = ConflictHistory::open(path)?;
+            history.records(&scope)?;
+            history.events(&scope)?;
         }
         "uploads.sqlite3" => {
             Uploads::open(path, client, folder)?.validate_evidence()?;
