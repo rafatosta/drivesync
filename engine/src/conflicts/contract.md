@@ -168,3 +168,25 @@ exige recuperação explícita conforme o fluxo existente.
 Os testes de integração usam arquivos e SQLite temporários reais e provedor
 remoto simulado. Os resultados e comandos de execução pertencem ao PR.
 Reabertura/falha transacional não comprova recuperação de perda real de energia.
+
+
+## SYNC-010 — preservação sem seleção (P02/P08)
+
+O [contrato de preservação](preservation.md) complementa a classificação pura:
+o executor de download pode criar uma cópia local verificada da versão remota
+em divergência de conteúdo binário gerenciado no mesmo caminho, mantendo o
+arquivo local original e a base B. Isso substitui, para esse cenário, o limite
+anterior de apenas preservar as origens sem cópia adicional. Classificação
+isolada continua sem efeitos e nunca comprova que uma cópia foi criada.
+`DownloadReport.conflict_copies` informa caminho original, cópia, ID e revisão
+somente após verificar identidade/tamanho/hash; `attention()` mantém pendência
+e apresenta o local recuperável. Falhas específicas não anunciam cópia íntegra.
+`conflict_copies` no SQLite principal v3 é separado de `downloads`: não fornece
+base nem histórico de exclusão. Formato v2 é rejeitado sem reset/migração.
+
+Oráculos P02/P08: `download/preservation_tests.rs` cobre reabertura, repetição,
+revisões seguintes, offline de mídia, falha de integridade/revisão, edição local,
+colisão de arquivo/symlink/diretório e criação concorrente, replay antes/depois
+do rename, rollback SQLite antes da intenção/Ready/Installed, cancelamento,
+bloqueio da raiz, staging/cópia corrompidos, isolamento de escopos e continuidade
+de itens independentes. Os resultados de execução pertencem à PR.

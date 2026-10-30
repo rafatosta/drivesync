@@ -17,7 +17,8 @@ Os oráculos de C01/C03/C04/C09/C12/C21/P01 estão ligados em
 
 O [catálogo](validation-checklist.md) contém 56 cenários/políticas, não 56
 funcionalidades implementadas. A [viabilidade](technical-feasibility.md) e a
-[pesquisa de UX](ux-research.md) são referências conceituais. Preservação com
-cópias gerais (CONFLICT-001), retenção e resolução assistida (CONFLICT-002)
-continuam propostas. Classificar como preservar significa manter intactos os
-artefatos disponíveis; não declara cópias adicionais ou sucesso de sincronização.
+[pesquisa de UX](ux-research.md) são referências conceituais. A [preservação SYNC-010](preservation.md) adiciona cópia local verificada da
+versão remota em divergências binárias comprovadas no mesmo caminho. Retenção,
+limpeza e resolução assistida continuam propostas. A classificação permanece
+pura: somente o relatório de execução confirma cópias adicionais; cópia não
+significa resolução nem sucesso de sincronização.

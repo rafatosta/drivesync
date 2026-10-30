@@ -33,3 +33,14 @@ Cursor de changes deve ser armazenado por **conta e escopo do feed de alteraçõ
 atômica de substitutos, preservação de bancos/sidecars, reuso de observações
 íntegras, isolamento, cancelamento e bloqueio por perda de intents de upload.
 A fachada retém locks até o fim. Recuperar não significa instalar nem reconstruir B.
+
+
+## Preservação de conflitos — SYNC-010
+
+O formato principal exato é v3. A tabela `conflict_copies` mantém intenção,
+staging verificado e publicação de versões remotas divergentes, isolados por
+cliente/conta/raiz remota/local e vinculados ao caminho original. Não participa
+de `confirmed_bases`, nem invalida ou avança B. A leitura valida nome derivado,
+chave, fase e metadados; o executor revalida identidade e conteúdo no filesystem.
+Formato anterior é rejeitado sem migração, reset ou remoção de dados.
+Contrato e recuperação: [preservation.md](../conflicts/preservation.md).

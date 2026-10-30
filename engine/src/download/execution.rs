@@ -1,4 +1,5 @@
 //! Manual downloads and managed updates with durable replay evidence.
+mod preservation;
 mod updates;
 
 use super::filesystem::{identity, Root};
@@ -232,6 +233,16 @@ pub(crate) fn run_with_root<'a>(
                     .map(|()| report.linked += 1)
                 })
             }
+            (
+                InventoryKind::Binary,
+                Some(path),
+                PlanAction::Blocked(crate::ConflictReason::ConcurrentChanges),
+            ) => session
+                .preserve_conflict(item, path, decision, &by_id, source)
+                .and_then(|copy| {
+                    report.conflict_copies.push(copy);
+                    Err(EngineError::DownloadConflict)
+                }),
             (InventoryKind::Binary, Some(_), PlanAction::Classified { .. }) => {
                 Err(EngineError::DownloadConflict)
             }

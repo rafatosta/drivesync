@@ -32,6 +32,9 @@ pub struct DownloadReport {
     pub updated: usize,
     /// Relative paths to prior versions retained beside updated files.
     pub preserved_copies: Vec<PathBuf>,
+    /// Verified remote conflict copies with their original local/Drive binding.
+    /// These remain pending and never establish a synchronized baseline.
+    pub conflict_copies: Vec<ConflictCopy>,
     pub recovered: usize,
     pub unchanged: usize,
     pub directories: usize,
@@ -67,6 +70,15 @@ impl DownloadReport {
                     .unwrap_or_else(|| issue.error.to_string())
             } else {
                 issue.error.to_string()
+            };
+            let message = if let Some(copy) = self
+                .conflict_copies
+                .iter()
+                .find(|copy| Some(&copy.original_path) == issue.relative_path.as_ref())
+            {
+                format!("Content conflict between the local file and Google Drive file. Remote version {} preserved at: {}. The local file remains at its original path; resolution is pending.", copy.remote_version, copy.copy_path.display())
+            } else {
+                message
             };
             result.push(DownloadAttention {
                 relative_path: issue.relative_path.clone(),
@@ -252,4 +264,20 @@ mod reconciliation_tests {
             .retain(|e| e.kind == ChangeKind::Equivalent);
         assert!(report.attention().is_empty());
     }
+}
+
+/// A verified recoverable remote version; the local origin remains untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictCopy {
+    pub original_path: PathBuf,
+    pub copy_path: PathBuf,
+    pub remote_id: String,
+    pub remote_version: u64,
+}
+
+/// Scoped preservation journal, deliberately excluded from confirmed bases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Preservation {
+    pub original: PathBuf,
+    pub operation: Operation,
 }

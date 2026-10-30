@@ -3,7 +3,7 @@ use super::*;
 use std::fs::File;
 
 impl Session<'_> {
-    fn intact(
+    pub(super) fn intact(
         &self,
         parent: &File,
         name: &OsStr,

@@ -11,10 +11,10 @@ mod stream;
 pub(crate) use execution::run;
 pub(crate) use execution::{run_with_root, Context, Source};
 pub use models::{
-    DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
-    DownloadStage, PreparationProgress, PreviousPath,
+    ConflictCopy, DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress,
+    DownloadReport, DownloadStage, PreparationProgress, PreviousPath,
 };
-pub(crate) use models::{Identity, Operation, Phase, Previous};
+pub(crate) use models::{Identity, Operation, Phase, Preservation, Previous};
 
 #[cfg(test)]
 mod tests;

@@ -400,16 +400,20 @@ fn c01_c06_divergence_offline_and_recovery_persist_without_selecting_a_version()
                 assert_eq!(attention[0].relative_path, Some("file.txt".into()));
                 assert!(attention[0].message.contains("local file"));
                 assert!(attention[0].message.contains("Google Drive file"));
-                assert!(attention[0]
-                    .message
-                    .contains("no conflict backup was created"));
+                assert!(attention[0].message.contains("preserved at:"));
             }
             assert_eq!(report.updated + report.downloaded, 0);
             assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
             assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
             assert_eq!(remote.content["file"], bytes);
         }
-        assert_eq!(fs::read_dir(&f.root).unwrap().count(), 1);
+        assert_eq!(
+            crate::local::scan(&Root::open(&f.root).unwrap(), &Cancellation::new())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
     }
 }
 

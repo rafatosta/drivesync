@@ -27,3 +27,13 @@ inside Flatpak, keeping persisted scope strings unchanged. All components beneat
 the mount, root identity, parent identity, file identity and hashes still require
 the existing descriptor-relative no-follow checks. Other symlink targets fail
 closed; never canonicalize arbitrary root/descendant symlinks as a workaround.
+
+
+## Cópias de conflito — SYNC-010
+
+A execução de divergência binária no mesmo caminho pode preservar a versão
+remota em cópia adicional sem substituir o original local. O journal separado
+não confirma instalação no caminho original nem sincronização. Relatório e
+recuperação seguem [o contrato de preservação](../conflicts/preservation.md).
+Nomes reservados de backup não entram em inventário/upload. Impossibilidade ou
+prova incompleta mantém a pendência e os artefatos existentes.

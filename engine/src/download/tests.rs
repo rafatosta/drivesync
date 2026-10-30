@@ -923,3 +923,6 @@ mod sync003_acceptance;
 
 #[path = "sync006_acceptance.rs"]
 mod sync006_acceptance;
+
+#[path = "preservation_tests.rs"]
+mod preservation_tests;

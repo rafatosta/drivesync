@@ -903,5 +903,9 @@ Falhas ou evidência insuficiente mantêm pendência explícita, sem avançar a 
 Reserva de nome, journal separado, recuperação e oráculos estão no
 [contrato de preservação](../engine/src/conflicts/preservation.md).
 Resolução assistida e políticas de retenção não fazem parte desta operação.
-A implementação e a validação devem ser distinguidas: os resultados executados
-ficam na PR; simulação não comprova Google Drive real nem queda de energia.
+Implementado no executor de download com journal de preservação separado no
+SQLite principal v3, nome determinístico reservado e publicação NOREPLACE.
+A matriz de testes automatizados está em `download/preservation_tests.rs`;
+os resultados executados ficam na PR. Simulação não comprova Google Drive real
+nem queda de energia. O formato v2 é rejeitado sem apagar dados; a recuperação
+explícita de estado existente permite reconstrução conservadora.
