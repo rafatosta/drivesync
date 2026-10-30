@@ -106,6 +106,12 @@ DriveSync is free and open source, developed and maintained in my spare time. If
 
 All contributions are voluntary. DriveSync remains free and open source.
 
+## License and copyright
+
+Copyright (C) 2026 Rafael Tosta Santos.
+
+DriveSync is free software distributed under the **GNU General Public License, version 3.0 only (GPL-3.0-only)**. You may use, study, modify, and redistribute it under the terms of that license. See the [LICENSE](LICENSE) file for the full license text.
+
 ## Feedback
 
 Found a problem or have a suggestion? [Open an issue](https://github.com/rafatosta/drivesync/issues).
