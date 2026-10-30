@@ -32,7 +32,10 @@ pub(super) fn pending(records: &[ConflictRecord]) -> Vec<Item> {
             _ => Category::Errors,
         };
         let path = r.relative_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Path unavailable".into());
-        let mut details = format!("{}\nLocal version: {}\nGoogle Drive version: {}\nDate and size: unavailable in the saved observation.\nAccess: not checked now; loss of access does not prove deletion.\nPreservation: available originals were left in place; their current availability requires a new check.", r.diagnosis.description(), if r.local_fingerprint.is_some() { "observed" } else { "unverified" }, r.remote_version.map(|v| v.to_string()).unwrap_or_else(|| "unverified".into()));
+        let mut details = format!("{}\nLocal version: {}\nGoogle Drive version: {}\nDates and sizes below describe saved observations, not current files.\nAccess: not checked now; loss of access does not prove deletion.\nPreservation: available originals were left in place; their current availability requires a new check.", r.diagnosis.description(), if r.local_fingerprint.is_some() { "observed" } else { "unverified" }, r.remote_version.map(|v| v.to_string()).unwrap_or_else(|| "unverified".into()));
+        let size = |value: Option<u64>| value.map(|n| format!("{n} bytes")).unwrap_or_else(|| "unavailable".into());
+        let modified = r.local_modified_unix.and_then(|seconds| adw::gtk::glib::DateTime::from_unix_utc(seconds).ok()).and_then(|date| date.format("%Y-%m-%d %H:%M:%S UTC").ok()).map(|text| text.to_string()).unwrap_or_else(|| "unavailable".into());
+        details.push_str(&format!("\nObserved local size: {}. Local modified: {modified}.\nObserved Drive size: {}. Drive modified date: unavailable.", size(r.local_size), size(r.remote_size)));
         for outcome in &r.outcomes {
             match outcome {
                 ConflictOutcome::CopyPreserved { copy_path, remote_version } => details.push_str(&format!("\nVerified preservation at the time of copying: Drive version {remote_version} at {}. Current copy availability is not checked.", copy_path.display())),
@@ -57,6 +60,9 @@ mod tests {
             relative_path: Some("<report>&.txt".into()),
             diagnosis: kind,
             status: ConflictStatus::Pending,
+            local_size: None,
+            local_modified_unix: None,
+            remote_size: None,
             local_fingerprint: None,
             remote_version: None,
             outcomes: vec![],
@@ -69,12 +75,18 @@ mod tests {
             copy_path: "copy.txt".into(),
             remote_version: 3,
         });
+        records[0].local_size = Some(42);
+        records[0].remote_size = Some(99);
+        records[0].local_modified_unix = Some(0);
         let before = records.clone();
         let items = pending(&records);
         assert_eq!(items.len(), 12);
         assert_eq!(items, pending(&records));
         assert_eq!(records, before);
         assert_eq!(items[0].path, "<report>&.txt");
+        assert!(items[0].details.contains("42 bytes"));
+        assert!(items[0].details.contains("99 bytes"));
+        assert!(items[0].details.contains("1970-01-01 00:00:00 UTC"));
         assert!(items[0].details.contains("version 3 at copy.txt"));
         assert!(items[1].details.contains("unverified"));
         assert!(!items[1].details.contains("version 3"));

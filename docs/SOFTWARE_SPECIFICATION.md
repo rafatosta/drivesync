@@ -1019,3 +1019,33 @@ não reduzem essa população. A revisão SQLite usa formato interno 4, sem migr
 formato anterior é rejeitado preservando o banco. A recuperação explícita existente
 pode reconstruir observações; arquivos e credenciais permanecem preservados.
 Bases sem localização conhecida contam conservadoramente no escopo da raiz.
+
+### SYNC-015 — Central de conflitos e problemas por conta
+
+A interface oferece uma janela GNOME acessível por “Conflicts and problems…”
+para cada conta configurada. A consulta usa a fachada `saved_conflicts` em worker,
+sem rede, com escopo da conta/raízes e sem efeitos sobre arquivos ou decisões.
+Listas separadas mostram todos os conflitos, incompatibilidades e erros pendentes;
+erros do último ciclo são identificados separadamente das observações duráveis.
+Cada item mostra caminho, diagnóstico, versão remota quando conhecida, presença
+de evidência local, incerteza de acesso, preservação comprovada e consequências.
+Tamanho local/remoto e data local são salvos quando observados; campos ausentes
+(inclusive data remota) são explicitamente indisponíveis;
+não são inferidos por nome, timestamp ou leitura de um caminho histórico.
+
+“Decide later” e fechar a janela não alteram a pendência, não selecionam versão e
+não pausam itens independentes. Reabrir consulta novamente as observações salvas.
+Erros de leitura/lock não viram uma lista vazia nem apagam evidências. Cópias são
+identificadas como verificadas no momento de sua criação, sem prometer que ainda
+existam. Texto de caminhos não é interpretado como markup; detalhes são
+selecionáveis, expansíveis por teclado, sem truncamento obrigatório e roláveis.
+
+O journal de conflitos usa formato exato v2; v1 é rejeitado sem apagar ou migrar
+evidências. A recuperação explícita de estado de desenvolvimento permanece necessária.
+
+**Limites:** a central apresenta o ramo de adiamento de P03, não implementa o
+executor de manter local/remoto/ambas. A revalidação SYNC-012 continua obrigatória
+para futura aplicação. C22/C25 são apresentados como acesso desconhecido ou
+indisponível, nunca como exclusão inferida. Testes determinísticos da apresentação,
+reabertura/idempotência SQLite e testes existentes de preservação são evidências
+simuladas; não homologam Drive real, leitor de tela ou recuperação de perda de energia.

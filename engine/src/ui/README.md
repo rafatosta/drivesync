@@ -28,3 +28,12 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
 **Estado:** rascunho v0.1; não implementado.
+
+## Central SYNC-015 implementada
+
+A central GTK em `src/dashboard/problems` consome somente a fachada pública
+`saved_conflicts`, fora da thread GTK. A especificação vigente descreve escopo,
+adiamento sem efeitos, categorias, dados desconhecidos e limites em
+[SYNC-015](../../../docs/SOFTWARE_SPECIFICATION.md#sync-015--central-de-conflitos-e-problemas-por-conta).
+O rascunho acima permanece referência dos demais algoritmos previstos, não o
+estado da central implementada.
