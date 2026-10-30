@@ -72,3 +72,36 @@ C01/C03/C04 exigem preservação; C09/C12 são conciliáveis apenas com evidênc
 identidade e atributos; C21 exige equivalência comprovada; P01 permite apenas
 operação suportada. Os testes e evidências de execução pertencem ao commit/PR;
 o catálogo não indica homologação com Google Drive real.
+
+## SYNC-007 — detecção de edições divergentes
+
+A coleta refina o candidato concorrente somente após comparar R/B e L/R. Antes de
+publicar equivalência, divergência ou uma decisão de localização, confere novamente
+assinatura local (incluindo ctime), hash e identidade por descritores sem seguir
+symlinks, na raiz já bloqueada. Prova local obsoleta/inacessível vira desconhecida;
+cancelamento e suspensão da raiz abortam a preparação. Não há atomicidade entre
+observações dos dois sistemas; o resultado não autoriza resolução posterior.
+
+Pseudocódigo: classificar B/L/R → verificar metadados/bytes remotos → comparar R/B
+e L/R → validar raiz e assinatura/hash/identidade de L → publicar decisão ou adiar
+→ persistir observação separada de B → reobservar antes de qualquer efeito.
+
+O conflito sinaliza as origens local e Drive, sem anunciar cópias não realizadas.
+Preservação nesta entrega é bloqueio de substituição com originais intactos;
+backup de conflito e resolução assistida permanecem fora deste contrato.
+
+Oráculos determinísticos (resultados de execução pertencem ao PR):
+
+| Cenário | Teste e efeito esperado |
+| --- | --- |
+| C01/C06 igual, divergente, offline e retomada | `c01_c06_divergence_offline_and_recovery_persist_without_selecting_a_version` em `download/sync006_acceptance.rs`: reabre SQLite a cada ciclo, verifica mensagem com ambas as origens, bytes intactos, nenhuma cópia/avanço de B. |
+| C01 concorrência durante leitura remota | `c01_local_changes_during_remote_proof_suspend_stale_diagnosis` em `download/reconciliation_tests.rs`: edição e substituição com bytes iguais invalidam tanto equivalência quanto divergência; nenhuma instalação. |
+| C06 mudanças unilaterais e divergência | `c06_reopened_offline_local_remote_and_divergent_changes_preserve_bases`: só mudança remota unilateral pode instalar; conflito mantém L/R/B. |
+| Prova incompleta/cancelamento | `incomplete_remote_equivalence_proof_is_unknown_without_media_installation`, `cancellation_during_equivalence_proof_never_publishes_a_plan`: não publicar sucesso sem prova. |
+| Falha de persistência | `failed_observation_commit_and_cancellation_keep_the_previous_classification`: transação abortada conserva geração anterior; não avança B. |
+
+Todos usam provedor remoto simulado; efeitos de arquivos e persistência usam
+filesystem/SQLite reais temporários. Reabertura não simula perda de energia.
+Referência primária: [Files](https://developers.google.com/workspace/drive/api/reference/rest/v3/files),
+consultada em 2026-10-30: revisão não é prova de mudança de conteúdo; checksums e
+metadados têm limites de disponibilidade. Nenhuma nova capacidade remota é presumida.

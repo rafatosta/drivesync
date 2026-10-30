@@ -66,7 +66,11 @@ pub(crate) fn refine(
     Ok(())
 }
 /// Builds a complete plan and optional equivalence evidence from a finished scan.
-/// This does not persist observations, execute a transfer or confirm a base.
+/// Revalidates local evidence for equivalent, divergent and location decisions
+/// after remote reads, using the already locked root. A changed or unreadable
+/// file defers its diagnosis; cancellation or root suspension aborts preparation.
+/// This does not persist observations, install content or confirm a base.
+/// Later edits still require fresh execution/resolution checks.
 pub(crate) fn prepare(
     inventory: &RemoteInventory,
     root: &crate::download::filesystem::Root,

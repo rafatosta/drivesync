@@ -357,6 +357,36 @@ Os requisitos RF-CON abaixo definem o comportamento pretendido. Não habilitam a
 
 O [catálogo de 56 cenários e políticas](../engine/src/conflicts/validation-checklist.md) fornece casos de cobertura, não 56 funcionalidades implementadas. A matriz B/L/R desse catálogo orienta a classificação; uma ação candidata, como enviar mudança local, continua bloqueada se o executor ou a política não a suportar.
 
+#### SYNC-007 — edições simultâneas divergentes
+
+A detecção usa a classificação centralizada e a prova de conteúdo existentes.
+Com B confirmada, alterações de bytes em L e R exigem comparação L/R: igualdade
+comprovada resulta em equivalência; diferença comprovada registra conflito e
+bloqueia substituições. Revisão remota maior com bytes iguais a B continua sendo
+mudança somente local. Datas nunca escolhem uma versão.
+
+Depois da prova remota, revalidar assinatura, SHA-256 e identidade local pelo
+descritor da raiz bloqueada antes de publicar equivalência, divergência ou decisão
+de localização. Edição, substituição, remoção ou falha de leitura invalida a prova
+local e adia o item; cancelamento ou suspensão da raiz aborta a preparação.
+Essa revalidação é uma observação, não um bloqueio contra editores externos:
+execução e futura resolução continuam exigindo nova verificação.
+
+A pendência sinaliza as duas origens observadas (arquivo local e arquivo no Drive).
+Preservar aqui significa deixá-las intactas, sem selecionar um vencedor, instalar
+conteúdo, criar cópia de conflito ou avançar B. Offline/falha na prova significa
+informação desconhecida; a retomada refaz a análise. Observações persistidas em
+SQLite sobrevivem à reabertura, mas não autorizam execução sem nova observação.
+A resolução assistida e a cópia durável de ambas as versões são entregas distintas,
+ainda não habilitadas. A disponibilidade observada não garante retenção histórica
+no Drive nem protege contra alterações externas posteriores.
+
+Aceite C01/C06: comparação igual/diferente, offline/retomada, edição e substituição
+durante a prova, persistência/reabertura e repetição sem cópias ou avanço de B.
+Ver [contrato e oráculos](../engine/src/conflicts/contract.md#sync-007--detecção-de-edições-divergentes).
+A validação determinística usa remoto simulado, arquivos e SQLite reais isolados;
+não equivale a homologação com Drive real, UI ou queda real de processo.
+
 #### SYNC-006 — classificação centralizada
 
 O classificador puro de `conflicts` deve distinguir diagnóstico, encaminhamento
