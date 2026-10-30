@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
 };
 
@@ -27,6 +27,12 @@ pub enum ChangeKind {
     LocalMissingRemoteChanged,
     LocalNew,
     RemoteUnavailable,
+    /// Local work differs from B while the remote identity cannot be observed.
+    LocalChangedRemoteUnavailable,
+    /// Explicit trash observation, without authority to delete the local version.
+    RemoteDeleted,
+    /// Local work conflicts with an explicit remote trash observation.
+    EditDeleteConflict,
     Temporary,
     Writing,
     Unsupported,
@@ -48,6 +54,9 @@ impl ChangeKind {
             Self::LocalMissingRemoteChanged => "The local copy is missing and Google Drive has changed since the last confirmed synchronization. The Drive version was preserved; review this item before restoring a local copy.",
             Self::LocalMissing => "No local copy was observed. This does not request deletion on Google Drive.",
             Self::LocalNew => "A local item was found. Upload requires this folder’s upload setting and a verified available destination.",
+            Self::RemoteDeleted => "This Drive item was observed in the trash. Local data was preserved; review before resolving. This observation does not authorize deletion.",
+            Self::EditDeleteConflict => "Local changes or a changed descendant conflict with a Drive item observed in the trash. Local work was preserved. Review before resolving; no conflict backup was created.",
+            Self::LocalChangedRemoteUnavailable => "Local changes or a changed descendant were found while the Drive item is unavailable. Deletion, a move and lost access cannot be distinguished from this observation. Local work was preserved; restore access and review before resolving. No conflict backup was created.",
             Self::RemoteUnavailable => "This item is no longer listed in the selected Drive folder. This may reflect a move or lost access; local data was preserved.",
             Self::Temporary => "This looks like a temporary file. Wait for the application to save its final file.",
             Self::Writing => "This file is still changing. Synchronization will check it again on the next cycle.",
@@ -60,6 +69,10 @@ impl ChangeKind {
         matches!(
             self,
             Self::LocalChanged
+                | Self::RemoteDeleted
+                | Self::EditDeleteConflict
+                | Self::RemoteUnavailable
+                | Self::LocalChangedRemoteUnavailable
                 | Self::Conciliable
                 | Self::LocationConflict
                 | Self::ConcurrentChanges
@@ -96,6 +109,7 @@ pub(crate) fn classify(
     local: &Inventory,
     plan: &DownloadPlan,
     history: &[Notice],
+    bases: &HashMap<String, crate::ConfirmedBase>,
 ) -> Vec<ReconciliationEntry> {
     let mut represented = HashSet::new();
     let mut result = Vec::new();
@@ -127,14 +141,107 @@ pub(crate) fn classify(
             }
         }
     }
+    // Confirmed locations survive even without an observation-only notice.
+    let current_ids: HashSet<_> = plan.entries.iter().map(|e| e.remote_id.as_str()).collect();
+    for (id, base) in bases {
+        if !current_ids.contains(id.as_str()) {
+            if let Some(location) = &base.location {
+                historical.insert((location.relative_path.clone(), id.clone()), ());
+            }
+        }
+    }
+    let mut relocated: HashMap<String, Option<PathBuf>> = HashMap::new();
+    for (path, evidence) in &local.entries {
+        if let Evidence::Stable { fingerprint, .. } = evidence {
+            relocated
+                .entry(fingerprint.to_ascii_lowercase())
+                .and_modify(|candidate| *candidate = None)
+                .or_insert_with(|| Some(path.clone()));
+        }
+    }
+    let deleted: HashSet<_> = history
+        .iter()
+        .filter(|n| n.deleted)
+        .map(|n| (&n.id, &n.path))
+        .collect();
+    let mut moved = BTreeMap::new();
     for (path, id) in historical.keys() {
+        let mut kind = ChangeKind::RemoteUnavailable;
+        if !current_ids.contains(id.as_str()) {
+            if let Some(base) = bases.get(id) {
+                if base
+                    .location
+                    .as_ref()
+                    .is_some_and(|l| l.relative_path == *path)
+                {
+                    match local.observe(path) {
+                        crate::LocalObservation::Verified(ref fingerprint) => {
+                            kind = match (
+                                crate::planner::fingerprint_parts(fingerprint),
+                                crate::planner::fingerprint_parts(&base.local_fingerprint),
+                            ) {
+                                (Some((hash, dev, ino)), Some((bh, bd, bi)))
+                                    if (dev, ino) == (bd, bi) =>
+                                {
+                                    if hash.eq_ignore_ascii_case(bh) {
+                                        ChangeKind::RemoteUnavailable
+                                    } else {
+                                        ChangeKind::LocalChangedRemoteUnavailable
+                                    }
+                                }
+                                _ => ChangeKind::LocalIdentityChanged,
+                            };
+                        }
+                        crate::LocalObservation::Absent => {
+                            if let Some(Some(destination)) =
+                                relocated.get(&base.local_fingerprint.to_ascii_lowercase())
+                            {
+                                represented.insert(destination.clone());
+                                moved.insert(
+                                    (destination.clone(), id.clone()),
+                                    if deleted.contains(&(id, &Some(path.clone()))) {
+                                        ChangeKind::EditDeleteConflict
+                                    } else {
+                                        ChangeKind::LocalChangedRemoteUnavailable
+                                    },
+                                );
+                                kind = ChangeKind::LocalChangedRemoteUnavailable;
+                            }
+                        }
+                        _ => kind = ChangeKind::Unknown,
+                    }
+                }
+            }
+        }
+        if !current_ids.contains(id.as_str()) && deleted.contains(&(id, &Some(path.clone()))) {
+            kind = match kind {
+                ChangeKind::RemoteUnavailable => ChangeKind::RemoteDeleted,
+                ChangeKind::LocalChangedRemoteUnavailable => ChangeKind::EditDeleteConflict,
+                other => other,
+            };
+        }
         result.push(ReconciliationEntry {
             relative_path: Some(path.clone()),
             remote_id: Some(id.clone()),
-            kind: ChangeKind::RemoteUnavailable,
+            kind,
         });
         represented.insert(path.clone());
     }
+    let mut result: BTreeMap<_, _> = result
+        .into_iter()
+        .map(|e| ((e.relative_path.clone(), e.remote_id.clone()), e))
+        .collect();
+    for ((path, id), kind) in moved {
+        result.insert(
+            (Some(path.clone()), Some(id.clone())),
+            ReconciliationEntry {
+                relative_path: Some(path),
+                remote_id: Some(id),
+                kind,
+            },
+        );
+    }
+    let mut result: Vec<_> = result.into_values().collect();
     for (path, evidence) in &local.entries {
         if !represented.contains(path) {
             result.push(ReconciliationEntry {
@@ -142,6 +249,58 @@ pub(crate) fn classify(
                 remote_id: None,
                 kind: evidence_kind(Some(evidence)).unwrap_or(ChangeKind::LocalNew),
             });
+        }
+    }
+    // Propagate attention through unavailable historical directories using path
+    // components: "docs-old" is not a descendant of "docs".
+    let ancestors: HashSet<_> = result
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                ChangeKind::LocalChangedRemoteUnavailable
+                    | ChangeKind::EditDeleteConflict
+                    | ChangeKind::LocalIdentityChanged
+                    | ChangeKind::LocalNew
+            )
+        })
+        .filter_map(|e| e.relative_path.as_ref())
+        .flat_map(|p| p.ancestors().skip(1).map(|a| a.to_path_buf()))
+        .collect();
+    let uncertain_ancestors: HashSet<_> = result
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                ChangeKind::Unknown | ChangeKind::Writing | ChangeKind::Unsupported
+            )
+        })
+        .filter_map(|e| e.relative_path.as_ref())
+        .flat_map(|p| p.ancestors().skip(1).map(|a| a.to_path_buf()))
+        .collect();
+    for entry in &mut result {
+        if matches!(
+            entry.kind,
+            ChangeKind::RemoteUnavailable | ChangeKind::RemoteDeleted
+        ) && entry
+            .relative_path
+            .as_ref()
+            .is_some_and(|p| ancestors.contains(p))
+        {
+            entry.kind = if entry.kind == ChangeKind::RemoteDeleted {
+                ChangeKind::EditDeleteConflict
+            } else {
+                ChangeKind::LocalChangedRemoteUnavailable
+            };
+        } else if matches!(
+            entry.kind,
+            ChangeKind::RemoteUnavailable | ChangeKind::RemoteDeleted
+        ) && entry
+            .relative_path
+            .as_ref()
+            .is_some_and(|p| uncertain_ancestors.contains(p))
+        {
+            entry.kind = ChangeKind::Unknown;
         }
     }
     result.sort_by(|a, b| (&a.relative_path, &a.remote_id).cmp(&(&b.relative_path, &b.remote_id)));

@@ -51,6 +51,7 @@ fn terminal(events: Vec<Change>) -> Result<ChangePage, EngineError> {
 }
 fn event(item: InventoryEntry) -> Change {
     Change {
+        confirmed_trashed: false,
         id: item.id.clone(),
         removed: false,
         item: Some(item),
@@ -156,6 +157,7 @@ fn additions_unrelated_changes_and_subtree_unavailability() {
         event(item("new", "root", false)),
         event(item("foreign", "outside", false)),
         Change {
+            confirmed_trashed: false,
             id: "folder".into(),
             removed: true,
             item: None,
@@ -323,12 +325,14 @@ fn folder_moves_outside_root_reconcile_and_file_renames_preserve_old_paths() {
 fn root_metadata_without_parent_is_not_a_removed_root() {
     let old = checkpoint(vec![]);
     let mut fake = Fake::new(vec![terminal(vec![Change {
+        confirmed_trashed: false,
         id: "root".into(),
         removed: false,
         item: None,
     }])]);
     assert!(collect_with(Some(&old), &mut fake).is_ok());
     let mut fake = Fake::new(vec![terminal(vec![Change {
+        confirmed_trashed: false,
         id: "root".into(),
         removed: true,
         item: None,
@@ -343,6 +347,7 @@ fn root_metadata_without_parent_is_not_a_removed_root() {
 fn forced_reconciliation_refreshes_silent_revisions_and_preserves_notices() {
     let mut old = checkpoint(vec![item("file", "root", false)]);
     old.notices.push(Notice {
+        deleted: false,
         id: "previously-moved".into(),
         path: Some("old/path.txt".into()),
     });
@@ -386,6 +391,7 @@ fn forced_reconciliation_refreshes_silent_revisions_and_preserves_notices() {
 fn failed_forced_refresh_does_not_change_prior_observations_or_notices() {
     let mut old = checkpoint(vec![item("file", "root", false)]);
     old.notices.push(Notice {
+        deleted: false,
         id: "missing".into(),
         path: Some("old.txt".into()),
     });
@@ -439,6 +445,7 @@ fn previous_paths_distinguish_moves_from_unavailability_without_creating_issues(
     let unchanged = collect_with(Some(&moved), &mut fake).unwrap();
     assert_eq!(previous_paths(&unchanged).unwrap(), activity);
     let mut fake = Fake::new(vec![terminal(vec![Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: true,
         item: None,

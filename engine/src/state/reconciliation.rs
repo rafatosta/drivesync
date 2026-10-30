@@ -35,7 +35,7 @@ impl Reconciliation {
         history: Vec<Notice>,
         previous: Option<&Self>,
     ) -> Self {
-        let mut entries = crate::changes::classify(&local, &plan, &history);
+        let mut entries = crate::changes::classify(&local, &plan, &history, &bases);
         let represented: HashSet<_> = entries
             .iter()
             .filter_map(|e| e.relative_path.clone())
@@ -72,7 +72,7 @@ impl Reconciliation {
 pub(crate) struct Reconciliations(Store);
 impl Reconciliations {
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, 0x44535243, 2, SCHEMA)?))
+        Ok(Self(Store::open_format(path, 0x44535243, 3, SCHEMA)?))
     }
     pub(crate) fn load(
         &self,

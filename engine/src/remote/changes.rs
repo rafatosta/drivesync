@@ -6,6 +6,8 @@ use serde::Deserialize;
 pub(crate) struct Change {
     pub id: String,
     pub removed: bool,
+    /// Only explicit, identity-checked trashed metadata proves this observation.
+    pub confirmed_trashed: bool,
     /// Unavailable includes trash and lost access; it never means local deletion.
     pub item: Option<InventoryEntry>,
 }
@@ -84,6 +86,7 @@ fn decode_page(bytes: &[u8]) -> Result<ChangePage, EngineError> {
             return Err(invalid());
         }
         let mut removed = raw.removed;
+        let mut confirmed_trashed = false;
         let item = if raw.removed {
             None
         } else {
@@ -99,6 +102,7 @@ fn decode_page(bytes: &[u8]) -> Result<ChangePage, EngineError> {
                 return Err(invalid());
             }
             let parents = file.get("parents").and_then(|v| v.as_array());
+            confirmed_trashed = trashed;
             removed = trashed || file.get("driveId").is_some_and(|v| !v.is_null());
             if trashed
                 || file.get("driveId").is_some_and(|v| !v.is_null())
@@ -121,6 +125,7 @@ fn decode_page(bytes: &[u8]) -> Result<ChangePage, EngineError> {
             }
         };
         changes.push(Change {
+            confirmed_trashed,
             id: raw.file_id,
             removed,
             item,
@@ -135,6 +140,17 @@ fn decode_page(bytes: &[u8]) -> Result<ChangePage, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_trash_is_distinct_from_removed_and_requires_matching_identity() {
+        let trashed = decode_page(br#"{"changes":[{"fileId":"f","file":{"id":"f","trashed":true}}],"newStartPageToken":"t"}"#).unwrap();
+        assert!(trashed.changes[0].confirmed_trashed);
+        assert!(trashed.changes[0].removed);
+        let unavailable =
+            decode_page(br#"{"changes":[{"fileId":"f","removed":true}],"newStartPageToken":"t"}"#)
+                .unwrap();
+        assert!(!unavailable.changes[0].confirmed_trashed);
+        assert!(decode_page(br#"{"changes":[{"fileId":"f","file":{"id":"other","trashed":true}}],"newStartPageToken":"t"}"#).is_err());
+    }
     #[test]
     fn validates_envelopes_and_does_not_infer_removal_from_missing_file() {
         for data in [

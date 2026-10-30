@@ -6,6 +6,8 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Notice {
     pub id: String,
+    /// Explicit trash evidence for this identity, never inferred from a missing listing.
+    pub deleted: bool,
     pub path: Option<PathBuf>,
 }
 #[derive(Clone, Serialize, Deserialize)]

@@ -93,6 +93,14 @@ pub(crate) fn refine_locations(
             continue;
         };
         let Some((path, fingerprint)) = locate(base, local, &relocated) else {
+            // Missing local work plus a remote rename/move is not permission
+            // to recreate the item at a new destination.
+            if local.observe(&location.relative_path) == LocalObservation::Absent
+                && (item.name != location.remote_name || item.parent_id != location.remote_parent)
+            {
+                entry.action =
+                    PlanAction::Blocked(crate::ConflictReason::LocalMissingRemoteChanged);
+            }
             continue;
         };
         let Some((base_hash, _, _)) = crate::planner::fingerprint_parts(&base.local_fingerprint)

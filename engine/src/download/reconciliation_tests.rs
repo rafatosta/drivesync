@@ -178,7 +178,7 @@ fn incomplete_remote_equivalence_proof_is_unknown_without_media_installation() {
     let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
     drop(root);
     assert_eq!(
-        crate::changes::classify(&local, &plan, &[])[0].kind,
+        crate::changes::classify(&local, &plan, &[], &std::collections::HashMap::new())[0].kind,
         ChangeKind::Unknown
     );
     let report = execute_plan(&f, &next, &plan, &mut remote);
@@ -337,7 +337,7 @@ fn metadata_only_remote_revision_does_not_turn_local_edit_into_content_conflict(
         let root = Root::open(&f.root).unwrap();
         let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
         assert_eq!(
-            crate::changes::classify(&local, &plan, &[])[0].kind,
+            crate::changes::classify(&local, &plan, &[], &std::collections::HashMap::new())[0].kind,
             ChangeKind::LocalChanged
         );
         drop(root);

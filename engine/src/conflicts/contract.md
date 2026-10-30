@@ -105,3 +105,66 @@ filesystem/SQLite reais temporários. Reabertura não simula perda de energia.
 Referência primária: [Files](https://developers.google.com/workspace/drive/api/reference/rest/v3/files),
 consultada em 2026-10-30: revisão não é prova de mudança de conteúdo; checksums e
 metadados têm limites de disponibilidade. Nenhuma nova capacidade remota é presumida.
+
+## SYNC-008 — edição e indisponibilidade
+
+A reconciliação compara observações históricas com a localização e fingerprint
+de B confirmada, inclusive quando a identidade remota saiu do inventário.
+Conteúdo alterado na mesma identidade local gera
+`LocalChangedRemoteUnavailable`; identidade substituída continua incompatível.
+Uma relocação local só é associada quando o caminho de B está ausente e existe
+um único fingerprint completo igual (hash/dispositivo/inode). Essa associação
+não transforma o item em upload novo. Relocação com edição simultânea permanece
+ambígua, sem inferência de exclusão.
+
+Pendências de descendentes elevam a atenção dos diretórios históricos
+indisponíveis, por componentes de caminho. Nenhuma análise permite excluir,
+substituir, recriar o remoto ou avançar B. A observação e suas evidências persistem
+no SQLite de reconciliação; reabertura não concede autorização para efeitos.
+
+### Evidência de lixeira e exclusão versus localização
+
+O adaptador conserva `confirmed_trashed` somente quando metadados explícitos
+`trashed=true` pertencem ao ID do evento. `removed=true`, ausência em scan,
+HTTP 404, falha de acesso e timeout não estabelecem essa prova. O checkpoint
+registra a prova no aviso daquele ID/caminho; avisos de journal não a inventam.
+A evidência pertence à observação, não afirma que o item ainda esteja na lixeira
+no momento de uma futura decisão. Um novo evento ambíguo remove a certeza anterior.
+
+Pseudocódigo: coletar evento → validar ID → distinguir lixeira/indisponibilidade
+→ podar subárvore remota sem efeito local → registrar avisos dos descendentes
+→ comparar cada localização de B com L → associar relocação única ou manter
+incerteza → elevar atenção dos ancestrais → persistir observações → reobservar
+antes de qualquer efeito. Descendentes de pasta na lixeira permanecem
+indisponíveis: não herdam uma prova individual de exclusão.
+
+`RemoteDeleted` indica observação de lixeira sem alteração local comprovada;
+`EditDeleteConflict` indica edição/relocação ou descendente alterado contra essa
+observação. Prova incompleta permanece `Unknown`; falta de acesso nunca é
+apresentada como exclusão confirmada. Diretórios com novo descendente também
+exigem revisão. Não se cria cópia de conflito nem se promete recuperar uma
+versão remota inacessível.
+
+Ausência do caminho local de B, sem relocação verificável, somada a rename/move
+remoto bloqueia a recriação em destino novo (`LocalMissingRemoteChanged`).
+Continua sendo ausência observada, não intenção comprovada de exclusão local.
+
+Os formatos internos exatos passam a checkpoint v2 e reconciliação v3.
+Versões anteriores são rejeitadas sem migração, exclusão ou reset automático;
+arquivos de usuário e credenciais não mudam. Estado de desenvolvimento antigo
+exige recuperação explícita conforme o fluxo existente.
+
+### Oráculos SYNC-008
+
+| Cenários | Teste determinístico e efeito esperado |
+| --- | --- |
+| C03/C08/C11 | `c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart`: edição, rename, move, substituição, ausência e ausência de avisos; distingue lixeira de indisponibilidade; persiste/reabre sem upload novo, instalação ou avanço de B. |
+| C03/C16 | `c03_c16_folder_trash_or_access_loss_preserves_descendants_through_failure_and_restart`: evento só do pai, offline, falha transacional após checkpoint, retomada e repetição; filho editado intacto e pai pendente. |
+| C04/C08/C11/C16 | `c04_c08_c11_c16_missing_local_tree_and_remote_changes_require_review`: ausência local com edição/rename/move remoto, inclusive subárvore; nenhuma recriação de arquivo. |
+| C08/C11 | `c08_c11_confirmed_deletion_conflicts_with_location_changes_in_both_directions`: classificação pura simétrica, preservação obrigatória. |
+| Evidência remota | `explicit_trash_is_distinct_from_removed_and_requires_matching_identity`: lixeira explícita, evento ambíguo e ID inválido. |
+| Concorrência | `local_removal_after_remote_update_planning_invalidates_the_candidate` em `download/reconciliation_tests.rs`: remoção após plano bloqueia instalação. |
+
+Os testes de integração usam arquivos e SQLite temporários reais e provedor
+remoto simulado. Os resultados e comandos de execução pertencem ao PR.
+Reabertura/falha transacional não comprova recuperação de perda real de energia.

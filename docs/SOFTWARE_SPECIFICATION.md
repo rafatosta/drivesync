@@ -357,6 +357,36 @@ Os requisitos RF-CON abaixo definem o comportamento pretendido. Não habilitam a
 
 O [catálogo de 56 cenários e políticas](../engine/src/conflicts/validation-checklist.md) fornece casos de cobertura, não 56 funcionalidades implementadas. A matriz B/L/R desse catálogo orienta a classificação; uma ação candidata, como enviar mudança local, continua bloqueada se o executor ou a política não a suportar.
 
+#### SYNC-008 — edição versus exclusão ou acesso perdido
+
+Usar B confirmada e os caminhos históricos da árvore para proteger arquivos e
+diretórios indisponíveis. Comparar o conteúdo e a identidade local com B;
+relocação requer caminho antigo ausente e candidato único de fingerprint completo.
+Alterações locais com remoto indisponível ficam pendentes de revisão, sem
+afirmar exclusão. Substituição de identidade continua incompatível.
+
+Somente metadados explícitos de lixeira associados ao mesmo ID estabelecem
+observação de exclusão remota. `removed`, scan incompleto, HTTP 404, timeout e
+perda de acesso permanecem ambíguos. Descendentes de uma pasta removida preservam
+suas próprias evidências; a prova de lixeira da pasta não prova exclusão individual
+de cada filho. Edição, relocação ou novo descendente eleva a atenção dos diretórios
+históricos afetados. Incerteza sem alteração comprovada permanece desconhecida.
+
+Bloquear recriação quando o caminho de B estiver ausente e R tiver sido editado,
+renomeado ou movido. Nunca propagar exclusão, escolher por timestamp, recriar um
+remoto indisponível ou avançar B como consequência desse diagnóstico. Preservação
+significa manter as versões disponíveis intactas; não promete cópia de conflito
+nem recuperação de conteúdo remoto inacessível. Resolução assistida permanece
+fora da primeira entrega.
+
+Aceite C03/C04/C08/C11/C16: prova explícita versus ambígua, arquivos/diretórios,
+edição/relocação e substituição, offline/retomada, concorrência entre preparação
+e execução, falha transacional, reabertura e repetição sem perda ou duplicação.
+Oráculos em [conflicts/contract.md](../engine/src/conflicts/contract.md#sync-008--edição-e-indisponibilidade).
+A validação usa provedor simulado e filesystem/SQLite reais isolados.
+Os formatos internos de checkpoint v2 e reconciliação v3 rejeitam formatos antigos
+sem migração nem reset automático; recuperação exige ação explícita.
+
 #### SYNC-007 — edições simultâneas divergentes
 
 A detecção usa a classificação centralizada e a prova de conteúdo existentes.
