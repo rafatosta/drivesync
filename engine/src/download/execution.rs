@@ -42,6 +42,9 @@ struct Session<'a> {
     context: Context<'a>,
     root: &'a Root,
     operations: HashMap<std::path::PathBuf, Vec<Operation>>,
+    /// Fresh durable evidence captured under the retained root lock. Each inventory
+    /// ID is processed once; this avoids rescanning the entire journal per new file.
+    bases: HashMap<String, crate::ConfirmedBase>,
     preserved: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
@@ -82,7 +85,14 @@ pub(crate) fn run_with_root<'a>(
             .or_default()
             .push(operation);
     }
+    let bases = context.store.confirmed_bases(
+        context.client,
+        &context.scope.account_id,
+        &context.scope.remote_root,
+        &context.scope.local_root,
+    )?;
     let session = Session {
+        bases,
         context,
         root,
         operations,
@@ -590,13 +600,8 @@ impl Session<'_> {
             });
         } else {
             // A local removal after planning invalidates a candidate remote update.
-            // Read durable B again; absence is not permission to undo a deletion.
-            let bases = self.context.store.confirmed_bases(
-                self.context.client,
-                &self.context.scope.account_id,
-                &self.context.scope.remote_root,
-                &self.context.scope.local_root,
-            )?;
+            // The executor's durable snapshot is fresh and protected by the root lock.
+            let bases = &self.bases;
             if bases.get(&item.id).is_some_and(|base| {
                 base.location
                     .as_ref()
