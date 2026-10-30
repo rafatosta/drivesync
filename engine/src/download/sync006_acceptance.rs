@@ -4,7 +4,11 @@ use crate::{
     state::{CheckpointScope, Reconciliation, Reconciliations},
     ChangeKind, DifferenceKind, DifferenceReason, DownloadPlan,
 };
-fn prepare_record(f: &Fixture, inv: &RemoteInventory, source: &mut Fake) -> Reconciliation {
+pub(super) fn prepare_record(
+    f: &Fixture,
+    inv: &RemoteInventory,
+    source: &mut Fake,
+) -> Reconciliation {
     let journal = Store::open(&f.db()).unwrap();
     let bases = journal
         .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
@@ -25,7 +29,7 @@ fn prepare_record(f: &Fixture, inv: &RemoteInventory, source: &mut Fake) -> Reco
         .collect();
     Reconciliation::new(local, inv.clone(), plan, bases, history, None)
 }
-fn execute(
+pub(super) fn execute(
     f: &Fixture,
     inv: &RemoteInventory,
     plan: &DownloadPlan,
@@ -48,7 +52,7 @@ fn execute(
     )
     .unwrap()
 }
-fn with_folder() -> RemoteInventory {
+pub(super) fn with_folder() -> RemoteInventory {
     let mut inv = inventory();
     inv.entries.push(InventoryEntry {
         id: "folder".into(),
@@ -63,7 +67,7 @@ fn with_folder() -> RemoteInventory {
     });
     inv
 }
-fn remote_bytes(inv: &mut RemoteInventory, bytes: &[u8]) -> Fake {
+pub(super) fn remote_bytes(inv: &mut RemoteInventory, bytes: &[u8]) -> Fake {
     inv.entries[0].version = Some(2);
     inv.entries[0].size = Some(bytes.len() as u64);
     inv.entries[0].md5_checksum = Some(format!("{:x}", md5::Md5::digest(bytes)));
