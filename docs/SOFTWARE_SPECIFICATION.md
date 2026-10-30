@@ -674,6 +674,11 @@ A disposição visual de uma central de atenção e comparadores por formato con
 
 ## 10. Verificação e validação
 
+### Catálogo de cenários e fluxogramas de sincronização
+
+A [matriz numerada de 54 cenários](sync/scenarios.md) define pré-condições e ações esperadas para mudanças B/L/R, criações, exclusões, renomeações, conectividade, interrupções e falhas técnicas. Os [fluxogramas Mermaid individuais](sync/flowcharts.md) explicitam decisões e bloqueios de segurança; a [matriz de verificação](sync/verification.md) será preenchida após confronto com o código e resultados de testes. Estas são **especificações propostas**, não declarações de funcionalidades implementadas ou aprovadas. O [catálogo técnico anterior C/E/P/N](../engine/src/conflicts/validation-checklist.md) não é substituído por esta numeração.
+
+
 ### 10.1 Estratégia de testes
 
 A verificação deve partir dos requisitos, das invariantes e dos efeitos observáveis esperados. Deve combinar avaliação de regras isoladas, integração entre responsabilidades e cenários de ponta a ponta nos ambientes declarados como suportados.
