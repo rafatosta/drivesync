@@ -231,7 +231,7 @@ export const english = {
   "Acompanhe o estado do DriveSync, suas prioridades e o processo de desenvolvimento.": "Follow DriveSync’s status, priorities and development process.",
   "Conheça as formas de apoiar o desenvolvimento e a manutenção do DriveSync.": "Explore ways to support DriveSync development and maintenance.",
   "Saiba como o site e o aplicativo DriveSync utilizam dados e permissões do Google.": "Learn how the DriveSync website and application use data and Google permissions.",
-  "O site não define cookies de rastreamento. As preferências de tema e idioma são salvas no armazenamento local do navegador; você pode removê-las nas configurações do navegador. Fontes, ícones e imagens são servidos junto com o site.": "The website does not set tracking cookies. Theme and language preferences are saved in your browser’s local storage; you can remove them in your browser settings. Fonts, icons and images are served with the website."
+  "O site não define cookies de rastreamento. As preferências de tema e idioma são salvas no armazenamento local do navegador; você pode removê-las nas configurações do navegador. Fontes, ícones e imagens são servidos junto com o site.": "The website does not set tracking cookies. Theme and language preferences are saved in your browser’s local storage; you can remove them in your browser settings. Fonts, icons and images are served with the website.",
   "Termos de Serviço": "Terms of Service",
   "Termos de Serviço · Atualizados em 30 de outubro de 2026": "Terms of Service · Updated October 30, 2026",
   "Condições de uso do DriveSync.": "DriveSync terms of use.",
