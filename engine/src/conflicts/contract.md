@@ -210,3 +210,17 @@ colisão de arquivo/symlink/diretório e criação concorrente, replay antes/dep
 do rename, rollback SQLite antes da intenção/Ready/Installed, cancelamento,
 bloqueio da raiz, staging/cópia corrompidos, isolamento de escopos e continuidade
 de itens independentes. Os resultados de execução pertencem à PR.
+
+## SYNC-012 — revalidação antes de aplicar resolução (N06/E06)
+
+`ResolutionProposal` deriva apenas de um `ConflictRecord` pendente com ID, pasta,
+nome, revisão remota, caminho e fingerprint local completos. Imediatamente antes
+de agir, o chamador coleta uma `ResolutionObservation` nova e
+`DriveSyncEngine::revalidate_resolution` compara identidade remota (ID/pasta/
+nome/caminho), revisão remota exata (inclusive regressão) e fingerprint local.
+Qualquer diferença, ausência ou evidência desconhecida aborta a proposta com uma
+`StaleResolutionReason`, registra `ConflictOutcome::ResolutionAborted` (evento
+`ResolutionAborted`, idempotente) e mantém a pendência: é exigida nova comparação.
+`Ok` não autoriza escrita; executores mantêm suas próprias pré-condições.
+Registro inexistente, de outro escopo ou já encerrado resulta em `NotPending`
+sem eventos. A aplicação de resolução assistida continua fora de escopo.

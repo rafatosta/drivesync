@@ -245,3 +245,118 @@ fn c08_c11_confirmed_deletion_conflicts_with_location_changes_in_both_directions
         }
     }
 }
+
+fn record() -> ConflictRecord {
+    ConflictRecord {
+        conflict_id: "0".repeat(64),
+        remote_id: Some("file".into()),
+        remote_parent_id: Some("root".into()),
+        remote_name: Some("a.txt".into()),
+        relative_path: Some("a.txt".into()),
+        diagnosis: crate::ChangeKind::ConcurrentChanges,
+        status: ConflictStatus::Pending,
+        local_fingerprint: Some("h:1:2".into()),
+        remote_version: Some(5),
+        outcomes: vec![],
+    }
+}
+fn current() -> ResolutionObservation {
+    ResolutionObservation {
+        relative_path: "a.txt".into(),
+        remote: RemoteState::Present {
+            id: "file".into(),
+            parent_id: "root".into(),
+            name: "a.txt".into(),
+            version: 5,
+        },
+        local: LocalState::Present {
+            fingerprint: "h:1:2".into(),
+        },
+    }
+}
+
+#[test]
+fn resolution_revalidation_aborts_every_stale_or_unproven_input() {
+    use StaleResolutionReason as S;
+    let proposal = ResolutionProposal::from_record(&record()).unwrap();
+    assert_eq!(proposal.revalidate(&current()), Ok(()));
+    type Mutation = Box<dyn Fn(&mut ResolutionObservation)>;
+    let cases: Vec<(Mutation, S)> = vec![
+        (
+            Box::new(|c| c.remote = RemoteState::Unknown),
+            S::EvidenceUnavailable,
+        ),
+        (
+            Box::new(|c| c.local = LocalState::Unknown),
+            S::EvidenceUnavailable,
+        ),
+        (
+            Box::new(|c| c.remote = RemoteState::Missing),
+            S::RemoteMissing,
+        ),
+        (Box::new(|c| c.local = LocalState::Missing), S::LocalMissing),
+        (
+            Box::new(|c| {
+                c.local = LocalState::Present {
+                    fingerprint: "h:1:3".into(),
+                }
+            }),
+            S::LocalChanged,
+        ),
+        (
+            Box::new(|c| c.relative_path = "b.txt".into()),
+            S::RemoteIdentityChanged,
+        ),
+        (
+            Box::new(|c| {
+                if let RemoteState::Present { version, .. } = &mut c.remote {
+                    *version = 6;
+                }
+            }),
+            S::RemoteRevisionChanged,
+        ),
+        (
+            Box::new(|c| {
+                if let RemoteState::Present { version, .. } = &mut c.remote {
+                    *version = 4;
+                }
+            }),
+            S::RemoteRevisionChanged,
+        ),
+        (
+            Box::new(|c| {
+                if let RemoteState::Present { name, .. } = &mut c.remote {
+                    *name = "renamed.txt".into();
+                }
+            }),
+            S::RemoteIdentityChanged,
+        ),
+        (
+            Box::new(|c| {
+                if let RemoteState::Present { id, .. } = &mut c.remote {
+                    *id = "other".into();
+                }
+            }),
+            S::RemoteIdentityChanged,
+        ),
+    ];
+    for (mutate, expected) in cases {
+        let mut value = current();
+        mutate(&mut value);
+        assert_eq!(proposal.revalidate(&value), Err(expected));
+    }
+}
+
+#[test]
+fn proposal_requires_pending_record_with_complete_evidence() {
+    let mut settled = record();
+    settled.status = ConflictStatus::NoLongerConflicting;
+    let mut incomplete = record();
+    incomplete.local_fingerprint = None;
+    for value in [settled, incomplete] {
+        assert_eq!(
+            ResolutionProposal::from_record(&value),
+            Err(StaleResolutionReason::NotPending)
+        );
+    }
+}

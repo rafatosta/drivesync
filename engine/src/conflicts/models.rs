@@ -160,6 +160,11 @@ pub enum ConflictOutcome {
     },
     /// A retry stopped without claiming success or changing the conflict status.
     RetryBlocked { reason: ConflictFailure },
+    /// A decision based on outdated evidence was cancelled without any effect.
+    /// A new comparison is required before another proposal can be applied.
+    ResolutionAborted {
+        reason: super::StaleResolutionReason,
+    },
 }
 
 /// Safe error categories suitable for durable audit without raw provider text.
@@ -194,5 +199,10 @@ pub enum ConflictHistoryKind {
     PendingObserved,
     NoLongerConflicting,
     CopyPreserved,
-    RetryBlocked { reason: ConflictFailure },
+    RetryBlocked {
+        reason: ConflictFailure,
+    },
+    ResolutionAborted {
+        reason: super::StaleResolutionReason,
+    },
 }

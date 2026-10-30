@@ -227,3 +227,111 @@ fn scopes_are_isolated_and_failed_event_commit_rolls_back_record() {
     assert!(history.records(&other_scope).unwrap().is_empty());
     assert!(history.events(&other_scope).unwrap().is_empty());
 }
+
+fn observation(version: u64, fingerprint: &str) -> crate::ResolutionObservation {
+    crate::ResolutionObservation {
+        relative_path: PathBuf::from("item.txt"),
+        remote: crate::RemoteState::Present {
+            id: "file".into(),
+            parent_id: "root".into(),
+            name: "item.txt".into(),
+            version,
+        },
+        local: crate::LocalState::Present {
+            fingerprint: fingerprint.into(),
+        },
+    }
+}
+
+#[test]
+fn stale_resolution_is_aborted_audited_idempotent_and_survives_reopen() {
+    use crate::{LocalState, RemoteState, StaleResolutionReason as S};
+    let fixture = Fixture::new();
+    let account = AccountId("account".into());
+    let local = Path::new("/files");
+    let account_scope = scope(&account, local);
+    let mut history = ConflictHistory::open(&fixture.db()).unwrap();
+    history
+        .record_pending(&account_scope, &reconciliation(), &Cancellation::new())
+        .unwrap();
+    let id = history.records(&account_scope).unwrap()[0]
+        .conflict_id
+        .clone();
+
+    let mut check = |current| {
+        history
+            .revalidate_resolution(&account_scope, &id, &current)
+            .unwrap()
+    };
+    assert_eq!(check(observation(3, "hash:1:2")), Ok(()));
+    assert_eq!(
+        check(observation(4, "hash:1:2")),
+        Err(S::RemoteRevisionChanged)
+    );
+    assert_eq!(
+        check(observation(4, "hash:1:2")),
+        Err(S::RemoteRevisionChanged)
+    );
+    assert_eq!(check(observation(3, "other:1:2")), Err(S::LocalChanged));
+    let mut moved = observation(3, "hash:1:2");
+    moved.remote = RemoteState::Unknown;
+    assert_eq!(check(moved), Err(S::EvidenceUnavailable));
+    let mut missing = observation(3, "hash:1:2");
+    missing.local = LocalState::Missing;
+    assert_eq!(check(missing), Err(S::LocalMissing));
+
+    let reopened = ConflictHistory::open(&fixture.db()).unwrap();
+    let records = reopened.records(&account_scope).unwrap();
+    assert_eq!(records[0].status, crate::ConflictStatus::Pending);
+    assert_eq!(records[0].outcomes.len(), 4);
+    let aborted = reopened
+        .events(&account_scope)
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                crate::ConflictHistoryKind::ResolutionAborted { .. }
+            )
+        })
+        .count();
+    assert_eq!(aborted, 4);
+}
+
+#[test]
+fn resolution_for_unknown_or_settled_conflict_is_rejected_without_events() {
+    let fixture = Fixture::new();
+    let account = AccountId("account".into());
+    let local = Path::new("/files");
+    let account_scope = scope(&account, local);
+    let mut history = ConflictHistory::open(&fixture.db()).unwrap();
+    history
+        .record_pending(&account_scope, &reconciliation(), &Cancellation::new())
+        .unwrap();
+    let id = history.records(&account_scope).unwrap()[0]
+        .conflict_id
+        .clone();
+    let mut settled = reconciliation();
+    settled.entries[0].kind = ChangeKind::Equivalent;
+    history
+        .record_pending(&account_scope, &settled, &Cancellation::new())
+        .unwrap();
+    let events = history.events(&account_scope).unwrap().len();
+    for target in [id.as_str(), "unknown"] {
+        assert_eq!(
+            history
+                .revalidate_resolution(&account_scope, target, &observation(3, "hash:1:2"))
+                .unwrap(),
+            Err(crate::StaleResolutionReason::NotPending)
+        );
+    }
+    assert_eq!(history.events(&account_scope).unwrap().len(), events);
+
+    let other = AccountId("other".into());
+    assert_eq!(
+        history
+            .revalidate_resolution(&scope(&other, local), &id, &observation(3, "hash:1:2"))
+            .unwrap(),
+        Err(crate::StaleResolutionReason::NotPending)
+    );
+}

@@ -93,7 +93,9 @@ fn valid_record(record: &ConflictRecord) -> bool {
                                 })
                     })
             }
-            ConflictOutcome::RetryBlocked { .. } => true,
+            ConflictOutcome::RetryBlocked { .. } | ConflictOutcome::ResolutionAborted { .. } => {
+                true
+            }
         })
 }
 
@@ -295,9 +297,43 @@ impl ConflictHistory {
             ConflictOutcome::RetryBlocked { reason } => {
                 ConflictHistoryKind::RetryBlocked { reason }
             }
+            ConflictOutcome::ResolutionAborted { reason } => {
+                ConflictHistoryKind::ResolutionAborted { reason }
+            }
         };
         insert_event(&tx, scope, local, &record, kind)?;
         tx.commit().map_err(failed)
+    }
+
+    /// Revalidates a stored proposal against fresh evidence before any effect.
+    ///
+    /// A stale or unverifiable proposal is aborted and the audit trail records
+    /// the reason; the conflict stays pending and a new comparison is required.
+    /// Repeating the same stale result is idempotent. `Ok(())` grants no write.
+    pub(crate) fn revalidate_resolution(
+        &mut self,
+        scope: &CheckpointScope<'_>,
+        conflict_id: &str,
+        current: &crate::ResolutionObservation,
+    ) -> Result<Result<(), crate::StaleResolutionReason>, EngineError> {
+        let record = self
+            .records(scope)?
+            .into_iter()
+            .find(|record| record.conflict_id == conflict_id);
+        let verdict = match &record {
+            None => Err(crate::StaleResolutionReason::NotPending),
+            Some(record) => crate::ResolutionProposal::from_record(record)
+                .and_then(|proposal| proposal.revalidate(current)),
+        };
+        if let (Some(record), Err(reason)) = (&record, verdict) {
+            self.record_outcome(
+                scope,
+                record.remote_id.as_deref(),
+                record.relative_path.as_deref(),
+                ConflictOutcome::ResolutionAborted { reason },
+            )?;
+        }
+        Ok(verdict)
     }
 
     /// Loads current pending records for this exact account/root scope.
