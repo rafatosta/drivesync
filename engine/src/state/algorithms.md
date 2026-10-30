@@ -119,6 +119,9 @@ Implementação: [recovery.rs](recovery.rs), exposta por `recover_state` na fach
    corrupção não publica outra seleção. Nenhuma conexão de escrita cooperante
    pode atravessar a troca: ciclos, recuperação, configuração de associação e
    alteração de consentimento de upload usam o lock de associação/raiz.
+   Leituras públicas de planos, reconciliações e consentimento, além do logout,
+   também retêm o lock de associação: abrir SQLite pode recuperar um hot journal
+   e não equivale necessariamente a uma leitura sem efeitos no banco.
 6. Perda de journal de instalações deixa B desconhecida. Inventários e planos
    íntegros continuam observações, nunca autorização para adotar preexistentes.
    A próxima sincronização refaz observações remotas quando necessário e aplica
