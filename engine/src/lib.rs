@@ -29,6 +29,11 @@ mod upload;
 pub use auth::{AuthError, Cancellation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
+pub use conflicts::{
+    classify_differences, AttributeChange, BaseEvidence, ContentComparison, DifferenceDecision,
+    DifferenceInput, DifferenceKind, DifferenceReason, Disposition, ObservationFailure,
+    SideDifference,
+};
 pub use coordinator::RootSuspension;
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
