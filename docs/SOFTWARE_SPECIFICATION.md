@@ -454,6 +454,28 @@ O aceite local usa provedor remoto simulado, filesystem e SQLite temporários re
 resultados efetivos pertencem ao commit/PR. Não implica homologação com Drive real
 ou aplicação completa dos cenários de preservação/resolução.
 
+### SYNC-009 — nomes, caminhos e tipos (C02/C13/C14/C15/C18/C20)
+
+Requisito: IDs distintos não podem compartilhar destino ambíguo. O planner deve
+considerar caixa, normalização Unicode e sufixos gerados de Workspace; bloquear
+nomes não representáveis, tipos incompatíveis e descendentes de destinos
+ambíguos. Não escolher vencedor, sobrescrever dados nem renomear automaticamente.
+A proteção conservadora também se aplica em filesystem sensível a caixa.
+
+Implementação: chaves canônicas com full Unicode case folding para irmãos
+remotos e caminhos do inventário local completo; validação portátil de componentes
+antes/depois da conversão e limite do caminho incluindo a raiz. Bloqueios são
+persistidos pelo plano existente, sem avanço da base. O contrato, limites e
+oráculos estão em [PLAN/SYNC-009](../engine/src/planner/algorithms.md#sync-009--destinos-representáveis-e-sem-ambiguidades).
+
+Aceite: duplicatas exatas e equivalentes, tipos em ambas as direções, caracteres,
+nomes reservados, comprimentos em bytes e links gerados; itens independentes devem
+continuar funcionando. Testes com provedor simulado, filesystem/SQLite temporários
+reais verificam preservação, reabertura e idempotência. Concorrência permanece
+sujeita às revalidações e instalação sem clobber do executor. Resultados de execução
+pertencem ao PR; não equivalem a teste com Google Drive ou volume case-insensitive
+real. Não se promete modelar todas as regras específicas de mounts.
+
 ### 4.10 Recuperação de falhas e reconciliação
 
 **Entradas comuns:** identidade da conta/raiz, configuração autorizada, registros duráveis de operações e pendências, evidências atuais dos destinos, staging e cópias preservadas. **Saídas:** efeito confirmado, retomada segura, replanejamento, espera por condição externa ou bloqueio explícito. Recuperação não pode assumir que timeout significa ausência de efeito.
