@@ -8,6 +8,7 @@ const metadata = {
   development: ['Desenvolvimento — DriveSync', 'Acompanhe o estado do DriveSync, suas prioridades e o processo de desenvolvimento.'],
   donations: ['Doações — DriveSync', 'Conheça as formas de apoiar o desenvolvimento e a manutenção do DriveSync.'],
   privacy: ['Política de privacidade — DriveSync', 'Saiba como o site e o aplicativo DriveSync utilizam dados e permissões do Google.'],
+  terms: ['Termos de Serviço — DriveSync', 'Leia as condições de uso, limitações e licença de código aberto do DriveSync.'],
 } as const
 
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -22,7 +23,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [])
   useEffect(() => {
     const path = window.location.pathname.slice(import.meta.env.BASE_URL.length)
-    const key = path.startsWith('desenvolvimento/') ? 'development' : path.startsWith('doacoes/') ? 'donations' : path.startsWith('privacidade/') ? 'privacy' : 'app'
+    const key = path.startsWith('desenvolvimento/') ? 'development' : path.startsWith('doacoes/') ? 'donations' : path.startsWith('privacidade/') ? 'privacy' : path.startsWith('termos/') ? 'terms' : 'app'
     const [title, description] = metadata[key]
     document.documentElement.lang = locale
     document.title = t(title)
