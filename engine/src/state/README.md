@@ -3,8 +3,16 @@
 Persiste observações e journal por escopo de cliente, conta e raízes. O recorte
 STATE-001/002 de downloads está implementado: separa planejamento de instalação,
 fornece bases confirmadas e rejeita estado inválido sem reset automático.
+STATE-003 oferece reconstrução local explícita e offline: inspeciona cópias,
+preserva bancos válidos e originais inválidos, e publica substitutos vazios por
+seletor durável sem retornar silenciosamente a uma geração antiga. A fachada
+coordena recuperação, ciclos, leitores e consentimento sob locks. A interface
+solicita confirmação e mantém a sincronização pausada até novo início explícito.
+
 A recuperação geral bidirecional e a reconstrução de base perdida permanecem
-pendentes; arquivos existentes nunca reconstroem B por inferência.
+pendentes; arquivos existentes nunca reconstroem B por inferência. Se intents de
+upload forem perdidos, uploads permanecem bloqueados para reconciliação das
+evidências, inclusive após reinício e nova tentativa de habilitação.
 
 Entradas, transações, seleção de B, erros e limites estão em
 [algorithms.md](algorithms.md). A organização da raiz e a matriz de regras,

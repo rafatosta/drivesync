@@ -194,9 +194,16 @@ impl Controller {
         let mut state = self.0.state.borrow_mut();
         if let Some(cancel) = &state.cancel {
             cancel.cancel();
-            state.user_paused = true;
-            state.revision += 1;
+        } else {
+            state.schedule.finish(
+                &Err(EngineError::Authentication(
+                    drivesync_engine::AuthError::Cancelled,
+                )),
+                now(),
+            );
         }
+        state.user_paused = true;
+        state.revision += 1;
     }
     pub fn request(&self) {
         let online =
@@ -424,6 +431,23 @@ mod tests {
             local_display: format!("/tmp/{name}").into(),
         }
     }
+    #[test]
+    fn idle_recovery_pause_prevents_timer_and_connectivity_restart() {
+        let job = Controller::new(
+            AccountId("recovery".into()),
+            Arc::new(|_, _, _| panic!("paused recovery dispatched a worker")),
+            false,
+        );
+        job.configure(Some(folder("recovery", "recovery-root")), true);
+        job.pause();
+        assert_eq!(job.snapshot().phase, Phase::Paused);
+        job.network_changed(true);
+        job.start(u64::MAX, true, false);
+        assert!(!job.running());
+        assert_eq!(job.snapshot().phase, Phase::Paused);
+        assert!(job.0.state.borrow().schedule.due.is_none());
+    }
+
     fn wait_until(context: &glib::MainContext, condition: impl Fn() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(3);
         while !condition() {

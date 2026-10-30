@@ -25,6 +25,35 @@ impl Uploads {
             local: folder.local.clone(),
         })
     }
+    /// Checks every persisted intent in this scope before recovery can reuse it.
+    pub(super) fn validate_evidence(&self) -> Result<(), EngineError> {
+        let enabled = self.enabled()?;
+        if enabled {
+            let json: Option<String> = self
+                .db
+                .0
+                .query_row(
+                    "SELECT root FROM settings WHERE scope=?1",
+                    [&self.scope],
+                    |r| r.get(0),
+                )
+                .map_err(failed)?;
+            let _: crate::download::Identity =
+                serde_json::from_str(&json.ok_or(EngineError::StateStorage)?).map_err(failed)?;
+        }
+        let mut statement = self
+            .db
+            .0
+            .prepare("SELECT path FROM intents WHERE scope=?1")
+            .map_err(failed)?;
+        let paths = statement
+            .query_map([&self.scope], |row| row.get::<_, String>(0))
+            .map_err(failed)?;
+        for path in paths {
+            self.load(Path::new(&path.map_err(failed)?))?;
+        }
+        Ok(())
+    }
     pub fn enabled(&self) -> Result<bool, EngineError> {
         self.db
             .0
@@ -38,8 +67,21 @@ impl Uploads {
             .map_err(failed)
     }
     pub fn enable(&self, enabled: bool) -> Result<(), EngineError> {
-        let root = if enabled {
+        if enabled {
             let root = crate::download::filesystem::Root::open(&self.local)?;
+            self.enable_locked(true, &root)
+        } else {
+            self.save_enabled(false, None)
+        }
+    }
+    /// Persists consent while the caller retains the physical and association locks.
+    pub(crate) fn enable_locked(
+        &self,
+        enabled: bool,
+        root: &crate::download::filesystem::Root,
+    ) -> Result<(), EngineError> {
+        root.validate()?;
+        let identity = if enabled {
             Some(
                 serde_json::to_string(&crate::download::filesystem::identity(&root.file)?)
                     .map_err(failed)?,
@@ -47,6 +89,9 @@ impl Uploads {
         } else {
             None
         };
+        self.save_enabled(enabled, identity)
+    }
+    fn save_enabled(&self, enabled: bool, root: Option<String>) -> Result<(), EngineError> {
         self.db.0.execute("INSERT INTO settings VALUES(?1,?2,?3) ON CONFLICT(scope) DO UPDATE SET enabled=excluded.enabled,root=excluded.root", params![self.scope, enabled, root]).map_err(failed)?;
         Ok(())
     }

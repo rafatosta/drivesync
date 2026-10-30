@@ -722,6 +722,11 @@ pub(super) fn build(
     activity.set_widget_name("download-history");
     footer.append(&activity);
     footer.append(start);
+    footer.append(&super::state_recovery::button(
+        engine.clone(),
+        saved,
+        status,
+    ));
     let ui = Widgets {
         start: start.downgrade(),
         account_toggle: account_toggle.downgrade(),

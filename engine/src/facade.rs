@@ -66,6 +66,11 @@ impl DriveSyncEngine {
             Err(error) => Err(error.clone()),
         };
         match &result {
+            Err(EngineError::StateStorage) if expected.is_some() => roots.suspend(
+                &config.client_id,
+                &folder,
+                Some(crate::RootSuspension::StateUnavailable),
+            )?,
             Err(EngineError::RootSuspended(reason)) if expected.is_some() => {
                 roots.suspend(&config.client_id, &folder, Some(*reason))?
             }
@@ -73,6 +78,27 @@ impl DriveSyncEngine {
             _ => {}
         }
         result
+    }
+
+    /// Rebuilds invalid local state without network access or changing user files.
+    /// Original databases and sidecars remain in place. Healthy stores stay active.
+    /// Missing installation evidence never grants ownership of existing files.
+    /// Call off the UI thread after the user chooses recovery.
+    ///
+    /// # Errors
+    /// Returns identity, lock, cancellation or storage failures. Uploads with
+    /// lost intent evidence remain blocked for explicit reconciliation.
+    pub fn recover_state(
+        &self,
+        id: &AccountId,
+        cancel: &Cancellation,
+    ) -> Result<crate::StateRecovery, EngineError> {
+        self.with_root(id, |folder, config, root| {
+            root.validate()?;
+            let result = crate::state::recovery::rebuild(folder, &config.client_id, cancel)?;
+            root.validate()?;
+            Ok(result)
+        })
     }
 
     /// Revalidates identity and configuration during transfers, without creating metadata.
@@ -333,7 +359,11 @@ impl DriveSyncEngine {
                 local: &folder.local,
             };
             let mut reconciliations = crate::state::Reconciliations::open(
-                &state_path.with_file_name("reconciliation.sqlite3"),
+                &crate::configuration::identity::metadata_path(
+                    folder,
+                    &config.client_id,
+                    "reconciliation.sqlite3",
+                )?,
             )?;
             let previous = reconciliations.load(&scope)?;
             let history = store
@@ -479,9 +509,12 @@ impl DriveSyncEngine {
                 path: Some(operation.relative),
             });
         }
-        let mut reconciliations = crate::state::Reconciliations::open(
-            &journal_path.with_file_name("reconciliation.sqlite3"),
-        )?;
+        let mut reconciliations =
+            crate::state::Reconciliations::open(&crate::configuration::identity::metadata_path(
+                folder,
+                &config.client_id,
+                "reconciliation.sqlite3",
+            )?)?;
         let previous_reconciliation = reconciliations.load(&scope)?;
         let reconciliation = crate::state::Reconciliation::new(
             local,
@@ -557,10 +590,24 @@ impl DriveSyncEngine {
             return Ok(false);
         };
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
+        self.upload_enabled_locked(&folder, &config)
+    }
+
+    /// Reads consent while the caller retains the association lock.
+    fn upload_enabled_locked(
+        &self,
+        folder: &FolderConfiguration,
+        config: &auth::OAuthConfig,
+    ) -> Result<bool, EngineError> {
+        if crate::state::recovery::uploads_blocked(&folder.local.join(".drivesync"))? {
+            return Ok(false);
+        }
         crate::state::Uploads::open(
-            &crate::configuration::identity::uploads_path(&folder, &config.client_id)?,
+            &crate::configuration::identity::uploads_path(folder, &config.client_id)?,
             &config.client_id,
-            &folder,
+            folder,
         )?
         .enabled()
     }
@@ -574,22 +621,31 @@ impl DriveSyncEngine {
         if self.saved_folder(&folder.account_id)?.as_ref() != Some(folder) {
             return Err(EngineError::InvalidPlan);
         }
-        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        if enabled
-            && !self
-                .auth
-                .can_upload(&config, &folder.account_id)
-                .map_err(EngineError::Authentication)?
-        {
-            return Err(EngineError::Authentication(AuthError::MissingPermissions));
-        }
-        crate::state::Uploads::open(
-            &crate::configuration::identity::uploads_path(folder, &config.client_id)?,
-            &config.client_id,
-            folder,
-        )?
-        .enable(enabled)
+        self.with_root(&folder.account_id, |current, config, root| {
+            if current != folder {
+                return Err(EngineError::InvalidPlan);
+            }
+            if enabled && crate::state::recovery::uploads_blocked(&folder.local.join(".drivesync"))?
+            {
+                return Err(EngineError::StateRecoveryPending);
+            }
+            if enabled
+                && !self
+                    .auth
+                    .can_upload(config, &folder.account_id)
+                    .map_err(EngineError::Authentication)?
+            {
+                return Err(EngineError::Authentication(AuthError::MissingPermissions));
+            }
+            crate::state::Uploads::open(
+                &crate::configuration::identity::uploads_path(folder, &config.client_id)?,
+                &config.client_id,
+                folder,
+            )?
+            .enable_locked(enabled, root)
+        })
     }
+
     pub(crate) fn auth_upload_access<T>(
         &self,
         config: &auth::OAuthConfig,
@@ -617,7 +673,13 @@ impl DriveSyncEngine {
             let mut report =
                 self.download_locked(id, cancel, &mut progress, folder, config, root)?;
             crate::coordinator::report(&report)?;
-            if !self.upload_enabled(id)? {
+            if !self.upload_enabled_locked(folder, config)? {
+                if crate::state::recovery::uploads_blocked(&folder.local.join(".drivesync"))? {
+                    report.issues.push(crate::DownloadIssue {
+                        relative_path: None,
+                        error: EngineError::StateRecoveryPending,
+                    });
+                }
                 return Ok(report);
             }
             let checkpoint_path =
@@ -703,8 +765,13 @@ impl DriveSyncEngine {
     ) -> Result<Vec<crate::ReconciliationEntry>, EngineError> {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
-        let path = crate::configuration::identity::state_path(&folder, &config.client_id)?
-            .with_file_name("reconciliation.sqlite3");
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
+        let path = crate::configuration::identity::metadata_path(
+            &folder,
+            &config.client_id,
+            "reconciliation.sqlite3",
+        )?;
         let scope = crate::state::CheckpointScope {
             client: &config.client_id,
             account: id,
@@ -728,6 +795,8 @@ impl DriveSyncEngine {
     ) -> Result<Option<crate::DownloadPlan>, EngineError> {
         let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
         let state_path = crate::configuration::identity::state_path(&folder, &config.client_id)?;
         crate::state::Store::open(&state_path)?.load(
             &config.client_id,
@@ -788,6 +857,15 @@ impl DriveSyncEngine {
         let folder = self.saved_folder(id)?;
         self.auth
             .sign_out_then(&config, id, || {
+                let roots = self
+                    .accounts
+                    .roots()
+                    .map_err(|_| AuthError::AccountStorage)?;
+                let _lock = folder
+                    .as_ref()
+                    .map(|folder| roots.lock(&config.client_id, folder))
+                    .transpose()
+                    .map_err(|_| AuthError::AccountStorage)?;
                 if let Some(folder) = &folder {
                     crate::state::Uploads::open(
                         &crate::configuration::identity::uploads_path(folder, &config.client_id)

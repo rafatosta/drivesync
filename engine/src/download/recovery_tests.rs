@@ -543,3 +543,110 @@ fn i28_duplicate_and_stale_events_preserve_bindings_after_conflict_history_and_r
         }
     }
 }
+
+#[test]
+fn sync005_rebuilt_state_preserves_preexisting_bytes_and_retries_integrity_failures() {
+    let f = Fixture::new();
+    let inv = inventory();
+    let folder = crate::FolderConfiguration {
+        account_id: inv.account_id.clone(),
+        remote: crate::DriveFolder {
+            id: inv.root_id.clone(),
+            name: "Root".into(),
+        },
+        local: f.root.clone(),
+        local_display: f.root.clone(),
+    };
+    crate::configuration::identity::ensure(&folder, "client").unwrap();
+    let original = f.root.join(".drivesync/state.sqlite3");
+    fs::write(&original, b"corrupt state").unwrap();
+    fs::write(f.root.join("file.txt"), b"USER DATA").unwrap();
+    let locked = Root::open(&f.root).unwrap();
+    let recovery =
+        crate::state::recovery::rebuild(&folder, "client", &Cancellation::new()).unwrap();
+    assert_eq!(recovery.rebuilt_stores, 4);
+    assert_eq!(Root::open(&f.root).err(), Some(EngineError::SyncBusy));
+    drop(locked);
+    let path = crate::configuration::identity::state_path(&folder, "client").unwrap();
+    let mut source = Fake::new(&inv);
+    for _ in 0..2 {
+        let mut store = Store::open(&path).unwrap();
+        let bases = store
+            .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+            .unwrap();
+        assert!(bases.is_empty());
+        let plan = crate::planner::plan_with_bases(&inv, &f.root, &bases, |_, relative, _| {
+            Ok(crate::planner::observe(&f.root, relative))
+        })
+        .unwrap();
+        store
+            .save("client", &inv, &plan, &Cancellation::new())
+            .unwrap();
+        let report = run(
+            Context {
+                client: "client",
+                scope: &plan,
+                store: &store,
+                cancel: &Cancellation::new(),
+            },
+            &inv,
+            &mut source,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(report.downloaded, 0);
+        assert!(!report.issues.is_empty());
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"USER DATA");
+        assert_eq!(source.media_calls, 0);
+    }
+    // An independent absent destination can still be installed, but bad bytes
+    // never confirm a base and a later valid retry is idempotent.
+    let mut next = inv.clone();
+    next.entries[0].name = "new.txt".into();
+    source.content.insert("file".into(), b"bad".to_vec());
+    for valid in [false, true, true] {
+        if valid {
+            source.content.insert("file".into(), b"abc".to_vec());
+        }
+        source.entries = next
+            .entries
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.clone()))
+            .collect();
+        let mut store = Store::open(&path).unwrap();
+        let plan = crate::planner::plan(&next, &f.root, |relative| {
+            crate::planner::observe(&f.root, relative)
+        })
+        .unwrap();
+        store
+            .save("client", &next, &plan, &Cancellation::new())
+            .unwrap();
+        let report = run(
+            Context {
+                client: "client",
+                scope: &plan,
+                store: &store,
+                cancel: &Cancellation::new(),
+            },
+            &next,
+            &mut source,
+            |_| {},
+        )
+        .unwrap();
+        if !valid {
+            assert!(report
+                .issues
+                .iter()
+                .any(|issue| issue.error == EngineError::DownloadIntegrity));
+            assert!(store
+                .confirmed_bases("client", &next.account_id, &next.root_id, &f.root)
+                .unwrap()
+                .is_empty());
+            assert!(!f.root.join("new.txt").exists());
+        } else {
+            assert_eq!(fs::read(f.root.join("new.txt")).unwrap(), b"abc");
+        }
+    }
+    assert_eq!(fs::read(original).unwrap(), b"corrupt state");
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"USER DATA");
+}

@@ -188,13 +188,13 @@ pub(crate) fn uploads_path(
     metadata_path(folder, client, "uploads.sqlite3")
 }
 
-fn metadata_path(
+pub(crate) fn metadata_path(
     folder: &FolderConfiguration,
     client: &str,
     name: &str,
 ) -> Result<PathBuf, EngineError> {
     verify(folder, client)?;
-    Ok(folder.local.join(DIRECTORY).join(name))
+    crate::state::recovery::resolve(&folder.local.join(DIRECTORY), name)
 }
 
 /// Creates or opens the private metadata directory without following symlinks.

@@ -2,6 +2,7 @@
 mod account_details;
 mod description;
 mod folders;
+mod state_recovery;
 mod synchronization;
 mod upload_mode;
 
