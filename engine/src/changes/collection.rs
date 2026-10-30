@@ -99,6 +99,13 @@ fn collect_mode(
                 if let Some(old) = &observed {
                     reconcile_notices(old, &inventory, &mut notices)?;
                 }
+                // A removed event is ambiguous. Only explicit trash metadata for
+                // the same ID records deletion; descendants remain unavailable.
+                for notice in &mut notices {
+                    if let Some(event) = events.get(&notice.id) {
+                        notice.deleted = event.confirmed_trashed;
+                    }
+                }
                 cancelled(cancel)?;
                 return Ok(Checkpoint {
                     cursor: next,
@@ -151,7 +158,8 @@ fn drain(
             if count > 100_000 {
                 return Err(EngineError::InventoryLimit);
             }
-            if !crate::configuration::valid_id(&event.id)
+            if (event.confirmed_trashed && (!event.removed || event.item.is_some()))
+                || !crate::configuration::valid_id(&event.id)
                 || event.item.as_ref().is_some_and(|item| item.id != event.id)
             {
                 return Err(invalid());
@@ -318,7 +326,11 @@ fn reconcile_notices(
         .collect();
     for (id, path) in before {
         if after.get(&id) != Some(&path) && known.insert((id.clone(), path.clone())) {
-            notices.push(Notice { id, path });
+            notices.push(Notice {
+                deleted: false,
+                id,
+                path,
+            });
         }
     }
     notices.retain(|n| after.get(&n.id) != Some(&n.path));

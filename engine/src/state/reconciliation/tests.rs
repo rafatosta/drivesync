@@ -195,6 +195,7 @@ fn corrupt_incompatible_foreign_and_unsafe_evidence_are_not_reset() {
 fn historical_remote_absence_never_becomes_a_new_upload_candidate() {
     let mut record = record();
     record.history = vec![Notice {
+        deleted: false,
         id: "old".into(),
         path: Some(PathBuf::from("new.txt")),
     }];

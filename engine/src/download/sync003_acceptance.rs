@@ -69,6 +69,7 @@ fn observed_cycle(
             .operations("client", &plan)?
             .into_iter()
             .map(|op| changes::Notice {
+                deleted: false,
                 id: op.item.id,
                 path: Some(op.relative),
             }),
@@ -147,6 +148,7 @@ fn c06_c21_n10_reconnect_after_observation_commit_failure_and_repeat_without_new
         .insert("file".into(), next.entries[0].clone());
     remote.content.insert("file".into(), b"same edit".to_vec());
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: false,
         item: Some(next.entries[0].clone()),
@@ -211,6 +213,7 @@ fn c06_c21_n10_reconnect_after_observation_commit_failure_and_repeat_without_new
         last = Some(loaded);
     }
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: true,
         item: None,
@@ -231,4 +234,99 @@ fn c06_c21_n10_reconnect_after_observation_commit_failure_and_repeat_without_new
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"same edit");
     assert_eq!(fs::read(f.root.join("new.part")).unwrap(), b"partial");
     assert_eq!(baseline_tests::base(&f, &inv), Some(baseline));
+}
+
+#[test]
+fn c03_c16_folder_trash_or_access_loss_preserves_descendants_through_failure_and_restart() {
+    for folder in [false, true] {
+        for trash in [false, true] {
+            let f = Fixture::new();
+            let mut inv = inventory();
+            let path = if folder {
+                let mut directory = inv.entries[0].clone();
+                directory.id = "folder".into();
+                directory.name = "folder".into();
+                directory.kind = InventoryKind::Folder;
+                directory.mime_type = "application/vnd.google-apps.folder".into();
+                inv.entries[0].parent_id = "folder".into();
+                inv.entries.push(directory);
+                "folder/file.txt"
+            } else {
+                "file.txt"
+            };
+            let mut feed = Feed {
+                inventory: inv.clone(),
+                events: vec![],
+                offline: false,
+            };
+            let mut remote = Fake::new(&inv);
+            assert_eq!(
+                observed_cycle(&f, &mut feed, &mut remote)
+                    .unwrap()
+                    .downloaded,
+                1
+            );
+            let base = baseline_tests::base(&f, &inv).unwrap();
+            fs::write(f.root.join(path), b"offline work").unwrap();
+            feed.events.push(Change {
+                id: if folder { "folder" } else { "file" }.into(),
+                removed: true,
+                confirmed_trashed: trash,
+                item: None,
+            });
+            feed.offline = true;
+            assert!(observed_cycle(&f, &mut feed, &mut remote).is_err());
+            assert_eq!(fs::read(f.root.join(path)).unwrap(), b"offline work");
+            feed.offline = false;
+            // Fail the observation transaction after the feed checkpoint commits.
+            // The next cycle must recover the trash/access distinction from SQLite.
+            let db = f.db().with_file_name("reconciliation.sqlite3");
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch("CREATE TRIGGER fail_observation BEFORE UPDATE ON snapshots BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+            assert_eq!(
+                observed_cycle(&f, &mut feed, &mut remote).unwrap_err(),
+                EngineError::StateStorage
+            );
+            conn.execute_batch("DROP TRIGGER fail_observation;")
+                .unwrap();
+            for _ in 0..3 {
+                let report = observed_cycle(&f, &mut feed, &mut remote).unwrap();
+                let child = report
+                    .reconciliation
+                    .iter()
+                    .find(|e| e.remote_id.as_deref() == Some("file"))
+                    .unwrap();
+                assert_eq!(
+                    child.kind,
+                    if trash && !folder {
+                        ChangeKind::EditDeleteConflict
+                    } else {
+                        ChangeKind::LocalChangedRemoteUnavailable
+                    }
+                );
+                if folder {
+                    let parent = report
+                        .reconciliation
+                        .iter()
+                        .find(|e| e.remote_id.as_deref() == Some("folder"))
+                        .unwrap();
+                    assert_eq!(
+                        parent.kind,
+                        if trash {
+                            ChangeKind::EditDeleteConflict
+                        } else {
+                            ChangeKind::LocalChangedRemoteUnavailable
+                        }
+                    );
+                }
+                assert!(!report.attention().is_empty());
+                assert_eq!(report.downloaded + report.updated, 0);
+                assert!(report.preserved_copies.is_empty());
+                assert_eq!(fs::read(f.root.join(path)).unwrap(), b"offline work");
+                assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
+            }
+            assert_eq!(remote.media_calls, 1);
+            assert_eq!(remote.content["file"], b"abc");
+        }
+    }
 }

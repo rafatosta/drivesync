@@ -109,6 +109,7 @@ fn observed_update_survives_failed_transfer_and_retries_without_another_event() 
     source.content.insert("file".into(), b"def".to_vec());
     source.fail_stream = true;
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: newer.id.clone(),
         removed: false,
         item: Some(newer.clone()),
@@ -141,6 +142,7 @@ fn removal_is_durable_unavailability_and_preserves_user_bytes() {
     let mut source = Fake::new(&inv);
     cycle(&f, &mut feed, &mut source).unwrap();
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: true,
         item: None,
@@ -231,6 +233,7 @@ fn rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_re
         .insert("folder".into(), inv.entries[0].clone());
     feed.inventory = inv.clone();
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "folder".into(),
         removed: false,
         item: Some(inv.entries[0].clone()),
@@ -252,6 +255,7 @@ fn rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_re
     inv.entries[1].version = Some(2);
     source.entries.insert("file".into(), inv.entries[1].clone());
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: false,
         item: Some(inv.entries[1].clone()),
@@ -260,6 +264,7 @@ fn rename_folder_move_and_removal_preserve_bytes_and_remain_information_after_re
     assert!(moved.issues.is_empty());
     assert_eq!(fs::read(f.root.join("moved.txt")).unwrap(), b"abc");
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: true,
         item: None,
@@ -295,6 +300,7 @@ fn historical_activity_never_suppresses_a_current_local_conflict() {
     source.entries.insert("file".into(), renamed.clone());
     fs::write(f.root.join("renamed.txt"), b"my own data").unwrap();
     feed.events.push(Change {
+        confirmed_trashed: false,
         id: "file".into(),
         removed: false,
         item: Some(renamed),
@@ -353,6 +359,7 @@ fn i07_same_id_path_changes_preserve_association_and_occupied_destinations() {
                 current.parent_id = "folder".into();
                 source.entries.insert("folder".into(), folder.clone());
                 feed.events.push(Change {
+                    confirmed_trashed: false,
                     id: "folder".into(),
                     removed: false,
                     item: Some(folder),
@@ -366,6 +373,7 @@ fn i07_same_id_path_changes_preserve_association_and_occupied_destinations() {
             }
             source.entries.insert("file".into(), current.clone());
             feed.events.push(Change {
+                confirmed_trashed: false,
                 id: "file".into(),
                 removed: false,
                 item: Some(current),

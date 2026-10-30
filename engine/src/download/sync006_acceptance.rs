@@ -18,6 +18,7 @@ fn prepare_record(f: &Fixture, inv: &RemoteInventory, source: &mut Fake) -> Reco
         .unwrap()
         .into_iter()
         .map(|op| crate::changes::Notice {
+            deleted: false,
             id: op.item.id,
             path: Some(op.relative),
         })
@@ -414,7 +415,10 @@ fn c01_c06_divergence_offline_and_recovery_persist_without_selecting_a_version()
 
 #[test]
 fn c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart() {
-    for action in ["edit", "rename", "move", "replace", "unchanged", "missing"] {
+    for (action, trash) in ["edit", "rename", "move", "replace", "unchanged", "missing"]
+        .into_iter()
+        .flat_map(|a| [false, true].map(move |t| (a, t)))
+    {
         let f = Fixture::new();
         let inv = inventory();
         baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
@@ -450,6 +454,15 @@ fn c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart(
             "replace" => ChangeKind::LocalIdentityChanged,
             _ => ChangeKind::RemoteUnavailable,
         };
+        let expected = if trash {
+            match expected {
+                ChangeKind::LocalChangedRemoteUnavailable => ChangeKind::EditDeleteConflict,
+                ChangeKind::RemoteUnavailable => ChangeKind::RemoteDeleted,
+                other => other,
+            }
+        } else {
+            expected
+        };
         let bytes = fs::read(f.root.join(path)).ok();
         let mut unavailable = inv.clone();
         unavailable.entries.clear();
@@ -462,7 +475,23 @@ fn c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart(
         };
         let db = f.db().with_file_name("reconciliation.sqlite3");
         for _ in 0..3 {
-            let record = prepare_record(&f, &unavailable, &mut remote);
+            let initial = prepare_record(&f, &unavailable, &mut remote);
+            let mut history = initial.history;
+            if trash {
+                for notice in &mut history {
+                    notice.deleted = true;
+                }
+            } else {
+                history.clear();
+            }
+            let record = Reconciliation::new(
+                initial.local,
+                initial.remote,
+                initial.plan,
+                initial.bases,
+                history,
+                None,
+            );
             assert!(record.entries.iter().any(|e| e.relative_path.as_deref()
                 == Some(std::path::Path::new(path))
                 && e.remote_id.as_deref() == Some("file")
@@ -494,6 +523,53 @@ fn c03_c08_c11_unavailable_remote_preserves_edits_and_relocations_after_restart(
             assert_eq!(report.downloaded + report.updated, 0);
             assert_eq!(fs::read(f.root.join(path)).ok(), bytes);
             assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
+        }
+        assert_eq!(remote.media_calls, 0);
+    }
+}
+
+#[test]
+fn c04_c08_c11_c16_missing_local_tree_and_remote_changes_require_review() {
+    for action in ["edit", "rename", "move", "tree"] {
+        let f = Fixture::new();
+        let mut inv = with_folder();
+        if action == "tree" {
+            inv.entries[0].parent_id = "folder".into();
+        }
+        baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+        let base = baseline_tests::base(&f, &inv).unwrap();
+        if action == "tree" {
+            fs::remove_dir_all(f.root.join("folder")).unwrap();
+        } else {
+            fs::remove_file(f.root.join("file.txt")).unwrap();
+        }
+        let mut remote = remote_bytes(&mut inv, b"remote edit");
+        if action == "rename" {
+            inv.entries[0].name = "renamed.txt".into();
+        }
+        if action == "move" {
+            inv.entries[0].parent_id = "folder".into();
+        }
+        remote.entries.insert("file".into(), inv.entries[0].clone());
+        for _ in 0..3 {
+            let record = prepare_record(&f, &inv, &mut remote);
+            let entry = record
+                .plan
+                .entries
+                .iter()
+                .find(|e| e.remote_id == "file")
+                .unwrap();
+            assert_eq!(
+                entry.action,
+                PlanAction::Blocked(crate::ConflictReason::LocalMissingRemoteChanged)
+            );
+            let report = execute(&f, &inv, &record.plan, &mut remote);
+            assert_eq!(report.downloaded + report.updated, 0);
+            for path in ["file.txt", "renamed.txt", "folder/file.txt"] {
+                assert!(!f.root.join(path).exists());
+            }
+            assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
+            assert_eq!(remote.content["file"], b"remote edit");
         }
         assert_eq!(remote.media_calls, 0);
     }

@@ -370,6 +370,7 @@ impl DriveSyncEngine {
                 .operations(&config.client_id, &plan)?
                 .into_iter()
                 .map(|op| crate::changes::Notice {
+                    deleted: false,
                     id: op.item.id,
                     path: Some(op.relative),
                 })
@@ -499,6 +500,7 @@ impl DriveSyncEngine {
         let mut history = checkpoint.notices.clone();
         for operation in store.operations(&config.client_id, &plan)? {
             history.push(crate::changes::Notice {
+                deleted: false,
                 id: operation.item.id,
                 path: Some(operation.relative),
             });

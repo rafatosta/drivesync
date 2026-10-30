@@ -392,6 +392,7 @@ fn event_cycle(
 }
 fn change(item: &InventoryEntry) -> Change {
     Change {
+        confirmed_trashed: false,
         id: item.id.clone(),
         removed: false,
         item: Some(item.clone()),

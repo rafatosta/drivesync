@@ -227,3 +227,21 @@ fn incomplete_attributes_and_content_never_authorize_reconciliation() {
         );
     }
 }
+
+#[test]
+fn c08_c11_confirmed_deletion_conflicts_with_location_changes_in_both_directions() {
+    for modified in [
+        location(Some("new-name"), None),
+        location(None, Some("new-parent")),
+    ] {
+        for (local, remote) in [
+            (modified.clone(), SideDifference::Deleted),
+            (SideDifference::Deleted, modified),
+        ] {
+            let result = classify_differences(&input(local, remote));
+            assert_eq!(result.reason, DifferenceReason::DeleteModify);
+            assert_eq!(result.kind, DifferenceKind::Conflict);
+            assert_eq!(result.disposition, Disposition::Preserve);
+        }
+    }
+}

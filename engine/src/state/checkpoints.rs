@@ -18,7 +18,7 @@ pub(crate) struct Scope<'a> {
 }
 impl Checkpoints {
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, 0x44534348, 1, SCHEMA)?))
+        Ok(Self(Store::open_format(path, 0x44534348, 2, SCHEMA)?))
     }
     /// Loads one validated inventory/cursor pair, preserving corrupt data on failure.
     pub(crate) fn load(
