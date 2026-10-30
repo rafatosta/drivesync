@@ -32,6 +32,10 @@ pub enum EngineError {
     RemoteForbidden,
     DriveApiDisabled,
     RemoteRateLimited,
+    /// The persisted upload deadline has not elapsed; no replay was admitted.
+    UploadDeferred,
+    /// Only read-only reconciliation is allowed for this preserved upload intent.
+    UploadRetryExhausted,
 }
 
 impl std::fmt::Display for EngineError {
@@ -62,6 +66,8 @@ impl std::fmt::Display for EngineError {
             Self::RemoteFolderUnavailable => f.write_str("This Google Drive folder is unavailable. Choose it again."),
             Self::RemoteForbidden => f.write_str("Google Drive denied access to this folder. Check this account’s access or choose another folder."),
             Self::DriveApiDisabled => f.write_str("Google Drive access is unavailable because Drive API is disabled for this app. Contact the DriveSync distributor."),
+            Self::UploadDeferred => f.write_str("This upload is waiting before another attempt. Existing data was preserved."),
+            Self::UploadRetryExhausted => f.write_str("This upload reached its attempt limit. Only remote verification will continue; local data and upload evidence were preserved."),
             Self::RemoteRateLimited => f.write_str("Google Drive is receiving too many requests. Please try again later."),
         }
     }

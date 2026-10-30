@@ -16,7 +16,12 @@ Resultado tipado ou erro recuperável, definitivo, conflitante ou ambíguo.
 Não realizar atividades de outros módulos; não depender de toolkit gráfico ou linguagem específica.
 
 ## Invariantes
-Se arquivo mudar durante envio, reagendar sua versão atual. Respeitar `docs/invariants.md`.
+Se a origem mudar durante envio, preservar snapshot/intenção e bloquear confirmação
+sobre bytes divergentes. Respeitar [invariantes](../../../docs/old/invariants.md).
+Resultado remoto incerto exige consulta pelo mesmo ID antes de novo efeito.
+O orçamento persistente admite cinco passes; espera exponencial e esgotamento
+não autorizam substituir ID nem apagar evidência. O contrato executável e as
+transições estão em [create-only.md](create-only.md#sync-013--uncertain-outcomes-and-bounded-replay).
 
 ## Qualidade
 Especificar idempotência, efeitos colaterais, concorrência, cancelamento, erro e recuperação antes da implementação.

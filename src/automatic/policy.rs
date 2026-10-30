@@ -137,6 +137,7 @@ fn transient(error: &EngineError) -> bool {
                 | AuthError::TimedOut
                 | AuthError::Busy
         ) | EngineError::RemoteRateLimited
+            | EngineError::UploadDeferred
             | EngineError::SyncBusy
             | EngineError::RemoteChanged
     )
@@ -298,6 +299,19 @@ mod tests {
         assert_eq!(s.due, Some(110));
         s.finish(&report(EngineError::DownloadIo), 120);
         assert_eq!(s.phase, Phase::Blocked);
+    }
+    #[test]
+    fn deferred_upload_retries_but_exhaustion_requires_manual_reconciliation() {
+        let mut s = Schedule::new(true, 0);
+        s.finish(&Err(EngineError::UploadDeferred), 10);
+        assert_eq!(s.phase, Phase::Retrying);
+        assert_eq!(s.due, Some(40));
+        s.finish(&Err(EngineError::UploadRetryExhausted), 40);
+        assert_eq!(s.phase, Phase::Blocked);
+        assert_eq!(s.due, None);
+        s.network_changed(true, 100);
+        assert!(!s.start(100, true, false));
+        assert!(s.start(100, true, true));
     }
     #[test]
     fn permanent_issues_take_priority_over_transient_errors() {

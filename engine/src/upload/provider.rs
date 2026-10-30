@@ -107,6 +107,7 @@ impl Remote for Provider<'_> {
                 snapshot: String::new(),
                 session: None,
                 confirmed: false,
+                retry: super::Retry::default(),
             };
             let item = self.stat(&op)?.ok_or(EngineError::RemoteChanged)?;
             if item.kind != InventoryKind::Folder {
