@@ -400,6 +400,12 @@ impl DriveSyncEngine {
                 &record,
                 cancel,
             )?;
+            crate::state::ConflictHistory::open(&crate::configuration::identity::metadata_path(
+                folder,
+                &config.client_id,
+                "conflict-history.sqlite3",
+            )?)?
+            .record_pending(&scope, &record, cancel)?;
             Ok(plan)
         })
     }
@@ -544,6 +550,13 @@ impl DriveSyncEngine {
             &reconciliation,
             cancel,
         )?;
+        let history_path = crate::configuration::identity::metadata_path(
+            folder,
+            &config.client_id,
+            "conflict-history.sqlite3",
+        )?;
+        let mut conflict_history = crate::state::ConflictHistory::open(&history_path)?;
+        conflict_history.record_pending(&scope, &reconciliation, cancel)?;
         let mut report = crate::download::run_with_root(
             crate::download::Context {
                 client: &config.client_id,
@@ -556,6 +569,36 @@ impl DriveSyncEngine {
             |event| (progress.borrow_mut())(event),
             local_root,
         )?;
+        for copy in &report.conflict_copies {
+            conflict_history.record_outcome(
+                &scope,
+                Some(&copy.remote_id),
+                Some(&copy.original_path),
+                crate::ConflictOutcome::CopyPreserved {
+                    copy_path: copy.copy_path.clone(),
+                    remote_version: copy.remote_version,
+                },
+            )?;
+        }
+        for issue in &report.issues {
+            let mut matching_entries = reconciliation.entries.iter().filter(|entry| {
+                entry.relative_path == issue.relative_path && entry.kind.needs_attention()
+            });
+            let Some(entry) = matching_entries.next() else {
+                continue;
+            };
+            if matching_entries.next().is_some() {
+                continue;
+            }
+            conflict_history.record_outcome(
+                &scope,
+                entry.remote_id.as_deref(),
+                entry.relative_path.as_deref(),
+                crate::ConflictOutcome::RetryBlocked {
+                    reason: crate::ConflictFailure::from(&issue.error),
+                },
+            )?;
+        }
         crate::coordinator::report(&report)?;
         if report
             .issues
@@ -778,6 +821,61 @@ impl DriveSyncEngine {
             .load(&scope)?
             .map(|(_, record)| record.entries)
             .unwrap_or_default())
+    }
+
+    /// Reads durable conflict records for this account and root without contacting Drive.
+    ///
+    /// These records report observed state and verified local effects only; they
+    /// never authorize applying a saved resolution.
+    ///
+    /// # Errors
+    /// Returns configuration, identity or storage errors without resetting evidence.
+    pub fn saved_conflicts(
+        &self,
+        id: &AccountId,
+    ) -> Result<Vec<crate::ConflictRecord>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
+        let path = crate::configuration::identity::metadata_path(
+            &folder,
+            &config.client_id,
+            "conflict-history.sqlite3",
+        )?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        crate::state::ConflictHistory::open(&path)?.records(&scope)
+    }
+
+    /// Reads the scoped append-only conflict audit without contacting Drive.
+    ///
+    /// # Errors
+    /// Returns configuration, identity or storage errors without resetting evidence.
+    pub fn conflict_history(
+        &self,
+        id: &AccountId,
+    ) -> Result<Vec<crate::ConflictHistoryEvent>, EngineError> {
+        let folder = self.saved_folder(id)?.ok_or(EngineError::InvalidFolder)?;
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let roots = self.accounts.roots()?;
+        let _lock = roots.lock(&config.client_id, &folder)?;
+        let path = crate::configuration::identity::metadata_path(
+            &folder,
+            &config.client_id,
+            "conflict-history.sqlite3",
+        )?;
+        let scope = crate::state::CheckpointScope {
+            client: &config.client_id,
+            account: id,
+            remote: &folder.remote.id,
+            local: &folder.local,
+        };
+        crate::state::ConflictHistory::open(&path)?.events(&scope)
     }
 
     /// Loads the current persisted plan for this account's configured root.

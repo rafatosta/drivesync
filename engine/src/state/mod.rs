@@ -3,6 +3,8 @@ pub(crate) mod recovery;
 mod roots;
 pub(crate) use roots::Roots;
 mod checkpoints;
+mod conflict_history;
+pub(crate) use conflict_history::ConflictHistory;
 mod reconciliation;
 pub(crate) use reconciliation::{Reconciliation, Reconciliations};
 mod uploads;

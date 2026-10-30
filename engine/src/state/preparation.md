@@ -6,7 +6,10 @@ cliente OAuth, à conta e à pasta remota; `state.sqlite3` registra o journal de
 operações e evidências de arquivos instalados; `changes.sqlite3` mantém o
 checkpoint remoto; `uploads.sqlite3` guarda preferências e intents de upload;
 `reconciliation.sqlite3` registra o inventário local completo, observações remotas,
-B consultada e diagnósticos anteriores à execução.
+B consultada e diagnósticos anteriores à execução; `conflict-history.sqlite3`
+mantém pendências de revisão e eventos de auditoria por item. Esses eventos
+registram somente diagnósticos e resultados verificados pelo motor, nunca tokens
+ou conteúdo de arquivos, e não autorizam executar uma decisão salva.
 Esses arquivos sobrevivem à remoção dos dados privados do aplicativo e não
 armazenam tokens. A pasta `.drivesync` é excluída do inventário de upload e é um
 caminho reservado que o inventário remoto não pode usar como destino.

@@ -296,7 +296,7 @@ fn lost_or_corrupt_selector_never_revives_stale_original_baselines() {
         }
         assert!(resolve(&f.parent(), "state.sqlite3").is_err());
         let recovered = f.run();
-        assert_eq!(recovered.rebuilt_stores, 4);
+        assert_eq!(recovered.rebuilt_stores, 5);
         assert!(recovered.uploads_blocked);
         assert!(selected.exists());
         assert_ne!(
@@ -312,6 +312,6 @@ fn interruption_after_no_fallback_marker_is_explicitly_recoverable() {
     let f = Fixture::new();
     std::fs::write(f.parent().join(REQUIRED), b"").unwrap();
     assert!(resolve(&f.parent(), "state.sqlite3").is_err());
-    assert_eq!(f.run().rebuilt_stores, 4);
+    assert_eq!(f.run().rebuilt_stores, 5);
     assert!(f.run().uploads_blocked);
 }

@@ -44,3 +44,21 @@ de `confirmed_bases`, nem invalida ou avança B. A leitura valida nome derivado,
 chave, fase e metadados; o executor revalida identidade e conteúdo no filesystem.
 Formato anterior é rejeitado sem migração, reset ou remoção de dados.
 Contrato e recuperação: [preservation.md](../conflicts/preservation.md).
+
+## Histórico de conflitos — SYNC-011
+
+`conflict-history.sqlite3` é um journal separado, com formato exato 1, aplicação
+e chave compostas próprias por cliente/conta/raiz remota/raiz local. Registros
+mantêm o último diagnóstico por identidade e caminho, incluindo se ainda exige
+atenção; eventos append-only registram diagnósticos distintos, cópias verificadas
+e falhas classificadas sem texto de provedor. Chaves determinísticas tornam a
+repetição idempotente; consulta após reabertura não acessa a rede e não concede
+autorização de escrita.
+
+Atualizações de registro e seus eventos são transacionais dentro desse banco.
+Ele não participa do journal de instalação, da base confirmada nem da
+reconciliação; ausência, corrupção ou formato incompatível falham sem reset ou
+migração. A reconstrução explícita preserva os originais e cria um journal vazio,
+mantendo operações de sincronização bloqueadas até a recuperação autorizada.
+Decisões assistidas e encerramento de pendências ainda não são executados pelo
+motor e, portanto, não são registradas como se tivessem ocorrido.

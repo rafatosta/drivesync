@@ -565,7 +565,7 @@ fn sync005_rebuilt_state_preserves_preexisting_bytes_and_retries_integrity_failu
     let locked = Root::open(&f.root).unwrap();
     let recovery =
         crate::state::recovery::rebuild(&folder, "client", &Cancellation::new()).unwrap();
-    assert_eq!(recovery.rebuilt_stores, 4);
+    assert_eq!(recovery.rebuilt_stores, 5);
     assert_eq!(Root::open(&f.root).err(), Some(EngineError::SyncBusy));
     drop(locked);
     let path = crate::configuration::identity::state_path(&folder, "client").unwrap();

@@ -63,6 +63,14 @@ suspensão antes de liberar o ciclo ou iniciar upload após download. Não prova
 indisponibilidade definitiva nem exclusão de um item. Suspensão tipada durante
 prova de equivalência aborta a preparação, em vez de virar apenas item desconhecido.
 
+Durante preparação e retomada, o coordinator persiste diagnósticos pendentes no
+journal SYNC-011 antes de efeitos de transferência. Resultados de cópias de
+conflito só são registrados após validação de identidade e conteúdo; falhas
+recebem categorias sanitizadas. Erro de persistência do histórico interrompe o
+ciclo com erro explícito, e os journals de operação/preservação continuam sendo
+a fonte para reconciliar efeitos já iniciados. Consulta ao histórico não executa
+nem autoriza resolução.
+
 ## Recuperação de estado — SYNC-005
 
 `StateStorage` suspende a associação com `StateUnavailable` no registro externo,
