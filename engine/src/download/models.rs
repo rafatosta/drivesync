@@ -71,11 +71,10 @@ impl DownloadReport {
             } else {
                 issue.error.to_string()
             };
-            let message = if let Some(copy) = self
-                .conflict_copies
-                .iter()
-                .find(|copy| Some(&copy.original_path) == issue.relative_path.as_ref())
-            {
+            let message = if let Some(copy) = self.conflict_copies.iter().find(|copy| {
+                matches!(issue.error, EngineError::DownloadConflict)
+                    && Some(&copy.original_path) == issue.relative_path.as_ref()
+            }) {
                 format!("Content conflict between the local file and Google Drive file. Remote version {} preserved at: {}. The local file remains at its original path; resolution is pending.", copy.remote_version, copy.copy_path.display())
             } else {
                 message

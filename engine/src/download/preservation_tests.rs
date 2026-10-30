@@ -433,6 +433,15 @@ fn p02_restart_recovers_verified_snapshot_when_remote_revision_changes_or_disapp
             assert_eq!(result.downloaded + result.updated + result.recovered, 0);
             if removed {
                 assert_eq!(source.media_calls, calls);
+            } else {
+                assert!(matches!(
+                    result.issues[0].error,
+                    EngineError::Authentication(crate::AuthError::Network)
+                ));
+                assert_eq!(
+                    result.attention()[0].message,
+                    result.issues[0].error.to_string()
+                );
             }
             let original = inventory();
             assert_eq!(baseline_tests::base(&f, &original), base);
