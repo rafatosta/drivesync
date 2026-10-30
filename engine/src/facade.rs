@@ -430,7 +430,7 @@ impl DriveSyncEngine {
         progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
         self.with_root(id, |folder, config, root| {
-            self.download_locked(id, cancel, progress, folder, config, root)
+            self.download_locked(id, cancel, progress, (folder, config, root), None)
         })
     }
 
@@ -439,10 +439,14 @@ impl DriveSyncEngine {
         id: &AccountId,
         cancel: &crate::Cancellation,
         progress: impl FnMut(crate::DownloadProgress),
-        folder: &FolderConfiguration,
-        config: &auth::OAuthConfig,
-        local_root: &crate::download::filesystem::Root,
+        context: (
+            &FolderConfiguration,
+            &auth::OAuthConfig,
+            &crate::download::filesystem::Root,
+        ),
+        approval: Option<&crate::BulkReview>,
     ) -> Result<crate::DownloadReport, EngineError> {
+        let (folder, config, local_root) = context;
         let progress = std::cell::RefCell::new(progress);
         let preparation =
             |stage| (progress.borrow_mut())(crate::DownloadProgress::preparing(stage));
@@ -557,6 +561,8 @@ impl DriveSyncEngine {
         )?;
         let mut conflict_history = crate::state::ConflictHistory::open(&history_path)?;
         conflict_history.record_pending(&scope, &reconciliation, cancel)?;
+        crate::local::check(cancel)?;
+        crate::coordinator::bulk_gate(&config.client_id, &reconciliation, approval)?;
         let mut report = crate::download::run_with_root(
             crate::download::Context {
                 client: &config.client_id,
@@ -708,9 +714,27 @@ impl DriveSyncEngine {
         cancel: &Cancellation,
         mut progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
+        self.synchronize_reviewed(id, cancel, None, &mut progress)
+    }
+
+    /// Runs one attempt after an explicit review of the exact pending batch.
+    /// Fresh observations must match `approval`; otherwise returns a new review
+    /// before any transfer. Approval never enables unsupported deletions or
+    /// remote overwrites and is not retained for automatic retries or restarts.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::synchronize_once`], including a stale
+    /// or missing batch approval as [`EngineError::BulkReviewRequired`].
+    pub fn synchronize_reviewed(
+        &self,
+        id: &AccountId,
+        cancel: &Cancellation,
+        approval: Option<&crate::BulkReview>,
+        mut progress: impl FnMut(crate::DownloadProgress),
+    ) -> Result<crate::DownloadReport, EngineError> {
         self.with_root(id, |folder, config, root| {
             let mut report =
-                self.download_locked(id, cancel, &mut progress, folder, config, root)?;
+                self.download_locked(id, cancel, &mut progress, (folder, config, root), approval)?;
             crate::coordinator::report(&report)?;
             if !self.upload_enabled_locked(folder, config)? {
                 if crate::state::recovery::uploads_blocked(&folder.local.join(".drivesync"))? {

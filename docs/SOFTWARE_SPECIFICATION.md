@@ -952,3 +952,70 @@ Retry-After. Inventário, OAuth e verificação geral de raiz mantêm os própri
 contratos. Não autoriza atualização/exclusão remota nem garante unicidade de
 nome frente a clientes independentes. Validação Google/Flatpak empacotado é
 separada e permanece no acompanhamento de upload [#43](https://github.com/rafatosta/drivesync/issues/43).
+
+### Proteção de lotes — SYNC-014
+
+**Intenção e política do produto.** Detectar impacto por raiz e por pasta antes de
+qualquer transferência. Um lote é suspeito quando afeta pelo menos 100 itens
+confirmados, ou pelo menos 10 itens e 20% da população confirmada do escopo.
+Esses valores são política conservadora inicial, não limites recomendados pelo
+Google; ficam em um tipo próprio validado, para configuração futura sem alterar
+o algoritmo. Configuração persistida e editor de limiares não fazem parte desta
+entrega. Não existe preferência para desativar a proteção nem consentimento global.
+
+**Contrato de implementação.** A população é formada pelas identidades com base
+confirmada, contadas uma vez por escopo ancestral da localização conhecida;
+localização desconhecida conta conservadoramente na raiz. Ausência
+local, indisponibilidade/exclusão remota, edição, substituição e mudança de localização
+contam como impacto; itens novos e equivalentes não contam. Evidência inconclusiva
+em item confirmado também conta conservadoramente, sem se transformar em exclusão.
+O cálculo usa componentes de caminho, inclui raiz e todas as pastas ancestrais,
+e não soma duplicatas de diagnóstico de uma identidade.
+
+O coordinator salva a reconciliação completa antes de verificar o lote e interrompe
+o ciclo inteiro antes de downloads, cópias de conflitos e uploads se houver impacto
+suspeito. Falha de coleta/persistência também impede transferências. A base confirmada
+não avança. A preparação apenas observacional continua permitida. A revisão informa
+escopo, quantidade e proporção e pede uma decisão explícita com cancelamento padrão.
+Confirmar permite somente uma tentativa com evidência idêntica, sob os locks normais,
+sem autorizar exclusões, sobrescritas remotas ou resoluções ainda não implementadas.
+
+A proposta contém um resumo e um digest determinístico das evidências B/L/R,
+plano e escopo cliente/conta/raiz/caminho. A nova tentativa recolhe observações;
+qualquer diferença invalida a proposta e exige revisão nova. Se o impacto cair
+abaixo dos limiares, a tentativa confirmada também é cancelada; uma nova checagem
+sem proposta pode então seguir a política normal. Consentimento não é
+persistido nem reutilizado por timers, conectividade, reinício ou nova tentativa.
+As observações duráveis permitem reconstruir a revisão após reinício; cada efeito
+continua sujeito às verificações individuais existentes. Não há transação atômica
+entre observação e Drive: mudança durante execução pode interromper o restante do
+ciclo após efeitos já confirmados, que permanecem recuperáveis pelos journals.
+
+**Algoritmo BULK-001.** Validar limiares; para cada base com localização, associar
+os diagnósticos pelo ID e verificar presença local/remota e localização atual.
+Acumular população e identidades afetadas em cada ancestral. Selecionar escopos que
+atinjam contagem absoluta OU mínimo e proporção; sem escopo suspeito, prosseguir.
+Ordenar evidências por identidade/caminho, calcular digest e comparar com proposta
+explicitamente fornecida a esta tentativa. Sem igualdade integral, retornar revisão
+pendente antes do executor. Nunca converter ausência, erro ou confirmação em delete.
+
+**Critérios de aceite e validação.** N08/P06: 4.800 ausências em 5.000 bases devem
+suspender sem transferências/exclusões; pequenas edições normais devem continuar;
+uma subpasta afetada deve bloquear mesmo se diluída na raiz; propostas antigas,
+contas/raízes diferentes e evidências offline devem falhar fechadas. Testar SQLite
+e filesystem reais isolados com provedor simulado: reabertura, cancelamento,
+concorrência, repetição e preservação de bytes/base. Testes automatizados não
+atestam Google Drive real nem interação manual com aplicativo empacotado.
+
+**Fundamentação.** A persistência reaproveita transações/CAS existentes, com a
+limitação de atomicidade por banco descrita em [SQLite Atomic Commit](https://www.sqlite.org/atomiccommit.html).
+Falhas de acesso continuam inconclusivas conforme [Drive: resolve errors](https://developers.google.com/workspace/drive/api/guides/handle-errors).
+Referências verificadas em 2026-10-30. Contagem, proporção e confirmação por lote
+são política DriveSync; não são capacidades de exclusão transacional da API.
+
+A população protetiva mantém a última base confirmada observada por identidade,
+separada da base que o journal autoriza usar na execução. Operações incompletas
+não reduzem essa população. A revisão SQLite usa formato interno 4, sem migração;
+formato anterior é rejeitado preservando o banco. A recuperação explícita existente
+pode reconstruir observações; arquivos e credenciais permanecem preservados.
+Bases sem localização conhecida contam conservadoramente no escopo da raiz.

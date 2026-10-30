@@ -20,3 +20,10 @@ Sem efeitos colaterais, sem exclusões com UNKNOWN.
 
 ## Qualidade de contrato
 Toda operação deverá especificar efeitos colaterais, idempotência, concorrência permitida, pré/pós-condições e recuperação após interrupções. Nenhuma falha pode ser interpretada como sucesso.
+
+## Impacto de lotes — SYNC-014
+
+BULK-001 agrega a população protetiva de identidades previamente confirmadas e
+os diagnósticos atuais por raiz e pasta ancestral. Retorna uma revisão sem efeitos
+nem permissão de exclusão. Política, limiares, digest de evidência e critérios em
+[proteção de lotes](../../../docs/SOFTWARE_SPECIFICATION.md#proteção-de-lotes--sync-014).

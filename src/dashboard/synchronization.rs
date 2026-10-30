@@ -761,6 +761,7 @@ pub(super) fn build(
         None
     };
     let job = crate::automatic::Controller::attach(engine, saved);
+    footer.append(&super::bulk_review::button(job.clone()));
     if let Some(receive) = restore {
         let restore_ui = ui.clone();
         let restore_job = job.clone();

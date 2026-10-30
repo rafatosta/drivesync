@@ -22,6 +22,10 @@ pub(crate) struct Reconciliation {
     pub remote: RemoteInventory,
     pub plan: DownloadPlan,
     pub bases: HashMap<String, ConfirmedBase>,
+    /// Last confirmed identities retained only for impact accounting. Incomplete
+    /// operation replay may invalidate executable B without shrinking this set.
+    /// These observations never authorize installation or baseline advancement.
+    pub bulk_population: HashMap<String, ConfirmedBase>,
     pub history: Vec<Notice>,
     pub entries: Vec<ReconciliationEntry>,
 }
@@ -58,7 +62,12 @@ impl Reconciliation {
         entries.sort_by(|a, b| {
             (&a.relative_path, &a.remote_id).cmp(&(&b.relative_path, &b.remote_id))
         });
+        let mut bulk_population = previous
+            .map(|p| p.bulk_population.clone())
+            .unwrap_or_default();
+        bulk_population.extend(bases.clone());
         Self {
+            bulk_population,
             local,
             remote,
             plan,
@@ -72,7 +81,7 @@ impl Reconciliation {
 pub(crate) struct Reconciliations(Store);
 impl Reconciliations {
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, 0x44535243, 3, SCHEMA)?))
+        Ok(Self(Store::open_format(path, 0x44535243, 4, SCHEMA)?))
     }
     pub(crate) fn load(
         &self,
@@ -141,6 +150,11 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
         || plan.entries.len() != record.remote.entries.len()
         || record.local.entries.len() > 100_000
         || record.bases.len() > 100_000
+        || record.bulk_population.len() > 100_000
+        || record
+            .bases
+            .iter()
+            .any(|(id, base)| record.bulk_population.get(id) != Some(base))
         || record.entries.len() > 300_000
         || record.history.len() > 200_000
     {
@@ -167,7 +181,7 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
             }
         }
     }
-    for (id, base) in &record.bases {
+    for (id, base) in record.bases.iter().chain(&record.bulk_population) {
         if !crate::configuration::valid_id(id)
             || base.remote_version == 0
             || crate::planner::fingerprint_parts(&base.local_fingerprint).is_none()

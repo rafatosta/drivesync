@@ -34,6 +34,14 @@ fn observed_cycle(
     feed: &mut Feed,
     source: &mut Fake,
 ) -> Result<DownloadReport, EngineError> {
+    observed_cycle_reviewed(f, feed, source, None)
+}
+fn observed_cycle_reviewed(
+    f: &Fixture,
+    feed: &mut Feed,
+    source: &mut Fake,
+    approval: Option<&crate::BulkReview>,
+) -> Result<DownloadReport, EngineError> {
     let cancel = Cancellation::new();
     let account = feed.inventory.account_id.clone();
     let scope = CheckpointScope {
@@ -98,6 +106,7 @@ fn observed_cycle(
         &record,
         &cancel,
     )?;
+    crate::coordinator::bulk_gate("client", &record, approval)?;
     drop(root);
     let mut report = run(
         Context {
@@ -330,3 +339,6 @@ fn c03_c16_folder_trash_or_access_loss_preserves_descendants_through_failure_and
         }
     }
 }
+
+#[path = "bulk_tests.rs"]
+mod bulk_tests;

@@ -114,3 +114,21 @@ pub(crate) fn report(report: &crate::DownloadReport) -> Result<(), EngineError> 
 
 #[cfg(test)]
 mod tests;
+
+/// Suspends all effects unless this attempt explicitly confirms identical evidence.
+/// Approval is borrowed for this cycle only and is never saved in a preference.
+pub(crate) fn bulk_gate(
+    client: &str,
+    record: &crate::state::Reconciliation,
+    approval: Option<&crate::BulkReview>,
+) -> Result<(), EngineError> {
+    match (
+        crate::planner::bulk_impact(client, record, crate::BulkPolicy::default())?,
+        approval,
+    ) {
+        (Some(review), Some(approved)) if &review == approved => Ok(()),
+        (Some(review), _) => Err(EngineError::BulkReviewRequired(review)),
+        (None, Some(_)) => Err(EngineError::BulkReviewChanged),
+        (None, None) => Ok(()),
+    }
+}

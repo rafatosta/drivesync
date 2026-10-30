@@ -56,6 +56,7 @@ fn reconciliation() -> super::super::Reconciliation {
     })
     .unwrap();
     super::super::Reconciliation {
+        bulk_population: Default::default(),
         local: Inventory {
             entries: BTreeMap::from([(
                 PathBuf::from("item.txt"),
