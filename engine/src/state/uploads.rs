@@ -20,7 +20,7 @@ impl Uploads {
         let scope = serde_json::to_string(&(client, &folder.account_id, &folder.remote.id, &local))
             .map_err(failed)?;
         Ok(Self {
-            db: Store::open_format(path, 0x44535550, 1, SCHEMA)?,
+            db: Store::open_format(path, 0x44535550, 2, SCHEMA)?,
             scope,
             local: folder.local.clone(),
         })
@@ -155,6 +155,12 @@ impl Uploads {
                 || o.parent != op.parent
                 || o.sha != op.sha
                 || o.directory != op.directory
+                || o.size != op.size
+                || o.md5 != op.md5
+                || o.snapshot != op.snapshot
+                || (o.confirmed && !op.confirmed)
+                || o.retry.attempts > op.retry.attempts
+                || o.retry.not_before > op.retry.not_before
         }) {
             return Err(EngineError::StateStorage);
         }
@@ -163,7 +169,8 @@ impl Uploads {
     }
 }
 fn valid(op: &Intent) -> bool {
-    op.root.inode > 0
+    op.retry.attempts <= crate::upload::Retry::LIMIT
+        && op.root.inode > 0
         && !op.path.as_os_str().is_empty()
         && op
             .path

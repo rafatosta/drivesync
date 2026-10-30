@@ -16,6 +16,12 @@ use std::{
 };
 #[derive(Default)]
 struct Fake {
+    now: u64,
+    fixed_clock: bool,
+    stat_error: Option<EngineError>,
+    stats: usize,
+    folder_error: Option<EngineError>,
+    folder_calls: usize,
     generated: usize,
     change_on_generate: Option<PathBuf>,
     change_after_chunk: Option<PathBuf>,
@@ -60,6 +66,9 @@ fn entry(op: &Intent) -> InventoryEntry {
     }
 }
 impl Remote for Fake {
+    fn now(&self) -> Result<u64, EngineError> {
+        Ok(self.now)
+    }
     fn configured(&mut self) -> Result<(), EngineError> {
         if self.chunks > 0 {
             if let Some(reason) = self.suspend_after_chunk {
@@ -87,9 +96,17 @@ impl Remote for Fake {
             .collect())
     }
     fn stat(&mut self, op: &Intent) -> Result<Option<InventoryEntry>, EngineError> {
+        self.stats += 1;
+        if let Some(error) = &self.stat_error {
+            return Err(error.clone());
+        }
         Ok(self.items.get(&op.id).cloned())
     }
     fn folder(&mut self, op: &Intent) -> Result<(), EngineError> {
+        self.folder_calls += 1;
+        if let Some(error) = &self.folder_error {
+            return Err(error.clone());
+        }
         assert!(!self.items.contains_key(&op.id));
         self.creates += 1;
         self.items.insert(op.id.clone(), entry(op));
@@ -208,6 +225,10 @@ impl Fixture {
         remote: &mut Fake,
         excluded: HashSet<PathBuf>,
     ) -> Result<DownloadReport, EngineError> {
+        // Existing restart oracles advance a deterministic clock beyond backoff.
+        if !remote.fixed_clock {
+            remote.now += 2000;
+        }
         let uploads = self.uploads();
         let inv = RemoteInventory {
             account_id: self.folder.account_id.clone(),
@@ -443,6 +464,7 @@ fn generated_ids_and_session_origins_are_validated() {
         snapshot: String::new(),
         session: None,
         confirmed: false,
+        retry: super::Retry::default(),
     };
     assert!(f.uploads().save(&op).is_err());
     assert!(!Path::new("../escape").starts_with(&f.root));
@@ -567,6 +589,13 @@ fn verified_recovery_retires_only_its_own_stale_download_conflict() {
         root_id: "root".into(),
         entries: remote.items.values().cloned().collect(),
     };
+    remote.now = f
+        .uploads()
+        .load(Path::new("file.txt"))
+        .unwrap()
+        .unwrap()
+        .retry
+        .not_before;
     let uploads = f.uploads();
     let mut report = DownloadReport {
         issues: vec![
@@ -786,4 +815,244 @@ fn relocated_managed_identity_is_not_uploaded_as_a_new_file() {
             .unwrap()
             .is_none());
     }
+}
+
+#[test]
+fn e08_rate_limit_backoff_survives_reopen_and_bounds_effect_attempts() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("nested")).unwrap();
+    let mut remote = Fake {
+        fixed_clock: true,
+        now: 100,
+        folder_error: Some(EngineError::RemoteRateLimited),
+        ..Default::default()
+    };
+    for attempt in 1..=super::Retry::LIMIT {
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.issues[0].error, EngineError::RemoteRateLimited);
+        let op = f.uploads().load(Path::new("nested")).unwrap().unwrap();
+        assert_eq!(op.retry.attempts, attempt);
+        let delay = op.retry.not_before - remote.now;
+        assert!(((60u64 << (attempt - 1))..=(60u64 << (attempt - 1)) + 30).contains(&delay));
+        let calls = remote.folder_calls;
+        let stats = remote.stats;
+        // Repeated cycles, even after a wall-clock rollback, send no request.
+        for _ in 0..2 {
+            remote.now -= 1;
+            assert_eq!(
+                f.run(&mut remote, HashSet::new()).unwrap().issues[0].error,
+                EngineError::UploadDeferred
+            );
+            assert_eq!(remote.folder_calls, calls);
+            assert_eq!(remote.stats, stats);
+        }
+        remote.now = op.retry.not_before;
+    }
+    remote.folder_error = None;
+    for _ in 0..2 {
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.issues[0].error, EngineError::UploadRetryExhausted);
+        assert_eq!(remote.folder_calls, 5);
+        assert_eq!(remote.generated, 1);
+        assert!(remote.items.is_empty());
+        let op = f.uploads().load(Path::new("nested")).unwrap().unwrap();
+        assert_eq!(op.retry.attempts, 5);
+        remote.now = op.retry.not_before;
+    }
+}
+
+#[test]
+fn n11_fifth_attempt_timeout_reconciles_without_a_sixth_effect() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("nested")).unwrap();
+    let mut remote = Fake {
+        fixed_clock: true,
+        now: 100,
+        folder_error: Some(EngineError::RemoteRateLimited),
+        ..Default::default()
+    };
+    for _ in 0..4 {
+        f.run(&mut remote, HashSet::new()).unwrap();
+        remote.now = f
+            .uploads()
+            .load(Path::new("nested"))
+            .unwrap()
+            .unwrap()
+            .retry
+            .not_before;
+    }
+    remote.folder_error = None;
+    remote.lost_folder = true;
+    assert_eq!(
+        f.run(&mut remote, HashSet::new()).unwrap().issues[0].error,
+        EngineError::Authentication(crate::AuthError::Network)
+    );
+    remote.now = f
+        .uploads()
+        .load(Path::new("nested"))
+        .unwrap()
+        .unwrap()
+        .retry
+        .not_before;
+    let report = f.run(&mut remote, HashSet::new()).unwrap();
+    assert!(report.issues.is_empty());
+    assert_eq!(report.created_remote_folders, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(remote.folder_calls, 5);
+    assert_eq!(remote.generated, 1);
+    assert!(
+        f.uploads()
+            .load(Path::new("nested"))
+            .unwrap()
+            .unwrap()
+            .confirmed
+    );
+    assert!(f
+        .run(&mut remote, HashSet::new())
+        .unwrap()
+        .issues
+        .is_empty());
+    assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn e04_offline_reconciliation_is_bounded_and_preserves_snapshot_and_bytes() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"preserve me").unwrap();
+    let mut remote = Fake {
+        fixed_clock: true,
+        now: 100,
+        stat_error: Some(EngineError::Authentication(crate::AuthError::Network)),
+        ..Default::default()
+    };
+    for attempt in 1..=super::Retry::LIMIT {
+        assert_eq!(
+            f.run(&mut remote, HashSet::new()).unwrap().issues[0].error,
+            EngineError::Authentication(crate::AuthError::Network)
+        );
+        let op = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+        assert_eq!(op.retry.attempts, attempt);
+        assert_eq!(
+            fs::read(f.path.with_file_name(&op.snapshot)).unwrap(),
+            b"preserve me"
+        );
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"preserve me");
+        remote.now = op.retry.not_before;
+    }
+    remote.stat_error = None;
+    assert_eq!(
+        f.run(&mut remote, HashSet::new()).unwrap().issues[0].error,
+        EngineError::UploadRetryExhausted
+    );
+    assert_eq!(remote.begins, 0);
+    assert_eq!(remote.chunks, 0);
+    assert_eq!(remote.generated, 1);
+}
+
+#[test]
+fn n11_crash_after_reservation_and_stale_writer_cannot_reset_budget() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake {
+        fail_after_complete: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let stale = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+    let mut reserved = stale.clone();
+    assert!(reserved.retry.reserve(stale.retry.not_before, 0).unwrap());
+    f.uploads().save(&reserved).unwrap();
+    assert_eq!(f.uploads().save(&stale), Err(EngineError::StateStorage));
+    remote.fixed_clock = true;
+    remote.now = reserved.retry.not_before - 1;
+    assert_eq!(
+        f.run(&mut remote, HashSet::new()).unwrap().issues[0].error,
+        EngineError::UploadDeferred
+    );
+    remote.now += 1;
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+}
+
+#[test]
+fn n11_concurrent_worker_cannot_replay_a_pending_intent() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake {
+        fail_after_complete: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let before = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+    let lock = crate::download::filesystem::Root::open(&f.root).unwrap();
+    assert!(matches!(
+        f.run(&mut remote, HashSet::new()),
+        Err(EngineError::SyncBusy)
+    ));
+    assert_eq!(
+        f.uploads()
+            .load(Path::new("file.txt"))
+            .unwrap()
+            .unwrap()
+            .retry
+            .attempts,
+        before.retry.attempts
+    );
+    drop(lock);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.creates, 1);
+}
+
+#[test]
+fn incompatible_upload_format_preserves_remote_intent_evidence() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake {
+        fail_after_complete: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let path = f.path.with_file_name("uploads.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let before: String = db
+        .query_row("SELECT record FROM intents", [], |r| r.get(0))
+        .unwrap();
+    db.pragma_update(None, "user_version", 1).unwrap();
+    drop(db);
+    assert!(matches!(
+        Uploads::open(&path, "client", &f.folder),
+        Err(EngineError::StateStorage)
+    ));
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let after: String = db
+        .query_row("SELECT record FROM intents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+}
+
+#[test]
+fn invalid_persisted_retry_budget_fails_closed() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake {
+        fail_after_complete: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let mut op = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+    op.retry.attempts = super::Retry::LIMIT + 1;
+    assert_eq!(f.uploads().save(&op), Err(EngineError::InvalidPlan));
+    let db = rusqlite::Connection::open(f.path.with_file_name("uploads.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE intents SET record=?1",
+        [serde_json::to_string(&op).unwrap()],
+    )
+    .unwrap();
+    assert!(matches!(
+        f.uploads().load(Path::new("file.txt")),
+        Err(EngineError::StateStorage)
+    ));
+    assert_eq!(remote.creates, 1);
 }

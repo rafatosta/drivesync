@@ -17,6 +17,14 @@ use std::{
 
 /// Provider seam includes configuration/parent revalidation before every effect.
 pub(crate) trait Remote {
+    /// Wall clock seam for durable scheduling; no host sleeps hold the root lock.
+    fn now(&self) -> Result<u64, EngineError> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_secs())
+            .map_err(|_| EngineError::StateStorage)
+    }
+
     fn configured(&mut self) -> Result<(), EngineError>;
     fn generate(&mut self) -> Result<String, EngineError>;
     fn children(&mut self, parent: &str, name: &str) -> Result<Vec<InventoryEntry>, EngineError>;
@@ -242,6 +250,7 @@ pub(crate) fn run_with_root(
                         snapshot,
                         session: None,
                         confirmed: false,
+                        retry: super::Retry::default(),
                     };
                     uploads.save(&op)?;
                     op
@@ -267,6 +276,11 @@ pub(crate) fn run_with_root(
             } else {
                 None
             };
+            // Reserve before reads as well as effects: offline and rate-limit failures
+            // must not bypass the durable pass budget on the next synchronization.
+            let jitter = u64::from(oauth2::CsrfToken::new_random().secret().as_bytes()[0]);
+            let writable = op.retry.reserve(remote.now()?, jitter)?;
+            uploads.save(&op)?;
             remote.validate_parent(&parent)?;
             let siblings = remote.children(&parent, name)?;
             if siblings.iter().any(|s| s.id != op.id) {
@@ -274,6 +288,9 @@ pub(crate) fn run_with_root(
             }
             let mut item = completed(remote, &op)?;
             if item.is_none() {
+                if !writable {
+                    return Err(EngineError::UploadRetryExhausted);
+                }
                 if directory {
                     remote.folder(&op)?;
                 } else {

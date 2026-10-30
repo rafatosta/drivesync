@@ -826,8 +826,8 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Preservação:** definir armazenamento, reserva de nomes, quota, retenção e recuperação das cópias; não habilitar limpeza automática de pendências.
 - **Concorrência:** detalhar contratos de revalidação local/remota, identidade e exclusão mútua por raiz; não presumir que uma consulta anterior elimina a corrida antes da escrita.
 - **Estado perdido:** definir como reconhecer raiz anteriormente gerenciada e reconstruir evidências sem inventar baseline; nunca tratar ausência de banco como autorização para sobrescrever.
-- **Resultado remoto ambíguo:** definir evidências de confirmação por operação e comportamento quando o provedor não permite concluir; manter resultado desconhecido sem repetição cega.
-- **Tentativas e lotes:** definir limites e política de retry. Propagação de exclusões, limiares de impacto e resolução em lote exigem especificação e revisão próprias.
+- **Resultado remoto ambíguo:** uploads de criação seguem SYNC-013 abaixo; definir evidências para futuras operações de atualização/exclusão e manter resultado desconhecido sem repetição cega.
+- **Tentativas e lotes:** uploads de criação têm orçamento persistente SYNC-013; definir política para os demais executores. Propagação de exclusões, limiares de impacto e resolução em lote exigem especificação e revisão próprias.
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
 - **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
 
@@ -918,3 +918,37 @@ A matriz de testes automatizados está em `download/preservation_tests.rs`;
 os resultados executados ficam na PR. Simulação não comprova Google Drive real
 nem queda de energia. O formato v2 é rejeitado sem apagar dados; a recuperação
 explícita de estado existente permite reconstrução conservadora.
+
+
+### SYNC-013 — resultado remoto incerto e tentativas de criação (N11/E04/E08)
+
+**Requisito:** perda de resposta não prova ausência remota. Persistir intenção e
+ID antes do efeito; consultar esse mesmo ID e verificar pai, nome, tipo e hashes
+antes de confirmar ou retomar. Nunca gerar ID substituto nem repetir cegamente
+um bloco. Evidência insuficiente ou divergente preserva arquivo e snapshot,
+sem avançar a base instalada.
+
+**Política implementada:** [contrato de criação](../engine/src/upload/create-only.md#sync-013--uncertain-outcomes-and-bounded-replay).
+Cada intenção tem cinco passes de execução no máximo, com contador e prazo
+persistidos antes das consultas/efeitos. A espera exponencial de 60–960 segundos
+mais jitter de 0–30 segundos sobrevive à reabertura e não bloqueia o worker com
+sleep. Um passe transfere vários blocos; falha/crash consome o passe reservado.
+Após esgotamento, somente consultas espaçadas podem confirmar efeito remoto já
+concluído. Não há reset automático, mesmo após revogação/retomada do consentimento.
+Formato interno de uploads 2 rejeita e preserva formatos anteriores sem migração.
+
+**Aceite verificável:** timeout após criação de pasta e publicação de arquivo
+não duplica IDs; bloco interrompido consulta offset antes de retomar; rede
+indisponível não confirma nem descarta dados; rate limit não dispara chamadas
+do adaptador de upload durante espera; o sexto passe não cria sessão nem envia
+bytes; reserva sobrevive à reabertura; worker concorrente não altera orçamento;
+resposta tardia da quinta tentativa pode ser confirmada sem sexto efeito.
+Os oráculos ficam em [upload/tests.rs](../engine/src/upload/tests.rs), com relógio
+controlado, provedor simulado, filesystem e SQLite reais isolados. Resultados de
+execução pertencem ao PR, sem equivalência com teste Google real ou queda de energia.
+
+**Limites:** não é um escalonador global de chamadas da API; não interpreta
+Retry-After. Inventário, OAuth e verificação geral de raiz mantêm os próprios
+contratos. Não autoriza atualização/exclusão remota nem garante unicidade de
+nome frente a clientes independentes. Validação Google/Flatpak empacotado é
+separada e permanece no acompanhamento de upload [#43](https://github.com/rafatosta/drivesync/issues/43).
