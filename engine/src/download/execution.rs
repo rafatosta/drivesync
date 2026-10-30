@@ -222,6 +222,9 @@ pub(crate) fn run_with_root<'a>(
                     .map(|()| report.linked += 1)
                 })
             }
+            (InventoryKind::Binary, Some(_), PlanAction::Classified { .. }) => {
+                Err(EngineError::DownloadConflict)
+            }
             (InventoryKind::Binary, Some(path), PlanAction::Equivalent) => session
                 .equivalent(item, path, decision, &by_id, source)
                 .map(|()| report.unchanged += 1),

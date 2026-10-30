@@ -114,6 +114,17 @@ pub(crate) fn refine_content(comparison: ContentComparison) -> PlanAction {
 /// checks remain in the planner; operation failure never becomes content precedence.
 pub(crate) fn plan_diagnosis(action: &PlanAction, local: &LocalObservation) -> ChangeKind {
     match action {
+        PlanAction::Classified { decision, .. } => match decision.kind {
+            DifferenceKind::Conciliable | DifferenceKind::Equivalent => ChangeKind::Conciliable,
+            DifferenceKind::LocalChanged => ChangeKind::LocalChanged,
+            DifferenceKind::RemoteChanged => ChangeKind::RemoteChanged,
+            DifferenceKind::Conflict if decision.reason == DifferenceReason::DivergentLocation => {
+                ChangeKind::LocationConflict
+            }
+            DifferenceKind::Conflict => ChangeKind::ConcurrentChanges,
+            DifferenceKind::Incompatible => ChangeKind::Unsupported,
+            _ => ChangeKind::Unknown,
+        },
         PlanAction::Equivalent => ChangeKind::Equivalent,
         PlanAction::NoOp => ChangeKind::Unchanged,
         PlanAction::Download | PlanAction::CreateDirectory | PlanAction::CreateLink => {

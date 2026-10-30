@@ -920,3 +920,6 @@ mod reconciliation_tests;
 
 #[path = "sync003_acceptance.rs"]
 mod sync003_acceptance;
+
+#[path = "sync006_acceptance.rs"]
+mod sync006_acceptance;

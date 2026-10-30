@@ -62,6 +62,7 @@ pub(crate) fn prepare(
     let mut plan = crate::planner::plan_with_bases(inventory, root, bases, |_, path, _| {
         Ok(local.observe(path))
     })?;
+    super::locations::refine_locations(&mut plan, inventory, bases, local, source, cancel)?;
     refine(&mut plan, inventory, source, cancel)?;
     Ok(plan)
 }

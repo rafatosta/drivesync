@@ -148,7 +148,10 @@ fn validate(scope: &CheckpointScope<'_>, record: &Reconciliation) -> Result<(), 
     }
     crate::changes::validate(scope.account, scope.remote, &record.remote)?;
     for (item, entry) in record.remote.entries.iter().zip(&plan.entries) {
-        if item.id != entry.remote_id || entry.relative_path.as_ref().is_some_and(|p| !safe(p)) {
+        if item.id != entry.remote_id
+            || entry.relative_path.as_ref().is_some_and(|p| !safe(p))
+            || matches!(&entry.action, crate::PlanAction::Classified { local_path, .. } if !safe(local_path))
+        {
             return Err(EngineError::InvalidPlan);
         }
     }

@@ -19,11 +19,7 @@ pub enum LocalObservation {
     /// The inode must be nonzero; this is not a permanent object identifier.
     Verified(String),
 }
-/// A base comes only from a durable installed journal entry, never an inventory.
-///
-/// `local_fingerprint` binds the installed SHA-256 to its local device/inode.
-/// The planner decodes these components independently. Device/inode equality is
-/// observable evidence, not a permanent identity guarantee against inode reuse.
+/// Location captured by a durable installed journal entry, never inferred by name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfirmedLocation {
     pub relative_path: PathBuf,
@@ -62,6 +58,12 @@ pub enum PlanAction {
     /// Verified equal bytes with B and continuous identity; execution is read-only
     /// and independently revalidates both versions without advancing B.
     Equivalent,
+    /// Observational classification awaiting a supported location-aware executor.
+    /// This variant never authorizes a transfer or a baseline update.
+    Classified {
+        decision: crate::DifferenceDecision,
+        local_path: PathBuf,
+    },
     CreateDirectory,
     Blocked(ConflictReason),
     DeferredUnknown,

@@ -18,6 +18,8 @@ pub enum ChangeKind {
     LocalChanged,
     ConcurrentChanges,
     Equivalent,
+    Conciliable,
+    LocationConflict,
     LocalIdentityChanged,
     ConcurrentIdentityChanges,
     ExistingLocalData,
@@ -38,6 +40,8 @@ impl ChangeKind {
             Self::RemoteChanged => "A Google Drive version is available. Local installation still requires verification.",
             Self::LocalChanged => "Local changes were preserved. Updating an existing Drive file is not available yet.",
             Self::ConcurrentChanges => "The local and Drive versions differ. Decide which content to keep; no version was selected.",
+            Self::Conciliable => "The name, location or content changes can be reconciled. Applying this combination is not available yet; the available versions were left intact.",
+            Self::LocationConflict => "This file has incompatible name or location changes. Review the destinations; no version was selected.",
             Self::Equivalent => "The same content was verified on this computer and Google Drive. No copy or replacement was needed.",
             Self::LocalIdentityChanged | Self::ConcurrentIdentityChanges => "This local file was replaced. Its contents were preserved; matching names or content do not authorize adoption.",
             Self::ExistingLocalData => "This file already exists locally and has no confirmed synchronization history. Its contents were preserved.",
@@ -56,6 +60,8 @@ impl ChangeKind {
         matches!(
             self,
             Self::LocalChanged
+                | Self::Conciliable
+                | Self::LocationConflict
                 | Self::ConcurrentChanges
                 | Self::LocalMissingRemoteChanged
                 | Self::LocalIdentityChanged
@@ -96,6 +102,9 @@ pub(crate) fn classify(
     for entry in &plan.entries {
         if let Some(path) = &entry.relative_path {
             represented.insert(path.clone());
+        }
+        if let crate::PlanAction::Classified { local_path, .. } = &entry.action {
+            represented.insert(local_path.clone());
         }
         let evidence = entry
             .relative_path
