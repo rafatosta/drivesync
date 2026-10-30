@@ -70,8 +70,9 @@ vincula perda/incompletude de B e recuperação aos testes de download com
 filesystem/SQLite reais e provedor falso. Reabrir conexões não demonstra queda
 real do processo, energia interrompida ou durabilidade em todos os filesystems.
 
-Reconstrução geral após perda de estado, quarentena automatizada, critérios de
-saída de modo degradado e recuperação bidirecional permanecem decisões futuras.
+A reconstrução local explícita é definida em STATE-003 abaixo. Salvamento parcial
+de linhas, limpeza automática de evidências e recuperação bidirecional geral
+permanecem fora desse protocolo.
 Não reconstruir B por inventário enquanto essas políticas não forem definidas.
 WAL é referência técnica alternativa, não o modo deste journal; não há migradores
 entre formatos internos. A bateria A01–A12 com Google Drive real permanece pendente.
@@ -80,3 +81,64 @@ Referências de projeto: [SQLite atomic commit](https://www.sqlite.org/atomiccom
 [SQLite pragmas](https://www.sqlite.org/pragma.html) e
 [SQLite WAL](https://www.sqlite.org/wal.html). Essas referências não demonstram
 validação de quedas de energia ou integração Google.
+
+## STATE-003 — reconstrução explícita (SYNC-005)
+
+Entrada: associação verificada, bloqueios lógico e físico retidos pelo chamador,
+confirmação explícita do usuário e cancelamento. Saída: quantidade de bancos
+substituídos e indicação de uploads bloqueados; não é confirmação de sincronização.
+Implementação: [recovery.rs](recovery.rs), exposta por `recover_state` na fachada.
+
+1. Verificar marcador e ler `.drivesync/recovery.json`, se existente. O seletor
+   aceita somente formato vigente e nomes de bancos conhecidos sem componentes de
+   caminho. Seletor inválido bloqueia leituras normais. Na recuperação explícita,
+   preservar seus bytes e tratar todas as gerações como desconhecidas, criando
+   substitutos vazios sem reutilizar bases antigas. Symlink, objeto não regular
+   ou arquivo ilegível bloqueiam recuperação; nunca escolher banco por enumeração.
+2. Para cada banco, copiar banco e sidecars presentes (`-journal`, `-wal`, `-shm`)
+   para diretório privado de inspeção. Validar SQLite e registros serializados do
+   escopo nas cópias. SQLite pode consumir sidecars durante abertura; por isso a
+   inspeção nunca abre os originais. Cópias de inspeção são descartáveis, sem valor
+   de baseline; sob interrupção podem permanecer e não são selecionadas.
+3. Manter o caminho de cada banco válido. Para banco ausente, inválido ou de
+   formato incompatível, criar um banco vigente vazio com nome exclusivo
+   `recovered-<id>-<banco>`. Não copiar linhas de um banco parcialmente inválido
+   para afirmar integridade. O original e todos os seus sidecars permanecem no
+   lugar, sem política automática de expiração ou remoção.
+4. Sincronizar candidatos e diretório; escrever seletor temporário privado,
+   sincronizá-lo, criar e sincronizar `recovery-required` e publicar por rename
+   atômico, seguido de fsync do diretório. O marcador impede voltar aos originais
+   obsoletos se o seletor desaparecer; se houver interrupção antes do primeiro
+   rename, a reconstrução explícita reinicia com todo o estado desconhecido.
+   Antes do marcador, cancelamento/falha deixa a seleção anterior. Entre o marcador
+   e o primeiro rename, leituras ficam bloqueadas até reconstrução explícita. Após rename,
+   falha de fsync ainda é erro: repetir valida a seleção visível. Candidatos não
+   publicados permanecem preservados e nunca são descobertos por enumeração.
+5. Uma seleção publicada cujo banco desapareceu causa erro nas leituras normais;
+   somente nova recuperação explícita pode substituí-lo. Repetição sem nova
+   corrupção não publica outra seleção. Nenhuma conexão de escrita cooperante
+   pode atravessar a troca: ciclos, recuperação, configuração de associação e
+   alteração de consentimento de upload usam o lock de associação/raiz.
+6. Perda de journal de instalações deixa B desconhecida. Inventários e planos
+   íntegros continuam observações, nunca autorização para adotar preexistentes.
+   A próxima sincronização refaz observações remotas quando necessário e aplica
+   as regras conservadoras existentes; offline a reconstrução local pode concluir,
+   mas não declara acesso remoto nem convergência.
+7. Perda/invalidade do banco de uploads bloqueia uploads duravelmente, inclusive
+   nova tentativa de habilitá-los. Não repetir creates de resultado incerto. O
+   download pode continuar, com pendência explícita no relatório combinado.
+   A resolução dos intents remotos perdidos não é inferida nem automatizada; exige
+   reconciliação adicional das evidências preservadas. O botão de recuperação não
+   remove esse bloqueio. Não há migração de formatos internos.
+
+O cursor confirma aquisição durável de inventário/notices reaproveitáveis, não
+instalação. Pode avançar antes da transferência somente porque o inventário
+persistido continua sendo reprocessado mesmo sem novo evento. B só avança depois
+de identidade, integridade, efeito e journal confirmados. Erro de checkpoint não
+pode ser tratado como inventário vazio; reconstruí-lo exige coleta completa.
+
+Base técnica: [atomic commit](https://www.sqlite.org/atomiccommit.html) e
+[risco de alterar bancos/journals em uso](https://www.sqlite.org/howtocorrupt.html),
+consultados em 2026-10-30. A publicação por seletor e a preservação conservadora
+são políticas do DriveSync, não uma transação distribuída SQLite/filesystem/rede.
+Os locks são advisory; ferramentas externas que os ignoram não são coordenadas.

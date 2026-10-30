@@ -43,3 +43,5 @@ pub use download::{
     DownloadAttention, DownloadIssue, DownloadItemProgress, DownloadProgress, DownloadReport,
     DownloadStage, PreparationProgress, PreviousPath,
 };
+
+pub use state::recovery::StateRecovery;

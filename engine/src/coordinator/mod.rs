@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum RootSuspension {
+    StateUnavailable,
     LocalUnavailable,
     IdentityUnverified,
     RemoteUnavailable,
@@ -21,6 +22,7 @@ pub enum RootSuspension {
 impl std::fmt::Display for RootSuspension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::StateUnavailable => "Synchronization suspended: local state could not be validated. Choose Recover synchronization state to rebuild observations while preserving existing files and database evidence.",
             Self::LocalUnavailable => "Synchronization suspended: the local folder is unavailable. Reconnect the volume or restore folder access, then try again. Existing data was preserved.",
             Self::IdentityUnverified => "Synchronization suspended: the selected folder's identity could not be verified. Restore the original folder and its DriveSync metadata. Existing data was preserved.",
             Self::RemoteUnavailable => "Synchronization suspended: the Drive folder is unavailable or cannot be verified. It may have been moved, removed or become inaccessible. Restore access and try again; local files were preserved.",

@@ -1,4 +1,5 @@
 //! SQLite observations, plans and durable download-operation evidence.
+pub(crate) mod recovery;
 mod roots;
 pub(crate) use roots::Roots;
 mod checkpoints;

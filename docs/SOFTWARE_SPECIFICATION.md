@@ -371,6 +371,37 @@ O [catálogo de 56 cenários e políticas](../engine/src/conflicts/validation-ch
 
 Os tipos concretos de erro, limites de tentativas e mecanismos de persistência serão definidos nos contratos de implementação. Nenhum nome de estado aqui obriga um formato de banco ou uma API interna.
 
+#### Recuperação explícita do estado — SYNC-005
+
+A ação **Recover synchronization state…** exige confirmação e funciona sem rede.
+Ela verifica a associação sob os bloqueios de raiz, conserva bancos válidos e
+preserva bancos inválidos e sidecars nos caminhos originais. Substitutos vazios
+são selecionados somente após validação e publicação durável de um seletor.
+Formato incompatível não é migrado. O algoritmo e os limites estão em
+[STATE-003](../engine/src/state/algorithms.md#state-003--reconstrução-explícita-sync-005).
+
+Reconstrução não confirma instalações nem adota arquivos preexistentes. Sem B
+confiável, esses arquivos continuam sujeitos à classificação conservadora. A
+sincronização deve ser iniciada novamente para atualizar as observações remotas;
+o término da reconstrução local não significa convergência. Estado inválido
+suspende o escopo e registra o motivo fora da raiz quando esse registro está
+íntegro e disponível.
+
+Se evidências de upload forem perdidas, preservar e bloquear uploads, inclusive
+nova habilitação, até reconciliação adicional; não repetir creates de resultado
+incerto. Essa pendência aparece no relatório combinado. Seletor inválido ou
+perdido bloqueia leituras normais; recuperação explícita preserva suas evidências
+e trata todas as gerações como desconhecidas, sem retornar a bases antigas.
+Objetos inseguros ou acesso insuficiente exigem restauração de acesso/metadados;
+não há fallback para outro banco nem limpeza automática.
+
+Critérios específicos: preservar observações de bancos íntegros; não substituir
+originais; reabrir estado selecionado sem criar B artificial; repetir recuperação
+sem nova seleção quando nada mudou; recusar worker concorrente; retomar trabalho
+observado sem exigir novo evento; confirmar B somente após efeito íntegro durável.
+Testes de SQLite/filesystem e provedor simulado não comprovam queda física de
+energia, integração Google nem funcionamento da interface instalada.
+
 ### 4.11 Documentos nativos do Google Workspace
 
 ### 4.12 Estado, histórico e notificações
@@ -655,7 +686,7 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 | --- | --- | --- |
 | Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | [SYNC-003](../engine/src/changes/reconciliation.rs) integra inventário local completo, diagnóstico de indisponibilidade remota e equivalência forte para mudanças concorrentes do mesmo objeto com B. Exclusões, atualização remota e cobertura integral de RF-CON-01–02 continuam sem aceite completo. |
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
-| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução após perda de estado e cobertura completa de RF-REC-02–03 não demonstradas. |
+| Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução local explícita disponível via STATE-003; recuperação de intents remotos perdidos e aceite real continuam limitados conforme o contrato. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
 | Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Diagnósticos restritos e pendências de SYNC-003 existem em `changes` e no banco de reconciliação; resolução assistida e a matriz geral de conflitos permanecem planejadas. |
 | Coordenação | [coordinator](../engine/src/coordinator/mod.rs) verifica identidade/disponibilidade da raiz e classifica suspensões; a fachada retém bloqueio por ciclo e `state::Roots` persiste vínculo e motivo fora do volume. | A coordenação geral continua na fachada; validação real de desmontagem, permissões Google, portal e reinício do aplicativo permanece pendente. |

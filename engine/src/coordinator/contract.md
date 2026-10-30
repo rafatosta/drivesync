@@ -62,3 +62,13 @@ Uma falha de transporte devolvida no relatório de transferência é promovida a
 suspensão antes de liberar o ciclo ou iniciar upload após download. Não prova
 indisponibilidade definitiva nem exclusão de um item. Suspensão tipada durante
 prova de equivalência aborta a preparação, em vez de virar apenas item desconhecido.
+
+## Recuperação de estado — SYNC-005
+
+`StateStorage` suspende a associação com `StateUnavailable` no registro externo,
+sem transformar erro em conjunto vazio. A ação explícita `recover_state` usa os
+mesmos locks de associação e raiz dos ciclos; ambos são retidos até a publicação
+do seletor e revalidação final. Configurar consentimento de upload também usa
+esses locks. Falha no registro externo bloqueia o trabalho, sem reinicializá-lo.
+O [protocolo STATE-003](../state/algorithms.md#state-003--reconstrução-explícita-sync-005)
+define o que pode voltar a funcionar e quais incertezas permanecem pendentes.
