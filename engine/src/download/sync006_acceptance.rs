@@ -11,8 +11,8 @@ fn prepare_record(f: &Fixture, inv: &RemoteInventory, source: &mut Fake) -> Reco
         .unwrap();
     let root = Root::open(&f.root).unwrap();
     let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
-    let plan = crate::changes::prepare(inv, &f.root, &bases, &local, source, &Cancellation::new())
-        .unwrap();
+    let plan =
+        crate::changes::prepare(inv, &root, &bases, &local, source, &Cancellation::new()).unwrap();
     let history = journal
         .operations("client", &plan)
         .unwrap()
@@ -343,4 +343,60 @@ fn conciliable_item_does_not_block_independent_downloads() {
     assert_eq!(fs::read(f.root.join("independent.txt")).unwrap(), b"abc");
     assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
     assert!(!f.root.join("renamed.txt").exists());
+}
+
+#[test]
+fn c01_c06_divergence_offline_and_recovery_persist_without_selecting_a_version() {
+    for equal in [false, true] {
+        let f = Fixture::new();
+        let mut inv = inventory();
+        baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+        let base = baseline_tests::base(&f, &inv).unwrap();
+        fs::write(f.root.join("file.txt"), b"local edit").unwrap();
+        let bytes: &[u8] = if equal { b"local edit" } else { b"remote edit" };
+        let mut remote = remote_bytes(&mut inv, bytes);
+        let scope = CheckpointScope {
+            client: "client",
+            account: &inv.account_id,
+            remote: "root",
+            local: &f.root,
+        };
+        let path = f.db().with_file_name("reconciliation.sqlite3");
+        for offline in [true, false, true, false, false] {
+            remote.fail_stream = offline;
+            let record = prepare_record(&f, &inv, &mut remote);
+            let expected = if offline {
+                ChangeKind::Unknown
+            } else if equal {
+                ChangeKind::Equivalent
+            } else {
+                ChangeKind::ConcurrentChanges
+            };
+            assert_eq!(record.entries[0].kind, expected);
+            let mut store = Reconciliations::open(&path).unwrap();
+            let previous = store.load(&scope).unwrap();
+            store
+                .save(
+                    &scope,
+                    previous.as_ref().map(|(r, _)| r.as_str()),
+                    &record,
+                    &Cancellation::new(),
+                )
+                .unwrap();
+            drop(store);
+            let reopened = Reconciliations::open(&path)
+                .unwrap()
+                .load(&scope)
+                .unwrap()
+                .unwrap()
+                .1;
+            assert_eq!(reopened, record);
+            let report = execute(&f, &inv, &reopened.plan, &mut remote);
+            assert_eq!(report.updated + report.downloaded, 0);
+            assert_eq!(baseline_tests::base(&f, &inv), Some(base.clone()));
+            assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
+            assert_eq!(remote.content["file"], bytes);
+        }
+        assert_eq!(fs::read_dir(&f.root).unwrap().count(), 1);
+    }
 }

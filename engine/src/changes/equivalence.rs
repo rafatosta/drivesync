@@ -69,16 +69,43 @@ pub(crate) fn refine(
 /// This does not persist observations, execute a transfer or confirm a base.
 pub(crate) fn prepare(
     inventory: &RemoteInventory,
-    root: &std::path::Path,
+    root: &crate::download::filesystem::Root,
     bases: &HashMap<String, ConfirmedBase>,
     local: &crate::local::Inventory,
     source: &mut impl Source,
     cancel: &Cancellation,
 ) -> Result<DownloadPlan, EngineError> {
-    let mut plan = crate::planner::plan_with_bases(inventory, root, bases, |_, path, _| {
+    let mut plan = crate::planner::plan_with_bases(inventory, root.path(), bases, |_, path, _| {
         Ok(local.observe(path))
     })?;
     super::locations::refine_locations(&mut plan, inventory, bases, local, source, cancel)?;
     refine(&mut plan, inventory, bases, source, cancel)?;
+    // Network reads may outlive the scan. Never publish stale content evidence.
+    root.validate()?;
+    for entry in &mut plan.entries {
+        let path = match &entry.action {
+            PlanAction::Classified { local_path, .. } => Some(local_path),
+            PlanAction::Equivalent | PlanAction::Blocked(ConflictReason::ConcurrentChanges) => {
+                entry.relative_path.as_ref()
+            }
+            _ => None,
+        };
+        let Some(path) = path else { continue };
+        crate::local::check(cancel)?;
+        let valid = match local.entries.get(path) {
+            Some(crate::local::Evidence::Stable { fingerprint, stamp }) => {
+                crate::local::stamp(root, path).as_ref() == Ok(stamp)
+                    && crate::download::filesystem::fingerprint_root(root, path, cancel).as_ref()
+                        == Ok(&Some(fingerprint.clone()))
+                    && crate::local::stamp(root, path).as_ref() == Ok(stamp)
+            }
+            _ => false,
+        };
+        crate::local::check(cancel)?;
+        root.validate()?;
+        if !valid {
+            entry.action = PlanAction::DeferredUnknown;
+        }
+    }
     Ok(plan)
 }

@@ -57,7 +57,7 @@ fn observed_cycle(
     let bases = journal.confirmed_bases("client", &account, "root", &f.root)?;
     let plan = changes::prepare(
         &checkpoint.inventory,
-        &f.root,
+        &root,
         &bases,
         &local,
         source,

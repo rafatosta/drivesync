@@ -74,6 +74,11 @@ pub(crate) struct Root {
     path: std::path::PathBuf,
 }
 impl Root {
+    /// Returns the authorized path; descriptor validation still guards all I/O.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn open(path: &Path) -> Result<Self, EngineError> {
         let file = Self::open_path(path)?;
         fs::flock(&file, fs::FlockOperation::NonBlockingLockExclusive)
