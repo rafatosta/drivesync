@@ -234,3 +234,53 @@ sem migração ou reset automático de v1. Não há inferência de versão vence
 por data nem consulta de caminhos históricos na apresentação. A central usa
 `saved_conflicts` sem rede e não altera status ou histórico ao adiar/fechar.
 Os registros continuam sendo observações, não autorizações de resolução.
+
+
+## SYNC-016 — proteção de renomeações
+
+### Entrada, política e efeitos permitidos
+
+Usar a base instalada por ID remoto e o inventário completo da mesma conta/raiz.
+Localizar L somente com caminho antigo ausente e candidato único com
+hash/dispositivo/inode de B; a prova já existente de inode e bytes no caminho
+original continua necessária para edições sem relocação. Comparar separadamente
+nome, pai e conteúdo de L/R. Consultar R antes/depois da leitura e revalidar L
+após a rede. Nenhuma decisão de localização autoriza I/O de mutação ou avanço de B.
+
+Pseudocódigo determinístico:
+
+1. Rejeitar evidência ausente, substituída, ambígua ou versão regressiva.
+2. Se somente o caminho projetado mudou por um ancestral, suspender: a identidade
+   do pai local não é demonstrada apenas por aquele caminho.
+3. Para alteração verificável de localização, provar R/B e R/L, incluindo quando
+   somente R foi renomeado. Falha de prova produz desconhecido, nunca download.
+4. Nomes finais iguais convergem; nomes finais distintos exigem decisão (C07).
+   Nome/pai versus conteúdo independentes produzem candidato conciliável (C09).
+5. Um caminho local não representado cujo dispositivo/inode coincide com B fica
+   desconhecido, inclusive offline, com aliases ou conteúdo alterado. A coincidência
+   somente impede classificá-lo como novo; não autoriza adoção nem vínculo por ID.
+6. Persistir observações com o CAS SQLite existente, separado de instalações.
+   Falha/rollback/cancelamento mantém a observação anterior. Reabrir não autoriza
+   aplicar a decisão; repetir a coleta e a revalidação.
+
+### Oráculos e limite de implementação
+
+[sync016_acceptance.rs](../download/sync016_acceptance.rs) cobre C07 convergente
+ou divergente, C09 nos dois sentidos, offline/retomada, reabertura/repetição,
+corridas de conteúdo/identidade/revisão durante a prova, aliases, ancestral
+renomeado, rollback SQLite e cancelamento de persistência. São arquivos e SQLite
+reais temporários com remoto simulado. Os testes exigem nenhum download/cópia
+falsa, preservação de L/R e B inalterada; não comprovam aplicação de C09.
+
+A implementação da combinação permanece bloqueante para concluir SYNC-016:
+precisa de intenção durável por identidade, contrato de concorrência da escrita
+remota, rename local sem substituição e recuperação após cada efeito e antes da
+confirmação. O upload create-only existente não fornece esses efeitos.
+Não substituir essa pendência por uma cópia com novo nome/ID nem declarar o
+cenário validado por seus testes de classificação.
+
+Fundamentação consultada em 2026-10-30: comparação de réplicas com estado anterior
+([Unison](https://github.com/bcpierce00/unison)); atualização do mesmo ID via
+[files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
+A referência da API não constitui evidência de execução, CAS distribuído ou
+recuperação implementada. O limite conservador de execução é política DriveSync.

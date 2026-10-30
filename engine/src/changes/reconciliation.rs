@@ -242,12 +242,28 @@ pub(crate) fn classify(
         );
     }
     let mut result: Vec<_> = result.into_values().collect();
+    // An inode match alone cannot establish continuity after a rename/edit,
+    // but it must not turn managed work into a new upload candidate either.
+    let managed: HashSet<_> = bases
+        .values()
+        .filter_map(|base| {
+            crate::planner::fingerprint_parts(&base.local_fingerprint).map(|(_, d, i)| (d, i))
+        })
+        .collect();
     for (path, evidence) in &local.entries {
         if !represented.contains(path) {
             result.push(ReconciliationEntry {
                 relative_path: Some(path.clone()),
                 remote_id: None,
-                kind: evidence_kind(Some(evidence)).unwrap_or(ChangeKind::LocalNew),
+                kind: evidence_kind(Some(evidence)).unwrap_or_else(|| {
+                    if matches!(evidence, Evidence::Stable { stamp, .. }
+                        if managed.contains(&(stamp.device, stamp.inode)))
+                    {
+                        ChangeKind::Unknown
+                    } else {
+                        ChangeKind::LocalNew
+                    }
+                }),
             });
         }
     }

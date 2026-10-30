@@ -429,8 +429,9 @@ concorrente de conteúdo quando os bytes de R continuam iguais a B.
 C01/C03/C04 representam conflitos quando a divergência/exclusão for comprovada;
 sem prova de exclusão, ausência e indisponibilidade permanecem distintas. Ausência
 local com revisão remota nova no mesmo caminho instalado exige revisão antes de
-recriar L. Mudança remota para caminho novo preserva o comportamento download-only
-existente e os dados do caminho anterior.
+recriar L. Mudança remota para caminho novo com B e identidade local verificáveis exige
+reconciliação de localização: não baixar uma segunda cópia nem avançar B.
+Sem evidência suficiente, suspender a alteração dependente.
 C09/C12 devem receber diagnóstico conciliável quando identidade e atributos
 independentes forem verificáveis; C21 não pode gerar conflito por timestamp ou
 conteúdo comprovadamente igual. P01 mantém operação automática apenas quando
@@ -453,6 +454,35 @@ Oráculos: [classificação SYNC-006](../engine/src/conflicts/algorithms.md#clas
 O aceite local usa provedor remoto simulado, filesystem e SQLite temporários reais;
 resultados efetivos pertencem ao commit/PR. Não implica homologação com Drive real
 ou aplicação completa dos cenários de preservação/resolução.
+
+#### SYNC-016 — renomeações simultâneas e renomeação com edição
+
+**Requisito:** comparar nome, pai e conteúdo separadamente em relação a B.
+C07 com nomes divergentes exige decisão; nomes convergentes não constituem
+conflito. C09 com renomeação de um lado e edição do outro deve combinar o nome
+e o conteúdo alterados quando identidade, destino e versões forem demonstrados.
+A combinação não pode criar um novo ID remoto nem uma segunda cópia local.
+
+**Proteção implementada:** o preparo classifica renomeações verificáveis sem
+executá-las. Renomeação somente remota também fica pendente, evitando baixar
+uma cópia no novo caminho e tratar a original como novo arquivo. Mudança de um
+ancestral sem histórico de identidade suficiente suspende os descendentes.
+Uma observação local com dispositivo/inode de B, mas sem prova completa de
+continuidade, é desconhecida, nunca arquivo novo; isso não estabelece identidade.
+Offline, aliases, edição simultânea à relocação e substituição não autorizam
+inferência por inode ou hash isolados. A retomada refaz a prova. Repetição e
+reabertura das observações preservam bytes, nomes disponíveis e B.
+
+**Aplicação pendente, bloqueante para o aceite completo de C09:** implementar
+intenção durável de combinação, revalidação de ambos os lados e do destino,
+atualização do mesmo item remoto com garantia de concorrência demonstrada,
+renomeação local sem substituição e recuperação de cada efeito interrompido.
+Somente após conferir os efeitos e persistir a confirmação pode B avançar.
+Conflito de nomes continua aguardando decisão revalidada do usuário.
+
+Oráculos: [contrato de renomeações](../engine/src/conflicts/contract.md#sync-016--proteção-de-renomeações).
+Testes de diagnóstico/preservação não comprovam aplicação da combinação,
+integração com Google Drive real, UI ou queda real de energia/processo.
 
 ### SYNC-009 — nomes, caminhos e tipos (C02/C13/C14/C15/C18/C20)
 

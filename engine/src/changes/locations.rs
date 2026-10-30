@@ -50,8 +50,8 @@ fn local_parent(old: &Path, current: &Path, paths: &HashMap<PathBuf, String>, ro
         None => A::Unknown,
     }
 }
-/// Refines only observed local changes involving location. Remote-only moves keep
-/// their existing download-only behavior. Every classified result remains pending:
+/// Refines every verified location change, including remote-only renames.
+/// Every classified result remains pending until a location-aware executor exists:
 /// no rename, remote update, duplicate download or baseline advancement is enabled.
 pub(crate) fn refine_locations(
     plan: &mut DownloadPlan,
@@ -118,7 +118,13 @@ pub(crate) fn refine_locations(
         let local_location_changed = path != location.relative_path;
         let remote_location_changed =
             item.name != location.remote_name || item.parent_id != location.remote_parent;
-        if !local_location_changed && !(remote_location_changed && local_content == C::Different) {
+        if !local_location_changed && !remote_location_changed {
+            // An ancestor may have moved while this item's name, parent ID and
+            // revision stayed unchanged. Without folder identity history this
+            // is not permission to download another copy at the projected path.
+            if entry.relative_path.as_ref() != Some(&location.relative_path) {
+                entry.action = PlanAction::DeferredUnknown;
+            }
             continue;
         }
         // Destination collisions remain structural blockers, never reconcilable.
