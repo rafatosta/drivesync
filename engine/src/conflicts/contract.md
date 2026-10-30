@@ -39,7 +39,19 @@ assistida não são habilitados por este classificador. Ausência local sem prov
 exclusão mantém a reposição conservadora existente, exceto quando R também mudou:
 esse caso requer preservação/revisão, sem recriar silenciosamente.
 
-Coleta e prova remota ficam em changes; a regra da prova fica em conflicts.
+Coleta e prova remota ficam em changes; a classificação da prova fica em conflicts.
+Revisão remota nova é evidência de mudança potencial: a prova compara bytes com B
+além de comparar L/R. Se os bytes de R continuam iguais a B, uma edição de L é
+mudança apenas local, mesmo com revisão remota maior.
+O journal fornece também a localização instalada de B. A coleta pode reconhecer
+um caminho local novo somente se o antigo estiver ausente e existir um único
+candidato com hash/dispositivo/inode de B. Não é identidade permanente contra
+reutilização de inode com bytes iguais. Relocação com conteúdo local também
+alterado e pais locais sem identidade remota verificável permanecem ambíguos.
+O plano `Classified` guarda decisão e caminho local associado e não é executável.
+A reconciliação evita apresentar esse caminho também como arquivo novo. O upload
+create-only não cria outro item para uma identidade gerenciada observada em
+caminho novo. Não é implementação da aplicação bidirecional de rename/move.
 A apresentação deriva do resultado central ou dos bloqueios estruturais do plano.
 Classificação não escreve arquivos, não acessa rede/banco e nunca avança B.
 Execução revalida escopo, identidade, bytes e revisão. Observações/pendências usam
@@ -49,7 +61,7 @@ Repetir entrada produz resultado idêntico; falhas/reinício exigem nova observa
 ## Fundamentação e limites
 
 Técnica: comparação de três vias sobre estado confirmado. Política DriveSync:
-preservar versões e bloquear exclusão/atualização não autorizizada, sem escolher
+preservar versões e bloquear exclusão/atualização não autorizada, sem escolher
 por timestamp. Referências primárias consultadas em 2026-10-30:
 [Files](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
 e [Changes](https://developers.google.com/workspace/drive/api/reference/rest/v3/changes).

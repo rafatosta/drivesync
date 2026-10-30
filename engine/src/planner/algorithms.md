@@ -122,7 +122,7 @@ continuidade contra reutilização acompanhada de bytes iguais ou rollback conju
 ## SYNC-003 — equivalência e observações locais completas
 
 `changes::prepare` constrói o plano com o inventário local completo e refina
-somente `ConcurrentChanges`, após a classificação de identidade de `decide`.
+candidatas `ConcurrentChanges`, após a classificação de identidade de `decide`.
 Para o mesmo objeto com B, bytes remotos são lidos para um sink, limitados ao
 tamanho esperado, com MD5 do provedor e SHA-256 calculados. Metadados exatos são
 verificados antes/depois; SHA-256 igual ao local permite `Equivalent`.
@@ -139,3 +139,17 @@ maior com L intacto mantém a atualização revalidada do executor existente.
 O relatório carrega classificações anteriores à execução; não representam
 confirmação de que as operações propostas terminaram. Ausência remota e caminhos
 históricos são indisponibilidade observada, sem propagação de exclusão.
+
+## SYNC-006 — decisão central e localização
+
+`decide` delega ao adaptador de [conflicts](../conflicts/contract.md). A prova de
+conteúdo também compara R com B, para não confundir revisão de metadados com
+edição remota. `LocalMissingRemoteChanged` impede recriar silenciosamente L ausente
+no caminho instalado quando R avançou. Um novo caminho remoto comprovado pela
+localização instalada é tratado como relocação observada, preservando a cópia antiga.
+O executor verifica novamente B quando L desaparece depois do planejamento.
+
+A coleta pode emitir `Classified`, com decisão tipada e caminho local associado,
+para combinações de localização/conteúdo. O executor recusa esse candidato sem
+transferência ou avanço de B; o diagnóstico diferencia conciliação pendente de
+conflito real. Não se habilitam renomeações, movimentos ou atualização remota.

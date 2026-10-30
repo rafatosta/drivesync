@@ -10,8 +10,8 @@ Saída: plano e classificações ordenadas por caminho/ID. Classificar não inst
 publica, exclui nem confirma B. Leituras remotas para comprovar equivalência são
 permitidas e consomem banda; não são operações de instalação.
 
-O planner decide primeiro por identidade e B. Somente mudanças concorrentes do
-mesmo objeto com B podem ser refinadas por prova de conteúdo: metadados exatos
+O planner decide primeiro por identidade e B. Mudanças concorrentes e combinações
+de localização/conteúdo do mesmo objeto com B podem ser refinadas por prova: metadados exatos
 antes/depois, tamanho/MD5 do provedor, SHA-256 dos bytes recebidos em sink e
 comparação com SHA-256 local. Nenhum hash adota uma identidade diferente.
 Sem prova, o item fica desconhecido. Configuração alterada, cancelamento ou erro
@@ -51,3 +51,14 @@ portal/mount do aplicativo instalado nem atomicidade contra escritores externos.
 A quiescência não prova fechamento de arquivo. Tipos Workspace não recebem prova
 universal de equivalência por hash; atualização remota, exclusões e resolução
 assistida permanecem fora deste contrato.
+
+## Classificação central SYNC-006
+
+As regras são compartilhadas por `conflicts`; este módulo coleta as evidências.
+[locations.rs](locations.rs) compara a localização instalada de B com o inventário
+completo e os nomes/pais remotos. O candidato `Classified` registra decisão e
+caminho local, preserva B e não é executável. O diagnóstico conciliável não é
+conflito nem declaração de sincronização concluída. Caminho associado não aparece
+também como arquivo local novo. Limites de identidade, execução e oráculos estão
+no [contrato central](../conflicts/contract.md) e na
+[matriz SYNC-006](../conflicts/algorithms.md#classificação-sync-006).

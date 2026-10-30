@@ -357,6 +357,43 @@ Os requisitos RF-CON abaixo definem o comportamento pretendido. Não habilitam a
 
 O [catálogo de 56 cenários e políticas](../engine/src/conflicts/validation-checklist.md) fornece casos de cobertura, não 56 funcionalidades implementadas. A matriz B/L/R desse catálogo orienta a classificação; uma ação candidata, como enviar mudança local, continua bloqueada se o executor ou a política não a suportar.
 
+#### SYNC-006 — classificação centralizada
+
+O classificador puro de `conflicts` deve distinguir diagnóstico, encaminhamento
+candidato e motivo tipados. A entrada normaliza diferenças de L/R em relação a B,
+com identidade contínua, conteúdo, nome, pai e disponibilidade independentes.
+B inválida, observação desconhecida e indisponibilidade não autorizam efeitos.
+Não se deve apresentar uma revisão remota apenas de metadados como edição
+concorrente de conteúdo quando os bytes de R continuam iguais a B.
+
+C01/C03/C04 representam conflitos quando a divergência/exclusão for comprovada;
+sem prova de exclusão, ausência e indisponibilidade permanecem distintas. Ausência
+local com revisão remota nova no mesmo caminho instalado exige revisão antes de
+recriar L. Mudança remota para caminho novo preserva o comportamento download-only
+existente e os dados do caminho anterior.
+C09/C12 devem receber diagnóstico conciliável quando identidade e atributos
+independentes forem verificáveis; C21 não pode gerar conflito por timestamp ou
+conteúdo comprovadamente igual. P01 mantém operação automática apenas quando
+suportada e autorizada. Hash igual não adota identidade substituída nem cria B.
+
+Implementação: decisão central e adaptadores em `conflicts`, coleta/prova em
+`changes`, observações SQLite com B separada da instalação. O plano pode guardar
+uma classificação de localização não executável e o caminho local associado.
+A combinação é uma pendência, sem cópia falsa, aplicação automática ou confirmação
+de sincronização. A atualização de localização remota, exclusões, cópias gerais
+de conflito e resolução assistida permanecem fora desta entrega.
+
+O reconhecimento de relocação local exige caminho anterior comprovadamente
+ausente e candidato único com o hash/dispositivo/inode de B; não oferece identidade
+permanente contra reutilização de inode. Relocação e edição local simultâneas ou
+pais sem mapeamento verificável não recebem inferência otimista. Upload create-only
+não deve criar outro objeto para identidade gerenciada observada em caminho novo.
+
+Oráculos: [classificação SYNC-006](../engine/src/conflicts/algorithms.md#classificação-sync-006).
+O aceite local usa provedor remoto simulado, filesystem e SQLite temporários reais;
+resultados efetivos pertencem ao commit/PR. Não implica homologação com Drive real
+ou aplicação completa dos cenários de preservação/resolução.
+
 ### 4.10 Recuperação de falhas e reconciliação
 
 **Entradas comuns:** identidade da conta/raiz, configuração autorizada, registros duráveis de operações e pendências, evidências atuais dos destinos, staging e cópias preservadas. **Saídas:** efeito confirmado, retomada segura, replanejamento, espera por condição externa ou bloqueio explícito. Recuperação não pode assumir que timeout significa ausência de efeito.
@@ -688,7 +725,7 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
 | Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução local explícita disponível via STATE-003; recuperação de intents remotos perdidos e aceite real continuam limitados conforme o contrato. |
 | Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
-| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) permanece sem lógica de negócio implementada. | Diagnósticos restritos e pendências de SYNC-003 existem em `changes` e no banco de reconciliação; resolução assistida e a matriz geral de conflitos permanecem planejadas. |
+| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) centraliza a classificação pura e os adaptadores do planner, incluindo conciliação candidata de localização/conteúdo e distinção entre equivalência, conflito e falta de evidência. | Aplicação bidirecional de rename/move, preservação geral com cópias e resolução assistida permanecem planejadas; a classificação não confirma sua execução. |
 | Coordenação | [coordinator](../engine/src/coordinator/mod.rs) verifica identidade/disponibilidade da raiz e classifica suspensões; a fachada retém bloqueio por ciclo e `state::Roots` persiste vínculo e motivo fora do volume. | A coordenação geral continua na fachada; validação real de desmontagem, permissões Google, portal e reinício do aplicativo permanece pendente. |
 
 RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
