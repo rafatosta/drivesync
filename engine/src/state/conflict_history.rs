@@ -105,7 +105,7 @@ pub(crate) struct ConflictHistory(Store);
 impl ConflictHistory {
     /// Opens a new exact-format journal without modifying incompatible evidence.
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, APP_ID, 1, SCHEMA)?))
+        Ok(Self(Store::open_format(path, APP_ID, 2, SCHEMA)?))
     }
 
     /// Stores pending diagnoses atomically; identical evidence is idempotent.
@@ -163,6 +163,12 @@ impl ConflictHistory {
                     Some(Evidence::Stable { fingerprint, .. }) => Some(fingerprint.clone()),
                     _ => None,
                 });
+            let local_stamp = relative_path.as_deref().and_then(|path| {
+                match reconciliation.local.entries.get(path) {
+                    Some(Evidence::Stable { stamp, .. }) => Some(stamp),
+                    _ => None,
+                }
+            });
             let record = ConflictRecord {
                 conflict_id: conflict_id(remote_id.as_deref(), relative_path.as_deref())?,
                 remote_id,
@@ -172,6 +178,9 @@ impl ConflictHistory {
                 diagnosis: entry.kind.clone(),
                 status,
                 local_fingerprint,
+                local_size: local_stamp.map(|stamp| stamp.size),
+                local_modified_unix: local_stamp.map(|stamp| stamp.mtime.0),
+                remote_size: remote_item.and_then(|item| item.size),
                 remote_version,
                 outcomes: Vec::new(),
             };

@@ -137,6 +137,11 @@ pub struct ConflictRecord {
     pub diagnosis: crate::ChangeKind,
     pub status: ConflictStatus,
     pub local_fingerprint: Option<String>,
+    /// Size and modification time from the stable local observation, not a live stat.
+    pub local_size: Option<u64>,
+    pub local_modified_unix: Option<i64>,
+    /// Size supplied by the observed remote inventory; native documents may omit it.
+    pub remote_size: Option<u64>,
     pub remote_version: Option<u64>,
     pub outcomes: Vec<ConflictOutcome>,
 }

@@ -336,3 +336,53 @@ fn resolution_for_unknown_or_settled_conflict_is_rejected_without_events() {
         Err(crate::StaleResolutionReason::NotPending)
     );
 }
+
+/// Access problems remain pending offline, across reopen and repeated observation.
+#[test]
+fn c22_c25_access_problems_remain_pending_after_restart_and_replay() {
+    let fixture = Fixture::new();
+    let account = AccountId("account".into());
+    let local_file = fixture.0.join("item.txt");
+    fs::write(&local_file, b"local work").unwrap();
+    let account_scope = scope(&account, &fixture.0);
+    for kind in [
+        ChangeKind::Unknown,
+        ChangeKind::RemoteUnavailable,
+        ChangeKind::LocalChangedRemoteUnavailable,
+    ] {
+        let mut observation = reconciliation();
+        observation.plan.local_root = fixture.0.clone();
+        observation.entries[0].kind = kind.clone();
+        let mut history = ConflictHistory::open(&fixture.db()).unwrap();
+        history
+            .record_pending(&account_scope, &observation, &Cancellation::new())
+            .unwrap();
+        let count = history.events(&account_scope).unwrap().len();
+        drop(history);
+        let mut reopened = ConflictHistory::open(&fixture.db()).unwrap();
+        let records = reopened.records(&account_scope).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, crate::ConflictStatus::Pending);
+        assert_eq!(records[0].diagnosis, kind);
+        assert_eq!(records[0].local_size, Some(4));
+        assert_eq!(records[0].local_modified_unix, Some(1));
+        assert_eq!(records[0].remote_size, Some(4));
+        assert!(records[0].outcomes.is_empty());
+        reopened
+            .record_pending(&account_scope, &observation, &Cancellation::new())
+            .unwrap();
+        assert_eq!(reopened.events(&account_scope).unwrap().len(), count);
+        assert_eq!(fs::read(&local_file).unwrap(), b"local work");
+    }
+}
+
+#[test]
+fn old_conflict_format_is_rejected_without_resetting_evidence() {
+    let fixture = Fixture::new();
+    let history = ConflictHistory::open(&fixture.db()).unwrap();
+    history.0 .0.pragma_update(None, "user_version", 1).unwrap();
+    drop(history);
+    let bytes = fs::read(fixture.db()).unwrap();
+    assert!(ConflictHistory::open(&fixture.db()).is_err());
+    assert_eq!(fs::read(fixture.db()).unwrap(), bytes);
+}

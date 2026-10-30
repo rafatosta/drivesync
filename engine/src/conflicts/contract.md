@@ -224,3 +224,13 @@ Qualquer diferença, ausência ou evidência desconhecida aborta a proposta com 
 `Ok` não autoriza escrita; executores mantêm suas próprias pré-condições.
 Registro inexistente, de outro escopo ou já encerrado resulta em `NotPending`
 sem eventos. A aplicação de resolução assistida continua fora de escopo.
+
+## SYNC-015 — projeção de pendências na interface
+
+`ConflictRecord` inclui tamanho local, mtime local em segundos Unix e tamanho
+remoto opcionais, colhidos das observações estáveis/inventário; ausência é
+explicitamente desconhecida. O journal de conflitos passa ao formato exato v2,
+sem migração ou reset automático de v1. Não há inferência de versão vencedora
+por data nem consulta de caminhos históricos na apresentação. A central usa
+`saved_conflicts` sem rede e não altera status ou histórico ao adiar/fechar.
+Os registros continuam sendo observações, não autorizações de resolução.

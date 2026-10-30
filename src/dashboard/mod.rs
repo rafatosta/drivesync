@@ -3,6 +3,7 @@ mod account_details;
 mod bulk_review;
 mod description;
 mod folders;
+mod problems;
 mod state_recovery;
 mod synchronization;
 mod upload_mode;
