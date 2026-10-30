@@ -118,4 +118,4 @@ backoff, crash after reservation, concurrent worker exclusion, stale-state
 rejection, expired sessions and repeated confirmation. They combine a simulated
 provider/clock with real temporary filesystem and SQLite reopened between passes.
 They do not prove Google behavior, process/power-loss durability or packaged UI
-integration. Real-provider coverage remains tracked in issue #28.
+integration. Real-provider upload coverage is tracked in issue #43; issue #28 covers download-only.

@@ -951,4 +951,4 @@ execução pertencem ao PR, sem equivalência com teste Google real ou queda de 
 Retry-After. Inventário, OAuth e verificação geral de raiz mantêm os próprios
 contratos. Não autoriza atualização/exclusão remota nem garante unicidade de
 nome frente a clientes independentes. Validação Google/Flatpak empacotado é
-separada e permanece no acompanhamento [#28](https://github.com/rafatosta/drivesync/issues/28).
+separada e permanece no acompanhamento de upload [#43](https://github.com/rafatosta/drivesync/issues/43).
