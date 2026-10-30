@@ -85,6 +85,10 @@ pub(crate) fn refine_locations(
         let Some(base) = bases.get(&item.id) else {
             continue;
         };
+        if base.remote_version == 0 {
+            entry.action = PlanAction::DeferredUnknown;
+            continue;
+        }
         let Some(location) = &base.location else {
             continue;
         };
@@ -109,7 +113,7 @@ pub(crate) fn refine_locations(
         if !local_location_changed && !(remote_location_changed && local_content == C::Different) {
             continue;
         }
-        // Destination collisions remain structural blockers, never reconciliable.
+        // Destination collisions remain structural blockers, never reconcilable.
         if let LocalObservation::Verified(target) = &entry.expected_local {
             if crate::planner::fingerprint_parts(target).map(|(_, d, i)| (d, i))
                 != crate::planner::fingerprint_parts(&fingerprint).map(|(_, d, i)| (d, i))

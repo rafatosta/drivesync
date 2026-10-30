@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub(crate) fn refine(
     plan: &mut DownloadPlan,
     inventory: &RemoteInventory,
+    bases: &HashMap<String, ConfirmedBase>,
     source: &mut impl Source,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
@@ -25,6 +26,13 @@ pub(crate) fn refine(
             .split(':')
             .next()
             .ok_or(EngineError::InvalidPlan)?;
+        let Some((base_sha, _, _)) = bases
+            .get(&entry.remote_id)
+            .and_then(|base| crate::planner::fingerprint_parts(&base.local_fingerprint))
+        else {
+            entry.action = PlanAction::DeferredUnknown;
+            continue;
+        };
         match crate::download::content_fingerprint(item, source, cancel) {
             Ok(remote_sha) => {
                 let comparison = if remote_sha.eq_ignore_ascii_case(local_sha) {
@@ -32,7 +40,12 @@ pub(crate) fn refine(
                 } else {
                     crate::ContentComparison::Different
                 };
-                entry.action = crate::conflicts::refine_content(comparison);
+                let remote_change = if remote_sha.eq_ignore_ascii_case(base_sha) {
+                    crate::ContentComparison::Equal
+                } else {
+                    crate::ContentComparison::Different
+                };
+                entry.action = crate::conflicts::refine_content(remote_change, comparison);
             }
             Err(EngineError::Authentication(crate::AuthError::Cancelled)) => {
                 return Err(EngineError::Authentication(crate::AuthError::Cancelled))
@@ -43,7 +56,10 @@ pub(crate) fn refine(
                 | EngineError::RootSuspended(_)),
             ) => return Err(error),
             Err(_) => {
-                entry.action = crate::conflicts::refine_content(crate::ContentComparison::Unknown)
+                entry.action = crate::conflicts::refine_content(
+                    crate::ContentComparison::Unknown,
+                    crate::ContentComparison::Unknown,
+                )
             }
         }
     }
@@ -63,6 +79,6 @@ pub(crate) fn prepare(
         Ok(local.observe(path))
     })?;
     super::locations::refine_locations(&mut plan, inventory, bases, local, source, cancel)?;
-    refine(&mut plan, inventory, source, cancel)?;
+    refine(&mut plan, inventory, bases, source, cancel)?;
     Ok(plan)
 }

@@ -97,14 +97,18 @@ pub(crate) fn binary_decision(
 }
 /// Refines only same-object concurrent content candidates, after external proof.
 /// Unknown proof cannot remain a user-visible proven conflict or authorize a write.
-pub(crate) fn refine_content(comparison: ContentComparison) -> PlanAction {
+pub(crate) fn refine_content(
+    remote_change: ContentComparison,
+    comparison: ContentComparison,
+) -> PlanAction {
     let result = classify_differences(&DifferenceInput {
         base: BaseEvidence::Confirmed,
         local: present(ContentComparison::Different),
-        remote: present(ContentComparison::Different),
+        remote: present(remote_change),
         current_content: comparison,
     });
     match result.kind {
+        DifferenceKind::LocalChanged => PlanAction::Blocked(ConflictReason::LocalChanged),
         DifferenceKind::Equivalent => PlanAction::Equivalent,
         DifferenceKind::Conflict => PlanAction::Blocked(ConflictReason::ConcurrentChanges),
         _ => PlanAction::DeferredUnknown,

@@ -319,3 +319,31 @@ fn local_removal_after_remote_update_planning_invalidates_the_candidate() {
     assert_eq!(baseline_tests::base(&f, &next), Some(base));
     assert_eq!(remote.media_calls, 0);
 }
+
+#[test]
+fn metadata_only_remote_revision_does_not_turn_local_edit_into_content_conflict() {
+    let f = Fixture::new();
+    let inv = inventory();
+    baseline_tests::cycle(&f, &inv, &mut Fake::new(&inv)).unwrap();
+    let base = baseline_tests::base(&f, &inv).unwrap();
+    fs::write(f.root.join("file.txt"), b"local edit").unwrap();
+    let (next, mut remote) = v2(&inv, b"abc");
+    for _ in 0..2 {
+        let plan = prepare(&f, &next, &mut remote);
+        assert_eq!(
+            plan.entries[0].action,
+            PlanAction::Blocked(ConflictReason::LocalChanged)
+        );
+        let root = Root::open(&f.root).unwrap();
+        let local = crate::local::scan(&root, &Cancellation::new()).unwrap();
+        assert_eq!(
+            crate::changes::classify(&local, &plan, &[])[0].kind,
+            ChangeKind::LocalChanged
+        );
+        drop(root);
+        let report = execute_plan(&f, &next, &plan, &mut remote);
+        assert_eq!(report.downloaded + report.updated, 0);
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"local edit");
+        assert_eq!(baseline_tests::base(&f, &next), Some(base.clone()));
+    }
+}
