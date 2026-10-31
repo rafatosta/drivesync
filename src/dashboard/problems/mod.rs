@@ -1,4 +1,5 @@
 //! Account-scoped GNOME problem center. Loading never contacts Google Drive.
+mod actions;
 mod models;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
@@ -17,64 +18,17 @@ pub(super) fn button(
     button.set_sensitive(saved.folder.is_some());
     let account = saved.account.clone();
     button.connect_clicked(move |button| {
-        let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());
-        let window = adw::Window::builder()
-            .title("Conflicts and problems")
-            .default_width(640).default_height(560).modal(true).build();
-        window.set_transient_for(parent.as_ref());
-        let toolbar = adw::ToolbarView::new();
-        let header = adw::HeaderBar::new();
-        let later = gtk::Button::with_label("Decide later");
-        let weak = window.downgrade();
-        later.connect_clicked(move |_| { if let Some(window) = weak.upgrade() { window.close(); } });
-        header.pack_end(&later);
-        toolbar.add_top_bar(&header);
-        let content = crate::flow::content();
-        let identity = gtk::Label::builder().label(format!("Account: {}", account.email.as_deref().unwrap_or(&account.id.0)))
-            .wrap(true).selectable(true).xalign(0.0).build();
-        content.append(&identity);
-        if let Some(result) = job.snapshot().result {
-            let errors: Vec<_> = match result {
-                Ok(report) => report.issues.iter().map(|issue| (issue.relative_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Account".into()), issue.error.to_string())).collect(),
-                Err(error) => vec![("Account".into(), error.to_string())],
-            };
-            if !errors.is_empty() {
-                let group = adw::PreferencesGroup::builder().title("Errors from the latest cycle").description("Saved item observations below may describe an earlier check.").build();
-                for (path, error) in errors {
-                    let row = adw::ActionRow::builder().title(&path).subtitle(&error).use_markup(false).subtitle_selectable(true).build();
-                    row.set_title_lines(0);
-                    row.set_subtitle_lines(0);
-                    group.add(&row);
-                }
-                content.append(&group);
-            }
-        }
-        let status = gtk::Label::builder().label("Loading saved observations…").wrap(true).xalign(0.0).build();
-        content.append(&status);
-        toolbar.set_content(Some(&crate::flow::scroll(&content, 760)));
-        window.set_content(Some(&toolbar));
-        let engine = engine.clone();
-        let id = account.id.clone();
-        let weak_content = content.downgrade();
-        let weak_status = status.downgrade();
-        crate::flow::work(move || engine.saved_conflicts(&id), move |result| {
-            let (Some(content), Some(status)) = (weak_content.upgrade(), weak_status.upgrade()) else { return; };
-            match result {
-                Err(error) => status.set_label(&format!("Saved problems could not be loaded: {error}. Close and reopen to retry. Existing pending items have not been cleared.")),
-                Ok(records) => {
-                    let items = models::pending(&records);
-                    status.set_label(if items.is_empty() { "No saved pending items. This is not a new synchronization check." } else { "Saved observations — may be outdated. No network check was made. Decide later keeps these items pending." });
-                    present_items(&content, &items);
-                }
-            }
-        });
-        window.present();
+        actions::open(button, engine.clone(), &account, job.clone());
     });
     button
 }
 
 /// Renders literal, keyboard-expandable rows without limiting the pending list.
-fn present_items(content: &gtk::Box, items: &[models::Item]) {
+fn present_items(
+    content: &gtk::Box,
+    items: &[models::Item],
+    center: Option<&std::rc::Rc<actions::Center>>,
+) {
     for category in [
         models::Category::Conflicts,
         models::Category::Incompatibilities,
@@ -102,6 +56,9 @@ fn present_items(content: &gtk::Box, items: &[models::Item]) {
                 .build();
             details.set_subtitle_lines(0);
             row.add_row(&details);
+            if let (Some(center), Some(record)) = (center, &item.record) {
+                actions::add_choices(&row, center, record);
+            }
             group.add(&row);
         }
         content.append(&group);
@@ -117,11 +74,12 @@ mod tests {
         adw::init().unwrap();
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let items: Vec<_> = (0..12).map(|i| models::Item {
+            record: None,
             category: models::Category::Conflicts,
             path: format!("<report>&{i}.txt"),
             details: "Local and Drive versions require comparison. Decide later keeps the pending item.".into(),
         }).collect();
-        present_items(&content, &items);
+        present_items(&content, &items, None);
         fn rows(widget: &gtk::Widget, found: &mut usize) {
             if let Some(row) = widget.downcast_ref::<adw::ExpanderRow>() {
                 *found += 1;

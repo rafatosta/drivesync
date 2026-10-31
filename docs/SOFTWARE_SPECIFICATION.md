@@ -463,33 +463,33 @@ conflito. C09 com renomeação de um lado e edição do outro deve combinar o no
 e o conteúdo alterados quando identidade, destino e versões forem demonstrados.
 A combinação não pode criar um novo ID remoto nem uma segunda cópia local.
 
-**Proteção implementada:** o preparo classifica renomeações verificáveis sem
-executá-las. Renomeação somente remota também fica pendente, evitando baixar
-uma cópia no novo caminho e tratar a original como novo arquivo. Mudança de um
-ancestral sem histórico de identidade suficiente suspende os descendentes.
-Uma observação local com dispositivo/inode de B, mas sem prova completa de
-continuidade, é desconhecida, nunca arquivo novo; isso não estabelece identidade.
-Offline, aliases, edição simultânea à relocação e substituição não autorizam
-inferência por inode ou hash isolados. A retomada refaz a prova. Repetição e
-reabertura das observações preservam bytes, nomes disponíveis e B.
+**Implementação:** o preparo classifica sem executar. No ciclo bidirecional com
+upload habilitado, o coordenador combina renomeações de mesmo pai e conteúdo
+independente ou equivalente pelo executor durável compartilhado. Exige B,
+continuidade demonstrada, ausência de aliases e destino livre. Atualiza o mesmo
+ID remoto com precondição forte, preserva versões locais e só confirma B após
+verificar ambos os resultados. Nomes convergentes reconciliam sem novo ID;
+nomes divergentes aguardam decisão explícita revalidada. Download-only não
+inicia essa combinação, mas pode retomar uma intenção já aceita.
 
-**Aplicação pendente, bloqueante para o aceite completo de C09:** implementar
-intenção durável de combinação, revalidação de ambos os lados e do destino,
-atualização do mesmo item remoto com garantia de concorrência demonstrada,
-renomeação local sem substituição e recuperação de cada efeito interrompido.
-Somente após conferir os efeitos e persistir a confirmação pode B avançar.
-Conflito de nomes continua aguardando decisão revalidada do usuário.
+Mudança de pai/ancestral, substituição de identidade, alias e edição simultânea
+à relocação local sem prova completa continuam pendentes. Offline não fornece
+nova autoridade. Uma observação com inode de B e continuidade incompleta é
+desconhecida, nunca arquivo novo. A retomada reconcilia efeitos por identidade,
+conteúdo e intenção antes de repetir uma escrita; não infere falha pela perda
+da resposta. Versões disponíveis e marcadores independentes são preservados.
 
 O [contrato compartilhado de execução](../engine/src/conflicts/resolution-execution.md)
-especifica a sequência de efeitos e recuperação para SYNC-015/SYNC-016 e o
-experimento opt-in da proteção de escrita remota. A existência do experimento
-não habilita atualizações no aplicativo nem conclui C09/P03. Garantias pertinentes
-de SYNC-020/021/023 devem ser demonstradas no executor; SYNC-025 acrescenta
-comparação visual, sem assumir o aceite da resolução básica de SYNC-015.
+especifica efeitos, recuperação, orçamento persistente e a combinação de
+inventário v3 com escritas condicionais v2. O experimento de precondições é uma
+ferramenta separada. As garantias pertinentes de SYNC-020/021/023 são aplicadas
+nesse escopo; movimentações de árvores continuam em SYNC-017 e comparação
+visual avançada em SYNC-025.
 
 Oráculos: [contrato de renomeações](../engine/src/conflicts/contract.md#sync-016--proteção-de-renomeações).
-Testes de diagnóstico/preservação não comprovam aplicação da combinação,
-integração com Google Drive real, UI ou queda real de energia/processo.
+Testes simulados usam filesystem e SQLite reais; os ensaios opt-in dos adaptadores
+e coordenador Google usam somente fixtures novas. Essas evidências não demonstram
+queda real de energia/processo, leitor de tela ou funcionamento do Flatpak instalado.
 
 ### SYNC-009 — nomes, caminhos e tipos (C02/C13/C14/C15/C18/C20)
 
@@ -848,8 +848,8 @@ A inspeção de código permite localizar comportamento existente, mas não demo
 | Classificação | [planner](../engine/src/planner/mod.rs) usa evidência local atual e uma base por ID remoto, extraída do último registro durável `Installed`/`Updated`; a base vincula revisão remota, SHA-256 e identidade local (dispositivo/inode). Distingue item sem base, mudança local isolada e mudanças concorrentes; a classificação não executa operações. | [SYNC-003](../engine/src/changes/reconciliation.rs) integra inventário local completo, diagnóstico de indisponibilidade remota e equivalência forte para mudanças concorrentes do mesmo objeto com B. Exclusões, atualização remota e cobertura integral de RF-CON-01–02 continuam sem aceite completo. |
 | Preservação e retomada local | [atualizações de download](../engine/src/download/execution/updates.rs) preservam a versão anterior e reconciliam fases de instalação interrompida. | Não equivalem ao registro geral de conflitos nem à resolução assistida RF-CON-03–05; aceite completo de RF-REC-01/05 pendente. |
 | Estado | [state](../engine/src/state/mod.rs) separa observações de base instalada e rejeita banco existente inválido/incompatível; o journal por raiz em [downloads](../engine/src/state/downloads.rs) fornece B apenas após confirmação durável da instalação e invalida candidatos quando a operação mais recente está incompleta. | Uma raiz sem journal não pode reconstruir B; reconstrução local explícita disponível via STATE-003; recuperação de intents remotos perdidos e aceite real continuam limitados conforme o contrato. |
-| Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | Não autorizam atualização remota de existentes nem propagação de exclusões. |
-| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) centraliza a classificação pura e os adaptadores do planner, incluindo conciliação candidata de localização/conteúdo e distinção entre equivalência, conflito e falta de evidência. | Aplicação bidirecional de rename/move, preservação geral com cópias e resolução assistida permanecem planejadas; a classificação não confirma sua execução. |
+| Upload | [upload](../engine/src/upload/mod.rs) e [execução](../engine/src/upload/execution.rs) tratam criação de itens com autorização específica, estabilização, temporários, snapshots privados e revalidação da origem antes dos blocos e da publicação final. | O executor separado [resolution](../engine/src/resolution/mod.rs) autoriza atualizações condicionais restritas; propagação de exclusões continua ausente. |
+| Conflitos gerais | [conflicts](../engine/src/conflicts/mod.rs) centraliza a classificação pura e os adaptadores do planner, incluindo conciliação candidata de localização/conteúdo e distinção entre equivalência, conflito e falta de evidência. | O executor [resolution](../engine/src/resolution/mod.rs) aplica renomes de mesmo pai e decisões explícitas com preservação; moves e aceite completo permanecem limitados conforme SYNC-015/016. A classificação isolada não confirma efeitos. |
 | Coordenação | [coordinator](../engine/src/coordinator/mod.rs) verifica identidade/disponibilidade da raiz e classifica suspensões; a fachada retém bloqueio por ciclo e `state::Roots` persiste vínculo e motivo fora do volume. | A coordenação geral continua na fachada; validação real de desmontagem, permissões Google, portal e reinício do aplicativo permanece pendente. |
 
 RF-CON-01–06 e RF-REC-01–05 estão especificados neste documento, com implementação parcial em fluxos restritos ou ainda ausente conforme a tabela. Nenhum recebe estado de validação completa por esta revisão documental.
@@ -866,9 +866,9 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Resultado remoto ambíguo:** uploads de criação seguem SYNC-013 abaixo; definir evidências para futuras operações de atualização/exclusão e manter resultado desconhecido sem repetição cega.
 - **Tentativas e lotes:** uploads de criação têm orçamento persistente SYNC-013; definir política para os demais executores. Propagação de exclusões, limiares de impacto e resolução em lote exigem especificação e revisão próprias.
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
-- **Interface:** validar compreensão, acessibilidade e consequências das escolhas antes de habilitar resolução assistida; comparadores de conteúdo continuam fora da primeira implementação.
+- **Interface:** concluir homologação de compreensão e acessibilidade das escolhas explícitas; comparadores de conteúdo continuam fora da primeira implementação.
 
-A classificação B/L/R do fluxo download-only usa inventário local com estabilização e fingerprint sem seguir symlinks. SYNC-003 acrescenta equivalência forte revalidada, observações persistidas separadamente de B e apresentação de pendências na interface existente. O journal de downloads fornece B somente após confirmação durável. Preservação e execução bidirecionais, reconstrução de B perdida, resolução assistida e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
+A classificação B/L/R do fluxo download-only usa inventário local com estabilização e fingerprint sem seguir symlinks. SYNC-003 acrescenta equivalência forte revalidada, observações persistidas separadamente de B e apresentação de pendências na interface existente. O journal de downloads fornece B somente após confirmação durável. Preservação e execução restritas seguem SYNC-015/016; reconstrução de B perdida e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
 
 ### 12.4 Política de mudanças da especificação
 
@@ -1082,8 +1082,14 @@ evidências. A recuperação explícita de estado de desenvolvimento permanece n
 
 **Estado de integração:** o motor oferece `resolve_conflict` para decisões
 explícitas de manter local/remoto/ambas, vinculadas às versões exibidas e
-revalidadas sob locks. A interface ainda apresenta somente o ramo de adiamento
-até integrar essas ações. O executor confirma B atomicamente com sua intenção e
+revalidadas sob locks. A interface oferece escolhas explícitas para observações completas e suportadas,
+com confirmação cujo padrão é Cancel, sem escolher automaticamente um vencedor.
+A decisão compartilha a exclusão por conta com o temporizador e preserva uma pausa
+anterior. Durante aplicação, fechar solicita pausa segura: não desfaz efeitos já
+aceitos. A janela mostra intenções salvas e permite retomá-las sem escolher novas
+versões, com caminhos de preservação marcados como planejados ou previamente
+verificados. Observações incompletas, desconhecidas ou incompatíveis não oferecem
+essas escolhas. Recarregar consulta apenas o estado salvo; não é nova sincronização. O executor confirma B atomicamente com sua intenção e
 audita a decisão após essa confirmação. C22/C25 são apresentados como acesso desconhecido ou
 indisponível, nunca como exclusão inferida. Testes determinísticos da apresentação,
 reabertura/idempotência SQLite e testes existentes de preservação são evidências

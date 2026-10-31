@@ -6,7 +6,8 @@ Este contrato especifica o executor necessário para concluir #15 e #16. O motor
 oferece a API explícita `resolve_conflict`, com preservação, intenção durável e
 confirmação de efeitos e resumos de retomada. O coordenador seleciona candidatos
 C09/C07 de mesmo pai quando uploads estão habilitados e revalida sua continuidade.
-A interface de decisões explícitas ainda precisa ser integrada. O experimento de precondições abaixo permanece
+A central GNOME apresenta decisões explícitas, confirmação sem vencedor padrão e
+retomada de intenções aceitas, usando a exclusão do coordenador por conta. O experimento de precondições abaixo permanece
 uma ferramenta separada; não é invocado pelo sincronizador.
 
 A implementação compartilhada é acompanhada pela [issue #48](https://github.com/rafatosta/drivesync/issues/48).
@@ -198,7 +199,7 @@ na conta/build testados. Outros modos, concorrência local, durabilidade SQLite/
 resultado incerto, permissões e integração do executor continuam exigindo testes
 próprios antes de habilitar a funcionalidade. Não há habilitação automática.
 
-## Oráculos do executor ainda necessários
+## Oráculos de validação do executor
 
 Usar remoto simulado com filesystem e SQLite reais temporários: C09 nos dois
 sentidos, C07 convergente/divergente, todas as escolhas P03, destino ocupado,

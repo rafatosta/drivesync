@@ -1,5 +1,8 @@
 //! Read-only presentation of durable observations; no saved entry authorizes writes.
-use drivesync_engine::{ChangeKind, ConflictOutcome, ConflictRecord, ConflictStatus};
+use drivesync_engine::{
+    ChangeKind, ConflictOutcome, ConflictRecord, ConflictStatus, ResolutionChoice,
+    ResolutionRequest,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Category {
@@ -21,6 +24,7 @@ pub(super) struct Item {
     pub category: Category,
     pub path: String,
     pub details: String,
+    pub record: Option<ConflictRecord>,
 }
 /// Unknown metadata and historical preservation are explicit; no filesystem probe
 /// follows an untrusted saved path and no timestamp selects a winning version.
@@ -44,8 +48,13 @@ pub(super) fn pending(records: &[ConflictRecord]) -> Vec<Item> {
                 ConflictOutcome::ResolutionAborted { .. } => details.push_str("\nA previous decision was aborted because evidence changed. Compare again."),
             }
         }
-        details.push_str("\nNext step: restore access if needed, synchronize again and compare available versions. Keeping local, remote or both through DriveSync is not available yet. Deciding later leaves this item pending and selects no version.");
-        Item { category, path, details }
+        let record = ResolutionRequest::from_record(r, ResolutionChoice::KeepLocal).ok().map(|_| r.clone());
+        details.push_str(if record.is_some() {
+            "\nChoose a version below. Each decision requires confirmation and a new live check; changed evidence leaves the item pending. Decide later selects no version."
+        } else {
+            "\nNext step: restore access if needed, synchronize again and compare available versions. Compatible same-parent renames require automatic uploads enabled. A version choice is unavailable without supported identity and version evidence. Decide later leaves this item pending."
+        });
+        Item { category, path, details, record }
     }).collect()
 }
 
@@ -110,5 +119,24 @@ mod tests {
             pending(&[record(ChangeKind::Unsupported)])[0].category,
             Category::Incompatibilities
         );
+    }
+    #[test]
+    fn version_choices_require_supported_complete_pending_evidence() {
+        let mut item = record(ChangeKind::ConcurrentChanges);
+        assert!(pending(&[item.clone()])[0].record.is_none());
+        item.remote_id = Some("file".into());
+        item.remote_parent_id = Some("root".into());
+        item.remote_name = Some("report.txt".into());
+        item.remote_version = Some(2);
+        item.local_fingerprint = Some(format!("{}:1:2", "a".repeat(64)));
+        assert_eq!(pending(&[item.clone()])[0].record, Some(item.clone()));
+        item.diagnosis = ChangeKind::Unknown;
+        assert!(pending(&[item.clone()])[0].record.is_none());
+        item.diagnosis = ChangeKind::Conciliable;
+        assert!(pending(&[item.clone()])[0].record.is_none());
+        item.diagnosis = ChangeKind::Unsupported;
+        assert!(pending(&[item.clone()])[0].record.is_none());
+        item.status = ConflictStatus::Resolved;
+        assert!(pending(&[item]).is_empty());
     }
 }
