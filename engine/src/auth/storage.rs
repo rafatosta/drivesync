@@ -16,13 +16,13 @@ impl DesktopVault {
 }
 impl CredentialStore for DesktopVault {
     fn load(&self, client: &str, id: &AccountId) -> Result<Option<Credential>, AuthError> {
-        match Self::entry(client, id)?.get_password() {
+        recover_read(|| match Self::entry(client, id)?.get_password() {
             Ok(value) => serde_json::from_str(&value)
                 .map(Some)
                 .map_err(|_| report_failure(VaultOperation::Decode, VaultFailure::InvalidData)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(keyring_failure(VaultOperation::Read, error)),
-        }
+        })
     }
     fn save(&self, client: &str, id: &AccountId, value: &Credential) -> Result<(), AuthError> {
         let serialized = serde_json::to_string(value)
@@ -36,6 +36,34 @@ impl CredentialStore for DesktopVault {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(keyring_failure(VaultOperation::Delete, error)),
         }
+    }
+}
+
+/// Reopens a failed encrypted read once, using a fresh keyring entry/session.
+///
+/// Repeated reads of a fixed synthetic secret reproduce intermittent DH crypto
+/// errors against oo7 on Fedora 45. Reading is idempotent; no remote operation or
+/// vault write is replayed. Decode errors, absence, permissions and unknown
+/// failures are never retried. The caller still verifies credential identity.
+fn recover_read<T>(mut read: impl FnMut() -> Result<T, AuthError>) -> Result<T, AuthError> {
+    let result = read();
+    if matches!(
+        result,
+        Err(AuthError::CredentialStorage {
+            operation: VaultOperation::Read,
+            failure: VaultFailure::Crypto,
+        })
+    ) {
+        let result = read();
+        if result.is_ok() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "DriveSync credential-vault operation=Read recovery=FreshSession"
+            );
+        }
+        result
+    } else {
+        result
     }
 }
 

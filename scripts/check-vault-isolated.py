@@ -58,8 +58,12 @@ def main():
                 command = ["flatpak", "run", "--devel", "--socket=session-bus", f"--filesystem={root}", f"--filesystem={binary.parent}:ro"]
                 for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "DRIVESYNC_TEST_VAULT_ROOT"]:
                     command.append(f"--env={name}={env[name]}")
-                command += ["--command=env", sdk, f"DBUS_SESSION_BUS_ADDRESS={env['DBUS_SESSION_BUS_ADDRESS']}", str(binary), "auth::storage::tests::isolated_vault_roundtrip", "--exact", "--ignored", "--nocapture"]
-                subprocess.run(command, env=env, check=True, timeout=300)
+                command += ["--command=env", sdk, f"DBUS_SESSION_BUS_ADDRESS={env['DBUS_SESSION_BUS_ADDRESS']}", str(binary)]
+                test = "auth::storage::tests::isolated_vault_roundtrip"
+                listing = subprocess.run(command + ["--list", "--format", "terse"], env=env, capture_output=True, text=True, check=True, timeout=30)
+                if f"{test}: test" not in listing.stdout.splitlines():
+                    raise RuntimeError("Selected binary does not contain the isolated vault test")
+                subprocess.run(command + [test, "--exact", "--ignored", "--nocapture"], env=env, check=True, timeout=300)
         finally:
             for process in [daemon, bus]:
                 if process is not None and process.poll() is None:

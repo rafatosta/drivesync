@@ -127,6 +127,75 @@ fn operations_remain_distinct_and_generic_failure_does_not_claim_a_lock() {
     assert!(!AuthError::SecureStorage.to_string().contains("Unlock"));
 }
 
+#[test]
+fn fresh_session_retry_is_bounded_and_only_for_crypto_reads() {
+    let transient = AuthError::CredentialStorage {
+        operation: VaultOperation::Read,
+        failure: VaultFailure::Crypto,
+    };
+    let mut calls = 0;
+    let recovered = recover_read(|| {
+        calls += 1;
+        if calls == 1 {
+            Err(transient)
+        } else {
+            Ok(42)
+        }
+    });
+    assert_eq!(recovered, Ok(42));
+    assert_eq!(calls, 2);
+    calls = 0;
+    assert_eq!(
+        recover_read::<()>(|| {
+            calls += 1;
+            Err(transient)
+        }),
+        Err(transient)
+    );
+    assert_eq!(calls, 2);
+    for operation in [
+        VaultOperation::Read,
+        VaultOperation::Entry,
+        VaultOperation::Decode,
+        VaultOperation::Write,
+        VaultOperation::Delete,
+    ] {
+        for failure in [
+            VaultFailure::Crypto,
+            VaultFailure::Locked,
+            VaultFailure::AccessDenied,
+            VaultFailure::InvalidData,
+            VaultFailure::Ambiguous,
+            VaultFailure::Platform,
+            VaultFailure::Unavailable,
+            VaultFailure::InvalidSession,
+        ] {
+            if operation == VaultOperation::Read && failure == VaultFailure::Crypto {
+                continue;
+            }
+            let error = AuthError::CredentialStorage { operation, failure };
+            calls = 0;
+            assert_eq!(
+                recover_read::<()>(|| {
+                    calls += 1;
+                    Err(error)
+                }),
+                Err(error)
+            );
+            assert_eq!(calls, 1);
+        }
+    }
+    calls = 0;
+    assert_eq!(
+        recover_read::<Option<()>>(|| {
+            calls += 1;
+            Ok(None)
+        }),
+        Ok(None)
+    );
+    assert_eq!(calls, 1);
+}
+
 /// Requires the isolated runner; never run against a desktop's real vault.
 #[test]
 #[ignore = "requires scripts/check-vault-isolated.py and a private Secret Service"]
@@ -166,6 +235,16 @@ fn isolated_vault_roundtrip() {
                 .unwrap_or_else(|error| panic!("write {step}: {error}"));
         }
     }
+    let entry = DesktopVault::entry(client, &id).unwrap();
+    entry.set_password("synthetic-invalid-json").unwrap();
+    assert!(matches!(
+        vault.load(client, &id),
+        Err(AuthError::CredentialStorage {
+            operation: VaultOperation::Decode,
+            failure: VaultFailure::InvalidData
+        })
+    ));
+    assert!(entry.get_password().unwrap() == "synthetic-invalid-json");
     vault.delete(client, &id).unwrap();
     vault.delete(client, &id).unwrap();
     assert!(vault.load(client, &id).unwrap().is_none());

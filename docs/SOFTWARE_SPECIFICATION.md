@@ -696,9 +696,18 @@ em stderr usa apenas nomes fixos de operação/categoria; nunca inclui erros
 brutos, seus textos/Debug, atributos, caminhos, identidade ou bytes de segredos.
 Ausência confirmada continua distinta de falha; dados inválidos ou múltiplas
 entradas não autorizam apagar ou substituir credenciais. Não há fallback para
-armazenamento inseguro, cache persistente de tokens ou retry automático do cofre.
+armazenamento inseguro, cache persistente de tokens ou repetição de gravações/exclusões do cofre.
 
-Algoritmo: executar a operação uma vez; tratar ausência apenas em leitura e
+A reprodução isolada de leituras repetidas do mesmo segredo fictício no oo7 do
+Fedora 45 demonstra falhas criptográficas intermitentes de sessão. Como mitigação,
+somente uma leitura que retorna a categoria criptográfica concreta pode ser
+repetida uma vez, com uma nova entrada/sessão. Não há repetição de decodificação,
+erro desconhecido, permissão, bloqueio ou ausência. Uma segunda falha é devolvida;
+a identidade continua sendo verificada antes de qualquer operação remota. Isso
+não modifica o formato nem o escopo de armazenamento e não atesta correção do
+backend externo. A causa criptográfica interna ainda exige investigação upstream.
+
+Algoritmo: executar a operação (com a recuperação limitada de leitura acima); tratar ausência apenas em leitura e
 exclusão; classificar erros concretos do keyring/Secret Service e nomes D-Bus
 permitidos; emitir diagnóstico sanitizado e devolver erro tipado. Decodificação
 inválida falha fechada sem escrita. Oráculos: falhas injetadas por categoria,
