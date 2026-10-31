@@ -436,6 +436,7 @@ version = "0.1.0"
 dependencies = [
  "caseless",
  "dbus",
+ "dbus-secret-service",
  "keyring",
  "md-5",
  "oauth2",

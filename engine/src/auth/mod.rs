@@ -21,6 +21,6 @@ mod provider;
 mod storage;
 
 pub use callback::Cancellation;
-pub use error::AuthError;
+pub use error::{AuthError, VaultFailure, VaultOperation};
 pub use google::OAuthConfig;
 pub(crate) use provider::AuthProvider;

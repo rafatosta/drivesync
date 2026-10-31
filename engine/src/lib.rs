@@ -28,7 +28,7 @@ mod state;
 mod ui;
 mod upload;
 
-pub use auth::{AuthError, Cancellation};
+pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use conflicts::{

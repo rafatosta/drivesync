@@ -689,6 +689,29 @@ Dados inconsistentes ou incompatíveis não devem ser descartados ou reinicializ
 
 ### 7.7 Persistência local e cofre de credenciais
 
+Falhas do cofre preservam a operação (entrada, leitura, decodificação,
+codificação, gravação ou exclusão) e uma categoria tipada segura. A interface
+só recomenda desbloqueio quando o backend identifica bloqueio. O diagnóstico
+em stderr usa apenas nomes fixos de operação/categoria; nunca inclui erros
+brutos, seus textos/Debug, atributos, caminhos, identidade ou bytes de segredos.
+Ausência confirmada continua distinta de falha; dados inválidos ou múltiplas
+entradas não autorizam apagar ou substituir credenciais. Não há fallback para
+armazenamento inseguro, cache persistente de tokens ou retry automático do cofre.
+
+Algoritmo: executar a operação uma vez; tratar ausência apenas em leitura e
+exclusão; classificar erros concretos do keyring/Secret Service e nomes D-Bus
+permitidos; emitir diagnóstico sanitizado e devolver erro tipado. Decodificação
+inválida falha fechada sem escrita. Oráculos: falhas injetadas por categoria,
+mensagens maliciosas que nunca são formatadas, preservação de dados inválidos,
+ausência/idempotência e repetição de acessos em serviço isolado.
+
+A classificação usa as APIs dos crates já utilizados pelo keyring:
+[Keyring Error](https://docs.rs/keyring/3.6.3/keyring/enum.Error.html),
+[Secret Service Error](https://docs.rs/dbus-secret-service/4.1.0/dbus_secret_service/enum.Error.html)
+e [erros do protocolo](https://specifications.freedesktop.org/secret-service-spec/latest/errors.html).
+Referências verificadas em 2026-10-31. Testes simulados não comprovam a integração
+Google/Flatpak nem atribuem uma falha intermitente ao Fedora sem reprodução.
+
 ### 7.8 Ciclo de vida e execução do aplicativo
 
 ### 7.9 Decisões arquiteturais e justificativas
