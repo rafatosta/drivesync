@@ -48,8 +48,10 @@ pub use resolution::{
 };
 
 pub use planner::{
-    decide, BulkImpact, BulkPolicy, BulkReview, ConfirmedBase, ConfirmedLocation, ConflictReason,
-    DownloadPlan, LocalObservation, PlanAction, PlanEntry,
+    decide, decide_move, BulkImpact, BulkPolicy, BulkReview, ConfirmedBase, ConfirmedLocation,
+    ConflictReason, ContentChange, DestinationIdentity, DownloadPlan, IdTree, LocalObservation,
+    MoveBlock, MoveDecision, MoveDirection, MoveEvidence, MoveInput, NodeKind, PlanAction,
+    PlanEntry, TreeNode,
 };
 
 pub use download::{

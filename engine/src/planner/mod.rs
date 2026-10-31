@@ -1,7 +1,12 @@
 //! Pure download decisions and conservative initial filesystem observations.
 mod bulk;
+mod moves;
 pub(crate) use bulk::assess as bulk_impact;
 pub use bulk::{BulkImpact, BulkPolicy, BulkReview};
+pub use moves::{
+    decide_move, ContentChange, DestinationIdentity, IdTree, MoveBlock, MoveDecision,
+    MoveDirection, MoveEvidence, MoveInput, NodeKind, TreeNode,
+};
 
 use crate::{AccountId, EngineError, InventoryKind, RemoteInventory, SkipReason};
 use serde::{Deserialize, Serialize};
