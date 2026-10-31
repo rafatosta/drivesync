@@ -11,6 +11,7 @@ mod uploads;
 pub(crate) use uploads::Uploads;
 mod downloads;
 mod preservation;
+mod resolutions;
 use crate::{DownloadPlan, EngineError, RemoteInventory};
 pub(crate) use checkpoints::{Checkpoints, Scope as CheckpointScope};
 pub(crate) use preservation::preservation_key;
@@ -25,7 +26,8 @@ const APP_ID: i64 = 0x4453594e;
 const SCHEMA:&str="CREATE TABLE roots(client TEXT NOT NULL, account TEXT NOT NULL, remote TEXT NOT NULL, local TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation>0), PRIMARY KEY(client,account,remote,local));
 CREATE TABLE observations(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,generation INTEGER NOT NULL,item TEXT NOT NULL,plan TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
 CREATE TABLE downloads(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
-CREATE TABLE conflict_copies(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));";
+CREATE TABLE conflict_copies(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
+CREATE TABLE resolutions(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));";
 fn failed(_: impl std::fmt::Debug) -> EngineError {
     EngineError::StateStorage
 }
@@ -35,7 +37,7 @@ pub(crate) struct Store(Connection);
 impl Store {
     /// Opens the private database. Existing corrupt/foreign/empty databases fail closed.
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Self::open_format(path, APP_ID, 3, SCHEMA)
+        Self::open_format(path, APP_ID, 4, SCHEMA)
     }
 
     /// Opens one exact internal format, without migrations or automatic resets.

@@ -78,6 +78,23 @@ impl Store {
             };
             latest.insert(operation.item.id, base);
         }
+        let scope = DownloadPlan {
+            account_id: account.clone(),
+            remote_root: remote.into(),
+            local_root: local.into(),
+            entries: vec![],
+        };
+        for intent in self.resolutions(client, &scope)? {
+            if !matches!(
+                intent.stage,
+                crate::resolution::Stage::Confirmed | crate::resolution::Stage::Aborted
+            ) {
+                latest.remove(&intent.plan.remote.item.id);
+                if let Some(copy) = intent.plan.copy_id {
+                    latest.remove(&copy);
+                }
+            }
+        }
         Ok(latest
             .into_iter()
             .filter_map(|(id, base)| base.map(|base| (id, base)))

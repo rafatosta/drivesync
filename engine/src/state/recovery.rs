@@ -337,8 +337,8 @@ pub(crate) fn rebuild(
             .and_then(|f| f.sync_all())
             .map_err(failed)?;
         value.stores.insert(name.into(), replacement);
-        if name == "uploads.sqlite3" {
-            // Even a missing intent store may hide an already completed remote create.
+        if matches!(name, "uploads.sqlite3" | "state.sqlite3") {
+            // Either journal may hide an uncertain remote create or update.
             value.uploads_blocked = true;
         }
         rebuilt += 1;

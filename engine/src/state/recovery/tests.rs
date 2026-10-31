@@ -82,7 +82,9 @@ fn corrupt_journal_rebuild_preserves_files_sidecars_and_healthy_observations() {
     std::fs::write(f.folder.local.join("user.txt"), b"user bytes").unwrap();
     std::fs::write(f.parent().join("state.sqlite3"), b"corrupt journal").unwrap();
     std::fs::write(f.parent().join("state.sqlite3-journal"), b"evidence").unwrap();
-    assert_eq!(f.run().rebuilt_stores, 1);
+    let recovered = f.run();
+    assert_eq!(recovered.rebuilt_stores, 1);
+    assert!(recovered.uploads_blocked);
     assert_eq!(
         std::fs::read(f.parent().join("state.sqlite3")).unwrap(),
         b"corrupt journal"

@@ -16,6 +16,12 @@ use std::{
     time::Duration,
 };
 
+/// Explicit user authority; recovery never chooses a new version.
+pub(crate) enum ResolutionTask {
+    Apply(Box<drivesync_engine::ResolutionRequest>),
+    ResumeAccepted,
+}
+
 type ResultReport = Result<DownloadReport, EngineError>;
 type Execute = Arc<
     dyn Fn(
@@ -225,6 +231,121 @@ impl Controller {
         let online =
             SERVICE.with(|service| service.borrow().as_ref().is_none_or(|s| *s.online.borrow()));
         self.start_reviewed(now(), online, true, Some(review));
+    }
+    /// Runs an explicit decision under the same account guard as synchronization.
+    /// A previously paused account stays paused after this single operation.
+    pub fn run_resolution(
+        &self,
+        engine: Arc<DriveSyncEngine>,
+        task: ResolutionTask,
+        done: impl FnOnce(Result<Vec<drivesync_engine::ResolutionReport>, EngineError>) + 'static,
+    ) -> bool {
+        self.start_resolution(
+            move |id, cancel| {
+                let reports = match task {
+                    ResolutionTask::Apply(request) => engine
+                        .resolve_conflict(id, &request, cancel)
+                        .map(|report| vec![report]),
+                    ResolutionTask::ResumeAccepted => engine.resume_resolutions(id, cancel),
+                }?;
+                let pending = engine.saved_conflicts(id);
+                let report = DownloadReport {
+                    updated: reports.len(),
+                    preserved_copies: reports
+                        .iter()
+                        .flat_map(|report| report.preserved_paths.clone())
+                        .collect(),
+                    issues: pending
+                        .as_ref()
+                        .err()
+                        .map(|error| drivesync_engine::DownloadIssue {
+                            relative_path: None,
+                            error: error.clone(),
+                        })
+                        .into_iter()
+                        .collect(),
+                    reconciliation: pending
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|record| record.status == drivesync_engine::ConflictStatus::Pending)
+                        .map(|record| drivesync_engine::ReconciliationEntry {
+                            relative_path: record.relative_path,
+                            remote_id: record.remote_id,
+                            kind: record.diagnosis,
+                        })
+                        .collect(),
+                    ..Default::default()
+                };
+                Ok((reports, report))
+            },
+            done,
+        )
+    }
+
+    /// Installs the guard before dispatch and retains it through safe completion.
+    fn start_resolution(
+        &self,
+        work: impl FnOnce(
+                &AccountId,
+                &Cancellation,
+            )
+                -> Result<(Vec<drivesync_engine::ResolutionReport>, DownloadReport), EngineError>
+            + Send
+            + 'static,
+        done: impl FnOnce(Result<Vec<drivesync_engine::ResolutionReport>, EngineError>) + 'static,
+    ) -> bool {
+        let (cancel, generation) = {
+            let mut state = self.0.state.borrow_mut();
+            if state.cancel.is_some() || !state.schedule.start(now(), true, true) {
+                return false;
+            }
+            let cancel = Cancellation::new();
+            state.cancel = Some(cancel.clone());
+            state.generation += 1;
+            state.progress = None;
+            state.result = None;
+            state.revision += 1;
+            (cancel, state.generation)
+        };
+        if self.0.desktop {
+            crate::background::set_activity(true)
+        }
+        let id = self.0.id.clone();
+        let completion = self.clone();
+        crate::flow::work(
+            move || work(&id, &cancel),
+            move |result| {
+                if completion.0.desktop {
+                    crate::background::set_activity(false)
+                }
+                let mut state = completion.0.state.borrow_mut();
+                state.cancel = None;
+                state.progress = None;
+                if state.generation == generation {
+                    let report = result
+                        .as_ref()
+                        .map(|(_, report)| report.clone())
+                        .map_err(Clone::clone);
+                    if state.user_paused {
+                        state.schedule.finish(
+                            &Err(EngineError::Authentication(
+                                drivesync_engine::AuthError::Cancelled,
+                            )),
+                            now(),
+                        );
+                    } else {
+                        state.schedule.finish(&report, now())
+                    }
+                    state.result = Some(report);
+                } else {
+                    state.schedule.running = false
+                }
+                state.revision += 1;
+                drop(state);
+                done(result.map(|(reports, _)| reports));
+            },
+        );
+        true
     }
     fn network_changed(&self, online: bool) {
         let mut state = self.0.state.borrow_mut();
@@ -445,6 +566,7 @@ fn publish_idle_status(service: &Service) {
 mod tests {
     use super::*;
     use drivesync_engine::{AuthError, DriveFolder};
+    use std::cell::Cell;
     use std::{
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         time::Instant,
@@ -733,6 +855,65 @@ mod tests {
         restored.restore_availability(generation, None);
         assert!(restored.0.state.borrow().schedule.due.is_some());
         SERVICE.with(|slot| slot.borrow_mut().take());
+        // Explicit decisions share the timer guard and retain a previous pause.
+        let explicit = Controller::new(
+            AccountId("explicit".into()),
+            Arc::new(|_, _, _, _| panic!("timer overlapped an explicit decision")),
+            false,
+        );
+        explicit.configure(Some(folder("explicit", "explicit-root")), true);
+        explicit.pause();
+        let release_explicit = Arc::new(AtomicBool::new(false));
+        let worker_release = release_explicit.clone();
+        let completed = Rc::new(Cell::new(false));
+        let observed = completed.clone();
+        assert!(explicit.start_resolution(
+            move |_, _| {
+                while !worker_release.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                Ok((
+                    vec![],
+                    DownloadReport {
+                        skipped: 1,
+                        ..Default::default()
+                    },
+                ))
+            },
+            move |result| {
+                assert!(result.is_ok());
+                observed.set(true)
+            }
+        ));
+        explicit.request();
+        explicit.start(u64::MAX, true, false);
+        assert!(!explicit.start_resolution(
+            |_, _| panic!("second explicit operation dispatched"),
+            |_| panic!("refused operation delivered completion")
+        ));
+        release_explicit.store(true, Ordering::SeqCst);
+        wait_until(&context, || completed.get());
+        assert!(!explicit.running());
+        assert_eq!(explicit.snapshot().phase, Phase::Paused);
+        assert!(explicit.snapshot().result.unwrap().unwrap().skipped == 1);
+        let completed = Rc::new(Cell::new(false));
+        let observed = completed.clone();
+        assert!(explicit.start_resolution(
+            move |_, cancel| {
+                while !cancel.is_cancelled() {
+                    std::thread::sleep(Duration::from_millis(2))
+                }
+                Err(EngineError::Authentication(AuthError::Cancelled))
+            },
+            move |result| {
+                assert!(result.is_err());
+                observed.set(true)
+            }
+        ));
+        explicit.pause();
+        assert!(explicit.running());
+        wait_until(&context, || completed.get());
+        assert_eq!(explicit.snapshot().phase, Phase::Paused);
         // Drain retired progress sources before releasing the default context.
         let until = Instant::now() + Duration::from_millis(120);
         while Instant::now() < until {

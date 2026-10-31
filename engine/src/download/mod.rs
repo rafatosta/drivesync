@@ -5,7 +5,7 @@ pub(crate) use equivalence::content_fingerprint;
 pub(crate) mod filesystem;
 mod links;
 mod models;
-mod stream;
+pub(crate) mod stream;
 
 #[cfg(test)]
 pub(crate) use execution::run;

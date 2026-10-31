@@ -6,6 +6,7 @@ mod models;
 pub(crate) mod provider;
 mod transport;
 pub(crate) use models::{Intent, Retry};
+pub(crate) use transport::generate as generate_remote_id;
 pub(crate) use transport::valid_session;
 
 #[cfg(test)]

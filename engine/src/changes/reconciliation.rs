@@ -44,9 +44,9 @@ impl ChangeKind {
         match self {
             Self::Unchanged => "No content change was detected.",
             Self::RemoteChanged => "A Google Drive version is available. Local installation still requires verification.",
-            Self::LocalChanged => "Local changes were preserved. Updating an existing Drive file is not available yet.",
-            Self::ConcurrentChanges => "Different edits were verified in the local file and the Google Drive file. Both were left in place; no conflict backup was created. Review both versions. Choosing a version in DriveSync is not available yet.",
-            Self::Conciliable => "The name, location or content changes can be reconciled. Applying this combination is not available yet; the available versions were left intact.",
+            Self::LocalChanged => "Local edits differ from the last confirmed synchronization. Review the pending item before replacing a version.",
+            Self::ConcurrentChanges => "Different edits were verified in the local file and the Google Drive file. Review both observed versions before choosing a version.",
+            Self::Conciliable => "The name, location or content changes are compatible under verified identity. Supported same-parent renames require uploads enabled; other combinations remain pending.",
             Self::LocationConflict => "This file has incompatible name or location changes. Review the destinations; no version was selected.",
             Self::Equivalent => "The same content was verified on this computer and Google Drive. No copy or replacement was needed.",
             Self::LocalIdentityChanged | Self::ConcurrentIdentityChanges => "This local file was replaced. Its contents were preserved; matching names or content do not authorize adoption.",
@@ -128,7 +128,10 @@ pub(crate) fn classify(
             crate::conflicts::plan_diagnosis(&entry.action, &entry.expected_local)
         });
         result.push(ReconciliationEntry {
-            relative_path: entry.relative_path.clone(),
+            relative_path: match &entry.action {
+                crate::PlanAction::Classified { local_path, .. } => Some(local_path.clone()),
+                _ => entry.relative_path.clone(),
+            },
             remote_id: Some(entry.remote_id.clone()),
             kind,
         });

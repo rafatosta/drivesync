@@ -3,7 +3,7 @@
 mod policy;
 mod runtime;
 pub(crate) use policy::Phase;
-pub(crate) use runtime::{configured, install, reconcile, Controller, Snapshot};
+pub(crate) use runtime::{configured, install, reconcile, Controller, ResolutionTask, Snapshot};
 
 /// Temporary authorization transport failures remain eligible for safe retry;
 /// revoked credentials, identity failures and storage errors require user action.

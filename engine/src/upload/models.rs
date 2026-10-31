@@ -22,7 +22,7 @@ pub(crate) struct Intent {
 
 /// Durable pass budget, reserved before remote requests so crashes consume it.
 /// A pass may send many verified chunks; success never requires one retry per chunk.
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Retry {
     pub attempts: u8,

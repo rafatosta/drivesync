@@ -68,11 +68,18 @@ fn valid_record(record: &ConflictRecord) -> bool {
                 &record.diagnosis,
                 crate::ChangeKind::Unchanged | crate::ChangeKind::Equivalent
             ),
+            crate::ConflictStatus::Resolved => record
+                .outcomes
+                .iter()
+                .any(|outcome| matches!(outcome, ConflictOutcome::ResolutionApplied { .. })),
         }
         && record.conflict_id
             == conflict_id(record.remote_id.as_deref(), record.relative_path.as_deref())
                 .unwrap_or_default()
         && record.outcomes.iter().all(|outcome| match outcome {
+            ConflictOutcome::ResolutionApplied { operation_id, .. } => {
+                operation_id.len() == 64 && operation_id.bytes().all(|v| v.is_ascii_hexdigit())
+            }
             ConflictOutcome::CopyPreserved {
                 copy_path,
                 remote_version,
@@ -105,7 +112,7 @@ pub(crate) struct ConflictHistory(Store);
 impl ConflictHistory {
     /// Opens a new exact-format journal without modifying incompatible evidence.
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Ok(Self(Store::open_format(path, APP_ID, 2, SCHEMA)?))
+        Ok(Self(Store::open_format(path, APP_ID, 3, SCHEMA)?))
     }
 
     /// Stores pending diagnoses atomically; identical evidence is idempotent.
@@ -253,6 +260,7 @@ impl ConflictHistory {
                 crate::ConflictStatus::NoLongerConflicting => {
                     ConflictHistoryKind::NoLongerConflicting
                 }
+                crate::ConflictStatus::Resolved => return Err(EngineError::InvalidPlan),
             };
             insert_event(&tx, scope, local, &record, event_kind)?;
         }
@@ -302,6 +310,13 @@ impl ConflictHistory {
         )
         .map_err(failed)?;
         let kind = match outcome {
+            ConflictOutcome::ResolutionApplied {
+                operation_id,
+                choice,
+            } => ConflictHistoryKind::ResolutionApplied {
+                operation_id,
+                choice,
+            },
             ConflictOutcome::CopyPreserved { .. } => ConflictHistoryKind::CopyPreserved,
             ConflictOutcome::RetryBlocked { reason } => {
                 ConflictHistoryKind::RetryBlocked { reason }
@@ -343,6 +358,77 @@ impl ConflictHistory {
             )?;
         }
         Ok(verdict)
+    }
+
+    /// Completes only the exact observed conflict that authorized this intention.
+    /// A newer pending observation keeps its status; the applied decision is
+    /// still audited without acknowledging an unrelated subsequent edit.
+    pub(crate) fn complete_resolution(
+        &mut self,
+        scope: &CheckpointScope<'_>,
+        intent: &crate::resolution::Intent,
+    ) -> Result<(), EngineError> {
+        if intent.stage != crate::resolution::Stage::Confirmed || !intent.valid() {
+            return Err(EngineError::InvalidPlan);
+        }
+        let id = match &intent.plan.conflict {
+            Some(id) => id.clone(),
+            None => match self.records(scope)?.into_iter().find(|record| {
+                record.remote_id.as_ref() == Some(&intent.plan.remote.item.id)
+                    && record.relative_path.as_ref() == Some(&intent.plan.origin)
+                    && record.local_fingerprint.as_ref() == Some(&intent.plan.local_fingerprint)
+                    && record.remote_version == intent.plan.remote.item.version
+            }) {
+                Some(record) => record.conflict_id,
+                None => return Ok(()),
+            },
+        };
+        let local = validate_scope(scope)?;
+        let tx = self
+            .0
+             .0
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(failed)?;
+        let json:Option<String>=tx.query_row("SELECT record FROM conflicts WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4 AND conflict_id=?5",params![scope.client,scope.account.0,scope.remote,local,id],|r|r.get(0)).optional().map_err(failed)?;
+        let Some(json) = json else {
+            return tx.commit().map_err(failed);
+        };
+        let mut record: ConflictRecord = serde_json::from_str(&json).map_err(failed)?;
+        if !valid_record(&record) {
+            return Err(EngineError::StateStorage);
+        }
+        let outcome = ConflictOutcome::ResolutionApplied {
+            operation_id: intent.id.clone(),
+            choice: intent.plan.choice,
+        };
+        if record.outcomes.contains(&outcome) {
+            return tx.commit().map_err(failed);
+        }
+        let exact = record.remote_id.as_ref() == Some(&intent.plan.remote.item.id)
+            && record.relative_path.as_ref() == Some(&intent.plan.origin)
+            && record.local_fingerprint.as_ref() == Some(&intent.plan.local_fingerprint)
+            && record.remote_version == intent.plan.remote.item.version
+            && record.remote_name.as_ref() == Some(&intent.plan.remote.item.name)
+            && record.remote_parent_id.as_ref() == Some(&intent.plan.remote.item.parent_id);
+        record.outcomes.push(outcome);
+        if exact {
+            record.status = crate::ConflictStatus::Resolved;
+        }
+        if !valid_record(&record) {
+            return Err(EngineError::StateStorage);
+        }
+        tx.execute("UPDATE conflicts SET record=?6 WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4 AND conflict_id=?5",params![scope.client,scope.account.0,scope.remote,local,id,serde_json::to_string(&record).map_err(failed)?]).map_err(failed)?;
+        insert_event(
+            &tx,
+            scope,
+            local,
+            &record,
+            ConflictHistoryKind::ResolutionApplied {
+                operation_id: intent.id.clone(),
+                choice: intent.plan.choice,
+            },
+        )?;
+        tx.commit().map_err(failed)
     }
 
     /// Loads current pending records for this exact account/root scope.

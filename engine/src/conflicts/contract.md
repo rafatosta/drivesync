@@ -229,8 +229,8 @@ sem eventos. A aplicação de resolução assistida continua fora de escopo.
 
 `ConflictRecord` inclui tamanho local, mtime local em segundos Unix e tamanho
 remoto opcionais, colhidos das observações estáveis/inventário; ausência é
-explicitamente desconhecida. O journal de conflitos passa ao formato exato v2,
-sem migração ou reset automático de v1. Não há inferência de versão vencedora
+explicitamente desconhecida. O journal de conflitos usa formato exato v3,
+sem migração ou reset automático dos formatos anteriores. Não há inferência de versão vencedora
 por data nem consulta de caminhos históricos na apresentação. A central usa
 `saved_conflicts` sem rede e não altera status ou histórico ao adiar/fechar.
 Os registros continuam sendo observações, não autorizações de resolução.
@@ -276,12 +276,16 @@ renomeado, rollback SQLite e cancelamento de persistência. São arquivos e SQLi
 reais temporários com remoto simulado. Os testes exigem nenhum download/cópia
 falsa, preservação de L/R e B inalterada; não comprovam aplicação de C09.
 
-A implementação da combinação permanece bloqueante para concluir SYNC-016:
-precisa de intenção durável por identidade, contrato de concorrência da escrita
-remota, rename local sem substituição e recuperação após cada efeito e antes da
-confirmação. O upload create-only existente não fornece esses efeitos.
-Não substituir essa pendência por uma cópia com novo nome/ID nem declarar o
-cenário validado por seus testes de classificação.
+A aplicação de mesmo pai usa o [executor compartilhado](resolution-execution.md):
+intenção durável por identidade, precondição forte v2, preservação, instalação
+local sem substituição e confirmação transacional de B após conferir efeitos.
+O coordenador só inicia combinações automáticas com upload habilitado. O fluxo
+create-only não substitui esses efeitos. Mudança de pai/árvore permanece em
+SYNC-017; não contornar a restrição criando outro ID remoto ou cópia ativa falsa.
+Os testes de `resolution` cobrem efeitos com filesystem/SQLite reais e remoto
+simulado; ensaios opt-in dos adaptadores e coordenador Google usam fixtures novas.
+Nenhuma dessas evidências equivale a queda de energia, leitor de tela ou
+funcionamento do aplicativo empacotado instalado.
 
 Fundamentação consultada em 2026-10-30: comparação de réplicas com estado anterior
 ([Unison](https://github.com/bcpierce00/unison)); atualização do mesmo ID via

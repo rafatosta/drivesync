@@ -137,7 +137,7 @@ pub(crate) fn path_key(name: &str) -> String {
     name.nfd().default_case_fold().nfd().collect()
 }
 
-fn safe(name: &str) -> bool {
+pub(crate) fn safe(name: &str) -> bool {
     let folded = path_key(name);
     let stem = folded.split('.').next().unwrap_or("");
     let device = matches!(stem, "con" | "prn" | "aux" | "nul")

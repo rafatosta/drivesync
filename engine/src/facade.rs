@@ -2,6 +2,8 @@
 //!
 //! Coordinates independent account, authentication, Drive and local folder
 //! modules without exposing credentials or platform storage to the GUI.
+mod resolution;
+mod resolution_state;
 use crate::{
     accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError, Cancellation,
     EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount, SyncRootId,
@@ -418,6 +420,8 @@ impl DriveSyncEngine {
     /// stored beside the marker in the local root, so it survives app-data resets.
     /// Managed intact copies can be updated after preserving their prior version;
     /// concurrent destinations are never overwritten.
+    /// Previously accepted conflict intentions are reconciled first; this call
+    /// does not authorize a new content choice or unconditional remote update.
     /// Existing divergent data is reported per item. Partial staging is preserved.
     ///
     /// # Errors
@@ -430,7 +434,7 @@ impl DriveSyncEngine {
         progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
         self.with_root(id, |folder, config, root| {
-            self.download_locked(id, cancel, progress, (folder, config, root), None)
+            self.download_locked(id, cancel, progress, (folder, config, root), None, false)
         })
     }
 
@@ -445,6 +449,7 @@ impl DriveSyncEngine {
             &crate::download::filesystem::Root,
         ),
         approval: Option<&crate::BulkReview>,
+        allow_renames: bool,
     ) -> Result<crate::DownloadReport, EngineError> {
         let (folder, config, local_root) = context;
         let progress = std::cell::RefCell::new(progress);
@@ -457,6 +462,8 @@ impl DriveSyncEngine {
         // Validate both stores before collecting observations or changing user files.
         let mut store = crate::state::Store::open(&journal_path)?;
         let mut checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
+        let recovered_resolutions =
+            resolution::recover(self, folder, config, local_root, &store, cancel)?;
         let root = self
             .auth
             .with_access_config(config, id, |token| {
@@ -485,6 +492,9 @@ impl DriveSyncEngine {
             cancel,
             &mut source,
         )?;
+        if !recovered_resolutions.is_empty() {
+            checkpoint = crate::changes::reconcile(id, &root, &checkpoint, cancel, &mut source)?;
+        }
         let inventory = &checkpoint.inventory;
         let bases = store.confirmed_bases(&config.client_id, id, &root, &folder.local)?;
         if let Some((_, old)) = &previous {
@@ -563,18 +573,57 @@ impl DriveSyncEngine {
         conflict_history.record_pending(&scope, &reconciliation, cancel)?;
         crate::local::check(cancel)?;
         crate::coordinator::bulk_gate(&config.client_id, &reconciliation, approval)?;
+        let automatic = if allow_renames && self.upload_enabled_locked(folder, config)? {
+            resolution::automatic(
+                self,
+                (folder, config, local_root),
+                &store,
+                &reconciliation,
+                cancel,
+                |event| (progress.borrow_mut())(event),
+            )?
+        } else {
+            resolution::AutomaticReport::default()
+        };
+        let completed: std::collections::HashSet<_> = automatic
+            .completed
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let mut remaining_plan = plan.clone();
+        remaining_plan
+            .entries
+            .retain(|entry| !completed.contains(entry.remote_id.as_str()));
+        let mut remaining_inventory = inventory.clone();
+        remaining_inventory
+            .entries
+            .retain(|item| !completed.contains(item.id.as_str()));
         let mut report = crate::download::run_with_root(
             crate::download::Context {
                 client: &config.client_id,
-                scope: &plan,
+                scope: &remaining_plan,
                 store: &store,
                 cancel,
             },
-            inventory,
+            &remaining_inventory,
             &mut source,
             |event| (progress.borrow_mut())(event),
             local_root,
         )?;
+        report.updated += automatic.completed.len();
+        report.preserved_copies.extend(
+            automatic
+                .completed
+                .iter()
+                .flat_map(|(_, result)| result.preserved_paths.clone()),
+        );
+        report.issues.extend(automatic.issues);
+        report.recovered += recovered_resolutions.len();
+        report.preserved_copies.extend(
+            recovered_resolutions
+                .into_iter()
+                .flat_map(|value| value.preserved_paths),
+        );
         for copy in &report.conflict_copies {
             conflict_history.record_outcome(
                 &scope,
@@ -625,6 +674,16 @@ impl DriveSyncEngine {
         crate::download::Source::configured(&mut source)?;
         local_root.validate()?;
         report.reconciliation = reconciliation.entries;
+        for (id, result) in &automatic.completed {
+            for entry in report
+                .reconciliation
+                .iter_mut()
+                .filter(|entry| entry.remote_id.as_ref() == Some(id))
+            {
+                entry.kind = crate::ChangeKind::Unchanged;
+                entry.relative_path = Some(result.path.clone());
+            }
+        }
         report.previous_paths = crate::changes::previous_paths(&checkpoint)?;
         Ok(report)
     }
@@ -707,7 +766,8 @@ impl DriveSyncEngine {
         self.auth.with_access_config(config, id, f)
     }
     /// Runs download reconciliation and optional create-only upload, sequentially.
-    /// Updates/deletions are never sent. Call off the UI thread.
+    /// Previously accepted conditional conflict decisions are reconciled first.
+    /// Deletions are never sent. Call off the UI thread.
     pub fn synchronize_once(
         &self,
         id: &AccountId,
@@ -733,9 +793,30 @@ impl DriveSyncEngine {
         mut progress: impl FnMut(crate::DownloadProgress),
     ) -> Result<crate::DownloadReport, EngineError> {
         self.with_root(id, |folder, config, root| {
-            let mut report =
-                self.download_locked(id, cancel, &mut progress, (folder, config, root), approval)?;
+            let mut report = self.download_locked(
+                id,
+                cancel,
+                &mut progress,
+                (folder, config, root),
+                approval,
+                true,
+            )?;
             crate::coordinator::report(&report)?;
+            let resolution_store = crate::state::Store::open(
+                &configuration::identity::state_path(folder, &config.client_id)?,
+            )?;
+            if resolution_store
+                .resolutions(&config.client_id, &resolution::scope(folder))?
+                .iter()
+                .any(|intent| {
+                    !matches!(
+                        intent.stage,
+                        crate::resolution::Stage::Confirmed | crate::resolution::Stage::Aborted
+                    )
+                })
+            {
+                return Ok(report);
+            }
             if !self.upload_enabled_locked(folder, config)? {
                 if crate::state::recovery::uploads_blocked(&folder.local.join(".drivesync"))? {
                     report.issues.push(crate::DownloadIssue {
@@ -1046,6 +1127,10 @@ impl DriveSyncEngine {
 }
 #[cfg(test)]
 mod live_google_tests;
+#[cfg(test)]
+mod live_rename_tests;
+#[cfg(test)]
+mod live_resolution_tests;
 #[cfg(test)]
 mod tests;
 

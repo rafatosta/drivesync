@@ -152,12 +152,18 @@ pub struct ConflictRecord {
 pub enum ConflictStatus {
     Pending,
     NoLongerConflicting,
+    Resolved,
 }
 
 /// Verified effects or sanitized failures from supported conflict handling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ConflictOutcome {
+    /// An accepted exact decision reached verified effects and confirmed B.
+    ResolutionApplied {
+        operation_id: String,
+        choice: crate::ResolutionChoice,
+    },
     /// The remote version was verified and retained as a separate local copy.
     CopyPreserved {
         copy_path: PathBuf,
@@ -201,6 +207,10 @@ pub struct ConflictHistoryEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ConflictHistoryKind {
+    ResolutionApplied {
+        operation_id: String,
+        choice: crate::ResolutionChoice,
+    },
     PendingObserved,
     NoLongerConflicting,
     CopyPreserved,
