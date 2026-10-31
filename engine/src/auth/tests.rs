@@ -24,9 +24,13 @@ struct MemoryVault {
     entries: Mutex<HashMap<(String, AccountId), String>>,
     fail: AtomicBool,
     fail_save: AtomicBool,
+    load_error: Mutex<Option<AuthError>>,
 }
 impl CredentialStore for MemoryVault {
     fn load(&self, client: &str, id: &AccountId) -> Result<Option<Credential>, AuthError> {
+        if let Some(error) = *self.load_error.lock().unwrap() {
+            return Err(error);
+        }
         if self.fail.load(Ordering::SeqCst) {
             return Err(AuthError::SecureStorage);
         }
@@ -739,4 +743,37 @@ fn initial_authorization_requests_full_drive_access() {
     assert!(scopes.contains(&"openid"));
     assert!(scopes.contains(&"email"));
     assert!(scopes.contains(&google::DRIVE_SCOPE));
+}
+
+#[test]
+fn typed_vault_failures_preserve_credentials_and_block_remote_operations() {
+    use crate::{VaultFailure, VaultOperation};
+    let (provider, store, _) = provider();
+    let account = provider
+        .complete(&config(), tokens("a"), &Cancellation::new())
+        .unwrap();
+    let before = store.entries.lock().unwrap().clone();
+    for failure in [
+        VaultFailure::Crypto,
+        VaultFailure::Locked,
+        VaultFailure::InvalidData,
+        VaultFailure::Ambiguous,
+        VaultFailure::Platform,
+    ] {
+        let error = AuthError::CredentialStorage {
+            operation: VaultOperation::Read,
+            failure,
+        };
+        *store.load_error.lock().unwrap() = Some(error);
+        let result: Result<(), crate::EngineError> =
+            provider.with_access_config(&config(), &account.id, |_| {
+                panic!("vault failure must block remote work")
+            });
+        assert_eq!(result, Err(crate::EngineError::Authentication(error)));
+        assert_eq!(*store.entries.lock().unwrap(), before);
+    }
+    *store.load_error.lock().unwrap() = None;
+    provider
+        .with_access_config(&config(), &account.id, |_| Ok(()))
+        .unwrap();
 }

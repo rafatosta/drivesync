@@ -22,11 +22,23 @@ pub enum AuthError {
     IdentityMismatch,
     ReauthorizationRequired,
     SecureStorage,
+    /// A sanitized credential-vault failure with its operation and category.
+    CredentialStorage {
+        operation: VaultOperation,
+        failure: VaultFailure,
+    },
     AccountStorage,
     Internal,
 }
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Self::CredentialStorage { operation, failure } = self {
+            return write!(
+                f,
+                "{} (credential vault: {operation:?}/{failure:?})",
+                failure.message()
+            );
+        }
         f.write_str(match self {
             Self::Configuration => {
                 "Google connection is unavailable in this build. Please install a configured DriveSync release or contact the distributor."
@@ -52,8 +64,9 @@ impl std::fmt::Display for AuthError {
             Self::IdentityMismatch => "The credential does not belong to the requested account.",
             Self::ReauthorizationRequired => "The account needs to be connected again.",
             Self::SecureStorage => {
-                "Could not access the desktop credential vault. Unlock your keyring and try again."
+                "Could not access the desktop credential vault. Try again; if the problem persists, restart DriveSync."
             }
+            Self::CredentialStorage { .. } => unreachable!(),
             Self::AccountStorage => "Could not read or update the account list. Please try again.",
             Self::Internal => {
                 "Account connection could not be completed. Please restart DriveSync."
@@ -62,3 +75,49 @@ impl std::fmt::Display for AuthError {
     }
 }
 impl std::error::Error for AuthError {}
+
+/// Credential operation names safe for user-visible diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultOperation {
+    Entry,
+    Read,
+    Decode,
+    Encode,
+    Write,
+    Delete,
+}
+
+/// Allowlisted failure categories; never contain provider text or secrets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultFailure {
+    Locked,
+    PromptDismissed,
+    AccessDenied,
+    Unavailable,
+    Timeout,
+    InvalidSession,
+    Crypto,
+    InvalidData,
+    Ambiguous,
+    InvalidAttribute,
+    Protocol,
+    Platform,
+}
+impl VaultFailure {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Locked => "The credential vault is locked. Unlock it and try again.",
+            Self::PromptDismissed => "Credential vault authorization was cancelled. Try again and complete the authorization prompt.",
+            Self::AccessDenied => "Access to the credential vault was denied. Check application permissions and try again.",
+            Self::Unavailable => "The credential vault service is unavailable. Restore the desktop credential service and try again.",
+            Self::Timeout => "The credential vault did not respond in time. Try again.",
+            Self::InvalidSession => "The credential vault session is no longer valid. Try again; if the problem persists, restart DriveSync.",
+            Self::Crypto => "The credential vault could not securely exchange credentials. Try again; if the problem persists, report this error.",
+            Self::InvalidData => "The saved credential could not be decoded. Existing credentials were preserved; report this error.",
+            Self::Ambiguous => "Multiple matching credentials were found. Existing credentials were preserved; report this error.",
+            Self::InvalidAttribute => "The credential vault rejected an entry attribute. Report this error.",
+            Self::Protocol => "The credential vault returned an incompatible response. Report this error.",
+            Self::Platform => "A credential vault operation failed. Try again; if the problem persists, report this error.",
+        }
+    }
+}

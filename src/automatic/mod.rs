@@ -49,6 +49,10 @@ mod tests {
             AuthError::ReauthorizationRequired,
             AuthError::IdentityMismatch,
             AuthError::SecureStorage,
+            AuthError::CredentialStorage {
+                operation: drivesync_engine::VaultOperation::Read,
+                failure: drivesync_engine::VaultFailure::Crypto,
+            },
             AuthError::AccountStorage,
             AuthError::MissingPermissions,
         ] {
