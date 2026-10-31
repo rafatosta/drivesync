@@ -56,19 +56,21 @@ pub(super) fn recover(
     }
     let _ = history(folder, config)?;
     let inventory = engine.inventory(&folder.account_id, cancel)?;
-    let mut provider = Provider::new(engine, folder, config, root, cancel, &inventory)?;
-    let mut reports = Vec::new();
-    for intent in pending {
-        let result = execution::run(&ctx, &mut provider, intent)?;
-        let confirmed = store
-            .resolutions(&config.client_id, &scope)?
-            .into_iter()
-            .find(|v| v.id == result.operation_id)
-            .ok_or(EngineError::StateStorage)?;
-        complete(folder, config, &confirmed)?;
-        reports.push(result);
-    }
-    Ok(reports)
+    engine.auth_upload_access(config, &folder.account_id, |token| {
+        let mut provider = Provider::new(engine, folder, config, root, cancel, &inventory, token)?;
+        let mut reports = Vec::new();
+        for intent in pending {
+            let result = execution::run(&ctx, &mut provider, intent)?;
+            let confirmed = store
+                .resolutions(&config.client_id, &scope)?
+                .into_iter()
+                .find(|v| v.id == result.operation_id)
+                .ok_or(EngineError::StateStorage)?;
+            complete(folder, config, &confirmed)?;
+            reports.push(result);
+        }
+        Ok(reports)
+    })
 }
 
 pub(super) fn same_request(intent: &Intent, request: &ResolutionRequest) -> bool {
@@ -212,135 +214,139 @@ impl DriveSyncEngine {
                 .load(&config.client_id, id, &folder.remote.id, &folder.local)?
                 .ok_or(EngineError::InvalidPlan)?;
             let inventory = self.inventory(id, cancel)?;
-            let mut provider = Provider::new(self, folder, config, root, cancel, &inventory)?;
-            let ctx = Context {
-                client: &config.client_id,
-                scope: &scope,
-                root,
-                store: &store,
-                cancel,
-            };
-            if let Some(previous) = store
-                .resolutions(&config.client_id, &scope)?
-                .into_iter()
-                .find(|intent| same_request(intent, request) && intent.stage != Stage::Aborted)
-            {
-                let report = execution::run(&ctx, &mut provider, previous)?;
+            self.auth_upload_access(config, id, |token| {
+                let mut provider =
+                    Provider::new(self, folder, config, root, cancel, &inventory, token)?;
+                let ctx = Context {
+                    client: &config.client_id,
+                    scope: &scope,
+                    root,
+                    store: &store,
+                    cancel,
+                };
+                if let Some(previous) = store
+                    .resolutions(&config.client_id, &scope)?
+                    .into_iter()
+                    .find(|intent| same_request(intent, request) && intent.stage != Stage::Aborted)
+                {
+                    let report = execution::run(&ctx, &mut provider, previous)?;
+                    let completed = store
+                        .resolutions(&config.client_id, &scope)?
+                        .into_iter()
+                        .find(|intent| intent.id == report.operation_id)
+                        .ok_or(EngineError::StateStorage)?;
+                    complete(folder, config, &completed)?;
+                    return Ok(report);
+                }
+                let mut journal = history(folder, config)?;
+                let history_scope = crate::state::CheckpointScope {
+                    client: &config.client_id,
+                    account: id,
+                    remote: &folder.remote.id,
+                    local: &folder.local,
+                };
+                if !journal
+                    .records(&history_scope)?
+                    .iter()
+                    .any(|record| record == &request.record)
+                {
+                    return Err(EngineError::RemoteChanged);
+                }
+                let remote_id = request
+                    .record
+                    .remote_id
+                    .as_deref()
+                    .ok_or(EngineError::InvalidPlan)?;
+                let origin = request
+                    .record
+                    .relative_path
+                    .as_ref()
+                    .ok_or(EngineError::InvalidPlan)?;
+                let remote = provider.observe(remote_id)?;
+                let fingerprint =
+                    crate::download::filesystem::fingerprint_root(root, origin, cancel)?;
+                let current = crate::ResolutionObservation {
+                    relative_path: origin.clone(),
+                    remote: crate::RemoteState::Present {
+                        id: remote.item.id.clone(),
+                        parent_id: remote.item.parent_id.clone(),
+                        name: remote.item.name.clone(),
+                        version: remote.item.version.ok_or(EngineError::ObservationUnknown)?,
+                    },
+                    local: fingerprint
+                        .clone()
+                        .map_or(crate::LocalState::Missing, |fingerprint| {
+                            crate::LocalState::Present { fingerprint }
+                        }),
+                };
+                if journal
+                    .revalidate_resolution(&history_scope, &request.record.conflict_id, &current)?
+                    .is_err()
+                {
+                    return Err(EngineError::RemoteChanged);
+                }
+                let fingerprint = fingerprint.ok_or(EngineError::DownloadConflict)?;
+                let base = store
+                    .confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?
+                    .remove(remote_id)
+                    .ok_or(EngineError::ObservationUnknown)?;
+                continuity(
+                    root,
+                    &inventory,
+                    origin,
+                    &fingerprint,
+                    &remote,
+                    &base,
+                    cancel,
+                )?;
+                let op_id = operation_id();
+                let desired_name = if request.choice == ResolutionChoice::KeepRemote {
+                    remote.item.name.clone()
+                } else {
+                    origin
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .ok_or(EngineError::InvalidPlan)?
+                        .into()
+                };
+                let target = origin.with_file_name(&desired_name);
+                let (copy_name, copy_id) = if request.choice == ResolutionChoice::KeepBoth {
+                    let name = copy_name(origin, &op_id)?;
+                    let local = crate::local::scan(root, cancel)?;
+                    if local.entries.keys().any(|path| {
+                        path.parent() == origin.parent()
+                            && path.file_name().and_then(|v| v.to_str()).is_some_and(|v| {
+                                crate::planner::path_key(v) == crate::planner::path_key(&name)
+                            })
+                    }) {
+                        return Err(EngineError::DownloadConflict);
+                    }
+                    (Some(name), Some(provider.generate()?))
+                } else {
+                    (None, None)
+                };
+                let plan = Plan {
+                    conflict: Some(request.record.conflict_id.clone()),
+                    origin: origin.clone(),
+                    target,
+                    local_fingerprint: fingerprint,
+                    remote,
+                    choice: request.choice,
+                    base: Some(base),
+                    desired_name,
+                    copy_name,
+                    copy_id,
+                };
+                let intent = execution::begin(&ctx, plan, op_id)?;
+                let report = execution::run(&ctx, &mut provider, intent)?;
                 let completed = store
                     .resolutions(&config.client_id, &scope)?
                     .into_iter()
                     .find(|intent| intent.id == report.operation_id)
                     .ok_or(EngineError::StateStorage)?;
                 complete(folder, config, &completed)?;
-                return Ok(report);
-            }
-            let mut journal = history(folder, config)?;
-            let history_scope = crate::state::CheckpointScope {
-                client: &config.client_id,
-                account: id,
-                remote: &folder.remote.id,
-                local: &folder.local,
-            };
-            if !journal
-                .records(&history_scope)?
-                .iter()
-                .any(|record| record == &request.record)
-            {
-                return Err(EngineError::RemoteChanged);
-            }
-            let remote_id = request
-                .record
-                .remote_id
-                .as_deref()
-                .ok_or(EngineError::InvalidPlan)?;
-            let origin = request
-                .record
-                .relative_path
-                .as_ref()
-                .ok_or(EngineError::InvalidPlan)?;
-            let remote = provider.observe(remote_id)?;
-            let fingerprint = crate::download::filesystem::fingerprint_root(root, origin, cancel)?;
-            let current = crate::ResolutionObservation {
-                relative_path: origin.clone(),
-                remote: crate::RemoteState::Present {
-                    id: remote.item.id.clone(),
-                    parent_id: remote.item.parent_id.clone(),
-                    name: remote.item.name.clone(),
-                    version: remote.item.version.ok_or(EngineError::ObservationUnknown)?,
-                },
-                local: fingerprint
-                    .clone()
-                    .map_or(crate::LocalState::Missing, |fingerprint| {
-                        crate::LocalState::Present { fingerprint }
-                    }),
-            };
-            if journal
-                .revalidate_resolution(&history_scope, &request.record.conflict_id, &current)?
-                .is_err()
-            {
-                return Err(EngineError::RemoteChanged);
-            }
-            let fingerprint = fingerprint.ok_or(EngineError::DownloadConflict)?;
-            let base = store
-                .confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?
-                .remove(remote_id)
-                .ok_or(EngineError::ObservationUnknown)?;
-            continuity(
-                root,
-                &inventory,
-                origin,
-                &fingerprint,
-                &remote,
-                &base,
-                cancel,
-            )?;
-            let op_id = operation_id();
-            let desired_name = if request.choice == ResolutionChoice::KeepRemote {
-                remote.item.name.clone()
-            } else {
-                origin
-                    .file_name()
-                    .and_then(|v| v.to_str())
-                    .ok_or(EngineError::InvalidPlan)?
-                    .into()
-            };
-            let target = origin.with_file_name(&desired_name);
-            let (copy_name, copy_id) = if request.choice == ResolutionChoice::KeepBoth {
-                let name = copy_name(origin, &op_id)?;
-                let local = crate::local::scan(root, cancel)?;
-                if local.entries.keys().any(|path| {
-                    path.parent() == origin.parent()
-                        && path.file_name().and_then(|v| v.to_str()).is_some_and(|v| {
-                            crate::planner::path_key(v) == crate::planner::path_key(&name)
-                        })
-                }) {
-                    return Err(EngineError::DownloadConflict);
-                }
-                (Some(name), Some(provider.generate()?))
-            } else {
-                (None, None)
-            };
-            let plan = Plan {
-                conflict: Some(request.record.conflict_id.clone()),
-                origin: origin.clone(),
-                target,
-                local_fingerprint: fingerprint,
-                remote,
-                choice: request.choice,
-                base: Some(base),
-                desired_name,
-                copy_name,
-                copy_id,
-            };
-            let intent = execution::begin(&ctx, plan, op_id)?;
-            let report = execution::run(&ctx, &mut provider, intent)?;
-            let completed = store
-                .resolutions(&config.client_id, &scope)?
-                .into_iter()
-                .find(|intent| intent.id == report.operation_id)
-                .ok_or(EngineError::StateStorage)?;
-            complete(folder, config, &completed)?;
-            Ok(report)
+                Ok(report)
+            })
         })
     }
 }

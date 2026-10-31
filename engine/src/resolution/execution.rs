@@ -83,7 +83,7 @@ fn check(ctx: &Context<'_>, remote: &mut impl Remote, intent: &Intent) -> Result
     remote.configured()
 }
 
-/// Verify remote bytes under an exact tag and reobserve after streaming.
+/// Verify remote bytes bracketed by exact metadata and reobserve after streaming.
 /// Metadata and checksums alone never establish equality with selected bytes.
 fn content(
     ctx: &Context<'_>,

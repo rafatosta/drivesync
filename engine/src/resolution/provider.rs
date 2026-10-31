@@ -24,6 +24,8 @@ pub(crate) struct Provider<'a> {
     pub root: &'a Root,
     pub cancel: &'a Cancellation,
     parents: HashMap<String, String>,
+    /// Borrowed only inside AuthProvider's account-locked operation closure.
+    token: &'a str,
 }
 impl<'a> Provider<'a> {
     pub fn new(
@@ -33,6 +35,7 @@ impl<'a> Provider<'a> {
         root: &'a Root,
         cancel: &'a Cancellation,
         inventory: &RemoteInventory,
+        token: &'a str,
     ) -> Result<Self, EngineError> {
         if inventory.account_id != folder.account_id || inventory.root_id != folder.remote.id {
             return Err(EngineError::InvalidPlan);
@@ -43,6 +46,7 @@ impl<'a> Provider<'a> {
             config,
             root,
             cancel,
+            token,
             parents: inventory
                 .entries
                 .iter()
@@ -53,8 +57,7 @@ impl<'a> Provider<'a> {
     }
     fn access<T>(&self, f: impl FnOnce(&str) -> Result<T, EngineError>) -> Result<T, EngineError> {
         crate::local::check(self.cancel)?;
-        self.engine
-            .auth_upload_access(self.config, &self.folder.account_id, f)
+        f(self.token)
     }
     fn parent(&self, parent: &str, write: bool) -> Result<(), EngineError> {
         let mut current = parent.to_owned();
@@ -322,28 +325,10 @@ impl Remote for Provider<'_> {
         }
         self.parent(&version.item.parent_id, false)?;
         self.access(|token| {
-            let response = client()?
-                .get(format!(
-                    "https://www.googleapis.com/drive/v2/files/{}",
-                    version.item.id
-                ))
-                .query(&[("alt", "media")])
-                .bearer_auth(token)
-                .header(reqwest::header::IF_MATCH, &version.etag)
-                .header(reqwest::header::ACCEPT_ENCODING, "identity")
-                .send()
-                .map_err(network)?;
-            if response.status().as_u16() != 200 {
-                body(response)?;
-                return Err(invalid());
-            }
-            if response
-                .headers()
-                .get(reqwest::header::CONTENT_ENCODING)
-                .is_some_and(|v| v != "identity")
-            {
-                return Err(EngineError::DownloadIntegrity);
-            }
+            // A File metadata ETag is not a media-representation ETag. Stream
+            // bounded bytes through the established transport; the executor
+            // verifies size/MD5/SHA and brackets the read with the exact version.
+            let response = crate::remote::file_media(token, &version.item.id)?;
             Ok(Box::new(response) as Box<dyn Read>)
         })
     }

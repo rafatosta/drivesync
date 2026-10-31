@@ -1062,6 +1062,8 @@ impl DriveSyncEngine {
 #[cfg(test)]
 mod live_google_tests;
 #[cfg(test)]
+mod live_resolution_tests;
+#[cfg(test)]
 mod tests;
 
 /// Holds one account/configuration scope throughout one transfer cycle.
