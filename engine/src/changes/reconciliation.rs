@@ -128,7 +128,10 @@ pub(crate) fn classify(
             crate::conflicts::plan_diagnosis(&entry.action, &entry.expected_local)
         });
         result.push(ReconciliationEntry {
-            relative_path: entry.relative_path.clone(),
+            relative_path: match &entry.action {
+                crate::PlanAction::Classified { local_path, .. } => Some(local_path.clone()),
+                _ => entry.relative_path.clone(),
+            },
             remote_id: Some(entry.remote_id.clone()),
             kind,
         });

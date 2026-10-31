@@ -177,7 +177,7 @@ pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineEr
         Err(e) => Err(io(e)),
     }
 }
-pub(super) fn create(parent: &File, name: &str, size: u64) -> Result<File, EngineError> {
+pub(crate) fn create(parent: &File, name: &str, size: u64) -> Result<File, EngineError> {
     let space = fs::fstatvfs(parent).map_err(io)?;
     if u128::from(space.f_bavail) * u128::from(space.f_frsize) < u128::from(size) {
         return Err(EngineError::DownloadIo);
@@ -196,7 +196,7 @@ pub(super) fn install(parent: &File, temp: &str, name: &OsStr) -> Result<(), Eng
     move_entry(parent, OsStr::new(temp), name)
 }
 /// Moves an entry without replacing any destination, then syncs the directory.
-pub(super) fn move_entry(parent: &File, old: &OsStr, new: &OsStr) -> Result<(), EngineError> {
+pub(crate) fn move_entry(parent: &File, old: &OsStr, new: &OsStr) -> Result<(), EngineError> {
     rename_entry(parent, old, new)?;
     parent.sync_all().map_err(io)
 }
@@ -213,7 +213,7 @@ pub(super) fn rename_entry(parent: &File, old: &OsStr, new: &OsStr) -> Result<()
 }
 
 /// Observes an entry without following symlinks, including unexpected file types.
-pub(super) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
+pub(crate) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
     match fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
         Ok(_) => Ok(true),
         Err(rustix::io::Errno::NOENT) => Ok(false),

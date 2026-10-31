@@ -31,13 +31,15 @@ Cursor de changes deve ser armazenado por **conta e escopo do feed de alteraçõ
 
 [STATE-003](algorithms.md#state-003--reconstrução-explícita-sync-005) define seleção
 atômica de substitutos, preservação de bancos/sidecars, reuso de observações
-íntegras, isolamento, cancelamento e bloqueio por perda de intents de upload.
+íntegras, isolamento, cancelamento e bloqueio por perda de intenções de upload
+ou resolução. Reconstruir `state.sqlite3` também bloqueia novas escritas remotas;
+marcadores independentes de resolução não são apagados pela reconstrução.
 A fachada retém locks até o fim. Recuperar não significa instalar nem reconstruir B.
 
 
 ## Preservação de conflitos — SYNC-010
 
-O formato principal exato é v3. A tabela `conflict_copies` mantém intenção,
+O formato principal exato é v4. A tabela `conflict_copies` mantém intenção,
 staging verificado e publicação de versões remotas divergentes, isolados por
 cliente/conta/raiz remota/local e vinculados ao caminho original. Não participa
 de `confirmed_bases`, nem invalida ou avança B. A leitura valida nome derivado,
@@ -47,7 +49,7 @@ Contrato e recuperação: [preservation.md](../conflicts/preservation.md).
 
 ## Histórico de conflitos — SYNC-011
 
-`conflict-history.sqlite3` é um journal separado, com formato exato 1, aplicação
+`conflict-history.sqlite3` é um journal separado, com formato exato 3, aplicação
 e chave compostas próprias por cliente/conta/raiz remota/raiz local. Registros
 mantêm o último diagnóstico por identidade e caminho, incluindo se ainda exige
 atenção; eventos append-only registram diagnósticos distintos, cópias verificadas
@@ -60,5 +62,32 @@ Ele não participa do journal de instalação, da base confirmada nem da
 reconciliação; ausência, corrupção ou formato incompatível falham sem reset ou
 migração. A reconstrução explícita preserva os originais e cria um journal vazio,
 mantendo operações de sincronização bloqueadas até a recuperação autorizada.
-Decisões assistidas e encerramento de pendências ainda não são executados pelo
-motor e, portanto, não são registradas como se tivessem ocorrido.
+Decisões aplicadas pelo executor são registradas com ID da operação e escolha,
+somente depois da confirmação de B. Uma observação mais nova não é encerrada
+pela conclusão de uma decisão antiga. A confirmação no banco principal e o
+evento nesse journal não são uma transação entre bancos: a intenção confirmada
+permanece disponível para repetir a auditoria idempotentemente.
+
+## Intenções de resolução
+
+A tabela `resolutions` do banco principal mantém a última intenção por arquivo e
+escopo. Comparação exata do registro anterior impede substituição de plano,
+regressão de fase ou redefinição de tentativas por um worker obsoleto. Intenções
+incompletas retiram B da consulta executável; a base anterior continua fisicamente
+preservada. Cancelamento antes dos efeitos pode abortar a intenção e devolver a
+base anterior ao planejador.
+
+Após verificar versões ativas e cópias preservadas, uma única transação publica
+as operações instaladas de ambos os arquivos de “manter ambas” e a fase
+`Confirmed`. Falha em qualquer escrita faz rollback de todas. O histórico de
+decisão continua sendo auditado separadamente depois dessa confirmação.
+
+Antes de efeitos, `.drivesync-resolution-<id>.guard` é gravado e sincronizado no
+filesystem independentemente do SQLite. Se o banco desaparecer ou perder a
+intenção, o marcador impede tratar a raiz como trabalho novo. Após confirmação,
+o marcador é renomeado sem substituição para `.done` e preservado. Marcadores
+incompatíveis, incompletos ou sem intenção correspondente bloqueiam operações;
+não são apagados nem recriados silenciosamente. O executor retoma intenções
+aceitas antes de novo planejamento de download.
+
+Contrato de efeitos: [executor compartilhado](../conflicts/resolution-execution.md).

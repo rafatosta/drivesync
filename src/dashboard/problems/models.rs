@@ -38,6 +38,7 @@ pub(super) fn pending(records: &[ConflictRecord]) -> Vec<Item> {
         details.push_str(&format!("\nObserved local size: {}. Local modified: {modified}.\nObserved Drive size: {}. Drive modified date: unavailable.", size(r.local_size), size(r.remote_size)));
         for outcome in &r.outcomes {
             match outcome {
+                ConflictOutcome::ResolutionApplied {..} => details.push_str("\nAn earlier decision reached verified effects. A newer observation may still need review."),
                 ConflictOutcome::CopyPreserved { copy_path, remote_version } => details.push_str(&format!("\nVerified preservation at the time of copying: Drive version {remote_version} at {}. Current copy availability is not checked.", copy_path.display())),
                 ConflictOutcome::RetryBlocked { reason } => details.push_str(&format!("\nLast blocked attempt: {reason:?}. No resolution confirmed.")),
                 ConflictOutcome::ResolutionAborted { .. } => details.push_str("\nA previous decision was aborted because evidence changed. Compare again."),

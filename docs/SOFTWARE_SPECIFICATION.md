@@ -1077,12 +1077,14 @@ identificadas como verificadas no momento de sua criação, sem prometer que ain
 existam. Texto de caminhos não é interpretado como markup; detalhes são
 selecionáveis, expansíveis por teclado, sem truncamento obrigatório e roláveis.
 
-O journal de conflitos usa formato exato v2; v1 é rejeitado sem apagar ou migrar
+O journal de conflitos usa formato exato v3; formatos anteriores são rejeitados sem apagar ou migrar
 evidências. A recuperação explícita de estado de desenvolvimento permanece necessária.
 
-**Limites:** a central apresenta o ramo de adiamento de P03, não implementa o
-executor de manter local/remoto/ambas. A revalidação SYNC-012 continua obrigatória
-para futura aplicação. C22/C25 são apresentados como acesso desconhecido ou
+**Estado de integração:** o motor oferece `resolve_conflict` para decisões
+explícitas de manter local/remoto/ambas, vinculadas às versões exibidas e
+revalidadas sob locks. A interface ainda apresenta somente o ramo de adiamento
+até integrar essas ações. O executor confirma B atomicamente com sua intenção e
+audita a decisão após essa confirmação. C22/C25 são apresentados como acesso desconhecido ou
 indisponível, nunca como exclusão inferida. Testes determinísticos da apresentação,
 reabertura/idempotência SQLite e testes existentes de preservação são evidências
 simuladas; não homologam Drive real, leitor de tela ou recuperação de perda de energia.

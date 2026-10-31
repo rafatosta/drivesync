@@ -29,7 +29,7 @@ fn signature(metadata: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64
 }
 /// Reads at most expected+1 bytes; writes only bounded verified-size prefixes.
 /// The caller owns staging and does not expose it as the final file on failure.
-pub(super) fn copy(
+pub(crate) fn copy(
     input: &mut dyn Read,
     output: &mut dyn Write,
     expected: u64,
@@ -73,7 +73,7 @@ pub(super) fn copy(
     Ok(format!("{:x}", local.finalize()))
 }
 /// Hashes one open regular file and rejects changes observed while it is read.
-pub(super) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<String, EngineError> {
+pub(crate) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<String, EngineError> {
     let before = file.metadata().map_err(io)?;
     if !before.is_file() {
         return Err(EngineError::DownloadConflict);
@@ -103,7 +103,7 @@ pub(super) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<Stri
     Ok(format!("{:x}", hash.finalize()))
 }
 /// Fingerprints the open regular file and rejects metadata changes during reading.
-pub(super) fn verify(
+pub(crate) fn verify(
     file: &mut File,
     size: u64,
     sha256: &str,

@@ -5,7 +5,8 @@
 //! here; internal modules are not exposed as independent public APIs.
 //! Manual binary downloads consume durable incremental remote observations,
 //! update intact managed copies and retain prior versions.
-//! Create-only uploads are optional per folder pair; remote overwrite and deletion are unavailable.
+//! Create-only uploads are optional per folder pair. Explicit conflict decisions
+//! use conditional same-ID updates; remote deletion remains unavailable.
 mod accounts;
 mod auth;
 mod changes;
@@ -22,6 +23,7 @@ mod notifications;
 mod planner;
 mod queue;
 mod remote;
+mod resolution;
 mod state;
 mod ui;
 mod upload;
@@ -41,6 +43,7 @@ pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncRootId};
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
+pub use resolution::{ResolutionChoice, ResolutionReport, ResolutionRequest};
 
 pub use planner::{
     decide, BulkImpact, BulkPolicy, BulkReview, ConfirmedBase, ConfirmedLocation, ConflictReason,

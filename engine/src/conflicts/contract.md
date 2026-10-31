@@ -229,8 +229,8 @@ sem eventos. A aplicação de resolução assistida continua fora de escopo.
 
 `ConflictRecord` inclui tamanho local, mtime local em segundos Unix e tamanho
 remoto opcionais, colhidos das observações estáveis/inventário; ausência é
-explicitamente desconhecida. O journal de conflitos passa ao formato exato v2,
-sem migração ou reset automático de v1. Não há inferência de versão vencedora
+explicitamente desconhecida. O journal de conflitos usa formato exato v3,
+sem migração ou reset automático dos formatos anteriores. Não há inferência de versão vencedora
 por data nem consulta de caminhos históricos na apresentação. A central usa
 `saved_conflicts` sem rede e não altera status ou histórico ao adiar/fechar.
 Os registros continuam sendo observações, não autorizações de resolução.

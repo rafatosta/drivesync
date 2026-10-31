@@ -2,10 +2,11 @@
 
 ## Escopo e condição de habilitação
 
-Este contrato especifica o executor necessário para concluir #15 e #16. O
-aplicativo ainda não executa essas resoluções. O experimento de precondições
-abaixo é executável, mas não constitui um executor nem habilita mutações no
-sincronizador.
+Este contrato especifica o executor necessário para concluir #15 e #16. O motor
+oferece a API explícita `resolve_conflict`, com preservação, intenção durável e
+confirmação de efeitos. A interface e a seleção automática de candidatos C09
+ainda precisam ser integradas. O experimento de precondições abaixo permanece
+uma ferramenta separada; não é invocado pelo sincronizador.
 
 A implementação compartilhada é acompanhada pela [issue #48](https://github.com/rafatosta/drivesync/issues/48).
 
@@ -105,24 +106,29 @@ Os aceites originais de #15/#16 continuam nessas issues até serem atendidos.
 
 ### Adaptador candidato e revisão do contrato
 
-O candidato de implementação usa **v2 somente nas operações que precisam de
+O adaptador usa **v2 somente nas operações que precisam de
 ETag condicional**, mantendo inventário/feed v3. Não é fallback automático em
 produção. Essa introdução precisa da revisão humana da especificação prevista
 em `docs/old/development-methodology.md`, etapa 5, antes de conectar efeitos
-destrutivos ao coordinator. As autorizações de teste e de publicação não
-constituem evidência de revisão técnica desse novo contrato.
+destrutivos ao coordinator. A aprovação do contrato abrange esse adaptador e a
+política explícita de “manter ambas”; não equivale à aprovação de testes não executados.
 
 | Porta candidata | Requisito |
 |---|---|
 | Consulta v2 de `id,title,version,etag` | Identidade e versão devem concordar com a observação v3 estabilizada; diferença é evidência insuficiente. ETag forte é opaco e não pode ser derivado de `version`. |
 | `PATCH /drive/v2/files/{id}` | Alterar somente `title` sob `If-Match`; 412 exige nova comparação, nunca escrita incondicional. |
 | `PUT /upload/drive/v2/files/{id}?uploadType=media` | Conteúdo sob `If-Match` para o mesmo ID; confirmar hash, tamanho, localização e revisão após o efeito. |
-| Upload resumível v2 | Precondição na criação da sessão e na publicação; validar origem da URI, guardar sessão como dado sensível e reconciliar resultado incerto antes de repetir. |
+| Upload resumível v2 | Precondição na criação da sessão e na publicação; validar origem da URI, tratar a sessão como dado sensível e reconciliar resultado incerto antes de repetir. Sessões provisórias ficam em memória; a retomada pode reiniciar a transferência do snapshot no mesmo ID após reconciliar o resultado. |
 | Fronteira v2/v3 | Coletar novamente se há propagação de revisão; somente leituras têm repetição limitada. Nunca avançar B usando observações divergentes. |
 
-Mesmo com ensaios positivos, faltam os contratos implementados de intenção,
-preservação, recuperação e confirmação descritos acima. Não conectar diretamente
-o experimento Python ao sincronizador; ele é uma ferramenta de pesquisa isolada.
+A intenção e a confirmação usam o banco principal v4; o journal de conflitos v3
+registra a decisão concluída separadamente. Marcadores `.guard` independentes
+impedem que perda do SQLite esconda efeitos incertos. Cópias remotas verificadas
+usam `DriveSync backup conflict-<id>-remote.bak`; o inode local deslocado fica em
+`DriveSync backup conflict-<id>.bak`. Essas cópias são excluídas de uploads.
+O orçamento de cinco passes e o prazo persistido limitam novas mutações; após
+esgotamento só é permitido reconhecer um resultado já aplicado. Não conectar
+diretamente o experimento Python ao sincronizador.
 
 Referências oficiais consultadas em 2026-10-30:
 

@@ -2,6 +2,7 @@
 //!
 //! Coordinates independent account, authentication, Drive and local folder
 //! modules without exposing credentials or platform storage to the GUI.
+mod resolution;
 use crate::{
     accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError, Cancellation,
     EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount, SyncRootId,
@@ -418,6 +419,8 @@ impl DriveSyncEngine {
     /// stored beside the marker in the local root, so it survives app-data resets.
     /// Managed intact copies can be updated after preserving their prior version;
     /// concurrent destinations are never overwritten.
+    /// Previously accepted conflict intentions are reconciled first; this call
+    /// does not authorize a new content choice or unconditional remote update.
     /// Existing divergent data is reported per item. Partial staging is preserved.
     ///
     /// # Errors
@@ -457,6 +460,8 @@ impl DriveSyncEngine {
         // Validate both stores before collecting observations or changing user files.
         let mut store = crate::state::Store::open(&journal_path)?;
         let mut checkpoints = crate::state::Checkpoints::open(&checkpoint_path)?;
+        let recovered_resolutions =
+            resolution::recover(self, folder, config, local_root, &store, cancel)?;
         let root = self
             .auth
             .with_access_config(config, id, |token| {
@@ -485,6 +490,9 @@ impl DriveSyncEngine {
             cancel,
             &mut source,
         )?;
+        if !recovered_resolutions.is_empty() {
+            checkpoint = crate::changes::reconcile(id, &root, &checkpoint, cancel, &mut source)?;
+        }
         let inventory = &checkpoint.inventory;
         let bases = store.confirmed_bases(&config.client_id, id, &root, &folder.local)?;
         if let Some((_, old)) = &previous {
@@ -575,6 +583,12 @@ impl DriveSyncEngine {
             |event| (progress.borrow_mut())(event),
             local_root,
         )?;
+        report.recovered += recovered_resolutions.len();
+        report.preserved_copies.extend(
+            recovered_resolutions
+                .into_iter()
+                .flat_map(|value| value.preserved_paths),
+        );
         for copy in &report.conflict_copies {
             conflict_history.record_outcome(
                 &scope,
@@ -707,7 +721,8 @@ impl DriveSyncEngine {
         self.auth.with_access_config(config, id, f)
     }
     /// Runs download reconciliation and optional create-only upload, sequentially.
-    /// Updates/deletions are never sent. Call off the UI thread.
+    /// Previously accepted conditional conflict decisions are reconciled first.
+    /// Deletions are never sent. Call off the UI thread.
     pub fn synchronize_once(
         &self,
         id: &AccountId,
