@@ -208,3 +208,25 @@ fundamenta caracteres e dispositivos reservados;
 [Unicode canonical caseless matching](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-3/#G1459)
 fundamenta decomposição e folding. As tabelas efetivas são as versões das crates
 fixadas no lockfile; não se promete suporte antecipado a caracteres futuros.
+
+## SYNC-017 — movimentações concorrentes e destinos alterados
+
+`decide_move` (módulo `planner::moves`) é puro e opera sobre IDs de item/pai, nunca
+sobre caminhos ou nomes. Entrada: evidência de movimento local/remoto contra o pai
+de B, mudança de conteúdo de cada lado, conflito de conteúdo e as árvores de IDs
+local (mapeada) e remota.
+
+1. Evidência `Unknown` em qualquer lado suspende a decisão (`IncompleteEvidence`).
+2. Destinos distintos (C10, C17) → `Preserve(DivergentDestinations)`; não há vencedor.
+3. Mesmo destino com identidade contínua → `Equivalent`.
+4. Movimento de um lado só → `Apply` candidato. Edição do outro lado (C12) é
+   combinada (`combined_edit`), salvo conflito de conteúdo ou evidência desconhecida.
+5. O destino é validado nas duas árvores com o item reparentado: deve existir,
+   estar disponível, ser pasta e ter identidade contínua (C19), e a cadeia de pais
+   deve alcançar a raiz sem passar pelo próprio item (ciclo) nem por pai ausente
+   (órfão). Movimentos concorrentes de ancestrais são capturados pela validação
+   conjunta.
+
+O resultado é apenas candidato: não autoriza efeito e exige revalidação do executor.
+Não há execução de move local/remoto nesta etapa; integração ao coletor/executor e
+validação com Google Drive real permanecem pendentes. Testes: `planner::moves::tests`.
