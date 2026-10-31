@@ -24,6 +24,139 @@ pub(super) fn scope(folder: &FolderConfiguration) -> crate::DownloadPlan {
     }
 }
 
+#[derive(Default)]
+pub(super) struct AutomaticReport {
+    pub completed: Vec<(String, crate::ResolutionReport)>,
+    pub issues: Vec<crate::DownloadIssue>,
+}
+
+/// Consumes only the exact bulk-gated reconciliation. Each candidate still
+/// revalidates live identity, parent mapping, configuration and conditional tag.
+pub(super) fn automatic(
+    engine: &DriveSyncEngine,
+    configuration: (
+        &FolderConfiguration,
+        &auth::OAuthConfig,
+        &crate::download::filesystem::Root,
+    ),
+    store: &crate::state::Store,
+    record: &crate::state::Reconciliation,
+    cancel: &Cancellation,
+    mut progress: impl FnMut(crate::DownloadProgress),
+) -> Result<AutomaticReport, EngineError> {
+    let (folder, config, root) = configuration;
+    if record.remote.entries.len() != record.plan.entries.len()
+        || record.remote.account_id != folder.account_id
+        || record.remote.root_id != folder.remote.id
+        || record.plan.local_root != folder.local
+    {
+        return Err(EngineError::InvalidPlan);
+    }
+    let candidates: Vec<_> = record
+        .remote
+        .entries
+        .iter()
+        .zip(&record.plan.entries)
+        .filter_map(|(item, entry)| {
+            let base = record.bases.get(&item.id)?;
+            crate::resolution::planning::candidate(item, entry, base, &record.local)
+                .map(|candidate| (item, candidate, base))
+        })
+        .collect();
+    let mut report = AutomaticReport {
+        completed: vec![],
+        issues: vec![],
+    };
+    if candidates.is_empty() {
+        return Ok(report);
+    }
+    engine.auth_upload_access(config, &folder.account_id, |token| {
+        let mut provider =
+            Provider::new(engine, folder, config, root, cancel, &record.remote, token)?;
+        let ctx = Context {
+            client: &config.client_id,
+            scope: &record.plan,
+            root,
+            store,
+            cancel,
+        };
+        for (index, (item, candidate, base)) in candidates.iter().enumerate() {
+            progress(crate::DownloadProgress {
+                preparation: None,
+                completed_items: index,
+                total_items: candidates.len(),
+                current: Some(crate::DownloadItemProgress {
+                    relative_path: candidate.origin.clone(),
+                    stage: crate::DownloadStage::Checking,
+                    received: 0,
+                    total: item.size,
+                }),
+            });
+            let result = (|| {
+                let remote = provider.observe(&item.id)?;
+                if remote.item != **item {
+                    return Err(EngineError::RemoteChanged);
+                }
+                continuity(
+                    root,
+                    &record.remote,
+                    &candidate.origin,
+                    &candidate.fingerprint,
+                    &remote,
+                    base,
+                    cancel,
+                )?;
+                let plan = Plan {
+                    conflict: None,
+                    origin: candidate.origin.clone(),
+                    target: candidate.target.clone(),
+                    local_fingerprint: candidate.fingerprint.clone(),
+                    remote,
+                    choice: candidate.choice,
+                    base: Some((*base).clone()),
+                    desired_name: candidate
+                        .target
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .ok_or(EngineError::InvalidPlan)?
+                        .into(),
+                    copy_name: None,
+                    copy_id: None,
+                };
+                let intent = execution::begin(&ctx, plan, operation_id())?;
+                let result = execution::run(&ctx, &mut provider, intent)?;
+                let confirmed = store
+                    .resolutions(&config.client_id, &record.plan)?
+                    .into_iter()
+                    .find(|intent| intent.id == result.operation_id)
+                    .ok_or(EngineError::StateStorage)?;
+                complete(folder, config, &confirmed)?;
+                Ok(result)
+            })();
+            match result {
+                Ok(value) => report.completed.push((item.id.clone(), value)),
+                Err(error) => {
+                    let error = crate::coordinator::connection(error);
+                    if matches!(
+                        error,
+                        EngineError::StateStorage
+                            | EngineError::RootSuspended(_)
+                            | EngineError::StateRecoveryPending
+                            | EngineError::Authentication(AuthError::Cancelled)
+                    ) {
+                        return Err(error);
+                    }
+                    report.issues.push(crate::DownloadIssue {
+                        relative_path: Some(candidate.origin.clone()),
+                        error,
+                    });
+                }
+            }
+        }
+        Ok(report)
+    })
+}
+
 /// Reconcile previously accepted effects before a new download plan can see an
 /// absent origin or target as permission to create a misleading replacement.
 pub(super) fn recover(

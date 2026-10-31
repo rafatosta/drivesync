@@ -371,8 +371,17 @@ impl ConflictHistory {
         if intent.stage != crate::resolution::Stage::Confirmed || !intent.valid() {
             return Err(EngineError::InvalidPlan);
         }
-        let Some(id) = &intent.plan.conflict else {
-            return Ok(());
+        let id = match &intent.plan.conflict {
+            Some(id) => id.clone(),
+            None => match self.records(scope)?.into_iter().find(|record| {
+                record.remote_id.as_ref() == Some(&intent.plan.remote.item.id)
+                    && record.relative_path.as_ref() == Some(&intent.plan.origin)
+                    && record.local_fingerprint.as_ref() == Some(&intent.plan.local_fingerprint)
+                    && record.remote_version == intent.plan.remote.item.version
+            }) {
+                Some(record) => record.conflict_id,
+                None => return Ok(()),
+            },
         };
         let local = validate_scope(scope)?;
         let tx = self

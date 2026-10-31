@@ -99,6 +99,20 @@ impl<'a> Provider<'a> {
     fn source(&self, plan: &Plan) -> Result<(), EngineError> {
         self.engine.verify_root(self.folder, self.config)?;
         self.root.validate()?;
+        if plan.conflict.is_none() {
+            if crate::state::recovery::uploads_blocked(&self.folder.local.join(".drivesync"))? {
+                return Err(EngineError::StateRecoveryPending);
+            }
+            let uploads = crate::state::Uploads::open(
+                &crate::configuration::identity::uploads_path(self.folder, &self.config.client_id)?,
+                &self.config.client_id,
+                self.folder,
+            )?;
+            if !uploads.enabled()? {
+                return Err(EngineError::InvalidPlan);
+            }
+            uploads.validate_root(self.root)?;
+        }
         if crate::download::filesystem::fingerprint_root(self.root, &plan.origin, self.cancel)?
             .as_ref()
             != Some(&plan.local_fingerprint)

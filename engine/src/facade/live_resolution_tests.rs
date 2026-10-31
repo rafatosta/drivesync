@@ -39,7 +39,7 @@ fn created_id(value: &Value) -> String {
         .expect("new fixture identity")
         .into()
 }
-fn create_root(token: &str, label: &str) -> String {
+pub(super) fn create_root(token: &str, label: &str) -> String {
     created_id(&response(
         client()
             .post("https://www.googleapis.com/drive/v3/files")
@@ -50,8 +50,8 @@ fn create_root(token: &str, label: &str) -> String {
             .expect("fixture folder transport"),
     ))
 }
-struct CreatedFile(String);
-fn create_file(token: &str, parent: &str, name: &str) -> CreatedFile {
+pub(super) struct CreatedFile(pub(super) String);
+pub(super) fn create_file(token: &str, parent: &str, name: &str) -> CreatedFile {
     let boundary = format!("fixture-{}", oauth2::CsrfToken::new_random().secret());
     let metadata = serde_json::to_vec(
         &json!({"name":name,"parents":[parent],"mimeType":"application/octet-stream"}),
@@ -74,7 +74,7 @@ fn create_file(token: &str, parent: &str, name: &str) -> CreatedFile {
             .expect("fixture create transport"),
     )))
 }
-fn external_edit(token: &str, file: &CreatedFile, bytes: &[u8]) {
+pub(super) fn external_edit(token: &str, file: &CreatedFile, bytes: &[u8]) {
     // This deliberately unconditional external writer is test-only and accepts
     // only a CreatedFile returned by this module's fresh fixture creation.
     response(
@@ -89,6 +89,20 @@ fn external_edit(token: &str, file: &CreatedFile, bytes: &[u8]) {
             .body(bytes.to_vec())
             .send()
             .expect("fixture external edit transport"),
+    );
+}
+pub(super) fn external_rename(token: &str, file: &CreatedFile, name: &str) {
+    response(
+        client()
+            .patch(format!(
+                "https://www.googleapis.com/drive/v3/files/{}",
+                file.0
+            ))
+            .bearer_auth(token)
+            .query(&[("fields", "id")])
+            .json(&json!({"name":name}))
+            .send()
+            .expect("fixture rename transport"),
     );
 }
 fn evidence(output: &mut File, event: Value) {

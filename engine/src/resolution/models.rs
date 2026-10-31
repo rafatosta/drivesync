@@ -141,6 +141,8 @@ impl Intent {
     }
     pub fn valid(&self) -> bool {
         hex(&self.id, 64)
+            && self.plan.conflict.as_deref().is_none_or(|id| hex(id, 64))
+            && (self.plan.choice != ResolutionChoice::KeepBoth || self.plan.conflict.is_some())
             && self.root.inode > 0
             && self.parent.inode > 0
             && relative(&self.plan.origin)

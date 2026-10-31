@@ -130,6 +130,15 @@ pub(super) fn retire(ctx: &Context<'_>, intent: &Intent) -> Result<(), EngineErr
 /// Validate all independent active markers before planning any effects. Losing
 /// SQLite after a remote request must not allow a fresh operation or download.
 pub(crate) fn check(ctx: &Context<'_>) -> Result<(), EngineError> {
+    validate_markers(ctx, true)
+}
+
+/// Read-only inspection for the offline problem center. Unlike recovery it does
+/// not retire a completed marker or mutate either journal.
+pub(crate) fn validate(ctx: &Context<'_>) -> Result<(), EngineError> {
+    validate_markers(ctx, false)
+}
+fn validate_markers(ctx: &Context<'_>, retire_completed: bool) -> Result<(), EngineError> {
     ctx.root.validate()?;
     if ctx.scope.local_root != ctx.root.path() {
         return Err(EngineError::InvalidPlan);
@@ -162,7 +171,7 @@ pub(crate) fn check(ctx: &Context<'_>) -> Result<(), EngineError> {
         {
             return Err(EngineError::StateStorage);
         }
-        if intent.stage == Stage::Confirmed {
+        if retire_completed && intent.stage == Stage::Confirmed {
             retire(ctx, intent)?;
         }
     }

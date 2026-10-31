@@ -4,8 +4,9 @@
 
 Este contrato especifica o executor necessário para concluir #15 e #16. O motor
 oferece a API explícita `resolve_conflict`, com preservação, intenção durável e
-confirmação de efeitos. A interface e a seleção automática de candidatos C09
-ainda precisam ser integradas. O experimento de precondições abaixo permanece
+confirmação de efeitos e resumos de retomada. O coordenador seleciona candidatos
+C09/C07 de mesmo pai quando uploads estão habilitados e revalida sua continuidade.
+A interface de decisões explícitas ainda precisa ser integrada. O experimento de precondições abaixo permanece
 uma ferramenta separada; não é invocado pelo sincronizador.
 
 A implementação compartilhada é acompanhada pela [issue #48](https://github.com/rafatosta/drivesync/issues/48).

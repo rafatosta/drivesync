@@ -1,4 +1,4 @@
-//! Native opt-in for create-only uploads using the account's existing OAuth grant.
+//! Native opt-in for new uploads and verified same-parent rename reconciliation.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AuthError, Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
@@ -6,8 +6,10 @@ fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, gu
     guard.set(true);
     row.set_active(active);
     guard.set(false);
-    group.set_description(Some(if active {"Downloads continue. Only new local files and folders are uploaded. Existing remote files are never replaced; deletions are not sent."} else {"Download only. Local files will not be uploaded to Google Drive."}));
-    row.set_subtitle("Requires your permission. Existing files and deletions are not sent.");
+    group.set_description(Some(if active {"New local files and folders can be uploaded. Verified independent rename and content changes can be combined for managed files. Conflicting versions still require your decision; deletions are not sent."} else {"Automatic uploads are disabled. Downloads continue and explicit conflict decisions remain available. Disabling uploads does not cancel already accepted decisions."}));
+    row.set_subtitle(
+        "New items and supported renames only. Content conflicts require a decision; no deletions.",
+    );
 }
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
@@ -16,7 +18,7 @@ pub(super) fn build(
     group: &adw::PreferencesGroup,
 ) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder()
-        .title("Upload new files and folders")
+        .title("Upload new items and reconcile renames")
         .subtitle("Download only until enabled")
         .build();
     row.set_subtitle_lines(0);
@@ -178,7 +180,7 @@ pub(super) fn verify_presentations(mut capture: impl FnMut(&adw::Window, &str)) 
             .title("Synchronization")
             .build();
         let row = adw::SwitchRow::builder()
-            .title("Upload new files and folders")
+            .title("Upload new items and reconcile renames")
             .build();
         row.set_title_lines(0);
         row.set_subtitle_lines(0);

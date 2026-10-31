@@ -157,6 +157,23 @@ impl Remote for Provider {
         Ok(())
     }
 }
+impl crate::download::Source for Provider {
+    fn configured(&mut self) -> Result<(), EngineError> {
+        Remote::configured(self)
+    }
+    fn metadata(&mut self, item: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
+        Ok(self.observe(&item.id)?.item)
+    }
+    fn media(&mut self, id: &str) -> Result<Box<dyn Read>, EngineError> {
+        Ok(Box::new(Cursor::new(
+            self.objects
+                .get(id)
+                .ok_or(EngineError::RemoteFolderUnavailable)?
+                .bytes
+                .clone(),
+        )))
+    }
+}
 struct Fixture {
     directory: PathBuf,
     root: PathBuf,
@@ -258,7 +275,7 @@ impl Fixture {
     ) -> Plan {
         let opened = Root::open(&self.root).unwrap();
         Plan {
-            conflict: None,
+            conflict: Some("b".repeat(64)),
             origin: origin.into(),
             target: target.into(),
             local_fingerprint: filesystem::fingerprint_root(
@@ -367,7 +384,7 @@ fn p03_all_choices_preserve_versions_confirm_b_and_replay_without_effects() {
             assert_eq!(remote.objects["reserved-copy"].bytes, b"remote edit");
             assert_eq!(
                 fs::read(fixture.root.join(report.additional_path.clone().unwrap())).unwrap(),
-                b"remote edit"
+                b"remote edit".as_slice()
             );
             assert_eq!(fixture.bases().len(), 2);
         } else {
@@ -890,4 +907,83 @@ fn completed_decision_is_audited_once_without_acknowledging_newer_observations()
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].remote_version, Some(99));
     assert_eq!(pending[0].status, crate::ConflictStatus::Pending);
+}
+
+#[test]
+fn c09_fresh_classification_selects_and_executes_both_independent_combinations() {
+    for local_rename in [true, false] {
+        let fixture = Fixture::new(if local_rename { b"base" } else { b"local edit" });
+        let mut remote = Provider::new(if local_rename {
+            b"remote edit"
+        } else {
+            b"base"
+        });
+        if local_rename {
+            fs::rename(
+                fixture.root.join("report.txt"),
+                fixture.root.join("renamed.txt"),
+            )
+            .unwrap();
+        } else {
+            remote.objects.get_mut("file").unwrap().name = "renamed.txt".into();
+        }
+        let inventory = RemoteInventory {
+            account_id: fixture.scope.account_id.clone(),
+            root_id: "root".into(),
+            entries: vec![remote.observe("file").unwrap().item],
+        };
+        let root = Root::open(&fixture.root).unwrap();
+        let cancel = Cancellation::new();
+        let store = Store::open(&fixture.db).unwrap();
+        let local = crate::local::scan(&root, &cancel).unwrap();
+        let bases = fixture.bases();
+        let prepared =
+            crate::changes::prepare(&inventory, &root, &bases, &local, &mut remote, &cancel)
+                .unwrap();
+        let selected = planning::candidate(
+            &inventory.entries[0],
+            &prepared.entries[0],
+            &fixture.base,
+            &local,
+        )
+        .expect("fresh independently classified C09");
+        let plan = Plan {
+            conflict: None,
+            origin: selected.origin,
+            target: selected.target.clone(),
+            local_fingerprint: selected.fingerprint,
+            remote: remote.observe("file").unwrap(),
+            choice: selected.choice,
+            base: Some(fixture.base.clone()),
+            desired_name: selected
+                .target
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .into(),
+            copy_name: None,
+            copy_id: None,
+        };
+        let ctx = Context {
+            client: "client",
+            scope: &prepared,
+            root: &root,
+            store: &store,
+            cancel: &cancel,
+        };
+        let intent = execution::begin(&ctx, plan, "c".repeat(64)).unwrap();
+        execution::run(&ctx, &mut remote, intent).unwrap();
+        assert_eq!(
+            fs::read(fixture.root.join("renamed.txt")).unwrap(),
+            if local_rename {
+                b"remote edit"
+            } else {
+                b"local edit".as_slice()
+            }
+        );
+        assert_eq!(remote.objects.len(), 1);
+        assert_eq!(remote.objects["file"].name, "renamed.txt");
+        assert_eq!(crate::local::scan(&root, &cancel).unwrap().entries.len(), 1);
+    }
 }
