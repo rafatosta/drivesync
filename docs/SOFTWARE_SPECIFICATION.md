@@ -1203,3 +1203,35 @@ Referência técnica: [Drive API v3 — files/capabilities](https://developers.g
 (verificada em 2026-11-01). Capacidades são resultados do provedor para a conta
 atual, não uma tradução universal de atributos POSIX. A política de não elevar
 permissões e de manter atributos não representáveis locais é do DriveSync.
+
+### SYNC-020 — links, arquivos especiais, temporários e locks
+
+Política autorizada pela issue #20: preservar e adiar sem solicitar decisões
+para contornar proteção. Somente arquivos regulares com um único hard link
+são elegíveis. Symlinks, FIFOs, sockets, dispositivos e múltiplos hard links
+não autorizam leitura de conteúdo, upload, substituição ou confirmação de B.
+Não inferir ausência de descendentes de entradas incompatíveis.
+
+Abrir caminhos relativos por descritores, com NOFOLLOW em todos os componentes,
+NONBLOCK na abertura de arquivos e revalidação de raiz, pai e identidade.
+Verificar tipo e número de links antes/depois das leituras. Manter um flock
+compartilhado durante a leitura e, no upload, até a publicação ou adiamento.
+Lock exclusivo concorrente adia o item, sem espera bloqueante ou perda de dados.
+Leitores com locks compartilhados são compatíveis. A proteção é cooperativa:
+flock não coordena locks POSIX fcntl nem escritores que ignoram locks; manter
+quiescência, assinaturas, hashes e snapshot privado. Não prometer detectar que
+um escritor fechou o arquivo, nem isolamento contra processo hostil do mesmo UID.
+
+Os padrões de temporários definidos em SYNC-003 também são inelegíveis como
+nomes remotos de instalação (incluindo colisões de caixa). Uma renomeação para
+nome definitivo permite nova observação. Arquivos ocultos e `.tmp` legítimos
+continuam permitidos. Staging interno permanece privado e só é instalado depois
+da validação de integridade e revalidação existentes.
+
+Aceite: N05 (links internos/externos, tipo especial, traversal, troca de caminho
+e criação de alias), N10 (temporários locais/remotos, gravação concorrente,
+snapshot incompleto, falha/retomada), E01 (flock exclusivo/compartilhado, liberação
+e progresso independente). Testes usam filesystem e SQLite reais isolados,
+provedor simulado e reabertura dos journals; não comprovam Google Drive real,
+reinício abrupto do processo ou distribuição Flatpak. Matriz e limites:
+[proteção local](../engine/src/local/safety.md).

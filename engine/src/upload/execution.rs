@@ -189,9 +189,11 @@ pub(crate) fn run_with_root(
                     return Ok(());
                 }
             }
-            if !directory {
-                local::check_link(root, &path)?;
-            }
+            let _source_guard = if !directory {
+                Some(local::check_link(root, &path)?)
+            } else {
+                None
+            };
             let mut op = match existing {
                 Some(op) => op,
                 None => {

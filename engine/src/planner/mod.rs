@@ -159,6 +159,8 @@ pub(crate) fn safe(name: &str) -> bool {
         && name != ".."
         && !crate::local::ignored(Path::new(name))
         && !crate::local::ignored(Path::new(&folded))
+        && !crate::local::temporary(Path::new(name))
+        && !crate::local::temporary(Path::new(&folded))
         && !(folded.starts_with("drivesync backup ") && folded.ends_with(".bak"))
         && name.len() <= 255
         && name.encode_utf16().count() <= 255

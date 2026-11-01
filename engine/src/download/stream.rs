@@ -74,6 +74,7 @@ pub(crate) fn copy(
 }
 /// Hashes one open regular file and rejects changes observed while it is read.
 pub(crate) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<String, EngineError> {
+    super::filesystem::regular(file)?;
     let before = file.metadata().map_err(io)?;
     if !before.is_file() {
         return Err(EngineError::DownloadConflict);
@@ -96,6 +97,7 @@ pub(crate) fn fingerprint(file: &mut File, cancel: &Cancellation) -> Result<Stri
         }
         hash.update(&buffer[..n]);
     }
+    super::filesystem::regular(file)?;
     let after = file.metadata().map_err(io)?;
     if bytes != before.len() || signature(&before) != signature(&after) {
         return Err(EngineError::DownloadConflict);
@@ -109,6 +111,7 @@ pub(crate) fn verify(
     sha256: &str,
     cancel: &Cancellation,
 ) -> Result<bool, EngineError> {
+    super::filesystem::regular(file)?;
     let before = file.metadata().map_err(io)?;
     if !before.is_file() || before.len() != size {
         return Ok(false);
@@ -126,6 +129,7 @@ pub(crate) fn verify(
         remaining -= n as u64;
         hash.update(&buffer[..n]);
     }
+    super::filesystem::regular(file)?;
     let after = file.metadata().map_err(io)?;
     Ok(signature(&before) == signature(&after) && format!("{:x}", hash.finalize()) == sha256)
 }

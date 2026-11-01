@@ -166,7 +166,33 @@ impl Root {
         Ok(())
     }
 }
-/// Opens regular files only; NONBLOCK prevents a hostile FIFO from blocking.
+/// Rejects aliases outside the authorized tree and nonregular descriptors.
+/// Link counts can change later, so callers recheck after reading as well.
+pub(crate) fn regular(file: &File) -> Result<(), EngineError> {
+    let metadata = file.metadata().map_err(io)?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(())
+}
+
+/// Holds a shared flock until the descriptor closes. Contention defers the item.
+/// This coordinates cooperative flock users, not POSIX record locks or writers
+/// that ignore advisory locks; stamps and hashes remain mandatory.
+pub(crate) fn lock_regular(file: &File) -> Result<(), EngineError> {
+    regular(file)?;
+    fs::flock(file, fs::FlockOperation::NonBlockingLockShared).map_err(|error| {
+        if error == rustix::io::Errno::WOULDBLOCK {
+            EngineError::LocalWriting
+        } else {
+            io(error)
+        }
+    })?;
+    regular(file)
+}
+
+/// Opens single-link regular files only; NONBLOCK prevents FIFO blocking.
+/// The shared advisory lock is retained by the returned descriptor.
 pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
     match fs::openat(
         parent,
@@ -176,9 +202,7 @@ pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineEr
     ) {
         Ok(fd) => {
             let file = File::from(fd);
-            if !file.metadata().map_err(io)?.is_file() {
-                return Err(EngineError::DownloadConflict);
-            }
+            lock_regular(&file)?;
             Ok(Some(file))
         }
         Err(rustix::io::Errno::NOENT) => Ok(None),

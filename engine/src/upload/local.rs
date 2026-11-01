@@ -27,13 +27,15 @@ fn reject_link(file: &mut File) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Checks candidates before provider ID allocation or creation of upload intent.
-pub(crate) fn check_link(root: &Root, path: &Path) -> Result<(), EngineError> {
+/// Checks candidates before provider effects and returns the shared-lock guard.
+/// The executor retains this descriptor through final publication or deferral.
+pub(crate) fn check_link(root: &Root, path: &Path) -> Result<File, EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     reject_link(&mut file)?;
-    root.validate_parent(path, parent_id)
+    root.validate_parent(path, parent_id)?;
+    Ok(file)
 }
 
 /// Removes only an incomplete staging file created by this invocation.
@@ -167,6 +169,7 @@ pub(crate) fn verify_file(
     op: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
+    filesystem::lock_regular(file)?;
     let before = crate::local::Stamp::read(file)?;
     reject_link(file)?;
     if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {
