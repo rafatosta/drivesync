@@ -61,13 +61,17 @@ Requer uma sessão gráfica acessível e o SDK `org.gnome.Sdk//50` com a extens�
 Execute a partir da raiz do projeto:
 
 ```sh
-flatpak run --command=sh \
+demo_build_dir="$(mktemp -d /tmp/drivesync-screenshot-sdk-XXXXXX)" || exit 1
+flatpak build-init "$demo_build_dir" \
+  com.rtosta.DriveSync.Devel org.gnome.Sdk org.gnome.Platform 50 || exit 1
+
+flatpak build \
   --filesystem="$PWD" \
   --share=network --share=ipc \
   --socket=wayland --socket=fallback-x11 \
   --own-name=com.rtosta.DriveSync.Screenshots \
   --env=PATH=/usr/lib/sdk/rust-stable/bin:/usr/bin \
-  org.gnome.Sdk//50 -c '
+  "$demo_build_dir" sh -c '
     cd "$1" || exit 1
     XDG_DATA_HOME="$(mktemp -d /tmp/drivesync-ui-demo-XXXXXX)" || exit 1
     export XDG_DATA_HOME
@@ -77,6 +81,7 @@ flatpak run --command=sh \
   ' sh "$PWD"
 ```
 
+- `flatpak build-init` prepara um ambiente temporário com a identidade `com.rtosta.DriveSync.Devel`, usando o SDK do manifesto. Essa identidade permite ao Glycin carregar o SVG embutido em uma execução de desenvolvimento sem instalar o aplicativo. Executar diretamente `org.gnome.Sdk//50` pode falhar ao carregar o SVG e mostrar um ícone de download no lugar do ícone do DriveSync.
 - `--filesystem="$PWD"` permite ler o projeto e gravar as capturas; os sockets e `--share=ipc` dão acesso à sessão gráfica. `--share=network` permite baixar dependências Cargo durante a compilação.
 - `--own-name=com.rtosta.DriveSync.Screenshots` permite registrar o aplicativo de demonstração no D-Bus da sessão; sem essa permissão, `app.register()` pode falhar com `ServiceUnknown`.
 - `--env=PATH=...` seleciona as ferramentas Rust da extensão do SDK.
@@ -85,6 +90,6 @@ flatpak run --command=sh \
 - `GSK_RENDERER=cairo` seleciona o renderizador Cairo para as capturas.
 - `--ignored` inclui o teste visual opt-in; `--test-threads=1` executa os testes selecionados em uma única thread, conforme necessário para o GTK.
 
-Ao terminar, confira o resultado do teste no terminal e abra os PNGs ou os links deste índice. O perfil temporário é criado no `/tmp` interno do sandbox Flatpak.
+Ao terminar, confira o resultado do teste no terminal e abra os PNGs ou os links deste índice. O perfil temporário é criado no `/tmp` interno do sandbox Flatpak. O diretório de desenvolvimento temporário fica no host, em `$demo_build_dir`, e pode ser removido após a geração.
 
 O gerador não instala tarefas automáticas, não inicia OAuth e não executa as ações de sincronizar ou sair da conta. As capturas validam a apresentação dos componentes, sem comprovar uma sincronização real com o Google Drive.
