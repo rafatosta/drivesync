@@ -24,3 +24,13 @@ de salvar; erro/cancelamento não conclui a configuração. `saved_folder` recup
 a escolha. `RestoredAccount.folder` orienta o roteamento para seleção ou dashboard,
 independentemente de falhas temporárias de autenticação. Regras e armazenamento:
 [CONFIG-003](algorithms.md#config-003--configuração-inicial-e-roteamento).
+
+
+## Mudança de escopo — SYNC-021
+
+A troca de pasta usa o mesmo lock estável cliente/conta dos ciclos, mesmo quando
+ambos os destinos mudam. `SyncBusy` preserva a seleção anterior; repetir após o
+ciclo terminar ou cancelar com segurança. O índice completo é atualizado sob lock
+entre processos, evitando perda de configurações de outras contas. Não há mudança
+de escopo aceita durante um ciclo ativo. Contrato e limites em
+[SYNC-021](../../../docs/SOFTWARE_SPECIFICATION.md#concorrência-e-mudanças-de-configuração--sync-021).

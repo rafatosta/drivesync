@@ -1235,3 +1235,60 @@ e progresso independente). Testes usam filesystem e SQLite reais isolados,
 provedor simulado e reabertura dos journals; não comprovam Google Drive real,
 reinício abrupto do processo ou distribuição Flatpak. Matriz e limites:
 [proteção local](../engine/src/local/safety.md).
+
+
+## Concorrência e mudanças de configuração — SYNC-021
+
+**Requisito:** um único fluxo com efeitos por raiz; nenhuma alteração de escopo
+pode tornar obsoleta a configuração de um ciclo ativo. A associação vigente tem
+uma raiz por cliente OAuth/conta. Contas independentes podem sincronizar juntas.
+
+**Implementação:** o lock advisory não bloqueante no diretório privado usa a
+chave estável cliente/conta, independentemente dos caminhos e IDs selecionados.
+Configuração explícita e ciclos usam o mesmo lock; a raiz física permanece
+bloqueada por descritor durante o ciclo. Trocar pasta local/remota durante um ciclo
+retorna `SyncBusy`, preserva a configuração anterior e requer nova tentativa após
+o término/cancelamento seguro do ciclo. Não há aplicação parcial nem troca
+imediata com worker antigo ativo. Após adquirir o lock, o ciclo relê a associação
+e recusa snapshot diferente com `InvalidPlan` antes de abrir a raiz.
+
+A política é **serializar a mudança**, em vez de aceitar uma nova geração durante
+a transferência: não é necessário um contador persistido para invalidar workers
+ativos, pois a nova associação só é publicada sem worker concorrente. Planos e
+intenções persistidos continuam sujeitos às suas validações de escopo, identidade,
+conteúdo e revisão; um plano antigo não autoriza efeitos por si só.
+
+Todas as transações de leitura/modificação/escrita do índice de contas usam um
+sidecar estável `accounts.lock`, exclusivo entre processos, até o fsync do índice e
+do diretório. Leituras observam o índice anterior ou o novo por rename atômico.
+Arquivos de lock não são removidos; fechar descritores ou encerrar processos libera
+os locks. Ordem: mutex da instância → lock do índice → lock de escopo não bloqueante
+na configuração; ciclos retêm escopo e podem consultar o índice sem obter seu lock
+de escrita. Isso evita espera circular. Erros não reinicializam bancos ou índice.
+
+**Algoritmo:** ler associação candidata → adquirir lock de escopo → reler e
+comparar associação → verificar/bloquear raiz física → executar/revalidar efeitos
+→ persistir resultado → liberar descritores. Para configuração: adquirir locks de
+escrita → ler/validar índice e sobreposições → tentar lock de escopo → verificar
+identidade/marcador → publicar índice atomicamente; falha mantém a seleção anterior.
+
+**Validação N07/N09:** `n07_active_scope_refuses_reconfiguration_and_retry_persists_after_restart`
+usa duas instâncias, filesystem e SQLite reais, verifica recusa sem marcador no novo
+destino, preservação de bytes, reabertura e repetição idempotente.
+`n09_scope_lock_covers_changed_local_and_remote_roots` verifica chave estável e
+isolamento por cliente; `n09_process_exit_releases_scope_without_deleting_lock_evidence`
+verifica contenção entre processos e liberação após SIGKILL.
+`independent_index_writers_preserve_all_accounts` verifica ausência de atualização
+perdida entre escritores independentes. As proteções não dependem de rede; os
+cenários novos são executáveis offline sem provedor remoto. Testes existentes de
+transferência com provedor simulado verificam os journals e as revalidações.
+
+**Limites:** locks advisory coordenam participantes no mesmo diretório privado e
+filesystem com suporte a flock. Não impedem escritores externos que ignoram o
+protocolo nem coordenam instalações com diretórios privados distintos. Não executar
+simultaneamente versões com protocolos de lock diferentes; encerrar a anterior
+antes de atualizar. Google real, UI instalada e queda de energia não são demonstrados
+por esses testes; homologações complementares permanecem nas issues #51, #52 e #53.
+Referência técnica: [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html),
+consultada em 2026-11-01: locks vinculados à descrição aberta, liberação no fechamento,
+contenção não bloqueante e caráter advisory.
