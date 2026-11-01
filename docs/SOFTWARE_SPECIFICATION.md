@@ -694,7 +694,7 @@ RF-CON-01–05 orientam a classificação e a resolução. A política inicial �
 | Manter ambas | Preservar conteúdos distintos sob identidades e nomes sem colisão, com destinos explicados. A convergência de ambas só termina quando os efeitos autorizados forem confirmados; não basta gerar uma cópia temporária. |
 | Adiar | Não aplicar a resolução e manter a pendência. Continuar somente trabalho independente. |
 
-Não executar mesclagem automática nem preferências por timestamp na primeira entrega. Preferências automáticas, comparação visual por formato e operações em lote permanecem propostas. Cópia de conflito, histórico de versões e registro de execução têm finalidades distintas; o registro não substitui os bytes preservados. Nenhuma limpeza automática de cópias de conflitos pendentes será habilitada sem política explícita de retenção e recuperação.
+Não executar mesclagem automática nem preferências por timestamp na primeira entrega. Preferências automáticas limitadas estão em SYNC-024 e comparação visual limitada em SYNC-025; operações em lote permanecem propostas. Cópia de conflito, histórico de versões e registro de execução têm finalidades distintas; o registro não substitui os bytes preservados. Nenhuma limpeza automática de cópias de conflitos pendentes será habilitada sem política explícita de retenção e recuperação.
 
 Os estudos de [viabilidade](../engine/src/conflicts/technical-feasibility.md) e [UX](../engine/src/conflicts/ux-research.md) são referências de investigação. Sua existência não comprova garantias de concorrência nem aprova as opções futuras.
 
@@ -806,7 +806,7 @@ Antes de uma resolução, apresentar as versões disponíveis, suas origens, con
 
 Adiar e reabrir devem recuperar a mesma pendência. Uma raiz suspensa deve aparecer como indisponível, sem sugerir que seus arquivos foram excluídos. O resumo não pode declarar sincronização completa enquanto houver itens bloqueados ou inconclusivos. O fluxo deve funcionar por teclado e leitor de tela, sem depender apenas de cor.
 
-A disposição visual de uma central de atenção e comparadores por formato continua em estudo na [pesquisa de UX](../engine/src/conflicts/ux-research.md); esta seção define comportamento observável, não um desenho de tela aprovado.
+A central de atenção e a comparação limitada de SYNC-025 usam como referência a [pesquisa de UX](../engine/src/conflicts/ux-research.md); esta seção define comportamento observável, não um desenho de tela aprovado.
 
 ### 9.6 Integração com o ambiente GNOME
 
@@ -945,7 +945,7 @@ Para conflitos e recuperação, as decisões seguintes condicionam futuras imple
 - **Resultado remoto ambíguo:** uploads de criação seguem SYNC-013 abaixo; definir evidências para futuras operações de atualização/exclusão e manter resultado desconhecido sem repetição cega.
 - **Tentativas e lotes:** uploads de criação têm orçamento persistente SYNC-013; definir política para os demais executores. Propagação de exclusões, limiares de impacto e resolução em lote exigem especificação e revisão próprias.
 - **Tipos e identidade:** detalhar renomeações, links, atributos, documentos nativos e restauração histórica; nenhuma inferência universal por nome ou timestamp.
-- **Interface:** concluir homologação de compreensão e acessibilidade das escolhas explícitas; comparadores de conteúdo continuam fora da primeira implementação.
+- **Interface:** concluir homologação de compreensão e acessibilidade das escolhas explícitas; a comparação limitada de conteúdo está especificada em SYNC-025.
 
 A classificação B/L/R do fluxo download-only usa inventário local com estabilização e fingerprint sem seguir symlinks. SYNC-003 acrescenta equivalência forte revalidada, observações persistidas separadamente de B e apresentação de pendências na interface existente. O journal de downloads fornece B somente após confirmação durável. Preservação e execução restritas seguem SYNC-015/016; reconstrução de B perdida e aceite completo de AC-CON-01–03 continuam dependentes de contratos e validação específicos.
 
@@ -1473,3 +1473,15 @@ Aceite: comparação nominal/repetida, reabertura de SQLite, offline, corrupçã
 concorrência local/remota, cancelamento, symlinks e limite de tamanho; originais e
 pendências permanecem intactos. Testes simulados não comprovam integração Google
 real ou portais do pacote instalado.
+
+A interface implementa diff literal para UTF-8 sem controles binários, limitado a
+256 KiB combinados/4000 linhas, sem normalizar CRLF ou a última quebra de linha.
+O algoritmo linear conserva prefixo/sufixo comum e apresenta o trecho central
+como substituído; não promete diff mínimo. PNGs de até 4 milhões de pixels podem
+ter miniatura; outros formatos mostram fallback. Cópias privadas temporárias
+(0600) podem ser abertas em aplicativos pelo GTK FileLauncher, sem abrir os
+originais. As cópias não são sincronizadas nem selecionam vencedor; ficam
+sujeitas à limpeza de temporários do sistema. Erros de abertura são explícitos.
+A escolha continua na central e exige confirmação com consequências e nova
+revalidação. Portais/aplicativos externos e leitor de tela exigem homologação
+separada dos testes GTK e simulados.

@@ -1,5 +1,6 @@
 //! Account-scoped GNOME problem center. Loading never contacts Google Drive.
 mod actions;
+mod comparison;
 mod models;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};

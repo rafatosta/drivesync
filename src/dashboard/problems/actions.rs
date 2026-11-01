@@ -250,6 +250,42 @@ pub(super) fn add_choices(row: &adw::ExpanderRow, center: &Rc<Center>, record: &
     buttons.set_margin_end(12);
     buttons.set_margin_top(6);
     buttons.set_margin_bottom(12);
+    let compare = gtk::Button::with_label("Compare observed versions…");
+    let comparison_record = record.clone();
+    let weak = Rc::downgrade(center);
+    compare.connect_clicked(move |_| {
+        let Some(center) = weak.upgrade() else { return; };
+        if center.busy.get() || center.loading.get() || center.job.running() { return; }
+        center.loading.set(true);
+        center.list.set_sensitive(false);
+        center.refresh.set_sensitive(false);
+        center.status.set_label("Reading and verifying observed versions…");
+        let engine = center.engine.clone();
+        let id = center.id.clone();
+        let record = comparison_record.clone();
+        let cancel = drivesync_engine::Cancellation::new();
+        let weak_window = center.window.clone();
+        let close_cancel = cancel.clone();
+        let handler = weak_window.upgrade().map(|window| window.connect_close_request(move |_| {
+            close_cancel.cancel(); gtk::glib::Propagation::Proceed
+        }));
+        crate::flow::work(move || engine.compare_conflict(&id, &record, &cancel), move |result| {
+            if let (Some(window), Some(handler)) = (weak_window.upgrade(), handler) { window.disconnect(handler); }
+            center.loading.set(false);
+            center.list.set_sensitive(true);
+            center.refresh.set_sensitive(true);
+            match result {
+                Ok(comparison) => {
+                    center.status.set_label("Snapshots verified. No decision was accepted. Choices still require a live revalidation.");
+                    if let Some(window) = center.window.upgrade().filter(|w| w.is_visible()) {
+                        super::comparison::show(&window, &center.account, &comparison);
+                    }
+                }
+                Err(error) => center.status.set_label(&format!("Comparison unavailable: {error}. Original versions and the pending item remain. Synchronize and review again if evidence changed.")),
+            }
+        });
+    });
+    buttons.append(&compare);
     for choice in [
         ResolutionChoice::KeepLocal,
         ResolutionChoice::KeepRemote,
