@@ -237,8 +237,10 @@ pub(crate) fn valid_workspace_link(link: &str, path: Option<&str>) -> bool {
         && url.port().is_none()
         && url.username().is_empty()
         && url.password().is_none()
-        && url.path().contains(path)
-        && url.path().contains("/d/")
+        && url
+            .path()
+            .strip_prefix(&format!("{path}d/"))
+            .is_some_and(|rest| rest.split('/').next().is_some_and(valid_id))
         && !link.chars().any(char::is_control)
 }
 

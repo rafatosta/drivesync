@@ -929,3 +929,6 @@ mod preservation_tests;
 
 #[path = "sync016_acceptance.rs"]
 mod sync016_acceptance;
+
+#[path = "sync019_acceptance.rs"]
+mod sync019_acceptance;

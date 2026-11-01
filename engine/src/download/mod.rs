@@ -3,7 +3,7 @@ mod equivalence;
 mod execution;
 pub(crate) use equivalence::content_fingerprint;
 pub(crate) mod filesystem;
-mod links;
+pub(crate) mod links;
 mod models;
 pub(crate) mod stream;
 

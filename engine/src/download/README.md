@@ -11,10 +11,10 @@ Atua como caixa-preta especializada do DriveSync, sujeita aos invariantes globai
 queue, coordinator.
 
 ## Saídas e compromissos
-Arquivos binários instalados por estágio temporário ou atalhos `.desktop` com o
+Arquivos binários instalados por estágio temporário ou atalhos `.html` com o
 `webViewLink` validado do Drive. Os atalhos abrem Docs, Sheets e Slides no
 navegador, inclusive atalhos do Drive para esses tipos; não exportam cópias nem
-enviam os arquivos `.desktop` de volta ao Drive.
+enviam os arquivos `.html` de volta ao Drive.
 Um atalho divergente já existente gera conflito e é preservado.
 
 ## Limites: o que NÃO faz
@@ -22,9 +22,9 @@ Não planejar qual arquivo sincronizar.
 
 ## Algoritmos
 Downloads binários usam transferência temporária e validação final. Atalhos são
-escritos como `Type=Link`, sem `Exec`, com instalação exclusiva sem substituição.
-No GNOME, o gerenciador de arquivos pode pedir que o usuário confie no atalho na
-primeira abertura.
+escritos como HTML com redirecionamento e link de fallback, escaping e modo
+`0444`, com journal e instalação exclusiva. No GNOME, a abertura depende da
+associação de HTML ao navegador. O contrato vigente está em [workspace.md](workspace.md).
 
 ## Erros e cenários a verificar
 Rede interrompida; disco cheio; remoto alterado; hash divergente.

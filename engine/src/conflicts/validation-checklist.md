@@ -76,7 +76,7 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **C21** — Timestamps divergentes com conteúdo idêntico; não criar conflito falso.
 - [ ] **C22** — Divergência de permissões de leitura/escrita entre lados.
 - [ ] **C23** — Metadados/atributos não representáveis de forma simétrica.
-- [ ] **C24** — Arquivo local comum versus documento nativo Google Workspace; respeitar suporte/limitações explícitos.
+- [ ] **C24** — Documento Workspace suportado → HTML gerenciado, somente navegador; não exportar/converter nem enviar o atalho como documento. Preservar HTML comum, alterações locais e evidências em falhas. Critérios e testes em [workspace.md](../download/workspace.md); aprovação real de Nautilus/Flatpak deve ser registrada separadamente na PR/issues.
 - [ ] **C25** — Mudança de compartilhamento/perda de acesso remoto; não interpretar como exclusão.
 
 ## Erros operacionais (não são necessariamente conflitos)
