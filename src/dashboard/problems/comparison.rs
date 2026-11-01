@@ -121,20 +121,37 @@ fn open_button(
     let parent = parent.downgrade();
     let status = status.clone();
     button.connect_clicked(move |button| {
-        let Some(parent) = parent.upgrade() else { return; };
-        match external_copy(&bytes, suffix) {
-            Err(error) => status.set_label(&format!("Could not prepare a copy: {error}. Original versions remain unchanged.")),
-            Ok(file) => {
-                status.set_label(&format!("Temporary snapshot: {}. Edits to this copy are not synchronized. The system may clean it later.", file.path().map(|p|p.display().to_string()).unwrap_or_default()));
-                button.set_sensitive(false);
-                let button = button.clone();
-                let status = status.clone();
-                gtk::FileLauncher::new(Some(&file)).launch(Some(&parent), gtk::gio::Cancellable::NONE, move |result| {
-                    button.set_sensitive(true);
-                    if let Err(error) = result { status.set_label(&format!("The application did not confirm opening the copy: {error}. Original versions remain unchanged.")); }
-                });
-            }
-        }
+        if parent.upgrade().is_none() { return; }
+        button.set_sensitive(false);
+        status.set_label("Preparing a separate temporary snapshot…");
+        let bytes = bytes.clone();
+        let button = button.clone();
+        let parent = parent.clone();
+        let status = status.clone();
+        crate::flow::work(
+            move || external_copy(&bytes, suffix).map_err(|_| drivesync_engine::EngineError::DownloadIo),
+            move |result| {
+                let Some(parent) = parent.upgrade().filter(|w| w.is_visible()) else {
+                    if let Ok(file) = result {
+                        std::thread::spawn(move || { let _ = file.delete(gtk::gio::Cancellable::NONE); });
+                    }
+                    return;
+                };
+                match result {
+                    Err(error) => {
+                        button.set_sensitive(true);
+                        status.set_label(&format!("Could not prepare a copy: {error}. Original versions remain unchanged."));
+                    }
+                    Ok(file) => {
+                        status.set_label(&format!("Temporary snapshot: {}. Edits to this copy are not synchronized. The system may clean it later.", file.path().map(|p|p.display().to_string()).unwrap_or_default()));
+                        gtk::FileLauncher::new(Some(&file)).launch(Some(&parent), gtk::gio::Cancellable::NONE, move |result| {
+                            button.set_sensitive(true);
+                            if let Err(error) = result { status.set_label(&format!("The application did not confirm opening the copy: {error}. Original versions remain unchanged.")); }
+                        });
+                    }
+                }
+            },
+        );
     });
     button
 }

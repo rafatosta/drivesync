@@ -120,7 +120,12 @@ pub(crate) fn inspect(
         return Err(EngineError::RemoteChanged);
     }
     root.validate_parent(path, parent_id)?;
-    if crate::local::Stamp::read(&file)? != stamp
+    if filesystem::read(&parent, &name)?
+        .as_ref()
+        .map(crate::local::Stamp::read)
+        .transpose()?
+        != Some(stamp.clone())
+        || crate::local::Stamp::read(&file)? != stamp
         || filesystem::fingerprint_root(root, path, cancel)?.as_ref()
             != record.local_fingerprint.as_ref()
     {

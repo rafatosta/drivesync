@@ -371,6 +371,22 @@ fn p03_all_choices_preserve_versions_confirm_b_and_replay_without_effects() {
     ] {
         let fixture = Fixture::new(b"local edit");
         let mut remote = Provider::new(b"remote edit");
+        let (record, _) =
+            preference_candidate(&fixture, &mut remote, ConflictPreference::KeepLocal);
+        {
+            let root = Root::open(&fixture.root).unwrap();
+            let comparison =
+                crate::comparison::inspect(&root, &mut remote, &record, &Cancellation::new())
+                    .unwrap();
+            assert_eq!(
+                comparison.content,
+                crate::ComparisonContent::Available {
+                    local: b"local edit".to_vec(),
+                    remote: b"remote edit".to_vec()
+                }
+            );
+            assert_eq!(remote.effects, 0);
+        }
         let plan = fixture.plan(&mut remote, choice, "report.txt", "report.txt");
         fixture.begin(plan);
         assert!(fixture.bases().is_empty());
