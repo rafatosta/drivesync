@@ -65,6 +65,7 @@ flatpak run --command=sh \
   --filesystem="$PWD" \
   --share=network --share=ipc \
   --socket=wayland --socket=fallback-x11 \
+  --own-name=com.rtosta.DriveSync.Screenshots \
   --env=PATH=/usr/lib/sdk/rust-stable/bin:/usr/bin \
   org.gnome.Sdk//50 -c '
     cd "$1" || exit 1
@@ -77,6 +78,7 @@ flatpak run --command=sh \
 ```
 
 - `--filesystem="$PWD"` permite ler o projeto e gravar as capturas; os sockets e `--share=ipc` dão acesso à sessão gráfica. `--share=network` permite baixar dependências Cargo durante a compilação.
+- `--own-name=com.rtosta.DriveSync.Screenshots` permite registrar o aplicativo de demonstração no D-Bus da sessão; sem essa permissão, `app.register()` pode falhar com `ServiceUnknown`.
 - `--env=PATH=...` seleciona as ferramentas Rust da extensão do SDK.
 - `XDG_DATA_HOME` cria um perfil temporário isolado. O prefixo `/tmp/drivesync-ui-demo-` é obrigatório e verificado pelo teste; não use o perfil real do aplicativo.
 - `DRIVESYNC_UI_PREVIEW_DIR` define o destino dos PNGs. O diretório é criado se necessário e as imagens com os mesmos nomes são substituídas. O destino padrão desta documentação é `data/screenshots`; para uma saída descartável, use outro caminho absoluto.
