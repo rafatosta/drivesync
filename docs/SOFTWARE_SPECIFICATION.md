@@ -1126,3 +1126,33 @@ audita a decisão após essa confirmação. C22/C25 são apresentados como acess
 indisponível, nunca como exclusão inferida. Testes determinísticos da apresentação,
 reabertura/idempotência SQLite e testes existentes de preservação são evidências
 simuladas; não homologam Drive real, leitor de tela ou recuperação de perda de energia.
+
+## Permissões e atributos — SYNC-018
+
+**Contrato implementado:** capacidades Drive são específicas à operação: download
+exige `canDownload=true`; criação remota exige `canAddChildren=true` na raiz,
+independentemente do consentimento OAuth. Permissão local de escrita não concede
+edição no Drive. O executor revalida o item antes dos efeitos e rejeita alterações
+de capacidade; HTTP 403/404 e falha de rede nunca comprovam exclusão.
+
+O mapeamento cobre conteúdo binário, nome e localização compatíveis, além dos
+links Workspace suportados. POSIX mode, proprietário/grupo, ACL, xattrs e datas
+não são traduzidos em permissões Drive, nem restaurados a partir de metadados
+remotos. Não há chmod/chown ou alteração de ACL remota para vencer uma falha.
+Arquivos novos usam os modos privados do staging; modos não representam roles.
+Metadados de integridade ausentes bloqueiam transferência. Acesso negado e
+metadados indisponíveis têm diagnósticos próprios, sem opção de escolher versão.
+Atributos locais não suportados não são prometidos como sincronizados.
+
+**Algoritmo e aceite:** decodificar capacidades por operação; excluir operações
+não autorizadas; distinguir acesso de integridade ausente; manter originais e B;
+revalidar identidade/revisão antes de aplicar efeitos. Erros não avançam B.
+Repetição/reinício exige nova observação e não altera permissões. C22 cobre
+permissões divergentes; C23 cobre atributos sem tradução e integridade ausente;
+E03 cobre negação de I/O/API. Testes simulados e filesystem/SQLite isolados
+validam o contrato local, sem comprovar Google Drive real ou a UI empacotada.
+
+Referência técnica: [Drive API v3 — files/capabilities](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
+(verificada em 2026-11-01). Capacidades são resultados do provedor para a conta
+atual, não uma tradução universal de atributos POSIX. A política de não elevar
+permissões e de manter atributos não representáveis locais é do DriveSync.

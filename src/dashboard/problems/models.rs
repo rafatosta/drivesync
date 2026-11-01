@@ -32,7 +32,7 @@ pub(super) fn pending(records: &[ConflictRecord]) -> Vec<Item> {
     records.iter().filter(|r| r.status == ConflictStatus::Pending).map(|r| {
         let category = match r.diagnosis {
             ChangeKind::ConcurrentChanges | ChangeKind::LocationConflict | ChangeKind::EditDeleteConflict => Category::Conflicts,
-            ChangeKind::Unsupported | ChangeKind::LocalIdentityChanged | ChangeKind::ConcurrentIdentityChanges | ChangeKind::ExistingLocalData | ChangeKind::Conciliable => Category::Incompatibilities,
+            ChangeKind::MetadataUnavailable | ChangeKind::Unsupported | ChangeKind::LocalIdentityChanged | ChangeKind::ConcurrentIdentityChanges | ChangeKind::ExistingLocalData | ChangeKind::Conciliable => Category::Incompatibilities,
             _ => Category::Errors,
         };
         let path = r.relative_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Path unavailable".into());

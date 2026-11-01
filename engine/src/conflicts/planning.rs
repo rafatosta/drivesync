@@ -139,6 +139,11 @@ pub(crate) fn plan_diagnosis(action: &PlanAction, local: &LocalObservation) -> C
             }
         }
         PlanAction::DeferredUnknown => ChangeKind::Unknown,
+        PlanAction::Skipped(crate::SkipReason::DownloadAccessUnknown) => ChangeKind::Unknown,
+        PlanAction::Skipped(crate::SkipReason::DownloadNotAllowed) => ChangeKind::AccessDenied,
+        PlanAction::Skipped(crate::SkipReason::MissingIntegrityMetadata) => {
+            ChangeKind::MetadataUnavailable
+        }
         PlanAction::Skipped(_) => ChangeKind::Unsupported,
         PlanAction::Blocked(reason) => match reason {
             ConflictReason::LocalChanged => ChangeKind::LocalChanged,

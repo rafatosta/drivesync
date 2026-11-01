@@ -35,6 +35,10 @@ pub enum ChangeKind {
     EditDeleteConflict,
     Temporary,
     Writing,
+    /// The provider explicitly denies the required operation.
+    AccessDenied,
+    /// Required metadata is absent or cannot be represented safely.
+    MetadataUnavailable,
     Unsupported,
     Unknown,
 }
@@ -60,6 +64,8 @@ impl ChangeKind {
             Self::RemoteUnavailable => "This item is no longer listed in the selected Drive folder. This may reflect a move or lost access; local data was preserved.",
             Self::Temporary => "This looks like a temporary file. Wait for the application to save its final file.",
             Self::Writing => "This file is still changing. Synchronization will check it again on the next cycle.",
+            Self::AccessDenied => "Google Drive does not allow downloading this item. Restore access and synchronize again. No permission or version was changed.",
+            Self::MetadataUnavailable => "Required integrity metadata is unavailable. This item cannot be transferred safely; no version was selected. POSIX permissions, ownership and extended attributes are not synchronized with Drive.",
             Self::Unsupported => "This item’s type or path cannot be synchronized safely. Existing data was preserved.",
             Self::Unknown => "This item could not be verified. Check access and synchronize again; no deletion was inferred.",
         }
@@ -82,6 +88,8 @@ impl ChangeKind {
                 | Self::ExistingLocalData
                 | Self::Temporary
                 | Self::Writing
+                | Self::AccessDenied
+                | Self::MetadataUnavailable
                 | Self::Unsupported
                 | Self::Unknown
         )
