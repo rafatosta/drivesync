@@ -486,6 +486,18 @@ impl Session<'_> {
         source: &mut impl Source,
         progress: &mut impl FnMut(DownloadItemProgress),
     ) -> Result<Outcome, EngineError> {
+        // A native-link intent reserves its path even if publication was
+        // interrupted or the remote document disappeared. Binary replay must
+        // never consume native Ready evidence or take over that destination.
+        if self
+            .operations
+            .get(path)
+            .into_iter()
+            .flatten()
+            .any(|op| op.item.kind == InventoryKind::GoogleWorkspaceLink)
+        {
+            return Err(EngineError::DownloadConflict);
+        }
         let size = item.size.ok_or(EngineError::InvalidPlan)?;
         let checksum = item
             .md5_checksum

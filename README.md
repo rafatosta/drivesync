@@ -33,7 +33,7 @@ DriveSync focuses on keeping local copies up to date with Google Drive. It does 
 | Background operation | Continue checking while the app is allowed to run in the background. Session startup depends on desktop permission. |
 | Conflicts and deletions | Preserve local files when changes conflict or remote files are removed. Conflicts need manual attention; there is no complete resolution interface yet. |
 | Recovery | Save progress for later runs and check interrupted work. Recovery after failures or missing sync data still needs broader testing. |
-| Google Docs, Sheets, and Slides | Create local links that open documents in the browser. Opening these links from GNOME Files still needs validation. |
+| Google Docs, Sheets, and Slides | Create read-only `.html` browser links, with managed identity and preserved prior versions. No offline editing, export or conversion. Opening these links from GNOME Files with an installed Flatpak still needs validation. |
 | Status and activity | Show progress, account status, and sync activity. Preferences and notifications remain limited. |
 | Shared Drives and special items | Shared Drives and some special Google Drive item types are not supported. |
 

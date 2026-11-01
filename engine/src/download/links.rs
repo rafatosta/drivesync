@@ -98,7 +98,7 @@ pub(super) fn ensure(
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
     let mut previous = None;
-    if let Some(old) = latest {
+    if let Some(mut old) = latest {
         let Phase::Installed {
             identity,
             ref sha256,
@@ -116,6 +116,10 @@ pub(super) fn ensure(
         root.validate_parent(&old.relative, old.parent)?;
         if old.relative == path {
             if entry(&old.item)? == contents {
+                if old.item != *item {
+                    old.item = item.clone();
+                    store.put_operation(client, scope, &old)?;
+                }
                 return Ok(());
             }
             previous = Some(Previous {

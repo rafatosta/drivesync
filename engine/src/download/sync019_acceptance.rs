@@ -333,3 +333,59 @@ fn c24_failed_ready_persistence_and_write_denial_publish_nothing() {
     assert!(!f.root.join("readonly/Workspace.html").exists());
     assert!(journal(&f, &inv).is_empty());
 }
+
+#[test]
+fn c24_pending_html_intent_cannot_be_consumed_by_binary_replay_at_same_path() {
+    for update in [false, true] {
+        let f = Fixture::new();
+        let mut inv = workspace("document", "document");
+        if update {
+            assert_eq!(execute(&f, &inv).linked, 1);
+            inv.entries[0].version = Some(2);
+            inv.entries[0].web_view_link =
+                Some("https://docs.google.com/document/d/test/edit?resourcekey=new".into());
+        }
+        baseline_tests::prepare(&f, &inv).unwrap();
+        let conn = rusqlite::Connection::open(f.db()).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_confirmation BEFORE UPDATE ON downloads WHEN json_extract(NEW.record, '$.phase.Installed') IS NOT NULL BEGIN SELECT RAISE(FAIL, 'injected'); END;").unwrap();
+        assert!(f
+            .execute(&inv, &mut Fake::new(&inv), &Cancellation::new(), |_| {})
+            .is_err());
+        let op = journal(&f, &inv).pop().unwrap();
+        fs::rename(f.root.join(&op.relative), f.root.join(&op.temporary)).unwrap();
+        let staged = fs::read(f.root.join(&op.temporary)).unwrap();
+        conn.execute_batch("DROP TRIGGER fail_confirmation;")
+            .unwrap();
+        drop(conn);
+        let mut binary = inventory();
+        binary.entries[0].id = "ordinary".into();
+        binary.entries[0].name = "Workspace.html".into();
+        let mut source = Fake::new(&binary);
+        let report = f
+            .execute(&binary, &mut source, &Cancellation::new(), |_| {})
+            .unwrap();
+        assert_eq!(report.downloaded, 0);
+        assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+        assert_eq!(source.media_calls, 0);
+        assert!(!f.root.join("Workspace.html").exists());
+        assert_eq!(fs::read(f.root.join(&op.temporary)).unwrap(), staged);
+        assert_eq!(execute(&f, &inv).linked, 1);
+    }
+}
+
+#[test]
+fn c24_metadata_only_revision_updates_journal_without_replacing_html() {
+    let f = Fixture::new();
+    let mut inv = workspace("document", "document");
+    assert_eq!(execute(&f, &inv).linked, 1);
+    let inode = fs::metadata(f.root.join("Workspace.html")).unwrap().ino();
+    inv.entries[0].version = Some(2);
+    assert_eq!(execute(&f, &inv).linked, 1);
+    assert_eq!(
+        fs::metadata(f.root.join("Workspace.html")).unwrap().ino(),
+        inode
+    );
+    let operations = journal(&f, &inv);
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].item, inv.entries[0]);
+}
