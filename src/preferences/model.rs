@@ -52,6 +52,8 @@ impl ColorScheme {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Preferences {
     pub color_scheme: ColorScheme,
+    /// Keeps DriveSync running when the window is closed; otherwise closing quits.
+    pub keep_running: bool,
     /// Posts a notification when the window is hidden and DriveSync keeps running.
     pub notify_on_close: bool,
 }
@@ -60,6 +62,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             color_scheme: ColorScheme::default(),
+            keep_running: true,
             notify_on_close: true,
         }
     }
@@ -98,6 +101,9 @@ impl Preferences {
                 .string(GROUP, "color-scheme")
                 .map(|value| ColorScheme::from_key(&value))
                 .unwrap_or(defaults.color_scheme),
+            keep_running: file
+                .boolean(GROUP, "keep-running")
+                .unwrap_or(defaults.keep_running),
             notify_on_close: file
                 .boolean(GROUP, "notify-on-close")
                 .unwrap_or(defaults.notify_on_close),
@@ -107,6 +113,7 @@ impl Preferences {
     pub(crate) fn to_key_file(self) -> glib::KeyFile {
         let file = glib::KeyFile::new();
         file.set_string(GROUP, "color-scheme", self.color_scheme.key());
+        file.set_boolean(GROUP, "keep-running", self.keep_running);
         file.set_boolean(GROUP, "notify-on-close", self.notify_on_close);
         file
     }
@@ -120,12 +127,14 @@ mod tests {
     fn round_trips_and_falls_back_to_defaults() {
         let value = Preferences {
             color_scheme: ColorScheme::Dark,
+            keep_running: false,
             notify_on_close: false,
         };
         assert_eq!(Preferences::from_key_file(&value.to_key_file()), value);
         let invalid = glib::KeyFile::new();
         invalid.set_string(GROUP, "color-scheme", "neon");
         invalid.set_string(GROUP, "notify-on-close", "maybe");
+        invalid.set_string(GROUP, "keep-running", "maybe");
         assert_eq!(Preferences::from_key_file(&invalid), Preferences::default());
     }
 }

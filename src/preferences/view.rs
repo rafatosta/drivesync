@@ -49,10 +49,19 @@ fn build(parent: &adw::ApplicationWindow) -> adw::PreferencesWindow {
         .title("Background")
         .description("DriveSync keeps synchronizing after the window is closed when background execution is allowed.")
         .build();
+    let keep = adw::SwitchRow::builder()
+        .title("Continue in Background When Closed")
+        .subtitle(
+            "Keep synchronizing after the window is closed; otherwise closing quits DriveSync",
+        )
+        .active(current.keep_running)
+        .build();
+    background.add(&keep);
     let notify = adw::SwitchRow::builder()
         .title("Notify When Running in Background")
         .subtitle("Show a notification when the window is closed")
         .active(current.notify_on_close)
+        .sensitive(current.keep_running)
         .build();
     background.add(&notify);
     page.add(&background);
@@ -66,6 +75,7 @@ fn build(parent: &adw::ApplicationWindow) -> adw::PreferencesWindow {
         }
     });
     let save_theme = report.clone();
+    let save_keep = report.clone();
     theme.connect_selected_notify(move |row| {
         let scheme = ColorScheme::ALL
             .get(row.selected() as usize)
@@ -75,6 +85,15 @@ fn build(parent: &adw::ApplicationWindow) -> adw::PreferencesWindow {
         let mut value = Preferences::load();
         value.color_scheme = scheme;
         save_theme(value.save());
+    });
+    let dependent = notify.downgrade();
+    keep.connect_active_notify(move |row| {
+        if let Some(notify) = dependent.upgrade() {
+            notify.set_sensitive(row.is_active());
+        }
+        let mut value = Preferences::load();
+        value.keep_running = row.is_active();
+        save_keep(value.save());
     });
     notify.connect_active_notify(move |row| {
         let mut value = Preferences::load();

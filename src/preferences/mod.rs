@@ -17,3 +17,8 @@ pub(crate) use view::install;
 pub(crate) fn notify_on_close() -> bool {
     Preferences::load().notify_on_close
 }
+
+/// Returns whether closing the window should keep DriveSync running in the background.
+pub(crate) fn keep_running() -> bool {
+    Preferences::load().keep_running
+}

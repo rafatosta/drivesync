@@ -611,7 +611,7 @@ implementação e validação real. Contrato: [Workspace HTML](../engine/src/dow
 
 ### 4.13 Preferências e gerenciamento da aplicação
 
-O menu principal abre uma janela de preferências nativa (`AdwPreferencesWindow`, atalho `Ctrl+,`) com ajustes globais da aplicação: esquema de cores (sistema, claro ou escuro) e notificação ao manter a execução em segundo plano. Os valores ficam em `$XDG_CONFIG_HOME/drivesync/preferences.ini`, sem credenciais ou dados de conta; valores inválidos usam o padrão. Opções por conta permanecem no painel da conta. Implementação: `src/preferences/`; sem validação visual em ambiente Flatpak empacotado.
+O menu principal abre uma janela de preferências nativa (`AdwPreferencesWindow`, atalho `Ctrl+,`) com ajustes globais da aplicação: esquema de cores (sistema, claro ou escuro) continuidade em segundo plano ao fechar a janela (desativada, o fechamento encerra o aplicativo) e notificação ao manter a execução em segundo plano. Os valores ficam em `$XDG_CONFIG_HOME/drivesync/preferences.ini`, sem credenciais ou dados de conta; valores inválidos usam o padrão. Opções por conta permanecem no painel da conta. Implementação: `src/preferences/`; sem validação visual em ambiente Flatpak empacotado.
 
 ## 5. Requisitos não funcionais
 

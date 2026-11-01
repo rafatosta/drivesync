@@ -46,6 +46,12 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
 
     let pending = Rc::new(Cell::new(false));
     window.connect_close_request(move |window| {
+        if !crate::preferences::keep_running() {
+            if let Some(app) = window.application() {
+                app.quit();
+            }
+            return glib::Propagation::Proceed;
+        }
         if pending.replace(true) {
             return glib::Propagation::Stop;
         }
