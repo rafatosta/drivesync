@@ -2,8 +2,6 @@
 //! the caller. A deadline never authorizes a second concurrent cycle.
 use drivesync_engine::{AuthError, DownloadReport, EngineError};
 
-pub(super) const INTERVAL: u64 = 60;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Unconfigured,
@@ -107,7 +105,7 @@ impl Schedule {
             } else {
                 Phase::Attention
             };
-            self.due = Some(now + INTERVAL);
+            self.due = Some(now + crate::preferences::sync_interval());
         }
     }
     /// A positive connectivity hint retries network failures promptly, but never
@@ -209,11 +207,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        for now in [3, 63, 123] {
+        let interval = crate::preferences::sync_interval();
+        for now in [3, 3 + interval, 3 + 2 * interval] {
             assert!(s.start(now, true, false));
             s.finish(&Ok(report.clone()), now);
             assert_eq!(s.phase, Phase::UpToDate);
-            assert_eq!(s.due, Some(now + INTERVAL));
+            assert_eq!(s.due, Some(now + interval));
         }
         report.issues.push(drivesync_engine::DownloadIssue {
             relative_path: Some("local-edit.txt".into()),

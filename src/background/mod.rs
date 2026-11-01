@@ -46,6 +46,12 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
 
     let pending = Rc::new(Cell::new(false));
     window.connect_close_request(move |window| {
+        if !crate::preferences::keep_running() {
+            if let Some(app) = window.application() {
+                app.quit();
+            }
+            return glib::Propagation::Proceed;
+        }
         if pending.replace(true) {
             return glib::Propagation::Stop;
         }
@@ -60,12 +66,14 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
             let Some(window) = weak_window.upgrade() else { return; };
             if allowed {
                 let Some(app) = window.application() else { return; };
-                let notice = gio::Notification::new("DriveSync continues running");
-                notice.set_body(Some("DriveSync is running in the background. Open it to view synchronization status."));
-                notice.set_default_action("app.show");
-                notice.add_button("Open DriveSync", "app.show");
-                notice.add_button("Quit", "app.quit");
-                app.send_notification(Some(NOTICE), &notice);
+                if crate::preferences::notify_on_close() {
+                    let notice = gio::Notification::new("DriveSync continues running");
+                    notice.set_body(Some("DriveSync is running in the background. Open it to view synchronization status."));
+                    notice.set_default_action("app.show");
+                    notice.add_button("Open DriveSync", "app.show");
+                    notice.add_button("Quit", "app.quit");
+                    app.send_notification(Some(NOTICE), &notice);
+                }
                 window.set_visible(false);
                 publish_status();
             } else {

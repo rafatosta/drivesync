@@ -9,6 +9,7 @@ pub(crate) fn button() -> gtk::MenuButton {
     accounts.append(Some("Add Account…"), Some("connection.open"));
     model.append_section(None, &accounts);
     let application = gtk::gio::Menu::new();
+    application.append(Some("Preferences"), Some("app.preferences"));
     application.append(Some("About DriveSync"), Some("app.about"));
     model.append_section(None, &application);
     let exit = gtk::gio::Menu::new();
@@ -21,7 +22,7 @@ pub(crate) fn button() -> gtk::MenuButton {
         .build()
 }
 
-/// Installs the native About window action without adding preferences or settings.
+/// Installs the native About window action.
 pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
     let action = gtk::gio::SimpleAction::new("about", None);
     let weak_window = window.downgrade();
