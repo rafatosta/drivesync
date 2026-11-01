@@ -1411,3 +1411,44 @@ Referência técnica: [Google Drive — resumable uploads](https://developers.go
 consulta de status e retomada pelo Range confirmado (consulta em 2026-11-01).
 A decisão de reiniciar downloads parciais e preservar resultados incertos é
 política conservadora do DriveSync.
+
+### SYNC-024 — preferências de resolução limitadas
+
+**Intenção e contrato.** A preferência pertence ao cliente OAuth, conta e par de
+raízes. O padrão é **Sempre perguntar**. O usuário pode optar por manter local,
+Drive ou ambas exclusivamente para edições simultâneas divergentes de arquivos
+binários gerenciados no mesmo caminho. Datas não autorizam precedência (P04).
+Exclusões, ausência local/remota, UNKNOWN, troca de identidade, nomes, movimentos,
+tipos incompatíveis e exclusões em massa permanecem fora da regra (P06).
+
+**Pré-condições.** Ciclo com uploads habilitados, identidade das raízes válida,
+B confirmada, conteúdo divergente comprovado, mesmo nome/pai/caminho e inode local
+contínuo sem aliases. A barreira de revisão em massa é executada antes da seleção;
+nenhuma preferência equivale a essa aprovação. O consentimento é salvo sob os
+locks da associação e raiz, rejeitando uma configuração diferente da exibida.
+
+**Implementação.** `ConflictPreference` seleciona evidência pendente exata;
+`resolution::preferences_candidate` restringe a classe permitida. O executor
+compartilhado revalida revisão/identidade/fingerprint e preserva ambas as versões
+antes de substituir conteúdo. KeepBoth deixa local no nome/ID original e publica
+a versão Drive em outro nome/ID. O histórico registra escolha, operação e cópias;
+a central de conflitos permite inspeção. Resultado possível: confirmação durável,
+pendência sem efeito por evidência obsoleta/insuficiente, ou intenção recuperável
+após efeito interrompido. Falhas nunca são interpretadas como sucesso.
+
+O SQLite `conflict-preferences.sqlite3` separa consentimento de observações e
+intenções. Dados inválidos bloqueiam leitura/automação sem reset silencioso;
+recuperação explícita preserva o banco antigo e volta a perguntar. Trocar a regra
+para perguntar ou desabilitar uploads impede novas escolhas automáticas, mas não
+cancela a reconciliação de intenções já aceitas. A política não é aplicada por
+`download_once`, apenas pelo ciclo que permite uploads/renomes.
+
+**Validação.** Os testes `p04_*` em `resolution/tests.rs` combinam coleta real,
+provedor simulado, arquivos temporários e SQLite reaberto: três escolhas com
+preservação, repetição, revisão concorrente, dados incompletos e recuperação de
+resposta remota perdida. `consent_is_scoped_persistent_and_invalid_data_is_never_ask`
+verifica isolamento por cliente/conta/raízes e corrupção. A bateria compartilhada
+do executor cobre colisões, falha de confirmação e interrupção local. Isso não
+comprova Google real, queda real de processo ou acessibilidade da UI instalada.
+Preferir a versão mais recente requer contrato adicional de relógios/evidência;
+continua indisponível, sem heurística baseada só em timestamps.

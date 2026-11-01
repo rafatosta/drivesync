@@ -18,12 +18,13 @@ use std::{
 
 const SELECTOR: &str = "recovery.json";
 const REQUIRED: &str = "recovery-required";
-const NAMES: [&str; 5] = [
+const NAMES: [&str; 6] = [
     "state.sqlite3",
     "changes.sqlite3",
     "reconciliation.sqlite3",
     "conflict-history.sqlite3",
     "uploads.sqlite3",
+    "conflict-preferences.sqlite3",
 ];
 
 /// Local recovery outcome, not confirmation of synchronization or remote effects.
@@ -227,6 +228,9 @@ fn validate(
             let history = ConflictHistory::open(path)?;
             history.records(&scope)?;
             history.events(&scope)?;
+        }
+        "conflict-preferences.sqlite3" => {
+            super::Preferences::open(path, client, folder)?.load()?;
         }
         "uploads.sqlite3" => {
             Uploads::open(path, client, folder)?.validate_evidence()?;

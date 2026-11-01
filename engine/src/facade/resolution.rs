@@ -52,6 +52,15 @@ pub(super) fn automatic(
     {
         return Err(EngineError::InvalidPlan);
     }
+    let preference = super::preferences::store(folder, config)?.load()?;
+    let mut journal = history(folder, config)?;
+    let history_scope = crate::state::CheckpointScope {
+        client: &config.client_id,
+        account: &folder.account_id,
+        remote: &folder.remote.id,
+        local: &folder.local,
+    };
+    let pending = journal.records(&history_scope)?;
     let candidates: Vec<_> = record
         .remote
         .entries
@@ -59,8 +68,26 @@ pub(super) fn automatic(
         .zip(&record.plan.entries)
         .filter_map(|(item, entry)| {
             let base = record.bases.get(&item.id)?;
-            crate::resolution::planning::candidate(item, entry, base, &record.local)
-                .map(|candidate| (item, candidate, base))
+            if let Some(candidate) =
+                crate::resolution::planning::candidate(item, entry, base, &record.local)
+            {
+                return Some((item, candidate, base, None));
+            }
+            let request = pending
+                .iter()
+                .filter_map(|r| preference.request(r))
+                .find(|request| {
+                    request.record.remote_id.as_ref() == Some(&item.id)
+                        && request.record.relative_path == entry.relative_path
+                })?;
+            let candidate = crate::resolution::preferences_candidate(
+                item,
+                entry,
+                base,
+                &record.local,
+                &request,
+            )?;
+            Some((item, candidate, base, Some(request)))
         })
         .collect();
     let mut report = AutomaticReport {
@@ -80,7 +107,7 @@ pub(super) fn automatic(
             store,
             cancel,
         };
-        for (index, (item, candidate, base)) in candidates.iter().enumerate() {
+        for (index, (item, candidate, base, request)) in candidates.iter().enumerate() {
             progress(crate::DownloadProgress {
                 preparation: None,
                 completed_items: index,
@@ -106,8 +133,38 @@ pub(super) fn automatic(
                     base,
                     cancel,
                 )?;
+                if let Some(request) = request {
+                    let current = crate::ResolutionObservation {
+                        relative_path: candidate.origin.clone(),
+                        local: crate::LocalState::Present {
+                            fingerprint: candidate.fingerprint.clone(),
+                        },
+                        remote: crate::RemoteState::Present {
+                            id: remote.item.id.clone(),
+                            parent_id: remote.item.parent_id.clone(),
+                            name: remote.item.name.clone(),
+                            version: remote.item.version.ok_or(EngineError::ObservationUnknown)?,
+                        },
+                    };
+                    journal
+                        .revalidate_resolution(
+                            &history_scope,
+                            &request.record.conflict_id,
+                            &current,
+                        )?
+                        .map_err(|_| EngineError::RemoteChanged)?;
+                }
+                let op_id = operation_id();
+                let (copy_name, copy_id) = if candidate.choice == ResolutionChoice::KeepBoth {
+                    (
+                        Some(copy_name(&candidate.origin, &op_id)?),
+                        Some(provider.generate()?),
+                    )
+                } else {
+                    (None, None)
+                };
                 let plan = Plan {
-                    conflict: None,
+                    conflict: request.as_ref().map(|r| r.record.conflict_id.clone()),
                     origin: candidate.origin.clone(),
                     target: candidate.target.clone(),
                     local_fingerprint: candidate.fingerprint.clone(),
@@ -120,10 +177,10 @@ pub(super) fn automatic(
                         .and_then(|v| v.to_str())
                         .ok_or(EngineError::InvalidPlan)?
                         .into(),
-                    copy_name: None,
-                    copy_id: None,
+                    copy_name,
+                    copy_id,
                 };
-                let intent = execution::begin(&ctx, plan, operation_id())?;
+                let intent = execution::begin(&ctx, plan, op_id)?;
                 let result = execution::run(&ctx, &mut provider, intent)?;
                 let confirmed = store
                     .resolutions(&config.client_id, &record.plan)?
