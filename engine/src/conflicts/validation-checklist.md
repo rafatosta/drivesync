@@ -106,7 +106,7 @@ Isso não representa homologação de rede Google ou queda física de energia (#
 - [ ] **P02** — Divergência com ambas as versões válidas: preservar as duas e registrar conflito sem sobrescrita silenciosa (`CONFLICT-001`).
 - [ ] **P03** — Resolução assistida: manter local / remoto / ambas, com revalidação antes de aplicar (`CONFLICT-002`).
 - [ ] **P04** — Prioridade por versão mais recente: **não assumir que timestamp implica precedência confiável**; decidir se política será suportada e em quais condições.
-- [ ] **P05** — Mesclagem automática: somente se formato e algoritmo confiável forem definidos; **fora do escopo inicial**.
+- [ ] **P05** — Mesclagem automática: somente se formato e algoritmo confiável forem definidos; **fora do escopo inicial**. O [estudo SYNC-026](text-merge.md) define geração pura de candidatos posicionais e recusas testáveis; automação/aplicação permanece na #68, sem homologação implícita.
 - [ ] **P06** — Exclusões locais/remotas, inclusive em lote: definir autorização, retenção, recuperação e prevenção de perda antes de habilitar propagação destrutiva.
   Proteção prévia implementada por BULK-001: ausências em lote exigem revisão, e confirmação não habilita exclusão local/remota. `p06_remote_trash_confirmation_never_authorizes_local_deletion` e `n08_p06_missing_batch_blocks_before_effects_survives_restart_and_requires_explicit_retry` verificam preservação. A propagação destrutiva continua indisponível.
 - [ ] **P07** — Conflito pendente não bloqueia itens independentes; pendência persiste após fechamento/reinício.

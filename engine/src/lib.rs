@@ -35,11 +35,11 @@ pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use changes::{ChangeKind, ReconciliationEntry};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use conflicts::{
-    classify_differences, AttributeChange, BaseEvidence, ConflictFailure, ConflictHistoryEvent,
-    ConflictHistoryKind, ConflictOutcome, ConflictRecord, ConflictStatus, ContentComparison,
-    DifferenceDecision, DifferenceInput, DifferenceKind, DifferenceReason, Disposition, LocalState,
-    ObservationFailure, RemoteState, ResolutionObservation, ResolutionProposal, SideDifference,
-    StaleResolutionReason,
+    classify_differences, merge_plain_text, AttributeChange, BaseEvidence, ConflictFailure,
+    ConflictHistoryEvent, ConflictHistoryKind, ConflictOutcome, ConflictRecord, ConflictStatus,
+    ContentComparison, DifferenceDecision, DifferenceInput, DifferenceKind, DifferenceReason,
+    Disposition, LocalState, ObservationFailure, RemoteState, ResolutionObservation,
+    ResolutionProposal, SideDifference, StaleResolutionReason, TextMergeOutcome, TextMergeRefusal,
 };
 pub use coordinator::RootSuspension;
 pub use error::EngineError;

@@ -22,3 +22,6 @@ versão remota em divergências binárias comprovadas no mesmo caminho. Retenç�
 limpeza e resolução assistida continuam propostas. A classificação permanece
 pura: somente o relatório de execução confirma cópias adicionais; cópia não
 significa resolução nem sucesso de sincronização.
+
+O [estudo SYNC-026](text-merge.md) define um gerador puro e limitado de candidatos
+textuais; não habilita mesclagem automática ou instalação de resultados.
