@@ -6,9 +6,9 @@ fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, gu
     guard.set(true);
     row.set_active(active);
     guard.set(false);
-    group.set_description(Some(if active {"New local files and folders can be uploaded. Verified independent rename and content changes can be combined for managed files. Conflicting versions still require your decision; deletions are not sent."} else {"Automatic uploads are disabled. Downloads continue and explicit conflict decisions remain available. Disabling uploads does not cancel already accepted decisions."}));
+    group.set_description(Some(if active {"New local files and folders can be uploaded. Verified independent rename and content changes can be combined for managed files. Simultaneous file edits follow your conflict preference; the default is to ask. Deletions are not sent."} else {"Automatic uploads are disabled. Downloads continue and explicit conflict decisions remain available. Disabling uploads does not cancel already accepted decisions."}));
     row.set_subtitle(
-        "New items and supported renames only. Content conflicts require a decision; no deletions.",
+        "New items and supported renames only. Conflict preferences apply only to supported file edits; no deletions.",
     );
 }
 pub(super) fn build(

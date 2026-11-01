@@ -1451,4 +1451,11 @@ verifica isolamento por cliente/conta/raízes e corrupção. A bateria compartil
 do executor cobre colisões, falha de confirmação e interrupção local. Isso não
 comprova Google real, queda real de processo ou acessibilidade da UI instalada.
 Preferir a versão mais recente requer contrato adicional de relógios/evidência;
-continua indisponível, sem heurística baseada só em timestamps.
+continua indisponível, sem heurística baseada só em timestamps
+([issue #64](https://github.com/rafatosta/drivesync/issues/64)).
+
+**Interface.** Nas configurações de sincronização da conta, “Simultaneous file
+edits” oferece Always ask, Keep local, Keep Drive e Keep both, com consequências
+e limites visíveis. O controle permanece desabilitado durante leitura/gravação e
+sincronização ativa. Uma falha de leitura nunca é apresentada como consentimento
+válido; falha de confirmação da escrita exige releitura da regra persistida.

@@ -1,6 +1,7 @@
 //! Adaptive account navigation and automatic download dashboard.
 mod account_details;
 mod bulk_review;
+mod conflict_preferences;
 mod description;
 mod folders;
 mod problems;

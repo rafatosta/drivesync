@@ -170,6 +170,11 @@ pub(super) fn populate(
             &folders,
             &sync,
         ));
+        sync.add(&super::conflict_preferences::build(
+            engine.clone(),
+            &saved,
+            &folders,
+        ));
         sync.add(&sync_state);
         content.append(&sync);
         content.append(&super::synchronization::build(
