@@ -147,6 +147,7 @@ fn blocking(error: &EngineError) -> bool {
         && !matches!(
             error,
             EngineError::DownloadConflict
+                | EngineError::WorkspaceLinkUpload
                 | EngineError::LocalWriting
                 | EngineError::LocalTemporary
                 | EngineError::ObservationUnknown
@@ -182,6 +183,7 @@ mod tests {
         for error in [
             EngineError::LocalWriting,
             EngineError::LocalTemporary,
+            EngineError::WorkspaceLinkUpload,
             EngineError::ObservationUnknown,
         ] {
             let report = DownloadReport {

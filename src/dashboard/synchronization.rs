@@ -601,7 +601,7 @@ fn summary(report: &DownloadReport) -> String {
         } else {
             "browser shortcuts"
         };
-        parts.push(format!("{} {label}", report.linked));
+        parts.push(format!("{} {label} (Docs, Sheets and Slides: browser only; no offline editing, export or conversion)", report.linked));
     }
     for (count, label) in [
         (report.downloaded, "downloaded"),

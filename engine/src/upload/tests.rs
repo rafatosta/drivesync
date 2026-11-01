@@ -1056,3 +1056,119 @@ fn invalid_persisted_retry_budget_fails_closed() {
     ));
     assert_eq!(remote.creates, 1);
 }
+
+#[test]
+fn c24_copied_and_renamed_links_never_create_upload_intents_after_restart() {
+    let f = Fixture::new();
+    let bytes = b"<!doctype html>\n<!-- DriveSync Workspace link -->\n<a href=\"https://docs.google.com/spreadsheets/d/test/edit\">Sheet</a>";
+    for name in ["copy.html", "renamed.txt"] {
+        fs::write(f.root.join(name), bytes).unwrap();
+    }
+    fs::write(f.root.join("ordinary.txt"), b"ordinary document").unwrap();
+    let mut remote = Fake::default();
+    for _ in 0..2 {
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.issues.len(), 2);
+        assert!(report
+            .issues
+            .iter()
+            .all(|issue| issue.error == EngineError::WorkspaceLinkUpload));
+        for name in ["copy.html", "renamed.txt"] {
+            assert_eq!(fs::read(f.root.join(name)).unwrap(), bytes);
+            assert!(f.uploads().load(Path::new(name)).unwrap().is_none());
+        }
+        assert_eq!(remote.generated, 1);
+        assert_eq!(remote.begins, 1);
+        assert_eq!(remote.items.len(), 1);
+    }
+}
+
+#[test]
+fn c24_managed_html_edits_and_local_moves_never_upload_without_remote_inventory() {
+    struct WorkspaceSource(InventoryEntry);
+    impl crate::download::Source for WorkspaceSource {
+        fn configured(&mut self) -> Result<(), EngineError> {
+            Ok(())
+        }
+        fn metadata(&mut self, _: &InventoryEntry) -> Result<InventoryEntry, EngineError> {
+            Ok(self.0.clone())
+        }
+        fn media(&mut self, _: &str) -> Result<Box<dyn std::io::Read>, EngineError> {
+            panic!("Workspace must never request media")
+        }
+    }
+    for renamed in [false, true] {
+        let f = Fixture::new();
+        let item = InventoryEntry {
+            id: "native".into(),
+            parent_id: "root".into(),
+            name: "Document".into(),
+            mime_type: "application/vnd.google-apps.document".into(),
+            version: Some(1),
+            size: None,
+            md5_checksum: None,
+            web_view_link: Some("https://docs.google.com/document/d/native/edit".into()),
+            kind: InventoryKind::GoogleWorkspaceLink,
+        };
+        let inv = RemoteInventory {
+            account_id: f.folder.account_id.clone(),
+            root_id: "root".into(),
+            entries: vec![item.clone()],
+        };
+        let plan =
+            crate::planner::plan(&inv, &f.root, |_| crate::LocalObservation::Absent).unwrap();
+        let mut store = Store::open(&f.path).unwrap();
+        store
+            .save("client", &inv, &plan, &Cancellation::new())
+            .unwrap();
+        assert_eq!(
+            crate::download::run(
+                crate::download::Context {
+                    client: "client",
+                    scope: &plan,
+                    store: &store,
+                    cancel: &Cancellation::new(),
+                },
+                &inv,
+                &mut WorkspaceSource(item),
+                |_| {}
+            )
+            .unwrap()
+            .linked,
+            1
+        );
+        drop(store);
+        let mut path = f.root.join("Document.html");
+        if renamed {
+            let destination = f.root.join("renamed.txt");
+            fs::rename(&path, &destination).unwrap();
+            path = destination;
+        }
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+        fs::write(&path, b"locally edited, marker removed").unwrap();
+        fs::write(
+            f.root.join("ordinary.html"),
+            b"<!doctype html><html>ordinary user document</html>",
+        )
+        .unwrap();
+        let mut remote = Fake::default();
+        for _ in 0..2 {
+            let report = f.run(&mut remote, HashSet::new()).unwrap();
+            assert!(report.issues.is_empty());
+            assert_eq!(fs::read(&path).unwrap(), b"locally edited, marker removed");
+            assert_eq!(remote.generated, 1);
+            assert_eq!(remote.begins, 1);
+            assert_eq!(remote.items.len(), 1);
+            assert_eq!(remote.items.values().next().unwrap().name, "ordinary.html");
+            assert!(f
+                .uploads()
+                .load(Path::new(if renamed {
+                    "renamed.txt"
+                } else {
+                    "Document.html"
+                }))
+                .unwrap()
+                .is_none());
+        }
+    }
+}
