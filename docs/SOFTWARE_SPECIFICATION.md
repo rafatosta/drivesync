@@ -1484,4 +1484,4 @@ originais. As cópias não são sincronizadas nem selecionam vencedor; ficam
 sujeitas à limpeza de temporários do sistema. Erros de abertura são explícitos.
 A escolha continua na central e exige confirmação com consequências e nova
 revalidação. Portais/aplicativos externos e leitor de tela exigem homologação
-separada dos testes GTK e simulados.
+separada dos testes GTK e simulados, acompanhada na [issue #66](https://github.com/rafatosta/drivesync/issues/66).
