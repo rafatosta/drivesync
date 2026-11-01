@@ -292,3 +292,25 @@ Fundamentação consultada em 2026-10-30: comparação de réplicas com estado a
 [files.update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update).
 A referência da API não constitui evidência de execução, CAS distribuído ou
 recuperação implementada. O limite conservador de execução é política DriveSync.
+
+## SYNC-025 — comparação sem decisão
+
+`DriveSyncEngine::compare_conflict` exige registro pendente exato na conta/par
+atual, raiz verificada e versões local/remota conhecidas. Não exige permissão de
+upload. A leitura usa descritores sem seguir symlinks, fingerprint SHA-256 local,
+tamanho/MD5 remoto e metadados remotos antes/depois. Mudança, cancelamento ou falha
+retorna erro; não limpa a pendência, não autoriza resolução nem altera originais.
+Até 1 MiB por lado, retorna cópias verificadas em memória; acima disso retorna
+somente metadados, sem truncar conteúdo. O lock da raiz serializa a coleta com a
+sincronização; escritores externos continuam sujeitos à revalidação. Uma mudança
+posterior exige nova comparação e continua bloqueada pelo executor de resolução.
+
+Pseudocódigo: validar registro salvo → observar R → abrir L sem seguir links →
+revalidar proposta → ler cópias limitadas e verificar hashes → reobservar R/L e
+raiz → retornar snapshot. Reinício descarta apenas o snapshot em memória; nenhum
+novo estado de recuperação é necessário. P02/P03 continuam sob o contrato do
+executor, sem mudanças nas consequências de manter local/remoto/ambas.
+
+Referências técnicas: [validação UTF-8](https://doc.rust-lang.org/std/str/fn.from_utf8.html)
+e [GtkFileLauncher](https://docs.gtk.org/gtk4/class.FileLauncher.html), consultadas
+em 2026-11-01. O limite de memória e o fallback são políticas do DriveSync.

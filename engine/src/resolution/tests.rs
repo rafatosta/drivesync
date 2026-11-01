@@ -40,6 +40,8 @@ struct Provider {
     update_calls: usize,
     copies: usize,
     lose_update: bool,
+    preview_fault: u8,
+    preview_path: Option<PathBuf>,
     fail_before: bool,
     config_changed: bool,
     local_after_update: Option<PathBuf>,
@@ -60,6 +62,8 @@ impl Provider {
             update_calls: 0,
             copies: 0,
             lose_update: false,
+            preview_fault: 0,
+            preview_path: None,
             fail_before: false,
             config_changed: false,
             local_after_update: None,
@@ -104,9 +108,15 @@ impl Remote for Provider {
         if self.observe(&version.item.id)? != *version {
             return Err(EngineError::RemoteChanged);
         }
-        Ok(Box::new(Cursor::new(
-            self.objects[&version.item.id].bytes.clone(),
-        )))
+        let mut bytes = self.objects[&version.item.id].bytes.clone();
+        match self.preview_fault {
+            1 => return Err(EngineError::Authentication(crate::AuthError::Network)),
+            2 => bytes.push(0),
+            3 => self.objects.get_mut(&version.item.id).unwrap().version += 1,
+            4 => fs::write(self.preview_path.as_ref().unwrap(), b"concurrent").unwrap(),
+            _ => {}
+        }
+        Ok(Box::new(Cursor::new(bytes)))
     }
     fn copy(&mut self, plan: &Plan, mut bytes: File, blob: &Blob) -> Result<(), EngineError> {
         let id = plan.copy_id.as_ref().ok_or(EngineError::InvalidPlan)?;
@@ -1140,4 +1150,107 @@ fn p04_preference_decision_recovers_uncertain_remote_effect_without_duplicates()
     assert_eq!(remote.copies, 1);
     assert_eq!(fixture.run(&mut remote).unwrap(), report);
     assert_eq!(remote.effects, 1);
+}
+
+/// The preview uses the same real root and durable conflict journal as decisions.
+#[test]
+fn comparison_preserves_versions_and_pending_history_across_reopen_and_repeat() {
+    let fixture = Fixture::new(b"same\nlocal\nend\n");
+    let mut remote = Provider::new(b"same\nremote\nend\n");
+    let (record, _) = preference_candidate(&fixture, &mut remote, ConflictPreference::KeepLocal);
+    let cancel = Cancellation::new();
+    for _ in 0..2 {
+        let root = Root::open(&fixture.root).unwrap();
+        let result = crate::comparison::inspect(&root, &mut remote, &record, &cancel).unwrap();
+        assert_eq!(
+            result.content,
+            crate::ComparisonContent::Available {
+                local: b"same\nlocal\nend\n".to_vec(),
+                remote: b"same\nremote\nend\n".to_vec()
+            }
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("report.txt")).unwrap(),
+            b"same\nlocal\nend\n"
+        );
+        let history =
+            crate::state::ConflictHistory::open(&fixture.directory.join("history.sqlite3"))
+                .unwrap();
+        assert_eq!(
+            history
+                .records(&crate::state::CheckpointScope {
+                    client: "client",
+                    account: &fixture.scope.account_id,
+                    remote: "root",
+                    local: &fixture.root
+                })
+                .unwrap(),
+            vec![record.clone()]
+        );
+        assert!(Store::open(&fixture.db)
+            .unwrap()
+            .resolutions("client", &fixture.scope)
+            .unwrap()
+            .is_empty());
+    }
+    assert_eq!(remote.effects, 0);
+    assert_eq!(remote.copies, 0);
+}
+
+#[test]
+fn comparison_rejects_offline_corrupt_media_and_concurrent_versions_without_effects() {
+    for fault in 1..=4 {
+        let fixture = Fixture::new(b"local");
+        let mut remote = Provider::new(b"remote");
+        let (record, _) =
+            preference_candidate(&fixture, &mut remote, ConflictPreference::KeepLocal);
+        remote.preview_fault = fault;
+        remote.preview_path = Some(fixture.root.join("report.txt"));
+        let root = Root::open(&fixture.root).unwrap();
+        assert!(
+            crate::comparison::inspect(&root, &mut remote, &record, &Cancellation::new()).is_err()
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("report.txt")).unwrap(),
+            if fault == 4 {
+                b"concurrent".as_slice()
+            } else {
+                b"local"
+            }
+        );
+        assert_eq!(remote.effects, 0);
+        assert_eq!(remote.objects["file"].bytes, b"remote");
+    }
+}
+
+#[test]
+fn comparison_bounds_content_and_rejects_stale_cancelled_and_symlink_inputs() {
+    let fixture = Fixture::new(b"local");
+    let mut remote = Provider::new(&vec![b'x'; crate::comparison::LIMIT as usize + 1]);
+    let (record, _) = preference_candidate(&fixture, &mut remote, ConflictPreference::KeepLocal);
+    remote.preview_fault = 1;
+    let root = Root::open(&fixture.root).unwrap();
+    assert_eq!(
+        crate::comparison::inspect(&root, &mut remote, &record, &Cancellation::new())
+            .unwrap()
+            .content,
+        crate::ComparisonContent::MetadataOnly
+    );
+    let mut stale = record.clone();
+    stale.remote_version = Some(1);
+    assert!(crate::comparison::inspect(&root, &mut remote, &stale, &Cancellation::new()).is_err());
+    let cancel = Cancellation::new();
+    cancel.cancel();
+    assert!(crate::comparison::inspect(&root, &mut remote, &record, &cancel).is_err());
+    fs::rename(
+        fixture.root.join("report.txt"),
+        fixture.root.join("original.txt"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("original.txt", fixture.root.join("report.txt")).unwrap();
+    assert!(crate::comparison::inspect(&root, &mut remote, &record, &Cancellation::new()).is_err());
+    assert_eq!(
+        fs::read(fixture.root.join("original.txt")).unwrap(),
+        b"local"
+    );
 }

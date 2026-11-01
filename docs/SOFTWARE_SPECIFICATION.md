@@ -1459,3 +1459,17 @@ edits” oferece Always ask, Keep local, Keep Drive e Keep both, com consequênc
 e limites visíveis. O controle permanece desabilitado durante leitura/gravação e
 sincronização ativa. Uma falha de leitura nunca é apresentada como consentimento
 válido; falha de confirmação da escrita exige releitura da regra persistida.
+
+### SYNC-025 — comparação visual por tipo (P02/P03)
+
+Requisito: a central permite inspecionar versões pendentes sem selecionar um
+vencedor. Pré-condições, revalidação e resultados em
+[contrato de comparação](../engine/src/conflicts/contract.md#sync-025--comparação-sem-decisão).
+A coleta verifica até 1 MiB por versão em memória; versões maiores retornam
+somente metadados. Informação indisponível e falhas são explícitas. Nenhum snapshot
+de comparação altera o estado-base ou substitui preservação durável.
+
+Aceite: comparação nominal/repetida, reabertura de SQLite, offline, corrupção,
+concorrência local/remota, cancelamento, symlinks e limite de tamanho; originais e
+pendências permanecem intactos. Testes simulados não comprovam integração Google
+real ou portais do pacote instalado.

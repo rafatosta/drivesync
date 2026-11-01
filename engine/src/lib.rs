@@ -10,6 +10,7 @@
 mod accounts;
 mod auth;
 mod changes;
+mod comparison;
 mod configuration;
 mod conflicts;
 mod coordinator;
@@ -27,6 +28,8 @@ mod resolution;
 mod state;
 mod ui;
 mod upload;
+
+pub use comparison::{ComparisonContent, VersionComparison};
 
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use changes::{ChangeKind, ReconciliationEntry};

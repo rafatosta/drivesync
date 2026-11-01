@@ -2,6 +2,7 @@
 //!
 //! Coordinates independent account, authentication, Drive and local folder
 //! modules without exposing credentials or platform storage to the GUI.
+mod comparison;
 mod preferences;
 mod resolution;
 mod resolution_state;
