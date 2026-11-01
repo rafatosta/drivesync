@@ -56,22 +56,33 @@ O upload é opcional e cria somente novos arquivos e pastas. As imagens de aten�
 
 O teste visual `demonstration_screenshots` gera novamente as capturas com dados fictícios, em tamanhos amplos e compactos. Ele é ignorado na execução normal dos testes.
 
-Requer Rust/Cargo, as bibliotecas de desenvolvimento GTK4 4.10 ou superior e Libadwaita 1.4 ou superior, além de uma sessão gráfica acessível. Em um ambiente Flatpak de desenvolvimento, execute dentro do SDK com acesso à sessão gráfica e ao diretório do projeto.
+Requer uma sessão gráfica acessível e o SDK `org.gnome.Sdk//50` com a extensão `org.freedesktop.Sdk.Extension.rust-stable` correspondente, instalados pelo Flathub conforme o [manifesto de desenvolvimento](../../flatpak/com.rtosta.DriveSync.Devel.yml). O comando abaixo usa o Cargo e as bibliotecas GTK4/Libadwaita do SDK; não é necessário instalar Rust/Cargo no host.
 
 Execute a partir da raiz do projeto:
 
 ```sh
-XDG_DATA_HOME="$(mktemp -d /tmp/drivesync-ui-demo-XXXXXX)" \
-DRIVESYNC_UI_PREVIEW_DIR="$PWD/data/screenshots" \
-GSK_RENDERER=cairo \
-cargo test -p drivesync demonstration_screenshots -- --ignored --test-threads=1
+flatpak run --command=sh \
+  --filesystem="$PWD" \
+  --share=network --share=ipc \
+  --socket=wayland --socket=fallback-x11 \
+  --env=PATH=/usr/lib/sdk/rust-stable/bin:/usr/bin \
+  org.gnome.Sdk//50 -c '
+    cd "$1" || exit 1
+    XDG_DATA_HOME="$(mktemp -d /tmp/drivesync-ui-demo-XXXXXX)" || exit 1
+    export XDG_DATA_HOME
+    export DRIVESYNC_UI_PREVIEW_DIR="$PWD/data/screenshots"
+    export GSK_RENDERER=cairo
+    cargo test -p drivesync demonstration_screenshots -- --ignored --test-threads=1
+  ' sh "$PWD"
 ```
 
+- `--filesystem="$PWD"` permite ler o projeto e gravar as capturas; os sockets e `--share=ipc` dão acesso à sessão gráfica. `--share=network` permite baixar dependências Cargo durante a compilação.
+- `--env=PATH=...` seleciona as ferramentas Rust da extensão do SDK.
 - `XDG_DATA_HOME` cria um perfil temporário isolado. O prefixo `/tmp/drivesync-ui-demo-` é obrigatório e verificado pelo teste; não use o perfil real do aplicativo.
 - `DRIVESYNC_UI_PREVIEW_DIR` define o destino dos PNGs. O diretório é criado se necessário e as imagens com os mesmos nomes são substituídas. O destino padrão desta documentação é `data/screenshots`; para uma saída descartável, use outro caminho absoluto.
 - `GSK_RENDERER=cairo` seleciona o renderizador Cairo para as capturas.
 - `--ignored` inclui o teste visual opt-in; `--test-threads=1` executa os testes selecionados em uma única thread, conforme necessário para o GTK.
 
-Ao terminar, confira o resultado do teste no terminal e abra os PNGs ou os links deste índice. O perfil temporário permanece em `/tmp` e pode ser removido após a geração.
+Ao terminar, confira o resultado do teste no terminal e abra os PNGs ou os links deste índice. O perfil temporário é criado no `/tmp` interno do sandbox Flatpak.
 
 O gerador não instala tarefas automáticas, não inicia OAuth e não executa as ações de sincronizar ou sair da conta. As capturas validam a apresentação dos componentes, sem comprovar uma sincronização real com o Google Drive.
