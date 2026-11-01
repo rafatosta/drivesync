@@ -17,6 +17,11 @@ pub(crate) fn io(error: impl Into<std::io::Error>) -> EngineError {
         || error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
     {
         EngineError::LocalAccessDenied
+    } else if [rustix::io::Errno::NOSPC, rustix::io::Errno::DQUOT]
+        .iter()
+        .any(|code| error.raw_os_error() == Some(code.raw_os_error()))
+    {
+        EngineError::LocalStorageFull
     } else {
         EngineError::DownloadIo
     }
@@ -213,7 +218,7 @@ pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineEr
 pub(crate) fn create(parent: &File, name: &str, size: u64) -> Result<File, EngineError> {
     let space = fs::fstatvfs(parent).map_err(io)?;
     if u128::from(space.f_bavail) * u128::from(space.f_frsize) < u128::from(size) {
-        return Err(EngineError::DownloadIo);
+        return Err(EngineError::LocalStorageFull);
     }
     fs::openat(
         parent,
@@ -251,5 +256,22 @@ pub(crate) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
         Ok(_) => Ok(true),
         Err(rustix::io::Errno::NOENT) => Ok(false),
         Err(e) => Err(io(e)),
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn e02_classifies_capacity_failures_separately_from_permissions_and_io() {
+        for code in [rustix::io::Errno::NOSPC, rustix::io::Errno::DQUOT] {
+            assert_eq!(io(code), EngineError::LocalStorageFull);
+        }
+        assert_eq!(
+            io(rustix::io::Errno::ACCESS),
+            EngineError::LocalAccessDenied
+        );
+        assert_eq!(io(rustix::io::Errno::IO), EngineError::DownloadIo);
     }
 }

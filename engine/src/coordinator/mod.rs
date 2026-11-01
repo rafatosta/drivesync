@@ -18,10 +18,16 @@ pub enum RootSuspension {
     Offline,
     RemoteRetry,
     AuthenticationRequired,
+    LocalStorageFull,
+    RemoteStorageFull,
+    RemoteQuotaExceeded,
 }
 impl std::fmt::Display for RootSuspension {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::LocalStorageFull => return EngineError::LocalStorageFull.fmt(f),
+            Self::RemoteStorageFull => return EngineError::RemoteStorageFull.fmt(f),
+            Self::RemoteQuotaExceeded => return EngineError::RemoteQuotaExceeded.fmt(f),
             Self::StateUnavailable => "Synchronization suspended: local state could not be validated. Choose Recover synchronization state to rebuild observations while preserving existing files and database evidence.",
             Self::LocalUnavailable => "Synchronization suspended: the local folder is unavailable. Reconnect the volume or restore folder access, then try again. Existing data was preserved.",
             Self::IdentityUnverified => "Synchronization suspended: the selected folder's identity could not be verified. Restore the original folder and its DriveSync metadata. Existing data was preserved.",
@@ -75,6 +81,9 @@ pub(crate) fn verify(
 /// Transport failures suspend work without claiming that a particular item vanished.
 pub(crate) fn connection(error: EngineError) -> EngineError {
     let reason = match error {
+        EngineError::LocalStorageFull => RootSuspension::LocalStorageFull,
+        EngineError::RemoteStorageFull => RootSuspension::RemoteStorageFull,
+        EngineError::RemoteQuotaExceeded => RootSuspension::RemoteQuotaExceeded,
         EngineError::Authentication(AuthError::Network | AuthError::TimedOut) => {
             RootSuspension::Offline
         }

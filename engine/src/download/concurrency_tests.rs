@@ -560,7 +560,7 @@ fn sync018_e03_syscall_denials_are_distinct_from_generic_io() {
     );
     assert_eq!(
         filesystem::io(rustix::io::Errno::NOSPC),
-        EngineError::DownloadIo
+        EngineError::LocalStorageFull
     );
 }
 

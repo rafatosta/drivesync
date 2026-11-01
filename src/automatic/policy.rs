@@ -366,6 +366,9 @@ mod availability_tests {
     fn root_suspension_retries_only_transient_failures_and_preserves_user_pause() {
         let mut schedule = Schedule::new(true, 0);
         for reason in [
+            RootSuspension::LocalStorageFull,
+            RootSuspension::RemoteStorageFull,
+            RootSuspension::RemoteQuotaExceeded,
             RootSuspension::LocalUnavailable,
             RootSuspension::IdentityUnverified,
             RootSuspension::RemoteUnavailable,

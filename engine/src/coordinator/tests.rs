@@ -395,3 +395,48 @@ fn n09_process_exit_releases_scope_without_deleting_lock_evidence() {
     drop(registry.lock("client", &f.folder).unwrap());
     assert!(registry.lock("client", &f.folder).is_ok());
 }
+
+#[test]
+fn e02_e07_capacity_and_credentials_persist_until_explicit_revalidation() {
+    let f = Fixture::new();
+    fs::write(f.folder.local.join("keep"), b"original").unwrap();
+    for (error, reason) in [
+        (
+            EngineError::LocalStorageFull,
+            RootSuspension::LocalStorageFull,
+        ),
+        (
+            EngineError::RemoteStorageFull,
+            RootSuspension::RemoteStorageFull,
+        ),
+        (
+            EngineError::RemoteQuotaExceeded,
+            RootSuspension::RemoteQuotaExceeded,
+        ),
+        (
+            EngineError::Authentication(AuthError::ReauthorizationRequired),
+            RootSuspension::AuthenticationRequired,
+        ),
+        (
+            EngineError::Authentication(AuthError::MissingPermissions),
+            RootSuspension::AuthenticationRequired,
+        ),
+    ] {
+        assert_eq!(connection(error), EngineError::RootSuspended(reason));
+        assert!(!reason.retryable());
+        for _ in 0..2 {
+            f.registry()
+                .suspend("client", &f.folder, Some(reason))
+                .unwrap();
+            assert_eq!(
+                f.registry().reason("client", &f.folder).unwrap(),
+                Some(reason)
+            );
+            assert_eq!(fs::read(f.folder.local.join("keep")).unwrap(), b"original");
+        }
+        let root = open("client", &f.folder, Some(&f.marker())).unwrap();
+        verify(&root, "client", &f.folder, Some(&f.marker())).unwrap();
+        f.registry().suspend("client", &f.folder, None).unwrap();
+        assert_eq!(f.registry().reason("client", &f.folder).unwrap(), None);
+    }
+}

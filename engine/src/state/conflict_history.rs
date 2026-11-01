@@ -560,7 +560,7 @@ impl From<&crate::EngineError> for ConflictFailure {
             E::LocalTemporary => Self::LocalTemporary,
             E::ObservationUnknown => Self::ObservationUnknown,
             E::DownloadIntegrity => Self::Integrity,
-            E::DownloadIo | E::LocalAccessDenied => Self::LocalIo,
+            E::DownloadIo | E::LocalStorageFull | E::LocalAccessDenied => Self::LocalIo,
             E::RemoteChanged => Self::RemoteChanged,
             E::StateStorage | E::StateRecoveryPending => Self::StateUnavailable,
             E::Authentication(crate::AuthError::Network | crate::AuthError::TimedOut)
