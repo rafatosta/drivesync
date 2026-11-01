@@ -49,7 +49,10 @@ fn matches(op: &Intent, item: &InventoryEntry) -> bool {
         } else {
             item.kind == InventoryKind::Binary
                 && item.size == Some(op.size)
-                && item.md5_checksum.as_deref() == Some(op.md5.as_str())
+                && item
+                    .md5_checksum
+                    .as_deref()
+                    .is_some_and(|hash| hash.eq_ignore_ascii_case(&op.md5))
         }
 }
 fn completed(remote: &mut impl Remote, op: &Intent) -> Result<Option<InventoryEntry>, EngineError> {

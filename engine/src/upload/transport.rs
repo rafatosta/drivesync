@@ -235,7 +235,7 @@ fn position(response: Response, total: u64) -> Result<Position, EngineError> {
                         .and_then(|n| n.checked_add(1))
                 })
                 .unwrap_or(Some(0))
-                .filter(|n| *n <= total)
+                .filter(|n| *n < total || (*n == 0 && total == 0))
                 .ok_or_else(invalid)?;
             Ok(Position::Offset(next))
         }
@@ -294,6 +294,8 @@ mod tests {
             "Range: bytes=1-7\r\n",
             "Range: bytes=0-99\r\n",
             "Range: forged\r\n",
+            "Range: bytes=0-9\r\n",
+            "Range: bytes=0-18446744073709551615\r\n",
         ] {
             assert!(position(response("308 Resume Incomplete", header), 10).is_err());
         }
