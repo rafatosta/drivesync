@@ -30,6 +30,9 @@ a proteção não promete exclusão mútua contra alterações hostis do mesmo U
 | N05: symlink/alias durante quiescência | `local::tests::sync020_n05_link_creation_and_symlink_swap_during_wait_fail_closed` |
 | N05: ancestral trocado e traversal | `local::tests::sync020_n05_descriptor_chain_refuses_parent_swaps_and_traversal`; `download::tests::symlinks_never_redirect_downloads` |
 | E01: lock exclusivo, compartilhado e liberação | `local::tests::sync020_e01_exclusive_flock_defers_and_shared_flock_allows_reading` |
+| N05/E01: fontes bloqueadas não impedem upload independente | `upload::tests::sync020_n05_e01_blocked_sources_preserve_bytes_and_allow_independent_upload` |
+| N05/E01: falha de rede, journal reaberto, lock/alias/symlink na retomada e mesmo ID | `upload::tests::sync020_n05_e01_locked_replay_keeps_snapshot_and_resumes_same_id_once` |
+| N05: alias criado durante snapshot invalida somente staging parcial | `upload::local::tests::sync020_n05_alias_created_during_snapshot_preserves_source_and_removes_partial` |
 | N10: temporários remotos não instalados | `download::tests::sync020_n10_remote_temporary_names_never_install_or_request_media` |
 | N10: temporário local e renomeação definitiva | `upload::tests::temporary_uploads_are_deferred_and_final_rename_uploads_once` |
 | N10: escrita/substituição durante snapshot | `upload::local::tests::n10_write_or_replacement_during_snapshot_discards_only_partial_staging` |

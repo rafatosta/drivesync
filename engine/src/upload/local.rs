@@ -319,4 +319,38 @@ mod tests {
             std::fs::remove_dir_all(base).unwrap();
         }
     }
+    #[test]
+    fn sync020_n05_alias_created_during_snapshot_preserves_source_and_removes_partial() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-alias-snapshot-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        let root_path = base.join("root");
+        std::fs::create_dir_all(&root_path).unwrap();
+        let bytes = vec![b'a'; 2 * 1024 * 1024];
+        let path = root_path.join("file");
+        std::fs::write(&path, &bytes).unwrap();
+        let stage = base.join("private.snapshot");
+        let alias = base.join("outside-alias");
+        let root = super::Root::open(&root_path).unwrap();
+        let mut changed = false;
+        let result = super::snapshot_with_progress(
+            &root,
+            Path::new("file"),
+            &stage,
+            &crate::Cancellation::new(),
+            |_| {
+                if !changed {
+                    changed = true;
+                    std::fs::hard_link(&path, &alias).unwrap();
+                }
+            },
+        );
+        assert_eq!(result, Err(crate::EngineError::DownloadConflict));
+        assert!(!stage.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&alias).unwrap(), bytes);
+        drop(root);
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }
