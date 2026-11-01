@@ -51,7 +51,10 @@ percorridos. Campo ausente não é permissão concedida. Referência:
 [Files capabilities](https://developers.google.com/workspace/drive/api/reference/rest/v3/files).
 
 Um lock de associação no diretório privado do aplicativo serializa a mesma chave
-cliente/conta/ID remoto/caminho local, mesmo quando o inode montado é substituído.
+cliente/conta, mesmo quando a pasta local, o ID remoto ou o inode montado mudam.
+Há uma raiz configurada por cliente/conta. Essa chave estável impede que a troca
+de destino contorne um worker ativo. A configuração é relida após adquirir o lock;
+um snapshot anterior diferente resulta em `InvalidPlan` antes de abrir a raiz.
 É adquirido antes do lock físico e retido até persistir o resultado do ciclo.
 Configuração explícita da mesma associação também o respeita. O lock é advisory,
 liberado ao fechar o descritor/encerrar o processo; não coordena programas externos

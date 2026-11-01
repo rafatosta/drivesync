@@ -108,7 +108,7 @@
 | N04 | files.get/changes e permissões, sem prova universal da causa | remote, changes, coordinator | Condicional; raiz UNKNOWN e sincronização suspensa |
 | N05 | symlink_metadata, rustix e verificações por descritor | local, planner | Viável com política de links/hard links |
 | N06 | Revalidação de fingerprint/revisão antes de efeito | conflicts, planner, coordinator | Viável; decisão antiga deve expirar |
-| N07 | Escopo e geração de configuração persistidos | configuration, coordinator, state | Viável com cancelamento/replanejamento |
+| N07 | Escopo serializado contra ciclos ativos; associação relida após lock | configuration, coordinator, state | SYNC-021: mudança recusada com SyncBusy; retry explícito, sem nova geração durante transferência |
 | N08 | Contagem/percentual por lote e política anti-exclusão | planner, conflicts, coordinator | Viável; limiares/UX a decidir |
 | N09 | Lock por raiz e controle concorrente | coordinator, state | Viável; também considerar processo externo |
 | N10 | Arquivo temporário, estabilidade de leitura e validação final | local, upload | Condicional; formatos temporários variam |

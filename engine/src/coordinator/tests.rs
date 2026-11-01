@@ -319,3 +319,79 @@ fn transfer_transport_failure_cannot_clear_suspension_or_authorize_upload() {
     };
     assert!(super::report(&report).is_ok());
 }
+
+#[test]
+fn n09_scope_lock_covers_changed_local_and_remote_roots() {
+    let f = Fixture::new();
+    let registry = f.registry();
+    let active = registry.lock("client", &f.folder).unwrap();
+    let mut changed = f.folder.clone();
+    changed.local = f.base.join("new-root");
+    changed.remote.id = "new-remote".into();
+    assert!(matches!(
+        f.registry().lock("client", &changed),
+        Err(EngineError::SyncBusy)
+    ));
+    assert!(f.registry().lock("other-client", &changed).is_ok());
+    drop(active);
+    let reopened = f.registry();
+    drop(reopened.lock("client", &changed).unwrap());
+    assert!(reopened.lock("client", &changed).is_ok());
+}
+
+#[test]
+fn n09_process_lock_holder() {
+    let Some(base) = std::env::var_os("DRIVESYNC_SCOPE_LOCK_TEST") else {
+        return;
+    };
+    let base = PathBuf::from(base);
+    let registry = Roots::open(&base.join("app/roots.sqlite3")).unwrap();
+    let folder: FolderConfiguration =
+        serde_json::from_slice(&fs::read(base.join("scope.json")).unwrap()).unwrap();
+    let _active = registry.lock("client", &folder).unwrap();
+    fs::write(base.join("ready"), b"locked").unwrap();
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+}
+
+#[test]
+fn n09_process_exit_releases_scope_without_deleting_lock_evidence() {
+    let f = Fixture::new();
+    fs::write(
+        f.base.join("scope.json"),
+        serde_json::to_vec(&f.folder).unwrap(),
+    )
+    .unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "coordinator::tests::n09_process_lock_holder",
+            "--nocapture",
+        ])
+        .env("DRIVESYNC_SCOPE_LOCK_TEST", &f.base)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !f.base.join("ready").exists() && std::time::Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if !f.base.join("ready").exists() {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("child did not acquire scope lock");
+    }
+    assert!(matches!(
+        f.registry().lock("client", &f.folder),
+        Err(EngineError::SyncBusy)
+    ));
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let registry = f.registry();
+    drop(registry.lock("client", &f.folder).unwrap());
+    assert!(registry.lock("client", &f.folder).is_ok());
+}

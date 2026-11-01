@@ -18,8 +18,8 @@ pub(super) const MAX_INDEX: u64 = 1024 * 1024;
 
 /// Profile and folder store backed by a JSON file.
 ///
-/// The mutex serializes operations through this instance, not across
-/// independent processes opening the same file.
+/// The mutex serializes this instance; a stable sidecar serializes writers
+/// across independent instances and processes.
 pub(crate) struct Accounts {
     /// Location of the index, or `None` without a usable data/home directory.
     pub(super) path: Option<PathBuf>,
@@ -51,6 +51,39 @@ impl Accounts {
             path: Some(path),
             lock: Mutex::new(()),
         }
+    }
+
+    /// Serializes complete index read/modify/write transactions across processes.
+    /// The sidecar is stable across atomic index replacement and is never removed.
+    fn writer_lock(&self) -> Result<File, AuthError> {
+        let path = self.path.as_ref().ok_or(AuthError::AccountStorage)?;
+        let directory = path.parent().ok_or(AuthError::AccountStorage)?;
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(directory)
+            .map_err(|_| AuthError::AccountStorage)?;
+        let file = rustix::fs::open(
+            directory.join("accounts.lock"),
+            rustix::fs::OFlags::RDWR
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .map(File::from)
+        .map_err(|_| AuthError::AccountStorage)?;
+        if !file
+            .metadata()
+            .map_err(|_| AuthError::AccountStorage)?
+            .is_file()
+        {
+            return Err(AuthError::AccountStorage);
+        }
+        rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+            .map_err(|_| AuthError::AccountStorage)?;
+        Ok(file)
     }
 
     /// Reads and validates the index; an absent file means an empty index.
@@ -89,6 +122,7 @@ impl Accounts {
     /// Returns [`AuthError`] if locking, validation or persistence fails.
     pub fn record(&self, client: &str, account: AccountSummary) -> Result<(), AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
+        let _writer = self.writer_lock()?;
         let mut index = self.read()?;
         let profiles = index.clients.entry(client.into()).or_default();
         profiles.retain(|p| p.id != account.id);
@@ -149,6 +183,7 @@ impl Accounts {
     /// Returns [`AuthError`] if locking, reading or writing the index fails.
     pub fn forget(&self, client: &str, id: &AccountId) -> Result<(), AuthError> {
         let _guard = self.lock.lock().map_err(|_| AuthError::Internal)?;
+        let _writer = self.writer_lock()?;
         let mut index = self.read()?;
         if let Some(profiles) = index.clients.get_mut(client) {
             profiles.retain(|p| &p.id != id);
@@ -205,6 +240,7 @@ impl Accounts {
             .lock
             .lock()
             .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let _writer = self.writer_lock().map_err(EngineError::Authentication)?;
         let mut index = self.read().map_err(EngineError::Authentication)?;
         if !index
             .clients
@@ -296,6 +332,7 @@ impl Accounts {
             .lock
             .lock()
             .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let _writer = self.writer_lock().map_err(EngineError::Authentication)?;
         let mut index = self.read().map_err(EngineError::Authentication)?;
         if !index
             .clients

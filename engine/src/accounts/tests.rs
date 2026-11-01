@@ -383,3 +383,65 @@ fn missing_external_binding_does_not_recreate_a_saved_pairs_missing_marker() {
         assert_eq!(fs::read_dir(local.join(".drivesync")).unwrap().count(), 0);
     }
 }
+
+#[test]
+fn n07_active_scope_refuses_reconfiguration_and_retry_persists_after_restart() {
+    let dir = Directory::new();
+    let accounts = dir.accounts();
+    accounts
+        .record(CLIENT, profile("a", "a@example.com"))
+        .unwrap();
+    let old = dir.0.join("old");
+    let new = dir.0.join("new");
+    fs::create_dir(&old).unwrap();
+    fs::create_dir(&new).unwrap();
+    fs::write(old.join("keep"), b"original").unwrap();
+    let original = configured("a", old.clone());
+    accounts.configure(CLIENT, original.clone()).unwrap();
+    let roots = accounts.roots().unwrap();
+    let active = roots.lock(CLIENT, &original).unwrap();
+    let mut changed = configured("a", new.clone());
+    changed.remote.id = "different-remote".into();
+    let independent = dir.accounts();
+    assert_eq!(
+        independent.configure(CLIENT, changed.clone()),
+        Err(EngineError::SyncBusy)
+    );
+    assert_eq!(independent.folders(CLIENT).unwrap(), vec![original.clone()]);
+    assert!(!new.join(".drivesync").exists());
+    assert_eq!(fs::read(old.join("keep")).unwrap(), b"original");
+    drop(active);
+    independent.configure(CLIENT, changed.clone()).unwrap();
+    drop(independent);
+    let reopened = dir.accounts();
+    assert_eq!(reopened.folders(CLIENT).unwrap(), vec![changed.clone()]);
+    reopened.configure(CLIENT, changed.clone()).unwrap();
+    assert_eq!(reopened.folders(CLIENT).unwrap(), vec![changed]);
+    assert_eq!(fs::read(old.join("keep")).unwrap(), b"original");
+}
+
+#[test]
+fn independent_index_writers_preserve_all_accounts() {
+    let dir = Directory::new();
+    let path = dir.0.join("private/accounts.json");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    std::thread::scope(|scope| {
+        for n in 0..8 {
+            let barrier = barrier.clone();
+            let path = path.clone();
+            scope.spawn(move || {
+                let accounts = Accounts::for_test(path);
+                barrier.wait();
+                for iteration in 0..10 {
+                    accounts
+                        .record(
+                            CLIENT,
+                            profile(&format!("account-{n}"), &format!("{iteration}@example.com")),
+                        )
+                        .unwrap();
+                }
+            });
+        }
+    });
+    assert_eq!(dir.accounts().list(CLIENT).unwrap().len(), 8);
+}

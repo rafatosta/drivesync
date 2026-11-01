@@ -113,9 +113,9 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **N04** — Raiz remota movida, excluída ou sem acesso: distinguir indisponibilidade e não executar ações destrutivas.
 - [ ] **N05** — Symlinks, hard links e arquivos especiais: definir suporte seguro, isolamento da raiz e prevenção de travessia.
 - [ ] **N06** — Arquivo muda enquanto o usuário compara ou confirma: invalidar decisão obsoleta e revalidar.
-- [ ] **N07** — Preferências/escopo alterados durante transferência: cancelar, reconciliar ou continuar somente sob regras explícitas.
+- [x] **N07** — Mudança de escopo recusada durante ciclo ativo; nova tentativa explícita após término. Teste `n07_active_scope_refuses_reconfiguration_and_retry_persists_after_restart`, filesystem/SQLite reais; contrato SYNC-021.
 - [x] **N08** — Proteção BULK-001 por raiz/pasta, revisão vinculada às evidências e suspensão antes de efeitos. Contrato em [SYNC-014](../../../docs/SOFTWARE_SPECIFICATION.md#proteção-de-lotes--sync-014); oráculos automatizados em `download/bulk_tests.rs`, com filesystem/SQLite reais e remoto simulado. Isso não certifica Drive real nem interação visual no aplicativo instalado.
-- [ ] **N09** — Duas instâncias/atores atuando sobre a mesma raiz local: bloqueio por escopo e proteção contra corrida.
+- [x] **N09** — Lock estável cliente/conta e lock físico por raiz; testes `n09_scope_lock_covers_changed_local_and_remote_roots` e `n09_process_exit_releases_scope_without_deleting_lock_evidence`, incluindo processo encerrado. Escritores externos sem protocolo não são bloqueados (SYNC-021).
 - [ ] **N10** — Arquivo parcial, temporário ou ainda gravado: não publicá-lo como versão definitiva.
 - [ ] **N11** — Resultado remoto desconhecido após timeout/crash: reconciliar por identidade antes de repetir operação.
 - [ ] **N12** — Restauração de backup/versão histórica: distinguir alteração legítima de inconsistência e preservar histórico.
