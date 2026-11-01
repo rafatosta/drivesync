@@ -1,5 +1,5 @@
 //! Native preferences window built with libadwaita components.
-use super::{ColorScheme, Preferences};
+use super::{ColorScheme, Preferences, SYNC_INTERVALS};
 use adw::{gtk, prelude::*};
 use std::rc::Rc;
 
@@ -45,6 +45,24 @@ fn build(parent: &adw::ApplicationWindow) -> adw::PreferencesWindow {
     appearance.add(&theme);
     page.add(&appearance);
 
+    let synchronization = adw::PreferencesGroup::builder()
+        .title("Synchronization")
+        .build();
+    let intervals = gtk::StringList::new(&SYNC_INTERVALS.map(|(_, label)| label));
+    let interval = adw::ComboRow::builder()
+        .title("Check for Changes")
+        .subtitle("How often DriveSync looks for new changes automatically")
+        .model(&intervals)
+        .build();
+    interval.set_selected(
+        SYNC_INTERVALS
+            .iter()
+            .position(|(secs, _)| *secs == current.sync_interval)
+            .unwrap_or(0) as u32,
+    );
+    synchronization.add(&interval);
+    page.add(&synchronization);
+
     let background = adw::PreferencesGroup::builder()
         .title("Background")
         .description("DriveSync keeps synchronizing after the window is closed when background execution is allowed.")
@@ -76,6 +94,14 @@ fn build(parent: &adw::ApplicationWindow) -> adw::PreferencesWindow {
     });
     let save_theme = report.clone();
     let save_keep = report.clone();
+    let save_interval = report.clone();
+    interval.connect_selected_notify(move |row| {
+        if let Some((secs, _)) = SYNC_INTERVALS.get(row.selected() as usize) {
+            let mut value = Preferences::load();
+            value.sync_interval = *secs;
+            save_interval(value.save());
+        }
+    });
     theme.connect_selected_notify(move |row| {
         let scheme = ColorScheme::ALL
             .get(row.selected() as usize)

@@ -10,7 +10,7 @@
 mod model;
 mod view;
 
-pub(crate) use model::{ColorScheme, Preferences};
+pub(crate) use model::{ColorScheme, Preferences, SYNC_INTERVALS};
 pub(crate) use view::install;
 
 /// Returns whether closing the window should post the "keeps running" notification.
@@ -21,4 +21,9 @@ pub(crate) fn notify_on_close() -> bool {
 /// Returns whether closing the window should keep DriveSync running in the background.
 pub(crate) fn keep_running() -> bool {
     Preferences::load().keep_running
+}
+
+/// Returns the delay in seconds between automatic synchronization cycles.
+pub(crate) fn sync_interval() -> u64 {
+    Preferences::load().sync_interval
 }

@@ -48,10 +48,21 @@ impl ColorScheme {
     }
 }
 
+/// Allowed automatic synchronization intervals in seconds, with display labels.
+pub(crate) const SYNC_INTERVALS: [(u64, &str); 5] = [
+    (60, "Every Minute"),
+    (300, "Every 5 Minutes"),
+    (900, "Every 15 Minutes"),
+    (1800, "Every 30 Minutes"),
+    (3600, "Every Hour"),
+];
+
 /// Persisted application preferences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Preferences {
     pub color_scheme: ColorScheme,
+    /// Delay between automatic synchronization cycles; always one of [`SYNC_INTERVALS`].
+    pub sync_interval: u64,
     /// Keeps DriveSync running when the window is closed; otherwise closing quits.
     pub keep_running: bool,
     /// Posts a notification when the window is hidden and DriveSync keeps running.
@@ -62,6 +73,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             color_scheme: ColorScheme::default(),
+            sync_interval: SYNC_INTERVALS[0].0,
             keep_running: true,
             notify_on_close: true,
         }
@@ -101,6 +113,12 @@ impl Preferences {
                 .string(GROUP, "color-scheme")
                 .map(|value| ColorScheme::from_key(&value))
                 .unwrap_or(defaults.color_scheme),
+            sync_interval: file
+                .integer(GROUP, "sync-interval")
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+                .filter(|value| SYNC_INTERVALS.iter().any(|(secs, _)| secs == value))
+                .unwrap_or(defaults.sync_interval),
             keep_running: file
                 .boolean(GROUP, "keep-running")
                 .unwrap_or(defaults.keep_running),
@@ -113,6 +131,7 @@ impl Preferences {
     pub(crate) fn to_key_file(self) -> glib::KeyFile {
         let file = glib::KeyFile::new();
         file.set_string(GROUP, "color-scheme", self.color_scheme.key());
+        file.set_integer(GROUP, "sync-interval", self.sync_interval as i32);
         file.set_boolean(GROUP, "keep-running", self.keep_running);
         file.set_boolean(GROUP, "notify-on-close", self.notify_on_close);
         file
@@ -127,6 +146,7 @@ mod tests {
     fn round_trips_and_falls_back_to_defaults() {
         let value = Preferences {
             color_scheme: ColorScheme::Dark,
+            sync_interval: 900,
             keep_running: false,
             notify_on_close: false,
         };
@@ -135,6 +155,7 @@ mod tests {
         invalid.set_string(GROUP, "color-scheme", "neon");
         invalid.set_string(GROUP, "notify-on-close", "maybe");
         invalid.set_string(GROUP, "keep-running", "maybe");
+        invalid.set_integer(GROUP, "sync-interval", 7);
         assert_eq!(Preferences::from_key_file(&invalid), Preferences::default());
     }
 }
