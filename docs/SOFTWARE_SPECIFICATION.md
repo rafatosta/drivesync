@@ -1485,3 +1485,27 @@ sujeitas à limpeza de temporários do sistema. Erros de abertura são explícit
 A escolha continua na central e exige confirmação com consequências e nova
 revalidação. Portais/aplicativos externos e leitor de tela exigem homologação
 separada dos testes GTK e simulados, acompanhada na [issue #66](https://github.com/rafatosta/drivesync/issues/66).
+
+
+### SYNC-026 — estudo de mesclagem especializada
+
+Intenção: conciliar edições textuais independentes usando base comum confiável,
+preservando versões e recusando ambiguidade. O [contrato textual](../engine/src/conflicts/text-merge.md)
+define a especialização posicional implementada e seus limites.
+
+Implementação: API pura `merge_plain_text`, somente MIME `text/plain`, UTF-8 sem
+NUL, até 1 MiB por entrada/saída e mesma estrutura de linhas/terminadores. Retorna
+candidato ou motivo de preservação, sem I/O, instalação ou decisão automática.
+Substituições por posição não provam alinhamento nem compatibilidade semântica.
+A base deve ser fornecida e verificada pelo chamador.
+
+Aceite P05 do estudo: edições independentes geram candidato determinístico;
+sobreposição, ausência de B, formato/codificação/estrutura/tamanho incompatíveis
+são recusados sem alterar B/L/R. Chamadas independentes e concorrentes não
+compartilham estado. Os testes e doctest do contrato são oráculos; resultados
+de execução constam na PR. Rede, filesystem e SQLite não participam da função.
+
+Limite: mesclagem automática no sincronizador não está habilitada. Retenção
+durável dos bytes de B, revisão do candidato, alinhamento geral e aplicação
+recuperável com preservação/revalidação são acompanhados na
+[issue #68](https://github.com/rafatosta/drivesync/issues/68).
