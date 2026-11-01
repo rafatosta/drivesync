@@ -112,6 +112,8 @@ impl Store {
         plan: &DownloadPlan,
         intent: &Intent,
         parent: crate::download::Identity,
+        bytes: Option<&[u8]>,
+        copy_bytes: Option<&[u8]>,
     ) -> Result<Intent, EngineError> {
         if intent.stage != Stage::Verified || !intent.valid() {
             return Err(EngineError::InvalidPlan);
@@ -126,6 +128,16 @@ impl Store {
             return Err(EngineError::StateStorage);
         }
         let result = intent.result.as_ref().ok_or(EngineError::StateStorage)?;
+        if let Some(bytes) = bytes {
+            self.retain_base(
+                client,
+                plan,
+                &result.item.id,
+                result.item.version.ok_or(EngineError::StateStorage)?,
+                &intent.winner()?.sha256,
+                bytes,
+            )?;
+        }
         self.put_operation(
             client,
             plan,
@@ -143,6 +155,20 @@ impl Store {
             },
         )?;
         if let Some(copy) = &intent.copy_result {
+            if let Some(bytes) = copy_bytes {
+                self.retain_base(
+                    client,
+                    plan,
+                    &copy.item.id,
+                    copy.item.version.ok_or(EngineError::StateStorage)?,
+                    &intent
+                        .remote
+                        .as_ref()
+                        .ok_or(EngineError::StateStorage)?
+                        .sha256,
+                    bytes,
+                )?;
+            }
             let path = intent.plan.target.with_file_name(
                 intent
                     .plan

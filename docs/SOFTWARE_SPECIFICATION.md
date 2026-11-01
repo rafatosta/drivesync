@@ -1505,10 +1505,19 @@ são recusados sem alterar B/L/R. Chamadas independentes e concorrentes não
 compartilham estado. Os testes e doctest do contrato são oráculos; resultados
 de execução constam na PR. Rede, filesystem e SQLite não participam da função.
 
-Limite: mesclagem automática no sincronizador não está habilitada. Retenção
-durável dos bytes de B, revisão do candidato, alinhamento geral e aplicação
-recuperável com preservação/revalidação são acompanhados na
-[issue #68](https://github.com/rafatosta/drivesync/issues/68).
+Integração SYNC-026: `preview_text_merge` produz candidato vinculado à conta,
+raízes, base confirmada, L/R e ETag verificados. Aceitação explícita por candidato
+`text/plain` gera `MergeText`; preferências automáticas não ativam essa escolha.
+A execução preserva B/L/R e resultado, revalida versões, atualiza condicionalmente
+o ID remoto e instala pelo executor recuperável. Só confirma nova B após verificar
+todos os efeitos. Falha, ausência/corrupção de base ou versão obsoleta mantém
+pendência/evidência recuperável. Não há alinhamento geral nem aprovação sem revisão.
+
+Aceite integrado: provedor simulado e filesystem/SQLite temporários reais cobrem
+nominal, base ausente/corrompida, offline, corridas, falhas entre intenção/efeito/
+confirmação, reabertura, idempotência, isolamento e preservação B/L/R. Resultados
+executados pertencem à PR. Interrupção real (#52), portais e homologação desktop/
+Google (#66) são verificações separadas, sem aprovação por esses testes.
 
 #### Base comum durável para SYNC-026
 

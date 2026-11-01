@@ -224,14 +224,16 @@ pub(super) fn installation(
     copy: bool,
     cancel: &Cancellation,
 ) -> Result<Blob, EngineError> {
-    let remote = copy || intent.plan.choice == ResolutionChoice::KeepRemote;
-    let blob = if remote {
-        intent.remote.as_ref()
+    let blob = if copy {
+        intent.remote.as_ref().ok_or(EngineError::StateStorage)?
     } else {
-        intent.local.as_ref()
-    }
-    .ok_or(EngineError::StateStorage)?;
-    let mut input = snapshot_file(root, intent, remote, cancel)?;
+        intent.winner()?
+    };
+    let mut input = if copy {
+        snapshot_file(root, intent, true, cancel)?
+    } else {
+        winner_file(root, intent, cancel)?
+    };
     input.seek(SeekFrom::Start(0)).map_err(filesystem::io)?;
     capture(
         root,
@@ -298,6 +300,9 @@ pub(super) fn verify_preserved(
     intent: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
+    if merge_snapshots(root, intent, cancel)? != intent.merged {
+        return Err(EngineError::DownloadIntegrity);
+    }
     let directory = parent(root, intent)?;
     let old = inspect(&directory, OsStr::new(&intent.backup()), cancel)?
         .ok_or(EngineError::DownloadConflict)?;
@@ -408,4 +413,89 @@ pub(super) fn target_available(
         return Err(EngineError::DownloadConflict);
     }
     Ok(())
+}
+
+/// Retains the ancestor and reviewed result before any effect, or verifies their
+/// immutable snapshots on replay. L/R are independently captured by the executor.
+pub(super) fn merge_snapshots(
+    root: &Root,
+    intent: &Intent,
+    cancel: &Cancellation,
+) -> Result<Option<Blob>, EngineError> {
+    let Some(proof) = &intent.plan.merge else {
+        return Ok(None);
+    };
+    let mut result = None;
+    for (kind, bytes) in [("base", &proof.base), ("merged", &proof.result)] {
+        let name = format!("DriveSync backup conflict-{}-{kind}.bak", intent.id);
+        let blob = capture(
+            root,
+            intent,
+            &name,
+            &mut bytes.as_slice(),
+            Expected {
+                size: bytes.len() as u64,
+                md5: &super::text::md5(bytes),
+                sha256: Some(&super::text::sha(bytes)),
+            },
+            cancel,
+        )?;
+        if kind == "merged" {
+            result = Some(blob);
+        }
+    }
+    Ok(result)
+}
+
+pub(super) fn winner_file(
+    root: &Root,
+    intent: &Intent,
+    cancel: &Cancellation,
+) -> Result<File, EngineError> {
+    if intent.plan.choice != ResolutionChoice::MergeText {
+        return snapshot_file(
+            root,
+            intent,
+            intent.plan.choice == ResolutionChoice::KeepRemote,
+            cancel,
+        );
+    }
+    let directory = parent(root, intent)?;
+    let name = format!("DriveSync backup conflict-{}-merged.bak", intent.id);
+    if !matches(&directory, OsStr::new(&name), intent.winner()?, cancel)? {
+        return Err(EngineError::DownloadIntegrity);
+    }
+    filesystem::read(&directory, OsStr::new(&name))?.ok_or(EngineError::DownloadIntegrity)
+}
+
+/// Reads bounded verified preservation bytes for atomic baseline retention.
+/// Reopens the selected immutable snapshot, never the active path after cutover.
+pub(super) fn base_bytes(
+    root: &Root,
+    intent: &Intent,
+    copy: bool,
+    cancel: &Cancellation,
+) -> Result<Option<Vec<u8>>, EngineError> {
+    let blob = if copy {
+        intent.remote.as_ref().ok_or(EngineError::StateStorage)?
+    } else {
+        intent.winner()?
+    };
+    if intent.plan.remote.item.mime_type != "text/plain" || blob.size > crate::comparison::LIMIT {
+        return Ok(None);
+    }
+    let mut file = if copy {
+        snapshot_file(root, intent, true, cancel)?
+    } else {
+        winner_file(root, intent, cancel)?
+    };
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(crate::comparison::LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(filesystem::io)?;
+    if bytes.len() as u64 != blob.size || super::text::sha(&bytes) != blob.sha256 {
+        return Err(EngineError::DownloadIntegrity);
+    }
+    Ok(Some(bytes))
 }

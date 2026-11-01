@@ -48,7 +48,7 @@ pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncR
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 pub use resolution::{
     ConflictPreference, ResolutionChoice, ResolutionProgress, ResolutionReport, ResolutionRequest,
-    ResolutionState,
+    ResolutionState, TextMergeCandidate,
 };
 
 pub use planner::{

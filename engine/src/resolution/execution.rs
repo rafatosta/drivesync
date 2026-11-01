@@ -47,17 +47,30 @@ pub struct ResolutionReport {
     pub preserved_paths: Vec<std::path::PathBuf>,
     pub additional_path: Option<std::path::PathBuf>,
 }
-fn report(intent: &Intent) -> ResolutionReport {
-    ResolutionReport {
-        operation_id: intent.id.clone(),
-        path: intent.plan.target.clone(),
-        preserved_paths: vec![
+pub(crate) fn report(intent: &Intent) -> ResolutionReport {
+    let mut preserved_paths = vec![
+        intent
+            .plan
+            .origin
+            .with_file_name(local::remote_name(intent)),
+        intent.plan.origin.with_file_name(intent.backup()),
+    ];
+    if intent.plan.merge.is_some() {
+        preserved_paths.push(
             intent
                 .plan
                 .origin
-                .with_file_name(local::remote_name(intent)),
-            intent.plan.origin.with_file_name(intent.backup()),
-        ],
+                .with_file_name(format!("DriveSync backup conflict-{}-base.bak", intent.id)),
+        );
+        preserved_paths.push(intent.plan.origin.with_file_name(format!(
+            "DriveSync backup conflict-{}-merged.bak",
+            intent.id
+        )));
+    }
+    ResolutionReport {
+        operation_id: intent.id.clone(),
+        path: intent.plan.target.clone(),
+        preserved_paths,
         additional_path: intent
             .plan
             .copy_name
@@ -174,7 +187,30 @@ pub(crate) fn run(
     if intent.stage == Stage::Aborted {
         return Err(EngineError::RemoteChanged);
     }
+    if let Some(proof) = &intent.plan.merge {
+        let mut scope = ctx.scope.clone();
+        scope.entries.clear();
+        if proof.client != ctx.client
+            || proof.scope != scope
+            || ctx
+                .store
+                .common_base(
+                    ctx.client,
+                    ctx.scope,
+                    &intent.plan.remote.item.id,
+                    &proof.confirmed,
+                )?
+                .as_ref()
+                != Some(&proof.base)
+        {
+            return Err(EngineError::DownloadIntegrity);
+        }
+    }
     check(ctx, remote, &intent)?;
+    let merged = local::merge_snapshots(ctx.root, &intent, ctx.cancel)?;
+    if intent.stage >= Stage::Preserved && merged != intent.merged {
+        return Err(EngineError::DownloadIntegrity);
+    }
     if intent.stage >= Stage::CopyPending {
         super::guard::ensure(ctx, &intent)?;
     }
@@ -211,6 +247,15 @@ pub(crate) fn run(
         match preserved {
             Ok((local, observed)) => {
                 let mut next = intent.clone();
+                if let Some(proof) = &intent.plan.merge {
+                    if local.sha256 != super::text::sha(&proof.local)
+                        || observed.sha256 != super::text::sha(&proof.remote)
+                    {
+                        stage(ctx, &mut intent, Stage::Aborted)?;
+                        return Err(EngineError::DownloadIntegrity);
+                    }
+                }
+                next.merged = merged;
                 next.local = Some(local);
                 next.remote = Some(observed);
                 next.stage = Stage::Preserved;
@@ -299,7 +344,7 @@ pub(crate) fn run(
                     .ok_or(EngineError::StateStorage)?
                     .sha256
             {
-                Some(local::snapshot_file(ctx.root, &intent, false, ctx.cancel)?)
+                Some(local::winner_file(ctx.root, &intent, ctx.cancel)?)
             } else {
                 None
             };
@@ -363,9 +408,20 @@ pub(crate) fn run(
         }
         save(ctx, &mut intent, next)?;
         crate::local::check(ctx.cancel)?;
-        intent = ctx
-            .store
-            .confirm_resolution(ctx.client, ctx.scope, &intent, intent.parent)?;
+        let bytes = local::base_bytes(ctx.root, &intent, false, ctx.cancel)?;
+        let copy_bytes = if intent.copy_result.is_some() {
+            local::base_bytes(ctx.root, &intent, true, ctx.cancel)?
+        } else {
+            None
+        };
+        intent = ctx.store.confirm_resolution(
+            ctx.client,
+            ctx.scope,
+            &intent,
+            intent.parent,
+            bytes.as_deref(),
+            copy_bytes.as_deref(),
+        )?;
         super::guard::retire(ctx, &intent)?;
     }
     Ok(report(&intent))
@@ -395,6 +451,7 @@ pub(crate) fn begin(ctx: &Context<'_>, plan: Plan, id: String) -> Result<Intent,
         stage: Stage::Preparing,
         local: None,
         remote: None,
+        merged: None,
         result: None,
         copy_result: None,
         installed: None,

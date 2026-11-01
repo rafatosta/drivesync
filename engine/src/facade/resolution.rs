@@ -171,6 +171,7 @@ pub(super) fn automatic(
                     remote,
                     choice: candidate.choice,
                     base: Some((*base).clone()),
+                    merge: None,
                     desired_name: candidate
                         .target
                         .file_name()
@@ -266,6 +267,7 @@ pub(super) fn recover(
 pub(super) fn same_request(intent: &Intent, request: &ResolutionRequest) -> bool {
     intent.plan.conflict.as_ref() == Some(&request.record.conflict_id)
         && intent.plan.choice == request.choice
+        && intent.plan.merge == request.merge
         && request.record.remote_id.as_ref() == Some(&intent.plan.remote.item.id)
         && request.record.relative_path.as_ref() == Some(&intent.plan.origin)
         && request.record.local_fingerprint.as_ref() == Some(&intent.plan.local_fingerprint)
@@ -489,6 +491,21 @@ impl DriveSyncEngine {
                     &base,
                     cancel,
                 )?;
+                if let Some(proof) = &request.merge {
+                    let mut expected_scope = scope.clone();
+                    expected_scope.entries.clear();
+                    if proof.client != config.client_id
+                        || proof.scope != expected_scope
+                        || proof.confirmed != base
+                        || proof.version != remote
+                        || store
+                            .common_base(&config.client_id, &scope, remote_id, &base)?
+                            .as_ref()
+                            != Some(&proof.base)
+                    {
+                        return Err(EngineError::RemoteChanged);
+                    }
+                }
                 let op_id = operation_id();
                 let desired_name = if request.choice == ResolutionChoice::KeepRemote {
                     remote.item.name.clone()
@@ -523,6 +540,7 @@ impl DriveSyncEngine {
                     remote,
                     choice: request.choice,
                     base: Some(base),
+                    merge: request.merge.clone(),
                     desired_name,
                     copy_name,
                     copy_id,

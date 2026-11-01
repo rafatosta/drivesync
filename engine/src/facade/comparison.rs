@@ -36,3 +36,79 @@ impl DriveSyncEngine {
         })
     }
 }
+
+impl DriveSyncEngine {
+    /// Builds a review-only plain-text merge from the exact saved B/L/R versions.
+    /// Missing/corrupt ancestors, unsupported formats and changed snapshots fail
+    /// without accepting any decision. Call on a worker; upload consent is not used.
+    pub fn preview_text_merge(
+        &self,
+        id: &AccountId,
+        record: &crate::ConflictRecord,
+        cancel: &Cancellation,
+    ) -> Result<crate::TextMergeCandidate, EngineError> {
+        self.with_root(id, |folder, config, root| {
+            let history = super::resolution::history(folder, config)?;
+            let history_scope = crate::state::CheckpointScope {
+                client: &config.client_id,
+                account: id,
+                remote: &folder.remote.id,
+                local: &folder.local,
+            };
+            if !history.records(&history_scope)?.iter().any(|r| r == record) {
+                return Err(EngineError::RemoteChanged);
+            }
+            let store = crate::state::Store::open(&configuration::identity::state_path(
+                folder,
+                &config.client_id,
+            )?)?;
+            let scope = super::resolution::scope(folder);
+            let remote_id = record
+                .remote_id
+                .as_deref()
+                .ok_or(EngineError::InvalidPlan)?;
+            let base = store
+                .confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?
+                .remove(remote_id)
+                .ok_or(EngineError::ObservationUnknown)?;
+            let bytes = store
+                .common_base(&config.client_id, &scope, remote_id, &base)?
+                .ok_or(EngineError::ObservationUnknown)?;
+            let inventory = self.inventory(id, cancel)?;
+            self.auth.with_access_config(config, id, |token| {
+                use crate::resolution::execution::Remote;
+                let mut provider =
+                    Provider::new(self, folder, config, root, cancel, &inventory, token)?;
+                let version = provider.observe(remote_id)?;
+                let comparison = crate::comparison::inspect(root, &mut provider, record, cancel)?;
+                if provider.observe(remote_id)? != version {
+                    return Err(EngineError::RemoteChanged);
+                }
+                super::resolution::continuity(
+                    root,
+                    &inventory,
+                    record
+                        .relative_path
+                        .as_ref()
+                        .ok_or(EngineError::InvalidPlan)?,
+                    record
+                        .local_fingerprint
+                        .as_deref()
+                        .ok_or(EngineError::InvalidPlan)?,
+                    &version,
+                    &base,
+                    cancel,
+                )?;
+                crate::resolution::text::candidate(
+                    &config.client_id,
+                    &scope,
+                    record,
+                    base.clone(),
+                    version,
+                    bytes.clone(),
+                    comparison,
+                )
+            })
+        })
+    }
+}

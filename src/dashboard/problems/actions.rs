@@ -210,6 +210,7 @@ impl Center {
 
 fn choice_label(choice: ResolutionChoice) -> &'static str {
     match choice {
+        ResolutionChoice::MergeText => "Apply reviewed text merge…",
         ResolutionChoice::KeepLocal => "Keep local version…",
         ResolutionChoice::KeepRemote => "Keep Drive version…",
         ResolutionChoice::KeepBoth => "Keep both versions…",
@@ -225,6 +226,7 @@ fn confirmation(
 ) -> adw::MessageDialog {
     let dialog = adw::MessageDialog::new(Some(parent), Some("Apply this version choice?"), None);
     let effect=match choice {
+        ResolutionChoice::MergeText=>"The reviewed plain-text candidate replaces both active versions at the existing Drive ID. Base, local and Drive versions are preserved. The positional merge requires review of the whole candidate; it cannot establish semantic compatibility.",
         ResolutionChoice::KeepLocal=>"The local bytes will replace the observed Drive version at its original ID. Available versions are preserved before replacement.",
         ResolutionChoice::KeepRemote=>"The observed Drive bytes will become the active local version. The displaced local version is preserved beside the file.",
         ResolutionChoice::KeepBoth=>"The local version stays at the original file name and Drive ID. The observed Drive version becomes another synchronized file named with ‘DriveSync remote conflict’ and a unique operation ID. Both observed versions are also preserved locally.",

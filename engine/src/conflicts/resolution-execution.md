@@ -101,7 +101,9 @@ já enviados continuam exigindo reconciliação.
 
 #18 contribui com capacidades necessárias a cada operação. #24 é política
 opt-in posterior; #25 acrescenta comparação visual por tipo, não substitui a
-resolução básica P03 da #15; #26 permanece pesquisa de merge especializado.
+resolução básica P03 da #15 e a aplicação revisada de texto da #68, descrita em
+[text-merge.md](text-merge.md). MergeText preserva B/L/R e resultado e exige
+revisão explícita; não é acionado pelas preferências automáticas.
 Os aceites originais de #15/#16 continuam nessas issues até serem atendidos.
 
 ## Experimento de precondições diretas
