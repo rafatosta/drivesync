@@ -9,10 +9,33 @@ use md5::Md5;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
+/// Refuses generated HTML redirects even after copying or renaming. Managed
+/// paths and identities are also excluded by the executor when bytes are edited.
+fn reject_link(file: &mut File) -> Result<(), EngineError> {
+    let mut prefix = Vec::new();
+    file.take(64 * 1024 + 1)
+        .read_to_end(&mut prefix)
+        .map_err(filesystem::io)?;
+    file.seek(SeekFrom::Start(0)).map_err(filesystem::io)?;
+    if String::from_utf8_lossy(&prefix).contains(crate::download::links::MARKER) {
+        return Err(EngineError::WorkspaceLinkUpload);
+    }
+    Ok(())
+}
+
+/// Checks candidates before provider ID allocation or creation of upload intent.
+pub(crate) fn check_link(root: &Root, path: &Path) -> Result<(), EngineError> {
+    let (parent, name) = root.parent(path)?;
+    let parent_id = filesystem::identity(&parent)?;
+    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    reject_link(&mut file)?;
+    root.validate_parent(path, parent_id)
+}
+
 /// Removes only an incomplete staging file created by this invocation.
 struct PartialSnapshot {
     path: PathBuf,
@@ -46,6 +69,7 @@ fn snapshot_with_progress(
     root.validate_parent(path, parent_id)?;
     let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     let before = crate::local::Stamp::read(&file)?;
+    reject_link(&mut file)?;
     let mut target = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -144,6 +168,7 @@ pub(crate) fn verify_file(
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
     let before = crate::local::Stamp::read(file)?;
+    reject_link(file)?;
     if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {
         return Err(EngineError::StateStorage);
     }
@@ -182,6 +207,53 @@ pub(crate) fn verify_file(
 mod tests {
     use crate::local::ignored;
     use std::path::Path;
+
+    #[test]
+    fn c24_snapshot_and_replay_verification_reject_redirect_bytes() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-link-upload-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        std::fs::create_dir(&base).unwrap();
+        let source = base.join("renamed.txt");
+        let bytes = b"<!doctype html>\n<!-- DriveSync Workspace link -->\n";
+        std::fs::write(&source, bytes).unwrap();
+        let stage = base.join("private.snapshot");
+        let root = super::Root::open(&base).unwrap();
+        assert_eq!(
+            super::snapshot(
+                &root,
+                Path::new("renamed.txt"),
+                &stage,
+                &crate::Cancellation::new()
+            ),
+            Err(crate::EngineError::WorkspaceLinkUpload)
+        );
+        assert!(!stage.exists());
+        std::fs::write(&stage, bytes).unwrap();
+        let op = super::Intent {
+            path: "renamed.txt".into(),
+            root: super::filesystem::identity(&root.file).unwrap(),
+            source: None,
+            id: "id".into(),
+            parent: "root".into(),
+            directory: false,
+            size: bytes.len() as u64,
+            md5: String::new(),
+            sha: String::new(),
+            snapshot: "private.snapshot".into(),
+            session: None,
+            confirmed: false,
+            retry: Default::default(),
+        };
+        assert!(matches!(
+            super::verify_stage(&stage, &op, &crate::Cancellation::new()),
+            Err(crate::EngineError::WorkspaceLinkUpload)
+        ));
+        assert_eq!(std::fs::read(source).unwrap(), bytes);
+        drop(root);
+        std::fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn root_identity_marker_is_not_uploaded() {

@@ -123,10 +123,33 @@ pub(crate) fn run_with_root(
             crate::planner::fingerprint_parts(&base.local_fingerprint).map(|(_, d, i)| (d, i))
         })
         .collect();
+    // Journal evidence protects edited or relocated managed links, independently
+    // of current remote presence, filename, marker, and document byte contents.
+    let links: Vec<_> = journal
+        .operations(client, &plan)?
+        .into_iter()
+        .filter(|op| op.item.kind == InventoryKind::GoogleWorkspaceLink)
+        .collect();
+    let link_paths: HashSet<_> = links.iter().map(|op| op.relative.clone()).collect();
+    let link_ids: HashSet<_> = links
+        .iter()
+        .filter_map(|op| match op.phase {
+            Phase::Ready { identity, .. }
+            | Phase::Installed { identity, .. }
+            | Phase::UpdateReady { identity, .. } => Some((identity.device, identity.inode)),
+            _ => None,
+        })
+        .collect();
     let total = paths.len();
     for (index, (path, evidence)) in paths.into_iter().enumerate() {
         let path = path.clone();
         let directory = *evidence == crate::local::Evidence::Directory;
+        if link_paths.contains(&path)
+            || matches!(evidence,
+            crate::local::Evidence::Stable { stamp, .. } if link_ids.contains(&(stamp.device, stamp.inode)))
+        {
+            continue;
+        }
         if let crate::local::Evidence::Stable { stamp, .. } = evidence {
             if !known.contains_key(&path) && managed.contains(&(stamp.device, stamp.inode)) {
                 continue;
@@ -165,6 +188,9 @@ pub(crate) fn run_with_root(
                 if existing.is_none() {
                     return Ok(());
                 }
+            }
+            if !directory {
+                local::check_link(root, &path)?;
             }
             let mut op = match existing {
                 Some(op) => op,
@@ -456,6 +482,7 @@ pub(crate) fn run_with_root(
             let stop = !matches!(
                 error,
                 EngineError::DownloadConflict
+                    | EngineError::WorkspaceLinkUpload
                     | EngineError::LocalWriting
                     | EngineError::LocalTemporary
                     | EngineError::ObservationUnknown

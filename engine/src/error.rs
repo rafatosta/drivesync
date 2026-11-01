@@ -21,6 +21,8 @@ pub enum EngineError {
     DownloadConflict,
     LocalWriting,
     LocalTemporary,
+    /// A browser link is not a binary document or a conversion request.
+    WorkspaceLinkUpload,
     ObservationUnknown,
     DownloadIntegrity,
     /// A local syscall denied access; no permission repair is attempted.
@@ -57,6 +59,7 @@ impl std::fmt::Display for EngineError {
             Self::StateRecoveryPending => f.write_str("Uploads and conflict resolutions are blocked because previous remote results cannot be verified. Preserved operation evidence requires reconciliation before writes can be enabled."),
             Self::StateStorage => f.write_str("The synchronization database could not be opened or validated. Existing data was preserved."),
             Self::LocalWriting => f.write_str("This file is still changing. Synchronization will check it again on the next cycle."),
+            Self::WorkspaceLinkUpload => f.write_str("Browser shortcuts are not uploaded as documents. Docs, Sheets and Slides open in your browser; offline editing, export and conversion are not supported. The local link was preserved."),
             Self::LocalTemporary => f.write_str("This looks like a temporary file. Wait for the application to save its final file."),
             Self::ObservationUnknown => f.write_str("This item could not be verified. Check access and synchronize again. Existing versions were preserved."),
             Self::DownloadConflict => f.write_str("A local file or folder conflicts with this download. Existing data was preserved."),

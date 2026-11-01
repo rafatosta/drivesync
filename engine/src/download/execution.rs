@@ -46,6 +46,7 @@ struct Session<'a> {
     /// Fresh durable evidence captured under the retained root lock. Each inventory
     /// ID is processed once; this avoids rescanning the entire journal per new file.
     bases: HashMap<String, crate::ConfirmedBase>,
+    workspace_operations: HashMap<String, Vec<Operation>>,
     preserved: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
@@ -80,7 +81,14 @@ pub(crate) fn run_with_root<'a>(
         return Err(EngineError::InvalidPlan);
     }
     let mut operations: HashMap<std::path::PathBuf, Vec<Operation>> = HashMap::new();
+    let mut workspace_operations: HashMap<String, Vec<Operation>> = HashMap::new();
     for operation in context.store.operations(context.client, context.scope)? {
+        if operation.item.kind == InventoryKind::GoogleWorkspaceLink {
+            workspace_operations
+                .entry(operation.item.id.clone())
+                .or_default()
+                .push(operation.clone());
+        }
         operations
             .entry(operation.relative.clone())
             .or_default()
@@ -93,6 +101,7 @@ pub(crate) fn run_with_root<'a>(
         &context.scope.local_root,
     )?;
     let session = Session {
+        workspace_operations,
         bases,
         context,
         root,
@@ -160,12 +169,9 @@ pub(crate) fn run_with_root<'a>(
                 .flatten()
         })
         .collect();
-    for op in session
-        .operations
-        .values()
-        .flatten()
-        .filter(|op| matches!(op.phase, Phase::UpdateReady { .. }))
-    {
+    for op in session.operations.values().flatten().filter(|op| {
+        op.item.kind == InventoryKind::Binary && matches!(op.phase, Phase::UpdateReady { .. })
+    }) {
         let present = represented.contains(&(op.item.id.as_str(), op.relative.as_path()));
         if !present {
             stream::cancelled(session.context.cancel)?;
@@ -244,10 +250,6 @@ pub(crate) fn run_with_root<'a>(
             }
             (InventoryKind::GoogleWorkspaceLink, Some(path), PlanAction::CreateLink) => {
                 validate_chain(source, item, &by_id, &inventory.root_id).and_then(|()| {
-                    let url = item
-                        .web_view_link
-                        .as_deref()
-                        .ok_or(EngineError::InvalidPlan)?;
                     progress(DownloadProgress {
                         preparation: None,
                         completed_items,
@@ -259,13 +261,22 @@ pub(crate) fn run_with_root<'a>(
                             total: None,
                         }),
                     });
+                    validate_chain(source, item, &by_id, &inventory.root_id)?;
                     super::links::ensure(
-                        session.root,
+                        super::links::Context {
+                            root: session.root,
+                            store: session.context.store,
+                            client: session.context.client,
+                            scope: session.context.scope,
+                            cancel: session.context.cancel,
+                            operations: session
+                                .workspace_operations
+                                .get(&item.id)
+                                .map(Vec::as_slice)
+                                .unwrap_or_default(),
+                        },
                         path,
-                        &item.name,
-                        &item.mime_type,
-                        url,
-                        session.context.cancel,
+                        item,
                     )
                     .map(|()| report.linked += 1)
                 })
@@ -475,6 +486,18 @@ impl Session<'_> {
         source: &mut impl Source,
         progress: &mut impl FnMut(DownloadItemProgress),
     ) -> Result<Outcome, EngineError> {
+        // A native-link intent reserves its path even if publication was
+        // interrupted or the remote document disappeared. Binary replay must
+        // never consume native Ready evidence or take over that destination.
+        if self
+            .operations
+            .get(path)
+            .into_iter()
+            .flatten()
+            .any(|op| op.item.kind == InventoryKind::GoogleWorkspaceLink)
+        {
+            return Err(EngineError::DownloadConflict);
+        }
         let size = item.size.ok_or(EngineError::InvalidPlan)?;
         let checksum = item
             .md5_checksum

@@ -353,7 +353,19 @@ fn portable_names_lengths_and_workspace_types() {
             PlanAction::Blocked(ConflictReason::LocalTypeMismatch)
         );
     }
-    inv.entries[0].name = "a".repeat(248);
+    inv.entries[0].name = "a".repeat(250);
+    assert_eq!(
+        plan(&inv, Path::new("/local"), |_| LocalObservation::Absent)
+            .unwrap()
+            .entries[0]
+            .relative_path
+            .as_ref()
+            .unwrap()
+            .as_os_str()
+            .len(),
+        255
+    );
+    inv.entries[0].name = "a".repeat(251);
     assert!(plan(&inv, Path::new("/local"), |_| panic!(
         "expanded name too long"
     ))

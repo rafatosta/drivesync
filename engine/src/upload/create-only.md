@@ -11,6 +11,13 @@ For each scoped client/account/folder pair:
 2. Lock and validate the local root against its persisted opt-in inode. Traverse descriptor-relative directories;
    reject symlinks/special files and bound traversal. Resolve remote parents by
    unique name and validated identity. Exclude historical downloaded paths.
+   Exclude Workspace journal paths and local identities even after remote absence,
+   local edits or renames. Check the bounded HTML provenance marker before provider
+   ID allocation and again when snapshotting/verifying source or staging bytes.
+   Refuse marked copies with a per-item browser-only diagnostic; unrelated files
+   continue. Ordinary HTML without managed provenance remains binary content,
+   never a request to convert or update a native document. See
+   [Workspace C24](../download/workspace.md).
 3. Complete a descriptor-relative local inventory with one shared 500 ms
    quiescence window. Defer recognized editor/download temporaries, changing files
    and unknown evidence; ordinary hidden files and `.tmp` are not blanket exclusions.

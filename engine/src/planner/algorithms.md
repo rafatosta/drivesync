@@ -163,7 +163,7 @@ ou inventar sufixos. Não há mapeamento alternativo a persistir: caminhos aceit
 continuam associados ao ID no plano/journal existente. A decisão é conservadora
 inclusive em filesystems sensíveis a caixa.
 
-1. Validar cada componente antes/depois de acrescentar `.desktop` a Workspace.
+1. Validar cada componente antes/depois de acrescentar `.html` a Workspace.
    Rejeitar vazio, pontos, separadores, controles, `< > : " | ? *`, ponto/espaço
    final, dispositivos Windows (também com extensão), nomes internos sem distinção
    de caixa e componentes acima de 255 bytes ou unidades UTF-16.

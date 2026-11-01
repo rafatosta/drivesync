@@ -323,3 +323,61 @@ fn sync018_c22_c23_access_and_metadata_are_not_version_conflicts() {
         }
     }
 }
+
+#[test]
+fn c24_workspace_allowlist_and_untrusted_urls() {
+    for (mime, product) in [
+        ("document", "document"),
+        ("spreadsheet", "spreadsheets"),
+        ("presentation", "presentation"),
+        ("drawing", "drawings"),
+        ("form", "forms"),
+    ] {
+        let mut item = file("native", "root-id");
+        item["mimeType"] = json!(format!("application/vnd.google-apps.{mime}"));
+        item["webViewLink"] = json!(format!("https://docs.google.com/{product}/d/native/edit"));
+        item["size"] = Value::Null;
+        item["md5Checksum"] = Value::Null;
+        let inv = scan(&account(), "root-id", &Cancellation::new(), |_, _| {
+            Ok(page(vec![item.clone()], None))
+        })
+        .unwrap();
+        assert_eq!(
+            inv.entries[0].kind,
+            if matches!(mime, "document" | "spreadsheet" | "presentation") {
+                InventoryKind::GoogleWorkspaceLink
+            } else {
+                InventoryKind::Skipped(SkipReason::UnsupportedGoogleType)
+            }
+        );
+    }
+    for url in [
+        Value::Null,
+        json!("https://evil.example/document/d/native/edit"),
+        json!("https://docs.google.com/fake/document/d/native/edit"),
+    ] {
+        let mut item = file("native", "root-id");
+        item["mimeType"] = json!("application/vnd.google-apps.document");
+        item["webViewLink"] = url;
+        let inv = scan(&account(), "root-id", &Cancellation::new(), |_, _| {
+            Ok(page(vec![item.clone()], None))
+        })
+        .unwrap();
+        assert_eq!(
+            inv.entries[0].kind,
+            InventoryKind::Skipped(SkipReason::InvalidWebViewLink)
+        );
+    }
+    let mut item = file("shortcut", "root-id");
+    item["mimeType"] = json!("application/vnd.google-apps.shortcut");
+    item["shortcutDetails"] = json!({"targetId":"target", "targetMimeType":"application/vnd.google-apps.spreadsheet", "targetResourceKey":"safe&key"});
+    let inv = scan(&account(), "root-id", &Cancellation::new(), |_, _| {
+        Ok(page(vec![item.clone()], None))
+    })
+    .unwrap();
+    assert_eq!(inv.entries[0].kind, InventoryKind::GoogleWorkspaceLink);
+    assert_eq!(
+        inv.entries[0].web_view_link.as_deref(),
+        Some("https://docs.google.com/spreadsheets/d/target/edit?resourcekey=safe%26key")
+    );
+}

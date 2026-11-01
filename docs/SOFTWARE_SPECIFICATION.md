@@ -560,6 +560,53 @@ energia, integração Google nem funcionamento da interface instalada.
 
 ### 4.11 Documentos nativos do Google Workspace
 
+**RF-WKS-01 — Representação local (C24, #19 e #57).** Docs, Sheets e Slides,
+e atalhos Drive cujo destino tenha um desses tipos, devem ser representados por
+`<nome remoto>.html`. Somente URLs HTTPS do host `docs.google.com`, sem
+credenciais/porta e com caminho de editor do produto suportado e ID não vazio,
+são aceitas. Tipos nativos não suportados ou metadados insuficientes são
+ignorados com indicação de limitação, sem download binário nem exportação.
+PDF, DOCX, imagens e HTML comum seguem seus fluxos binários habituais.
+
+**RF-WKS-02 — Conteúdo e abertura.** O HTML contém redirecionamento imediato e
+link de fallback para a URL validada; título e URL devem receber escaping de
+HTML. Não contém JavaScript, comandos ou credenciais. A instalação usa permissão
+`0444`; o proprietário ainda pode alterar permissões e bytes, e o diretório
+controla renomeação/exclusão. A abertura depende da associação de `.html` ao
+navegador padrão e de acesso ao documento. Não há edição offline, exportação,
+conversão nem edição bidirecional do documento por meio do HTML. Exportação ou
+conversão são possibilidades futuras, sujeitas a contrato e opção explícita.
+
+**RF-WKS-03 — Evidência e recuperação.** Reaproveitar o journal SQLite de
+operações de download, isolado por cliente/conta/raiz: registrar ID remoto, MIME,
+URL, nome, caminho, identidades locais, SHA-256 e estado Ready antes de publicar.
+Confirmar Installed somente após instalação exclusiva, verificação e fsync.
+Repetição preserva o inode quando nada mudou. Atualizações de URL/título no
+mesmo caminho preservam o inode anterior em backup antes de instalar; mudança
+de nome/caminho cria o novo atalho e mantém o anterior. Uma interrupção pode
+retomar somente o inode Ready registrado; nunca adotar HTML comum pelo nome ou
+pela igualdade de bytes. Dados anteriores à primeira versão estável não exigem
+migração ou camada de compatibilidade.
+
+**RF-WKS-04 — Alterações locais e upload.** Atalho gerenciado modificado,
+substituído, ausente ou renomeado exige atenção e bloqueia atualização automática
+daquele documento; não deve propagar exclusão remota. Histórico de caminhos e
+inodes do journal exclui esses objetos do upload, mesmo sem o marcador HTML.
+Cópias/renomeações que mantêm o marcador de origem são recusadas antes de criar
+intenção ou transferir bytes; o snapshot é revalidado. HTML comum sem essa
+proveniência permanece um arquivo binário, nunca uma conversão para Workspace.
+Não há identidade inferível para uma cópia arbitrária cujo marcador tenha sido
+removido e cujo inode/caminho não conste do journal.
+
+**Implementação e validação.** Implementado em `remote`, `planner`, `download`
+e na proteção de `upload`. Os testes C24 usam metadados remotos simulados,
+filesystem e SQLite reais isolados, incluindo falhas e reinício. Essa cobertura
+não comprova integração Google real, associação de navegador, abertura por duplo
+clique no Nautilus ou funcionamento do pacote instalado. Evidência pontual e
+estado desses testes manuais devem constar da PR/issues, sem confundir intenção,
+implementação e validação real. Contrato: [Workspace HTML](../engine/src/download/workspace.md).
+
+
 ### 4.12 Estado, histórico e notificações
 
 ### 4.13 Preferências e gerenciamento da aplicação

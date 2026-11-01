@@ -310,7 +310,7 @@ fn sync009_unicode_case_type_and_generated_destinations_survive_restart() {
     let mut link = binary("link", "root", "report", b"");
     link.kind = InventoryKind::GoogleWorkspaceLink;
     let inv = RemoteInventory {
-        entries: vec![link, binary("binary", "root", "REPORT.desktop", b"KEEP")],
+        entries: vec![link, binary("binary", "root", "REPORT.html", b"KEEP")],
         ..inventory()
     };
     blocked_cycle(&f, &inv, &mut Fake::new(&inv));
