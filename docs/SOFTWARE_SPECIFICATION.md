@@ -1509,3 +1509,14 @@ Limite: mesclagem automática no sincronizador não está habilitada. Retenção
 durável dos bytes de B, revisão do candidato, alinhamento geral e aplicação
 recuperável com preservação/revalidação são acompanhados na
 [issue #68](https://github.com/rafatosta/drivesync/issues/68).
+
+#### Base comum durável para SYNC-026
+
+Downloads e uploads confirmados de `text/plain` até 1 MiB retêm os bytes da
+revisão verificada no journal SQLite privado, na mesma transação da evidência
+de instalação. A chave inclui cliente OAuth, conta, ambas as raízes, ID remoto,
+revisão e SHA-256. Leitura confere integridade; revisão atual, timestamp e nome
+não substituem bytes ausentes. Versões históricas são imutáveis. O orçamento é
+64 MiB por escopo, sem remoção automática de evidências; esgotamento bloqueia
+novas retenções. O formato interno do journal é 5; versões antigas são recusadas
+sem migração ou apagamento automático.
