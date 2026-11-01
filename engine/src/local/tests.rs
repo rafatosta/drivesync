@@ -143,3 +143,105 @@ fn sync018_e03_unreadable_files_remain_unknown_to_planner_with_access_diagnosis(
         b"preserved child"
     );
 }
+
+#[test]
+fn sync020_n05_aliases_and_special_files_are_never_upload_candidates() {
+    let outside = Tree::new();
+    let t = Tree::new();
+    fs::write(outside.0.join("private"), b"private bytes").unwrap();
+    fs::hard_link(outside.0.join("private"), t.0.join("alias")).unwrap();
+    std::os::unix::fs::symlink(outside.0.join("private"), t.0.join("link")).unwrap();
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        t.0.join("pipe"),
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        0,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let inv = t.scan(|| Ok(()));
+        for name in ["alias", "link", "pipe"] {
+            assert_eq!(inv.entries[Path::new(name)], Evidence::Unsupported);
+            assert_eq!(
+                inv.observe(Path::new(name)),
+                LocalObservation::SymlinkOrSpecial
+            );
+        }
+    }
+    assert_eq!(
+        fs::read(outside.0.join("private")).unwrap(),
+        b"private bytes"
+    );
+    fs::remove_file(t.0.join("alias")).unwrap();
+    fs::write(t.0.join("alias"), b"independent copy").unwrap();
+    assert!(matches!(
+        t.scan(|| Ok(())).entries[Path::new("alias")],
+        Evidence::Stable { .. }
+    ));
+}
+
+#[test]
+fn sync020_e01_exclusive_flock_defers_and_shared_flock_allows_reading() {
+    let t = Tree::new();
+    fs::write(t.0.join("file"), b"preserved").unwrap();
+    let writer = fs::File::open(t.0.join("file")).unwrap();
+    rustix::fs::flock(
+        &writer,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let inv = t.scan(|| Ok(()));
+        assert_eq!(inv.entries[Path::new("file")], Evidence::Writing);
+        assert_eq!(inv.observe(Path::new("file")), LocalObservation::Unknown);
+    }
+    rustix::fs::flock(&writer, rustix::fs::FlockOperation::NonBlockingLockShared).unwrap();
+    assert!(matches!(
+        t.scan(|| Ok(())).entries[Path::new("file")],
+        Evidence::Stable { .. }
+    ));
+    drop(writer);
+    assert_eq!(fs::read(t.0.join("file")).unwrap(), b"preserved");
+}
+
+#[test]
+fn sync020_n05_link_creation_and_symlink_swap_during_wait_fail_closed() {
+    for alias in [false, true] {
+        let outside = Tree::new();
+        let t = Tree::new();
+        fs::write(outside.0.join("private"), b"private").unwrap();
+        fs::write(t.0.join("file"), b"local").unwrap();
+        let inv = t.scan(|| {
+            if alias {
+                fs::hard_link(t.0.join("file"), outside.0.join("alias")).unwrap();
+            } else {
+                fs::remove_file(t.0.join("file")).unwrap();
+                std::os::unix::fs::symlink(outside.0.join("private"), t.0.join("file")).unwrap();
+            }
+            Ok(())
+        });
+        assert_eq!(inv.observe(Path::new("file")), LocalObservation::Unknown);
+        assert_eq!(fs::read(outside.0.join("private")).unwrap(), b"private");
+    }
+}
+
+#[test]
+fn sync020_n05_descriptor_chain_refuses_parent_swaps_and_traversal() {
+    let t = Tree::new();
+    let outside = Tree::new();
+    fs::create_dir(t.0.join("nested")).unwrap();
+    fs::write(t.0.join("nested/file"), b"original").unwrap();
+    fs::write(outside.0.join("file"), b"private").unwrap();
+    let root = Root::open(&t.0).unwrap();
+    let (parent, _) = root.parent(Path::new("nested/file")).unwrap();
+    let id = crate::download::filesystem::identity(&parent).unwrap();
+    fs::rename(t.0.join("nested"), t.0.join("saved")).unwrap();
+    std::os::unix::fs::symlink(&outside.0, t.0.join("nested")).unwrap();
+    assert!(root.validate_parent(Path::new("nested/file"), id).is_err());
+    assert!(stamp(&root, Path::new("nested/file")).is_err());
+    for path in ["../file", "/file", "nested/../../file"] {
+        assert!(root.parent(Path::new(path)).is_err());
+    }
+    assert_eq!(fs::read(outside.0.join("file")).unwrap(), b"private");
+}

@@ -27,4 +27,7 @@ Deverá documentar entradas, saídas, erros tipados, efeitos colaterais, idempot
 ## Testes mínimos
 Caminho normal, entrada inválida, falha temporária, interrupção após efeito parcial, repetição e recuperação. Casos completos pendentes de revisão humana.
 
-**Estado:** rascunho v0.1; não implementado.
+**Estado:** upload create-only implementado; contrato vigente em [create-only.md](create-only.md).
+A fonte mantém lock compartilhado até publicação/adiamento, com snapshot e
+revalidação de identidade, conteúdo e tipo. Política e limites de links/locks:
+[SYNC-020](../local/safety.md).

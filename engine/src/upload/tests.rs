@@ -32,6 +32,7 @@ struct Fake {
     data: HashMap<String, Vec<u8>>,
     intents: HashMap<String, Intent>,
     fail_chunk: bool,
+    assert_source_locked: Option<PathBuf>,
     fail_after_complete: bool,
     expire: bool,
     lost_folder: bool,
@@ -140,6 +141,16 @@ impl Remote for Fake {
                 return Ok(Position::Expired);
             }
             return Ok(Position::Offset(self.data[&op.id].len() as u64));
+        }
+        if let Some(path) = &self.assert_source_locked {
+            let writer = fs::File::open(path).unwrap();
+            assert_eq!(
+                rustix::fs::flock(
+                    &writer,
+                    rustix::fs::FlockOperation::NonBlockingLockExclusive
+                ),
+                Err(rustix::io::Errno::WOULDBLOCK)
+            );
         }
         assert_eq!(offset.unwrap(), self.data[&op.id].len() as u64);
         self.data.get_mut(&op.id).unwrap().extend(bytes);
@@ -1171,4 +1182,119 @@ fn c24_managed_html_edits_and_local_moves_never_upload_without_remote_inventory(
                 .is_none());
         }
     }
+}
+
+#[test]
+fn sync020_n05_e01_blocked_sources_preserve_bytes_and_allow_independent_upload() {
+    let f = Fixture::new();
+    let private = f.base.join("private-source");
+    fs::write(&private, b"outside bytes").unwrap();
+    fs::hard_link(&private, f.root.join("alias")).unwrap();
+    std::os::unix::fs::symlink(&private, f.root.join("link")).unwrap();
+    fs::write(f.root.join("locked"), b"locked bytes").unwrap();
+    fs::write(f.root.join("ready"), b"ready bytes").unwrap();
+    let writer = fs::File::open(f.root.join("locked")).unwrap();
+    rustix::fs::flock(
+        &writer,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .unwrap();
+    let mut remote = Fake::default();
+    let first = f.run(&mut remote, HashSet::new()).unwrap();
+    assert_eq!(first.uploaded, 1);
+    assert_eq!(remote.generated, 1);
+    for path in ["alias", "link", "locked"] {
+        assert!(first
+            .issues
+            .iter()
+            .any(|issue| issue.relative_path.as_deref() == Some(Path::new(path))));
+        assert!(f.uploads().load(Path::new(path)).unwrap().is_none());
+    }
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(fs::read(&private).unwrap(), b"outside bytes");
+    assert_eq!(fs::read(f.root.join("locked")).unwrap(), b"locked bytes");
+    drop(writer);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.generated, 2);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.creates, 2);
+    assert!(!remote
+        .intents
+        .values()
+        .any(|op| op.path == Path::new("alias") || op.path == Path::new("link")));
+}
+
+#[test]
+fn sync020_n05_e01_locked_replay_keeps_snapshot_and_resumes_same_id_once() {
+    let f = Fixture::new();
+    let path = f.root.join("large.bin");
+    let bytes = vec![b'a'; 2 * 1024 * 1024];
+    fs::write(&path, &bytes).unwrap();
+    let mut remote = Fake {
+        fail_chunk: true,
+        assert_source_locked: Some(path.clone()),
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let pending = f.uploads().load(Path::new("large.bin")).unwrap().unwrap();
+    assert!(!pending.confirmed);
+    let snapshot = f.path.with_file_name(&pending.snapshot);
+    assert_eq!(fs::read(&snapshot).unwrap(), bytes);
+    let chunks = remote.chunks;
+    let writer = fs::File::open(&path).unwrap();
+    rustix::fs::flock(
+        &writer,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.uploaded, 0);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.error == EngineError::LocalWriting));
+        assert_eq!(remote.chunks, chunks);
+        assert_eq!(
+            f.uploads()
+                .load(Path::new("large.bin"))
+                .unwrap()
+                .unwrap()
+                .id,
+            pending.id
+        );
+        assert_eq!(fs::read(&snapshot).unwrap(), bytes);
+    }
+    drop(writer);
+    let alias = f.base.join("outside-alias");
+    fs::hard_link(&path, &alias).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.chunks, chunks);
+    assert_eq!(fs::read(&alias).unwrap(), bytes);
+    assert_eq!(fs::read(&snapshot).unwrap(), bytes);
+    fs::remove_file(&alias).unwrap();
+    let saved = f.base.join("saved-source");
+    let private = f.base.join("unrelated-private");
+    fs::write(&private, b"private bytes").unwrap();
+    fs::rename(&path, &saved).unwrap();
+    std::os::unix::fs::symlink(&private, &path).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.chunks, chunks);
+    assert_eq!(fs::read(&private).unwrap(), b"private bytes");
+    fs::remove_file(&path).unwrap();
+    fs::rename(&saved, &path).unwrap();
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.generated, 1);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(remote.items.len(), 1);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert!(!snapshot.exists());
+    let writer = fs::File::open(&path).unwrap();
+    rustix::fs::flock(
+        &writer,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .unwrap();
 }

@@ -27,13 +27,15 @@ fn reject_link(file: &mut File) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Checks candidates before provider ID allocation or creation of upload intent.
-pub(crate) fn check_link(root: &Root, path: &Path) -> Result<(), EngineError> {
+/// Checks candidates before provider effects and returns the shared-lock guard.
+/// The executor retains this descriptor through final publication or deferral.
+pub(crate) fn check_link(root: &Root, path: &Path) -> Result<File, EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     reject_link(&mut file)?;
-    root.validate_parent(path, parent_id)
+    root.validate_parent(path, parent_id)?;
+    Ok(file)
 }
 
 /// Removes only an incomplete staging file created by this invocation.
@@ -167,6 +169,7 @@ pub(crate) fn verify_file(
     op: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
+    filesystem::lock_regular(file)?;
     let before = crate::local::Stamp::read(file)?;
     reject_link(file)?;
     if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {
@@ -315,5 +318,39 @@ mod tests {
             drop(root);
             std::fs::remove_dir_all(base).unwrap();
         }
+    }
+    #[test]
+    fn sync020_n05_alias_created_during_snapshot_preserves_source_and_removes_partial() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-alias-snapshot-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        let root_path = base.join("root");
+        std::fs::create_dir_all(&root_path).unwrap();
+        let bytes = vec![b'a'; 2 * 1024 * 1024];
+        let path = root_path.join("file");
+        std::fs::write(&path, &bytes).unwrap();
+        let stage = base.join("private.snapshot");
+        let alias = base.join("outside-alias");
+        let root = super::Root::open(&root_path).unwrap();
+        let mut changed = false;
+        let result = super::snapshot_with_progress(
+            &root,
+            Path::new("file"),
+            &stage,
+            &crate::Cancellation::new(),
+            |_| {
+                if !changed {
+                    changed = true;
+                    std::fs::hard_link(&path, &alias).unwrap();
+                }
+            },
+        );
+        assert_eq!(result, Err(crate::EngineError::DownloadConflict));
+        assert!(!stage.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&alias).unwrap(), bytes);
+        drop(root);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

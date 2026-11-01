@@ -932,3 +932,27 @@ mod sync016_acceptance;
 
 #[path = "sync019_acceptance.rs"]
 mod sync019_acceptance;
+
+#[test]
+fn sync020_n10_remote_temporary_names_never_install_or_request_media() {
+    for name in [
+        "partial.part",
+        "partial.PART",
+        ".editor.swp",
+        "~$book.xlsx",
+        ".goutputstream-123",
+    ] {
+        let f = Fixture::new();
+        let mut inv = inventory();
+        inv.entries[0].name = name.into();
+        let mut remote = Fake::new(&inv);
+        for _ in 0..2 {
+            let report = f
+                .execute(&inv, &mut remote, &Cancellation::new(), |_| {})
+                .unwrap();
+            assert_eq!(report.downloaded, 0);
+            assert!(!f.root.join(name).exists());
+        }
+        assert_eq!(remote.media_calls, 0);
+    }
+}

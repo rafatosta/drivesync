@@ -226,7 +226,7 @@ fn ancestor_rename_defers_children_without_downloading_duplicate_content() {
 }
 
 #[test]
-fn rename_with_local_edit_or_ambiguous_aliases_is_unknown_instead_of_new() {
+fn rename_with_local_edit_or_ambiguous_aliases_is_deferred_instead_of_new() {
     for alias in [false, true] {
         let f = Fixture::new();
         let mut inv = inventory();
@@ -248,7 +248,13 @@ fn rename_with_local_edit_or_ambiguous_aliases_is_unknown_instead_of_new() {
         assert!(record
             .entries
             .iter()
-            .any(|e| e.relative_path == Some("local.txt".into()) && e.kind == ChangeKind::Unknown));
+            .any(|e| e.relative_path == Some("local.txt".into())
+                && e.kind
+                    == if alias {
+                        ChangeKind::Unsupported
+                    } else {
+                        ChangeKind::Unknown
+                    }));
         let report = execute(&f, &inv, &record.plan, &mut remote);
         assert_eq!(report.downloaded + report.updated, 0);
         assert!(!f.root.join("remote.txt").exists());

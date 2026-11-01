@@ -118,12 +118,13 @@ pub(super) fn scan_with_wait(
             } else if kind == rustix::fs::FileType::Directory {
                 pending.push(child.clone());
                 Evidence::Directory
-            } else if kind == rustix::fs::FileType::RegularFile {
+            } else if kind == rustix::fs::FileType::RegularFile && stat.st_nlink == 1 {
                 match stamp(root, &child) {
                     Ok(s) => {
                         candidates.push((child.clone(), s));
                         Evidence::Writing
                     }
+                    Err(EngineError::LocalWriting) => Evidence::Writing,
                     Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
                     Err(_) => Evidence::Unknown,
                 }
@@ -175,7 +176,7 @@ pub(super) fn scan_with_wait(
             Err(EngineError::Authentication(AuthError::Cancelled)) => {
                 return Err(EngineError::Authentication(AuthError::Cancelled))
             }
-            Err(EngineError::DownloadConflict) => Evidence::Writing,
+            Err(EngineError::DownloadConflict | EngineError::LocalWriting) => Evidence::Writing,
             Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
             Err(_) => Evidence::Unknown,
         };

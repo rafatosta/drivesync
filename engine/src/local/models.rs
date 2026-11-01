@@ -15,6 +15,7 @@ impl Stamp {
     /// Samples change detectors from one open descriptor; it does not prove closure.
     pub(crate) fn read(file: &std::fs::File) -> Result<Self, crate::EngineError> {
         use std::os::unix::fs::MetadataExt;
+        crate::download::filesystem::regular(file)?;
         let m = file.metadata().map_err(crate::download::filesystem::io)?;
         Ok(Self {
             device: m.dev(),
