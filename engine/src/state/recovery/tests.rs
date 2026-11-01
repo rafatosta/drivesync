@@ -298,7 +298,7 @@ fn lost_or_corrupt_selector_never_revives_stale_original_baselines() {
         }
         assert!(resolve(&f.parent(), "state.sqlite3").is_err());
         let recovered = f.run();
-        assert_eq!(recovered.rebuilt_stores, 5);
+        assert_eq!(recovered.rebuilt_stores, NAMES.len());
         assert!(recovered.uploads_blocked);
         assert!(selected.exists());
         assert_ne!(
@@ -314,6 +314,28 @@ fn interruption_after_no_fallback_marker_is_explicitly_recoverable() {
     let f = Fixture::new();
     std::fs::write(f.parent().join(REQUIRED), b"").unwrap();
     assert!(resolve(&f.parent(), "state.sqlite3").is_err());
-    assert_eq!(f.run().rebuilt_stores, 5);
+    assert_eq!(f.run().rebuilt_stores, NAMES.len());
     assert!(f.run().uploads_blocked);
+}
+
+#[test]
+fn corrupt_consent_is_preserved_and_explicit_recovery_returns_to_ask() {
+    let f = Fixture::new();
+    let original = f.parent().join("conflict-preferences.sqlite3");
+    super::super::Preferences::open(&original, "client", &f.folder)
+        .unwrap()
+        .save(crate::ConflictPreference::KeepBoth)
+        .unwrap();
+    std::fs::write(&original, b"invalid consent").unwrap();
+    assert_eq!(f.run().rebuilt_stores, 1);
+    assert_eq!(std::fs::read(&original).unwrap(), b"invalid consent");
+    let selected = resolve(&f.parent(), "conflict-preferences.sqlite3").unwrap();
+    assert_ne!(selected, original);
+    assert_eq!(
+        super::super::Preferences::open(&selected, "client", &f.folder)
+            .unwrap()
+            .load()
+            .unwrap(),
+        crate::ConflictPreference::Ask
+    );
 }

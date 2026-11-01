@@ -987,3 +987,157 @@ fn c09_fresh_classification_selects_and_executes_both_independent_combinations()
         assert_eq!(crate::local::scan(&root, &cancel).unwrap().entries.len(), 1);
     }
 }
+
+/// Runs the actual collector, durable pending journal, consent store and selector.
+fn preference_candidate(
+    fixture: &Fixture,
+    remote: &mut Provider,
+    rule: ConflictPreference,
+) -> (crate::ConflictRecord, planning::Candidate) {
+    let root = Root::open(&fixture.root).unwrap();
+    let cancel = Cancellation::new();
+    let local = crate::local::scan(&root, &cancel).unwrap();
+    let inventory = RemoteInventory {
+        account_id: fixture.scope.account_id.clone(),
+        root_id: "root".into(),
+        entries: vec![remote.observe("file").unwrap().item],
+    };
+    let plan =
+        crate::changes::prepare(&inventory, &root, &fixture.bases(), &local, remote, &cancel)
+            .unwrap();
+    let reconciliation =
+        crate::state::Reconciliation::new(local, inventory, plan, fixture.bases(), vec![], None);
+    let scope = crate::state::CheckpointScope {
+        client: "client",
+        account: &fixture.scope.account_id,
+        remote: "root",
+        local: &fixture.root,
+    };
+
+    let folder = crate::FolderConfiguration {
+        account_id: fixture.scope.account_id.clone(),
+        remote: crate::DriveFolder {
+            id: "root".into(),
+            name: "Root".into(),
+        },
+        local: fixture.root.clone(),
+        local_display: fixture.root.clone(),
+    };
+    crate::configuration::identity::ensure(&folder, "client").unwrap();
+    let path = crate::configuration::identity::metadata_path(
+        &folder,
+        "client",
+        "conflict-preferences.sqlite3",
+    )
+    .unwrap();
+    let preferences = crate::state::Preferences::open(&path, "client", &folder).unwrap();
+    assert_eq!(preferences.load().unwrap(), ConflictPreference::Ask);
+    preferences.save(rule).unwrap();
+    drop(preferences);
+    let restored = crate::state::Preferences::open(&path, "client", &folder)
+        .unwrap()
+        .load()
+        .unwrap();
+    let mut history =
+        crate::state::ConflictHistory::open(&fixture.directory.join("history.sqlite3")).unwrap();
+    history
+        .record_pending(&scope, &reconciliation, &cancel)
+        .unwrap();
+    let record = history.records(&scope).unwrap().remove(0);
+    let request = restored.request(&record).unwrap();
+    let selected = preferences_candidate(
+        &reconciliation.remote.entries[0],
+        &reconciliation.plan.entries[0],
+        &fixture.base,
+        &reconciliation.local,
+        &request,
+    )
+    .unwrap();
+    (record, selected)
+}
+
+#[test]
+fn p04_opt_in_rules_preserve_both_versions_and_replay_after_reopen() {
+    for rule in [
+        ConflictPreference::KeepLocal,
+        ConflictPreference::KeepRemote,
+        ConflictPreference::KeepBoth,
+    ] {
+        let fixture = Fixture::new(b"local edit");
+        let mut remote = Provider::new(b"remote edit");
+        let (record, selected) = preference_candidate(&fixture, &mut remote, rule);
+        assert!(ConflictPreference::Ask.request(&record).is_none());
+        let mut plan = fixture.plan(&mut remote, selected.choice, "report.txt", "report.txt");
+        plan.conflict = Some(record.conflict_id);
+        plan.local_fingerprint = selected.fingerprint;
+        fixture.begin(plan);
+        let report = fixture.run(&mut remote).unwrap();
+        let expected = if rule == ConflictPreference::KeepRemote {
+            b"remote edit".as_slice()
+        } else {
+            b"local edit".as_slice()
+        };
+        assert_eq!(fs::read(fixture.root.join("report.txt")).unwrap(), expected);
+        assert_eq!(remote.objects["file"].bytes, expected);
+        let preserved: Vec<_> = report
+            .preserved_paths
+            .iter()
+            .map(|p| fs::read(fixture.root.join(p)).unwrap())
+            .collect();
+        assert!(preserved.contains(&b"local edit".to_vec()));
+        assert!(preserved.contains(&b"remote edit".to_vec()));
+        let effects = remote.effects;
+        assert_eq!(fixture.run(&mut remote).unwrap(), report);
+        assert_eq!(remote.effects, effects);
+    }
+}
+
+#[test]
+fn p04_p06_preferences_reject_unknown_deletion_and_stale_evidence() {
+    let fixture = Fixture::new(b"local edit");
+    let mut remote = Provider::new(b"remote edit");
+    let (record, selected) =
+        preference_candidate(&fixture, &mut remote, ConflictPreference::KeepLocal);
+    for diagnosis in [
+        crate::ChangeKind::Unknown,
+        crate::ChangeKind::LocalMissingRemoteChanged,
+        crate::ChangeKind::LocationConflict,
+        crate::ChangeKind::Unsupported,
+        crate::ChangeKind::AccessDenied,
+    ] {
+        let mut blocked = record.clone();
+        blocked.diagnosis = diagnosis;
+        assert!(ConflictPreference::KeepLocal.request(&blocked).is_none());
+    }
+    let mut missing = record.clone();
+    missing.local_fingerprint = None;
+    assert!(ConflictPreference::KeepBoth.request(&missing).is_none());
+    let plan = fixture.plan(&mut remote, selected.choice, "report.txt", "report.txt");
+    fixture.begin(plan);
+    remote.objects.get_mut("file").unwrap().version += 1;
+    assert!(fixture.run(&mut remote).is_err());
+    assert_eq!(remote.effects, 0);
+    assert_eq!(
+        fs::read(fixture.root.join("report.txt")).unwrap(),
+        b"local edit"
+    );
+    assert_eq!(remote.objects["file"].bytes, b"remote edit");
+}
+
+#[test]
+fn p04_preference_decision_recovers_uncertain_remote_effect_without_duplicates() {
+    let fixture = Fixture::new(b"local edit");
+    let mut remote = Provider::new(b"remote edit");
+    let (_, selected) = preference_candidate(&fixture, &mut remote, ConflictPreference::KeepBoth);
+    let plan = fixture.plan(&mut remote, selected.choice, "report.txt", "report.txt");
+    fixture.begin(plan);
+    remote.lose_update = true;
+    assert!(fixture.run(&mut remote).is_err());
+    remote.lose_update = false;
+    remote.now += 3600;
+    let report = fixture.run(&mut remote).unwrap();
+    assert_eq!(remote.effects, 1);
+    assert_eq!(remote.copies, 1);
+    assert_eq!(fixture.run(&mut remote).unwrap(), report);
+    assert_eq!(remote.effects, 1);
+}
