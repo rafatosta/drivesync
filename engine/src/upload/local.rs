@@ -163,7 +163,8 @@ pub(crate) fn verify_stage(
     verify_file(&mut file, op, cancel)?;
     Ok(file)
 }
-/// Hashes the opened descriptor, without resolving a pathname a second time.
+/// Checks size, SHA-256 and provider MD5 on the same locked descriptor.
+/// Inconsistent intent evidence or observed mutation fails without changing bytes.
 pub(crate) fn verify_file(
     file: &mut File,
     op: &Intent,
@@ -176,6 +177,7 @@ pub(crate) fn verify_file(
         return Err(EngineError::StateStorage);
     }
     let mut sha = Sha256::new();
+    let mut md5 = Md5::new();
     let mut buffer = vec![0; 1024 * 1024];
     let mut size = 0;
     loop {
@@ -196,8 +198,12 @@ pub(crate) fn verify_file(
             return Err(EngineError::StateStorage);
         }
         sha.update(&buffer[..n]);
+        md5.update(&buffer[..n]);
     }
-    if size != op.size || format!("{:x}", sha.finalize()) != op.sha {
+    if size != op.size
+        || format!("{:x}", sha.finalize()) != op.sha
+        || !format!("{:x}", md5.finalize()).eq_ignore_ascii_case(&op.md5)
+    {
         return Err(EngineError::StateStorage);
     }
     if crate::local::Stamp::read(file)? != before {

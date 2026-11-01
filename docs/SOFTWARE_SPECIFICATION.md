@@ -1352,3 +1352,62 @@ Referência técnica consultada em 2026-11-01:
 [Google Drive — Resolve errors](https://developers.google.com/workspace/drive/api/guides/handle-errors),
 classificação de 401/403/429, `storageQuotaExceeded`, `dailyLimitExceeded` e backoff.
 A suspensão até tentativa explícita e os limites concretos são políticas DriveSync.
+
+### Transferências parciais e integridade — SYNC-023
+
+**Pré-condições:** conta/raiz/configuração verificadas, exclusão mútua da raiz,
+identidade e revisão remota conhecidas, tamanho e MD5 disponíveis para binários.
+Arquivos Workspace usam o contrato de links; ausência de hash não autoriza
+confirmar bytes binários por suposição.
+
+**Contrato implementado:**
+
+- Download grava em staging exclusivo, limita leitura a tamanho esperado + 1,
+  verifica tamanho/MD5 e calcula SHA-256. Sincroniza arquivo e diretório, relê o
+  staging e revalida revisão/identidades antes de registrar Ready e instalar.
+  Instalação durável e journal verificado precedem a confirmação de base B.
+- Falha, cancelamento ou divergência antes de Ready mantém a intenção e não
+  publica bytes parciais. Na recuperação, staging incompleto conhecido é
+  descartado com as verificações de identidade do executor e a transferência
+  reinicia do zero. Download não retoma por HTTP Range. Ready/Installed só
+  permitem replay com identidade, tamanho e SHA-256 novamente conferidos.
+- Upload mantém snapshot privado durável e intenção SQLite antes dos efeitos.
+  Origem e snapshot devem corresponder ao tamanho, SHA-256 e MD5 persistidos.
+  Após reinício, consulta o mesmo ID e a sessão antes de enviar bytes a partir
+  do offset confirmado pelo servidor. HTTP 308 não confirma conclusão; ranges
+  inválidos, com overflow ou cobrindo o tamanho total falham conservadoramente.
+- Confirmação de upload exige ID, pai, nome, tipo, tamanho e MD5 remotos iguais
+  à intenção, além de nova validação da origem local. MD5 hexadecimal é
+  comparado sem distinção de caixa. Resultado incerto ou divergente preserva
+  snapshot/intenção e conteúdo local/remoto, sem substituir ID nem confirmar B.
+  A política de tentativas e espera persistente de SYNC-013 continua aplicável.
+- Atualização local preserva a versão anterior conforme o contrato de backups.
+  Concorrência, mudança de origem/raiz e estado inválido bloqueiam o item;
+  nenhuma preferência autoriza escolher silenciosamente o conteúdo vencedor.
+
+**Oráculos de aceite E05/E10:**
+
+| Cenário | Teste determinístico |
+| --- | --- |
+| Binário vazio, arquivos e pastas; repetição | `creates_nested_files_once_and_records_download_evidence`, `accepts_empty_binary_and_creates_nested_folders` |
+| Interrupção, resposta perdida e sessão expirada; mesmo ID | `interrupted_chunks_lost_confirmation_and_expired_sessions_reuse_one_id` |
+| Download curto, longo ou hash incorreto; reabertura e retry | `rejects_short_long_and_corrupt_streams_without_final_file` |
+| Interrupção antes de Ready, cancelamento e erro SQLite; versão anterior preservada | `i25_incomplete_stream_and_verified_staging_never_confirm_a_base` |
+| Efeito sem confirmação; replay por identidade | `i26_actual_effect_without_confirmation_replays_only_the_verified_identity` |
+| Tamanho/hash remoto divergente não confirma B nem altera versões | `sync023_e10_remote_size_or_hash_mismatch_preserves_unconfirmed_versions` |
+| SHA-256 consistente mas MD5 da intenção divergente | `sync023_e10_snapshot_requires_both_persisted_hashes_before_resume` |
+| MD5 equivalente em caixa alta | `sync023_e10_uppercase_remote_md5_confirms_identical_bytes_once` |
+| Range inválido/overflow/completo com HTTP 308 | `interprets_only_verified_server_offsets_and_known_session_states` |
+| Snapshot corrompido, concorrência e origem alterada | `corrupt_staging_blocks_replay_without_sending_another_chunk`, `n11_concurrent_worker_cannot_replay_a_pending_intent`, `n10_resumed_writer_stops_before_final_upload_publication_and_keeps_intent` |
+
+Os testes de execução usam provedor simulado, filesystem e SQLite reais em
+pastas temporárias isoladas; o parser de transporte usa servidor HTTP local.
+São evidência de recuperação determinística, não homologação do Google Drive
+nem prova de durabilidade em queda física de energia. Ensaios externos
+complementares permanecem em #52 (interrupções reais) e #53 (semântica Google).
+Não há cenário lógico E05/E10 acima que exija Google real para ser simulado.
+
+Referência técnica: [Google Drive — resumable uploads](https://developers.google.com/workspace/drive/api/guides/manage-uploads#resumable),
+consulta de status e retomada pelo Range confirmado (consulta em 2026-11-01).
+A decisão de reiniciar downloads parciais e preservar resultados incertos é
+política conservadora do DriveSync.

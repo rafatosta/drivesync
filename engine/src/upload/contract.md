@@ -25,3 +25,9 @@ transições estão em [create-only.md](create-only.md#sync-013--uncertain-outco
 
 ## Qualidade
 Especificar idempotência, efeitos colaterais, concorrência, cancelamento, erro e recuperação antes da implementação.
+
+## Integridade e recuperação — SYNC-023
+
+Snapshot/origem exigem tamanho, SHA-256 e MD5 coerentes. Sessão retomável não
+substitui a conferência de metadados remotos por ID antes da confirmação.
+Ver [pré-condições, resultados e oráculos E05/E10](../../../docs/SOFTWARE_SPECIFICATION.md#transferências-parciais-e-integridade--sync-023).

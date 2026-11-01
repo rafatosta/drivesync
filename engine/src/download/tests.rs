@@ -391,6 +391,29 @@ fn rejects_short_long_and_corrupt_streams_without_final_file() {
             .unwrap();
         assert_eq!(result.issues[0].error, EngineError::DownloadIntegrity);
         assert!(!f.root.join("file.txt").exists());
+        let store = Store::open(&f.db()).unwrap();
+        assert!(store
+            .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+            .unwrap()
+            .is_empty());
+        drop(store);
+        source.content.insert("file".into(), b"abc".to_vec());
+        assert_eq!(
+            f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+                .unwrap()
+                .downloaded,
+            1
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                f.execute(&inv, &mut source, &Cancellation::new(), |_| {})
+                    .unwrap()
+                    .unchanged,
+                1
+            );
+            assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+        }
+        assert_eq!(source.media_calls, 2);
     }
 }
 #[test]

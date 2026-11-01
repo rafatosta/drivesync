@@ -1343,3 +1343,94 @@ fn sync022_e02_e07_e08_upload_repair_reuses_preserved_snapshot_and_identity() {
         assert_eq!(remote.begins, 1);
     }
 }
+
+#[test]
+fn sync023_e10_remote_size_or_hash_mismatch_preserves_unconfirmed_versions() {
+    for wrong_size in [false, true] {
+        let f = Fixture::new();
+        fs::write(f.root.join("file.txt"), b"abc").unwrap();
+        let mut remote = Fake {
+            fail_after_complete: true,
+            ..Default::default()
+        };
+        f.run(&mut remote, HashSet::new()).unwrap();
+        let op = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+        let item = remote.items.get_mut(&op.id).unwrap();
+        if wrong_size {
+            item.size = Some(2);
+        } else {
+            item.md5_checksum = Some("d16fb36f0911f878998c136191af705e".into());
+            remote.data.insert(op.id.clone(), b"xyz".to_vec());
+        }
+        let remote_bytes = remote.data[&op.id].clone();
+        let snapshot = f.path.with_file_name(&op.snapshot);
+        for _ in 0..2 {
+            let report = f.run(&mut remote, HashSet::new()).unwrap();
+            assert_eq!(report.uploaded, 0);
+            assert_eq!(report.issues[0].error, EngineError::DownloadConflict);
+            assert!(
+                !f.uploads()
+                    .load(Path::new("file.txt"))
+                    .unwrap()
+                    .unwrap()
+                    .confirmed
+            );
+            assert_eq!(fs::read(&snapshot).unwrap(), b"abc");
+            assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+            assert_eq!(remote.data[&op.id], remote_bytes);
+            assert!(Store::open(&f.path)
+                .unwrap()
+                .confirmed_bases("client", &f.folder.account_id, "root", &f.root)
+                .unwrap()
+                .is_empty());
+            assert_eq!(remote.generated, 1);
+            assert_eq!(remote.begins, 1);
+            assert_eq!(remote.chunks, 1);
+        }
+    }
+}
+
+#[test]
+fn sync023_e10_snapshot_requires_both_persisted_hashes_before_resume() {
+    let f = Fixture::new();
+    let bytes = vec![b'a'; 2 * 1024 * 1024];
+    fs::write(f.root.join("file.bin"), &bytes).unwrap();
+    let mut remote = Fake {
+        fail_chunk: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let op = f.uploads().load(Path::new("file.bin")).unwrap().unwrap();
+    let mut inconsistent = op.clone();
+    inconsistent.md5 = "900150983cd24fb0d6963f7d28e17f72".into();
+    let snapshot = f.path.with_file_name(&op.snapshot);
+    assert!(matches!(
+        super::local::verify_stage(&snapshot, &inconsistent, &Cancellation::new()),
+        Err(EngineError::StateStorage)
+    ));
+    assert_eq!(fs::read(&snapshot).unwrap(), bytes);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(remote.data[&op.id], bytes);
+    assert_eq!(remote.chunks, 2);
+    assert_eq!(remote.begins, 1);
+    assert_eq!(remote.generated, 1);
+    assert!(!snapshot.exists());
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+}
+
+#[test]
+fn sync023_e10_uppercase_remote_md5_confirms_identical_bytes_once() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file.txt"), b"abc").unwrap();
+    let mut remote = Fake {
+        fail_after_complete: true,
+        ..Default::default()
+    };
+    f.run(&mut remote, HashSet::new()).unwrap();
+    let op = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+    remote.items.get_mut(&op.id).unwrap().md5_checksum = Some(op.md5.to_uppercase());
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+    assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+    assert_eq!(remote.creates, 1);
+    assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+}

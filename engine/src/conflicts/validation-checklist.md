@@ -97,6 +97,9 @@ E02/E07/E08 têm contrato e oráculos locais em [SYNC-022](../../../docs/SOFTWAR
 Os checkboxes globais não representam homologação Google/desktop; os ensaios
 externos complementares permanecem nas issues #51/#52/#53.
 
+E05/E10 têm contrato e oráculos determinísticos em [SYNC-023](../../../docs/SOFTWARE_SPECIFICATION.md#transferências-parciais-e-integridade--sync-023).
+Isso não representa homologação de rede Google ou queda física de energia (#52/#53).
+
 ## Políticas a especificar e validar
 
 - [ ] **P01** — Sem divergência: sincronização automática.
