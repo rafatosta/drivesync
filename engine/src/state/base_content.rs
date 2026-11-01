@@ -256,3 +256,99 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+    #[test]
+    fn verified_installation_and_base_commit_together_or_roll_back() {
+        let dir = std::env::temp_dir().join(format!(
+            "drivesync-base-atomic-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        let local = dir.join("files");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("file.txt"), b"base").unwrap();
+        let root = Root::open(&local).unwrap();
+        let cancel = Cancellation::new();
+        let scope = DownloadPlan {
+            account_id: crate::AccountId("account".into()),
+            remote_root: "root".into(),
+            local_root: local.clone(),
+            entries: vec![],
+        };
+        let mut store = Store::open(&dir.join("state.sqlite3")).unwrap();
+        store
+            .save(
+                "client",
+                &crate::RemoteInventory {
+                    account_id: scope.account_id.clone(),
+                    root_id: "root".into(),
+                    entries: vec![],
+                },
+                &scope,
+                &cancel,
+            )
+            .unwrap();
+        let sha = format!("{:x}", Sha256::digest(b"base"));
+        let id =
+            filesystem::identity(&std::fs::File::open(local.join("file.txt")).unwrap()).unwrap();
+        let op = Operation {
+            id: "operation".into(),
+            item: crate::InventoryEntry {
+                id: "file".into(),
+                parent_id: "root".into(),
+                name: "file.txt".into(),
+                mime_type: "text/plain".into(),
+                kind: crate::InventoryKind::Binary,
+                version: Some(1),
+                size: Some(4),
+                md5_checksum: Some(crate::resolution::text::md5(b"base")),
+                web_view_link: None,
+            },
+            relative: "file.txt".into(),
+            temporary: ".drivesync-operation.part".into(),
+            root: filesystem::identity(&root.file).unwrap(),
+            parent: filesystem::identity(&root.file).unwrap(),
+            phase: Phase::Installed {
+                identity: id,
+                sha256: sha.clone(),
+            },
+        };
+        let base = ConfirmedBase {
+            remote_version: 1,
+            local_fingerprint: id.fingerprint(&sha),
+            location: None,
+        };
+        store.0.execute_batch("CREATE TRIGGER fail BEFORE INSERT ON downloads BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+        assert_eq!(
+            store.put_verified_operation("client", &scope, &op, &root, &cancel),
+            Err(EngineError::StateStorage)
+        );
+        assert!(store.operations("client", &scope).unwrap().is_empty());
+        assert_eq!(
+            store.common_base("client", &scope, "file", &base).unwrap(),
+            None
+        );
+        store.0.execute_batch("DROP TRIGGER fail").unwrap();
+        store
+            .put_verified_operation("client", &scope, &op, &root, &cancel)
+            .unwrap();
+        assert_eq!(
+            store.common_base("client", &scope, "file", &base).unwrap(),
+            Some(b"base".to_vec())
+        );
+        std::fs::write(local.join("file.txt"), b"race").unwrap();
+        assert_eq!(
+            store.put_verified_operation("client", &scope, &op, &root, &cancel),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(
+            store.common_base("client", &scope, "file", &base).unwrap(),
+            Some(b"base".to_vec())
+        );
+        drop(store);
+        drop(root);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
