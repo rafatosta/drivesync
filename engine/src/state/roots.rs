@@ -18,7 +18,8 @@ impl Roots {
             path.parent().ok_or(EngineError::StateStorage)?.into(),
         ))
     }
-    /// Serializes one logical association independently of the mounted inode.
+    /// Serializes the account scope across root changes and physical replacement.
+    /// One configured root per client/account makes this its stable scope key.
     /// Lock files contain no data and are never deleted while workers may exist.
     pub(crate) fn lock(
         &self,
@@ -26,9 +27,7 @@ impl Roots {
         folder: &FolderConfiguration,
     ) -> Result<RootLock, EngineError> {
         use sha2::Digest;
-        let scope =
-            serde_json::to_vec(&(client, &folder.account_id, &folder.remote.id, &folder.local))
-                .map_err(failed)?;
+        let scope = serde_json::to_vec(&(client, &folder.account_id)).map_err(failed)?;
         let name = format!("root-{:x}.lock", sha2::Sha256::digest(scope));
         let file = rustix::fs::open(
             self.1.join(name),

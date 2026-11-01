@@ -57,6 +57,9 @@ impl DriveSyncEngine {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let roots = self.accounts.roots()?;
         let _association_lock = roots.lock(&config.client_id, &folder)?;
+        if self.saved_folder(id)?.as_ref() != Some(&folder) {
+            return Err(EngineError::InvalidPlan);
+        }
         let expected = roots.marker(&config.client_id, &folder)?;
         let opened = crate::coordinator::open(&config.client_id, &folder, expected.as_deref());
         let result = match &opened {
