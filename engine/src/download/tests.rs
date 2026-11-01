@@ -122,6 +122,7 @@ struct Fake {
     on_media: Option<Box<dyn FnMut()>>,
     on_metadata: Option<Box<dyn FnMut()>>,
     configure_error: bool,
+    media_error: Option<EngineError>,
 }
 impl Fake {
     fn new(inv: &RemoteInventory) -> Self {
@@ -147,6 +148,7 @@ impl Fake {
             on_media: None,
             on_metadata: None,
             configure_error: false,
+            media_error: None,
         }
     }
 }
@@ -171,6 +173,9 @@ impl Source for Fake {
         Ok(value)
     }
     fn media(&mut self, id: &str) -> Result<Box<dyn Read>, EngineError> {
+        if let Some(error) = &self.media_error {
+            return Err(error.clone());
+        }
         self.media_calls += 1;
         self.media_ids.push(id.to_owned());
         if let Some(f) = &mut self.on_media {
@@ -618,7 +623,9 @@ fn stream_write_failure_never_claims_integrity() {
     struct Fail;
     impl io::Write for Fail {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-            Err(io::Error::other("injected disk full"))
+            Err(io::Error::from_raw_os_error(
+                rustix::io::Errno::NOSPC.raw_os_error(),
+            ))
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
@@ -635,7 +642,7 @@ fn stream_write_failure_never_claims_integrity() {
             || Ok(())
         )
         .unwrap_err(),
-        EngineError::DownloadIo
+        EngineError::LocalStorageFull
     );
 }
 

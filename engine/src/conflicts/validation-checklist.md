@@ -92,6 +92,11 @@ Criação sem B, renomeação, movimentação e substituição precisam de anál
 - [ ] **E09** — Arquivo remoto indisponível, removido ou inacessível; distinguir causas.
 - [ ] **E10** — Integridade divergente após transferência; não confirmar estado incorreto.
 
+E02/E07/E08 têm contrato e oráculos locais em [SYNC-022](../../../docs/SOFTWARE_SPECIFICATION.md#falhas-recuperáveis-de-conta-e-capacidade--sync-022) e na
+[matriz do coordinator](../coordinator/tests/test-cases.md#sync-022--e02e07e08).
+Os checkboxes globais não representam homologação Google/desktop; os ensaios
+externos complementares permanecem nas issues #51/#52/#53.
+
 ## Políticas a especificar e validar
 
 - [ ] **P01** — Sem divergência: sincronização automática.

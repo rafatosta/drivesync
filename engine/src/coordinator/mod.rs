@@ -18,8 +18,11 @@ pub enum RootSuspension {
     Offline,
     RemoteRetry,
     AuthenticationRequired,
+    /// Local capacity requires repair before an explicit synchronization.
     LocalStorageFull,
+    /// Account storage requires repair before an explicit synchronization.
     RemoteStorageFull,
+    /// Project quota requires reset or distributor intervention.
     RemoteQuotaExceeded,
 }
 impl std::fmt::Display for RootSuspension {
@@ -78,7 +81,7 @@ pub(crate) fn verify(
     }
     Ok(())
 }
-/// Transport failures suspend work without claiming that a particular item vanished.
+/// Account, capacity and transport failures suspend work without claiming deletion.
 pub(crate) fn connection(error: EngineError) -> EngineError {
     let reason = match error {
         EngineError::LocalStorageFull => RootSuspension::LocalStorageFull,

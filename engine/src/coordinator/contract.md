@@ -92,3 +92,13 @@ com upload usam esse mesmo ponto de controle. A confirmação só acompanha o wo
 iniciado pela ação explícita; timers, retry, conectividade e reinício não a herdam.
 Locks e validações por item continuam obrigatórios, e nenhuma exclusão é habilitada.
 Contrato e limites em [proteção de lotes](../../../docs/SOFTWARE_SPECIFICATION.md#proteção-de-lotes--sync-014).
+
+## Conta, capacidade e quotas — SYNC-022
+
+`connection` converte falhas de capacidade local/remota e quota de projeto em
+suspensões duráveis não retryable. `report` aplica o mesmo gate aos erros de
+transferência antes da direção seguinte. Retomada explícita revalida o escopo;
+não limpa intenções incertas nem renova orçamento de escrita. Autenticação e
+permissão continuam separadas de divergência de conteúdo. Contrato completo,
+pré-condições, códigos permitidos e limites em
+[SYNC-022](../../../docs/SOFTWARE_SPECIFICATION.md#falhas-recuperáveis-de-conta-e-capacidade--sync-022).

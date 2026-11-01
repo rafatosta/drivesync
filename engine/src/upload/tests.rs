@@ -1298,3 +1298,48 @@ fn sync020_n05_e01_locked_replay_keeps_snapshot_and_resumes_same_id_once() {
     )
     .unwrap();
 }
+
+#[test]
+fn sync022_e02_e07_e08_upload_repair_reuses_preserved_snapshot_and_identity() {
+    for error in [
+        EngineError::RemoteStorageFull,
+        EngineError::RemoteQuotaExceeded,
+        EngineError::RemoteForbidden,
+        EngineError::RemoteRateLimited,
+        EngineError::Authentication(crate::AuthError::ReauthorizationRequired),
+        EngineError::Authentication(crate::AuthError::MissingPermissions),
+    ] {
+        let f = Fixture::new();
+        fs::write(f.root.join("file.txt"), b"abc").unwrap();
+        let mut remote = Fake {
+            fixed_clock: true,
+            now: 100,
+            stat_error: Some(error.clone()),
+            ..Default::default()
+        };
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert!(report.issues.iter().any(|issue| issue.error == error));
+        let op = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+        assert!(!op.confirmed);
+        let snapshot = f.path.with_file_name(&op.snapshot);
+        assert_eq!(fs::read(&snapshot).unwrap(), b"abc");
+        for _ in 0..2 {
+            let report = f.run(&mut remote, HashSet::new()).unwrap();
+            assert_eq!(report.issues[0].error, EngineError::UploadDeferred);
+            assert_eq!(remote.generated, 1);
+            assert_eq!(remote.begins, 0);
+            assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"abc");
+        }
+        remote.stat_error = None;
+        remote.now = op.retry.not_before;
+        assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 1);
+        let confirmed = f.uploads().load(Path::new("file.txt")).unwrap().unwrap();
+        assert!(confirmed.confirmed);
+        assert_eq!(confirmed.id, op.id);
+        assert_eq!(remote.data[&op.id], b"abc");
+        assert!(!snapshot.exists());
+        assert_eq!(f.run(&mut remote, HashSet::new()).unwrap().uploaded, 0);
+        assert_eq!(remote.generated, 1);
+        assert_eq!(remote.begins, 1);
+    }
+}
