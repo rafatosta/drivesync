@@ -204,9 +204,9 @@ pub(super) fn verify_presentations(mut capture: impl FnMut(&adw::Window, &str)) 
             assert_eq!(row.is_active(), active);
             assert!(!guard.get());
             assert!(group.description().unwrap().contains(if active {
-                "Only new local files"
+                "New local files and folders can be uploaded"
             } else {
-                "Download only"
+                "Automatic uploads are disabled"
             }));
             capture(
                 &window,
