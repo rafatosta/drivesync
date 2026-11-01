@@ -10,6 +10,8 @@ pub enum ResolutionChoice {
     KeepLocal,
     KeepRemote,
     KeepBoth,
+    /// A separately reviewed and verified plain-text candidate.
+    MergeText,
 }
 
 /// A decision bound to the exact saved evidence displayed by the interface.
@@ -18,6 +20,7 @@ pub enum ResolutionChoice {
 pub struct ResolutionRequest {
     pub(crate) record: ConflictRecord,
     pub(crate) choice: ResolutionChoice,
+    pub(crate) merge: Option<super::text::MergeEvidence>,
 }
 impl ResolutionRequest {
     /// Requires a pending binary-file proposal with both observed identities.
@@ -26,6 +29,9 @@ impl ResolutionRequest {
         record: &ConflictRecord,
         choice: ResolutionChoice,
     ) -> Result<Self, EngineError> {
+        if choice == ResolutionChoice::MergeText {
+            return Err(EngineError::InvalidPlan);
+        }
         crate::ResolutionProposal::from_record(record).map_err(|_| EngineError::InvalidPlan)?;
         if !matches!(
             record.diagnosis,
@@ -39,6 +45,7 @@ impl ResolutionRequest {
         Ok(Self {
             record: record.clone(),
             choice,
+            merge: None,
         })
     }
 }
@@ -80,6 +87,7 @@ pub(crate) struct Plan {
     pub remote: RemoteVersion,
     pub choice: ResolutionChoice,
     pub base: Option<ConfirmedBase>,
+    pub merge: Option<super::text::MergeEvidence>,
     pub desired_name: String,
     pub copy_name: Option<String>,
     pub copy_id: Option<String>,
@@ -118,6 +126,7 @@ pub(crate) struct Intent {
     pub stage: Stage,
     pub local: Option<Blob>,
     pub remote: Option<Blob>,
+    pub merged: Option<Blob>,
     pub result: Option<RemoteVersion>,
     pub copy_result: Option<RemoteVersion>,
     pub installed: Option<crate::download::Identity>,
@@ -132,7 +141,9 @@ impl Intent {
         format!("DriveSync backup conflict-{}.bak", self.id)
     }
     pub fn winner(&self) -> Result<&Blob, EngineError> {
-        if self.plan.choice == ResolutionChoice::KeepRemote {
+        if self.plan.choice == ResolutionChoice::MergeText {
+            self.merged.as_ref()
+        } else if self.plan.choice == ResolutionChoice::KeepRemote {
             self.remote.as_ref()
         } else {
             self.local.as_ref()
@@ -140,7 +151,24 @@ impl Intent {
         .ok_or(EngineError::StateStorage)
     }
     pub fn valid(&self) -> bool {
-        hex(&self.id, 64)
+        ((self.plan.choice == ResolutionChoice::MergeText) == self.plan.merge.is_some())
+            && self
+                .plan
+                .merge
+                .as_ref()
+                .is_none_or(|proof| proof.valid(&self.plan))
+            && self.merged.as_ref().is_none_or(|blob| {
+                self.plan.merge.as_ref().is_some_and(|proof| {
+                    blob.sha256 == super::text::sha(&proof.result)
+                        && blob.md5 == super::text::md5(&proof.result)
+                        && blob.size == proof.result.len() as u64
+                        && blob.identity.inode > 0
+                })
+            })
+            && (self.stage < Stage::Preserved
+                || self.plan.choice != ResolutionChoice::MergeText
+                || self.merged.is_some())
+            && hex(&self.id, 64)
             && self.plan.conflict.as_deref().is_none_or(|id| hex(id, 64))
             && (self.plan.choice != ResolutionChoice::KeepBoth || self.plan.conflict.is_some())
             && self.root.inode > 0

@@ -426,7 +426,7 @@ pub(crate) fn run_with_root(
                     return Err(EngineError::DownloadConflict);
                 }
                 root.validate_parent(&path, filesystem::identity(&p)?)?;
-                journal.put_operation(
+                journal.put_verified_operation(
                     client,
                     &plan,
                     &Operation {
@@ -444,6 +444,8 @@ pub(crate) fn run_with_root(
                             sha256: op.sha.clone(),
                         },
                     },
+                    root,
+                    cancel,
                 )?;
                 // A lost upload confirmation can look like an unowned local
                 // destination to the preceding download pass. Exact ID, original

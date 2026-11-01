@@ -1,4 +1,5 @@
 //! SQLite observations, plans and durable download-operation evidence.
+mod base_content;
 pub(crate) mod recovery;
 mod roots;
 pub(crate) use roots::Roots;
@@ -29,7 +30,8 @@ const SCHEMA:&str="CREATE TABLE roots(client TEXT NOT NULL, account TEXT NOT NUL
 CREATE TABLE observations(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,generation INTEGER NOT NULL,item TEXT NOT NULL,plan TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
 CREATE TABLE downloads(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
 CREATE TABLE conflict_copies(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,operation TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,operation),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
-CREATE TABLE resolutions(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));";
+CREATE TABLE resolutions(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(client,account,remote,local,file),FOREIGN KEY(client,account,remote,local) REFERENCES roots(client,account,remote,local));
+CREATE TABLE base_content(client TEXT NOT NULL,account TEXT NOT NULL,remote TEXT NOT NULL,local TEXT NOT NULL,file TEXT NOT NULL,version INTEGER NOT NULL,sha TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(client,account,remote,local,file,version,sha));";
 fn failed(_: impl std::fmt::Debug) -> EngineError {
     EngineError::StateStorage
 }
@@ -39,7 +41,7 @@ pub(crate) struct Store(Connection);
 impl Store {
     /// Opens the private database. Existing corrupt/foreign/empty databases fail closed.
     pub(crate) fn open(path: &Path) -> Result<Self, EngineError> {
-        Self::open_format(path, APP_ID, 4, SCHEMA)
+        Self::open_format(path, APP_ID, 5, SCHEMA)
     }
 
     /// Opens one exact internal format, without migrations or automatic resets.

@@ -3,6 +3,8 @@ pub(crate) mod execution;
 pub(crate) mod guard;
 mod local;
 mod models;
+pub(crate) mod text;
+pub use text::TextMergeCandidate;
 mod preferences;
 pub(crate) use preferences::candidate as preferences_candidate;
 pub use preferences::ConflictPreference;

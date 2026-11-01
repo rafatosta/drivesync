@@ -41,13 +41,7 @@ pub(crate) fn saved(intent: &Intent) -> Option<ResolutionProgress> {
         target_path: intent.plan.target.clone(),
         choice: intent.plan.choice,
         state,
-        preserved_paths: vec![
-            intent
-                .plan
-                .origin
-                .with_file_name(super::local::remote_name(intent)),
-            intent.plan.origin.with_file_name(intent.backup()),
-        ],
+        preserved_paths: super::execution::report(intent).preserved_paths,
         additional_path: intent
             .plan
             .copy_name

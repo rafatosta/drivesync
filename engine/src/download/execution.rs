@@ -411,9 +411,13 @@ fn matches_metadata(expected: &InventoryEntry, current: &InventoryEntry) -> bool
 }
 impl Session<'_> {
     fn put(&self, op: &Operation) -> Result<(), EngineError> {
-        self.context
-            .store
-            .put_operation(self.context.client, self.context.scope, op)
+        self.context.store.put_verified_operation(
+            self.context.client,
+            self.context.scope,
+            op,
+            self.root,
+            self.context.cancel,
+        )
     }
     /// Equal bytes never bypass identity, latest-operation or scope checks.
     fn equivalent(

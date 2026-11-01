@@ -210,6 +210,7 @@ impl Center {
 
 fn choice_label(choice: ResolutionChoice) -> &'static str {
     match choice {
+        ResolutionChoice::MergeText => "Apply reviewed text merge…",
         ResolutionChoice::KeepLocal => "Keep local version…",
         ResolutionChoice::KeepRemote => "Keep Drive version…",
         ResolutionChoice::KeepBoth => "Keep both versions…",
@@ -225,6 +226,7 @@ fn confirmation(
 ) -> adw::MessageDialog {
     let dialog = adw::MessageDialog::new(Some(parent), Some("Apply this version choice?"), None);
     let effect=match choice {
+        ResolutionChoice::MergeText=>"The reviewed plain-text candidate replaces both active versions at the existing Drive ID. Base, local and Drive versions are preserved. The positional merge requires review of the whole candidate; it cannot establish semantic compatibility.",
         ResolutionChoice::KeepLocal=>"The local bytes will replace the observed Drive version at its original ID. Available versions are preserved before replacement.",
         ResolutionChoice::KeepRemote=>"The observed Drive bytes will become the active local version. The displaced local version is preserved beside the file.",
         ResolutionChoice::KeepBoth=>"The local version stays at the original file name and Drive ID. The observed Drive version becomes another synchronized file named with ‘DriveSync remote conflict’ and a unique operation ID. Both observed versions are also preserved locally.",
@@ -286,6 +288,48 @@ pub(super) fn add_choices(row: &adw::ExpanderRow, center: &Rc<Center>, record: &
         });
     });
     buttons.append(&compare);
+    let merge = gtk::Button::with_label("Review plain-text merge…");
+    let merge_record = record.clone();
+    let weak = Rc::downgrade(center);
+    merge.connect_clicked(move |_| {
+        let Some(center) = weak.upgrade() else { return; };
+        if center.busy.get() || center.loading.get() || center.job.running() { return; }
+        center.loading.set(true);
+        center.list.set_sensitive(false);
+        center.refresh.set_sensitive(false);
+        center.status.set_label("Verifying the retained common base and both observed versions…");
+        let engine = center.engine.clone();
+        let id = center.id.clone();
+        let record = merge_record.clone();
+        let cancel = drivesync_engine::Cancellation::new();
+        let weak_window = center.window.clone();
+        let close_cancel = cancel.clone();
+        let handler = weak_window.upgrade().map(|window| window.connect_close_request(move |_| { close_cancel.cancel(); gtk::glib::Propagation::Proceed }));
+        crate::flow::work(move || engine.preview_text_merge(&id, &record, &cancel), {
+            let record = merge_record.clone();
+            move |result| {
+                if let (Some(window), Some(handler)) = (weak_window.upgrade(), handler) { window.disconnect(handler); }
+                center.loading.set(false);
+                center.list.set_sensitive(true);
+                center.refresh.set_sensitive(true);
+                match result {
+                    Ok(candidate) => {
+                        center.status.set_label("Plain-text candidate verified for review. No decision accepted.");
+                        if let Some(window) = center.window.upgrade().filter(|w| w.is_visible()) {
+                            let dialog = super::text_merge::dialog(&window, &center.account, &record, &candidate);
+                            let weak = Rc::downgrade(&center);
+                            dialog.connect_response(Some("apply"), move |_, _| {
+                                if let Some(center) = weak.upgrade() { center.run(ResolutionTask::Apply(Box::new(candidate.accept_reviewed()))); }
+                            });
+                            dialog.present();
+                        }
+                    }
+                    Err(error) => center.status.set_label(&format!("Text merge unavailable: {error}. A retained verified common base and compatible plain text are required. Offline, overlap, unsupported content or stale versions keep the conflict pending. You can compare versions or decide later.")),
+                }
+            }
+        });
+    });
+    buttons.append(&merge);
     for choice in [
         ResolutionChoice::KeepLocal,
         ResolutionChoice::KeepRemote,

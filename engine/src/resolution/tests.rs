@@ -193,13 +193,16 @@ struct Fixture {
 }
 impl Fixture {
     fn new(local: &[u8]) -> Self {
+        Self::with_base(local, b"base")
+    }
+    fn with_base(local: &[u8], base_bytes: &[u8]) -> Self {
         let directory = std::env::temp_dir().join(format!(
             "drivesync-resolution-{}",
             oauth2::CsrfToken::new_random().secret()
         ));
         let root = directory.join("root");
         fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("report.txt"), b"base").unwrap();
+        fs::write(root.join("report.txt"), base_bytes).unwrap();
         let opened = Root::open(&root).unwrap();
         let fingerprint = filesystem::fingerprint_root(
             &opened,
@@ -239,7 +242,7 @@ impl Fixture {
             .unwrap();
         let identity = filesystem::identity(&File::open(root.join("report.txt")).unwrap()).unwrap();
         store
-            .put_operation(
+            .put_verified_operation(
                 "client",
                 &scope,
                 &Operation {
@@ -250,8 +253,8 @@ impl Fixture {
                         name: "report.txt".into(),
                         mime_type: "text/plain".into(),
                         version: Some(1),
-                        size: Some(4),
-                        md5_checksum: Some(md5(b"base")),
+                        size: Some(base_bytes.len() as u64),
+                        md5_checksum: Some(md5(base_bytes)),
                         web_view_link: None,
                         kind: InventoryKind::Binary,
                     },
@@ -261,9 +264,11 @@ impl Fixture {
                     parent: filesystem::identity(&opened.file).unwrap(),
                     phase: Phase::Installed {
                         identity,
-                        sha256: sha(b"base"),
+                        sha256: sha(base_bytes),
                     },
                 },
+                &opened,
+                &Cancellation::new(),
             )
             .unwrap();
         fs::write(root.join("report.txt"), local).unwrap();
@@ -298,6 +303,7 @@ impl Fixture {
             remote: remote.observe("file").unwrap(),
             choice,
             base: Some(self.base.clone()),
+            merge: None,
             desired_name: target.into(),
             copy_name: (choice == ResolutionChoice::KeepBoth)
                 .then(|| "report (remote copy).txt".into()),
@@ -981,6 +987,7 @@ fn c09_fresh_classification_selects_and_executes_both_independent_combinations()
             remote: remote.observe("file").unwrap(),
             choice: selected.choice,
             base: Some(fixture.base.clone()),
+            merge: None,
             desired_name: selected
                 .target
                 .file_name()
@@ -1269,4 +1276,267 @@ fn comparison_bounds_content_and_rejects_stale_cancelled_and_symlink_inputs() {
         fs::read(fixture.root.join("original.txt")).unwrap(),
         b"local"
     );
+}
+
+/// Exercises the production comparison and candidate builder with retained B.
+fn text_candidate(
+    fixture: &Fixture,
+    remote: &mut Provider,
+) -> Result<crate::TextMergeCandidate, EngineError> {
+    let root = Root::open(&fixture.root)?;
+    let store = Store::open(&fixture.db)?;
+    let version = remote.observe("file")?;
+    let cancel = Cancellation::new();
+    let record = crate::ConflictRecord {
+        conflict_id: "b".repeat(64),
+        remote_id: Some("file".into()),
+        remote_parent_id: Some("root".into()),
+        remote_name: Some("report.txt".into()),
+        relative_path: Some("report.txt".into()),
+        diagnosis: crate::ChangeKind::ConcurrentChanges,
+        status: crate::ConflictStatus::Pending,
+        local_size: None,
+        local_modified_unix: None,
+        remote_size: version.item.size,
+        local_fingerprint: filesystem::fingerprint_root(
+            &root,
+            std::path::Path::new("report.txt"),
+            &cancel,
+        )?,
+        remote_version: version.item.version,
+        outcomes: vec![],
+    };
+    let bytes = store
+        .common_base("client", &fixture.scope, "file", &fixture.base)?
+        .ok_or(EngineError::ObservationUnknown)?;
+    let comparison = crate::comparison::inspect(&root, remote, &record, &cancel)?;
+    text::candidate(
+        "client",
+        &fixture.scope,
+        &record,
+        fixture.base.clone(),
+        version,
+        bytes,
+        comparison,
+    )
+}
+fn text_plan(fixture: &Fixture, remote: &mut Provider) -> Plan {
+    let candidate = text_candidate(fixture, remote).unwrap();
+    assert_eq!(candidate.base(), b"a\nb\n");
+    assert_eq!(candidate.local(), b"A\nb\n");
+    assert_eq!(candidate.remote(), b"a\nB\n");
+    assert_eq!(candidate.result(), b"A\nB\n");
+    let request = candidate.accept_reviewed();
+    let mut plan = fixture.plan(
+        remote,
+        ResolutionChoice::KeepLocal,
+        "report.txt",
+        "report.txt",
+    );
+    plan.choice = ResolutionChoice::MergeText;
+    plan.merge = request.merge;
+    plan
+}
+#[test]
+fn p05_reviewed_merge_preserves_three_versions_confirms_new_base_and_replays_once() {
+    let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+    let mut remote = Provider::new(b"a\nB\n");
+    let plan = text_plan(&fixture, &mut remote);
+    assert_eq!(remote.effects, 0);
+    assert!(fixture.intent_or_none().is_none());
+    fixture.begin(plan);
+    let report = fixture.run(&mut remote).unwrap();
+    assert_eq!(
+        fs::read(fixture.root.join("report.txt")).unwrap(),
+        b"A\nB\n"
+    );
+    assert_eq!(remote.objects["file"].bytes, b"A\nB\n");
+    let versions: Vec<_> = report
+        .preserved_paths
+        .iter()
+        .map(|p| fs::read(fixture.root.join(p)).unwrap())
+        .collect();
+    for bytes in [b"a\nb\n", b"A\nb\n", b"a\nB\n", b"A\nB\n"] {
+        assert!(versions.contains(&bytes.to_vec()));
+    }
+    use std::os::unix::fs::PermissionsExt;
+    for path in report.preserved_paths.iter().filter(|p| {
+        **p != std::path::Path::new("report.txt").with_file_name(fixture.intent().backup())
+    }) {
+        assert_eq!(
+            fs::metadata(fixture.root.join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    let base = fixture.bases().remove("file").unwrap();
+    assert_eq!(
+        Store::open(&fixture.db)
+            .unwrap()
+            .common_base("client", &fixture.scope, "file", &base)
+            .unwrap(),
+        Some(b"A\nB\n".to_vec())
+    );
+    assert_eq!(fixture.run(&mut remote).unwrap(), report);
+    assert_eq!(remote.effects, 1);
+}
+impl Fixture {
+    fn intent_or_none(&self) -> Option<Intent> {
+        Store::open(&self.db)
+            .unwrap()
+            .resolutions("client", &self.scope)
+            .unwrap()
+            .into_iter()
+            .next()
+    }
+}
+#[test]
+fn p05_lost_remote_response_reopens_and_reconciles_without_duplicate_upload() {
+    let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+    let mut remote = Provider::new(b"a\nB\n");
+    fixture.begin(text_plan(&fixture, &mut remote));
+    remote.lose_update = true;
+    assert!(fixture.run(&mut remote).is_err());
+    assert_eq!(fixture.intent().stage, Stage::RemotePending);
+    assert_eq!(remote.effects, 1);
+    assert!(fixture.bases().is_empty());
+    remote.now += 1000;
+    fixture.run(&mut remote).unwrap();
+    assert_eq!(remote.effects, 1);
+    assert_eq!(fixture.intent().stage, Stage::Confirmed);
+    assert_eq!(
+        fs::read(fixture.root.join("report.txt")).unwrap(),
+        b"A\nB\n"
+    );
+}
+#[test]
+fn p05_offline_and_snapshot_races_never_apply_the_candidate() {
+    for fault in 1..=4 {
+        let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+        let mut remote = Provider::new(b"a\nB\n");
+        remote.preview_fault = fault;
+        remote.preview_path = Some(fixture.root.join("report.txt"));
+        assert!(text_candidate(&fixture, &mut remote).is_err());
+        assert_eq!(remote.effects, 0);
+        assert!(fixture.intent_or_none().is_none());
+    }
+}
+#[test]
+fn p05_local_remote_and_scope_changes_after_review_block_application() {
+    for fault in 0..3 {
+        let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+        let mut remote = Provider::new(b"a\nB\n");
+        let mut plan = text_plan(&fixture, &mut remote);
+        if fault == 2 {
+            plan.merge.as_mut().unwrap().scope.account_id = AccountId("other".into());
+        }
+        fixture.begin(plan);
+        if fault == 0 {
+            fs::write(fixture.root.join("report.txt"), b"concurrent edit").unwrap();
+        }
+        if fault == 1 {
+            remote.objects.get_mut("file").unwrap().version += 1;
+        }
+        assert!(fixture.run(&mut remote).is_err());
+        assert_eq!(remote.effects, 0);
+    }
+}
+#[test]
+fn p05_missing_corrupt_base_and_unsupported_text_remain_unaccepted() {
+    for fault in 0..4 {
+        let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+        let mut remote = Provider::new(if fault == 2 { b"C\nb\n" } else { b"a\nB\n" });
+        if fault == 0 {
+            rusqlite::Connection::open(&fixture.db)
+                .unwrap()
+                .execute_batch("DELETE FROM base_content")
+                .unwrap();
+        }
+        if fault == 1 {
+            rusqlite::Connection::open(&fixture.db)
+                .unwrap()
+                .execute_batch("UPDATE base_content SET bytes=X'00'")
+                .unwrap();
+        }
+        if fault == 3 {
+            fs::write(fixture.root.join("report.txt"), b"A\0\nb\n").unwrap();
+        }
+        assert!(text_candidate(&fixture, &mut remote).is_err());
+        assert_eq!(remote.effects, 0);
+        assert!(fixture.intent_or_none().is_none());
+    }
+}
+
+#[test]
+fn p05_durable_boundaries_recover_after_sqlite_failures_without_duplicate_effects() {
+    for boundary in [
+        "Preserved",
+        "RemotePending",
+        "RemoteVerified",
+        "LocalPending",
+        "Verified",
+        "Confirmed",
+    ] {
+        let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+        let mut remote = Provider::new(b"a\nB\n");
+        fixture.begin(text_plan(&fixture, &mut remote));
+        let db = rusqlite::Connection::open(&fixture.db).unwrap();
+        db.execute_batch(&format!("CREATE TRIGGER fail BEFORE UPDATE ON resolutions WHEN json_extract(NEW.record,'$.stage')='{boundary}' BEGIN SELECT RAISE(ABORT,'injected'); END;")).unwrap();
+        assert_eq!(
+            fixture.run(&mut remote),
+            Err(EngineError::StateStorage),
+            "{boundary}"
+        );
+        assert_ne!(fixture.intent().stage, Stage::Confirmed);
+        let intent = fixture.intent();
+        for (kind, bytes) in [("base", b"a\nb\n"), ("merged", b"A\nB\n")] {
+            assert_eq!(
+                fs::read(fixture.root.join(format!(
+                    "DriveSync backup conflict-{}-{kind}.bak",
+                    intent.id
+                )))
+                .unwrap(),
+                bytes
+            );
+        }
+        db.execute_batch("DROP TRIGGER fail").unwrap();
+        remote.now += 1000;
+        fixture.run(&mut remote).unwrap();
+        assert_eq!(remote.effects, 1, "{boundary}");
+        assert_eq!(fixture.intent().stage, Stage::Confirmed);
+        assert_eq!(
+            fs::read(fixture.root.join("report.txt")).unwrap(),
+            b"A\nB\n"
+        );
+    }
+}
+#[test]
+fn p05_corrupt_preserved_ancestor_and_local_race_after_upload_block_confirmation() {
+    for corrupt in [true, false] {
+        let fixture = Fixture::with_base(b"A\nb\n", b"a\nb\n");
+        let mut remote = Provider::new(b"a\nB\n");
+        fixture.begin(text_plan(&fixture, &mut remote));
+        if corrupt {
+            remote.lose_update = true;
+            assert!(fixture.run(&mut remote).is_err());
+            fs::write(
+                fixture.root.join(format!(
+                    "DriveSync backup conflict-{}-base.bak",
+                    fixture.intent().id
+                )),
+                b"corrupt",
+            )
+            .unwrap();
+            remote.now += 1000;
+        } else {
+            remote.local_after_update = Some(fixture.root.join("report.txt"));
+        }
+        assert!(fixture.run(&mut remote).is_err());
+        assert_eq!(remote.effects, 1);
+        assert!(fixture.bases().is_empty());
+        assert_ne!(fixture.intent().stage, Stage::Confirmed);
+    }
 }

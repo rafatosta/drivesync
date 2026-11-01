@@ -2,6 +2,7 @@
 mod actions;
 mod comparison;
 mod models;
+mod text_merge;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;

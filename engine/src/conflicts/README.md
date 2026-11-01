@@ -24,4 +24,5 @@ pura: somente o relatório de execução confirma cópias adicionais; cópia nã
 significa resolução nem sucesso de sincronização.
 
 O [estudo SYNC-026](text-merge.md) define um gerador puro e limitado de candidatos
-textuais; não habilita mesclagem automática ou instalação de resultados.
+textuais. A integração revisada da #68 usa base durável e aplicação recuperável;
+mesclagem automática sem revisão permanece desabilitada.
