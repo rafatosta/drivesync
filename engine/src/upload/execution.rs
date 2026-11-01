@@ -180,6 +180,9 @@ pub(crate) fn run_with_root(
                             return Err(EngineError::LocalTemporary)
                         }
                         crate::local::Evidence::Writing => return Err(EngineError::LocalWriting),
+                        crate::local::Evidence::AccessDenied => {
+                            return Err(EngineError::LocalAccessDenied)
+                        }
                         crate::local::Evidence::Unknown => {
                             return Err(EngineError::ObservationUnknown)
                         }
@@ -444,6 +447,7 @@ pub(crate) fn run_with_root(
                 error,
                 EngineError::StateStorage
                     | EngineError::InvalidPlan
+                    | EngineError::LocalAccessDenied
                     | EngineError::DownloadIo
                     | EngineError::RootSuspended(_)
             ) {

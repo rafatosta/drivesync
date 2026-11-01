@@ -301,7 +301,7 @@ fn i09_nonregular_or_unreadable_identity_never_becomes_absence() {
     let mut source = provider(&inv, V1);
     let result = cycle(&f, &inv, &mut source);
     fs::set_permissions(&path, permissions).unwrap();
-    assert!(matches!(result, Err(EngineError::DownloadIo)));
+    assert!(matches!(result, Err(EngineError::LocalAccessDenied)));
     assert!(source.media_ids.is_empty());
     let bases = Store::open(&f.db())
         .unwrap()

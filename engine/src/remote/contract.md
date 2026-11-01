@@ -20,3 +20,8 @@ Adaptador REST da Drive API v3. Não assumir responsabilidades de outros módulo
 
 ## Qualidade de contrato
 Toda operação deverá especificar efeitos colaterais, idempotência, concorrência permitida, pré/pós-condições e recuperação após interrupções. Nenhuma falha pode ser interpretada como sucesso.
+
+`canDownload=false` é distinto de capacidade ausente; ambos impedem download,
+mas somente o primeiro comprova negação. `canEdit` não é requisito de leitura.
+Não se traduzem modos/ACLs locais em roles Drive. Capacidades são revalidadas
+pelo executor e não substituem o tratamento de negação pela API.

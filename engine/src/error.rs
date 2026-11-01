@@ -23,6 +23,8 @@ pub enum EngineError {
     LocalTemporary,
     ObservationUnknown,
     DownloadIntegrity,
+    /// A local syscall denied access; no permission repair is attempted.
+    LocalAccessDenied,
     DownloadIo,
     RemoteChanged,
     ChangeCursorRejected,
@@ -59,6 +61,7 @@ impl std::fmt::Display for EngineError {
             Self::ObservationUnknown => f.write_str("This item could not be verified. Check access and synchronize again. Existing versions were preserved."),
             Self::DownloadConflict => f.write_str("A local file or folder conflicts with this download. Existing data was preserved."),
             Self::DownloadIntegrity => f.write_str("The downloaded file failed its size or checksum verification. It was not installed."),
+            Self::LocalAccessDenied => f.write_str("Local access was denied. Check file and folder permissions, then synchronize again. DriveSync does not change permissions or select a version to bypass this limitation."),
             Self::DownloadIo => f.write_str("Could not safely read, write or synchronize the local folder. Check permissions and free space."),
             Self::ChangeCursorRejected => f.write_str("The Drive change cursor was rejected. A complete reconciliation is required."),
             Self::RemoteChanged => f.write_str("The item or its folder changed on Google Drive during verification. Run synchronization again. Existing local files were preserved."),

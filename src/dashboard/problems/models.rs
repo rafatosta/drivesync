@@ -136,6 +136,16 @@ mod tests {
         assert!(pending(&[item.clone()])[0].record.is_none());
         item.diagnosis = ChangeKind::Unsupported;
         assert!(pending(&[item.clone()])[0].record.is_none());
+        for diagnosis in [
+            ChangeKind::AccessDenied,
+            ChangeKind::LocalAccessDenied,
+            ChangeKind::MetadataUnavailable,
+        ] {
+            item.diagnosis = diagnosis;
+            let rows = pending(&[item.clone()]);
+            assert!(rows[0].record.is_none());
+            assert_ne!(rows[0].category, Category::Conflicts);
+        }
         item.status = ConflictStatus::Resolved;
         assert!(pending(&[item]).is_empty());
     }

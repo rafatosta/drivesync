@@ -9,8 +9,17 @@ use std::{
     path::{Component, Path},
 };
 
-pub(crate) fn io(_: impl std::fmt::Debug) -> EngineError {
-    EngineError::DownloadIo
+/// Classifies actual syscall failures without inferring access from POSIX mode bits.
+/// ACLs and sandbox policy remain enforced by the kernel; no repair is attempted.
+pub(crate) fn io(error: impl Into<std::io::Error>) -> EngineError {
+    let error = error.into();
+    if error.kind() == std::io::ErrorKind::PermissionDenied
+        || error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
+    {
+        EngineError::LocalAccessDenied
+    } else {
+        EngineError::DownloadIo
+    }
 }
 pub(crate) fn identity(file: &File) -> Result<Identity, EngineError> {
     let m = file.metadata().map_err(io)?;

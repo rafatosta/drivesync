@@ -520,3 +520,65 @@ fn n03_write_permission_revoked_during_read_stops_an_already_open_staging_descri
         0
     );
 }
+
+#[test]
+fn sync018_c22_e03_revoked_capability_preserves_base_across_restart_and_retry() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, inv) = installed();
+    let original_base = base(&f, &inv).unwrap();
+    let path = f.root.join("dados.db");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let next = remote(V2, 2);
+    let plan = prepare(&f, &next).unwrap();
+    for _ in 0..2 {
+        let mut source = fake(&next, V2);
+        source.entries.get_mut("file").unwrap().kind =
+            InventoryKind::Skipped(crate::SkipReason::DownloadNotAllowed);
+        let report =
+            execute_plan(&f, &next, &plan, &mut source, &Cancellation::new(), |_| {}).unwrap();
+        assert!(!report.issues.is_empty());
+        assert_eq!(source.media_calls, 0);
+        assert_eq!(fs::read(&path).unwrap(), V1);
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o640);
+        assert_eq!(base(&f, &inv).unwrap(), original_base);
+    }
+    let mut restored = fake(&next, V2);
+    assert_eq!(cycle(&f, &next, &mut restored).unwrap().updated, 1);
+    assert_eq!(fs::read(&path).unwrap(), V2);
+    assert_eq!(cycle(&f, &next, &mut restored).unwrap().unchanged, 1);
+    assert_eq!(restored.media_calls, 1);
+}
+
+#[test]
+fn sync018_e03_syscall_denials_are_distinct_from_generic_io() {
+    for error in [rustix::io::Errno::ACCESS, rustix::io::Errno::PERM] {
+        assert_eq!(filesystem::io(error), EngineError::LocalAccessDenied);
+    }
+    assert_eq!(
+        filesystem::io(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        EngineError::LocalAccessDenied
+    );
+    assert_eq!(
+        filesystem::io(rustix::io::Errno::NOSPC),
+        EngineError::DownloadIo
+    );
+}
+
+#[test]
+fn sync018_c23_local_mode_is_not_a_drive_role_or_content_conflict() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, inv) = installed();
+    let before = base(&f, &inv).unwrap();
+    let path = f.root.join("dados.db");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+    for _ in 0..2 {
+        let mut source = fake(&inv, V1);
+        let report = cycle(&f, &inv, &mut source).unwrap();
+        assert_eq!(report.unchanged, 1);
+        assert!(report.issues.is_empty());
+        assert_eq!(source.media_calls, 0);
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o400);
+        assert_eq!(fs::read(&path).unwrap(), V1);
+        assert_eq!(base(&f, &inv).unwrap(), before);
+    }
+}

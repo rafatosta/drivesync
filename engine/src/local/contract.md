@@ -9,3 +9,8 @@ O módulo observa a árvore elegível por descritores, não chama Google e não
 instala, publica ou exclui conteúdo. Evidência desconhecida não é ausência;
 assinaturas são detectores de mudança, não prova de precedência temporal.
 Monitor contínuo permanece proposta e não é pré-condição da varredura por ciclo.
+
+Uma leitura negada pelo kernel produz evidência `AccessDenied`, conservada como
+`Unknown` para o planner e apresentada como limitação de acesso. A travessia
+negada de um diretório invalida o scan completo, preservando o checkpoint anterior.
+Não se infere capacidade por bits POSIX e não se tenta elevar permissões.
