@@ -288,6 +288,48 @@ pub(super) fn add_choices(row: &adw::ExpanderRow, center: &Rc<Center>, record: &
         });
     });
     buttons.append(&compare);
+    let merge = gtk::Button::with_label("Review plain-text merge…");
+    let merge_record = record.clone();
+    let weak = Rc::downgrade(center);
+    merge.connect_clicked(move |_| {
+        let Some(center) = weak.upgrade() else { return; };
+        if center.busy.get() || center.loading.get() || center.job.running() { return; }
+        center.loading.set(true);
+        center.list.set_sensitive(false);
+        center.refresh.set_sensitive(false);
+        center.status.set_label("Verifying the retained common base and both observed versions…");
+        let engine = center.engine.clone();
+        let id = center.id.clone();
+        let record = merge_record.clone();
+        let cancel = drivesync_engine::Cancellation::new();
+        let weak_window = center.window.clone();
+        let close_cancel = cancel.clone();
+        let handler = weak_window.upgrade().map(|window| window.connect_close_request(move |_| { close_cancel.cancel(); gtk::glib::Propagation::Proceed }));
+        crate::flow::work(move || engine.preview_text_merge(&id, &record, &cancel), {
+            let record = merge_record.clone();
+            move |result| {
+                if let (Some(window), Some(handler)) = (weak_window.upgrade(), handler) { window.disconnect(handler); }
+                center.loading.set(false);
+                center.list.set_sensitive(true);
+                center.refresh.set_sensitive(true);
+                match result {
+                    Ok(candidate) => {
+                        center.status.set_label("Plain-text candidate verified for review. No decision accepted.");
+                        if let Some(window) = center.window.upgrade().filter(|w| w.is_visible()) {
+                            let dialog = super::text_merge::dialog(&window, &center.account, &record, &candidate);
+                            let weak = Rc::downgrade(&center);
+                            dialog.connect_response(Some("apply"), move |_, _| {
+                                if let Some(center) = weak.upgrade() { center.run(ResolutionTask::Apply(Box::new(candidate.accept_reviewed()))); }
+                            });
+                            dialog.present();
+                        }
+                    }
+                    Err(error) => center.status.set_label(&format!("Text merge unavailable: {error}. A retained verified common base and compatible plain text are required. Offline, overlap, unsupported content or stale versions keep the conflict pending. You can compare versions or decide later.")),
+                }
+            }
+        });
+    });
+    buttons.append(&merge);
     for choice in [
         ResolutionChoice::KeepLocal,
         ResolutionChoice::KeepRemote,

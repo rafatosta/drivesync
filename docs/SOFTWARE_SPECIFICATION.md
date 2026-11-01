@@ -1508,6 +1508,9 @@ de execução constam na PR. Rede, filesystem e SQLite não participam da funç�
 Integração SYNC-026: `preview_text_merge` produz candidato vinculado à conta,
 raízes, base confirmada, L/R e ETag verificados. Aceitação explícita por candidato
 `text/plain` gera `MergeText`; preferências automáticas não ativam essa escolha.
+A central oferece “Review plain-text merge…”: apresenta B/L/R e resultado
+integrais, conta, arquivo, revisão e consequências. Fechar/adiar não aceita
+decisão; “Apply merge” começa desabilitado e exige marcar a revisão completa.
 A execução preserva B/L/R e resultado, revalida versões, atualiza condicionalmente
 o ID remoto e instala pelo executor recuperável. Só confirma nova B após verificar
 todos os efeitos. Falha, ausência/corrupção de base ou versão obsoleta mantém
