@@ -70,3 +70,22 @@ depois e efeito da repetição. Não executar em dados pessoais.
 SDK Flatpak, respostas simuladas, reabertura SQLite e screenshots de fixtures não
 demonstram estes cenários reais, interrupção de energia nem atomicidade entre uma
 verificação de permissão e o efeito seguinte no Google.
+
+## SYNC-022 — E02/E07/E08
+
+| Cenário | Oráculo automatizado |
+| --- | --- |
+| Capacidade local vs permissão/I/O | `download::filesystem::capacity_tests::e02_classifies_capacity_failures_separately_from_permissions_and_io` |
+| Armazenamento Drive vs quota do projeto vs rate limit/escopo | `remote::errors::recovery_tests::e02_e07_e08_distinguish_repair_from_transient_limits_without_private_messages` |
+| Persistência e reabertura da suspensão; bytes preservados | `coordinator::tests::e02_e07_capacity_and_credentials_persist_until_explicit_revalidation` |
+| Preflight real sem capacidade não cria staging nem altera B | `download::tests::concurrency_tests::sync022_e02_capacity_preflight_preserves_files_and_confirmed_sqlite_base` |
+| Falhas remotas repetidas em V1→V2; B e bytes preservados; retomada idempotente | `download::tests::concurrency_tests::sync022_e02_e07_e08_failed_transfer_preserves_base_and_recovers_after_reopen` |
+| Upload recusa antes do deadline; reabre snapshot/ID e confirma uma vez após reparo | `upload::tests::sync022_e02_e07_e08_upload_repair_reuses_preserved_snapshot_and_identity` |
+| Rate limit com teto persistente, reabertura e recuo do relógio | `upload::tests::e08_rate_limit_backoff_survives_reopen_and_bounds_effect_attempts` |
+| Renovação concorrente única; revogação em A não afeta B após reinício do provider | `auth::tests::expired_credentials_renew_once_under_concurrent_requests_and_keep_refresh`; `auth::tests::restart_reuses_credentials_and_failure_on_a_does_not_change_b` |
+| Timer não retoma capacidade/quota/auth; evento de rede não antecipa backoff | `automatic::policy::availability_tests::root_suspension_retries_only_transient_failures_and_preserves_user_pause`; `automatic::policy::tests::network_hints_resume_offline_but_not_rate_limits_or_blocked_errors` |
+
+As fixtures usam remoto simulado, arquivos e SQLite isolados; não demonstram
+homologação Google/desktop nem disco fisicamente cheio. Falhas de escrita podem
+ser injetadas e o preflight usa capacidade real do volume sem esgotá-lo. As issues
+#51/#52/#53 acompanham os ensaios externos complementares.

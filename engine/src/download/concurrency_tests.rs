@@ -560,7 +560,7 @@ fn sync018_e03_syscall_denials_are_distinct_from_generic_io() {
     );
     assert_eq!(
         filesystem::io(rustix::io::Errno::NOSPC),
-        EngineError::DownloadIo
+        EngineError::LocalStorageFull
     );
 }
 
@@ -581,4 +581,63 @@ fn sync018_c23_local_mode_is_not_a_drive_role_or_content_conflict() {
         assert_eq!(fs::read(&path).unwrap(), V1);
         assert_eq!(base(&f, &inv).unwrap(), before);
     }
+}
+
+#[test]
+fn sync022_e02_e07_e08_failed_transfer_preserves_base_and_recovers_after_reopen() {
+    for error in [
+        EngineError::RemoteStorageFull,
+        EngineError::RemoteQuotaExceeded,
+        EngineError::RemoteRateLimited,
+        EngineError::RemoteForbidden,
+        EngineError::Authentication(crate::AuthError::ReauthorizationRequired),
+        EngineError::Authentication(crate::AuthError::MissingPermissions),
+    ] {
+        let (f, inv) = installed();
+        let original = journal(&f, &inv)
+            .into_iter()
+            .find(|op| matches!(op.phase, Phase::Installed { .. }))
+            .unwrap();
+        let original_json = serde_json::to_string(&original).unwrap();
+        let next = remote(V2, 2);
+        let mut source = fake(&next, V2);
+        source.media_error = Some(error.clone());
+        for _ in 0..2 {
+            let report = cycle(&f, &next, &mut source).unwrap();
+            assert!(report.issues.iter().any(|issue| issue.error == error));
+            assert_eq!(report.updated, 0);
+            assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V1);
+            assert!(base(&f, &inv).is_none());
+            let saved = journal(&f, &inv)
+                .into_iter()
+                .find(|op| op.id == original.id)
+                .unwrap();
+            assert_eq!(serde_json::to_string(&saved).unwrap(), original_json);
+        }
+        source.media_error = None;
+        assert_eq!(cycle(&f, &next, &mut source).unwrap().updated, 1);
+        assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V2);
+        assert_eq!(cycle(&f, &next, &mut source).unwrap().unchanged, 1);
+        assert_eq!(source.media_calls, 1);
+    }
+}
+
+#[test]
+fn sync022_e02_capacity_preflight_preserves_files_and_confirmed_sqlite_base() {
+    let (f, inv) = installed();
+    let original = base(&f, &inv).unwrap();
+    let root = Root::open(&f.root).unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            filesystem::create(&root.file, ".capacity.part", u64::MAX),
+            Err(EngineError::LocalStorageFull)
+        ));
+        assert!(!f.root.join(".capacity.part").exists());
+        assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V1);
+        assert_eq!(base(&f, &inv).unwrap(), original);
+    }
+    drop(root);
+    let next = remote(V2, 2);
+    assert_eq!(cycle(&f, &next, &mut fake(&next, V2)).unwrap().updated, 1);
+    assert_eq!(fs::read(f.root.join("dados.db")).unwrap(), V2);
 }

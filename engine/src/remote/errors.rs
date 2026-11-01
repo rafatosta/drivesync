@@ -43,15 +43,19 @@ fn forbidden_reason(body: &[u8]) -> EngineError {
         )
     }) {
         EngineError::Authentication(AuthError::MissingPermissions)
+    } else if reasons.contains(&"storageQuotaExceeded") {
+        EngineError::RemoteStorageFull
     } else if reasons.iter().any(|r| {
         matches!(
             *r,
-            "RATE_LIMIT_EXCEEDED"
-                | "QUOTA_EXCEEDED"
-                | "rateLimitExceeded"
-                | "userRateLimitExceeded"
-                | "dailyLimitExceeded"
-                | "quotaExceeded"
+            "dailyLimitExceeded" | "quotaExceeded" | "QUOTA_EXCEEDED"
+        )
+    }) {
+        EngineError::RemoteQuotaExceeded
+    } else if reasons.iter().any(|r| {
+        matches!(
+            *r,
+            "RATE_LIMIT_EXCEEDED" | "rateLimitExceeded" | "userRateLimitExceeded"
         )
     }) {
         EngineError::RemoteRateLimited
@@ -119,6 +123,47 @@ mod change_tests {
         }
         assert_eq!(
             change_response_status(429, b""),
+            Err(EngineError::RemoteRateLimited)
+        );
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn e02_e07_e08_distinguish_repair_from_transient_limits_without_private_messages() {
+        for (reason, expected) in [
+            ("storageQuotaExceeded", EngineError::RemoteStorageFull),
+            ("dailyLimitExceeded", EngineError::RemoteQuotaExceeded),
+            ("quotaExceeded", EngineError::RemoteQuotaExceeded),
+            ("QUOTA_EXCEEDED", EngineError::RemoteQuotaExceeded),
+            ("userRateLimitExceeded", EngineError::RemoteRateLimited),
+            ("rateLimitExceeded", EngineError::RemoteRateLimited),
+            ("insufficientFilePermissions", EngineError::RemoteForbidden),
+            (
+                "insufficientPermissions",
+                EngineError::Authentication(AuthError::MissingPermissions),
+            ),
+        ] {
+            for field in ["errors", "details"] {
+                let body = format!(
+                    r#"{{"error":{{"{field}":[{{"reason":"{reason}"}}],"message":"private-token-file-name"}}}}"#
+                );
+                let error = response_status(403, body.as_bytes()).unwrap_err();
+                assert_eq!(error, expected);
+                assert!(!error.to_string().contains("private-token"));
+            }
+        }
+        assert_eq!(
+            response_status(401, b"private-token"),
+            Err(EngineError::Authentication(
+                AuthError::ReauthorizationRequired
+            ))
+        );
+        assert_eq!(
+            response_status(429, b""),
             Err(EngineError::RemoteRateLimited)
         );
     }

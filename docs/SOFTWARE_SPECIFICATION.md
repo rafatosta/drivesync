@@ -1292,3 +1292,63 @@ por esses testes; homologações complementares permanecem nas issues #51, #52 e
 Referência técnica: [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html),
 consultada em 2026-11-01: locks vinculados à descrição aberta, liberação no fechamento,
 contenção não bloqueante e caráter advisory.
+
+## Falhas recuperáveis de conta e capacidade — SYNC-022
+
+**Requisito:** diferenciar autenticação, autorização, capacidade e limitação
+transitória sem inferir exclusão nem escolher conteúdo prevalecente. Pré-condições:
+associação cliente/conta/raízes validada, locks de escopo e raiz, observações
+verificáveis e journals íntegros. Nenhuma reparação apaga arquivos, muda permissões,
+aumenta quota ou reinicializa estado automaticamente.
+
+**Contrato implementado:**
+
+| Entrada | Resultado e ação |
+| --- | --- |
+| Token próximo da expiração | Renovação serializada por conta; confirmar identidade e persistir credenciais antes de retornar sucesso. |
+| HTTP 401 ou refresh `invalid_grant`; escopo insuficiente | Suspender com `AuthenticationRequired`; usar “Check or Reconnect Account” na conta afetada. Falha em A não invalida B. |
+| HTTP 403 sem motivo reconhecido / permissão de arquivo insuficiente | Preservar item; acesso negado à raiz suspende com `RemoteAccessDenied`. Restaurar acesso e tentar explicitamente; não alterar permissões. |
+| `storageQuotaExceeded` | `RemoteStorageFull`: liberar/aumentar armazenamento da conta e sincronizar explicitamente. |
+| `dailyLimitExceeded`, `quotaExceeded`, `QUOTA_EXCEEDED` | `RemoteQuotaExceeded`: aguardar reset ou contatar distribuidor e sincronizar explicitamente. Não tratar quota de projeto como falta de espaço pessoal. |
+| HTTP 429, `rateLimitExceeded`, `userRateLimitExceeded`, `RATE_LIMIT_EXCEEDED` | `RemoteRateLimited` / `RemoteRetry`: backoff controlado existente, sem contornar limites. |
+| Preflight local sem capacidade, ENOSPC ou EDQUOT em escrita/fsync | `LocalStorageFull`: liberar capacidade no volume e tentar explicitamente; não instalar staging parcial nem avançar B. Erro SQLite continua `StateStorage`, exigindo recuperação segura. |
+
+O parser inspeciona somente códigos permitidos nos campos `errors`/`details`;
+mensagens, URLs e identificadores privados do provedor não entram nos erros.
+Motivos de capacidade e quota são persistidos pelo mesmo registro externo de
+suspensão e restaurados antes de iniciar timers; não são retryable. Falhas por
+item aparecem no relatório, e o coordinator impede a direção seguinte quando
+há falha global de autenticação/capacidade/limitação. A UI apresenta o motivo
+sanitizado e usa as ações existentes de reconexão e sincronização explícita.
+
+**Algoritmo e recuperação:** classificar erro → preservar arquivo, B e intenção
+não confirmada → reportar/suspender escopo → aguardar reparo ou deadline →
+revalidar identidade/configuração/acesso/conteúdo e reconciliar efeitos anteriores
+→ confirmar somente resultado verificado. Reinício e tentativa explícita não
+zeram o orçamento de uploads: cinco passes com deadline persistido, atraso
+exponencial de 60 segundos com jitter de 0–30 segundos; após esgotamento, apenas
+consulta/reconciliação. O scheduler usa atraso de 30 até 300 segundos e exclusão
+de workers concorrentes; eventos de rede não antecipam backoff. Deadlines de
+upload sobrevivem à reabertura SQLite e a recuo do relógio. Nenhuma dessas
+políticas autoriza repetir cegamente uma escrita incerta. O scheduler de leitura
+é efêmero e não interpreta `Retry-After`; o orçamento de escrita é durável.
+
+**Oráculos E02/E07/E08:** classificação HTTP e errno; suspensão persistida e
+restaurada; download V1→V2 recusado repetidamente preservando bytes e B, seguido
+de reparo e atualização única; upload bloqueado preservando snapshot/ID, recusa
+antes do deadline, retomada com mesmo ID e repetição sem duplicata; preflight com
+capacidade impossível em filesystem real sem criar staging; expiração concorrente
+com uma renovação; revogação em A preservando B. Matriz de funções em
+[casos do coordinator](../engine/src/coordinator/tests/test-cases.md).
+
+**Limites de validação:** respostas Google e erros de syscall podem ser injetados
+deterministicamente; filesystem e SQLite são reais e isolados. Isso não comprova
+armazenamento Google cheio, política de quotas do serviço, cofre desktop, disco
+real cheio durante fsync, reinício abrupto ou acessibilidade instalada. Homologação
+externa de permissões/quota permanece na issue #53, recuperação real em #52 e UI
+instalada em #51; não são funcionalidades ausentes desta implementação.
+
+Referência técnica consultada em 2026-11-01:
+[Google Drive — Resolve errors](https://developers.google.com/workspace/drive/api/guides/handle-errors),
+classificação de 401/403/429, `storageQuotaExceeded`, `dailyLimitExceeded` e backoff.
+A suspensão até tentativa explícita e os limites concretos são políticas DriveSync.
