@@ -37,3 +37,9 @@ não confirma instalação no caminho original nem sincronização. Relatório e
 recuperação seguem [o contrato de preservação](../conflicts/preservation.md).
 Nomes reservados de backup não entram em inventário/upload. Impossibilidade ou
 prova incompleta mantém a pendência e os artefatos existentes.
+
+## Transferências parciais — SYNC-023
+
+Staging incompleto não é retomado por offset nem publicado: a recuperação
+conservadora reinicia a transferência. Ready/Installed exigem revalidação antes
+de replay. Ver [contrato e oráculos E05/E10](../../../docs/SOFTWARE_SPECIFICATION.md#transferências-parciais-e-integridade--sync-023).
