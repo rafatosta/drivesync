@@ -12,6 +12,8 @@ pub enum SkipReason {
     GoogleNativeOrShortcut,
     UnsupportedGoogleType,
     DownloadNotAllowed,
+    /// The provider did not supply the capability; this is not an explicit denial.
+    DownloadAccessUnknown,
     MissingIntegrityMetadata,
     InvalidWebViewLink,
 }
@@ -168,8 +170,10 @@ impl Item {
             }
         } else if self.mime_type.starts_with("application/vnd.google-apps.") {
             InventoryKind::Skipped(SkipReason::UnsupportedGoogleType)
-        } else if self.capabilities.and_then(|c| c.can_download) != Some(true) {
+        } else if self.capabilities.as_ref().and_then(|c| c.can_download) == Some(false) {
             InventoryKind::Skipped(SkipReason::DownloadNotAllowed)
+        } else if self.capabilities.and_then(|c| c.can_download) != Some(true) {
+            InventoryKind::Skipped(SkipReason::DownloadAccessUnknown)
         } else if version.is_none() || size.is_none() || self.md5_checksum.is_none() {
             InventoryKind::Skipped(SkipReason::MissingIntegrityMetadata)
         } else {

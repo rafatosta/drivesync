@@ -35,6 +35,12 @@ pub enum ChangeKind {
     EditDeleteConflict,
     Temporary,
     Writing,
+    /// The provider explicitly denies the required operation.
+    AccessDenied,
+    /// A local read was denied; this is not evidence of content divergence.
+    LocalAccessDenied,
+    /// Required metadata is absent or cannot be represented safely.
+    MetadataUnavailable,
     Unsupported,
     Unknown,
 }
@@ -60,6 +66,9 @@ impl ChangeKind {
             Self::RemoteUnavailable => "This item is no longer listed in the selected Drive folder. This may reflect a move or lost access; local data was preserved.",
             Self::Temporary => "This looks like a temporary file. Wait for the application to save its final file.",
             Self::Writing => "This file is still changing. Synchronization will check it again on the next cycle.",
+            Self::LocalAccessDenied => "Local access was denied. Restore access and synchronize again. DriveSync does not change permissions or select a version to bypass this limitation.",
+            Self::AccessDenied => "Google Drive does not allow downloading this item. Restore access and synchronize again. No permission or version was changed.",
+            Self::MetadataUnavailable => "Required integrity metadata is unavailable. This item cannot be transferred safely; no version was selected. POSIX permissions, ownership and extended attributes are not synchronized with Drive.",
             Self::Unsupported => "This item’s type or path cannot be synchronized safely. Existing data was preserved.",
             Self::Unknown => "This item could not be verified. Check access and synchronize again; no deletion was inferred.",
         }
@@ -82,6 +91,9 @@ impl ChangeKind {
                 | Self::ExistingLocalData
                 | Self::Temporary
                 | Self::Writing
+                | Self::LocalAccessDenied
+                | Self::AccessDenied
+                | Self::MetadataUnavailable
                 | Self::Unsupported
                 | Self::Unknown
         )
@@ -98,6 +110,7 @@ fn evidence_kind(evidence: Option<&Evidence>) -> Option<ChangeKind> {
     match evidence {
         Some(Evidence::Temporary) => Some(ChangeKind::Temporary),
         Some(Evidence::Writing) => Some(ChangeKind::Writing),
+        Some(Evidence::AccessDenied) => Some(ChangeKind::LocalAccessDenied),
         Some(Evidence::Unknown) => Some(ChangeKind::Unknown),
         Some(Evidence::Unsupported) => Some(ChangeKind::Unsupported),
         _ => None,
@@ -291,7 +304,12 @@ pub(crate) fn classify(
         .filter(|e| {
             matches!(
                 e.kind,
-                ChangeKind::Unknown | ChangeKind::Writing | ChangeKind::Unsupported
+                ChangeKind::Unknown
+                    | ChangeKind::Writing
+                    | ChangeKind::Unsupported
+                    | ChangeKind::AccessDenied
+                    | ChangeKind::LocalAccessDenied
+                    | ChangeKind::MetadataUnavailable
             )
         })
         .filter_map(|e| e.relative_path.as_ref())

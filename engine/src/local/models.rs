@@ -31,6 +31,7 @@ pub(crate) enum Evidence {
     Stable { fingerprint: String, stamp: Stamp },
     Temporary,
     Writing,
+    AccessDenied,
     Unsupported,
     Unknown,
 }
@@ -50,7 +51,12 @@ impl Inventory {
             Some(Evidence::Directory) => L::Directory,
             Some(Evidence::Stable { fingerprint, .. }) => L::Verified(fingerprint.clone()),
             Some(Evidence::Unsupported) => L::SymlinkOrSpecial,
-            Some(Evidence::Temporary | Evidence::Writing | Evidence::Unknown) => L::Unknown,
+            Some(
+                Evidence::Temporary
+                | Evidence::Writing
+                | Evidence::Unknown
+                | Evidence::AccessDenied,
+            ) => L::Unknown,
             None => {
                 if path.ancestors().skip(1).any(|parent| {
                     self.entries

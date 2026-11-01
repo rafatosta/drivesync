@@ -277,3 +277,49 @@ fn n04_c25_root_read_and_write_permissions_are_independent_and_unknown_is_blocke
         );
     }
 }
+
+#[test]
+fn sync018_c22_c23_access_and_metadata_are_not_version_conflicts() {
+    for (caps, checksum, expected) in [
+        (Value::Null, true, Some(crate::ChangeKind::Unknown)),
+        (json!({"canDownload": true, "canEdit": false}), true, None),
+        (
+            json!({"canDownload": false, "canEdit": true}),
+            true,
+            Some(crate::ChangeKind::AccessDenied),
+        ),
+        (
+            json!({"canDownload": true}),
+            false,
+            Some(crate::ChangeKind::MetadataUnavailable),
+        ),
+    ] {
+        let mut value = file("item", "root-id");
+        value["capabilities"] = caps;
+        if !checksum {
+            value["md5Checksum"] = Value::Null;
+        }
+        let item = decode_item(&serde_json::to_vec(&value).unwrap(), "root-id").unwrap();
+        let inventory = RemoteInventory {
+            account_id: account(),
+            root_id: "root-id".into(),
+            entries: vec![item],
+        };
+        let plan = crate::planner::plan(&inventory, std::path::Path::new("/isolated"), |_| {
+            crate::LocalObservation::Absent
+        })
+        .unwrap();
+        if let Some(kind) = expected {
+            assert_eq!(
+                crate::conflicts::plan_diagnosis(
+                    &plan.entries[0].action,
+                    &crate::LocalObservation::Absent
+                ),
+                kind
+            );
+            assert!(kind.needs_attention());
+        } else {
+            assert_eq!(plan.entries[0].action, crate::PlanAction::Download);
+        }
+    }
+}

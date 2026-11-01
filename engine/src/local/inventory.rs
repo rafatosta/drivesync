@@ -124,6 +124,7 @@ pub(super) fn scan_with_wait(
                         candidates.push((child.clone(), s));
                         Evidence::Writing
                     }
+                    Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
                     Err(_) => Evidence::Unknown,
                 }
             } else {
@@ -175,6 +176,7 @@ pub(super) fn scan_with_wait(
                 return Err(EngineError::Authentication(AuthError::Cancelled))
             }
             Err(EngineError::DownloadConflict) => Evidence::Writing,
+            Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
             Err(_) => Evidence::Unknown,
         };
         entries.insert(path, evidence);
