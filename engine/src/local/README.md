@@ -31,3 +31,6 @@ Caminho normal, entrada inválida, falha temporária, interrupção após efeito
 Contrato vigente e oráculos: [inventário e estabilização](reconciliation.md).
 Monitor contínuo permanece proposta; cada ciclo varre a árvore para recuperar
 mudanças ocorridas sem eventos ou com o aplicativo fechado.
+
+Proteção SYNC-020: [política de links, tipos especiais e locks advisory](safety.md).
+Hard links múltiplos ficam incompatíveis; locks exclusivos adiam a leitura.
