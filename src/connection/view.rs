@@ -1,5 +1,6 @@
 //! Compact native connection presentation independent of authentication.
 use adw::{gtk, prelude::*};
+use gettextrs::gettext;
 
 /// Controls owned by one browser authorization window.
 pub(super) struct ConnectionView {
@@ -32,12 +33,16 @@ pub(super) fn set_waiting(
     feedback: &gtk::Label,
     waiting: bool,
 ) {
-    connect.set_label(if waiting { "Cancel" } else { "Sign In…" });
-    connect.set_sensitive(true);
-    subtitle.set_label(if waiting {
-        "Complete authorization in your web browser, then return here."
+    connect.set_label(&if waiting {
+        gettext("Cancel")
     } else {
-        "Sign in to Google using your web browser."
+        gettext("Sign In…")
+    });
+    connect.set_sensitive(true);
+    subtitle.set_label(&if waiting {
+        gettext("Complete authorization in your web browser, then return here.")
+    } else {
+        gettext("Sign in to Google using your web browser.")
     });
     spinner.set_opacity(if waiting { 1.0 } else { 0.0 });
     spinner.set_spinning(waiting);
@@ -47,7 +52,7 @@ pub(super) fn set_waiting(
 /// Fits the normal content naturally; scrolling remains for small displays.
 pub(super) fn build(parent: Option<&gtk::Window>) -> ConnectionView {
     let window = adw::Window::builder()
-        .title("Google Account")
+        .title(gettext("Google Account"))
         .modal(true)
         .default_width(420)
         .width_request(300)
@@ -76,7 +81,7 @@ pub(super) fn build(parent: Option<&gtk::Window>) -> ConnectionView {
     content.append(&image);
     content.append(
         &gtk::Label::builder()
-            .label("Google Account")
+            .label(gettext("Google Account"))
             .css_classes(["title-1"])
             .wrap(true)
             .justify(gtk::Justification::Center)
@@ -94,18 +99,18 @@ pub(super) fn build(parent: Option<&gtk::Window>) -> ConnectionView {
         .build();
     spinner.set_widget_name("connection-spinner");
     content.append(&spinner);
-    let connect = gtk::Button::with_label("Sign In…");
+    let connect = gtk::Button::with_label(&gettext("Sign In…"));
     connect.add_css_class("suggested-action");
     connect.add_css_class("pill");
     content.append(&connect);
     let copy = gtk::Button::builder()
-        .label("Copy Link")
+        .label(gettext("Copy Link"))
         .sensitive(false)
-        .tooltip_text("Available after starting sign-in")
+        .tooltip_text(gettext("Available after starting sign-in"))
         .build();
     copy.add_css_class("pill");
     content.append(&copy);
-    let help = gtk::Label::builder().label("Copy the authorization link to continue in a different browser after starting sign-in.")
+    let help = gtk::Label::builder().label(gettext("Copy the authorization link to continue in a different browser after starting sign-in."))
         .wrap(true).justify(gtk::Justification::Center).css_classes(["dim-label"]).build();
     content.append(&help);
     let feedback = gtk::Label::builder()

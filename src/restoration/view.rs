@@ -3,6 +3,7 @@
 //! Presentation widgets are independent of credential verification and
 //! dashboard routing, which run in the controller.
 use adw::{gtk, prelude::*};
+use gettextrs::gettext;
 
 /// Handles for the status and controls of the startup restoration panel.
 pub(super) struct RestorationView {
@@ -18,12 +19,12 @@ pub(super) fn build() -> RestorationView {
     panel.set_halign(gtk::Align::Center);
     panel.set_valign(gtk::Align::Center);
     let status = gtk::Label::builder()
-        .label("Checking saved accounts…")
+        .label(gettext("Checking saved accounts…"))
         .wrap(true)
         .max_width_chars(48)
         .build();
     let spinner = gtk::Spinner::new();
-    let retry = gtk::Button::with_label("Try Again");
+    let retry = gtk::Button::with_label(&gettext("Try Again"));
     retry.set_visible(false);
     panel.append(&spinner);
     panel.append(&status);

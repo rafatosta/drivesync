@@ -681,8 +681,9 @@ por usuários ou dados persistidos. Traduções com valores e plurais devem mant
 seu significado e permitir ordenação adequada para cada idioma.
 
 Implementação parcial: `src/i18n.rs` configura GNU gettext, os manifestos Flatpak
-compilam `po/pt_BR.po` e a tela de boas-vindas e o menu principal usam o
-catálogo. As demais telas, diagnósticos e metadados ainda precisam ser
+compilam `po/pt_BR.po`; a tela de boas-vindas, o menu principal e as telas
+de restauração e conexão usam o catálogo. Os metadados desktop e AppStream
+incluem português brasileiro. As demais telas e diagnósticos ainda precisam ser
 internacionalizados; a disponibilidade do catálogo não demonstra aceite visual
 ou cobertura integral. Para verificar as mensagens já marcadas e o fallback no
 SDK, executar `python3 -m unittest scripts.tests.test_i18n`. A implementação

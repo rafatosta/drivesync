@@ -3,6 +3,7 @@ mod controller;
 mod view;
 
 use drivesync_engine::{Cancellation, DriveSyncEngine};
+use gettextrs::gettext;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 /// Builds a neutral loading page and registers reusable account actions.
@@ -35,7 +36,7 @@ pub(crate) fn show_accounts(
         crate::flow::InitialDestination::Accounts => {
             crate::automatic::reconcile(engine.clone(), &accounts);
             let welcome = crate::welcome::build(engine, nav, toasts, cancellation);
-            nav.replace(&[adw::NavigationPage::new(&welcome, "Welcome")]);
+            nav.replace(&[adw::NavigationPage::new(&welcome, &gettext("Welcome"))]);
         }
         crate::flow::InitialDestination::Dashboard => {
             nav.replace(&[crate::dashboard::build(engine, accounts, nav, toasts)]);

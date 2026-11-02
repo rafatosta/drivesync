@@ -3,11 +3,14 @@
   <id>com.rtosta.DriveSync</id>
   <name>DriveSync</name>
   <summary>Google Drive file synchronization for Linux</summary>
+  <summary xml:lang="pt_BR">Sincronização de arquivos do Google Drive para Linux</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>LicenseRef-proprietary</project_license>
   <description>
     <p>DriveSync is an experimental desktop application aiming to synchronize Google Drive files with local folders on Linux.</p>
+    <p xml:lang="pt_BR">O DriveSync é um aplicativo experimental que pretende sincronizar arquivos do Google Drive com pastas locais no Linux.</p>
     <p>It is in early development and is not yet suitable for everyday file synchronization.</p>
+    <p xml:lang="pt_BR">Ele está em estágio inicial de desenvolvimento e ainda não é adequado para a sincronização diária de arquivos.</p>
   </description>
   <launchable type="desktop-id">com.rtosta.DriveSync.desktop</launchable>
   <url type="homepage">https://github.com/rafatosta/drivesync</url>

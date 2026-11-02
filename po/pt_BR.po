@@ -51,3 +51,42 @@ msgstr "Adicionar conta"
 
 msgid "Download files from Google Drive. Local edits are preserved."
 msgstr "Baixe arquivos do Google Drive. As alterações locais são preservadas."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Sign In…"
+msgstr "Entrar…"
+
+msgid "Complete authorization in your web browser, then return here."
+msgstr "Conclua a autorização no navegador e volte para cá."
+
+msgid "Sign in to Google using your web browser."
+msgstr "Entre na sua conta do Google pelo navegador."
+
+msgid "Google Account"
+msgstr "Conta do Google"
+
+msgid "Copy Link"
+msgstr "Copiar link"
+
+msgid "Available after starting sign-in"
+msgstr "Disponível após iniciar a entrada"
+
+msgid "Copy the authorization link to continue in a different browser after starting sign-in."
+msgstr "Após iniciar a entrada, copie o link de autorização para continuar em outro navegador."
+
+msgid "Cancelling…"
+msgstr "Cancelando…"
+
+msgid "Copy the current authorization link"
+msgstr "Copiar o link de autorização atual"
+
+msgid "Checking saved accounts…"
+msgstr "Verificando contas salvas…"
+
+msgid "Try Again"
+msgstr "Tentar novamente"
+
+msgid "Welcome"
+msgstr "Boas-vindas"

@@ -2,6 +2,7 @@
 use super::view::RestorationView;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Cancellation, DriveSyncEngine};
+use gettextrs::gettext;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 /// Installs account actions on the persistent navigation view, not on welcome.
@@ -34,7 +35,7 @@ pub(super) fn bind(
         if nav.visible_page().is_some() {
             nav.replace(std::slice::from_ref(&page));
         }
-        status.set_label("Checking saved accounts…");
+        status.set_label(&gettext("Checking saved accounts…"));
         retry.set_visible(false);
         spinner.set_visible(true);
         spinner.start();
