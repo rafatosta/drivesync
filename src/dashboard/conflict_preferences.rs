@@ -49,6 +49,7 @@ pub(super) fn build(
     ));
     let busy = Rc::new(Cell::new(false));
     let guard = Rc::new(Cell::new(false));
+    let retry_read = Rc::new(Cell::new(false));
     let weak = row.downgrade();
     let controls = folders.downgrade();
     let read_engine = engine.clone();
@@ -56,6 +57,7 @@ pub(super) fn build(
     let read_busy = busy.clone();
     let read_guard = guard.clone();
     let read_job = job.clone();
+    let read_retry = retry_read.clone();
     let mut last = None;
     gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
         let Some(row) = weak.upgrade() else {
@@ -71,7 +73,8 @@ pub(super) fn build(
                     .is_some_and(|(f, _)| Some(f) == folder.as_ref())
                 && controls.upgrade().is_some_and(|w| w.is_sensitive()),
         );
-        if !read_busy.get() && !read_job.running() && folder != last {
+        if !read_busy.get() && !read_job.running() && (folder != last || read_retry.get()) {
+            read_retry.set(false);
             last = folder.clone();
             read_loaded.replace(None);
             row.set_sensitive(false);
@@ -85,6 +88,7 @@ pub(super) fn build(
                 let loaded = read_loaded.clone();
                 let busy = read_busy.clone();
                 let guard = read_guard.clone();
+                let retry = read_retry.clone();
                 crate::flow::work(
                     move || {
                         let rule = engine.conflict_preference(&folder.account_id)?;
@@ -102,6 +106,10 @@ pub(super) fn build(
                                 row.set_selected(RULES.iter().position(|r| *r == rule).unwrap() as u32);
                                 row.set_subtitle(LIMITS);
                                 loaded.replace(Some((folder, rule)));
+                            }
+                            Err(EngineError::SyncBusy) => {
+                                retry.set(true);
+                                row.set_subtitle("Waiting for synchronization to finish before reading the saved conflict preference. No new rule was authorized.");
                             }
                             Err(error) => row.set_subtitle(&format!("Could not read conflict preference: {error}. No new rule was authorized. Reopen this account to retry.")),
                         }
@@ -130,6 +138,7 @@ pub(super) fn build(
         let loaded = loaded.clone();
         let busy = busy.clone();
         let guard = guard.clone();
+        let retry = retry_read.clone();
         crate::flow::work(move || engine.set_conflict_preference(&folder, rule).map(|()| folder), move |result| {
             busy.set(false);
             if let Some(row) = weak.upgrade() {
@@ -139,7 +148,13 @@ pub(super) fn build(
                     Err(error) => {
                         row.set_selected(RULES.iter().position(|r| *r == previous).unwrap() as u32);
                         loaded.replace(None);
-                        row.set_subtitle(&format!("Could not confirm the saved conflict preference: {error}. Reopen this account to read the durable rule."));
+                        if error == EngineError::SyncBusy {
+                            // Reload durable consent after contention; never retry a rejected write.
+                            retry.set(true);
+                            row.set_subtitle("The preference was not saved because synchronization is running. The saved rule will be read again automatically.");
+                        } else {
+                            row.set_subtitle(&format!("Could not confirm the saved conflict preference: {error}. Reopen this account to read the durable rule."));
+                        }
                     }
                 }
                 guard.set(false);
