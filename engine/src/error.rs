@@ -27,6 +27,8 @@ pub enum EngineError {
     DownloadIntegrity,
     /// A local syscall denied access; no permission repair is attempted.
     LocalAccessDenied,
+    /// The filesystem cannot provide the cooperative lock required for safe reads.
+    LocalLockUnsupported,
     DownloadIo,
     /// Local disk capacity or filesystem quota requires explicit repair.
     LocalStorageFull,
@@ -71,6 +73,7 @@ impl std::fmt::Display for EngineError {
             Self::DownloadConflict => f.write_str("A local file or folder conflicts with this download. Existing data was preserved."),
             Self::DownloadIntegrity => f.write_str("The downloaded file failed its size or checksum verification. It was not installed."),
             Self::LocalAccessDenied => f.write_str("Local access was denied. Check file and folder permissions, then synchronize again. DriveSync does not change permissions or select a version to bypass this limitation."),
+            Self::LocalLockUnsupported => f.write_str("This filesystem or Flatpak document portal does not support the file locks required for synchronization. Use a location with file-lock support and direct access from DriveSync. Existing files and recovery evidence were preserved."),
             Self::LocalStorageFull => f.write_str("Local storage is full or its quota was reached. Free space on this volume, then synchronize again. Existing files and recovery evidence were preserved."),
             Self::RemoteStorageFull => f.write_str("Google Drive storage is full. Free space or increase this account’s storage, then synchronize again. Existing versions were preserved."),
             Self::RemoteQuotaExceeded => f.write_str("The app’s Google Drive API quota was exceeded. Contact the DriveSync distributor or wait for the quota to reset, then synchronize again."),

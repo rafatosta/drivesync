@@ -10,6 +10,9 @@ Contrato e política: [especificação](../../../docs/SOFTWARE_SPECIFICATION.md#
 3. Abrir regular com NOFOLLOW/NONBLOCK, exigir nlink=1 e adquirir flock
    compartilhado não bloqueante. Contenção vira LocalWriting; outros erros de
    acesso/I/O permanecem distintos e não autorizam ausência.
+   `ENOSYS`/`EOPNOTSUPP` produzem `LocalLockUnsupported`: o portal ou filesystem
+   não oferece o lock exigido. Não ler sem lock nem sugerir falta de espaço;
+   sincronização requer suporte a locks e acesso direto autorizado pelo sandbox.
 4. Comparar assinatura após quiescência, calcular hash e revalidar assinatura,
    pai e raiz. Trocas ou alterações adiam; não reutilizar observação após reinício.
 5. Upload retém o descritor bloqueado durante os efeitos remotos, cria snapshot

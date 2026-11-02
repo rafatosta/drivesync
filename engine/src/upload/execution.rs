@@ -481,6 +481,7 @@ pub(crate) fn run_with_root(
                 EngineError::StateStorage
                     | EngineError::InvalidPlan
                     | EngineError::LocalAccessDenied
+                    | EngineError::LocalLockUnsupported
                     | EngineError::LocalStorageFull
                     | EngineError::DownloadIo
                     | EngineError::RootSuspended(_)

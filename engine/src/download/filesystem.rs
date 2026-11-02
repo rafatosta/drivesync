@@ -193,14 +193,19 @@ pub(crate) fn regular(file: &File) -> Result<(), EngineError> {
 /// that ignore advisory locks; stamps and hashes remain mandatory.
 pub(crate) fn lock_regular(file: &File) -> Result<(), EngineError> {
     regular(file)?;
-    fs::flock(file, fs::FlockOperation::NonBlockingLockShared).map_err(|error| {
-        if error == rustix::io::Errno::WOULDBLOCK {
-            EngineError::LocalWriting
-        } else {
-            io(error)
-        }
-    })?;
+    fs::flock(file, fs::FlockOperation::NonBlockingLockShared).map_err(lock_error)?;
     regular(file)
+}
+
+/// Unsupported locking is a capability failure, never permission to read unlocked.
+fn lock_error(error: rustix::io::Errno) -> EngineError {
+    match error {
+        rustix::io::Errno::WOULDBLOCK => EngineError::LocalWriting,
+        rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP => {
+            EngineError::LocalLockUnsupported
+        }
+        _ => io(error),
+    }
 }
 
 /// Opens single-link regular files only; NONBLOCK prevents FIFO blocking.
@@ -269,6 +274,22 @@ pub(crate) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
 #[cfg(test)]
 mod capacity_tests {
     use super::*;
+
+    #[test]
+    fn unsupported_file_locks_fail_closed_with_a_distinct_diagnosis() {
+        for code in [rustix::io::Errno::NOSYS, rustix::io::Errno::OPNOTSUPP] {
+            assert_eq!(lock_error(code), EngineError::LocalLockUnsupported);
+        }
+        assert_eq!(
+            lock_error(rustix::io::Errno::WOULDBLOCK),
+            EngineError::LocalWriting
+        );
+        assert_eq!(
+            lock_error(rustix::io::Errno::ACCESS),
+            EngineError::LocalAccessDenied
+        );
+        assert_eq!(lock_error(rustix::io::Errno::IO), EngineError::DownloadIo);
+    }
 
     #[test]
     fn e02_classifies_capacity_failures_separately_from_permissions_and_io() {

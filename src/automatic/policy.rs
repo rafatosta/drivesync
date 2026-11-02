@@ -302,6 +302,25 @@ mod tests {
         assert_eq!(s.phase, Phase::Blocked);
     }
     #[test]
+    fn unsupported_file_locks_require_action_instead_of_periodic_retries() {
+        let mut s = Schedule::new(true, 0);
+        s.finish(
+            &Ok(DownloadReport {
+                issues: vec![drivesync_engine::DownloadIssue {
+                    relative_path: Some("file.txt".into()),
+                    error: EngineError::LocalLockUnsupported,
+                }],
+                ..Default::default()
+            }),
+            10,
+        );
+        assert_eq!(s.phase, Phase::Blocked);
+        assert_eq!(s.due, None);
+        s.network_changed(true, 20);
+        assert!(!s.start(10000, true, false));
+        assert!(s.start(10000, true, true));
+    }
+    #[test]
     fn deferred_upload_retries_but_exhaustion_requires_manual_reconciliation() {
         let mut s = Schedule::new(true, 0);
         s.finish(&Err(EngineError::UploadDeferred), 10);
