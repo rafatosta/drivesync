@@ -45,10 +45,23 @@ struct Widgets {
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
     editable: bool,
+    open_local: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
+    open_remote: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
     start: gtk::glib::WeakRef<gtk::Button>,
 }
 impl Widgets {
     fn refresh(&self, draft: &Selection, busy: bool) {
+        if let Some(action) = self.open_local.upgrade() {
+            action.set_enabled(draft.saved.is_some());
+        }
+        if let Some(action) = self.open_remote.upgrade() {
+            action.set_enabled(
+                draft
+                    .saved
+                    .as_ref()
+                    .is_some_and(|f| !f.remote.id.is_empty()),
+            );
+        }
         let unavailable =
             draft.saved.is_some() && !draft.local_available && !draft.dirty() && !busy;
         if let Some(warning) = self.warning.upgrade() {
@@ -128,6 +141,34 @@ impl Widgets {
     }
 }
 
+/// Owns folder editing and account-local open commands. Open commands always use
+/// the last saved pair, never an incomplete draft, and remain independent of the
+/// editor's sensitivity while a synchronization worker is running.
+pub(super) struct FolderSetup {
+    root: gtk::Box,
+    actions: gtk::gio::SimpleActionGroup,
+}
+impl FolderSetup {
+    pub fn widget(&self) -> &gtk::Box {
+        &self.root
+    }
+    pub fn actions(&self) -> &gtk::gio::SimpleActionGroup {
+        &self.actions
+    }
+}
+
+/// Encodes the exact saved identity as a single URI path segment. Opening the
+/// browser does not verify remote existence and never falls back to another root.
+fn remote_uri(id: &str) -> Option<String> {
+    if id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "https://drive.google.com/drive/folders/{}",
+        gtk::glib::uri_escape_string(id, None::<&str>, false)
+    ))
+}
+
 /// Builds independent choosers that save automatically once both folders exist.
 /// Existing engine validation, portal handling and account isolation are reused.
 pub(super) fn build(
@@ -136,7 +177,7 @@ pub(super) fn build(
     sync: &adw::ActionRow,
     status: &gtk::Label,
     start: &gtk::Button,
-) -> gtk::Box {
+) -> FolderSetup {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let group = adw::PreferencesGroup::builder()
         .title("Folders")
@@ -179,6 +220,11 @@ pub(super) fn build(
         .build();
     feedback.set_widget_name("folder-feedback");
     content.append(&feedback);
+    let actions = gtk::gio::SimpleActionGroup::new();
+    let open_local = gtk::gio::SimpleAction::new("open-local", None);
+    let open_remote = gtk::gio::SimpleAction::new("open-remote", None);
+    actions.add_action(&open_local);
+    actions.add_action(&open_remote);
     let ui = Widgets {
         remote: remote.downgrade(),
         local: local.downgrade(),
@@ -189,9 +235,38 @@ pub(super) fn build(
         sync: sync.downgrade(),
         status: status.downgrade(),
         editable: crate::automatic::eligible(saved),
+        open_local: open_local.downgrade(),
+        open_remote: open_remote.downgrade(),
         start: start.downgrade(),
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
+    for (action, remote) in [(&open_local, false), (&open_remote, true)] {
+        let draft = draft.clone();
+        let weak_root = content.downgrade();
+        action.connect_activate(move |_, _| {
+            let Some(folder) = draft.borrow().saved.clone() else { return; };
+            let Some(root) = weak_root.upgrade() else { return; };
+            let parent = root.root().and_downcast::<gtk::Window>();
+            gtk::glib::spawn_future_local(async move {
+                let result = if remote {
+                    let Some(uri) = remote_uri(&folder.remote.id) else { return; };
+                    gtk::UriLauncher::new(&uri).launch_future(parent.as_ref()).await
+                } else {
+                    gtk::FileLauncher::new(Some(&gtk::gio::File::for_path(&folder.local))).launch_future(parent.as_ref()).await
+                };
+                if result.is_err() {
+                    let dialog = adw::MessageDialog::new(parent.as_ref(), Some("Could not open folder"), Some(if remote {
+                        "The browser could not open the configured Google Drive folder. Check access to this account and folder."
+                    } else {
+                        "The configured local folder could not be opened. Check that it is still available."
+                    }));
+                    dialog.add_response("close", "Close");
+                    dialog.set_close_response("close");
+                    dialog.present();
+                }
+            });
+        });
+    }
     ui.refresh(&draft.borrow(), false);
     local.set_tooltip_text(Some("Open folder on this computer"));
     {
@@ -295,7 +370,10 @@ pub(super) fn build(
             });
         });
     }
-    content
+    FolderSetup {
+        root: content,
+        actions,
+    }
 }
 
 /// Revalidates a complete explicitly selected pair off the GTK thread.
@@ -345,6 +423,18 @@ fn autosave(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_open_preserves_the_exact_configured_identity() {
+        assert_eq!(remote_uri(""), None);
+        assert_eq!(
+            remote_uri("folder-123").as_deref(),
+            Some("https://drive.google.com/drive/folders/folder-123")
+        );
+        assert_eq!(
+            remote_uri("a/b?c#d").as_deref(),
+            Some("https://drive.google.com/drive/folders/a%2Fb%3Fc%23d")
+        );
+    }
     #[test]
     fn automatic_save_requires_complete_changed_pair() {
         let mut draft = Selection::default();

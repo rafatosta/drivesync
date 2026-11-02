@@ -64,41 +64,13 @@ pub(super) fn populate(
             .build();
         identity.append(&account_status);
         heading.append(&identity);
-        let menu = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
-            .tooltip_text("Account actions")
-            .valign(gtk::Align::Start)
-            .build();
-        let popover = gtk::Popover::new();
-        let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        actions.append(
-            &gtk::Label::builder()
-                .label(format!("Status: {state}"))
-                .xalign(0.0)
-                .margin_start(12)
-                .margin_end(12)
-                .margin_top(8)
-                .margin_bottom(8)
-                .build(),
-        );
-        let sync_menu_status = gtk::Label::builder()
-            .label("Synchronization: Not started")
-            .xalign(0.0)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(8)
-            .margin_bottom(8)
-            .build();
-        actions.append(&sync_menu_status);
-        actions.append(&crate::session::sign_out_button(
-            engine.clone(),
-            saved.account.id.clone(),
-            nav,
-            toasts,
-        ));
-        popover.set_child(Some(&actions));
-        menu.set_popover(Some(&popover));
-        heading.append(&menu);
+        let sign_out =
+            crate::session::sign_out_button(engine.clone(), saved.account.id.clone(), nav, toasts);
+        sign_out.set_visible(false);
+        content.append(&sign_out);
+        let sync_menu_status = gtk::Label::new(None);
+        sync_menu_status.set_visible(false);
+        content.append(&sync_menu_status);
         content.append(&heading);
 
         let description = adw::PreferencesGroup::new();
@@ -118,7 +90,17 @@ pub(super) fn populate(
         email.set_subtitle_lines(2);
         email.set_tooltip_text(Some(name));
         description.add(&email);
-        content.append(&description);
+        let configuration = adw::ExpanderRow::builder()
+            .title(gettextrs::gettext("Account configuration"))
+            .subtitle(gettextrs::gettext(
+                "Account identity and synchronization folders",
+            ))
+            .expanded(saved.folder.is_none())
+            .build();
+        configuration.set_widget_name("account-configuration");
+        let configuration_group = adw::PreferencesGroup::new();
+        configuration_group.add(&configuration);
+        configuration.add_row(&description);
         super::description::bind(
             engine.clone(),
             &saved,
@@ -149,7 +131,42 @@ pub(super) fn populate(
         ));
         start.set_widget_name("start-synchronization");
         let folders = super::folders::build(engine.clone(), &saved, &sync_state, &status, &start);
-        content.append(&folders);
+        configuration.add_row(folders.widget());
+        content.append(&configuration_group);
+        let job = crate::automatic::Controller::attach(engine.clone(), &saved);
+        let actions = super::account_actions::AccountActions::new(
+            job.clone(),
+            folders.actions(),
+            &configuration,
+            &user,
+            list,
+            &sign_out,
+        );
+        let preferences = gtk::gio::SimpleAction::new("preferences", None);
+        let preferences_engine = engine.clone();
+        let preferences_saved = saved.clone();
+        let preferences_job = job.clone();
+        let weak_content = content.downgrade();
+        preferences.connect_activate(move |_, _| {
+            if let Some(parent) = weak_content
+                .upgrade()
+                .and_then(|w| w.root())
+                .and_downcast::<adw::ApplicationWindow>()
+            {
+                let mut saved = preferences_saved.clone();
+                saved.folder = preferences_job.folder();
+                crate::preferences::present_account(&parent, preferences_engine.clone(), &saved);
+            }
+        });
+        actions.group().add_action(&preferences);
+        actions.install(&user);
+        actions.install(&content);
+        let sidebar_menu = actions.menu();
+        sidebar_menu.set_widget_name("sidebar-account-menu");
+        user.add_suffix(&sidebar_menu);
+        let menu = actions.menu();
+        menu.set_widget_name("dashboard-account-menu");
+        heading.append(&menu);
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -165,11 +182,11 @@ pub(super) fn populate(
             .build();
         sync.add(&sync_state);
         content.append(&sync);
-        content.append(&super::synchronization::build(
+        content.append(&super::synchronization::build_for_job(
             engine.clone(),
             &saved,
             super::synchronization::Controls {
-                folders: &folders,
+                folders: folders.widget(),
                 start: &start,
                 row: &sync_state,
                 status: &status,
@@ -180,6 +197,7 @@ pub(super) fn populate(
                 account_status_fallback: &state,
                 menu_status: &sync_menu_status,
             },
+            job,
         ));
         details.add_named(&content, Some(&saved.account.id.0));
     }

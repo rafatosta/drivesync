@@ -305,9 +305,7 @@ impl Widgets {
         if let Some(folders) = self.folders.upgrade() {
             folders.set_sensitive(false);
         }
-        if let Some(menu) = self.menu.upgrade() {
-            menu.set_sensitive(false);
-        }
+
         if let Some(row) = self.row.upgrade() {
             row.set_title("Checking for changes");
             row.set_subtitle("Checking Google Drive changes and existing local copies…");
@@ -689,10 +687,22 @@ pub(super) struct Controls<'a> {
 
 /// Observes the shared account job. Page disposal stops observation only; the
 /// application-owned worker continues while hidden or while pages are rebuilt.
+#[cfg(test)]
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
     controls: Controls<'_>,
+) -> gtk::Box {
+    let job = crate::automatic::Controller::attach(engine.clone(), saved);
+    build_for_job(engine, saved, controls, job)
+}
+
+/// Uses the same controller as both account menus, including isolated fixtures.
+pub(super) fn build_for_job(
+    engine: Arc<DriveSyncEngine>,
+    saved: &RestoredAccount,
+    controls: Controls<'_>,
+    job: crate::automatic::Controller,
 ) -> gtk::Box {
     let Controls {
         folders,
@@ -789,7 +799,6 @@ pub(super) fn build(
     } else {
         None
     };
-    let job = crate::automatic::Controller::attach(engine.clone(), saved);
     footer.append(&super::problems::button(engine, saved, job.clone()));
     footer.append(&super::bulk_review::button(job.clone()));
     if let Some(receive) = restore {
@@ -902,7 +911,7 @@ pub(super) fn verify_worker_failure() {
     start.emit_clicked();
     assert_eq!(start.label().as_deref(), Some("Pause"));
     assert!(!folders.is_sensitive());
-    assert!(!menu.is_sensitive());
+    assert!(menu.is_sensitive());
     let wait = gtk::glib::MainLoop::new(None, false);
     let finish = wait.clone();
     let weak_start = start.downgrade();
