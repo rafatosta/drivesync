@@ -154,6 +154,25 @@ only after the preceding process has exited. Use `--unshare=network` for the
 offline cycle and restore normal networking for recovery. Coordinator Offline
 suspensions and lower-level network errors both satisfy `--expect-error network`.
 
+For the generated three-file fixture, the count oracles are:
+
+| Scenario | Counts or error | Additional oracle |
+| --- | --- | --- |
+| Empty local root | `3,0,0,0,0,0` | Text, empty and binary SHA-256 match originals. |
+| Repeat/new process | `0,0,0,3,0,0` | Zero media attempts and identical bytes. |
+| Remote-only simple-file edit | `0,1,0,2,0,1` | New bytes installed; the last count includes the required preserved backup of the old bytes. |
+| Offline start | `--expect-error network` | Zero media attempts; persistent state remains retryable. |
+| Reconnection | `0,0,0,3,0,0` | Zero media attempts. |
+| Local-only simple-file edit | `0,0,0,2,1,0` | Zero media attempts; divergent local bytes and download journal records remain unchanged. |
+
+Run cancellation/SIGKILL recovery before editing the simple file, passing
+`--items 3 --issues 0 --transfer-file binary.dat` to the existing supervisor.
+All cycles must use the isolated profile. Preserve failed command outputs as
+well as successful results; a failed count assertion does not undo a completed
+installation. Inspect bytes, backups and journal evidence before deciding
+whether the implementation or the test input was incorrect. Do not reset state
+to rerun an initial-download oracle against an already installed file.
+
 For an offline-start check, use `--unshare=network` instead of `--share=network`
 and pass `--expect-error network`. It must fail before requesting media. Follow
 it with a normal unchanged cycle to verify that observation state is retryable.
