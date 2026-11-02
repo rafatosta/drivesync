@@ -1619,3 +1619,72 @@ Preferências apresenta somente os ajustes globais e orienta selecionar uma
 conta. Uploads e conflitos continuam persistidos pela engine por conta/raízes,
 sem virar preferências globais. Os controles permanecem bloqueados durante
 sincronização ou leitura/gravação, mantendo as revalidações existentes.
+
+### Dashboard contextual por conta
+
+**Requisito e implementação:** a página individual compõe identidade da conta,
+card de sincronização, resumo de pendências observadas, atividade do último
+resultado e configuração expansível. Configuração, operação e pendências são
+independentes; transferências não significam resolução de conflitos anteriores.
+
+- Sem pastas configuradas, a configuração fica expandida e reutiliza os seletores
+  existentes, com salvamento automático após validação do par completo. Não há
+  botão de confirmação fictício. Falhas preservam a configuração anterior.
+- Com configuração existente, a seção fica recolhida. Falta de acesso à pasta
+  local expande a configuração para tornar o aviso e a recuperação acessíveis.
+  A configuração pode ser aberta novamente pelo menu da conta.
+- A operação normal apresenta o card e os resultados efetivamente recebidos.
+  Datas da última sincronização, bytes totais do ciclo e previsão de agendamento
+  não são inventados quando ausentes nos modelos atuais.
+- Pendências apresentam contagens distintas de conflitos e problemas, com acesso
+  ao centro existente. As contagens descrevem caminhos observados no relatório,
+  não decisões resolvidas nem uma nova leitura remota. Informações anteriores
+  continuam acessíveis enquanto outro ciclo está em andamento; um novo resultado
+  ou uma reconfiguração substitui as observações.
+- Diagnóstico detalhado, etapas da análise, progresso por arquivo, explicações
+  operacionais e recuperação de estado ficam em "Synchronization details".
+  Avisos de cópias preservadas e itens ignorados permanecem na área principal.
+  A revisão de mudanças em lote e as confirmações anteriores são preservadas.
+
+**Contratos de comandos:** os menus da sidebar e do cabeçalho compartilham um
+`GSimpleActionGroup` por conta, independente da seleção atual. O menu continua
+acessível durante a execução. Sincronização manual, pausa e retomada usam o mesmo
+controlador do card e da recuperação. Saída da conta fica indisponível enquanto
+um ciclo está em execução. Configuração de pastas não pode ser modificada nesse
+período; os comandos de abertura permanecem independentes desse bloqueio.
+
+Abrir pastas usa exclusivamente o último par salvo, nunca um rascunho incompleto.
+O destino remoto é o identificador configurado codificado em um único segmento
+HTTPS; não há fallback silencioso para outra pasta. Abrir o navegador não confirma
+existência ou acesso remoto. Falha no launcher gera uma mensagem sem alterar o
+job. O mesmo menu fica disponível no cabeçalho em navegação compacta.
+
+**Preservação funcional:** descrição e email ficam na configuração; autenticação,
+reconexão, preferências, saída confirmada, seletores, resolução de conflitos,
+revisão em lote, recuperação, avisos de preservação e histórico expansível mantêm
+os fluxos existentes. O dashboard não altera a engine ou as políticas de arquivos.
+Observadores não retêm as páginas descartadas nem interrompem jobs ao navegar.
+
+**Critérios de aceite:**
+
+| Cenário | Resultado exigido |
+| --- | --- |
+| Menu da conta A com B selecionada | Comando mantém A como destino |
+| Configurar A pelo menu lateral | Seleciona A e expande sua configuração |
+| Ciclo em andamento | Abertura de pastas disponível; edição e saída bloqueadas |
+| Troca e descarte de páginas | Sem mistura de resultados ou retenção por observadores |
+| Preparação sem total | Sem percentual inventado |
+| Resultado parcial ou ignorados | Sem confirmação de sucesso |
+| Novo ciclo com pendências anteriores | Observações anteriores permanecem acessíveis |
+| Nova configuração | Resultados antigos não representam a nova pasta |
+| Janela estreita e temas | Ações acessíveis e conteúdo sem overflow horizontal |
+
+**Validação:** separar testes determinísticos, testes GTK com perfil isolado,
+inspeção visual e integração real de launchers/Google Drive. Capturas com dados
+fictícios não comprovam transferências ou acesso remoto. Evidências de execução
+pertencem aos commits correspondentes.
+
+Referências de integração: [Gio.SimpleActionGroup](https://docs.gtk.org/gio/class.SimpleActionGroup.html)
+e [Gtk.UriLauncher, disponível desde GTK 4.10](https://docs.gtk.org/gtk4/class.UriLauncher.html).
+O projeto usa o recurso `v4_10` do gtk-rs; não depende de `can_launch`, adicionado
+em versões posteriores.

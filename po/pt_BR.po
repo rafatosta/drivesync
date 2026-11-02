@@ -90,3 +90,66 @@ msgstr "Tentar novamente"
 
 msgid "Welcome"
 msgstr "Boas-vindas"
+
+msgid "Open local folder"
+msgstr "Abrir pasta local"
+
+msgid "Open Google Drive folder"
+msgstr "Abrir pasta no Google Drive"
+
+msgid "Configure account"
+msgstr "Configurar conta"
+
+msgid "Account preferences…"
+msgstr "Preferências da conta…"
+
+msgid "Sign Out"
+msgstr "Sair da conta"
+
+msgid "Synchronize now"
+msgstr "Sincronizar agora"
+
+msgid "Pause synchronization"
+msgstr "Pausar sincronização"
+
+msgid "Resume synchronization"
+msgstr "Retomar sincronização"
+
+msgid "Start synchronization"
+msgstr "Iniciar sincronização"
+
+msgid "Account actions"
+msgstr "Ações da conta"
+
+msgid "Account configuration"
+msgstr "Configuração da conta"
+
+msgid "Account identity and synchronization folders"
+msgstr "Identidade da conta e pastas de sincronização"
+
+msgid "Observed pending items"
+msgstr "Pendências observadas"
+
+msgid "Conflicts"
+msgstr "Conflitos"
+
+msgid "Problems"
+msgstr "Problemas"
+
+msgid "Review observed versions before deciding"
+msgstr "Revise as versões observadas antes de decidir"
+
+msgid "Review details and available recovery actions"
+msgstr "Revise os detalhes e as ações de recuperação disponíveis"
+
+msgid "Synchronization details"
+msgstr "Detalhes da sincronização"
+
+msgid "Recent activity"
+msgstr "Atividade recente"
+
+msgid "Latest completed check"
+msgstr "Última verificação concluída"
+
+msgid "Account"
+msgstr "Conta"

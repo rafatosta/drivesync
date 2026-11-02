@@ -8,7 +8,7 @@ struct Selection {
     remote: Option<DriveFolder>,
     local: Option<PathBuf>,
     saved: Option<FolderConfiguration>,
-    local_available: bool,
+    local_available: Option<bool>,
 }
 impl Selection {
     fn from_saved(saved: Option<FolderConfiguration>) -> Self {
@@ -16,7 +16,7 @@ impl Selection {
             remote: saved.as_ref().map(|f| f.remote.clone()),
             local: saved.as_ref().map(|f| f.local.clone()),
             saved,
-            local_available: false,
+            local_available: None,
         }
     }
     fn dirty(&self) -> bool {
@@ -44,6 +44,7 @@ struct Widgets {
     warning: gtk::glib::WeakRef<gtk::Image>,
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
+    configuration: gtk::glib::WeakRef<adw::ExpanderRow>,
     editable: bool,
     open_local: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
     open_remote: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
@@ -62,8 +63,15 @@ impl Widgets {
                     .is_some_and(|f| !f.remote.id.is_empty()),
             );
         }
-        let unavailable =
-            draft.saved.is_some() && !draft.local_available && !draft.dirty() && !busy;
+        let unavailable = draft.saved.is_some()
+            && draft.local_available == Some(false)
+            && !draft.dirty()
+            && !busy;
+        if unavailable {
+            if let Some(configuration) = self.configuration.upgrade() {
+                configuration.set_expanded(true);
+            }
+        }
         if let Some(warning) = self.warning.upgrade() {
             warning.set_visible(unavailable);
         }
@@ -106,8 +114,10 @@ impl Widgets {
                 "Saving folder configuration…"
             } else if draft.dirty() {
                 "Folder configuration incomplete"
-            } else if draft.saved.is_some() && !draft.local_available {
+            } else if draft.saved.is_some() && draft.local_available == Some(false) {
                 "Local folder unavailable"
+            } else if draft.saved.is_some() && draft.local_available.is_none() {
+                "Checking the saved local folder…"
             } else if draft.saved.is_some() {
                 "Configuration saved"
             } else {
@@ -118,14 +128,18 @@ impl Widgets {
             start.set_sensitive(
                 self.editable
                     && draft.saved.is_some()
-                    && draft.local_available
+                    && draft.local_available == Some(true)
                     && !draft.dirty()
                     && !busy,
             );
         }
         if let Some(sync) = self.sync.upgrade() {
             sync.set_subtitle(
-                if draft.saved.is_some() && draft.local_available && !draft.dirty() && !busy {
+                if draft.saved.is_some()
+                    && draft.local_available == Some(true)
+                    && !draft.dirty()
+                    && !busy
+                {
                     "Folders are configured"
                 } else {
                     "Choose folders before synchronization"
@@ -177,6 +191,7 @@ pub(super) fn build(
     sync: &adw::ActionRow,
     status: &gtk::Label,
     start: &gtk::Button,
+    configuration: &adw::ExpanderRow,
 ) -> FolderSetup {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let group = adw::PreferencesGroup::builder()
@@ -234,6 +249,7 @@ pub(super) fn build(
         warning: warning.downgrade(),
         sync: sync.downgrade(),
         status: status.downgrade(),
+        configuration: configuration.downgrade(),
         editable: crate::automatic::eligible(saved),
         open_local: open_local.downgrade(),
         open_remote: open_remote.downgrade(),
@@ -298,7 +314,7 @@ pub(super) fn build(
         crate::flow::work(
             move || worker.check_local_folder(&path),
             move |result| {
-                draft.borrow_mut().local_available = result.is_ok();
+                draft.borrow_mut().local_available = Some(result.is_ok());
                 ui.refresh(&draft.borrow(), false);
                 if result.is_ok() {
                     ui.message("");
@@ -409,8 +425,11 @@ fn autosave(
                 Ok(Some(saved)) => {
                     crate::automatic::configured(saved.clone());
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
-                    draft.borrow_mut().local_available = true;
+                    draft.borrow_mut().local_available = Some(true);
                     ui.message("");
+                    if let Some(configuration) = ui.configuration.upgrade() {
+                        configuration.set_expanded(false);
+                    }
                 }
                 Ok(None) => ui.message("Could not load the saved folders. Please try again."),
                 Err(e) => ui.message(&e.to_string()),
@@ -423,6 +442,67 @@ fn autosave(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
+    fn native_folder_configuration_preserves_context_and_open_actions() {
+        adw::init().unwrap();
+        let profile = std::env::var("XDG_DATA_HOME").unwrap();
+        assert!(profile.starts_with("/tmp/drivesync-ui-"));
+        let id = drivesync_engine::AccountId("google:folder-ui-fixture".into());
+        for available in [true, false] {
+            let path =
+                PathBuf::from(&profile).join(if available { "available" } else { "missing" });
+            if available {
+                std::fs::create_dir_all(&path).unwrap();
+            }
+            let saved = RestoredAccount {
+                account: drivesync_engine::AccountSummary {
+                    id: id.clone(),
+                    provider_subject: "folder-ui-fixture".into(),
+                    email: None,
+                },
+                error: None,
+                folder: Some(FolderConfiguration {
+                    account_id: id.clone(),
+                    remote: DriveFolder {
+                        id: "remote".into(),
+                        name: "Remote".into(),
+                    },
+                    local: path.clone(),
+                    local_display: path,
+                }),
+            };
+            let configuration = adw::ExpanderRow::new();
+            let start = gtk::Button::new();
+            let sync = adw::ActionRow::new();
+            let status = gtk::Label::new(None);
+            let setup = build(
+                Arc::new(DriveSyncEngine::new()),
+                &saved,
+                &sync,
+                &status,
+                &start,
+                &configuration,
+            );
+            assert!(
+                !configuration.is_expanded(),
+                "an unchecked path is not an unavailable path"
+            );
+            setup.widget().set_sensitive(false);
+            for name in ["open-local", "open-remote"] {
+                assert!(setup.actions().is_action_enabled(name));
+            }
+            setup.widget().set_sensitive(true);
+            let wait = gtk::glib::MainLoop::new(None, false);
+            let finish = wait.clone();
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+                finish.quit()
+            });
+            wait.run();
+            assert_eq!(configuration.is_expanded(), !available);
+            assert_eq!(start.is_sensitive(), available);
+        }
+    }
     #[test]
     fn remote_open_preserves_the_exact_configured_identity() {
         assert_eq!(remote_uri(""), None);

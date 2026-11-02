@@ -7,10 +7,10 @@ pub(super) fn button(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
     status: &gtk::Label,
+    job: crate::automatic::Controller,
 ) -> gtk::Button {
     let button = gtk::Button::with_label("Recover synchronization state…");
     button.set_widget_name("recover-state");
-    let job = crate::automatic::Controller::attach(engine.clone(), saved);
     let id = saved.account.id.clone();
     let status = status.downgrade();
     button.connect_clicked(move |button| {

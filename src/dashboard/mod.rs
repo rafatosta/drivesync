@@ -1,11 +1,14 @@
 //! Adaptive account navigation and automatic download dashboard.
 mod account_actions;
 mod account_details;
+mod account_header;
+mod attention_summary;
 mod bulk_review;
 mod description;
 mod folders;
 pub(crate) mod presentation;
 mod problems;
+mod recent_activity;
 mod state_recovery;
 mod synchronization;
 
@@ -121,7 +124,10 @@ pub fn build_selected(
     });
     list.select_row(list.row_at_index(initial as i32).as_ref());
     toolbar.set_content(Some(&crate::flow::scroll(&details, 760)));
-    split.set_content(Some(&adw::NavigationPage::new(&toolbar, "Folders")));
+    split.set_content(Some(&adw::NavigationPage::new(
+        &toolbar,
+        &gettextrs::gettext("Account"),
+    )));
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         660.0,

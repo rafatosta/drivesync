@@ -1,4 +1,5 @@
 //! Automatic and explicit downloads observing application-owned account jobs.
+use super::presentation::preparation_text;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
     DownloadProgress, DownloadReport, DownloadStage, DriveSyncEngine, EngineError, RestoredAccount,
@@ -11,14 +12,13 @@ use std::{sync::Arc, time::Duration};
 #[derive(Clone)]
 struct Widgets {
     card: Option<crate::sync_progress_card::SyncProgressCard>,
+    attention: Option<super::attention_summary::AttentionSummary>,
     start: gtk::glib::WeakRef<gtk::Button>,
-    account_toggle: gtk::glib::WeakRef<gtk::Button>,
+    header: super::account_header::AccountHeader,
     folders: gtk::glib::WeakRef<gtk::Box>,
     menu: gtk::glib::WeakRef<gtk::MenuButton>,
     row: gtk::glib::WeakRef<adw::ActionRow>,
     account_row: gtk::glib::WeakRef<adw::ActionRow>,
-    account_status: gtk::glib::WeakRef<gtk::Label>,
-    account_status_fallback: String,
     status: gtk::glib::WeakRef<gtk::Label>,
     menu_status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
@@ -29,39 +29,6 @@ struct Widgets {
     spinner: gtk::glib::WeakRef<gtk::Spinner>,
 }
 impl Widgets {
-    /// Mirrors the shared synchronization state in the account-header control.
-    fn present_account_toggle(&self, snapshot: &crate::automatic::Snapshot) {
-        let Some(button) = self.account_toggle.upgrade() else {
-            return;
-        };
-        match snapshot.phase {
-            crate::automatic::Phase::Running if snapshot.pausing => {
-                button.set_icon_name("process-working-symbolic");
-                button.set_tooltip_text(Some("Pausing safely…"));
-                button.set_sensitive(false);
-            }
-            crate::automatic::Phase::Running => {
-                button.set_icon_name("media-playback-pause-symbolic");
-                button.set_tooltip_text(Some("Pause synchronization"));
-                button.set_sensitive(true);
-            }
-            crate::automatic::Phase::Paused => {
-                button.set_icon_name("media-playback-start-symbolic");
-                button.set_tooltip_text(Some("Resume synchronization"));
-                button.set_sensitive(true);
-            }
-            crate::automatic::Phase::Unconfigured => {
-                button.set_icon_name("media-playback-start-symbolic");
-                button.set_tooltip_text(Some("Choose a folder to enable synchronization"));
-                button.set_sensitive(false);
-            }
-            _ => {
-                button.set_icon_name("media-playback-start-symbolic");
-                button.set_tooltip_text(Some("Start or resume synchronization"));
-                button.set_sensitive(true);
-            }
-        }
-    }
     fn progress(&self, event: &DownloadProgress) {
         if let Some(stage) = &event.preparation {
             let (title, detail) = preparation_text(stage);
@@ -125,6 +92,9 @@ impl Widgets {
         }
     }
     fn clear_issues(&self) {
+        if let Some(summary) = &self.attention {
+            summary.clear();
+        }
         if let Some(container) = self.issues.upgrade() {
             while let Some(child) = container.first_child() {
                 container.remove(&child);
@@ -146,6 +116,9 @@ impl Widgets {
     }
     fn show_issues_title(&self, report: &DownloadReport, title: &str) {
         self.clear_issues();
+        if let Some(summary) = &self.attention {
+            summary.present(report);
+        }
         if let Some(container) = self.issues.upgrade() {
             let group = adw::PreferencesGroup::builder().title(title).build();
             let attention = report.attention();
@@ -193,108 +166,10 @@ impl Widgets {
             container.set_visible(!attention.is_empty());
         }
     }
-    /// Normal remote path changes belong in optional activity details. They
-    /// never display warning icons or require a user acknowledgment.
     fn show_activity(&self, report: &DownloadReport) {
-        let Some(container) = self.activity.upgrade() else {
-            return;
-        };
-        while let Some(child) = container.first_child() {
-            container.remove(&child);
+        if let Some(container) = self.activity.upgrade() {
+            super::recent_activity::present(&container, report);
         }
-        let equivalent: Vec<_> = report
-            .reconciliation
-            .iter()
-            .filter(|entry| {
-                entry.kind == drivesync_engine::ChangeKind::Equivalent
-                    && !report
-                        .issues
-                        .iter()
-                        .any(|issue| issue.relative_path == entry.relative_path)
-            })
-            .collect();
-        container.set_visible(!report.previous_paths.is_empty() || !equivalent.is_empty());
-        if report.previous_paths.is_empty() && equivalent.is_empty() {
-            return;
-        }
-        let group = adw::PreferencesGroup::new();
-        let details = adw::ExpanderRow::builder()
-            .title("View activity")
-            .subtitle(if report.previous_paths.is_empty() {
-                "Equivalent content was verified. No replacement was needed."
-            } else {
-                "Previous local copies are kept. No action is needed."
-            })
-            .use_markup(false)
-            .build();
-        details.set_subtitle_lines(0);
-        for activity in report.previous_paths.iter().take(50) {
-            let name = activity
-                .previous_path
-                .as_deref()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Previous location".into());
-            let subtitle = activity
-                .current_path
-                .as_deref()
-                .map(|path| {
-                    format!(
-                        "Now at {} on Google Drive. Previous local copies are kept.",
-                        path.to_string_lossy()
-                    )
-                })
-                .unwrap_or_else(|| {
-                    "No longer listed in the selected Google Drive folder. Local copies are kept."
-                        .into()
-                });
-            let row = adw::ActionRow::builder()
-                .title(&name)
-                .subtitle(&subtitle)
-                .use_markup(false)
-                .build();
-            row.set_title_lines(0);
-            row.set_subtitle_lines(0);
-            row.set_tooltip_text(Some(&format!("{name}\n{subtitle}")));
-            row.add_prefix(&gtk::Image::from_icon_name("document-open-recent-symbolic"));
-            details.add_row(&row);
-        }
-        for entry in equivalent.iter().take(50) {
-            let name = entry
-                .relative_path
-                .as_deref()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Item".into());
-            let row = adw::ActionRow::builder()
-                .title(&name)
-                .subtitle(entry.kind.description())
-                .use_markup(false)
-                .build();
-            row.set_title_lines(0);
-            row.set_subtitle_lines(0);
-            details.add_row(&row);
-        }
-        if equivalent.len() > 50 {
-            details.add_row(
-                &adw::ActionRow::builder()
-                    .title(format!(
-                        "{} additional equivalent files observed",
-                        equivalent.len() - 50
-                    ))
-                    .build(),
-            );
-        }
-        if report.previous_paths.len() > 50 {
-            details.add_row(
-                &adw::ActionRow::builder()
-                    .title(format!(
-                        "{} additional previous paths recorded",
-                        report.previous_paths.len() - 50
-                    ))
-                    .build(),
-            );
-        }
-        group.add(&details);
-        container.append(&group);
     }
     fn begin(&self) {
         if let Some(button) = self.start.upgrade() {
@@ -312,10 +187,6 @@ impl Widgets {
         }
         if let Some(status) = self.status.upgrade() {
             status.set_label("Connecting to Google Drive. Analysis progress will appear here…");
-        }
-        self.clear_issues();
-        if let Some(activity) = self.activity.upgrade() {
-            activity.set_visible(false);
         }
         if let Some(preserved) = self.preserved.upgrade() {
             preserved.set_visible(false);
@@ -350,7 +221,7 @@ impl Widgets {
         previous: Option<crate::automatic::Phase>,
     ) {
         use crate::automatic::Phase;
-        self.present_account_toggle(snapshot);
+        self.header.present(snapshot);
         let root_suspended = snapshot
             .result
             .as_ref()
@@ -359,16 +230,8 @@ impl Widgets {
         if let Some(status) = self.menu_status.upgrade() {
             status.set_label(&format!("Synchronization: {sync_status}"));
         }
-        let account_status = if snapshot.phase == Phase::Unconfigured {
-            self.account_status_fallback.as_str()
-        } else {
-            sync_status
-        };
         if let Some(row) = self.account_row.upgrade() {
-            row.set_subtitle(account_status);
-        }
-        if let Some(status) = self.account_status.upgrade() {
-            status.set_label(account_status);
+            row.set_subtitle(sync_status);
         }
         if snapshot.phase == Phase::Running {
             if previous != Some(Phase::Running) {
@@ -546,40 +409,6 @@ impl Widgets {
         }
     }
 }
-/// Preparation has no known total: show actual observations without a percentage.
-fn preparation_text(stage: &drivesync_engine::PreparationProgress) -> (&'static str, String) {
-    use drivesync_engine::PreparationProgress;
-    match stage {
-        PreparationProgress::ScanningUploads => (
-            "Looking for new local files",
-            "Checking which new files and folders can be uploaded…".into(),
-        ),
-        PreparationProgress::PreparingUpload { current_path } => (
-            "Preparing a new upload",
-            format!("Reading: {}", current_path.to_string_lossy()),
-        ),
-        PreparationProgress::Connecting => (
-            "Connecting to Google Drive",
-            "Verifying account access and the selected folder…".into(),
-        ),
-        PreparationProgress::ReadingChanges => (
-            "Checking recent Drive changes",
-            "Reading changes reported by Google Drive…".into(),
-        ),
-        PreparationProgress::Scanning { files, folders, .. } => (
-            "Analyzing Google Drive",
-            format!("{files} files and {folders} folders found so far…"),
-        ),
-        PreparationProgress::CheckingLocal { checked } => (
-            "Checking files on this computer",
-            format!("{checked} local paths checked…"),
-        ),
-        PreparationProgress::SavingState => (
-            "Preparing downloads",
-            "Saving the analysis before checking and downloading files…".into(),
-        ),
-    }
-}
 /// Item-count progress advances only after an item finishes checking/installation.
 fn cycle_fraction(event: &DownloadProgress) -> f64 {
     if event.total_items == 0 {
@@ -678,10 +507,8 @@ pub(super) struct Controls<'a> {
     pub row: &'a adw::ActionRow,
     pub status: &'a gtk::Label,
     pub menu: &'a gtk::MenuButton,
-    pub account_toggle: &'a gtk::Button,
+    pub header: &'a super::account_header::AccountHeader,
     pub account_row: &'a adw::ActionRow,
-    pub account_status: &'a gtk::Label,
-    pub account_status_fallback: &'a str,
     pub menu_status: &'a gtk::Label,
 }
 
@@ -710,10 +537,8 @@ pub(super) fn build_for_job(
         row,
         status,
         menu,
-        account_toggle,
+        header,
         account_row,
-        account_status,
-        account_status_fallback,
         menu_status,
     } = controls;
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -723,21 +548,32 @@ pub(super) fn build_for_job(
         .xalign(0.0)
         .css_classes(["dim-label"])
         .build();
-    footer.append(&note);
+    let diagnostics = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let diagnostic_group = adw::PreferencesGroup::new();
+    let diagnostic_row = adw::ExpanderRow::builder()
+        .title(gettextrs::gettext("Synchronization details"))
+        .build();
+    diagnostic_row.set_widget_name("sync-details");
+    diagnostic_row.add_row(&diagnostics);
+    diagnostic_group.add(&diagnostic_row);
+    let legacy_state = adw::PreferencesGroup::new();
+    legacy_state.add(row);
+    diagnostics.append(&legacy_state);
+    diagnostics.append(&note);
     let spinner = gtk::Spinner::new();
     spinner.set_widget_name("download-activity");
     spinner.set_halign(gtk::Align::Start);
     spinner.set_visible(false);
-    footer.append(&spinner);
+    diagnostics.append(&spinner);
     let progress = gtk::ProgressBar::new();
     progress.set_widget_name("download-progress");
     progress.set_show_text(true);
     progress.set_tooltip_text(Some("Cycle progress counts all processed files and folders, including skipped items and conflicts. It does not show downloaded bytes."));
     progress.set_visible(false);
     let card = crate::sync_progress_card::SyncProgressCard::new();
-    footer.append(&progress);
+    diagnostics.append(&progress);
     footer.prepend(card.widget());
-    footer.append(status);
+    diagnostics.append(status);
     let skipped = gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
@@ -758,27 +594,34 @@ pub(super) fn build_for_job(
     let issues = gtk::Box::new(gtk::Orientation::Vertical, 0);
     issues.set_visible(false);
     issues.set_widget_name("download-issues");
-    footer.append(&issues);
+    diagnostics.append(&issues);
     let activity = gtk::Box::new(gtk::Orientation::Vertical, 0);
     activity.set_visible(false);
     activity.set_widget_name("download-history");
     footer.append(&activity);
     footer.append(start);
-    footer.append(&super::state_recovery::button(
-        engine.clone(),
-        saved,
-        status,
-    ));
+    let recovery = super::state_recovery::button(engine.clone(), saved, status, job.clone());
+    let weak_diagnostics = diagnostic_row.downgrade();
+    recovery.connect_clicked(move |_| {
+        if let Some(row) = weak_diagnostics.upgrade() {
+            row.set_expanded(true);
+        }
+    });
+    diagnostics.append(&recovery);
+    let review = super::problems::button(engine.clone(), saved, job.clone());
+    let attention = super::attention_summary::AttentionSummary::new(&review);
+    footer.insert_child_after(attention.widget(), Some(card.widget()));
+    footer.append(&review);
+    footer.append(&diagnostic_group);
     let ui = Widgets {
         card: Some(card),
+        attention: Some(attention),
         start: start.downgrade(),
-        account_toggle: account_toggle.downgrade(),
+        header: header.clone(),
         folders: folders.downgrade(),
         menu: menu.downgrade(),
         row: row.downgrade(),
         account_row: account_row.downgrade(),
-        account_status: account_status.downgrade(),
-        account_status_fallback: account_status_fallback.to_owned(),
         status: status.downgrade(),
         menu_status: menu_status.downgrade(),
         progress: progress.downgrade(),
@@ -799,7 +642,6 @@ pub(super) fn build_for_job(
     } else {
         None
     };
-    footer.append(&super::problems::button(engine, saved, job.clone()));
     footer.append(&super::bulk_review::button(job.clone()));
     if let Some(receive) = restore {
         let restore_ui = ui.clone();
@@ -833,7 +675,8 @@ pub(super) fn build_for_job(
             }
         });
     }
-    for button in [start, account_toggle] {
+    {
+        let button = start;
         let click_job = job.clone();
         let click_ui = ui.clone();
         button.connect_clicked(move |_| {
@@ -846,8 +689,18 @@ pub(super) fn build_for_job(
             click_ui.present_job(&click_job.snapshot(), Some(previous));
         });
     }
-    let mut revision = u64::MAX;
-    let mut phase = None;
+    let click_job = job.clone();
+    header.connect_toggle(move || {
+        if click_job.running() {
+            click_job.pause();
+        } else {
+            click_job.request();
+        }
+    });
+    let initial = job.snapshot();
+    ui.present_job(&initial, None);
+    let mut revision = initial.revision;
+    let mut phase = Some(initial.phase);
     gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
         if ui.start.upgrade().is_none() {
             return gtk::glib::ControlFlow::Break;
@@ -888,9 +741,8 @@ pub(super) fn verify_worker_failure() {
     let row = adw::ActionRow::new();
     let account_row = adw::ActionRow::new();
     let status = gtk::Label::new(None);
-    let account_status = gtk::Label::new(Some("Connected"));
+    let header = super::account_header::AccountHeader::new("Fixture", "Connected");
     let menu = gtk::MenuButton::new();
-    let account_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
     let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
     let footer = build(
         Arc::new(DriveSyncEngine::new()),
@@ -901,10 +753,8 @@ pub(super) fn verify_worker_failure() {
             row: &row,
             status: &status,
             menu: &menu,
-            account_toggle: &account_toggle,
+            header: &header,
             account_row: &account_row,
-            account_status: &account_status,
-            account_status_fallback: "Connected",
             menu_status: &menu_status,
         },
     );
@@ -960,9 +810,9 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .use_markup(false)
             .build();
         let account_row = adw::ActionRow::new();
-        let account_status = gtk::Label::new(Some("Connected"));
+        let header = super::account_header::AccountHeader::new("Fixture", "Connected");
+        let account_status = header.status_for_test();
         let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
-        let account_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
         let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
         let footer = build(
             Arc::new(DriveSyncEngine::new()),
@@ -973,19 +823,24 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 row: &row,
                 status: &status,
                 menu: &menu,
-                account_toggle: &account_toggle,
+                header: &header,
                 account_row: &account_row,
-                account_status: &account_status,
-                account_status_fallback: "Connected",
                 menu_status: &menu_status,
             },
         );
-        let mut controls = std::collections::HashMap::new();
-        let mut child = footer.first_child();
-        while let Some(widget) = child {
+        fn collect(
+            widget: &gtk::Widget,
+            controls: &mut std::collections::HashMap<String, gtk::Widget>,
+        ) {
             controls.insert(widget.widget_name().to_string(), widget.clone());
-            child = widget.next_sibling();
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                collect(&current, controls);
+                child = current.next_sibling();
+            }
         }
+        let mut controls = std::collections::HashMap::new();
+        collect(footer.upcast_ref(), &mut controls);
         let bar = controls["download-progress"]
             .clone()
             .downcast::<gtk::ProgressBar>()
@@ -1010,16 +865,25 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .clone()
             .downcast::<gtk::Label>()
             .unwrap();
+        let test_card = crate::sync_progress_card::SyncProgressCard::new();
+        footer.remove(&footer.first_child().unwrap());
+        footer.prepend(test_card.widget());
+        let review = controls["problem-center"]
+            .clone()
+            .downcast::<gtk::Button>()
+            .unwrap();
+        let test_attention = super::attention_summary::AttentionSummary::new(&review);
+        footer.remove(&controls["attention-summary"]);
+        footer.insert_child_after(test_attention.widget(), Some(test_card.widget()));
         let ui = Widgets {
-            card: None,
+            card: Some(test_card),
+            attention: Some(test_attention),
             start: start.downgrade(),
-            account_toggle: account_toggle.downgrade(),
+            header: header.clone(),
             folders: folders.downgrade(),
             menu: menu.downgrade(),
             row: row.downgrade(),
             account_row: account_row.downgrade(),
-            account_status: account_status.downgrade(),
-            account_status_fallback: "Connected".into(),
             status: status.downgrade(),
             menu_status: menu_status.downgrade(),
             progress: bar.downgrade(),
@@ -1037,11 +901,6 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .margin_start(24)
             .margin_end(24)
             .build();
-        let group = adw::PreferencesGroup::builder()
-            .title("Synchronization")
-            .build();
-        group.add(&row);
-        content.append(&group);
         content.append(&footer);
         let window = adw::Window::builder()
             .default_width(width)
@@ -1051,6 +910,18 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         window.present();
         spinner.set_visible(true);
         spinner.start();
+        let present_progress = |event: &DownloadProgress| {
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 1,
+                    pausing: false,
+                    phase: crate::automatic::Phase::Running,
+                    progress: Some(event.clone()),
+                    result: None,
+                },
+                Some(crate::automatic::Phase::Running),
+            );
+        };
         for stage in [
             drivesync_engine::PreparationProgress::Connecting,
             drivesync_engine::PreparationProgress::Scanning {
@@ -1062,7 +933,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             drivesync_engine::PreparationProgress::CheckingLocal { checked: 128 },
             drivesync_engine::PreparationProgress::SavingState,
         ] {
-            ui.progress(&DownloadProgress {
+            present_progress(&DownloadProgress {
                 preparation: Some(stage),
                 completed_items: 0,
                 total_items: 0,
@@ -1088,18 +959,18 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 total: Some(3_400_000),
             }),
         };
-        ui.progress(&event);
+        present_progress(&event);
         assert_eq!(bar.fraction(), 0.35);
         assert!(bar.text().unwrap().contains("7 of 20"));
         assert!(status.text().starts_with("Current file:"));
         capture(&window, &format!("download-progress-{width}"));
         assert!(window.width() <= width + 10);
         event.current.as_mut().unwrap().stage = DownloadStage::Uploading;
-        ui.progress(&event);
+        present_progress(&event);
         assert_eq!(row.title(), "Uploading new file");
         capture(&window, &format!("upload-progress-{width}"));
         event.current.as_mut().unwrap().stage = DownloadStage::Verifying;
-        ui.progress(&event);
+        present_progress(&event);
         assert_eq!(row.title(), "Verifying file integrity");
         assert_eq!(bar.fraction(), 0.35);
         let completed = |report, phase| {
@@ -1334,16 +1205,17 @@ mod tests {
         let activity = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let skipped = gtk::Label::new(None);
         let preserved = gtk::Label::new(None);
+        let review = gtk::Button::new();
+        let attention = super::super::attention_summary::AttentionSummary::new(&review);
         let ui = Widgets {
-            card: None,
+            card: Some(crate::sync_progress_card::SyncProgressCard::new()),
+            attention: Some(attention.clone()),
             start: start.downgrade(),
-            account_toggle: Default::default(),
+            header: crate::dashboard::account_header::AccountHeader::new("Fixture", "Connected"),
             folders: Default::default(),
             menu: Default::default(),
             row: row.downgrade(),
             account_row: Default::default(),
-            account_status: Default::default(),
-            account_status_fallback: "Connected".into(),
             status: status.downgrade(),
             menu_status: Default::default(),
             progress: Default::default(),
@@ -1395,6 +1267,36 @@ mod tests {
             assert!(!skipped.is_visible());
             assert!(!preserved.is_visible());
         }
+        let mut snapshot = crate::automatic::Snapshot {
+            revision: 3,
+            pausing: false,
+            phase: crate::automatic::Phase::Attention,
+            progress: None,
+            result: Some(Ok(DownloadReport {
+                issues: vec![drivesync_engine::DownloadIssue {
+                    relative_path: Some("pending.txt".into()),
+                    error: EngineError::DownloadConflict,
+                }],
+                ..Default::default()
+            })),
+        };
+        ui.present_job(&snapshot, Some(crate::automatic::Phase::Waiting));
+        assert!(attention.widget().is_visible());
+        assert!(issues.is_visible());
+        snapshot.phase = crate::automatic::Phase::Running;
+        snapshot.result = None;
+        ui.present_job(&snapshot, Some(crate::automatic::Phase::Attention));
+        assert!(
+            attention.widget().is_visible(),
+            "running independent transfers must not hide observed conflicts"
+        );
+        assert!(issues.is_visible());
+        snapshot.phase = crate::automatic::Phase::Waiting;
+        ui.present_job(&snapshot, Some(crate::automatic::Phase::Running));
+        assert!(
+            !attention.widget().is_visible(),
+            "a new configuration discards previous-scope observations"
+        );
     }
 
     #[test]

@@ -12,7 +12,12 @@ pub(super) struct Attention {
 }
 impl Attention {
     pub fn from_report(report: &DownloadReport) -> Self {
-        let pending = report.attention();
+        let mut seen = HashSet::new();
+        let pending: Vec<_> = report
+            .attention()
+            .into_iter()
+            .filter(|item| seen.insert(item.relative_path.clone()))
+            .collect();
         let conflicts: HashSet<_> = report
             .reconciliation
             .iter()
@@ -71,6 +76,43 @@ pub(super) fn status(snapshot: &Snapshot) -> &'static str {
         Phase::Offline => "Offline",
         Phase::Retrying => "Retrying",
         Phase::Paused => "Paused",
+    }
+}
+
+/// Describes observed preparation work without inventing a total.
+pub(crate) fn preparation_text(
+    stage: &drivesync_engine::PreparationProgress,
+) -> (&'static str, String) {
+    use drivesync_engine::PreparationProgress;
+    match stage {
+        PreparationProgress::ScanningUploads => (
+            "Looking for new local files",
+            "Checking which new files and folders can be uploaded…".into(),
+        ),
+        PreparationProgress::PreparingUpload { current_path } => (
+            "Preparing a new upload",
+            format!("Reading: {}", current_path.to_string_lossy()),
+        ),
+        PreparationProgress::Connecting => (
+            "Connecting to Google Drive",
+            "Verifying account access and the selected folder…".into(),
+        ),
+        PreparationProgress::ReadingChanges => (
+            "Checking recent Drive changes",
+            "Reading changes reported by Google Drive…".into(),
+        ),
+        PreparationProgress::Scanning { files, folders, .. } => (
+            "Analyzing Google Drive",
+            format!("{files} files and {folders} folders found so far…"),
+        ),
+        PreparationProgress::CheckingLocal { checked } => (
+            "Checking files on this computer",
+            format!("{checked} local paths checked…"),
+        ),
+        PreparationProgress::SavingState => (
+            "Preparing downloads",
+            "Saving the analysis before checking and downloading files…".into(),
+        ),
     }
 }
 

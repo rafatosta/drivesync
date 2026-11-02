@@ -129,8 +129,19 @@ impl SyncProgressCard {
                 "dim-label",
             ),
         };
-        self.title.set_label(title);
-        self.description.set_label(detail);
+        self.title.set_label(&gettextrs::gettext(title));
+        self.description.set_label(&gettextrs::gettext(detail));
+        if snapshot.phase == Phase::Running && !snapshot.pausing {
+            if let Some(stage) = snapshot
+                .progress
+                .as_ref()
+                .and_then(|p| p.preparation.as_ref())
+            {
+                let (title, detail) = crate::dashboard::presentation::preparation_text(stage);
+                self.title.set_label(&gettextrs::gettext(title));
+                self.description.set_label(&detail);
+            }
+        }
         if matches!(snapshot.phase, Phase::Attention | Phase::Blocked) {
             if let Some(Ok(report)) = &snapshot.result {
                 self.description.set_label(&format!(

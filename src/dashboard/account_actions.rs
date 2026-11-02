@@ -159,3 +159,83 @@ impl AccountActions {
             .build()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use drivesync_engine::{AccountId, AccountSummary, DriveSyncEngine, RestoredAccount};
+    use std::{cell::Cell, rc::Rc, sync::Arc};
+
+    #[test]
+    #[ignore = "requires a desktop display"]
+    fn native_menus_keep_account_targets_and_configuration_navigation() {
+        adw::init().unwrap();
+        let list = gtk::ListBox::new();
+        let pages = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let selected = Rc::new(Cell::new(-1));
+        let observed = selected.clone();
+        list.connect_row_selected(move |_, row| observed.set(row.map(|r| r.index()).unwrap_or(-1)));
+        let mut rows = vec![];
+        let mut configurations = vec![];
+        let mut counts = vec![];
+        let mut commands = vec![];
+        for id in ["one", "two"] {
+            let user = adw::ActionRow::builder().title(id).build();
+            list.append(&user);
+            let configuration = adw::ExpanderRow::new();
+            pages.append(&configuration);
+            let saved = RestoredAccount {
+                account: AccountSummary {
+                    id: AccountId(id.into()),
+                    provider_subject: id.into(),
+                    email: None,
+                },
+                error: None,
+                folder: None,
+            };
+            let job = Controller::attach(Arc::new(DriveSyncEngine::new()), &saved);
+            let folders = gio::SimpleActionGroup::new();
+            let counter = Rc::new(Cell::new(0));
+            let observed = counter.clone();
+            let open = gio::SimpleAction::new("open-local", None);
+            open.connect_activate(move |_, _| observed.set(observed.get() + 1));
+            folders.add_action(&open);
+            let logout = gtk::Button::new();
+            pages.append(&logout);
+            let actions = AccountActions::new(job, &folders, &configuration, &user, &list, &logout);
+            actions.install(&user);
+            user.add_suffix(&actions.menu());
+            assert!(!actions.group.is_action_enabled("sync"));
+            assert!(!actions.group.is_action_enabled("toggle"));
+            commands.push(actions.group.clone());
+            counts.push(counter);
+            rows.push(user);
+            configurations.push(configuration);
+        }
+        list.select_row(Some(&rows[1]));
+        rows[0]
+            .activate_action("account-controls.open-local", None)
+            .unwrap();
+        assert_eq!((counts[0].get(), counts[1].get()), (1, 0));
+        assert_eq!(selected.get(), 1);
+        configurations[0].set_sensitive(false);
+        assert!(commands[0].is_action_enabled("open-local"));
+        commands[0].activate_action("open-local", None);
+        assert_eq!((counts[0].get(), counts[1].get()), (2, 0));
+        configurations[0].set_sensitive(true);
+        rows[0]
+            .activate_action("account-controls.configure", None)
+            .unwrap();
+        assert_eq!(selected.get(), 0);
+        assert!(configurations[0].is_expanded());
+        assert!(!configurations[1].is_expanded());
+        let weak_group = commands[0].downgrade();
+        commands.clear();
+        drop(rows);
+        drop(list);
+        assert!(
+            weak_group.upgrade().is_none(),
+            "observers must not retain removed account groups"
+        );
+    }
+}

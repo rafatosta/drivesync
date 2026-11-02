@@ -34,36 +34,7 @@ pub(super) fn populate(
         list.append(&user);
 
         let content = crate::flow::content();
-        let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let identity = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        identity.set_hexpand(true);
-        let title = gtk::Label::builder()
-            .label(name)
-            .use_markup(false)
-            .xalign(0.0)
-            .hexpand(true)
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .css_classes(["title-1"])
-            .build();
-        let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        title_row.append(&title);
-        let sync_toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
-        sync_toggle.set_tooltip_text(Some("Start or resume synchronization"));
-        sync_toggle.set_valign(gtk::Align::Center);
-        sync_toggle.set_sensitive(false);
-        sync_toggle.set_widget_name("account-sync-toggle");
-        title_row.append(&sync_toggle);
-        identity.append(&title_row);
-        let account_status = gtk::Label::builder()
-            .label(&state)
-            .use_markup(false)
-            .xalign(0.0)
-            .wrap(true)
-            .css_classes(["dim-label"])
-            .build();
-        identity.append(&account_status);
-        heading.append(&identity);
+        let heading = super::account_header::AccountHeader::new(name, &state);
         let sign_out =
             crate::session::sign_out_button(engine.clone(), saved.account.id.clone(), nav, toasts);
         sign_out.set_visible(false);
@@ -71,7 +42,7 @@ pub(super) fn populate(
         let sync_menu_status = gtk::Label::new(None);
         sync_menu_status.set_visible(false);
         content.append(&sync_menu_status);
-        content.append(&heading);
+        content.append(heading.widget());
 
         let description = adw::PreferencesGroup::new();
         let entry = adw::EntryRow::builder()
@@ -101,15 +72,7 @@ pub(super) fn populate(
         let configuration_group = adw::PreferencesGroup::new();
         configuration_group.add(&configuration);
         configuration.add_row(&description);
-        super::description::bind(
-            engine.clone(),
-            &saved,
-            &entry,
-            &description,
-            &title,
-            &user,
-            &avatar,
-        );
+        heading.bind_description(engine.clone(), &saved, &entry, &description, &user, &avatar);
 
         let sync_state = crate::flow::row(
             "Not started",
@@ -130,9 +93,16 @@ pub(super) fn populate(
             "Download new files and update intact managed copies; preserve local edits",
         ));
         start.set_widget_name("start-synchronization");
-        let folders = super::folders::build(engine.clone(), &saved, &sync_state, &status, &start);
+        let folders = super::folders::build(
+            engine.clone(),
+            &saved,
+            &sync_state,
+            &status,
+            &start,
+            &configuration,
+        );
         configuration.add_row(folders.widget());
-        content.append(&configuration_group);
+
         let job = crate::automatic::Controller::attach(engine.clone(), &saved);
         let actions = super::account_actions::AccountActions::new(
             job.clone(),
@@ -166,7 +136,7 @@ pub(super) fn populate(
         user.add_suffix(&sidebar_menu);
         let menu = actions.menu();
         menu.set_widget_name("dashboard-account-menu");
-        heading.append(&menu);
+        heading.set_menu(&menu);
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -177,11 +147,6 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
-        let sync = adw::PreferencesGroup::builder()
-            .title("Synchronization")
-            .build();
-        sync.add(&sync_state);
-        content.append(&sync);
         content.append(&super::synchronization::build_for_job(
             engine.clone(),
             &saved,
@@ -191,14 +156,73 @@ pub(super) fn populate(
                 row: &sync_state,
                 status: &status,
                 menu: &menu,
-                account_toggle: &sync_toggle,
+                header: &heading,
                 account_row: &user,
-                account_status: &account_status,
-                account_status_fallback: &state,
                 menu_status: &sync_menu_status,
             },
             job,
         ));
+        content.append(&configuration_group);
         details.add_named(&content, Some(&saved.account.id.0));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
+    fn discarded_dashboard_releases_components_and_observers() {
+        adw::init().unwrap();
+        assert!(std::env::var("XDG_DATA_HOME")
+            .unwrap()
+            .starts_with("/tmp/drivesync-ui-"));
+        fn named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+            if widget.widget_name() == name {
+                return Some(widget.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                if let Some(found) = named(&current, name) {
+                    return Some(found);
+                }
+                child = current.next_sibling();
+            }
+            None
+        }
+        let saved = RestoredAccount {
+            account: drivesync_engine::AccountSummary {
+                id: drivesync_engine::AccountId("google:disposed-ui".into()),
+                provider_subject: "disposed-ui".into(),
+                email: Some("fixture@example.com".into()),
+            },
+            error: None,
+            folder: None,
+        };
+        let nav = adw::NavigationView::new();
+        let toasts = adw::ToastOverlay::new();
+        let page =
+            crate::dashboard::build(Arc::new(DriveSyncEngine::new()), vec![saved], &nav, &toasts);
+        let start = named(page.upcast_ref(), "start-synchronization")
+            .unwrap()
+            .downgrade();
+        let header_toggle = named(page.upcast_ref(), "account-sync-toggle")
+            .unwrap()
+            .downgrade();
+        let attention = named(page.upcast_ref(), "attention-summary")
+            .unwrap()
+            .downgrade();
+        let page_ref = page.downgrade();
+        drop(page);
+        let wait = gtk::glib::MainLoop::new(None, false);
+        let finish = wait.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+            finish.quit()
+        });
+        wait.run();
+        assert!(page_ref.upgrade().is_none());
+        assert!(start.upgrade().is_none());
+        assert!(header_toggle.upgrade().is_none());
+        assert!(attention.upgrade().is_none());
     }
 }

@@ -19,8 +19,17 @@ pub(super) fn button(
     button.set_widget_name("problem-center");
     button.set_sensitive(saved.folder.is_some());
     let account = saved.account.clone();
+    let clicked_job = job.clone();
     button.connect_clicked(move |button| {
-        actions::open(button, engine.clone(), &account, job.clone());
+        actions::open(button, engine.clone(), &account, clicked_job.clone());
+    });
+    let weak = button.downgrade();
+    gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        let Some(button) = weak.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        button.set_sensitive(job.folder().is_some());
+        gtk::glib::ControlFlow::Continue
     });
     button
 }

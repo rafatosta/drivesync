@@ -63,6 +63,13 @@ fn rendered(window: &impl IsA<gtk::Window>) -> gtk::gsk::RenderNode {
 #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
 fn folder_setup_and_dashboard_layouts() {
     adw::init().unwrap();
+    adw::StyleManager::default().set_color_scheme(
+        if std::env::var_os("DRIVESYNC_UI_DARK").is_some() {
+            adw::ColorScheme::ForceDark
+        } else {
+            adw::ColorScheme::ForceLight
+        },
+    );
     crate::folder_picker::verify_selection();
     let output =
         std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
@@ -219,8 +226,8 @@ fn folder_setup_and_dashboard_layouts() {
                         .unwrap()
                         .downcast::<adw::ActionRow>()
                         .unwrap();
-                    // The synchronization observer has already presented the waiting job.
-                    assert_eq!(account_row.subtitle().as_deref(), Some("Waiting"));
+                    // The isolated fixture has no valid saved root binding; restoring availability reports a problem.
+                    assert_eq!(account_row.subtitle().as_deref(), Some("Needs attention"));
                     assert_eq!(
                         account_row.tooltip_text().as_deref(),
                         Some("preview@example.com")
