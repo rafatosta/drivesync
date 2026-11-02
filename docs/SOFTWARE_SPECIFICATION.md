@@ -1263,6 +1263,13 @@ flock não coordena locks POSIX fcntl nem escritores que ignoram locks; manter
 quiescência, assinaturas, hashes e snapshot privado. Não prometer detectar que
 um escritor fechou o arquivo, nem isolamento contra processo hostil do mesmo UID.
 
+Na seleção de uma raiz nova, preferir a origem direta verificada pelo portal
+somente quando já autorizada pelo sandbox e sem `.drivesync` em ambas as vistas.
+Testar escrita e locks antes de persistir a associação; recusar filesystem
+incompatível explicitamente. Não trocar a vista de uma raiz com estado existente,
+migrar identidades ou ampliar permissões automaticamente. Esse caso permanece
+bloqueado em portais sem flock. Contrato operacional: [proteção local](../engine/src/local/safety.md).
+
 Os padrões de temporários definidos em SYNC-003 também são inelegíveis como
 nomes remotos de instalação (incluindo colisões de caixa). Uma renomeação para
 nome definitivo permite nova observação. Arquivos ocultos e `.tmp` legítimos

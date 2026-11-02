@@ -5,6 +5,41 @@ use super::{
 };
 use std::path::Path;
 
+/// Requires a freshly exported disposable directory with direct sandbox access.
+/// Does not authenticate or configure an account, and never creates root state.
+#[test]
+#[ignore = "requires an explicit fresh disposable portal export and scoped direct grant"]
+fn fresh_portal_folder_selects_direct_access_before_recording_inode_evidence() {
+    let selected = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_PATH").expect("portal path"),
+    );
+    let origin = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_ORIGIN").expect("host origin"),
+    );
+    assert!(Path::new("/.flatpak-info").is_file());
+    assert!(!selected.join(".drivesync").exists());
+    assert_eq!(super::paths::local_origin(&selected).unwrap(), origin);
+    assert_eq!(super::paths::local_folder(&selected).unwrap(), origin);
+    assert!(!selected.join(".drivesync").exists());
+    std::fs::create_dir(selected.join(".drivesync")).unwrap();
+    std::fs::write(selected.join(".drivesync/evidence"), b"preserve").unwrap();
+    assert_eq!(
+        super::paths::local_folder(&selected),
+        Err(crate::EngineError::LocalLockUnsupported)
+    );
+    assert_eq!(
+        std::fs::read(selected.join(".drivesync/evidence")).unwrap(),
+        b"preserve"
+    );
+    assert!(!std::fs::read_dir(&selected).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".drivesync-access-")));
+    std::fs::remove_file(selected.join(".drivesync/evidence")).unwrap();
+    std::fs::remove_dir(selected.join(".drivesync")).unwrap();
+}
+
 #[test]
 fn path_overlap_uses_components_not_text_prefixes() {
     assert!(overlap(Path::new("/a/b"), Path::new("/a/b/c")));

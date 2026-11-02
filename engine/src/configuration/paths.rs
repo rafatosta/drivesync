@@ -9,16 +9,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Canonicalizes and probes a writable local directory.
+/// Selects and probes a writable, lock-capable local directory.
 ///
 /// The `path` must be absolute and refer to an existing directory other than
 /// the filesystem root. A unique, mode-`0600` temporary file is created and
-/// removed to check write access; no user files are changed.
+/// removed to check write access and shared locks; no user files are changed.
+/// A fresh portal selection uses its host origin when already accessible through
+/// no-follow descriptors. Existing `.drivesync` state prevents this selection.
 ///
 /// # Errors
 ///
 /// Returns [`EngineError::InvalidFolder`] when the path is invalid,
 /// cannot be canonicalized, is not a directory, or the access probe fails.
+/// Returns [`EngineError::LocalLockUnsupported`] when file locks are unavailable.
 pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
     if !path.is_absolute() {
         return Err(EngineError::InvalidFolder);
@@ -27,6 +30,8 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
     if !path.is_dir() || path.parent().is_none() {
         return Err(EngineError::InvalidFolder);
     }
+    let origin = local_origin(&path)?;
+    let path = fresh_root_access(&path, &origin);
     let probe = path.join(format!(
         ".drivesync-access-{}",
         oauth2::CsrfToken::new_random().secret()
@@ -37,9 +42,25 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .mode(0o600)
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
+    let capability = crate::download::filesystem::lock_regular(&file);
     drop(file);
     fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
+    capability?;
     Ok(path)
+}
+
+/// Selects an already sandbox-authorized host origin only before any root state
+/// exists. Portal and direct inode evidence is never interchangeable. An absent
+/// or inaccessible origin keeps the selected view; no permission is requested.
+fn fresh_root_access(selected: &Path, origin: &Path) -> PathBuf {
+    if selected == origin
+        || !matches!(fs::symlink_metadata(selected.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        || !matches!(fs::symlink_metadata(origin.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        || crate::download::filesystem::Root::observe(origin).is_err()
+    {
+        return selected.into();
+    }
+    origin.into()
 }
 /// Resolves a Flatpak document-portal alias to its host-side location.
 ///
@@ -186,6 +207,48 @@ fn portal_alias_target(path: &Path, target: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod access_tests {
     use super::*;
+    #[test]
+    fn fresh_portal_selection_uses_only_accessible_origins_without_existing_state() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-access-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        fs::create_dir(&base).unwrap();
+        let selected = base.join("selected");
+        let origin = base.join("origin");
+        fs::create_dir(&selected).unwrap();
+        fs::create_dir(&origin).unwrap();
+        assert_eq!(fresh_root_access(&selected, &origin), origin);
+        assert_eq!(
+            fresh_root_access(&selected, &base.join("missing")),
+            selected
+        );
+        fs::create_dir(selected.join(".drivesync")).unwrap();
+        fs::write(selected.join(".drivesync/evidence"), b"preserve").unwrap();
+        assert_eq!(fresh_root_access(&selected, &origin), selected);
+        assert_eq!(
+            fs::read(selected.join(".drivesync/evidence")).unwrap(),
+            b"preserve"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn local_folder_capability_probe_preserves_existing_files_and_cleans_itself() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-probe-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        fs::create_dir(&base).unwrap();
+        fs::write(base.join("existing"), b"preserve").unwrap();
+        assert_eq!(
+            local_folder(&base).unwrap(),
+            fs::canonicalize(&base).unwrap()
+        );
+        assert_eq!(fs::read(base.join("existing")).unwrap(), b"preserve");
+        assert_eq!(fs::read_dir(&base).unwrap().count(), 1);
+        fs::remove_dir_all(base).unwrap();
+    }
     #[test]
     fn only_the_fixed_flatpak_runtime_alias_is_translated() {
         for target in ["../../flatpak/doc", "/run/flatpak/doc"] {
