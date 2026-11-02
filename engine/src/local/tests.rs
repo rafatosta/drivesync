@@ -22,6 +22,41 @@ impl Drop for Tree {
     }
 }
 #[test]
+fn monitor_discovery_skips_symlinks_and_does_not_hold_the_sync_lock() {
+    let t = Tree::new();
+    fs::create_dir(t.0.join("nested")).unwrap();
+    fs::create_dir(t.0.join(".drivesync")).unwrap();
+    fs::create_dir(t.0.join("writing.part")).unwrap();
+    std::os::unix::fs::symlink("/", t.0.join("outside")).unwrap();
+    let cancel = Cancellation::new();
+    let tree = MonitorTree::discover(&t.0, &cancel).unwrap();
+    let paths: Vec<_> = tree
+        .directories()
+        .iter()
+        .map(|dir| dir.relative())
+        .collect();
+    assert_eq!(paths, [Path::new(""), Path::new("nested")]);
+    assert!(Root::open(&t.0).is_ok());
+    assert_eq!(tree.validate(&cancel), Ok(()));
+}
+
+#[test]
+fn monitor_discovery_detects_replaced_directories_and_cancellation() {
+    let t = Tree::new();
+    fs::create_dir(t.0.join("nested")).unwrap();
+    let cancel = Cancellation::new();
+    let tree = MonitorTree::discover(&t.0, &cancel).unwrap();
+    fs::rename(t.0.join("nested"), t.0.join("old")).unwrap();
+    fs::create_dir(t.0.join("nested")).unwrap();
+    assert_eq!(tree.validate(&cancel), Err(MonitorError::Changed));
+    cancel.cancel();
+    assert!(matches!(
+        MonitorTree::discover(&t.0, &cancel),
+        Err(MonitorError::Cancelled)
+    ));
+}
+
+#[test]
 fn full_scan_recovers_offline_changes_without_events_and_rejects_temporary_patterns() {
     let t = Tree::new();
     fs::create_dir(t.0.join("nested")).unwrap();

@@ -102,6 +102,13 @@ impl Root {
             path: path.into(),
         })
     }
+    /// Opens a read-only observation anchor without taking the synchronization lock.
+    pub(crate) fn observe(path: &Path) -> Result<Self, EngineError> {
+        Ok(Self {
+            file: Self::open_path(path)?,
+            path: path.into(),
+        })
+    }
     fn open_path(path: &Path) -> Result<File, EngineError> {
         if !path.is_absolute() {
             return Err(EngineError::InvalidFolder);

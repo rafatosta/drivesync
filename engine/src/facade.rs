@@ -26,6 +26,24 @@ impl DriveSyncEngine {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Discovers local directories for monitoring without following symlinks.
+    ///
+    /// This read-only observation does not authorize synchronization or replace
+    /// the root identity checks performed during a cycle. Call off the GTK
+    /// main thread and discard the result when its configuration changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error on cancellation, inaccessible or changed paths,
+    /// I/O failure, or the directory and entry limits.
+    pub fn monitor_tree(
+        &self,
+        path: &std::path::Path,
+        cancel: &Cancellation,
+    ) -> Result<crate::MonitorTree, crate::MonitorError> {
+        crate::local::MonitorTree::discover(path, cancel)
+    }
     /// Reads durable suspension without accessing the selected volume or Drive.
     /// Missing external identity is unverified, never implicit permission to bind.
     /// Call off the GTK main thread.
