@@ -115,9 +115,6 @@ msgstr "Pausar sincronização"
 msgid "Resume synchronization"
 msgstr "Retomar sincronização"
 
-msgid "Start synchronization"
-msgstr "Iniciar sincronização"
-
 msgid "Account actions"
 msgstr "Ações da conta"
 

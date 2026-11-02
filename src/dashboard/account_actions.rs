@@ -40,10 +40,10 @@ impl AccountActions {
         let toggle = gio::SimpleAction::new("toggle", None);
         let clicked = job.clone();
         toggle.connect_activate(move |_, _| {
-            if clicked.running() {
-                clicked.pause();
-            } else {
+            if clicked.snapshot().phase == Phase::Paused {
                 clicked.request();
+            } else {
+                clicked.pause();
             }
         });
         group.add_action(&toggle);
@@ -123,12 +123,10 @@ impl AccountActions {
                 Some("account-controls.sync"),
             );
             operation.append(
-                Some(&gettext(if running {
-                    "Pause synchronization"
-                } else if snapshot.phase == Phase::Paused {
+                Some(&gettext(if snapshot.phase == Phase::Paused {
                     "Resume synchronization"
                 } else {
-                    "Start synchronization"
+                    "Pause synchronization"
                 })),
                 Some("account-controls.toggle"),
             );
@@ -165,6 +163,64 @@ mod tests {
     use super::*;
     use drivesync_engine::{AccountId, AccountSummary, DriveSyncEngine, RestoredAccount};
     use std::{cell::Cell, rc::Rc, sync::Arc};
+
+    #[test]
+    #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
+    fn native_idle_pause_suspends_checks_instead_of_starting_a_transfer() {
+        adw::init().unwrap();
+        assert!(std::env::var("XDG_DATA_HOME")
+            .unwrap()
+            .starts_with("/tmp/drivesync-ui-"));
+        let id = AccountId("google:idle-pause-ui".into());
+        let saved = RestoredAccount {
+            account: AccountSummary {
+                id: id.clone(),
+                provider_subject: "idle-pause-ui".into(),
+                email: None,
+            },
+            error: None,
+            folder: Some(drivesync_engine::FolderConfiguration {
+                account_id: id,
+                remote: drivesync_engine::DriveFolder {
+                    id: "fixture".into(),
+                    name: "Fixture".into(),
+                },
+                local: "/tmp/drivesync-ui-unconfigured-fixture".into(),
+                local_display: "/tmp/drivesync-ui-unconfigured-fixture".into(),
+            }),
+        };
+        let job = Controller::attach(Arc::new(DriveSyncEngine::new()), &saved);
+        let list = gtk::ListBox::new();
+        let user = adw::ActionRow::new();
+        list.append(&user);
+        let configuration = adw::ExpanderRow::new();
+        let logout = gtk::Button::new();
+        let actions = AccountActions::new(
+            job.clone(),
+            &gio::SimpleActionGroup::new(),
+            &configuration,
+            &user,
+            &list,
+            &logout,
+        );
+        assert!(actions.group.is_action_enabled("toggle"));
+        actions.group.activate_action("toggle", None);
+        assert_eq!(job.snapshot().phase, Phase::Paused);
+        assert!(!job.running());
+        let wait = gtk::glib::MainLoop::new(None, false);
+        let finish = wait.clone();
+        gtk::glib::timeout_add_local_once(Duration::from_millis(250), move || finish.quit());
+        wait.run();
+        assert_eq!(job.snapshot().phase, Phase::Paused);
+        assert!(!job.running());
+        let operation = actions.model.item_link(0, "section").unwrap();
+        let label = operation
+            .item_attribute_value(1, "label", None)
+            .unwrap()
+            .get::<String>()
+            .unwrap();
+        assert_eq!(label, "Resume synchronization");
+    }
 
     #[test]
     #[ignore = "requires a desktop display"]

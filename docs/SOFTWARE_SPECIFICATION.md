@@ -1649,7 +1649,9 @@ independentes; transferências não significam resolução de conflitos anterior
 **Contratos de comandos:** os menus da sidebar e do cabeçalho compartilham um
 `GSimpleActionGroup` por conta, independente da seleção atual. O menu continua
 acessível durante a execução. Sincronização manual, pausa e retomada usam o mesmo
-controlador do card e da recuperação. Saída da conta fica indisponível enquanto
+controlador do card e da recuperação. Pausar também suspende verificações futuras
+quando não há transferência em andamento; uma leitura tardia de disponibilidade
+não pode desfazer essa pausa explícita. Saída da conta fica indisponível enquanto
 um ciclo está em execução. Configuração de pastas não pode ser modificada nesse
 período; os comandos de abertura permanecem independentes desse bloqueio.
 

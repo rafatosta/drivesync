@@ -140,6 +140,7 @@ impl Controller {
     fn restore_availability(&self, generation: u64, error: Option<EngineError>) {
         let mut state = self.0.state.borrow_mut();
         if state.generation != generation
+            || state.user_paused
             || state.cancel.is_some()
             || state.result.is_some()
             || !state.eligible
@@ -602,6 +603,31 @@ mod tests {
         assert!(!job.running());
         assert_eq!(job.snapshot().phase, Phase::Paused);
         assert!(job.0.state.borrow().schedule.due.is_none());
+    }
+
+    #[test]
+    fn explicit_idle_pause_survives_late_availability_reads() {
+        for error in [
+            None,
+            Some(EngineError::RootSuspended(
+                drivesync_engine::RootSuspension::Offline,
+            )),
+        ] {
+            let job = Controller::new(
+                AccountId("idle-pause".into()),
+                Arc::new(|_, _, _, _| panic!("idle pause dispatched a worker")),
+                false,
+            );
+            job.configure(Some(folder("idle-pause", "root")), true);
+            let generation = job.0.state.borrow().generation;
+            job.pause();
+            job.restore_availability(generation, error);
+            job.network_changed(true);
+            job.start(u64::MAX, true, false);
+            assert_eq!(job.snapshot().phase, Phase::Paused);
+            assert!(!job.running());
+            assert!(job.0.state.borrow().schedule.due.is_none());
+        }
     }
 
     fn wait_until(context: &glib::MainContext, condition: impl Fn() -> bool) {
