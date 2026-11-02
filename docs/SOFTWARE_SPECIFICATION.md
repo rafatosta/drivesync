@@ -336,6 +336,26 @@ executores existentes. A [matriz local de aceite](../engine/src/changes/reconcil
 liga C06/C21/N10 aos testes determinísticos. O aceite com Drive real e o aplicativo
 empacotado permanecem pendentes; executar ferramentas no SDK não os substitui.
 
+#### LOCAL-001 — antecipação por eventos locais
+
+**Intenção:** alterações na árvore local de uma conta devem solicitar
+reconciliação antecipada, sem substituir o inventário completo de SYNC-003.
+Eventos são pistas, não evidência suficiente para transferência ou exclusão.
+Pausa, bloqueios, disponibilidade, autorização e backoff continuam prevalecendo.
+Uma falha de monitoramento deve ser visível e não equivale a uma árvore vazia.
+
+**Situação:** monitoramento contínuo ainda não implementado. O
+[contrato proposto](../engine/src/local/monitoring.md) está em revisão e não
+autoriza implementação antes da revisão humana dos algoritmos e oráculos.
+A varredura periódica existente continua sendo a recuperação de eventos ausentes.
+
+**Aceite pretendido:** os cenários do contrato devem ser demonstrados com
+relógio controlado, filesystem e SQLite temporários e provedor simulado;
+portais, mounts, perda de acesso e serviço em segundo plano exigem também
+homologação separada no Flatpak instalado. Google real, quando necessário,
+exige conta de teste e consentimento. Testes no SDK não demonstram por si só
+essas integrações.
+
 ### 4.8 Pausa, retomada e execução em segundo plano
 
 ### 4.9 Tratamento de conflitos e exclusões
