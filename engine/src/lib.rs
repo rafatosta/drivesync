@@ -44,6 +44,7 @@ pub use conflicts::{
 pub use coordinator::RootSuspension;
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
+pub use local::{MonitorDirectory, MonitorError, MonitorTree};
 pub use models::{AccountId, AccountSummary, EngineStatus, RestoredAccount, SyncRootId};
 pub use remote::{FolderPage, InventoryEntry, InventoryKind, RemoteInventory, SkipReason};
 pub use resolution::{
