@@ -119,6 +119,41 @@ EXDEV even when the underlying host directories share a device. The suite aborts
 before moving the fixture in that case. Do not grant access to unrelated paths
 when a narrower common test parent is available.
 
+### Isolated download fixture and installed profile
+
+The ignored `facade::live_google_tests::prepare_isolated_download_fixture` test
+requires `DRIVESYNC_LIVE_GOOGLE_TEST=1`, an exact `DRIVESYNC_TEST_ACCOUNT` email
+and a new absolute `DRIVESYNC_DOWNLOAD_EVIDENCE` directory. It reads the existing
+account metadata and vault in their original OAuth namespace, creates a generated
+remote folder with text, empty and 10 MiB binary files, and configures a separate
+`profile/` beneath that evidence directory. It never reconfigures the original
+account index or enables engine uploads. The fixture manifest and originals are
+retained there. `update_isolated_download_fixture` updates only the authenticated
+`simple.txt` child in that isolated pair, preserving the original local fixture.
+Both helpers are test-only, ignored by default, and require explicit opt-in.
+
+For installed apps, Flatpak can override `--env=XDG_DATA_HOME=...` during startup.
+Set the isolated profile **after** startup through `/usr/bin/env`, and retain the
+exact pair checks in `sync-cycle`. Do not change the normal app profile to work
+around a scope mismatch:
+
+```sh
+flatpak run --filesystem=/absolute/evidence-directory \
+  --command=/usr/bin/env com.rtosta.DriveSync.Devel \
+  DRIVESYNC_LIVE_GOOGLE_TEST=1 \
+  XDG_DATA_HOME=/absolute/evidence-directory/profile \
+  /app/bin/sync-cycle test@example.com REMOTE_TEST_FOLDER_ID \
+  /absolute/evidence-directory/files --expect 3,0,0,0,0,0
+```
+
+The locally installed validation package must contain the freshly built
+`sync-cycle` executable; an SDK executable is not proof of installed behavior.
+Run the Python recovery supervisor inside that same installed runtime so SIGKILL
+targets the actual worker rather than a host Flatpak launcher. Start each command
+only after the preceding process has exited. Use `--unshare=network` for the
+offline cycle and restore normal networking for recovery. Coordinator Offline
+suspensions and lower-level network errors both satisfy `--expect-error network`.
+
 For an offline-start check, use `--unshare=network` instead of `--share=network`
 and pass `--expect-error network`. It must fail before requesting media. Follow
 it with a normal unchanged cycle to verify that observation state is retryable.
