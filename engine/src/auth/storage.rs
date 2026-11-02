@@ -42,16 +42,18 @@ impl CredentialStore for DesktopVault {
 /// Reopens a failed encrypted read once, using a fresh keyring entry/session.
 ///
 /// Repeated reads of a fixed synthetic secret reproduce intermittent DH crypto
-/// errors against oo7 on Fedora 45. Reading is idempotent; no remote operation or
-/// vault write is replayed. Decode errors, absence, permissions and unknown
-/// failures are never retried. The caller still verifies credential identity.
+/// errors against oo7 on Fedora 45. Backend UTF-8 failures are also eligible:
+/// they occur before JSON decoding and do not establish stored JSON corruption.
+/// Reading is idempotent; no remote operation or vault write is replayed. JSON
+/// decode errors, absence, permissions and unknown failures are never retried.
+/// A second failure is returned unchanged; the caller verifies identity.
 fn recover_read<T>(mut read: impl FnMut() -> Result<T, AuthError>) -> Result<T, AuthError> {
     let result = read();
     if matches!(
         result,
         Err(AuthError::CredentialStorage {
             operation: VaultOperation::Read,
-            failure: VaultFailure::Crypto,
+            failure: VaultFailure::Crypto | VaultFailure::InvalidData,
         })
     ) {
         let result = read();
