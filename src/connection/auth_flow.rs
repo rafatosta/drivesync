@@ -6,6 +6,7 @@
 use super::view::ConnectionView;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountSummary, AuthError, Cancellation, DriveSyncEngine, EngineError};
+use gettextrs::gettext;
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -67,7 +68,7 @@ pub(super) fn bind(
         if let Some(cancel) = cancellation.borrow().as_ref() {
             cancel.cancel();
             button.set_sensitive(false);
-            button.set_label("Cancelling…");
+            button.set_label(&gettext("Cancelling…"));
             copy.set_sensitive(false);
             url_slot.borrow_mut().take();
             return;
@@ -130,7 +131,7 @@ pub(super) fn bind(
                     }
                     *url_slot.borrow_mut() = Some(url.clone());
                     copy.set_sensitive(true);
-                    copy.set_tooltip_text(Some("Copy the current authorization link"));
+                    copy.set_tooltip_text(Some(&gettext("Copy the current authorization link")));
                     gtk::glib::spawn_future_local(async move {
                         // GIO uses the desktop OpenURI portal inside Flatpak.
                         let launched = gtk::gio::AppInfo::launch_default_for_uri_future(
@@ -152,7 +153,7 @@ pub(super) fn bind(
             cancellation.borrow_mut().take();
             super::view::set_waiting(&button, &subtitle, &spinner, &feedback, false);
             copy.set_sensitive(false);
-            copy.set_tooltip_text(Some("Available after starting sign-in"));
+            copy.set_tooltip_text(Some(&gettext("Available after starting sign-in")));
             url_slot.borrow_mut().take();
             match result {
                 Ok(account) => {

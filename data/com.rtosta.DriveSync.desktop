@@ -2,11 +2,14 @@
 Type=Application
 Name=DriveSync
 GenericName=Google Drive Synchronization
+GenericName[pt_BR]=Sincronização do Google Drive
 Comment=Keep Google Drive files available on Linux
+Comment[pt_BR]=Mantenha os arquivos do Google Drive disponíveis no Linux
 Exec=drivesync
 Icon=com.rtosta.DriveSync
 Terminal=false
 Categories=Network;FileTransfer;Utility;
 Keywords=Google;Drive;Cloud;Sync;Files;
+Keywords[pt_BR]=Google;Drive;Nuvem;Sincronização;Arquivos;
 StartupNotify=true
 X-GNOME-UsesNotifications=true

@@ -1,0 +1,92 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: DriveSync\n"
+"PO-Revision-Date: 2026-11-01 00:00+0000\n"
+"Last-Translator: DriveSync contributors\n"
+"Language-Team: Brazilian Portuguese\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "DriveSync application icon"
+msgstr "Ícone do aplicativo DriveSync"
+
+msgid "Welcome to DriveSync"
+msgstr "Boas-vindas ao DriveSync"
+
+msgid "Your Google Drive, a little closer."
+msgstr "Seu Google Drive mais perto de você."
+
+msgid "Download only · Technical preview"
+msgstr "Somente download · Versão de prévia técnica"
+
+msgid "Connect Google Account"
+msgstr "Conectar conta do Google"
+
+msgid "Sign in securely in your web browser"
+msgstr "Entre com segurança pelo navegador"
+
+msgid "A calmer place for the files that matter to you."
+msgstr "Um lugar mais tranquilo para os arquivos importantes para você."
+
+msgid "Add Account…"
+msgstr "Adicionar conta…"
+
+msgid "Preferences"
+msgstr "Preferências"
+
+msgid "About DriveSync"
+msgstr "Sobre o DriveSync"
+
+msgid "Quit"
+msgstr "Sair"
+
+msgid "Main Menu"
+msgstr "Menu principal"
+
+msgid "Add Account"
+msgstr "Adicionar conta"
+
+msgid "Download files from Google Drive. Local edits are preserved."
+msgstr "Baixe arquivos do Google Drive. As alterações locais são preservadas."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Sign In…"
+msgstr "Entrar…"
+
+msgid "Complete authorization in your web browser, then return here."
+msgstr "Conclua a autorização no navegador e volte para cá."
+
+msgid "Sign in to Google using your web browser."
+msgstr "Entre na sua conta do Google pelo navegador."
+
+msgid "Google Account"
+msgstr "Conta do Google"
+
+msgid "Copy Link"
+msgstr "Copiar link"
+
+msgid "Available after starting sign-in"
+msgstr "Disponível após iniciar a entrada"
+
+msgid "Copy the authorization link to continue in a different browser after starting sign-in."
+msgstr "Após iniciar a entrada, copie o link de autorização para continuar em outro navegador."
+
+msgid "Cancelling…"
+msgstr "Cancelando…"
+
+msgid "Copy the current authorization link"
+msgstr "Copiar o link de autorização atual"
+
+msgid "Checking saved accounts…"
+msgstr "Verificando contas salvas…"
+
+msgid "Try Again"
+msgstr "Tentar novamente"
+
+msgid "Welcome"
+msgstr "Boas-vindas"

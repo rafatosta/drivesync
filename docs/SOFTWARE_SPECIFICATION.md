@@ -673,6 +673,23 @@ A interface deve apresentar ações, estados e consequências em linguagem compr
 
 As interações devem considerar navegação por teclado, tecnologias assistivas, legibilidade e diferentes dimensões de janela. Informações essenciais não devem depender exclusivamente de cor ou de elementos visuais sem descrição.
 
+O idioma padrão deve ser inglês, com tradução inicial em português brasileiro
+(`pt_BR`), escolhida pelo idioma do ambiente; idiomas indisponíveis retornam ao
+texto inglês. Mensagens, ações, descrições acessíveis, metadados e consequências
+de operações devem ser traduzíveis sem alterar identificadores, nomes fornecidos
+por usuários ou dados persistidos. Traduções com valores e plurais devem manter
+seu significado e permitir ordenação adequada para cada idioma.
+
+Implementação parcial: `src/i18n.rs` configura GNU gettext, os manifestos Flatpak
+compilam `po/pt_BR.po`; a tela de boas-vindas, o menu principal e as telas
+de restauração e conexão usam o catálogo. Os metadados desktop e AppStream
+incluem português brasileiro. As demais telas e diagnósticos ainda precisam ser
+internacionalizados; a disponibilidade do catálogo não demonstra aceite visual
+ou cobertura integral. Para verificar as mensagens já marcadas e o fallback no
+SDK, executar `python3 -m unittest scripts.tests.test_i18n`. A implementação
+usa [gettext-rs recomendado pelo GNU gettext](https://www.gnu.org/software/gettext/manual/html_node/Rust.html);
+traduções são extraídas com `xgettext` e compiladas com `msgfmt`.
+
 ### 5.7 Compatibilidade e portabilidade
 
 Os ambientes suportados devem ser declarados com base em validação. O uso das diretrizes GNOME não deve ser confundido com garantia de funcionamento de todas as integrações em qualquer desktop Linux.
