@@ -7,15 +7,16 @@ Contrato e política: [especificação](../../../docs/SOFTWARE_SPECIFICATION.md#
 1. Validar a raiz autorizada e abrir cada ancestral por descritor com NOFOLLOW.
 2. Classificar por stat sem seguir links. Múltiplos hard links e tipos especiais
    são Unsupported; descendentes permanecem UNKNOWN.
-3. Abrir regular com NOFOLLOW/NONBLOCK, exigir nlink=1 e adquirir flock
-   compartilhado não bloqueante. Contenção vira LocalWriting; outros erros de
-   acesso/I/O permanecem distintos e não autorizam ausência.
-   `ENOSYS`/`EOPNOTSUPP` produzem `LocalLockUnsupported`: o portal ou filesystem
-   não oferece o lock exigido. Não ler sem lock nem sugerir falta de espaço;
-   sincronização requer suporte a locks e acesso direto autorizado pelo sandbox.
+3. Abrir regular com NOFOLLOW/NONBLOCK e exigir nlink=1. Observações e downloads
+   tentam flock compartilhado não bloqueante: contenção vira LocalWriting.
+   Somente ENOSYS/EOPNOTSUPP permitem leitura otimista, com assinatura, hash,
+   identidade e cadeia de descritores revalidados. Outros erros permanecem erros.
+   Execução de decisões de conflitos continua usando a leitura estrita,
+   que retorna LocalLockUnsupported sem autorizar efeitos remotos.
 4. Comparar assinatura após quiescência, calcular hash e revalidar assinatura,
    pai e raiz. Trocas ou alterações adiam; não reutilizar observação após reinício.
-5. Upload retém o descritor bloqueado durante os efeitos remotos, cria snapshot
+5. Upload retém o descritor da origem durante os efeitos remotos, tenta flock
+   quando suportado e cria snapshot
    privado e revalida fonte em cada fronteira de chunk. Falha remove somente
    snapshot parcial próprio; intent já persistido permanece para reconciliação.
 6. Instalação remota recusa nomes temporários no planner e mantém staging,
@@ -32,23 +33,42 @@ A configuração resolve a origem informada pelo document portal. Se não existe
 com descritores NOFOLLOW, usa o caminho direto antes de registrar identidades.
 Isso não concede permissões nem altera uma associação salva. Havendo estado,
 mantém a vista selecionada: identidades de portal e host não são intercambiáveis.
-Um arquivo temporário exclusivo verifica escrita e flock durante a configuração;
-a sondagem é removida também quando o lock falha. Um portal sem locks é recusado
-com `LocalLockUnsupported`, sem iniciar transferência nem criar um journal.
-O inventário propaga a mesma falha de capacidade; não a converte em observação
-`Unknown` nem apresenta a pendência como um conflito de conteúdo.
+Um arquivo temporário exclusivo verifica escrita e tenta flock durante a
+configuração; sua ausência não bloqueia download. A sondagem própria é removida.
+Não adicionar acesso geral ao home como solução. Downloads usam a mesma vista
+mesmo com journal existente; nenhuma identidade ou base é migrada ou regravada
+para satisfazer a verificação. O teste opt-in de seleção do portal verifica essa
+continuidade e a preservação das evidências.
 
-O acesso direto precisa ser autorizado externamente e limitado à pasta escolhida.
-Não adicionar acesso geral ao home como solução. Uma raiz existente com journal
-no portal permanece bloqueada; mudar sua identidade ou reconstruir sua base não
-faz parte deste procedimento. Preservar a raiz e usar outra pasta vazia para
-ensaios. O teste opt-in `fresh_portal_folder_selects_direct_access_before_recording_inode_evidence`
-exercita o portal real, a escolha direta e a preservação do estado existente.
+## Download sem flock de arquivo regular
+
+O lock de raiz e o lock privado por conta continuam exclusivos e obrigatórios.
+Leituras de transferências verificadas, observação e captura de base usam a
+política otimista. Upload de itens novos exige autorização por conta, snapshot
+privado e hashes da origem antes de enviar o bloco final. Cada bloco verifica
+a assinatura do snapshot antes do envio. Decisões de conflito continuam usando
+a leitura estrita; esta política não autoriza sobrescrita remota.
+A instalação mantém staging exclusivo, tamanho/MD5/SHA-256, fsync e NOREPLACE.
+Revalidar staging após consultas remotas e verificar o destino instalado antes
+de confirmar Installed/Updated. Falha conserva o journal recuperável e os bytes;
+não anunciar instalação confirmada. Atualizações preservam e revalidam a versão
+anterior no backup. A política detecta alterações observadas, sem prometer uma
+transação com escritores externos não cooperantes.
+
+Fundamentação: [portal 1.22.1](https://github.com/flatpak/xdg-desktop-portal/blob/1.22.1/document-portal/document-portal-fuse.c)
+retorna ENOSYS em flock, embora implemente fcntl;
+[flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html) é cooperativo;
+[rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html) define NOREPLACE.
+A adoção dessa política não altera a camada de arquivos nem introduz GIO.
 
 ## Oráculos de aceite
 
 | Cenário | Testes |
 | --- | --- |
+| ENOSYS em arquivos, download inicial/vazio/binário, repetição, reinício, rede, cancelamento, links e lock de raiz | `download::tests::downloads_without_file_flock_keep_integrity_recovery_and_local_preservation` |
+| ENOSYS, atualização com backup, divergência, troca de inode e recuperação | `download::tests::update_tests::portal_lock_capability_does_not_prevent_verified_updates_or_recovery` |
+| Mutação de staging na instalação não confirma binário corrompido | `download::tests::portal_staging_mutation_at_install_never_confirms_a_corrupt_binary` |
+| Leitura estrita continua recusando ENOSYS; tipos especiais continuam recusados | `download::filesystem::capacity_tests::only_verified_reads_allow_unsupported_flock_and_never_special_files` |
 | N05: links externos, FIFO, repetição e cópia independente | `local::tests::sync020_n05_aliases_and_special_files_are_never_upload_candidates` |
 | N05: symlink/alias durante quiescência | `local::tests::sync020_n05_link_creation_and_symlink_swap_during_wait_fail_closed` |
 | N05: ancestral trocado e traversal | `local::tests::sync020_n05_descriptor_chain_refuses_parent_swaps_and_traversal`; `download::tests::symlinks_never_redirect_downloads` |

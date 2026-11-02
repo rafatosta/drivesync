@@ -1255,8 +1255,12 @@ Não inferir ausência de descendentes de entradas incompatíveis.
 
 Abrir caminhos relativos por descritores, com NOFOLLOW em todos os componentes,
 NONBLOCK na abertura de arquivos e revalidação de raiz, pai e identidade.
-Verificar tipo e número de links antes/depois das leituras. Manter um flock
-compartilhado durante a leitura e, no upload, até a publicação ou adiamento.
+Verificar tipo e número de links antes/depois das leituras. Tentar um flock
+compartilhado nas observações e downloads; somente ENOSYS/EOPNOTSUPP permitem
+seguir com verificação otimista de assinatura, identidade e hashes. Contenção
+continua adiando o item. Upload de itens novos admite a mesma ausência de flock somente com snapshot
+privado, hashes e revalidação de origem por bloco e antes da confirmação.
+Execução de decisões de conflitos continua exigindo lock suportado.
 Lock exclusivo concorrente adia o item, sem espera bloqueante ou perda de dados.
 Leitores com locks compartilhados são compatíveis. A proteção é cooperativa:
 flock não coordena locks POSIX fcntl nem escritores que ignoram locks; manter
@@ -1265,10 +1269,10 @@ um escritor fechou o arquivo, nem isolamento contra processo hostil do mesmo UID
 
 Na seleção de uma raiz nova, preferir a origem direta verificada pelo portal
 somente quando já autorizada pelo sandbox e sem `.drivesync` em ambas as vistas.
-Testar escrita e locks antes de persistir a associação; recusar filesystem
-incompatível explicitamente. Não trocar a vista de uma raiz com estado existente,
-migrar identidades ou ampliar permissões automaticamente. Esse caso permanece
-bloqueado em portais sem flock. Contrato operacional: [proteção local](../engine/src/local/safety.md).
+Testar escrita antes de persistir a associação; ausência de flock em arquivos
+regulares não impede download validado. Não trocar a vista de uma raiz com estado existente,
+migrar identidades ou ampliar permissões automaticamente. Downloads preservam a vista existente mesmo quando o portal não oferece flock;
+não reconstruir a base nem alterar identidades para habilitá-los. Contrato operacional: [proteção local](../engine/src/local/safety.md).
 
 Os padrões de temporários definidos em SYNC-003 também são inelegíveis como
 nomes remotos de instalação (incluindo colisões de caixa). Uma renomeação para

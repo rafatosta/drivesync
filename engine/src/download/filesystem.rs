@@ -56,14 +56,18 @@ pub(crate) fn fingerprint_root(
 ) -> Result<Option<String>, EngineError> {
     let (parent, name) = root.parent(relative)?;
     let parent_id = identity(&parent)?;
-    let Some(mut file) = read(&parent, &name)? else {
+    let Some(mut file) = read_transfer(&parent, &name)? else {
         return Ok(None);
     };
     let file_id = identity(&file)?;
     let content_fingerprint = super::stream::fingerprint(&mut file, cancel)?;
     root.validate_parent(relative, parent_id)?;
     if identity(&file)? != file_id
-        || read(&parent, &name)?.as_ref().map(identity).transpose()? != Some(file_id)
+        || read_transfer(&parent, &name)?
+            .as_ref()
+            .map(identity)
+            .transpose()?
+            != Some(file_id)
     {
         return Err(EngineError::DownloadConflict);
     }
@@ -193,11 +197,46 @@ pub(crate) fn regular(file: &File) -> Result<(), EngineError> {
 /// that ignore advisory locks; stamps and hashes remain mandatory.
 pub(crate) fn lock_regular(file: &File) -> Result<(), EngineError> {
     regular(file)?;
+    #[cfg(test)]
+    if UNSUPPORTED_FILE_LOCKS.get() {
+        return Err(EngineError::LocalLockUnsupported);
+    }
     fs::flock(file, fs::FlockOperation::NonBlockingLockShared).map_err(lock_error)?;
     regular(file)
 }
 
-/// Unsupported locking is a capability failure, never permission to read unlocked.
+/// Verified transfers can use optimistic reads when file flock is
+/// unsupported. Contention and all other failures still defer the operation.
+/// Callers must verify stamps/hashes and install without replacing destinations.
+/// Upload callers must additionally verify a private snapshot and source before
+/// publication. Conflict execution keeps using `lock_regular`/`read`.
+pub(crate) fn lock_transfer(file: &File) -> Result<(), EngineError> {
+    match lock_regular(file) {
+        Err(EngineError::LocalLockUnsupported) => regular(file),
+        result => result,
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static UNSUPPORTED_FILE_LOCKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Injects only regular-file lock failure on this test thread; root locks and
+/// real filesystem/SQLite operations remain active, including during recovery.
+#[cfg(test)]
+pub(crate) fn with_unsupported_file_locks<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            UNSUPPORTED_FILE_LOCKS.set(self.0);
+        }
+    }
+    let _reset = Reset(UNSUPPORTED_FILE_LOCKS.replace(true));
+    run()
+}
+
+/// Classifies strict-source lock failures; download policy is applied separately.
 fn lock_error(error: rustix::io::Errno) -> EngineError {
     match error {
         rustix::io::Errno::WOULDBLOCK => EngineError::LocalWriting,
@@ -211,6 +250,20 @@ fn lock_error(error: rustix::io::Errno) -> EngineError {
 /// Opens single-link regular files only; NONBLOCK prevents FIFO blocking.
 /// The shared advisory lock is retained by the returned descriptor.
 pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
+    read_with(parent, name, lock_regular)
+}
+
+/// Opens a verified transfer observation without requiring a regular-file flock
+/// capability. This is not an upload authorization or a mutation lease.
+pub(crate) fn read_transfer(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
+    read_with(parent, name, lock_transfer)
+}
+
+fn read_with(
+    parent: &File,
+    name: &OsStr,
+    lock: fn(&File) -> Result<(), EngineError>,
+) -> Result<Option<File>, EngineError> {
     match fs::openat(
         parent,
         name,
@@ -219,7 +272,7 @@ pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineEr
     ) {
         Ok(fd) => {
             let file = File::from(fd);
-            lock_regular(&file)?;
+            lock(&file)?;
             Ok(Some(file))
         }
         Err(rustix::io::Errno::NOENT) => Ok(None),
@@ -274,6 +327,30 @@ pub(crate) fn exists(parent: &File, name: &OsStr) -> Result<bool, EngineError> {
 #[cfg(test)]
 mod capacity_tests {
     use super::*;
+
+    #[test]
+    fn only_verified_reads_allow_unsupported_flock_and_never_special_files() {
+        let file = std::fs::File::open("/dev/null").unwrap();
+        with_unsupported_file_locks(|| {
+            assert_eq!(lock_transfer(&file), Err(EngineError::DownloadConflict));
+            let base = std::env::temp_dir().join(format!(
+                "drivesync-lock-policy-{}",
+                oauth2::CsrfToken::new_random().secret()
+            ));
+            std::fs::create_dir(&base).unwrap();
+            std::fs::write(base.join("file"), b"preserve").unwrap();
+            let parent = File::open(&base).unwrap();
+            assert!(matches!(
+                read(&parent, OsStr::new("file")),
+                Err(EngineError::LocalLockUnsupported)
+            ));
+            assert!(read_transfer(&parent, OsStr::new("file"))
+                .unwrap()
+                .is_some());
+            assert_eq!(std::fs::read(base.join("file")).unwrap(), b"preserve");
+            std::fs::remove_dir_all(base).unwrap();
+        });
+    }
 
     #[test]
     fn unsupported_file_locks_fail_closed_with_a_distinct_diagnosis() {

@@ -128,7 +128,69 @@ fn operations_remain_distinct_and_generic_failure_does_not_claim_a_lock() {
 }
 
 #[test]
-fn fresh_session_retry_is_bounded_and_only_for_crypto_reads() {
+fn backend_encoding_read_retries_once_and_preserves_persistent_failures() {
+    let error = AuthError::CredentialStorage {
+        operation: VaultOperation::Read,
+        failure: VaultFailure::InvalidData,
+    };
+    let mut calls = 0;
+    assert_eq!(
+        recover_read(|| {
+            calls += 1;
+            if calls == 1 {
+                Err(error)
+            } else {
+                Ok(42)
+            }
+        }),
+        Ok(42)
+    );
+    assert_eq!(calls, 2);
+    calls = 0;
+    assert_eq!(
+        recover_read::<()>(|| {
+            calls += 1;
+            Err(error)
+        }),
+        Err(error)
+    );
+    assert_eq!(calls, 2);
+    let decode = AuthError::CredentialStorage {
+        operation: VaultOperation::Decode,
+        failure: VaultFailure::InvalidData,
+    };
+    calls = 0;
+    assert_eq!(
+        recover_read::<()>(|| {
+            calls += 1;
+            Err(decode)
+        }),
+        Err(decode)
+    );
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn backend_encoding_message_does_not_claim_stored_json_corruption() {
+    let read = AuthError::CredentialStorage {
+        operation: VaultOperation::Read,
+        failure: VaultFailure::InvalidData,
+    }
+    .to_string();
+    let decode = AuthError::CredentialStorage {
+        operation: VaultOperation::Decode,
+        failure: VaultFailure::InvalidData,
+    }
+    .to_string();
+    assert!(read.contains("vault returned unreadable data"));
+    assert!(read.contains("Read/InvalidData"));
+    assert!(!read.contains("saved credential could not be decoded"));
+    assert!(decode.contains("saved credential could not be decoded"));
+    assert!(decode.contains("Decode/InvalidData"));
+}
+
+#[test]
+fn fresh_session_retry_is_bounded_and_only_for_eligible_backend_reads() {
     let transient = AuthError::CredentialStorage {
         operation: VaultOperation::Read,
         failure: VaultFailure::Crypto,
@@ -170,7 +232,9 @@ fn fresh_session_retry_is_bounded_and_only_for_crypto_reads() {
             VaultFailure::Unavailable,
             VaultFailure::InvalidSession,
         ] {
-            if operation == VaultOperation::Read && failure == VaultFailure::Crypto {
+            if operation == VaultOperation::Read
+                && matches!(failure, VaultFailure::Crypto | VaultFailure::InvalidData)
+            {
                 continue;
             }
             let error = AuthError::CredentialStorage { operation, failure };
@@ -200,15 +264,7 @@ fn fresh_session_retry_is_bounded_and_only_for_crypto_reads() {
 #[test]
 #[ignore = "requires scripts/check-vault-isolated.py and a private Secret Service"]
 fn isolated_vault_roundtrip() {
-    let root = std::env::var("DRIVESYNC_TEST_VAULT_ROOT").expect("use isolated runner");
-    assert!(root.contains("drivesync-vault-"));
-    assert_eq!(
-        std::env::var("XDG_DATA_HOME").unwrap(),
-        format!("{root}/data")
-    );
-    assert!(std::env::var("DBUS_SESSION_BUS_ADDRESS")
-        .unwrap()
-        .contains(&root));
+    require_isolated_vault();
     let id = AccountId("synthetic-vault-account".into());
     let client = "synthetic-vault-client";
     let vault = DesktopVault;
@@ -248,4 +304,44 @@ fn isolated_vault_roundtrip() {
     vault.delete(client, &id).unwrap();
     vault.delete(client, &id).unwrap();
     assert!(vault.load(client, &id).unwrap().is_none());
+}
+
+fn require_isolated_vault() {
+    let root = std::env::var("DRIVESYNC_TEST_VAULT_ROOT").expect("use isolated runner");
+    assert!(root.contains("drivesync-vault-"));
+    assert_eq!(
+        std::env::var("XDG_DATA_HOME").unwrap(),
+        format!("{root}/data")
+    );
+    assert!(std::env::var("DBUS_SESSION_BUS_ADDRESS")
+        .unwrap()
+        .contains(&root));
+}
+
+/// Uses only a private synthetic entry, never the desktop OAuth vault.
+#[test]
+#[ignore = "requires the isolated runner and a private Secret Service"]
+fn isolated_vault_invalid_encoding_is_preserved() {
+    require_isolated_vault();
+    let client = "synthetic-binary-vault-client";
+    let id = AccountId("synthetic-binary-vault-account".into());
+    let vault = DesktopVault;
+    let entry = DesktopVault::entry(client, &id).unwrap();
+    let binary = [0xff, 0xfe, 0xfd];
+    entry.set_secret(&binary).unwrap();
+    assert!(matches!(
+        vault.load(client, &id),
+        Err(AuthError::CredentialStorage {
+            operation: VaultOperation::Read,
+            failure: VaultFailure::InvalidData
+        })
+    ));
+    assert_eq!(
+        recover_read(|| entry
+            .get_secret()
+            .map_err(|e| keyring_failure(VaultOperation::Read, e)))
+        .unwrap(),
+        binary
+    );
+    vault.delete(client, &id).unwrap();
 }

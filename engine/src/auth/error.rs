@@ -33,10 +33,17 @@ pub enum AuthError {
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Self::CredentialStorage { operation, failure } = self {
+            let message = if *operation == VaultOperation::Read
+                && *failure == VaultFailure::InvalidData
+            {
+                "The credential vault returned unreadable data. Try again; if the problem persists, restart DriveSync or report this error. Existing credentials were preserved."
+            } else {
+                failure.message()
+            };
             return write!(
                 f,
                 "{} (credential vault: {operation:?}/{failure:?})",
-                failure.message()
+                message
             );
         }
         f.write_str(match self {

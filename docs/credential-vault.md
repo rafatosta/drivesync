@@ -5,8 +5,11 @@ for example `Read/Crypto` or `Decode/InvalidData`. The same identifiers appear
 on stderr when the application is launched from a terminal. Raw provider error
 messages, account attributes and secret bytes are never logged.
 
-Only `Locked` recommends unlocking the keyring. A crypto failure during a read
-opens a fresh session and repeats that read once. This recovery does not replay
+Only `Locked` recommends unlocking the keyring. A crypto or UTF-8 encoding failure during a read
+opens a fresh session and repeats that read once. `Read/InvalidData` indicates
+unreadable backend bytes before JSON parsing, while `Decode/InvalidData`
+indicates malformed credential JSON and is never retried. An unreadable
+response does not by itself establish permanent corruption of the saved entry. This recovery does not replay
 writes, deletions, JSON decoding or remote operations. A second failure blocks
 synchronization and remains visible. `recovery=FreshSession` on stderr means the
 second read succeeded; it does not mean the external backend has been repaired.
@@ -41,6 +44,14 @@ that exact executable (not the `.d` file) to:
 ```sh
 python3 scripts/check-vault-isolated.py --binary /absolute/path/to/drivesync_engine-HASH
 ```
+
+For the focused backend-encoding preservation oracle, pass
+`--test isolated_vault_invalid_encoding_is_preserved`. It creates a synthetic
+non-UTF-8 entry, checks that the bounded read still fails, and verifies the
+stored bytes are unchanged. The ordinary stress test retains its 500 reads and
+periodic writes; failure of that test must not be hidden by the focused result.
+The isolated runner disables document-portal startup, which is unnecessary for
+credential tests and can leave a disconnected FUSE mount on its private bus.
 
 The runner creates a temporary D-Bus, XDG directories and an unlocked disposable
 oo7 keyring, executes the test in the project SDK, then stops its processes and

@@ -13,6 +13,7 @@ struct Options {
     cancel_after: Option<u64>,
     expected_error: Option<String>,
     hold: bool,
+    upload: bool,
 }
 impl Options {
     fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
@@ -28,6 +29,7 @@ impl Options {
             cancel_after: None,
             expected_error: None,
             hold: false,
+            upload: false,
         };
         while let Some(flag) = args.next() {
             match flag.as_str() {
@@ -63,6 +65,7 @@ impl Options {
                     options.expected_error = Some(error);
                 }
                 "--hold-at-install" if !options.hold => options.hold = true,
+                "--upload" if !options.upload => options.upload = true,
                 _ => return Err("Unknown or duplicate option".into()),
             }
         }
@@ -71,6 +74,7 @@ impl Options {
             || options.remote == "root"
             || !options.local.is_absolute()
             || (options.hold && options.cancel_after.is_some())
+            || (options.hold && options.upload)
             || (options.expected.is_some() && options.expected_error.is_some())
         {
             return Err("Invalid or incompatible test arguments".into());
@@ -80,7 +84,7 @@ impl Options {
     /// Test tools cannot silently choose a first account or reconfigure a real root.
     fn matches(&self, folder: &FolderConfiguration) -> bool {
         folder.remote.id == self.remote
-            && folder.local_display == self.local
+            && (folder.local_display == self.local || folder.local == self.local)
             && folder
                 .remote
                 .name
@@ -114,10 +118,12 @@ fn run() -> Result<(), String> {
     let cancel = Cancellation::new();
     let mut held = false;
     let mut media_attempts = 0usize;
-    let result = engine.download_once(id, &cancel, |event| {
+    let observe = |event: drivesync_engine::DownloadProgress| {
         if let Some(item) = event.current {
-            if item.stage == DownloadStage::Downloading {
-                if item.received == 0 {
+            if item.stage == DownloadStage::Downloading
+                || (options.upload && item.stage == DownloadStage::Uploading)
+            {
+                if item.stage == DownloadStage::Downloading && item.received == 0 {
                     media_attempts += 1;
                 }
                 if options
@@ -134,7 +140,12 @@ fn run() -> Result<(), String> {
                 std::thread::sleep(std::time::Duration::from_secs(30));
             }
         }
-    });
+    };
+    let result = if options.upload {
+        engine.synchronize_once(id, &cancel, observe)
+    } else {
+        engine.download_once(id, &cancel, observe)
+    };
     match result {
         Ok(report) => {
             let counts = vec![
@@ -147,7 +158,7 @@ fn run() -> Result<(), String> {
             ];
             println!(
                 "{}",
-                json!({"event":"completed","counts":counts,"media_attempts":media_attempts,"previous_paths":report.previous_paths.len()})
+                json!({"event":"completed","counts":counts,"media_attempts":media_attempts,"previous_paths":report.previous_paths.len(),"uploaded":report.uploaded,"created_remote_folders":report.created_remote_folders,"issue_errors":report.issues.iter().map(|issue|issue.error.to_string()).collect::<Vec<_>>()})
             );
             if options.expected_error.is_some() {
                 return Err("Expected error did not occur".into());
@@ -194,6 +205,25 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn upload_mode_is_explicit_and_does_not_enable_upload_consent() {
+        assert!(
+            !Options::parse(["a", "remote", "/test"].map(String::from))
+                .unwrap()
+                .upload
+        );
+        assert!(
+            Options::parse(["a", "remote", "/test", "--upload"].map(String::from))
+                .unwrap()
+                .upload
+        );
+        for args in [
+            vec!["a", "remote", "/test", "--upload", "--upload"],
+            vec!["a", "remote", "/test", "--upload", "--hold-at-install"],
+        ] {
+            assert!(Options::parse(args.into_iter().map(String::from)).is_err());
+        }
+    }
     #[test]
     fn offline_root_suspension_keeps_the_transport_failure_oracle() {
         for error in [
@@ -251,6 +281,10 @@ mod tests {
             local_display: "/test".into(),
         };
         assert!(options.matches(&folder));
+        let access_options =
+            Options::parse(["test@example.com", "remote", "/portal/access"].map(String::from))
+                .unwrap();
+        assert!(access_options.matches(&folder));
         folder.local_display = "/other".into();
         assert!(!options.matches(&folder));
         folder.local_display = "/test".into();

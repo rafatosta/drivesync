@@ -1,6 +1,18 @@
 //! Managed update fixtures; no Google, user data or account vault access.
 use super::*;
 use md5::Digest;
+
+#[test]
+fn portal_lock_capability_does_not_prevent_verified_updates_or_recovery() {
+    filesystem::with_unsupported_file_locks(|| {
+        updates_reopens_and_preserves_prior_versions_including_empty_updates();
+        edited_local_files_are_not_downloaded_over();
+        edits_and_inode_swaps_during_download_remain_untouched();
+        network_checksum_and_cancellation_keep_old_file_at_its_path();
+        recovery_covers_both_renames_and_does_not_redownload();
+        new_destination_after_backup_is_not_replaced_or_restored_over();
+    });
+}
 fn changed(inv: &RemoteInventory, bytes: &[u8]) -> (RemoteInventory, Fake) {
     let mut next = inv.clone();
     let entry = &mut next.entries[0];

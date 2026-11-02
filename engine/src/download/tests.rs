@@ -20,6 +20,49 @@ struct Fixture {
     base: PathBuf,
     root: PathBuf,
 }
+
+#[test]
+fn downloads_without_file_flock_keep_integrity_recovery_and_local_preservation() {
+    filesystem::with_unsupported_file_locks(|| {
+        installs_verifies_reopens_and_never_overwrites_local_changes();
+        accepts_empty_binary_and_creates_nested_folders();
+        network_failure_and_cancellation_preserve_final_namespace();
+        root_lock_and_configuration_changes_stop_the_cycle();
+        symlinks_never_redirect_downloads();
+    });
+}
+
+#[test]
+fn portal_staging_mutation_at_install_never_confirms_a_corrupt_binary() {
+    filesystem::with_unsupported_file_locks(|| {
+        let f = Fixture::new();
+        let mut inv = inventory();
+        inv.entries[0].mime_type = "application/octet-stream".into();
+        let report = f
+            .execute(&inv, &mut Fake::new(&inv), &Cancellation::new(), |event| {
+                if event
+                    .current
+                    .is_some_and(|item| item.stage == DownloadStage::Installing)
+                {
+                    let staged = fs::read_dir(&f.root)
+                        .unwrap()
+                        .map(Result::unwrap)
+                        .find(|entry| entry.file_name().to_string_lossy().ends_with(".part"))
+                        .unwrap();
+                    fs::write(staged.path(), b"xyz").unwrap();
+                }
+            })
+            .unwrap();
+        assert_eq!(report.downloaded, 0);
+        assert_eq!(report.issues[0].error, EngineError::DownloadIntegrity);
+        let store = Store::open(&f.db()).unwrap();
+        assert!(store
+            .confirmed_bases("client", &inv.account_id, &inv.root_id, &f.root)
+            .unwrap()
+            .is_empty());
+        assert_eq!(fs::read(f.root.join("file.txt")).unwrap(), b"xyz");
+    });
+}
 impl Fixture {
     fn new() -> Self {
         let base = std::env::temp_dir().join(format!(

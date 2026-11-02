@@ -27,12 +27,14 @@ fn reject_link(file: &mut File) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Checks candidates before provider effects and returns the shared-lock guard.
-/// The executor retains this descriptor through final publication or deferral.
+/// Checks candidates before provider effects and retains their descriptor.
+/// Shared flock is used where supported; identity, stamps and snapshot hashes
+/// remain mandatory when the portal does not implement regular-file flock.
 pub(crate) fn check_link(root: &Root, path: &Path) -> Result<File, EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
-    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let mut file =
+        filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     reject_link(&mut file)?;
     root.validate_parent(path, parent_id)?;
     Ok(file)
@@ -69,7 +71,8 @@ fn snapshot_with_progress(
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
     root.validate_parent(path, parent_id)?;
-    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let mut file =
+        filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     let before = crate::local::Stamp::read(&file)?;
     reject_link(&mut file)?;
     let mut target = OpenOptions::new()
@@ -107,7 +110,8 @@ fn snapshot_with_progress(
         .and_then(|p| p.sync_all())
         .map_err(filesystem::io)?;
     root.validate_parent(path, parent_id)?;
-    let current = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let current =
+        filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     if crate::local::Stamp::read(&file)? != before
         || crate::local::Stamp::read(&current)? != before
         || size != before.size
@@ -133,7 +137,8 @@ pub(crate) fn verify_source(
     let before = crate::local::stamp(root, path)?;
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
-    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let mut file =
+        filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     if op.source != Some(filesystem::identity(&file)?) {
         return Err(EngineError::DownloadConflict);
     }
@@ -163,14 +168,14 @@ pub(crate) fn verify_stage(
     verify_file(&mut file, op, cancel)?;
     Ok(file)
 }
-/// Checks size, SHA-256 and provider MD5 on the same locked descriptor.
+/// Checks size, SHA-256 and provider MD5 on the same verified descriptor.
 /// Inconsistent intent evidence or observed mutation fails without changing bytes.
 pub(crate) fn verify_file(
     file: &mut File,
     op: &Intent,
     cancel: &Cancellation,
 ) -> Result<(), EngineError> {
-    filesystem::lock_regular(file)?;
+    filesystem::lock_transfer(file)?;
     let before = crate::local::Stamp::read(file)?;
     reject_link(file)?;
     if !file.metadata().map_err(filesystem::io)?.is_file() || before.size != op.size {

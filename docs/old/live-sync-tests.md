@@ -10,6 +10,31 @@ ID and an absolute local directory matching the saved pair. The saved remote
 name must start with `DriveSync — Ensaio controlado`. Mismatches fail before sync.
 Use a dedicated test pair and do not start the GUI's cycle concurrently.
 
+For create-only upload acceptance, `--upload` calls `synchronize_once` instead.
+It retains the exact controlled-pair checks and does not enable the pair's
+upload setting. JSON additionally reports `uploaded` and `created_remote_folders`;
+the existing six download counts retain their meaning. Byte cancellation also
+observes upload progress, so remote effects may precede cancellation and must
+be reconciled through the preserved intent/ID. Installation-hold injection is
+incompatible with this mode.
+The upload journal's persisted retry deadline remains authoritative after
+cancellation or network failure. Do not expect immediate retry to send bytes;
+record an early deferral and wait for the existing deadline without editing the
+budget or generating another ID. JSON `issue_errors` contains only the engine's
+sanitized messages, allowing a deadline deferral to be distinguished from a
+filesystem, authentication or transfer failure.
+
+The ignored `facade::live_upload_tests::prepare_portal_upload_fixture` requires
+an exact `DRIVESYNC_TEST_ACCOUNT`, a new `DRIVESYNC_UPLOAD_EVIDENCE` directory,
+`DRIVESYNC_UPLOAD_PORTAL_ROOT` pointing to an empty exported disposable directory
+and `DRIVESYNC_LIVE_GOOGLE_TEST=1`. It creates only a generated remote folder,
+an isolated profile and three local sources (text, empty, 3 MiB binary), keeping
+uploads disabled. `enable_portal_upload_fixture` enables only that saved pair.
+`verify_portal_upload_fixture` reads actual remote media and compares SHA-256,
+size and unique remote identities with the retained originals. Keep the host
+origin inaccessible to the installed app, and use a sibling evidence directory
+inside the same portal export for all filesystem-side checks.
+
 Each invocation is a new process, exercising durable state. JSON results expose
 counts/media attempts, not credentials. Expected counts fail the command when
 results differ. The six counts are `downloaded,updated,recovered,unchanged,
@@ -131,6 +156,25 @@ account index or enables engine uploads. The fixture manifest and originals are
 retained there. `update_isolated_download_fixture` updates only the authenticated
 `simple.txt` child in that isolated pair, preserving the original local fixture.
 Both helpers are test-only, ignored by default, and require explicit opt-in.
+
+To exercise the document portal itself, supply `DRIVESYNC_DOWNLOAD_PORTAL_ROOT`
+as an explicitly exported, empty disposable directory outside the granted evidence
+tree. Grant the application only the evidence directory and portal export; do not
+grant the host origin. The helper asserts that the configured access path remains
+the portal path and records both access and display paths in `fixture.json`.
+`sync-cycle` accepts either exact saved path as its local scope argument, allowing
+the recovery supervisor to operate on the writable portal view. Unrelated paths
+remain rejected. Use the same portal view and persisted profile after restarting:
+never rewrite inode evidence or change a direct fixture into a portal fixture.
+
+Portal-only acceptance must record that the host origin is inaccessible while
+regular-file flock actually returns ENOSYS. Keep root exclusion active. Verify
+initial hashes, repeat and restart with the same journal, cancellation/retry,
+Ready/SIGKILL recovery without media, remote-only update with backup, offline
+recovery and preservation of local divergence. Retain the original root marker
+and compare it after the suite. Put supervisor evidence in a sibling directory
+inside the same exported parent, outside the configured root: moving between
+the portal mount and a directly granted evidence tree can fail with EXDEV.
 
 For installed apps, Flatpak can override `--env=XDG_DATA_HOME=...` during startup.
 Set the isolated profile **after** startup through `/usr/bin/env`, and retain the

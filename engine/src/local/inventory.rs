@@ -48,7 +48,7 @@ pub(crate) fn temporary(path: &Path) -> bool {
 pub(crate) fn stamp(root: &Root, path: &Path) -> Result<Stamp, EngineError> {
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
-    let file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let file = filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     let stamp = Stamp::read(&file)?;
     root.validate_parent(path, parent_id)?;
     Ok(stamp)
