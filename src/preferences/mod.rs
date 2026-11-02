@@ -6,7 +6,7 @@
 //! invalid stored values fall back to defaults without deleting the file.
 //!
 //! - [`model`]: typed values and their key-file representation.
-//! - [`view`]: the `AdwPreferencesWindow` and the `app.preferences` action.
+//! - [`view`]: the adaptive preferences window and the `app.preferences` action.
 mod model;
 mod view;
 
