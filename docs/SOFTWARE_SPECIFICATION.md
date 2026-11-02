@@ -1584,3 +1584,27 @@ não substituem bytes ausentes. Versões históricas são imutáveis. O orçamen
 64 MiB por escopo, sem remoção automática de evidências; esgotamento bloqueia
 novas retenções. O formato interno do journal é 5; versões antigas são recusadas
 sem migração ou apagamento automático.
+
+### Componente SyncProgressCard
+
+O card recebe snapshots completos do controlador da conta exibida, sem assinar
+um barramento global ou controlar a engine. O dashboard observa somente o job
+associado à conta; descartar a página encerra sua observação, sem parar workers
+das demais contas. Uma nova página recebe o snapshot da nova conta.
+
+A apresentação encapsula ícone, título, descrição, barra e porcentagem para
+espera, sincronização, pausa, offline, falha/atenção e conclusão. A preparação
+sem total conhecido e os estados ociosos ocultam a barra e a porcentagem.
+Durante execução/pausa, a barra conta itens processados (incluindo pastas),
+não bytes nem apenas arquivos transferidos, e fica limitada a 99% até confirmar
+o resultado. A pausa conserva o último progresso observado no controlador;
+iniciar outro ciclo ou reconfigurar descarta esse progresso.
+
+A confirmação de conclusão exige resultado bem-sucedido, sem pendências ou
+itens ignorados; um snapshot contraditório não apresenta sucesso. Se ainda há
+progresso no snapshot, ele também precisa ter terminado a preparação e todos
+os itens, sem arquivo atual. Os detalhes de problemas permanecem disponíveis
+nos controles existentes. Aceite determinístico: progresso parcial, pausa,
+total desconhecido, resultado ausente, itens ignorados e pendências não podem
+produzir uma confirmação de conclusão. Homologação visual desktop e Google real
+é separada dos testes unitários e da compilação.

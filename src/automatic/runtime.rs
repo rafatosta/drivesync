@@ -320,7 +320,9 @@ impl Controller {
                 }
                 let mut state = completion.0.state.borrow_mut();
                 state.cancel = None;
-                state.progress = None;
+                if !state.user_paused {
+                    state.progress = None;
+                }
                 if state.generation == generation {
                     let report = result
                         .as_ref()
@@ -419,7 +421,9 @@ impl Controller {
                 }
                 let mut state = completion.0.state.borrow_mut();
                 state.cancel = None;
-                state.progress = None;
+                if !state.user_paused {
+                    state.progress = None;
+                }
                 if state.generation == generation {
                     if state.user_paused {
                         state.schedule.finish(
@@ -771,11 +775,13 @@ mod tests {
         release.store(false, Ordering::SeqCst);
         job.request();
         wait_until(&context, || calls.load(Ordering::SeqCst) == 3);
+        wait_until(&context, || job.snapshot().progress.is_some());
         job.pause();
         job.request();
         assert!(job.snapshot().pausing);
         wait_until(&context, || !job.running());
         assert_eq!(job.snapshot().phase, Phase::Paused);
+        assert!(job.snapshot().progress.is_some());
         job.start(now() + 10000, true, false);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
 

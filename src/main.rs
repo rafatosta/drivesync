@@ -18,6 +18,7 @@ mod main_menu;
 mod preferences;
 mod restoration;
 mod session;
+mod sync_progress_card;
 mod welcome;
 
 /// The build profile selects the installed Flatpak application identity.

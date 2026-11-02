@@ -10,6 +10,7 @@ use std::{sync::Arc, time::Duration};
 /// Weak handles let navigation dispose account pages while cancellation propagates.
 #[derive(Clone)]
 struct Widgets {
+    card: Option<crate::sync_progress_card::SyncProgressCard>,
     start: gtk::glib::WeakRef<gtk::Button>,
     account_toggle: gtk::glib::WeakRef<gtk::Button>,
     folders: gtk::glib::WeakRef<gtk::Box>,
@@ -327,6 +328,16 @@ impl Widgets {
     /// Scheduling state and transfer results have separate meanings. Keep issue
     /// details visible while showing offline/retry/pause as the account status.
     fn present_job(
+        &self,
+        snapshot: &crate::automatic::Snapshot,
+        previous: Option<crate::automatic::Phase>,
+    ) {
+        self.present_details(snapshot, previous);
+        if let Some(card) = &self.card {
+            card.present(snapshot);
+        }
+    }
+    fn present_details(
         &self,
         snapshot: &crate::automatic::Snapshot,
         previous: Option<crate::automatic::Phase>,
@@ -715,7 +726,8 @@ pub(super) fn build(
     progress.set_show_text(true);
     progress.set_tooltip_text(Some("Cycle progress counts all processed files and folders, including skipped items and conflicts. It does not show downloaded bytes."));
     progress.set_visible(false);
-    footer.append(&progress);
+    let card = crate::sync_progress_card::SyncProgressCard::new(&progress);
+    footer.prepend(card.widget());
     footer.append(status);
     let skipped = gtk::Label::builder()
         .wrap(true)
@@ -749,6 +761,7 @@ pub(super) fn build(
         status,
     ));
     let ui = Widgets {
+        card: Some(card),
         start: start.downgrade(),
         account_toggle: account_toggle.downgrade(),
         folders: folders.downgrade(),
@@ -990,6 +1003,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             .downcast::<gtk::Label>()
             .unwrap();
         let ui = Widgets {
+            card: None,
             start: start.downgrade(),
             account_toggle: account_toggle.downgrade(),
             folders: folders.downgrade(),
@@ -1313,6 +1327,7 @@ mod tests {
         let skipped = gtk::Label::new(None);
         let preserved = gtk::Label::new(None);
         let ui = Widgets {
+            card: None,
             start: start.downgrade(),
             account_toggle: Default::default(),
             folders: Default::default(),
