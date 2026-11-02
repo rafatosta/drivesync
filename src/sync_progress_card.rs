@@ -15,7 +15,9 @@ pub(crate) struct SyncProgressCard {
 }
 
 impl SyncProgressCard {
-    pub(crate) fn new(progress: &gtk::ProgressBar) -> Self {
+    pub(crate) fn new() -> Self {
+        let progress = gtk::ProgressBar::new();
+        progress.set_widget_name("sync-card-progress");
         let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
         root.add_css_class("card");
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -46,7 +48,7 @@ impl SyncProgressCard {
         header.append(&text);
         header.append(&percentage);
         content.append(&header);
-        content.append(progress);
+        content.append(&progress);
         root.append(&content);
         Self {
             root,
@@ -170,10 +172,7 @@ impl SyncProgressCard {
 }
 
 fn complete(snapshot: &Snapshot) -> bool {
-    matches!(&snapshot.result, Some(Ok(report)) if report.attention().is_empty() && report.skipped == 0)
-        && snapshot.progress.as_ref().is_none_or(|p| {
-            p.preparation.is_none() && p.current.is_none() && p.completed_items >= p.total_items
-        })
+    crate::dashboard::presentation::confirmed(snapshot)
 }
 
 fn fraction(snapshot: &Snapshot) -> Option<f64> {

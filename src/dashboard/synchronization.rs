@@ -133,7 +133,16 @@ impl Widgets {
         }
     }
     fn show_issues(&self, report: &DownloadReport) {
-        self.show_issues_title(report, "Needs attention");
+        let attention = super::presentation::Attention::from_report(report);
+        let title = if attention.any() {
+            format!(
+                "Needs attention · {} conflicts · {} problems",
+                attention.conflicts, attention.problems
+            )
+        } else {
+            "Needs attention".into()
+        };
+        self.show_issues_title(report, &title);
     }
     fn show_issues_title(&self, report: &DownloadReport, title: &str) {
         self.clear_issues();
@@ -348,18 +357,7 @@ impl Widgets {
             .result
             .as_ref()
             .is_some_and(|result| matches!(result, Err(EngineError::RootSuspended(_))));
-        let sync_status = match snapshot.phase {
-            Phase::Unconfigured => "Not configured",
-            Phase::Waiting => "Waiting",
-            Phase::Running if snapshot.pausing => "Pausing",
-            Phase::Running => "Syncing",
-            Phase::UpToDate => "Up to date",
-            Phase::Blocked if root_suspended => "Folder unavailable",
-            Phase::Attention | Phase::Blocked => "Needs attention",
-            Phase::Offline => "Offline",
-            Phase::Retrying => "Retrying",
-            Phase::Paused => "Paused",
-        };
+        let sync_status = super::presentation::status(snapshot);
         if let Some(status) = self.menu_status.upgrade() {
             status.set_label(&format!("Synchronization: {sync_status}"));
         }
@@ -726,7 +724,8 @@ pub(super) fn build(
     progress.set_show_text(true);
     progress.set_tooltip_text(Some("Cycle progress counts all processed files and folders, including skipped items and conflicts. It does not show downloaded bytes."));
     progress.set_visible(false);
-    let card = crate::sync_progress_card::SyncProgressCard::new(&progress);
+    let card = crate::sync_progress_card::SyncProgressCard::new();
+    footer.append(&progress);
     footer.prepend(card.widget());
     footer.append(status);
     let skipped = gtk::Label::builder()
