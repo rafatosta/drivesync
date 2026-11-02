@@ -235,7 +235,7 @@ pub(crate) fn with_unsupported_file_locks<T>(run: impl FnOnce() -> T) -> T {
     run()
 }
 
-/// Unsupported locking is a capability failure, never permission to read unlocked.
+/// Classifies strict-source lock failures; download policy is applied separately.
 fn lock_error(error: rustix::io::Errno) -> EngineError {
     match error {
         rustix::io::Errno::WOULDBLOCK => EngineError::LocalWriting,

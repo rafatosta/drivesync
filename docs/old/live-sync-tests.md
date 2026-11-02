@@ -142,6 +142,15 @@ the recovery supervisor to operate on the writable portal view. Unrelated paths
 remain rejected. Use the same portal view and persisted profile after restarting:
 never rewrite inode evidence or change a direct fixture into a portal fixture.
 
+Portal-only acceptance must record that the host origin is inaccessible while
+regular-file flock actually returns ENOSYS. Keep root exclusion active. Verify
+initial hashes, repeat and restart with the same journal, cancellation/retry,
+Ready/SIGKILL recovery without media, remote-only update with backup, offline
+recovery and preservation of local divergence. Retain the original root marker
+and compare it after the suite. Put supervisor evidence in a sibling directory
+inside the same exported parent, outside the configured root: moving between
+the portal mount and a directly granted evidence tree can fail with EXDEV.
+
 For installed apps, Flatpak can override `--env=XDG_DATA_HOME=...` during startup.
 Set the isolated profile **after** startup through `/usr/bin/env`, and retain the
 exact pair checks in `sync-cycle`. Do not change the normal app profile to work

@@ -61,6 +61,10 @@ A adoção dessa política não altera a camada de arquivos nem introduz GIO.
 
 | Cenário | Testes |
 | --- | --- |
+| ENOSYS em arquivos, download inicial/vazio/binário, repetição, reinício, rede, cancelamento, links e lock de raiz | `download::tests::downloads_without_file_flock_keep_integrity_recovery_and_local_preservation` |
+| ENOSYS, atualização com backup, divergência, troca de inode e recuperação | `download::tests::update_tests::portal_lock_capability_does_not_prevent_verified_updates_or_recovery` |
+| Mutação de staging na instalação não confirma binário corrompido | `download::tests::portal_staging_mutation_at_install_never_confirms_a_corrupt_binary` |
+| Leitura estrita continua recusando ENOSYS; tipos especiais continuam recusados | `download::filesystem::capacity_tests::only_download_reads_allow_unsupported_flock_and_never_special_files` |
 | N05: links externos, FIFO, repetição e cópia independente | `local::tests::sync020_n05_aliases_and_special_files_are_never_upload_candidates` |
 | N05: symlink/alias durante quiescência | `local::tests::sync020_n05_link_creation_and_symlink_swap_during_wait_fail_closed` |
 | N05: ancestral trocado e traversal | `local::tests::sync020_n05_descriptor_chain_refuses_parent_swaps_and_traversal`; `download::tests::symlinks_never_redirect_downloads` |
