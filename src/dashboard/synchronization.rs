@@ -16,11 +16,9 @@ struct Widgets {
     start: gtk::glib::WeakRef<gtk::Button>,
     header: super::account_header::AccountHeader,
     folders: gtk::glib::WeakRef<gtk::Box>,
-    menu: gtk::glib::WeakRef<gtk::MenuButton>,
     row: gtk::glib::WeakRef<adw::ActionRow>,
     account_row: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
-    menu_status: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
     issues: gtk::glib::WeakRef<gtk::Box>,
     activity: gtk::glib::WeakRef<gtk::Box>,
@@ -227,9 +225,6 @@ impl Widgets {
             .as_ref()
             .is_some_and(|result| matches!(result, Err(EngineError::RootSuspended(_))));
         let sync_status = super::presentation::status(snapshot);
-        if let Some(status) = self.menu_status.upgrade() {
-            status.set_label(&format!("Synchronization: {sync_status}"));
-        }
         if let Some(row) = self.account_row.upgrade() {
             row.set_subtitle(sync_status);
         }
@@ -285,7 +280,14 @@ impl Widgets {
                     "Waiting for automatic synchronization",
                     "Configured accounts are checked automatically.",
                 ),
-                Phase::UpToDate => ("Up to date", "Next automatic check in about a minute"),
+                Phase::UpToDate if !super::presentation::confirmed(snapshot) => (
+                    "Needs attention",
+                    "Completion could not be confirmed. Review the synchronization details.",
+                ),
+                Phase::UpToDate => (
+                    "Up to date",
+                    "The latest check completed without pending items.",
+                ),
                 Phase::Attention => (
                     "Some files could not be updated",
                     "Local files were preserved. Automatic checks continue.",
@@ -315,6 +317,13 @@ impl Widgets {
             row.set_title(title);
             row.set_subtitle(subtitle);
         }
+        if snapshot.phase == Phase::UpToDate && !super::presentation::confirmed(snapshot) {
+            if let Some(status) = self.status.upgrade() {
+                status.set_label(
+                    "Completion could not be confirmed. Review the synchronization details.",
+                );
+            }
+        }
         if snapshot.phase == Phase::Paused {
             if let Some(button) = self.start.upgrade() {
                 button.set_label("Resume");
@@ -334,9 +343,6 @@ impl Widgets {
         }
         if let Some(folders) = self.folders.upgrade() {
             folders.set_sensitive(true);
-        }
-        if let Some(menu) = self.menu.upgrade() {
-            menu.set_sensitive(true);
         }
         if let Some(bar) = self.progress.upgrade() {
             bar.set_visible(false);
@@ -506,10 +512,8 @@ pub(super) struct Controls<'a> {
     pub start: &'a gtk::Button,
     pub row: &'a adw::ActionRow,
     pub status: &'a gtk::Label,
-    pub menu: &'a gtk::MenuButton,
     pub header: &'a super::account_header::AccountHeader,
     pub account_row: &'a adw::ActionRow,
-    pub menu_status: &'a gtk::Label,
 }
 
 /// Observes the shared account job. Page disposal stops observation only; the
@@ -536,10 +540,8 @@ pub(super) fn build_for_job(
         start,
         row,
         status,
-        menu,
         header,
         account_row,
-        menu_status,
     } = controls;
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
@@ -619,11 +621,9 @@ pub(super) fn build_for_job(
         start: start.downgrade(),
         header: header.clone(),
         folders: folders.downgrade(),
-        menu: menu.downgrade(),
         row: row.downgrade(),
         account_row: account_row.downgrade(),
         status: status.downgrade(),
-        menu_status: menu_status.downgrade(),
         progress: progress.downgrade(),
         issues: issues.downgrade(),
         activity: activity.downgrade(),
@@ -742,8 +742,7 @@ pub(super) fn verify_worker_failure() {
     let account_row = adw::ActionRow::new();
     let status = gtk::Label::new(None);
     let header = super::account_header::AccountHeader::new("Fixture", "Connected");
-    let menu = gtk::MenuButton::new();
-    let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
+
     let footer = build(
         Arc::new(DriveSyncEngine::new()),
         &saved,
@@ -752,16 +751,14 @@ pub(super) fn verify_worker_failure() {
             start: &start,
             row: &row,
             status: &status,
-            menu: &menu,
             header: &header,
             account_row: &account_row,
-            menu_status: &menu_status,
         },
     );
     start.emit_clicked();
     assert_eq!(start.label().as_deref(), Some("Pause"));
     assert!(!folders.is_sensitive());
-    assert!(menu.is_sensitive());
+
     let wait = gtk::glib::MainLoop::new(None, false);
     let finish = wait.clone();
     let weak_start = start.downgrade();
@@ -783,7 +780,7 @@ pub(super) fn verify_worker_failure() {
     assert_eq!(row.title(), "Needs attention");
     assert!(!start.is_sensitive());
     assert!(folders.is_sensitive());
-    assert!(menu.is_sensitive());
+
     assert!(footer.first_child().is_some());
 }
 
@@ -804,7 +801,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         let start = gtk::Button::with_label("Pause");
         start.set_halign(gtk::Align::End);
         let folders = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let menu = gtk::MenuButton::new();
+
         let row = adw::ActionRow::builder()
             .title("Synchronization")
             .use_markup(false)
@@ -813,7 +810,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         let header = super::account_header::AccountHeader::new("Fixture", "Connected");
         let account_status = header.status_for_test();
         let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
-        let menu_status = gtk::Label::new(Some("Synchronization: Not started"));
+
         let footer = build(
             Arc::new(DriveSyncEngine::new()),
             &saved,
@@ -822,10 +819,8 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 start: &start,
                 row: &row,
                 status: &status,
-                menu: &menu,
                 header: &header,
                 account_row: &account_row,
-                menu_status: &menu_status,
             },
         );
         fn collect(
@@ -881,11 +876,9 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
             start: start.downgrade(),
             header: header.clone(),
             folders: folders.downgrade(),
-            menu: menu.downgrade(),
             row: row.downgrade(),
             account_row: account_row.downgrade(),
             status: status.downgrade(),
-            menu_status: menu_status.downgrade(),
             progress: bar.downgrade(),
             issues: issues.downgrade(),
             activity: activity.downgrade(),
@@ -1124,7 +1117,14 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                     pausing: false,
                     phase,
                     progress: None,
-                    result: None,
+                    result: if phase == crate::automatic::Phase::UpToDate {
+                        Some(Ok(DownloadReport {
+                            unchanged: 8,
+                            ..Default::default()
+                        }))
+                    } else {
+                        None
+                    },
                 },
                 None,
             );
@@ -1185,7 +1185,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
         );
         assert!(!spinner.is_spinning());
         assert!(folders.is_sensitive());
-        assert!(menu.is_sensitive());
+
         assert_eq!(start.label().as_deref(), Some("Synchronize Now"));
         window.close();
     }
@@ -1213,11 +1213,10 @@ mod tests {
             start: start.downgrade(),
             header: crate::dashboard::account_header::AccountHeader::new("Fixture", "Connected"),
             folders: Default::default(),
-            menu: Default::default(),
+
             row: row.downgrade(),
             account_row: Default::default(),
             status: status.downgrade(),
-            menu_status: Default::default(),
             progress: Default::default(),
             issues: issues.downgrade(),
             activity: activity.downgrade(),
@@ -1267,6 +1266,18 @@ mod tests {
             assert!(!skipped.is_visible());
             assert!(!preserved.is_visible());
         }
+        ui.present_job(
+            &crate::automatic::Snapshot {
+                revision: 3,
+                pausing: false,
+                phase: crate::automatic::Phase::UpToDate,
+                progress: None,
+                result: None,
+            },
+            Some(crate::automatic::Phase::Waiting),
+        );
+        assert_eq!(row.title(), "Needs attention");
+        assert!(status.label().contains("could not be confirmed"));
         let mut snapshot = crate::automatic::Snapshot {
             revision: 3,
             pausing: false,

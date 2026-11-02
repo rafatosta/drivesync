@@ -77,7 +77,7 @@ impl SyncProgressCard {
             Phase::Running => (
                 "Synchronizing files",
                 "Checking for changes…",
-                "emblem-synchronizing-symbolic",
+                "view-refresh-symbolic",
                 "accent",
             ),
             Phase::Paused => (
@@ -107,7 +107,7 @@ impl SyncProgressCard {
             Phase::UpToDate if complete(snapshot) => (
                 "Everything synchronized",
                 "Your files are up to date on this computer and Google Drive.",
-                "emblem-ok-symbolic",
+                "object-select-symbolic",
                 "success",
             ),
             Phase::UpToDate => (
@@ -151,6 +151,14 @@ impl SyncProgressCard {
                 ));
             }
         }
+        let theme = gtk::IconTheme::for_display(&self.root.display());
+        let icon = if theme.has_icon(icon) {
+            icon
+        } else if class == "warning" {
+            "dialog-warning-symbolic"
+        } else {
+            "view-refresh-symbolic"
+        };
         self.icon.set_icon_name(Some(icon));
         for name in ["accent", "warning", "success", "dim-label"] {
             self.icon.remove_css_class(name);
@@ -202,6 +210,44 @@ mod tests {
     use super::*;
     use drivesync_engine::{DownloadProgress, DownloadReport};
 
+    #[test]
+    #[ignore = "requires a desktop display"]
+    fn native_progress_states_use_available_symbolic_icons() {
+        adw::init().unwrap();
+        let theme = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap());
+        let card = SyncProgressCard::new();
+        let mut missing = Vec::new();
+        for phase in [
+            Phase::Unconfigured,
+            Phase::Waiting,
+            Phase::Running,
+            Phase::Paused,
+            Phase::Offline,
+            Phase::Retrying,
+            Phase::Blocked,
+            Phase::Attention,
+            Phase::UpToDate,
+        ] {
+            let snapshot = Snapshot {
+                revision: 1,
+                phase,
+                pausing: false,
+                progress: None,
+                result: Some(Ok(DownloadReport::default())),
+            };
+            card.present(&snapshot);
+            let icon = card.icon.icon_name().unwrap();
+            if !theme.has_icon(&icon) {
+                missing.push(format!("{phase:?}: {icon}"));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "theme {:?} lacks {:?}",
+            theme.theme_name(),
+            missing
+        );
+    }
     #[test]
     fn unknown_totals_and_idle_states_hide_progress() {
         let mut snapshot = Snapshot {

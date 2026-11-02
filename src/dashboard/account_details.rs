@@ -39,9 +39,6 @@ pub(super) fn populate(
             crate::session::sign_out_button(engine.clone(), saved.account.id.clone(), nav, toasts);
         sign_out.set_visible(false);
         content.append(&sign_out);
-        let sync_menu_status = gtk::Label::new(None);
-        sync_menu_status.set_visible(false);
-        content.append(&sync_menu_status);
         content.append(heading.widget());
 
         let description = adw::PreferencesGroup::new();
@@ -155,10 +152,8 @@ pub(super) fn populate(
                 start: &start,
                 row: &sync_state,
                 status: &status,
-                menu: &menu,
                 header: &heading,
                 account_row: &user,
-                menu_status: &sync_menu_status,
             },
             job,
         ));

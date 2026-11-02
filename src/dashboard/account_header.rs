@@ -88,7 +88,7 @@ impl AccountHeader {
         self.status.set_label(status);
         let (icon, tip, enabled) = match snapshot.phase {
             Phase::Running if snapshot.pausing => {
-                ("process-working-symbolic", "Pausing safely…", false)
+                ("view-refresh-symbolic", "Pausing safely…", false)
             }
             Phase::Running => (
                 "media-playback-pause-symbolic",
