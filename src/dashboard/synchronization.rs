@@ -383,8 +383,25 @@ impl Widgets {
         }
         if let Some(result) = &snapshot.result {
             self.finish(result);
-        } else if previous == Some(Phase::Running) {
+        } else if previous.is_some_and(|phase| phase != snapshot.phase) {
             self.idle();
+            if matches!(snapshot.phase, Phase::Waiting | Phase::Unconfigured) {
+                // Reconfiguration discards the previous result in the controller.
+                // Do not keep presenting that result as a failure of the new scope.
+                self.clear_issues();
+                if let Some(status) = self.status.upgrade() {
+                    status.set_label("");
+                }
+                if let Some(activity) = self.activity.upgrade() {
+                    activity.set_visible(false);
+                }
+                if let Some(skipped) = self.skipped.upgrade() {
+                    skipped.set_visible(false);
+                }
+                if let Some(preserved) = self.preserved.upgrade() {
+                    preserved.set_visible(false);
+                }
+            }
             if snapshot.phase == Phase::Unconfigured {
                 if let Some(button) = self.start.upgrade() {
                     button.set_sensitive(false);
@@ -1284,6 +1301,79 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires an isolated GTK display"]
+    fn reconfigured_waiting_clears_the_previous_cycle_error() {
+        adw::init().unwrap();
+        let row = adw::ActionRow::new();
+        let start = gtk::Button::new();
+        let status = gtk::Label::new(None);
+        let issues = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let activity = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let skipped = gtk::Label::new(None);
+        let preserved = gtk::Label::new(None);
+        let ui = Widgets {
+            start: start.downgrade(),
+            account_toggle: Default::default(),
+            folders: Default::default(),
+            menu: Default::default(),
+            row: row.downgrade(),
+            account_row: Default::default(),
+            account_status: Default::default(),
+            account_status_fallback: "Connected".into(),
+            status: status.downgrade(),
+            menu_status: Default::default(),
+            progress: Default::default(),
+            issues: issues.downgrade(),
+            activity: activity.downgrade(),
+            skipped: skipped.downgrade(),
+            preserved: preserved.downgrade(),
+            spinner: Default::default(),
+        };
+        for previous in [
+            crate::automatic::Phase::Offline,
+            crate::automatic::Phase::Blocked,
+            crate::automatic::Phase::Running,
+        ] {
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 1,
+                    pausing: false,
+                    phase: previous,
+                    progress: None,
+                    result: Some(Err(EngineError::RootSuspended(
+                        drivesync_engine::RootSuspension::Offline,
+                    ))),
+                },
+                None,
+            );
+            if previous != crate::automatic::Phase::Running {
+                assert!(issues.is_visible());
+                assert_eq!(status.label(), "The cycle could not finish.");
+            }
+            activity.set_visible(true);
+            skipped.set_visible(true);
+            preserved.set_visible(true);
+            ui.present_job(
+                &crate::automatic::Snapshot {
+                    revision: 2,
+                    pausing: false,
+                    phase: crate::automatic::Phase::Waiting,
+                    progress: None,
+                    result: None,
+                },
+                Some(previous),
+            );
+            assert_eq!(row.title(), "Waiting for automatic synchronization");
+            assert!(status.label().is_empty());
+            assert!(!issues.is_visible());
+            assert!(issues.first_child().is_none());
+            assert!(!activity.is_visible());
+            assert!(!skipped.is_visible());
+            assert!(!preserved.is_visible());
+        }
+    }
+
     #[test]
     fn activity_is_not_an_error_or_an_action_in_the_completion_summary() {
         let report = DownloadReport {
