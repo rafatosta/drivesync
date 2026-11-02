@@ -56,8 +56,9 @@ Esta seção distingue **solução consolidada**, **decisão do DriveSync**, **t
 - **Testes/oráculos a detalhar:** Renomeação, editor com arquivo temporário, diretórios grandes, overflow/monitor indisponível.
 - **Limitações / questões abertas:** Monitor recursivo e comportamento de mounts/permissões Flatpak requerem prova em Fedora.
 - **Situação:** varredura por ciclo implementada; monitor contínuo permanece proposta.
-  O [contrato proposto](monitoring.md) requer revisão humana; oráculos do
-  inventário atual em [tests.rs](tests.rs); aceitação de portal/mount instalado pendente.
+  O [contrato](monitoring.md) foi aprovado e a descoberta de diretórios está
+  implementada, mas não há observador integrado; aceitação de portal/mount
+  instalado pendente.
 
 ### LOCAL-002
 

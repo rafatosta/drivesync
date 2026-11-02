@@ -344,10 +344,12 @@ Eventos são pistas, não evidência suficiente para transferência ou exclusão
 Pausa, bloqueios, disponibilidade, autorização e backoff continuam prevalecendo.
 Uma falha de monitoramento deve ser visível e não equivale a uma árvore vazia.
 
-**Situação:** monitoramento contínuo ainda não implementado. O
-[contrato proposto](../engine/src/local/monitoring.md) está em revisão e não
-autoriza implementação antes da revisão humana dos algoritmos e oráculos.
-A varredura periódica existente continua sendo a recuperação de eventos ausentes.
+**Situação:** o [contrato](../engine/src/local/monitoring.md) e os oráculos
+foram aprovados para implementação, mas o monitoramento contínuo ainda não
+está integrado. A descoberta limitada de diretórios por descritores está
+implementada no engine; não produz eventos nem substitui verificações de
+identidade da sincronização. A varredura periódica continua sendo a
+recuperação de eventos ausentes.
 
 **Aceite pretendido:** os cenários do contrato devem ser demonstrados com
 relógio controlado, filesystem e SQLite temporários e provedor simulado;

@@ -1,6 +1,8 @@
 # LOCAL-001 — proposta de monitoramento local
 
-**Estado:** proposta para revisão humana, não implementada nem validada.
+**Estado:** contrato e oráculos aprovados para implementação; descoberta de
+diretórios por descritores implementada, sem observador integrado ou aceite
+completo.
 Requisito de produto: [LOCAL-001](../../../docs/SOFTWARE_SPECIFICATION.md#local-001--antecipação-por-eventos-locais).
 Inventário e estabilização permanecem sob [SYNC-003](reconciliation.md).
 
