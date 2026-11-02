@@ -601,6 +601,8 @@ pub(super) fn build_for_job(
     activity.set_visible(false);
     activity.set_widget_name("download-history");
     footer.append(&activity);
+    // Visible synchronization actions belong to the header and account menus.
+    start.set_visible(false);
     footer.append(start);
     let recovery = super::state_recovery::button(engine.clone(), saved, status, job.clone());
     let weak_diagnostics = diagnostic_row.downgrade();

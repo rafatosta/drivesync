@@ -198,9 +198,17 @@ mod tests {
         let toasts = adw::ToastOverlay::new();
         let page =
             crate::dashboard::build(Arc::new(DriveSyncEngine::new()), vec![saved], &nav, &toasts);
-        let start = named(page.upcast_ref(), "start-synchronization")
+        let start = {
+            let button = named(page.upcast_ref(), "start-synchronization").unwrap();
+            assert!(
+                !button.is_visible(),
+                "the header replaces the redundant dashboard button"
+            );
+            button.downgrade()
+        };
+        assert!(named(page.upcast_ref(), "account-sync-toggle")
             .unwrap()
-            .downgrade();
+            .is_visible());
         let header_toggle = named(page.upcast_ref(), "account-sync-toggle")
             .unwrap()
             .downgrade();
