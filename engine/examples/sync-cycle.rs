@@ -161,11 +161,7 @@ fn run() -> Result<(), String> {
             }
         }
         Err(error) => {
-            let code = match error {
-                EngineError::Authentication(AuthError::Cancelled) => "cancelled",
-                EngineError::Authentication(AuthError::Network) => "network",
-                _ => "other",
-            };
+            let code = error_code(&error);
             println!(
                 "{}",
                 json!({"event":"failed","code":code,"media_attempts":media_attempts})
@@ -176,6 +172,15 @@ fn run() -> Result<(), String> {
         }
     }
     Ok(())
+}
+/// Recognizes coordinator suspension as well as lower-level transport failures.
+fn error_code(error: &EngineError) -> &'static str {
+    match error {
+        EngineError::Authentication(AuthError::Cancelled) => "cancelled",
+        EngineError::Authentication(AuthError::Network | AuthError::TimedOut)
+        | EngineError::RootSuspended(drivesync_engine::RootSuspension::Offline) => "network",
+        _ => "other",
+    }
 }
 fn main() -> ExitCode {
     match run() {
@@ -189,6 +194,21 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn offline_root_suspension_keeps_the_transport_failure_oracle() {
+        for error in [
+            EngineError::Authentication(AuthError::Network),
+            EngineError::Authentication(AuthError::TimedOut),
+            EngineError::RootSuspended(drivesync_engine::RootSuspension::Offline),
+        ] {
+            assert_eq!(error_code(&error), "network");
+        }
+        assert_eq!(error_code(&EngineError::LocalLockUnsupported), "other");
+        assert_eq!(
+            error_code(&EngineError::Authentication(AuthError::Cancelled)),
+            "cancelled"
+        );
+    }
     #[test]
     fn refuses_implicit_roots_and_incompatible_fault_injection() {
         for args in [
