@@ -56,14 +56,14 @@ pub(crate) fn fingerprint_root(
 ) -> Result<Option<String>, EngineError> {
     let (parent, name) = root.parent(relative)?;
     let parent_id = identity(&parent)?;
-    let Some(mut file) = read_download(&parent, &name)? else {
+    let Some(mut file) = read_transfer(&parent, &name)? else {
         return Ok(None);
     };
     let file_id = identity(&file)?;
     let content_fingerprint = super::stream::fingerprint(&mut file, cancel)?;
     root.validate_parent(relative, parent_id)?;
     if identity(&file)? != file_id
-        || read_download(&parent, &name)?
+        || read_transfer(&parent, &name)?
             .as_ref()
             .map(identity)
             .transpose()?
@@ -205,11 +205,12 @@ pub(crate) fn lock_regular(file: &File) -> Result<(), EngineError> {
     regular(file)
 }
 
-/// Download observation can use optimistic verification when file flock is
+/// Verified transfers can use optimistic reads when file flock is
 /// unsupported. Contention and all other failures still defer the operation.
 /// Callers must verify stamps/hashes and install without replacing destinations.
-/// Upload sources and conflict execution must keep using `lock_regular`/`read`.
-pub(crate) fn lock_download(file: &File) -> Result<(), EngineError> {
+/// Upload callers must additionally verify a private snapshot and source before
+/// publication. Conflict execution keeps using `lock_regular`/`read`.
+pub(crate) fn lock_transfer(file: &File) -> Result<(), EngineError> {
     match lock_regular(file) {
         Err(EngineError::LocalLockUnsupported) => regular(file),
         result => result,
@@ -252,10 +253,10 @@ pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineEr
     read_with(parent, name, lock_regular)
 }
 
-/// Opens a download observation without requiring a filesystem-wide flock
+/// Opens a verified transfer observation without requiring a regular-file flock
 /// capability. This is not an upload authorization or a mutation lease.
-pub(crate) fn read_download(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
-    read_with(parent, name, lock_download)
+pub(crate) fn read_transfer(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
+    read_with(parent, name, lock_transfer)
 }
 
 fn read_with(
@@ -328,10 +329,10 @@ mod capacity_tests {
     use super::*;
 
     #[test]
-    fn only_download_reads_allow_unsupported_flock_and_never_special_files() {
+    fn only_verified_reads_allow_unsupported_flock_and_never_special_files() {
         let file = std::fs::File::open("/dev/null").unwrap();
         with_unsupported_file_locks(|| {
-            assert_eq!(lock_download(&file), Err(EngineError::DownloadConflict));
+            assert_eq!(lock_transfer(&file), Err(EngineError::DownloadConflict));
             let base = std::env::temp_dir().join(format!(
                 "drivesync-lock-policy-{}",
                 oauth2::CsrfToken::new_random().secret()
@@ -343,7 +344,7 @@ mod capacity_tests {
                 read(&parent, OsStr::new("file")),
                 Err(EngineError::LocalLockUnsupported)
             ));
-            assert!(read_download(&parent, OsStr::new("file"))
+            assert!(read_transfer(&parent, OsStr::new("file"))
                 .unwrap()
                 .is_some());
             assert_eq!(std::fs::read(base.join("file")).unwrap(), b"preserve");

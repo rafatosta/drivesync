@@ -1258,8 +1258,9 @@ NONBLOCK na abertura de arquivos e revalidação de raiz, pai e identidade.
 Verificar tipo e número de links antes/depois das leituras. Tentar um flock
 compartilhado nas observações e downloads; somente ENOSYS/EOPNOTSUPP permitem
 seguir com verificação otimista de assinatura, identidade e hashes. Contenção
-continua adiando o item. Upload e execução de decisões de conflitos exigem o
-lock suportado até a publicação ou adiamento.
+continua adiando o item. Upload de itens novos admite a mesma ausência de flock somente com snapshot
+privado, hashes e revalidação de origem por bloco e antes da confirmação.
+Execução de decisões de conflitos continua exigindo lock suportado.
 Lock exclusivo concorrente adia o item, sem espera bloqueante ou perda de dados.
 Leitores com locks compartilhados são compatíveis. A proteção é cooperativa:
 flock não coordena locks POSIX fcntl nem escritores que ignoram locks; manter

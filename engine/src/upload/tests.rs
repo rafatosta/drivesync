@@ -14,6 +14,48 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+#[test]
+fn unsupported_file_flock_keeps_create_only_integrity_and_recovery() {
+    crate::download::filesystem::with_unsupported_file_locks(|| {
+        creates_nested_files_once_and_records_download_evidence();
+        interrupted_chunks_lost_confirmation_and_expired_sessions_reuse_one_id();
+        cancellation_retains_the_session_and_confirmed_remote_removal_is_not_recreated();
+        a_replaced_source_with_identical_bytes_is_not_silently_adopted();
+        corrupt_staging_blocks_replay_without_sending_another_chunk();
+        local_write_after_inventory_never_starts_remote_upload();
+        n10_resumed_writer_stops_before_final_upload_publication_and_keeps_intent();
+        sync023_e10_snapshot_requires_both_persisted_hashes_before_resume();
+    });
+}
+
+#[test]
+fn mutated_private_snapshot_stops_before_the_next_upload_chunk() {
+    crate::download::filesystem::with_unsupported_file_locks(|| {
+        let f = Fixture::new();
+        let bytes = vec![7; 3 * 1024 * 1024];
+        fs::write(f.root.join("large.bin"), &bytes).unwrap();
+        let stage = f.path.with_file_name("upload-generated_1.snapshot");
+        let mut remote = Fake {
+            corrupt_snapshot_after_chunk: Some(stage.clone()),
+            ..Fake::default()
+        };
+        let report = f.run(&mut remote, HashSet::new()).unwrap();
+        assert_eq!(report.uploaded, 0);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(remote.chunks, 1);
+        assert_eq!(remote.creates, 0);
+        assert_eq!(fs::read(f.root.join("large.bin")).unwrap(), bytes);
+        assert!(stage.exists());
+        assert!(
+            !f.uploads()
+                .load(Path::new("large.bin"))
+                .unwrap()
+                .unwrap()
+                .confirmed
+        );
+    });
+}
 #[derive(Default)]
 struct Fake {
     now: u64,
@@ -25,6 +67,7 @@ struct Fake {
     generated: usize,
     change_on_generate: Option<PathBuf>,
     change_after_chunk: Option<PathBuf>,
+    corrupt_snapshot_after_chunk: Option<PathBuf>,
     creates: usize,
     chunks: usize,
     begins: usize,
@@ -161,6 +204,12 @@ impl Remote for Fake {
         }
         if let Some(path) = self.change_after_chunk.take() {
             fs::write(path, b"writer resumed during upload").unwrap();
+        }
+        if let Some(path) = self.corrupt_snapshot_after_chunk.take() {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut file = fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+            file.write_all(b"mutated snapshot bytes").unwrap();
         }
         if self.data[&op.id].len() as u64 == op.size {
             self.creates += 1;

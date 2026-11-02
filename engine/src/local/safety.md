@@ -11,11 +11,12 @@ Contrato e política: [especificação](../../../docs/SOFTWARE_SPECIFICATION.md#
    tentam flock compartilhado não bloqueante: contenção vira LocalWriting.
    Somente ENOSYS/EOPNOTSUPP permitem leitura otimista, com assinatura, hash,
    identidade e cadeia de descritores revalidados. Outros erros permanecem erros.
-   Upload e execução de decisões de conflitos continuam usando a leitura estrita,
+   Execução de decisões de conflitos continua usando a leitura estrita,
    que retorna LocalLockUnsupported sem autorizar efeitos remotos.
 4. Comparar assinatura após quiescência, calcular hash e revalidar assinatura,
    pai e raiz. Trocas ou alterações adiam; não reutilizar observação após reinício.
-5. Upload retém o descritor bloqueado durante os efeitos remotos, cria snapshot
+5. Upload retém o descritor da origem durante os efeitos remotos, tenta flock
+   quando suportado e cria snapshot
    privado e revalida fonte em cada fronteira de chunk. Falha remove somente
    snapshot parcial próprio; intent já persistido permanece para reconciliação.
 6. Instalação remota recusa nomes temporários no planner e mantém staging,
@@ -42,8 +43,11 @@ continuidade e a preservação das evidências.
 ## Download sem flock de arquivo regular
 
 O lock de raiz e o lock privado por conta continuam exclusivos e obrigatórios.
-Somente leituras de download/observação e captura de base verificada usam a
-política otimista. Ela não é uma autorização para upload ou decisão de conflito.
+Leituras de transferências verificadas, observação e captura de base usam a
+política otimista. Upload de itens novos exige autorização por conta, snapshot
+privado e hashes da origem antes de enviar o bloco final. Cada bloco verifica
+a assinatura do snapshot antes do envio. Decisões de conflito continuam usando
+a leitura estrita; esta política não autoriza sobrescrita remota.
 A instalação mantém staging exclusivo, tamanho/MD5/SHA-256, fsync e NOREPLACE.
 Revalidar staging após consultas remotas e verificar o destino instalado antes
 de confirmar Installed/Updated. Falha conserva o journal recuperável e os bytes;
@@ -64,7 +68,7 @@ A adoção dessa política não altera a camada de arquivos nem introduz GIO.
 | ENOSYS em arquivos, download inicial/vazio/binário, repetição, reinício, rede, cancelamento, links e lock de raiz | `download::tests::downloads_without_file_flock_keep_integrity_recovery_and_local_preservation` |
 | ENOSYS, atualização com backup, divergência, troca de inode e recuperação | `download::tests::update_tests::portal_lock_capability_does_not_prevent_verified_updates_or_recovery` |
 | Mutação de staging na instalação não confirma binário corrompido | `download::tests::portal_staging_mutation_at_install_never_confirms_a_corrupt_binary` |
-| Leitura estrita continua recusando ENOSYS; tipos especiais continuam recusados | `download::filesystem::capacity_tests::only_download_reads_allow_unsupported_flock_and_never_special_files` |
+| Leitura estrita continua recusando ENOSYS; tipos especiais continuam recusados | `download::filesystem::capacity_tests::only_verified_reads_allow_unsupported_flock_and_never_special_files` |
 | N05: links externos, FIFO, repetição e cópia independente | `local::tests::sync020_n05_aliases_and_special_files_are_never_upload_candidates` |
 | N05: symlink/alias durante quiescência | `local::tests::sync020_n05_link_creation_and_symlink_swap_during_wait_fail_closed` |
 | N05: ancestral trocado e traversal | `local::tests::sync020_n05_descriptor_chain_refuses_parent_swaps_and_traversal`; `download::tests::symlinks_never_redirect_downloads` |

@@ -543,7 +543,7 @@ impl Session<'_> {
             else {
                 unreachable!()
             };
-            if let Some(mut final_file) = filesystem::read_download(&parent, &name)? {
+            if let Some(mut final_file) = filesystem::read_transfer(&parent, &name)? {
                 if identity(&final_file)? != *expected
                     || !stream::verify(
                         &mut final_file,
@@ -570,7 +570,7 @@ impl Session<'_> {
             if op.item != *item {
                 return Err(EngineError::RemoteChanged);
             }
-            let mut staged = filesystem::read_download(&parent, OsStr::new(&op.temporary))?
+            let mut staged = filesystem::read_transfer(&parent, OsStr::new(&op.temporary))?
                 .ok_or(EngineError::DownloadConflict)?;
             if identity(&staged)? != *expected
                 || !stream::verify(&mut staged, size, sha256, self.context.cancel)?
@@ -597,7 +597,7 @@ impl Session<'_> {
             return Ok(Outcome::Recovered);
         }
         let mut previous = None;
-        if let Some(mut existing) = filesystem::read_download(&parent, &name)? {
+        if let Some(mut existing) = filesystem::read_transfer(&parent, &name)? {
             let Some(op) = self
                 .operations
                 .get(path)
@@ -653,7 +653,7 @@ impl Session<'_> {
                 // A newer metadata version does not necessarily change file bytes.
                 // Recheck the path after remote I/O before advancing durable evidence.
                 source.configured()?;
-                let mut current = filesystem::read_download(&parent, &name)?
+                let mut current = filesystem::read_transfer(&parent, &name)?
                     .ok_or(EngineError::DownloadConflict)?;
                 if identity(&current)? != expected
                     || !stream::verify(&mut current, old_size, sha256, self.context.cancel)?
@@ -755,7 +755,7 @@ impl Session<'_> {
         source.configured()?;
         validate_chain(source, item, by_id, &self.context.scope.remote_root)?;
         self.root.validate_parent(path, parent_id)?;
-        let mut current = filesystem::read_download(&parent, OsStr::new(&op.temporary))?
+        let mut current = filesystem::read_transfer(&parent, OsStr::new(&op.temporary))?
             .ok_or(EngineError::DownloadConflict)?;
         if identity(&current)? != staged_id
             || !stream::verify(&mut current, size, &sha256, self.context.cancel)?

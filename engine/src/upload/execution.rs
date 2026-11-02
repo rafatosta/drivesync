@@ -330,6 +330,7 @@ pub(crate) fn run_with_root(
                 } else {
                     let stage = state_path.with_file_name(&op.snapshot);
                     let mut file = local::verify_stage(&stage, &op, cancel)?;
+                    let snapshot_stamp = crate::local::Stamp::read(&file)?;
                     if op.session.is_none() {
                         op.session = Some(remote.begin(&op)?);
                         uploads.save(&op)?;
@@ -360,6 +361,9 @@ pub(crate) fn run_with_root(
                         let count = (op.size - offset).min(1024 * 1024) as usize;
                         let mut bytes = vec![0; count];
                         file.read_exact(&mut bytes).map_err(filesystem::io)?;
+                        if crate::local::Stamp::read(&file)? != snapshot_stamp {
+                            return Err(EngineError::DownloadIntegrity);
+                        }
                         if source_stamp.as_ref() != Some(&crate::local::stamp(root, &path)?) {
                             return Err(EngineError::LocalWriting);
                         }
@@ -409,7 +413,9 @@ pub(crate) fn run_with_root(
                 // Confirm local installed evidence only if the original local bytes
                 // still match the snapshot; divergent data remains untouched.
                 let (p, n) = root.parent(&path)?;
-                let mut file = filesystem::read(&p, &n)?.ok_or(EngineError::DownloadConflict)?;
+                let mut file =
+                    filesystem::read_transfer(&p, &n)?.ok_or(EngineError::DownloadConflict)?;
+                let source_before = crate::local::Stamp::read(&file)?;
                 let identity = filesystem::identity(&file)?;
                 if Some(identity) != op.source {
                     return Err(EngineError::DownloadConflict);
@@ -421,8 +427,12 @@ pub(crate) fn run_with_root(
                         error
                     }
                 })?;
-                let current = filesystem::read(&p, &n)?.ok_or(EngineError::DownloadConflict)?;
-                if filesystem::identity(&current)? != identity {
+                let current =
+                    filesystem::read_transfer(&p, &n)?.ok_or(EngineError::DownloadConflict)?;
+                if filesystem::identity(&current)? != identity
+                    || crate::local::Stamp::read(&file)? != source_before
+                    || crate::local::Stamp::read(&current)? != source_before
+                {
                     return Err(EngineError::DownloadConflict);
                 }
                 root.validate_parent(&path, filesystem::identity(&p)?)?;

@@ -41,7 +41,7 @@ impl Store {
         let (parent, name) = root.parent(&op.relative)?;
         let parent_id = filesystem::identity(&parent)?;
         let mut file =
-            filesystem::read_download(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+            filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
         let stamp = crate::local::Stamp::read(&file)?;
         let mut bytes = Vec::new();
         (&mut file)
@@ -54,7 +54,7 @@ impl Store {
             || Some(bytes.len() as u64) != op.item.size
             || filesystem::identity(&file)? != *identity
             || crate::local::Stamp::read(&file)? != stamp
-            || filesystem::read_download(&parent, &name)?
+            || filesystem::read_transfer(&parent, &name)?
                 .as_ref()
                 .map(crate::local::Stamp::read)
                 .transpose()?

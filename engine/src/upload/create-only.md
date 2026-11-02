@@ -32,6 +32,7 @@ For each scoped client/account/folder pair:
 5. Persist the resumable session URI privately. On restart query the server's
    offset; send aligned bounded chunks, validating ranges. Recheck the source
    signature before each chunk and its identity/hash before the final chunk;
+   verify snapshot signature after reading each chunk, before sending it;
    a detected resumed writer leaves the intent pending without final publication. An expired session
    may restart creation with the SAME ID after checking completion. Never log
    tokens, session URIs or raw provider responses.
@@ -126,3 +127,17 @@ rejection, expired sessions and repeated confirmation. They combine a simulated
 provider/clock with real temporary filesystem and SQLite reopened between passes.
 They do not prove Google behavior, process/power-loss durability or packaged UI
 integration. Real-provider upload coverage is tracked in issue #43; issue #28 covers download-only.
+
+## File-lock capabilities and portal sources
+
+Create-only upload attempts a shared flock on regular source/snapshot files.
+Only ENOSYS/EOPNOTSUPP permit optimistic reads; contention and other errors still
+block the item. Root/account exclusion and scoped upload consent are mandatory.
+Descriptor-relative NOFOLLOW, single-link regular files, stable inventory,
+source identity and SHA-256/MD5-verified private snapshots remain required.
+Revalidate source stamps at chunk boundaries and source hashes before the final
+chunk; verify snapshot stamps before sending each chunk. After remote completion,
+revalidate the source descriptor and current path before confirming the local base.
+Interrupted or ambiguous operations retain their original ID, snapshot and intent.
+Do not interpret unsupported flock as permission for remote overwrite, deletion
+or a conflict choice. Conflict-execution source reads retain their strict policy.

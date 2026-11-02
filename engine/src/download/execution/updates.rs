@@ -12,7 +12,7 @@ impl Session<'_> {
         sha: &str,
         cancel: &Cancellation,
     ) -> Result<bool, EngineError> {
-        let Some(mut file) = filesystem::read_download(parent, name)? else {
+        let Some(mut file) = filesystem::read_transfer(parent, name)? else {
             return Ok(false);
         };
         let stamp = crate::local::Stamp::read(&file)?;
@@ -20,7 +20,7 @@ impl Session<'_> {
             return Ok(false);
         }
         file.sync_all().map_err(filesystem::io)?;
-        let current = filesystem::read_download(parent, name)?;
+        let current = filesystem::read_transfer(parent, name)?;
         Ok(crate::local::Stamp::read(&file)? == stamp
             && current
                 .as_ref()
@@ -38,7 +38,7 @@ impl Session<'_> {
         backup: &str,
         expected: super::super::models::Identity,
     ) {
-        if let Ok(Some(file)) = filesystem::read_download(parent, OsStr::new(backup)) {
+        if let Ok(Some(file)) = filesystem::read_transfer(parent, OsStr::new(backup)) {
             if identity(&file).ok() == Some(expected) {
                 self.remember_backup(op, backup);
             }

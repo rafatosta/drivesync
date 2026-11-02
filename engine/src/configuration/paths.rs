@@ -42,7 +42,7 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .mode(0o600)
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
-    let capability = crate::download::filesystem::lock_download(&file);
+    let capability = crate::download::filesystem::lock_transfer(&file);
     drop(file);
     fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
     capability?;
