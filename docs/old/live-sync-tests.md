@@ -17,6 +17,12 @@ the existing six download counts retain their meaning. Byte cancellation also
 observes upload progress, so remote effects may precede cancellation and must
 be reconciled through the preserved intent/ID. Installation-hold injection is
 incompatible with this mode.
+The upload journal's persisted retry deadline remains authoritative after
+cancellation or network failure. Do not expect immediate retry to send bytes;
+record an early deferral and wait for the existing deadline without editing the
+budget or generating another ID. JSON `issue_errors` contains only the engine's
+sanitized messages, allowing a deadline deferral to be distinguished from a
+filesystem, authentication or transfer failure.
 
 The ignored `facade::live_upload_tests::prepare_portal_upload_fixture` requires
 an exact `DRIVESYNC_TEST_ACCOUNT`, a new `DRIVESYNC_UPLOAD_EVIDENCE` directory,

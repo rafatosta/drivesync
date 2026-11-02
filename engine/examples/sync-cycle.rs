@@ -158,7 +158,7 @@ fn run() -> Result<(), String> {
             ];
             println!(
                 "{}",
-                json!({"event":"completed","counts":counts,"media_attempts":media_attempts,"previous_paths":report.previous_paths.len(),"uploaded":report.uploaded,"created_remote_folders":report.created_remote_folders})
+                json!({"event":"completed","counts":counts,"media_attempts":media_attempts,"previous_paths":report.previous_paths.len(),"uploaded":report.uploaded,"created_remote_folders":report.created_remote_folders,"issue_errors":report.issues.iter().map(|issue|issue.error.to_string()).collect::<Vec<_>>()})
             );
             if options.expected_error.is_some() {
                 return Err("Expected error did not occur".into());
