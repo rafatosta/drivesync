@@ -162,19 +162,7 @@ pub(super) fn populate(
         }
         let sync = adw::PreferencesGroup::builder()
             .title("Synchronization")
-            .description("Local files will not be uploaded to Google Drive.")
             .build();
-        sync.add(&super::upload_mode::build(
-            engine.clone(),
-            &saved,
-            &folders,
-            &sync,
-        ));
-        sync.add(&super::conflict_preferences::build(
-            engine.clone(),
-            &saved,
-            &folders,
-        ));
         sync.add(&sync_state);
         content.append(&sync);
         content.append(&super::synchronization::build(

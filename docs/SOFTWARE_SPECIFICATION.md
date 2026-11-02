@@ -1506,8 +1506,8 @@ Preferir a versão mais recente requer contrato adicional de relógios/evidênci
 continua indisponível, sem heurística baseada só em timestamps
 ([issue #64](https://github.com/rafatosta/drivesync/issues/64)).
 
-**Interface.** Nas configurações de sincronização da conta, “Simultaneous file
-edits” oferece Always ask, Keep local, Keep Drive e Keep both, com consequências
+**Interface.** Em Preferências → Sincronização, para a conta selecionada no dashboard,
+“Simultaneous file edits” oferece Always ask, Keep local, Keep Drive e Keep both, com consequências
 e limites visíveis. O controle permanece desabilitado durante leitura/gravação e
 sincronização ativa. Uma falha de leitura nunca é apresentada como consentimento
 válido; falha de confirmação da escrita exige releitura da regra persistida.
@@ -1608,3 +1608,14 @@ nos controles existentes. Aceite determinístico: progresso parcial, pausa,
 total desconhecido, resultado ausente, itens ignorados e pendências não podem
 produzir uma confirmação de conclusão. Homologação visual desktop e Google real
 é separada dos testes unitários e da compilação.
+
+### Opções de sincronização em Preferências
+
+As opções “Upload new items and reconcile renames” e “Simultaneous file edits”
+ficam em Preferências → Sincronização, com identificação explícita da conta
+selecionada no dashboard. A janela modal conserva esse escopo até fechar;
+reabrir após trocar de conta usa a nova seleção. Sem uma conta selecionada,
+Preferências apresenta somente os ajustes globais e orienta selecionar uma
+conta. Uploads e conflitos continuam persistidos pela engine por conta/raízes,
+sem virar preferências globais. Os controles permanecem bloqueados durante
+sincronização ou leitura/gravação, mantendo as revalidações existentes.

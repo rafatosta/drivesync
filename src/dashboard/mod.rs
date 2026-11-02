@@ -1,13 +1,11 @@
 //! Adaptive account navigation and automatic download dashboard.
 mod account_details;
 mod bulk_review;
-mod conflict_preferences;
 mod description;
 mod folders;
 mod problems;
 mod state_recovery;
 mod synchronization;
-mod upload_mode;
 
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
@@ -98,6 +96,8 @@ pub fn build_selected(
     let initial = selected
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
+    let preference_accounts = accounts.clone();
+    let preference_engine = engine.clone();
     account_details::populate(engine, accounts, nav, toasts, &list, &details);
     let weak_details = details.downgrade();
     let weak_split = split.downgrade();
@@ -132,10 +132,30 @@ pub fn build_selected(
     bin.set_height_request(320);
     bin.set_child(Some(&split));
     bin.add_breakpoint(breakpoint);
-    adw::NavigationPage::builder()
+    let page = adw::NavigationPage::builder()
         .title("Dashboard")
         .child(&bin)
-        .build()
+        .build();
+    let actions = gtk::gio::SimpleActionGroup::new();
+    let open = gtk::gio::SimpleAction::new("preferences", None);
+    let weak_list = list.downgrade();
+    open.connect_activate(move |_, _| {
+        let Some(list) = weak_list.upgrade() else {
+            return;
+        };
+        let Some(row) = list.selected_row() else {
+            return;
+        };
+        let Some(saved) = preference_accounts.get(row.index() as usize) else {
+            return;
+        };
+        if let Some(parent) = list.root().and_downcast::<adw::ApplicationWindow>() {
+            crate::preferences::present_account(&parent, preference_engine.clone(), saved);
+        }
+    });
+    actions.add_action(&open);
+    page.insert_action_group("account", Some(&actions));
+    page
 }
 
 #[cfg(test)]
@@ -145,6 +165,6 @@ pub(crate) fn verify_download_worker_failure() {
 
 #[cfg(test)]
 pub(crate) fn verify_download_progress(mut capture: impl FnMut(&adw::Window, &str)) {
-    upload_mode::verify_presentations(&mut capture);
+    crate::preferences::verify_upload_presentations(&mut capture);
     synchronization::verify_progress_presentations(capture);
 }

@@ -1,24 +1,53 @@
 //! Native preferences window built with libadwaita components.
 use super::{ColorScheme, Preferences, SYNC_INTERVALS};
 use adw::{gtk, prelude::*};
-use std::rc::Rc;
+use drivesync_engine::{DriveSyncEngine, RestoredAccount};
+use std::{rc::Rc, sync::Arc};
 
 /// Applies the stored color scheme and registers `app.preferences` (Ctrl+,).
-pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
+pub(crate) fn install(
+    app: &adw::Application,
+    window: &adw::ApplicationWindow,
+    navigation: &adw::NavigationView,
+) {
     adw::StyleManager::default().set_color_scheme(Preferences::load().color_scheme.adw());
     let action = gtk::gio::SimpleAction::new("preferences", None);
     let weak_window = window.downgrade();
+    let weak_navigation = navigation.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = weak_window.upgrade() {
-            build(&window).present();
+            if let Some(nav) = weak_navigation.upgrade() {
+                if !nav.is_sensitive() {
+                    return;
+                }
+                if nav
+                    .visible_page()
+                    .is_some_and(|page| page.activate_action("account.preferences", None).is_ok())
+                {
+                    return;
+                }
+            }
+            build(&window, None).present();
         }
     });
     app.add_action(&action);
     app.set_accels_for_action("app.preferences", &["<Primary>comma"]);
 }
 
-/// Presents global settings in an adaptive sidebar without changing their storage.
-fn build(parent: &adw::ApplicationWindow) -> adw::Window {
+/// Opens preferences for the dashboard selection without changing other accounts.
+pub(crate) fn present_account(
+    parent: &adw::ApplicationWindow,
+    engine: Arc<DriveSyncEngine>,
+    saved: &RestoredAccount,
+) {
+    build(parent, Some((engine, saved))).present();
+}
+
+/// Presents global and optional account settings without changing their storage.
+fn build(
+    parent: &adw::ApplicationWindow,
+    account: Option<(Arc<DriveSyncEngine>, &RestoredAccount)>,
+) -> adw::Window {
     let window = adw::Window::builder()
         .transient_for(parent)
         .modal(true)
@@ -116,6 +145,36 @@ fn build(parent: &adw::ApplicationWindow) -> adw::Window {
     );
     synchronization.add(&interval);
     synchronization_page.add(&synchronization);
+    if let Some((engine, saved)) = account {
+        let group = adw::PreferencesGroup::builder()
+            .title("Account synchronization")
+            .description(
+                saved
+                    .account
+                    .email
+                    .as_deref()
+                    .unwrap_or(&saved.account.id.0),
+            )
+            .build();
+        group.add(
+            &adw::ActionRow::builder()
+                .title("Selected account")
+                .subtitle("These settings apply only to this account and its configured folders.")
+                .build(),
+        );
+        let options = adw::PreferencesGroup::new();
+        options.add(&super::upload_mode::build(engine.clone(), saved, &options));
+        options.add(&super::conflict_preferences::build(engine, saved));
+        synchronization_page.add(&group);
+        synchronization_page.add(&options);
+    } else {
+        let group = adw::PreferencesGroup::new();
+        group.add(&adw::ActionRow::builder()
+            .title("Account synchronization settings")
+            .subtitle("Select an account in the dashboard to configure uploads and simultaneous file edits.")
+            .build());
+        synchronization_page.add(&group);
+    }
     pages.add_named(&synchronization_page, Some("synchronization"));
 
     let background_page = adw::PreferencesPage::new();
@@ -145,7 +204,7 @@ fn build(parent: &adw::ApplicationWindow) -> adw::Window {
 
     let sections = [
         ("appearance", "Appearance", "preferences-desktop-theme-symbolic", "color scheme choose between the system setting follow system light or dark"),
-        ("synchronization", "Synchronization", "emblem-synchronizing-symbolic", "check for changes how often drivesync looks for new changes automatically every minute 5 15 30 hour"),
+        ("synchronization", "Synchronization", "emblem-synchronizing-symbolic", "check for changes how often drivesync looks for new changes automatically every minute 5 15 30 hour account upload new items reconcile renames simultaneous file edits conflicts always ask keep local drive both"),
         ("background", "Background", "application-x-executable-symbolic", "drivesync keeps synchronizing after the window is closed when background execution is allowed continue in background when closed keep synchronizing after the window is closed otherwise closing quits drivesync notify when running in background show a notification when the window is closed"),
     ];
     for (_, title, icon, _) in sections {
@@ -289,7 +348,7 @@ mod tests {
             .register(None::<&gtk::gio::Cancellable>)
             .unwrap();
         let parent = adw::ApplicationWindow::new(&application);
-        let window = build(&parent);
+        let window = build(&parent, None);
         let root = window.upcast_ref::<gtk::Widget>();
         let list = find(root, "preferences-list")
             .unwrap()

@@ -37,11 +37,7 @@ fn row() -> adw::ComboRow {
 }
 
 /// Holds a reviewed folder snapshot so a delayed save cannot authorize a new pair.
-pub(super) fn build(
-    engine: Arc<DriveSyncEngine>,
-    saved: &RestoredAccount,
-    folders: &gtk::Box,
-) -> adw::ComboRow {
+pub(super) fn build(engine: Arc<DriveSyncEngine>, saved: &RestoredAccount) -> adw::ComboRow {
     let row = row();
     let job = crate::automatic::Controller::attach(engine.clone(), saved);
     let loaded = Rc::new(RefCell::new(
@@ -51,7 +47,6 @@ pub(super) fn build(
     let guard = Rc::new(Cell::new(false));
     let retry_read = Rc::new(Cell::new(false));
     let weak = row.downgrade();
-    let controls = folders.downgrade();
     let read_engine = engine.clone();
     let read_loaded = loaded.clone();
     let read_busy = busy.clone();
@@ -70,8 +65,7 @@ pub(super) fn build(
                 && read_loaded
                     .borrow()
                     .as_ref()
-                    .is_some_and(|(f, _)| Some(f) == folder.as_ref())
-                && controls.upgrade().is_some_and(|w| w.is_sensitive()),
+                    .is_some_and(|(f, _)| Some(f) == folder.as_ref()),
         );
         if !read_busy.get() && !read_job.running() && (folder != last || read_retry.get()) {
             read_retry.set(false);

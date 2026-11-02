@@ -14,7 +14,6 @@ fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, gu
 pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
-    folders: &gtk::Box,
     group: &adw::PreferencesGroup,
 ) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder()
@@ -33,19 +32,13 @@ pub(super) fn build(
     let read_id = saved.account.id.clone();
     let read_guard = guard.clone();
     let read_busy = busy.clone();
-    let folder_controls = folders.downgrade();
     let mut last = None;
     let mut initial = true;
     gtk::glib::timeout_add_local(Duration::from_millis(250), move || {
         let (Some(row), Some(group)) = (weak.upgrade(), weak_group.upgrade()) else {
             return gtk::glib::ControlFlow::Break;
         };
-        row.set_sensitive(
-            !read_busy.get()
-                && !poll_job.running()
-                && poll_job.folder().is_some()
-                && folder_controls.upgrade().is_some_and(|w| w.is_sensitive()),
-        );
+        row.set_sensitive(!read_busy.get() && !poll_job.running() && poll_job.folder().is_some());
         let folder = poll_job.folder();
         if !read_busy.get() && (initial || folder != last) {
             initial = false;
@@ -173,7 +166,7 @@ pub(super) fn build(
 
 /// Native presentation fixtures never authorize, persist or access an account.
 #[cfg(test)]
-pub(super) fn verify_presentations(mut capture: impl FnMut(&adw::Window, &str)) {
+pub(crate) fn verify_presentations(mut capture: impl FnMut(&adw::Window, &str)) {
     for width in [360, 720] {
         let guard = Cell::new(false);
         let group = adw::PreferencesGroup::builder()
