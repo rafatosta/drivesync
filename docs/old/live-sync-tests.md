@@ -10,6 +10,25 @@ ID and an absolute local directory matching the saved pair. The saved remote
 name must start with `DriveSync — Ensaio controlado`. Mismatches fail before sync.
 Use a dedicated test pair and do not start the GUI's cycle concurrently.
 
+For create-only upload acceptance, `--upload` calls `synchronize_once` instead.
+It retains the exact controlled-pair checks and does not enable the pair's
+upload setting. JSON additionally reports `uploaded` and `created_remote_folders`;
+the existing six download counts retain their meaning. Byte cancellation also
+observes upload progress, so remote effects may precede cancellation and must
+be reconciled through the preserved intent/ID. Installation-hold injection is
+incompatible with this mode.
+
+The ignored `facade::live_upload_tests::prepare_portal_upload_fixture` requires
+an exact `DRIVESYNC_TEST_ACCOUNT`, a new `DRIVESYNC_UPLOAD_EVIDENCE` directory,
+`DRIVESYNC_UPLOAD_PORTAL_ROOT` pointing to an empty exported disposable directory
+and `DRIVESYNC_LIVE_GOOGLE_TEST=1`. It creates only a generated remote folder,
+an isolated profile and three local sources (text, empty, 3 MiB binary), keeping
+uploads disabled. `enable_portal_upload_fixture` enables only that saved pair.
+`verify_portal_upload_fixture` reads actual remote media and compares SHA-256,
+size and unique remote identities with the retained originals. Keep the host
+origin inaccessible to the installed app, and use a sibling evidence directory
+inside the same portal export for all filesystem-side checks.
+
 Each invocation is a new process, exercising durable state. JSON results expose
 counts/media attempts, not credentials. Expected counts fail the command when
 results differ. The six counts are `downloaded,updated,recovered,unchanged,

@@ -1173,6 +1173,8 @@ mod live_rename_tests;
 #[cfg(test)]
 mod live_resolution_tests;
 #[cfg(test)]
+mod live_upload_tests;
+#[cfg(test)]
 mod tests;
 
 /// Holds one account/configuration scope throughout one transfer cycle.
