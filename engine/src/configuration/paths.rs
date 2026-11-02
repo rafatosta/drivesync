@@ -9,11 +9,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Selects and probes a writable, lock-capable local directory.
+/// Selects and probes a writable local directory for verified downloads.
 ///
 /// The `path` must be absolute and refer to an existing directory other than
 /// the filesystem root. A unique, mode-`0600` temporary file is created and
-/// removed to check write access and shared locks; no user files are changed.
+/// removed to check write access and attempt shared locks; no user files are changed.
 /// A fresh portal selection uses its host origin when already accessible through
 /// no-follow descriptors. Existing `.drivesync` state prevents this selection.
 ///
@@ -21,7 +21,7 @@ use std::{
 ///
 /// Returns [`EngineError::InvalidFolder`] when the path is invalid,
 /// cannot be canonicalized, is not a directory, or the access probe fails.
-/// Returns [`EngineError::LocalLockUnsupported`] when file locks are unavailable.
+/// Unsupported regular-file flock does not prevent verified downloads.
 pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
     if !path.is_absolute() {
         return Err(EngineError::InvalidFolder);
@@ -42,7 +42,7 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .mode(0o600)
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
-    let capability = crate::download::filesystem::lock_regular(&file);
+    let capability = crate::download::filesystem::lock_download(&file);
     drop(file);
     fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
     capability?;

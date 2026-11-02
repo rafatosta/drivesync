@@ -176,7 +176,7 @@ fn intact(
     bytes: &[u8],
     cancel: &Cancellation,
 ) -> Result<bool, EngineError> {
-    let Some(mut file) = filesystem::read(parent, name)? else {
+    let Some(mut file) = filesystem::read_download(parent, name)? else {
         return Ok(false);
     };
     if filesystem::identity(&file)? != expected
@@ -194,7 +194,7 @@ fn intact(
     if !stream::verify(&mut file, bytes.len() as u64, &sha, cancel)? {
         return Ok(false);
     }
-    Ok(filesystem::read(parent, name)?
+    Ok(filesystem::read_download(parent, name)?
         .as_ref()
         .map(filesystem::identity)
         .transpose()?
@@ -277,7 +277,7 @@ fn matches_prior(
     old: &Previous,
     cancel: &Cancellation,
 ) -> Result<bool, EngineError> {
-    let Some(mut file) = filesystem::read(parent, name)? else {
+    let Some(mut file) = filesystem::read_download(parent, name)? else {
         return Ok(false);
     };
     Ok(filesystem::identity(&file)? == old.identity

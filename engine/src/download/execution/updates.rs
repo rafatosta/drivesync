@@ -12,14 +12,21 @@ impl Session<'_> {
         sha: &str,
         cancel: &Cancellation,
     ) -> Result<bool, EngineError> {
-        let Some(mut file) = filesystem::read(parent, name)? else {
+        let Some(mut file) = filesystem::read_download(parent, name)? else {
             return Ok(false);
         };
+        let stamp = crate::local::Stamp::read(&file)?;
         if identity(&file)? != expected || !stream::verify(&mut file, size, sha, cancel)? {
             return Ok(false);
         }
         file.sync_all().map_err(filesystem::io)?;
-        Ok(true)
+        let current = filesystem::read_download(parent, name)?;
+        Ok(crate::local::Stamp::read(&file)? == stamp
+            && current
+                .as_ref()
+                .map(crate::local::Stamp::read)
+                .transpose()?
+                == Some(stamp))
     }
     fn remember_backup(&self, op: &Operation, backup: &str) {
         *self.preserved.borrow_mut() = Some(op.relative.with_file_name(backup));
@@ -31,7 +38,7 @@ impl Session<'_> {
         backup: &str,
         expected: super::super::models::Identity,
     ) {
-        if let Ok(Some(file)) = filesystem::read(parent, OsStr::new(backup)) {
+        if let Ok(Some(file)) = filesystem::read_download(parent, OsStr::new(backup)) {
             if identity(&file).ok() == Some(expected) {
                 self.remember_backup(op, backup);
             }
@@ -152,6 +159,18 @@ impl Session<'_> {
         else {
             return Err(EngineError::InvalidPlan);
         };
+        let (parent, name) = self.root.parent(&op.relative)?;
+        self.root.validate_parent(&op.relative, op.parent)?;
+        if !self.intact(
+            &parent,
+            &name,
+            *identity,
+            op.item.size.ok_or(EngineError::StateStorage)?,
+            sha256,
+            &Cancellation::new(),
+        )? {
+            return Err(EngineError::DownloadIntegrity);
+        }
         let mut confirmed = op.clone();
         confirmed.phase = Phase::Updated {
             identity: *identity,
