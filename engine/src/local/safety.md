@@ -35,6 +35,8 @@ mantém a vista selecionada: identidades de portal e host não são intercambiá
 Um arquivo temporário exclusivo verifica escrita e flock durante a configuração;
 a sondagem é removida também quando o lock falha. Um portal sem locks é recusado
 com `LocalLockUnsupported`, sem iniciar transferência nem criar um journal.
+O inventário propaga a mesma falha de capacidade; não a converte em observação
+`Unknown` nem apresenta a pendência como um conflito de conteúdo.
 
 O acesso direto precisa ser autorizado externamente e limitado à pasta escolhida.
 Não adicionar acesso geral ao home como solução. Uma raiz existente com journal

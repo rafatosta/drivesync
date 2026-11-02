@@ -24,6 +24,13 @@ fn fresh_portal_folder_selects_direct_access_before_recording_inode_evidence() {
     std::fs::create_dir(selected.join(".drivesync")).unwrap();
     std::fs::write(selected.join(".drivesync/evidence"), b"preserve").unwrap();
     assert_eq!(
+        crate::local::scan(
+            &crate::download::filesystem::Root::open(&selected).unwrap(),
+            &crate::Cancellation::new(),
+        ),
+        Err(crate::EngineError::LocalLockUnsupported)
+    );
+    assert_eq!(
         super::paths::local_folder(&selected),
         Err(crate::EngineError::LocalLockUnsupported)
     );
