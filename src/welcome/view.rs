@@ -3,6 +3,7 @@
 //! Constructs the welcome page and its reusable presentation widgets, while
 //! Browser authorization is presented by the shared connection module.
 use adw::{gtk, prelude::*};
+use gettextrs::gettext;
 
 /// First-run content and the entry point to the shared connection window.
 pub(super) struct WelcomeView {
@@ -57,28 +58,31 @@ pub(super) fn build() -> WelcomeView {
     };
     image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);
-    image.update_property(&[gtk::accessible::Property::Label(
+    image.update_property(&[gtk::accessible::Property::Label(&gettext(
         "DriveSync application icon",
-    )]);
+    ))]);
     content.append(&image);
-    content.append(&text("Welcome to DriveSync", "title-1"));
-    let description = text("Your Google Drive, a little closer.", "body");
+    content.append(&text(&gettext("Welcome to DriveSync"), "title-1"));
+    let description = text(&gettext("Your Google Drive, a little closer."), "body");
     description.set_max_width_chars(48);
     description.set_halign(gtk::Align::Center);
     content.append(&description);
-    content.append(&text("Download only · Technical preview", "caption"));
+    content.append(&text(
+        &gettext("Download only · Technical preview"),
+        "caption",
+    ));
 
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
     actions.set_halign(gtk::Align::Center);
-    let connect = gtk::Button::with_label("Connect Google Account");
+    let connect = gtk::Button::with_label(&gettext("Connect Google Account"));
     connect.add_css_class("suggested-action");
     connect.add_css_class("pill");
-    connect.set_tooltip_text(Some("Sign in securely in your web browser"));
+    connect.set_tooltip_text(Some(&gettext("Sign in securely in your web browser")));
     actions.append(&connect);
     content.append(&actions);
 
     let footnote = text(
-        "A calmer place for the files that matter to you.",
+        &gettext("A calmer place for the files that matter to you."),
         "dim-label",
     );
     footnote.set_max_width_chars(80);

@@ -13,6 +13,7 @@ mod connection;
 mod dashboard;
 mod flow;
 mod folder_picker;
+mod i18n;
 mod main_menu;
 mod preferences;
 mod restoration;
@@ -28,6 +29,7 @@ const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
 
 /// Launches the single-instance GTK application.
 fn main() -> adw::gtk::glib::ExitCode {
+    i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
     background::configure_application(&app);
     // Startup runs once for the primary application, even on repeated activation.

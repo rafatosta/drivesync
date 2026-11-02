@@ -36,6 +36,8 @@ modules:
       - cargo --version
       - cargo build --release --locked
       - install -Dm755 target/release/drivesync /app/bin/drivesync
+      - install -d /app/share/locale/pt_BR/LC_MESSAGES
+      - msgfmt --check -o /app/share/locale/pt_BR/LC_MESSAGES/drivesync.mo po/pt_BR.po
       - install -Dm644 data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg /app/share/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg
       - install -Dm644 data/com.rtosta.DriveSync.desktop /app/share/applications/com.rtosta.DriveSync.desktop
       - install -Dm644 data/com.rtosta.DriveSync.metainfo.xml /app/share/metainfo/com.rtosta.DriveSync.metainfo.xml

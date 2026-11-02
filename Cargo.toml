@@ -13,3 +13,4 @@ license = "GPL-3.0-only"
 gtk = { package = "gtk4", version = "0.10", features = ["v4_10"] }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_4"] }
 drivesync-engine = { path = "engine" }
+gettext-rs = { version = "0.8.0", features = ["gettext-system"] }
