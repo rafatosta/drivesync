@@ -80,7 +80,7 @@ impl Options {
     /// Test tools cannot silently choose a first account or reconfigure a real root.
     fn matches(&self, folder: &FolderConfiguration) -> bool {
         folder.remote.id == self.remote
-            && folder.local_display == self.local
+            && (folder.local_display == self.local || folder.local == self.local)
             && folder
                 .remote
                 .name
@@ -251,6 +251,10 @@ mod tests {
             local_display: "/test".into(),
         };
         assert!(options.matches(&folder));
+        let access_options =
+            Options::parse(["test@example.com", "remote", "/portal/access"].map(String::from))
+                .unwrap();
+        assert!(access_options.matches(&folder));
         folder.local_display = "/other".into();
         assert!(!options.matches(&folder));
         folder.local_display = "/test".into();

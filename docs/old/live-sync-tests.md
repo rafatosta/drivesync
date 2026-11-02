@@ -132,6 +132,16 @@ retained there. `update_isolated_download_fixture` updates only the authenticate
 `simple.txt` child in that isolated pair, preserving the original local fixture.
 Both helpers are test-only, ignored by default, and require explicit opt-in.
 
+To exercise the document portal itself, supply `DRIVESYNC_DOWNLOAD_PORTAL_ROOT`
+as an explicitly exported, empty disposable directory outside the granted evidence
+tree. Grant the application only the evidence directory and portal export; do not
+grant the host origin. The helper asserts that the configured access path remains
+the portal path and records both access and display paths in `fixture.json`.
+`sync-cycle` accepts either exact saved path as its local scope argument, allowing
+the recovery supervisor to operate on the writable portal view. Unrelated paths
+remain rejected. Use the same portal view and persisted profile after restarting:
+never rewrite inode evidence or change a direct fixture into a portal fixture.
+
 For installed apps, Flatpak can override `--env=XDG_DATA_HOME=...` during startup.
 Set the isolated profile **after** startup through `/usr/bin/env`, and retain the
 exact pair checks in `sync-cycle`. Do not change the normal app profile to work

@@ -75,11 +75,30 @@ fn prepare_isolated_download_fixture() {
         .accounts
         .record(&config.client_id, account.clone())
         .unwrap();
-    let local = path.join("files");
-    fs::create_dir(&local).unwrap();
-    engine
+    let local = if let Some(portal) = std::env::var_os("DRIVESYNC_DOWNLOAD_PORTAL_ROOT") {
+        let portal = PathBuf::from(portal);
+        assert!(portal.starts_with("/run/user") || portal.starts_with("/run/flatpak/doc"));
+        assert_eq!(
+            fs::read_dir(&portal).unwrap().count(),
+            0,
+            "explicit disposable empty portal root"
+        );
+        portal
+    } else {
+        let local = path.join("files");
+        fs::create_dir(&local).unwrap();
+        local
+    };
+    let folder = engine
         .configure_folder(&account.id, &root, &local)
         .expect("configure only isolated pair");
+    if std::env::var_os("DRIVESYNC_DOWNLOAD_PORTAL_ROOT").is_some() {
+        assert_eq!(
+            folder.local,
+            configuration::access_path(&local).unwrap(),
+            "portal-only validation must not switch to direct access"
+        );
+    }
     let originals = path.join("originals");
     fs::create_dir(&originals).unwrap();
     fs::write(
@@ -89,7 +108,7 @@ fn prepare_isolated_download_fixture() {
     .unwrap();
     fs::write(originals.join("empty.bin"), b"").unwrap();
     fs::write(originals.join("binary.dat"), &binary).unwrap();
-    fs::write(path.join("fixture.json"), serde_json::to_vec_pretty(&serde_json::json!({"remote_root":root,"local_root":local,"profile":path.join("profile"),"account":email})).unwrap()).unwrap();
+    fs::write(path.join("fixture.json"), serde_json::to_vec_pretty(&serde_json::json!({"remote_root":root,"local_root":folder.local,"local_display":folder.local_display,"profile":path.join("profile"),"account":email})).unwrap()).unwrap();
     println!("Disposable fixtures and isolated profile prepared; original root unchanged.");
 }
 
@@ -120,7 +139,13 @@ fn update_isolated_download_fixture() {
         .remote
         .name
         .starts_with("DriveSync — Ensaio controlado downloads "));
-    assert_eq!(folder.local, path.join("files"));
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(path.join("fixture.json")).unwrap()).unwrap();
+    assert_eq!(folder.local.to_str(), fixture["local_root"].as_str());
+    assert_eq!(
+        Some(folder.remote.id.as_str()),
+        fixture["remote_root"].as_str()
+    );
     assert_ne!(folder.remote.id, "root");
     let inventory = engine.inventory(&account.id, &Cancellation::new()).unwrap();
     let files: Vec<_> = inventory
