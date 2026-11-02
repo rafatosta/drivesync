@@ -22,6 +22,15 @@ pub(crate) fn button() -> gtk::MenuButton {
         .build()
 }
 
+/// Creates the header shortcut for the same `connection.open` action used by the menu.
+pub(crate) fn add_account_button() -> gtk::Button {
+    gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .tooltip_text("Add Account")
+        .action_name("connection.open")
+        .build()
+}
+
 /// Installs the native About window action.
 pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
     let action = gtk::gio::SimpleAction::new("about", None);

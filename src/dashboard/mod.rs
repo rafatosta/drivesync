@@ -41,6 +41,7 @@ pub fn build_selected(
     let sidebar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
+    header.pack_start(&crate::main_menu::add_account_button());
     header.pack_end(&crate::main_menu::button());
     sidebar.add_top_bar(&header);
     let side_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
