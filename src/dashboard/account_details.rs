@@ -11,7 +11,9 @@ pub(super) fn populate(
     toasts: &adw::ToastOverlay,
     list: &gtk::ListBox,
     details: &gtk::Stack,
-) {
+) -> std::rc::Rc<crate::preferences::Accounts> {
+    let mut settings = vec![];
+    let mut menus = vec![];
     for saved in accounts {
         let name = saved.account.email.as_deref().unwrap_or("Google Account");
         let state = saved
@@ -32,7 +34,6 @@ pub(super) fn populate(
         user.set_activatable(true);
         user.set_selectable(true);
         list.append(&user);
-
         let content = crate::flow::content();
         let heading = super::account_header::AccountHeader::new(name, &state);
         let sign_out =
@@ -41,12 +42,15 @@ pub(super) fn populate(
         content.append(&sign_out);
         content.append(heading.widget());
 
-        let description = adw::PreferencesGroup::new();
+        let editor = gtk::Box::new(gtk::Orientation::Vertical, 24);
+        editor.set_widget_name("account-settings-editor");
+        let description = adw::PreferencesGroup::builder()
+            .title(gettextrs::gettext("Identity"))
+            .build();
         let entry = adw::EntryRow::builder()
             .title("Account description")
             .build();
         entry.set_widget_name("account-display-name");
-
         description.add(&entry);
         let email = adw::ActionRow::builder()
             .title("Email")
@@ -58,17 +62,7 @@ pub(super) fn populate(
         email.set_subtitle_lines(2);
         email.set_tooltip_text(Some(name));
         description.add(&email);
-        let configuration = adw::ExpanderRow::builder()
-            .title(gettextrs::gettext("Account configuration"))
-            .subtitle(gettextrs::gettext(
-                "Account identity and synchronization folders",
-            ))
-            .expanded(saved.folder.is_none())
-            .build();
-        configuration.set_widget_name("account-configuration");
-        let configuration_group = adw::PreferencesGroup::new();
-        configuration_group.add(&configuration);
-        configuration.add_row(&description);
+        editor.append(&description);
         heading.bind_description(engine.clone(), &saved, &entry, &description, &user, &avatar);
 
         let sync_state = crate::flow::row(
@@ -83,12 +77,7 @@ pub(super) fn populate(
             .css_classes(["dim-label"])
             .build();
         let start = gtk::Button::with_label("Synchronize Now");
-        start.set_halign(gtk::Align::End);
-        start.add_css_class("suggested-action");
         start.set_sensitive(false);
-        start.set_tooltip_text(Some(
-            "Download new files and update intact managed copies; preserve local edits",
-        ));
         start.set_widget_name("start-synchronization");
         let folders = super::folders::build(
             engine.clone(),
@@ -96,44 +85,24 @@ pub(super) fn populate(
             &sync_state,
             &status,
             &start,
-            &configuration,
+            content.upcast_ref(),
         );
-        configuration.add_row(folders.widget());
-
+        editor.append(folders.widget());
         let job = crate::automatic::Controller::attach(engine.clone(), &saved);
-        let actions = super::account_actions::AccountActions::new(
-            job.clone(),
-            folders.actions(),
-            &configuration,
-            &user,
-            list,
-            &sign_out,
-        );
-        let preferences = gtk::gio::SimpleAction::new("preferences", None);
-        let preferences_engine = engine.clone();
-        let preferences_saved = saved.clone();
-        let preferences_job = job.clone();
-        let weak_content = content.downgrade();
-        preferences.connect_activate(move |_, _| {
-            if let Some(parent) = weak_content
-                .upgrade()
-                .and_then(|w| w.root())
-                .and_downcast::<adw::ApplicationWindow>()
-            {
-                let mut saved = preferences_saved.clone();
-                saved.folder = preferences_job.folder();
-                crate::preferences::present_account(&parent, preferences_engine.clone(), &saved);
-            }
+        let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));
+        configure.set_action_name(Some("account-controls.configure"));
+        configure.set_widget_name("initial-account-configuration");
+        configure.set_visible(saved.folder.is_none());
+        content.append(&configure);
+        let weak_configure = configure.downgrade();
+        let configure_job = job.clone();
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let Some(button) = weak_configure.upgrade() else {
+                return gtk::glib::ControlFlow::Break;
+            };
+            button.set_visible(configure_job.folder().is_none());
+            gtk::glib::ControlFlow::Continue
         });
-        actions.group().add_action(&preferences);
-        actions.install(&user);
-        actions.install(&content);
-        let sidebar_menu = actions.menu();
-        sidebar_menu.set_widget_name("sidebar-account-menu");
-        user.add_suffix(&sidebar_menu);
-        let menu = actions.menu();
-        menu.set_widget_name("dashboard-account-menu");
-        heading.set_menu(&menu);
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -155,11 +124,54 @@ pub(super) fn populate(
                 header: &heading,
                 account_row: &user,
             },
-            job,
+            job.clone(),
         ));
-        content.append(&configuration_group);
         details.add_named(&content, Some(&saved.account.id.0));
+        menus.push((
+            job.clone(),
+            folders.actions().clone(),
+            heading,
+            user,
+            content,
+            sign_out,
+            saved.account.id.clone(),
+        ));
+        settings.push(crate::preferences::AccountSettings::new(
+            engine.clone(),
+            saved,
+            job,
+            editor,
+        ));
     }
+    let settings = crate::preferences::Accounts::new(settings);
+    for (job, folders, heading, user, content, sign_out, id) in menus {
+        let context = settings.clone();
+        let weak_content = content.downgrade();
+        let actions =
+            super::account_actions::AccountActions::new(job, &folders, &sign_out, move || {
+                if let Some(parent) = weak_content
+                    .upgrade()
+                    .and_then(|w| w.root())
+                    .and_downcast::<gtk::Window>()
+                {
+                    crate::preferences::present_with_accounts(
+                        &parent,
+                        context.clone(),
+                        Some(&id),
+                        true,
+                    );
+                }
+            });
+        actions.install(&user);
+        actions.install(&content);
+        let sidebar_menu = actions.menu();
+        sidebar_menu.set_widget_name("sidebar-account-menu");
+        user.add_suffix(&sidebar_menu);
+        let menu = actions.menu();
+        menu.set_widget_name("dashboard-account-menu");
+        heading.set_menu(&menu);
+    }
+    settings
 }
 
 #[cfg(test)]

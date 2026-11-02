@@ -1,8 +1,8 @@
 //! Native preferences window built with libadwaita components.
 use super::{ColorScheme, Preferences, SYNC_INTERVALS};
 use adw::{gtk, prelude::*};
-use drivesync_engine::{DriveSyncEngine, RestoredAccount};
-use std::{rc::Rc, sync::Arc};
+use drivesync_engine::AccountId;
+use std::rc::Rc;
 
 /// Applies the stored color scheme and registers `app.preferences` (Ctrl+,).
 pub(crate) fn install(
@@ -34,25 +34,41 @@ pub(crate) fn install(
     app.set_accels_for_action("app.preferences", &["<Primary>comma"]);
 }
 
-/// Opens preferences for the dashboard selection without changing other accounts.
-pub(crate) fn present_account(
-    parent: &adw::ApplicationWindow,
-    engine: Arc<DriveSyncEngine>,
-    saved: &RestoredAccount,
+/// Reuses the modal window for this dashboard. Account shortcuts select the
+/// dedicated page; global preferences retain normal section navigation.
+pub(crate) fn present_with_accounts(
+    parent: &impl IsA<gtk::Window>,
+    accounts: Rc<super::Accounts>,
+    selected: Option<&AccountId>,
+    show_accounts: bool,
 ) {
-    build(parent, Some((engine, saved))).present();
+    if let Some(window) = accounts.window.upgrade() {
+        if show_accounts {
+            accounts.select(selected, true);
+        }
+        window.present();
+        return;
+    }
+    accounts.select(selected, false);
+    let window = build(parent, Some(accounts.clone()));
+    accounts.window.set(Some(&window));
+    accounts.select(selected, show_accounts);
+    window.present();
 }
 
 /// Presents global and optional account settings without changing their storage.
-fn build(
-    parent: &adw::ApplicationWindow,
-    account: Option<(Arc<DriveSyncEngine>, &RestoredAccount)>,
-) -> adw::Window {
+fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) -> adw::Window {
+    let parent_width = parent.as_ref().width();
+    let width = if parent_width > 0 {
+        parent_width.min(850)
+    } else {
+        850
+    };
     let window = adw::Window::builder()
         .transient_for(parent)
         .modal(true)
         .title("Preferences")
-        .default_width(850)
+        .default_width(width)
         .default_height(600)
         .build();
     let split = adw::NavigationSplitView::builder()
@@ -145,37 +161,12 @@ fn build(
     );
     synchronization.add(&interval);
     synchronization_page.add(&synchronization);
-    if let Some((engine, saved)) = account {
-        let group = adw::PreferencesGroup::builder()
-            .title("Account synchronization")
-            .description(
-                saved
-                    .account
-                    .email
-                    .as_deref()
-                    .unwrap_or(&saved.account.id.0),
-            )
-            .build();
-        group.add(
-            &adw::ActionRow::builder()
-                .title("Selected account")
-                .subtitle("These settings apply only to this account and its configured folders.")
-                .build(),
-        );
-        let options = adw::PreferencesGroup::new();
-        options.add(&super::upload_mode::build(engine.clone(), saved, &options));
-        options.add(&super::conflict_preferences::build(engine, saved));
-        synchronization_page.add(&group);
-        synchronization_page.add(&options);
-    } else {
-        let group = adw::PreferencesGroup::new();
-        group.add(&adw::ActionRow::builder()
-            .title("Account synchronization settings")
-            .subtitle("Select an account in the dashboard to configure uploads and simultaneous file edits.")
-            .build());
-        synchronization_page.add(&group);
-    }
     pages.add_named(&synchronization_page, Some("synchronization"));
+
+    let account_context = accounts
+        .clone()
+        .unwrap_or_else(|| super::Accounts::new(vec![]));
+    pages.add_named(&account_context.page(), Some("accounts"));
 
     let background_page = adw::PreferencesPage::new();
     let background = adw::PreferencesGroup::builder()
@@ -203,12 +194,15 @@ fn build(
     pages.add_named(&background_page, Some("background"));
 
     let sections = [
-        ("appearance", "Appearance", "preferences-desktop-theme-symbolic", "color scheme choose between the system setting follow system light or dark"),
-        ("synchronization", "Synchronization", "emblem-synchronizing-symbolic", "check for changes how often drivesync looks for new changes automatically every minute 5 15 30 hour account upload new items reconcile renames simultaneous file edits conflicts always ask keep local drive both"),
+        ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
+        ("accounts", "Accounts", "system-users-symbolic", "account accounts identity description email folders local google drive upload simultaneous edits conflicts settings conta contas pastas descrição envio conflitos"),
+        ("synchronization", "Synchronization", "view-refresh-symbolic", "check for changes how often drivesync looks for new changes automatically every minute 5 15 30 hour"),
         ("background", "Background", "application-x-executable-symbolic", "drivesync keeps synchronizing after the window is closed when background execution is allowed continue in background when closed keep synchronizing after the window is closed otherwise closing quits drivesync notify when running in background show a notification when the window is closed"),
     ];
     for (_, title, icon, _) in sections {
-        let row = adw::ActionRow::builder().title(title).build();
+        let row = adw::ActionRow::builder()
+            .title(gettextrs::gettext(title))
+            .build();
         row.add_prefix(&gtk::Image::from_icon_name(icon));
         list.append(&row);
     }
@@ -221,10 +215,11 @@ fn build(
         {
             if let Some((name, title, _, _)) = sections.get(row.index() as usize) {
                 pages.set_visible_child_name(name);
-                content.set_title(title);
+                content.set_title(&gettextrs::gettext(*title));
             }
         }
     });
+    account_context.bind_navigation(&list, &split, &search);
     list.select_row(list.row_at_index(0).as_ref());
     list.connect_row_activated(move |_, _| {
         if let Some(split) = weak_split.upgrade() {
@@ -273,6 +268,19 @@ fn build(
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&bin));
     window.set_content(Some(&toasts));
+
+    window.set_widget_name("drivesync-preferences");
+    window.connect_close_request(move |window| {
+        if account_context
+            .window
+            .upgrade()
+            .as_ref()
+            .is_none_or(|current| current == window)
+        {
+            account_context.detach();
+        }
+        gtk::glib::Propagation::Proceed
+    });
 
     // Handlers re-read the file so each control changes only its own setting.
     let weak_toasts = toasts.downgrade();
@@ -337,6 +345,142 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a desktop display"]
+    fn account_preferences_select_reuse_and_release_the_correct_editors() {
+        adw::init().unwrap();
+        let engine = std::sync::Arc::new(drivesync_engine::DriveSyncEngine::new());
+        let parent = adw::Window::new();
+        let mut records = vec![];
+        let mut editors = vec![];
+        for id in ["google:settings-one", "google:settings-two"] {
+            let saved = drivesync_engine::RestoredAccount {
+                account: drivesync_engine::AccountSummary {
+                    id: AccountId(id.into()),
+                    provider_subject: id.into(),
+                    email: Some(format!("{id}@example.com")),
+                },
+                error: None,
+                folder: None,
+            };
+            let editor = gtk::Box::new(gtk::Orientation::Vertical, 12);
+            let draft = adw::EntryRow::builder().title("Draft").build();
+            draft.set_text(id);
+            editor.append(&draft);
+            let job = crate::automatic::Controller::attach(engine.clone(), &saved);
+            records.push(super::super::AccountSettings::new(
+                engine.clone(),
+                saved,
+                job,
+                editor.clone(),
+            ));
+            editors.push((editor, draft));
+        }
+        let context = super::super::Accounts::new(records);
+        let second = AccountId("google:settings-two".into());
+        present_with_accounts(&parent, context.clone(), Some(&second), true);
+        let window = context.window.upgrade().unwrap();
+        let sections = find(window.upcast_ref(), "preferences-pages")
+            .unwrap()
+            .downcast::<gtk::Stack>()
+            .unwrap();
+        assert_eq!(sections.visible_child_name().as_deref(), Some("accounts"));
+        let selected = find(window.upcast_ref(), "preferences-account-selector")
+            .unwrap()
+            .downcast::<adw::ComboRow>()
+            .unwrap();
+        let account_pages = find(window.upcast_ref(), "preferences-account-editors")
+            .unwrap()
+            .downcast::<gtk::Stack>()
+            .unwrap();
+        assert_eq!(selected.selected(), 1);
+        assert_eq!(
+            selected
+                .selected_item()
+                .unwrap()
+                .downcast::<gtk::StringObject>()
+                .unwrap()
+                .string()
+                .as_str(),
+            "google:settings-two@example.com"
+        );
+        assert_eq!(
+            account_pages.visible_child_name().as_deref(),
+            Some(second.0.as_str())
+        );
+        assert_eq!(
+            account_pages.visible_child().as_ref(),
+            Some(editors[1].0.upcast_ref())
+        );
+        editors[1].1.set_text("unsaved second account draft");
+        present_with_accounts(
+            &parent,
+            context.clone(),
+            Some(&AccountId("google:settings-one".into())),
+            false,
+        );
+        assert_eq!(
+            selected.selected(),
+            1,
+            "focusing global preferences preserves the account chosen inside the modal"
+        );
+        selected.set_selected(0);
+        assert_eq!(
+            selected
+                .selected_item()
+                .unwrap()
+                .downcast::<gtk::StringObject>()
+                .unwrap()
+                .string()
+                .as_str(),
+            "google:settings-one@example.com"
+        );
+        assert_eq!(editors[0].1.text(), "google:settings-one");
+        let first = AccountId("google:settings-one".into());
+        present_with_accounts(&parent, context.clone(), Some(&first), true);
+        assert_eq!(context.window.upgrade().as_ref(), Some(&window));
+        assert_eq!(
+            account_pages.visible_child_name().as_deref(),
+            Some(first.0.as_str())
+        );
+        let search = find(window.upcast_ref(), "preferences-search")
+            .unwrap()
+            .downcast::<gtk::SearchEntry>()
+            .unwrap();
+        search.set_text("upload");
+        search.emit_by_name::<()>("search-changed", &[]);
+        assert_eq!(sections.visible_child_name().as_deref(), Some("accounts"));
+        search.set_text("closed notification");
+        search.emit_by_name::<()>("search-changed", &[]);
+        assert_eq!(sections.visible_child_name().as_deref(), Some("background"));
+        present_with_accounts(&parent, context.clone(), Some(&second), true);
+        assert!(search.text().is_empty());
+        assert_eq!(selected.selected(), 1);
+        assert_eq!(sections.visible_child_name().as_deref(), Some("accounts"));
+        window.close();
+        for (editor, _) in &editors {
+            assert!(editor.parent().is_none());
+        }
+        present_with_accounts(&parent, context.clone(), Some(&second), true);
+        let reopened = context.window.upgrade().unwrap();
+        assert_ne!(reopened, window);
+        assert_eq!(editors[1].1.text(), "unsaved second account draft");
+        let account_pages = find(reopened.upcast_ref(), "preferences-account-editors")
+            .unwrap()
+            .downcast::<gtk::Stack>()
+            .unwrap();
+        assert_eq!(
+            account_pages.visible_child().as_ref(),
+            Some(editors[1].0.upcast_ref())
+        );
+        window.close();
+        assert!(
+            editors[1].0.parent().is_some(),
+            "an old modal must not detach a reopened editor"
+        );
+        reopened.close();
+    }
+
+    #[test]
     #[ignore = "requires a desktop display and an isolated XDG_CONFIG_HOME"]
     fn preferences_navigation_search_and_settings() {
         let config = std::env::var("XDG_CONFIG_HOME").expect("isolated configuration directory");
@@ -384,7 +528,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(pages.visible_child_name().as_deref(), Some("appearance"));
-        list.select_row(list.row_at_index(1).as_ref());
+        list.select_row(list.row_at_index(2).as_ref());
         assert_eq!(
             pages.visible_child_name().as_deref(),
             Some("synchronization")
@@ -399,7 +543,7 @@ mod tests {
         search.emit_by_name::<()>("search-changed", &[]);
         assert_eq!(pages.visible_child_name().as_deref(), Some("background"));
         assert!(!list.row_at_index(0).unwrap().property::<bool>("visible"));
-        assert!(list.row_at_index(2).unwrap().property::<bool>("visible"));
+        assert!(list.row_at_index(3).unwrap().property::<bool>("visible"));
         search.set_text("no such setting");
         search.emit_by_name::<()>("search-changed", &[]);
         assert!(list.selected_row().is_none());

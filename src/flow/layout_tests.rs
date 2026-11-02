@@ -52,6 +52,37 @@ fn rendered(window: &impl IsA<gtk::Window>) -> gtk::gsk::RenderNode {
             return node;
         }
     }
+    // Some compositors suppress top-level paintables for occluded modal windows.
+    // Snapshot the allocated native content directly before declaring failure.
+    if let Some(child) = window
+        .child()
+        .filter(|child| child.width() > 0 && child.height() > 0)
+    {
+        child.allocate(child.width(), child.height(), -1, None);
+        fn invalidate(widget: &gtk::Widget) {
+            widget.queue_draw();
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                invalidate(&current);
+                child = current.next_sibling();
+            }
+        }
+        invalidate(&child);
+        let snapshot = gtk::Snapshot::new();
+        // GTK 4.10 exposes native background rendering through this legacy API.
+        #[allow(deprecated)]
+        snapshot.render_background(
+            &window.style_context(),
+            0.0,
+            0.0,
+            window.width() as f64,
+            window.height() as f64,
+        );
+        window.snapshot_child(&child, &snapshot);
+        if let Some(node) = snapshot.to_node() {
+            return node;
+        }
+    }
     panic!(
         "window did not render: mapped={}, width={}, height={}",
         window.is_mapped(),
@@ -70,7 +101,10 @@ fn folder_setup_and_dashboard_layouts() {
             adw::ColorScheme::ForceLight
         },
     );
-    crate::folder_picker::verify_selection();
+    let accounts_only = std::env::var_os("DRIVESYNC_UI_ACCOUNT_LAYOUT_ONLY").is_some();
+    if !accounts_only {
+        crate::folder_picker::verify_selection();
+    }
     let output =
         std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
     let data = std::env::var("XDG_DATA_HOME").expect("isolated profile directory");
@@ -88,17 +122,22 @@ fn folder_setup_and_dashboard_layouts() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
         settings.set_gtk_enable_animations(false);
     }
-    crate::dashboard::verify_download_progress(|window, name| {
-        let node = rendered(window);
-        window
-            .renderer()
-            .unwrap()
-            .render_texture(&node, None)
-            .save_to_png(format!("{output}/{name}.png"))
-            .unwrap();
-    });
+    if !accounts_only {
+        crate::dashboard::verify_download_progress(|window, name| {
+            let node = rendered(window);
+            window
+                .renderer()
+                .unwrap()
+                .render_texture(&node, None)
+                .save_to_png(format!("{output}/{name}.png"))
+                .unwrap();
+        });
+    }
     for width in [1000, 360] {
         for screen in ["welcome", "dashboard"] {
+            if accounts_only && screen != "dashboard" {
+                continue;
+            }
             let nav = adw::NavigationView::new();
             let toasts = adw::ToastOverlay::new();
             let cancellation = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -194,11 +233,24 @@ fn folder_setup_and_dashboard_layouts() {
                 let start = find_named(window.upcast_ref(), "start-synchronization").unwrap();
                 assert!(!start.is_sensitive());
                 assert!(find_button(window.upcast_ref(), "Account Details…").is_none());
-                let entry = find_named(window.upcast_ref(), "account-display-name")
+                assert!(find_named(window.upcast_ref(), "account-display-name").is_none());
+                page.activate_action("account.preferences", None).unwrap();
+                let preferences = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .find_map(|w| {
+                        (w.widget_name() == "drivesync-preferences")
+                            .then(|| w.downcast::<adw::Window>().unwrap())
+                    })
+                    .unwrap();
+                let editors = find_named(preferences.upcast_ref(), "preferences-account-editors")
+                    .unwrap()
+                    .downcast::<gtk::Stack>()
+                    .unwrap();
+                let entry = find_named(preferences.upcast_ref(), "account-display-name")
                     .unwrap()
                     .downcast::<adw::EntryRow>()
                     .unwrap();
-                let email = find_named(window.upcast_ref(), "account-email")
+                let email = find_named(preferences.upcast_ref(), "account-email")
                     .unwrap()
                     .downcast::<adw::ActionRow>()
                     .unwrap();
@@ -263,7 +315,7 @@ fn folder_setup_and_dashboard_layouts() {
                 entry.emit_by_name::<()>("apply", &[]);
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 assert!(find_button(window.upcast_ref(), "Save and Continue").is_none());
-                let configured = details.visible_child().unwrap();
+                let configured = editors.child_by_name("google:layout-fixture").unwrap();
                 assert!(find_named(&configured, "save-folders").is_none());
                 let warning = find_named(&configured, "folder-feedback")
                     .unwrap()
@@ -296,12 +348,45 @@ fn folder_setup_and_dashboard_layouts() {
                     details.visible_child_name().as_deref(),
                     Some("google:layout-fixture")
                 );
+                let sections = find_named(preferences.upcast_ref(), "preferences-list")
+                    .unwrap()
+                    .downcast::<gtk::ListBox>()
+                    .unwrap();
+                sections.select_row(sections.row_at_index(1).as_ref());
+                assert_eq!(sections.selected_row().unwrap().index(), 1);
+                let split = find_named(preferences.upcast_ref(), "preferences-split")
+                    .unwrap()
+                    .downcast::<adw::NavigationSplitView>()
+                    .unwrap();
+                split.set_show_content(true);
+                let wait = gtk::glib::MainLoop::new(None, false);
+                let finish = wait.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(200), move || {
+                    finish.quit()
+                });
+                wait.run();
+                assert!(
+                    preferences.width() <= width.min(850) + 10,
+                    "account preferences overflow"
+                );
+                let node = rendered(&preferences);
+                preferences
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{output}/preferences-accounts-{width}.png"))
+                    .unwrap();
+                preferences.close();
             }
             let node = rendered(&window);
             let texture = window.renderer().unwrap().render_texture(&node, None);
             texture
                 .save_to_png(format!("{output}/{}-{width}.png", screen))
                 .unwrap();
+            if accounts_only {
+                window.close();
+                continue;
+            }
             if screen == "welcome" || screen == "dashboard" {
                 if screen == "welcome" {
                     find_button(window.upcast_ref(), "Connect Google Account")

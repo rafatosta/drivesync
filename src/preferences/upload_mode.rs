@@ -15,16 +15,17 @@ pub(super) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
     group: &adw::PreferencesGroup,
+    job: crate::automatic::Controller,
 ) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder()
         .title("Upload new items and reconcile renames")
         .subtitle("Download only until enabled")
+        .sensitive(false)
         .build();
     row.set_subtitle_lines(0);
     row.set_title_lines(0);
     let guard = Rc::new(Cell::new(false));
     let busy = Rc::new(Cell::new(false));
-    let job = crate::automatic::Controller::attach(engine.clone(), saved);
     let poll_job = job.clone();
     let weak = row.downgrade();
     let weak_group = group.downgrade();

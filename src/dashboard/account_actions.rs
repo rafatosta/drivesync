@@ -18,10 +18,8 @@ impl AccountActions {
     pub fn new(
         job: Controller,
         folders: &gio::SimpleActionGroup,
-        configuration: &adw::ExpanderRow,
-        user: &adw::ActionRow,
-        list: &gtk::ListBox,
         sign_out: &gtk::Button,
+        configure_account: impl Fn() + 'static,
     ) -> Self {
         let group = gio::SimpleActionGroup::new();
         for name in ["open-local", "open-remote"] {
@@ -47,23 +45,13 @@ impl AccountActions {
             }
         });
         group.add_action(&toggle);
-        let configure = gio::SimpleAction::new("configure", None);
-        let weak_configuration = configuration.downgrade();
-        let weak_list = list.downgrade();
-        let weak_user = user.downgrade();
-        configure.connect_activate(move |_, _| {
-            if let (Some(list), Some(user), Some(configuration)) = (
-                weak_list.upgrade(),
-                weak_user.upgrade(),
-                weak_configuration.upgrade(),
-            ) {
-                list.select_row(Some(&user));
-                list.emit_by_name::<()>("row-activated", &[&user]);
-                configuration.set_expanded(true);
-                configuration.grab_focus();
-            }
-        });
-        group.add_action(&configure);
+        let configure_account = std::rc::Rc::new(configure_account);
+        for name in ["configure", "preferences"] {
+            let action = gio::SimpleAction::new(name, None);
+            let open = configure_account.clone();
+            action.connect_activate(move |_, _| open());
+            group.add_action(&action);
+        }
         let logout = gio::SimpleAction::new("sign-out", None);
         let weak_sign_out = sign_out.downgrade();
         logout.connect_activate(move |_, _| {
@@ -145,9 +133,6 @@ impl AccountActions {
     pub fn install(&self, widget: &impl IsA<gtk::Widget>) {
         widget.insert_action_group("account-controls", Some(&self.group));
     }
-    pub fn group(&self) -> &gio::SimpleActionGroup {
-        &self.group
-    }
     pub fn menu(&self) -> gtk::MenuButton {
         gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
@@ -193,16 +178,9 @@ mod tests {
         let list = gtk::ListBox::new();
         let user = adw::ActionRow::new();
         list.append(&user);
-        let configuration = adw::ExpanderRow::new();
         let logout = gtk::Button::new();
-        let actions = AccountActions::new(
-            job.clone(),
-            &gio::SimpleActionGroup::new(),
-            &configuration,
-            &user,
-            &list,
-            &logout,
-        );
+        let actions =
+            AccountActions::new(job.clone(), &gio::SimpleActionGroup::new(), &logout, || {});
         assert!(actions.group.is_action_enabled("toggle"));
         actions.group.activate_action("toggle", None);
         assert_eq!(job.snapshot().phase, Phase::Paused);
@@ -232,14 +210,12 @@ mod tests {
         let observed = selected.clone();
         list.connect_row_selected(move |_, row| observed.set(row.map(|r| r.index()).unwrap_or(-1)));
         let mut rows = vec![];
-        let mut configurations = vec![];
+        let configured = Rc::new(Cell::new(-1));
         let mut counts = vec![];
         let mut commands = vec![];
         for id in ["one", "two"] {
             let user = adw::ActionRow::builder().title(id).build();
             list.append(&user);
-            let configuration = adw::ExpanderRow::new();
-            pages.append(&configuration);
             let saved = RestoredAccount {
                 account: AccountSummary {
                     id: AccountId(id.into()),
@@ -258,7 +234,11 @@ mod tests {
             folders.add_action(&open);
             let logout = gtk::Button::new();
             pages.append(&logout);
-            let actions = AccountActions::new(job, &folders, &configuration, &user, &list, &logout);
+            let configured_account = configured.clone();
+            let index = rows.len() as i32;
+            let actions = AccountActions::new(job, &folders, &logout, move || {
+                configured_account.set(index)
+            });
             actions.install(&user);
             user.add_suffix(&actions.menu());
             assert!(!actions.group.is_action_enabled("sync"));
@@ -266,7 +246,6 @@ mod tests {
             commands.push(actions.group.clone());
             counts.push(counter);
             rows.push(user);
-            configurations.push(configuration);
         }
         list.select_row(Some(&rows[1]));
         rows[0]
@@ -274,17 +253,20 @@ mod tests {
             .unwrap();
         assert_eq!((counts[0].get(), counts[1].get()), (1, 0));
         assert_eq!(selected.get(), 1);
-        configurations[0].set_sensitive(false);
+        pages.set_sensitive(false);
         assert!(commands[0].is_action_enabled("open-local"));
         commands[0].activate_action("open-local", None);
         assert_eq!((counts[0].get(), counts[1].get()), (2, 0));
-        configurations[0].set_sensitive(true);
+        pages.set_sensitive(true);
         rows[0]
             .activate_action("account-controls.configure", None)
             .unwrap();
-        assert_eq!(selected.get(), 0);
-        assert!(configurations[0].is_expanded());
-        assert!(!configurations[1].is_expanded());
+        assert_eq!(configured.get(), 0);
+        assert_eq!(
+            selected.get(),
+            1,
+            "opening settings must not change dashboard selection"
+        );
         let weak_group = commands[0].downgrade();
         commands.clear();
         drop(rows);

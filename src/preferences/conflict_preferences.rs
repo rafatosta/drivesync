@@ -1,8 +1,6 @@
 //! Account/folder-scoped opt-in; asynchronous reads never silently grant consent.
 use adw::{gtk, prelude::*};
-use drivesync_engine::{
-    ConflictPreference, DriveSyncEngine, EngineError, FolderConfiguration, RestoredAccount,
-};
+use drivesync_engine::{ConflictPreference, DriveSyncEngine, EngineError, FolderConfiguration};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -37,9 +35,11 @@ fn row() -> adw::ComboRow {
 }
 
 /// Holds a reviewed folder snapshot so a delayed save cannot authorize a new pair.
-pub(super) fn build(engine: Arc<DriveSyncEngine>, saved: &RestoredAccount) -> adw::ComboRow {
+pub(super) fn build(
+    engine: Arc<DriveSyncEngine>,
+    job: crate::automatic::Controller,
+) -> adw::ComboRow {
     let row = row();
-    let job = crate::automatic::Controller::attach(engine.clone(), saved);
     let loaded = Rc::new(RefCell::new(
         None::<(FolderConfiguration, ConflictPreference)>,
     ));

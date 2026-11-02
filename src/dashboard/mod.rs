@@ -101,9 +101,7 @@ pub fn build_selected(
     let initial = selected
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
-    let preference_accounts = accounts.clone();
-    let preference_engine = engine.clone();
-    account_details::populate(engine, accounts, nav, toasts, &list, &details);
+    let preferences = account_details::populate(engine, accounts, nav, toasts, &list, &details);
     let weak_details = details.downgrade();
     let weak_split = split.downgrade();
     list.connect_row_selected(move |_, row| {
@@ -151,14 +149,12 @@ pub fn build_selected(
         let Some(list) = weak_list.upgrade() else {
             return;
         };
-        let Some(row) = list.selected_row() else {
-            return;
-        };
-        let Some(saved) = preference_accounts.get(row.index() as usize) else {
-            return;
-        };
-        if let Some(parent) = list.root().and_downcast::<adw::ApplicationWindow>() {
-            crate::preferences::present_account(&parent, preference_engine.clone(), saved);
+        if let Some(parent) = list.root().and_downcast::<gtk::Window>() {
+            let row = list.selected_row();
+            let id = row
+                .as_ref()
+                .and_then(|row| preferences.id_at(row.index() as usize));
+            crate::preferences::present_with_accounts(&parent, preferences.clone(), id, false);
         }
     });
     actions.add_action(&open);

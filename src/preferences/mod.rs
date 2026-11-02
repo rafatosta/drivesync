@@ -6,13 +6,15 @@
 //!
 //! - [`model`]: typed values and their key-file representation.
 //! - [`view`]: the adaptive preferences window and the `app.preferences` action.
+mod accounts;
 mod conflict_preferences;
 mod model;
 mod upload_mode;
 mod view;
 
+pub(crate) use accounts::{AccountSettings, Accounts};
 pub(crate) use model::{ColorScheme, Preferences, SYNC_INTERVALS};
-pub(crate) use view::{install, present_account};
+pub(crate) use view::{install, present_with_accounts};
 
 #[cfg(test)]
 pub(crate) use upload_mode::verify_presentations as verify_upload_presentations;

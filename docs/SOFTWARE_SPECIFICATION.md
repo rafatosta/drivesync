@@ -633,7 +633,7 @@ implementação e validação real. Contrato: [Workspace HTML](../engine/src/dow
 
 ### 4.13 Preferências e gerenciamento da aplicação
 
-O menu principal abre uma janela de preferências nativa (atalho `Ctrl+,`) com navegação lateral adaptável e busca por funcionalidade. As páginas agrupam os ajustes globais existentes: aparência (esquema de cores do sistema, claro ou escuro), sincronização (intervalo de verificação) e segundo plano (continuidade ao fechar a janela e notificação). Ao desativar a continuidade, fechar a janela encerra o aplicativo. Os valores ficam em `$XDG_CONFIG_HOME/drivesync/preferences.ini`, sem credenciais ou dados de conta; valores inválidos usam o padrão. Opções por conta permanecem no painel da conta. Implementação: `src/preferences/`; sem validação visual em ambiente Flatpak empacotado.
+O menu principal abre uma janela de preferências nativa (atalho `Ctrl+,`) com navegação lateral adaptável e busca por funcionalidade. As páginas agrupam aparência (esquema de cores do sistema, claro ou escuro), contas (identidade, pastas e opções por conta), sincronização (intervalo global de verificação) e segundo plano (continuidade ao fechar a janela e notificação). Ao desativar a continuidade, fechar a janela encerra o aplicativo. Os valores ficam em `$XDG_CONFIG_HOME/drivesync/preferences.ini`, sem credenciais ou dados de conta; valores inválidos usam o padrão. Opções por conta ficam em Preferências → Contas, com seleção explícita e isolamento por conta/raízes. Implementação: `src/preferences/`; sem validação visual em ambiente Flatpak empacotado.
 
 ## 5. Requisitos não funcionais
 
@@ -1506,7 +1506,7 @@ Preferir a versão mais recente requer contrato adicional de relógios/evidênci
 continua indisponível, sem heurística baseada só em timestamps
 ([issue #64](https://github.com/rafatosta/drivesync/issues/64)).
 
-**Interface.** Em Preferências → Sincronização, para a conta selecionada no dashboard,
+**Interface.** Em Preferências → Contas, para a conta selecionada nessa página,
 “Simultaneous file edits” oferece Always ask, Keep local, Keep Drive e Keep both, com consequências
 e limites visíveis. O controle permanece desabilitado durante leitura/gravação e
 sincronização ativa. Uma falha de leitura nunca é apresentada como consentimento
@@ -1609,30 +1609,51 @@ total desconhecido, resultado ausente, itens ignorados e pendências não podem
 produzir uma confirmação de conclusão. Homologação visual desktop e Google real
 é separada dos testes unitários e da compilação.
 
-### Opções de sincronização em Preferências
+### Configurações de contas em Preferências
 
-As opções “Upload new items and reconcile renames” e “Simultaneous file edits”
-ficam em Preferências → Sincronização, com identificação explícita da conta
-selecionada no dashboard. A janela modal conserva esse escopo até fechar;
-reabrir após trocar de conta usa a nova seleção. Sem uma conta selecionada,
-Preferências apresenta somente os ajustes globais e orienta selecionar uma
-conta. Uploads e conflitos continuam persistidos pela engine por conta/raízes,
-sem virar preferências globais. Os controles permanecem bloqueados durante
-sincronização ou leitura/gravação, mantendo as revalidações existentes.
+Preferências → Contas reúne descrição local, email, pasta do Google Drive,
+pasta local, “Upload new items and reconcile renames” e “Simultaneous file edits”.
+O seletor identifica a conta por email; com uma única conta, a identificação é
+apresentada sem um seletor redundante. Sem contas disponíveis, a página orienta
+conectar uma conta pela janela principal. Aparência, intervalo global de
+verificação e execução em segundo plano permanecem nas páginas globais.
+
+Os menus “Configurar conta” e “Account preferences…” abrem essa página diretamente
+na conta correspondente, mesmo com outra selecionada no dashboard. Selecionar
+uma conta nas Preferências não troca a seleção do dashboard. O menu principal
+abre as Preferências gerais, mantendo a escolha feita em uma janela já aberta.
+Um atalho direto limpa filtros que esconderiam a página Contas e funciona em
+navegação compacta.
+
+Os editores de identidade e pastas são instâncias únicas por conta, reutilizando
+os seletores, salvamento automático e validações existentes. Fechar a janela
+separa os editores de sua apresentação sem descartar rascunhos incompletos;
+reabrir os apresenta novamente. As opções de upload e conflitos usam o mesmo
+controlador do dashboard e continuam persistidas pela engine por conta/raízes.
+Carregamento, gravação e sincronização mantêm os bloqueios existentes. Alterar a
+descrição atualiza a identificação da conta no dashboard e na sidebar.
+
+Critérios de aceite: selecionar A/B mantém campos e comandos isolados; abrir um
+atalho de A com B selecionada apresenta A sem alterar o dashboard; fechar e
+reabrir preserva rascunhos sem duplicar editores; troca de pasta continua validada
+pela engine; início de um ciclo bloqueia as opções daquela conta; busca e
+navegação compacta alcançam Contas; o descarte do dashboard libera seus
+observadores. Testes GTK isolados e capturas não comprovam integração real com
+Google Drive ou com seletores do portal no aplicativo instalado.
 
 ### Dashboard contextual por conta
 
 **Requisito e implementação:** a página individual compõe identidade da conta,
 card de sincronização, resumo de pendências observadas, atividade do último
-resultado e configuração expansível. Configuração, operação e pendências são
+resultado e acesso contextual à configuração em Preferências → Contas. Configuração, operação e pendências são
 independentes; transferências não significam resolução de conflitos anteriores.
 
-- Sem pastas configuradas, a configuração fica expandida e reutiliza os seletores
-  existentes, com salvamento automático após validação do par completo. Não há
-  botão de confirmação fictício. Falhas preservam a configuração anterior.
-- Com configuração existente, a seção fica recolhida. Falta de acesso à pasta
-  local expande a configuração para tornar o aviso e a recuperação acessíveis.
-  A configuração pode ser aberta novamente pelo menu da conta.
+- Sem pastas configuradas, um botão “Configurar conta” abre os editores da conta
+  em Preferências → Contas. O par completo é salvo automaticamente após validação,
+  sem uma confirmação fictícia. Falhas preservam a configuração anterior.
+- O dashboard não duplica os campos de identidade e pastas. Avisos operacionais
+  permanecem no card e nos detalhes; seletores e mensagens de configuração ficam
+  na página Contas, acessível pelos menus mesmo quando há problemas de acesso.
 - A operação normal apresenta o card e os resultados efetivamente recebidos.
   Datas da última sincronização, bytes totais do ciclo e previsão de agendamento
   não são inventados quando ausentes nos modelos atuais.
@@ -1672,7 +1693,7 @@ Observadores não retêm as páginas descartadas nem interrompem jobs ao navegar
 | Cenário | Resultado exigido |
 | --- | --- |
 | Menu da conta A com B selecionada | Comando mantém A como destino |
-| Configurar A pelo menu lateral | Seleciona A e expande sua configuração |
+| Configurar A pelo menu lateral | Abre Preferências → Contas em A sem alterar a seleção do dashboard |
 | Ciclo em andamento | Abertura de pastas disponível; edição e saída bloqueadas |
 | Troca e descarte de páginas | Sem mistura de resultados ou retenção por observadores |
 | Preparação sem total | Sem percentual inventado |

@@ -1,4 +1,4 @@
-//! Account-local folder drafts and existing engine configuration on the dashboard.
+//! Account-local folder drafts and reusable engine-backed configuration editors.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveFolder, DriveSyncEngine, FolderConfiguration, RestoredAccount};
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
@@ -44,7 +44,6 @@ struct Widgets {
     warning: gtk::glib::WeakRef<gtk::Image>,
     sync: gtk::glib::WeakRef<adw::ActionRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
-    configuration: gtk::glib::WeakRef<adw::ExpanderRow>,
     editable: bool,
     open_local: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
     open_remote: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
@@ -67,11 +66,6 @@ impl Widgets {
             && draft.local_available == Some(false)
             && !draft.dirty()
             && !busy;
-        if unavailable {
-            if let Some(configuration) = self.configuration.upgrade() {
-                configuration.set_expanded(true);
-            }
-        }
         if let Some(warning) = self.warning.upgrade() {
             warning.set_visible(unavailable);
         }
@@ -191,7 +185,7 @@ pub(super) fn build(
     sync: &adw::ActionRow,
     status: &gtk::Label,
     start: &gtk::Button,
-    configuration: &adw::ExpanderRow,
+    host: &gtk::Widget,
 ) -> FolderSetup {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let group = adw::PreferencesGroup::builder()
@@ -249,7 +243,6 @@ pub(super) fn build(
         warning: warning.downgrade(),
         sync: sync.downgrade(),
         status: status.downgrade(),
-        configuration: configuration.downgrade(),
         editable: crate::automatic::eligible(saved),
         open_local: open_local.downgrade(),
         open_remote: open_remote.downgrade(),
@@ -259,10 +252,11 @@ pub(super) fn build(
     for (action, remote) in [(&open_local, false), (&open_remote, true)] {
         let draft = draft.clone();
         let weak_root = content.downgrade();
+        let weak_host = host.downgrade();
         action.connect_activate(move |_, _| {
             let Some(folder) = draft.borrow().saved.clone() else { return; };
             let Some(root) = weak_root.upgrade() else { return; };
-            let parent = root.root().and_downcast::<gtk::Window>();
+            let parent = root.root().or_else(|| weak_host.upgrade().and_then(|host| host.root())).and_downcast::<gtk::Window>();
             gtk::glib::spawn_future_local(async move {
                 let result = if remote {
                     let Some(uri) = remote_uri(&folder.remote.id) else { return; };
@@ -427,9 +421,6 @@ fn autosave(
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
                     draft.borrow_mut().local_available = Some(true);
                     ui.message("");
-                    if let Some(configuration) = ui.configuration.upgrade() {
-                        configuration.set_expanded(false);
-                    }
                 }
                 Ok(None) => ui.message("Could not load the saved folders. Please try again."),
                 Err(e) => ui.message(&e.to_string()),
@@ -472,7 +463,6 @@ mod tests {
                     local_display: path,
                 }),
             };
-            let configuration = adw::ExpanderRow::new();
             let start = gtk::Button::new();
             let sync = adw::ActionRow::new();
             let status = gtk::Label::new(None);
@@ -482,11 +472,17 @@ mod tests {
                 &sync,
                 &status,
                 &start,
-                &configuration,
+                sync.upcast_ref(),
             );
+            let feedback = setup
+                .widget()
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap();
             assert!(
-                !configuration.is_expanded(),
-                "an unchecked path is not an unavailable path"
+                !feedback.has_css_class("error"),
+                "an unchecked path is not unavailable"
             );
             setup.widget().set_sensitive(false);
             for name in ["open-local", "open-remote"] {
@@ -499,7 +495,7 @@ mod tests {
                 finish.quit()
             });
             wait.run();
-            assert_eq!(configuration.is_expanded(), !available);
+            assert_eq!(feedback.has_css_class("error"), !available);
             assert_eq!(start.is_sensitive(), available);
         }
     }

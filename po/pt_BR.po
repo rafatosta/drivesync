@@ -150,3 +150,21 @@ msgstr "Última verificação concluída"
 
 msgid "Account"
 msgstr "Conta"
+
+msgid "Accounts"
+msgstr "Contas"
+
+msgid "Identity"
+msgstr "Identidade"
+
+msgid "Settings apply only to the account shown below."
+msgstr "Os ajustes se aplicam somente à conta exibida abaixo."
+
+msgid "No connected accounts"
+msgstr "Nenhuma conta conectada"
+
+msgid "Connect an account from the main window to configure it here."
+msgstr "Conecte uma conta pela janela principal para configurá-la aqui."
+
+msgid "Account synchronization"
+msgstr "Sincronização da conta"
