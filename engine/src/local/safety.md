@@ -25,6 +25,26 @@ Não há alteração de schema. Operações adiadas são repetíveis sem apagar 
 base ou intenção. Um alias criado durante a leitura invalida a assinatura;
 a proteção não promete exclusão mútua contra alterações hostis do mesmo UID.
 
+## Seleção de uma raiz nova no Flatpak
+
+A configuração resolve a origem informada pelo document portal. Se não existe
+`.drivesync` em nenhuma das vistas e a origem já pode ser aberta pelo sandbox
+com descritores NOFOLLOW, usa o caminho direto antes de registrar identidades.
+Isso não concede permissões nem altera uma associação salva. Havendo estado,
+mantém a vista selecionada: identidades de portal e host não são intercambiáveis.
+Um arquivo temporário exclusivo verifica escrita e flock durante a configuração;
+a sondagem é removida também quando o lock falha. Um portal sem locks é recusado
+com `LocalLockUnsupported`, sem iniciar transferência nem criar um journal.
+O inventário propaga a mesma falha de capacidade; não a converte em observação
+`Unknown` nem apresenta a pendência como um conflito de conteúdo.
+
+O acesso direto precisa ser autorizado externamente e limitado à pasta escolhida.
+Não adicionar acesso geral ao home como solução. Uma raiz existente com journal
+no portal permanece bloqueada; mudar sua identidade ou reconstruir sua base não
+faz parte deste procedimento. Preservar a raiz e usar outra pasta vazia para
+ensaios. O teste opt-in `fresh_portal_folder_selects_direct_access_before_recording_inode_evidence`
+exercita o portal real, a escolha direta e a preservação do estado existente.
+
 ## Oráculos de aceite
 
 | Cenário | Testes |

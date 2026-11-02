@@ -126,6 +126,9 @@ pub(super) fn scan_with_wait(
                     }
                     Err(EngineError::LocalWriting) => Evidence::Writing,
                     Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
+                    Err(EngineError::LocalLockUnsupported) => {
+                        return Err(EngineError::LocalLockUnsupported);
+                    }
                     Err(_) => Evidence::Unknown,
                 }
             } else {
@@ -178,6 +181,9 @@ pub(super) fn scan_with_wait(
             }
             Err(EngineError::DownloadConflict | EngineError::LocalWriting) => Evidence::Writing,
             Err(EngineError::LocalAccessDenied) => Evidence::AccessDenied,
+            Err(EngineError::LocalLockUnsupported) => {
+                return Err(EngineError::LocalLockUnsupported);
+            }
             Err(_) => Evidence::Unknown,
         };
         entries.insert(path, evidence);
