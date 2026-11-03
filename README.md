@@ -86,6 +86,29 @@ flatpak uninstall --user com.rtosta.DriveSync
 
 To report a problem, include the commit identifier from the installer filename and your Linux distribution and desktop environment. Do not attach OAuth tokens or private files.
 
+## Install the local checkout
+
+With the GNOME SDK and Rust extension specified in the selected Flatpak manifest
+already installed, build and install for the current user:
+
+```sh
+./scripts/install-user.sh normal
+# Or install the development variant:
+./scripts/install-user.sh devel
+```
+
+The script uses `flatpak-builder` or the installed `org.flatpak.Builder` app.
+The normal variant requires `data/oauth/production.json`. Builds use separate
+directories under `_build/`; repeating the command updates the selected variant.
+The normal and development apps use separate application IDs and account storage.
+Close an existing instance before launching the installed update:
+
+```sh
+flatpak run com.rtosta.DriveSync
+# Development variant:
+flatpak run com.rtosta.DriveSync.Devel
+```
+
 ## What's next
 
 The immediate focus is clearer first-time setup, more reliable recovery, better conflict handling, and validation of background operation and document links across Linux desktop environments. Updating existing files on Google Drive and propagating deletions require additional safeguards before they can be enabled.
