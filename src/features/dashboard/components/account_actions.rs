@@ -82,3 +82,45 @@ impl AccountActions {
             .build()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::Cell, rc::Rc};
+
+    #[test]
+    #[ignore = "requires a desktop display"]
+    fn account_actions_keep_their_own_targets_without_sync_commands() {
+        adw::init().unwrap();
+        let list = gtk::ListBox::new();
+        let opened = Rc::new(Cell::new(0));
+        let configured = Rc::new(Cell::new(0));
+        let mut rows = Vec::new();
+        for index in 1..=2 {
+            let row = adw::ActionRow::new();
+            list.append(&row);
+            let folders = gio::SimpleActionGroup::new();
+            let open = gio::SimpleAction::new("open-local", None);
+            let opened = opened.clone();
+            open.connect_activate(move |_, _| opened.set(index));
+            folders.add_action(&open);
+            let sign_out = gtk::Button::new();
+            let configured = configured.clone();
+            let actions = AccountActions::new(&folders, &sign_out, move || configured.set(index));
+            assert!(!actions.group.has_action("sync"));
+            assert!(!actions.group.has_action("toggle"));
+            actions.install(&row);
+            rows.push(row);
+        }
+        list.select_row(Some(&rows[1]));
+        rows[0]
+            .activate_action("account-controls.open-local", None)
+            .unwrap();
+        rows[0]
+            .activate_action("account-controls.configure", None)
+            .unwrap();
+        assert_eq!(opened.get(), 1);
+        assert_eq!(configured.get(), 1);
+        assert_eq!(list.selected_row().unwrap().index(), 1);
+    }
+}
