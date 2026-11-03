@@ -168,3 +168,92 @@ msgstr "Conecte uma conta pela janela principal para configurá-la aqui."
 
 msgid "Account synchronization"
 msgstr "Sincronização da conta"
+
+msgid "{action} · {completed} of {total} items processed"
+msgstr "{action} · {completed} de {total} itens processados"
+
+msgid "Uploading"
+msgstr "Enviando"
+
+msgid "Downloading"
+msgstr "Baixando"
+
+msgid "Checking"
+msgstr "Verificando"
+
+msgid "Verifying"
+msgstr "Conferindo integridade"
+
+msgid "Saving"
+msgstr "Salvando"
+
+msgid "Creating a shortcut"
+msgstr "Criando um atalho"
+
+msgid "Synchronization"
+msgstr "Sincronização"
+
+msgid "Reading the file before uploading…"
+msgstr "Lendo o arquivo antes do envio…"
+
+msgid "Pending conflicts"
+msgstr "Conflitos pendentes"
+
+msgid "Problems found"
+msgstr "Problemas encontrados"
+
+msgid "Synchronization needs attention"
+msgstr "A sincronização precisa de atenção"
+
+
+msgid "{count} conflict awaiting a decision"
+msgid_plural "{count} conflicts awaiting a decision"
+msgstr[0] "{count} conflito aguarda decisão"
+msgstr[1] "{count} conflitos aguardam decisão"
+
+msgid "{count} problem to review"
+msgid_plural "{count} problems to review"
+msgstr[0] "{count} problema para revisar"
+msgstr[1] "{count} problemas para revisar"
+
+msgid "Local version"
+msgstr "Versão no computador"
+
+msgid "Google Drive version"
+msgstr "Versão no Google Drive"
+
+msgid "Unavailable"
+msgstr "Indisponível"
+
+msgid "Observed versions and next steps"
+msgstr "Detalhes e próximos passos"
+
+msgid "Saved observation"
+msgstr "Observação salva"
+
+msgid "Apply choice"
+msgstr "Confirmar escolha"
+
+msgid "Keep local version…"
+msgstr "Usar a versão do computador"
+
+msgid "Keep Drive version…"
+msgstr "Usar a versão do Google Drive"
+
+msgid "Keep both versions…"
+msgstr "Manter as duas versões"
+
+msgid "Compare observed versions…"
+msgstr "Comparar versões…"
+
+msgid "Review plain-text merge…"
+msgstr "Revisar mesclagem de texto…"
+
+msgid "The local bytes will replace the observed Drive version at its original ID. Available versions are preserved before replacement."
+msgstr "A versão do computador substituirá a versão observada no Drive, mantendo a identidade do arquivo. As versões disponíveis serão preservadas antes da substituição."
+
+msgid "The observed Drive bytes will become the active local version. The displaced local version is preserved beside the file."
+msgstr "A versão observada no Drive será usada no computador. A versão local anterior será preservada ao lado do arquivo."
+
+msgid "The local version stays at the original file name and Drive ID. The observed Drive version becomes another synchronized file named with ‘DriveSync remote conflict’ and a unique operation ID. Both observed versions are also preserved locally."
+msgstr "A versão local mantém o nome e a identidade originais. A versão do Drive vira outro arquivo sincronizado, com “DriveSync remote conflict” e um identificador único no nome. Ambas também são preservadas no computador."
