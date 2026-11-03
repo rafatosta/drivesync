@@ -1,6 +1,8 @@
 # Documentação do DriveSync
 
 - [**Especificação de Software — DriveSync (estrutura inicial)**](SOFTWARE_SPECIFICATION.md)
+- [GUI architecture and relocation map](gui-architecture.md)
+- [GUI migration verification](gui-migration-verification.md)
 - [Credential vault diagnostics and isolated oo7 test](credential-vault.md)
 - [Telas demonstrativas e geração de screenshots](../data/screenshots/README.md#gerar-novamente)
 
