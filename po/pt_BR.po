@@ -428,3 +428,9 @@ msgstr "Foram verificadas edições diferentes no computador e no Google Drive. 
 
 msgid "Local edits differ from the last confirmed synchronization. Review the pending item before replacing a version."
 msgstr "As edições locais diferem da última sincronização confirmada. Revise o item pendente antes de substituir uma versão."
+
+msgid "Errors from the latest cycle (saved observations may be older):\n{errors}"
+msgstr "Erros da última verificação (as observações salvas podem ser anteriores):\n{errors}"
+
+msgid "This filesystem or Flatpak document portal does not support the file locks required for synchronization. Use a location with file-lock support and direct access from DriveSync. Existing files and recovery evidence were preserved."
+msgstr "Este acesso à pasta não oferece um bloqueio exigido pela operação. Os arquivos existentes e as informações de recuperação foram preservados."
