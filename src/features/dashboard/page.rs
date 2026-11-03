@@ -23,9 +23,9 @@ pub fn build_selected(
 ) -> adw::NavigationPage {
     crate::features::synchronization::automatic::reconcile(engine.clone(), &accounts);
     let split = adw::NavigationSplitView::builder()
-        .min_sidebar_width(240.0)
-        .max_sidebar_width(300.0)
-        .sidebar_width_fraction(0.28)
+        .min_sidebar_width(280.0)
+        .max_sidebar_width(440.0)
+        .sidebar_width_fraction(0.5)
         .build();
     split.set_widget_name("dashboard-split");
     let sidebar = adw::ToolbarView::new();
@@ -89,6 +89,20 @@ pub fn build_selected(
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
     let preferences = super::account_view::populate(engine, accounts, nav, toasts, &list, &details);
+    update_sidebar_width(&split, &list);
+    let mut index = 0;
+    while let Some(widget) = list.row_at_index(index) {
+        index += 1;
+        if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+            let weak_split = split.downgrade();
+            let weak_list = list.downgrade();
+            row.connect_title_notify(move |_| {
+                if let (Some(split), Some(list)) = (weak_split.upgrade(), weak_list.upgrade()) {
+                    update_sidebar_width(&split, &list);
+                }
+            });
+        }
+    }
     let weak_details = details.downgrade();
     let weak_split = split.downgrade();
     list.connect_row_selected(move |_, row| {
@@ -152,6 +166,22 @@ pub fn build_selected(
     actions.add_action(&open);
     page.insert_action_group("account", Some(&actions));
     page
+}
+
+/// Uses rendered account titles to bound the expanded sidebar without forcing
+/// narrow windows wider. Compact navigation wraps titles within the full page.
+fn update_sidebar_width(split: &adw::NavigationSplitView, list: &gtk::ListBox) {
+    let mut preferred = 280.0_f64;
+    let mut index = 0;
+    while let Some(widget) = list.row_at_index(index) {
+        index += 1;
+        if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+            let (text_width, _) = row.create_pango_layout(Some(&row.title())).pixel_size();
+            // Reserve space for the avatar, account menu, spacing and row margins.
+            preferred = preferred.max(f64::from(text_width) + 144.0);
+        }
+    }
+    split.set_max_sidebar_width(preferred.clamp(280.0, 440.0));
 }
 
 #[cfg(test)]

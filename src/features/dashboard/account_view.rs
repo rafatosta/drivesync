@@ -28,7 +28,7 @@ pub(super) fn populate(
         let avatar = adw::Avatar::new(32, Some(name), true);
         user.add_prefix(&avatar);
         user.set_subtitle_selectable(false);
-        user.set_title_lines(1);
+        user.set_title_lines(0);
         user.set_subtitle_lines(2);
         user.set_tooltip_text(Some(name));
         user.set_activatable(true);

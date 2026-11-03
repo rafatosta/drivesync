@@ -386,6 +386,45 @@ fn folder_setup_and_dashboard_layouts() {
                     .save_to_png(format!("{output}/preferences-accounts-{width}.png"))
                     .unwrap();
                 preferences.close();
+                let split = find_named(window.upcast_ref(), "dashboard-split")
+                    .unwrap()
+                    .downcast::<adw::NavigationSplitView>()
+                    .unwrap();
+                let row = list
+                    .row_at_index(0)
+                    .unwrap()
+                    .downcast::<adw::ActionRow>()
+                    .unwrap();
+                let original = row.title();
+                let short_width = split.max_sidebar_width();
+                row.set_title("long.account.address.for.sidebar@example.com");
+                assert_eq!(row.title_lines(), 0);
+                assert!(
+                    split.max_sidebar_width() > short_width,
+                    "width {} -> {}, title {}",
+                    short_width,
+                    split.max_sidebar_width(),
+                    row.title()
+                );
+                assert!(split.max_sidebar_width() <= 440.0);
+                split.set_show_content(false);
+                let wait = gtk::glib::MainLoop::new(None, false);
+                let finish = wait.clone();
+                gtk::glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    finish.quit()
+                });
+                wait.run();
+                assert!(window.width() <= width + 10);
+                let node = rendered(&window);
+                window
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{output}/sidebar-long-title-{width}.png"))
+                    .unwrap();
+                row.set_title(&original);
+                assert_eq!(split.max_sidebar_width(), short_width);
+                split.set_show_content(true);
             }
             let node = rendered(&window);
             let texture = window.renderer().unwrap().render_texture(&node, None);

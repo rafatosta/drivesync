@@ -1682,6 +1682,11 @@ independentes; transferências não significam resolução de conflitos anterior
   com confirmação explícita e retorno próprio na página. A revisão de mudanças
   em lote e as confirmações anteriores são preservadas.
 
+A sidebar adapta sua largura aos títulos das contas, com limite de 440 unidades
+lógicas e até metade da largura disponível no modo de dois painéis. Títulos
+longos quebram linha, inclusive na navegação compacta, sem forçar o aumento da
+janela. Alterações da descrição da conta recalculam a largura preferida.
+
 **Contratos de comandos:** os menus da sidebar e do cabeçalho compartilham um
 `GSimpleActionGroup` por conta, independente da seleção atual. O menu continua
 acessível durante a execução. Sincronização manual, pausa e retomada usam o mesmo
