@@ -1731,3 +1731,18 @@ Referências de integração: [Gio.SimpleActionGroup](https://docs.gtk.org/gio/c
 e [Gtk.UriLauncher, disponível desde GTK 4.10](https://docs.gtk.org/gtk4/class.UriLauncher.html).
 O projeto usa o recurso `v4_10` do gtk-rs; não depende de `can_launch`, adicionado
 em versões posteriores.
+
+
+### Resolução de substituições locais durante edição
+
+Arquivos binários com base confirmada substituídos no mesmo caminho devem
+oferecer decisão explícita: manter ambas, usar local ou usar Drive. A escolha
+inicial da interface é manter ambas, sem execução até confirmação. Revalidar
+registro, versões, caminho, pai e identidade antes dos efeitos; preservar L/R e
+reutilizar a intenção durável. Evidência ausente ou modificada mantém a pendência
+com próximo passo explícito. Preferências automáticas não adotam outro inode.
+
+O reconhecimento automático de salvamentos por editor exige evidência adicional
+além de nome, conteúdo e inode observado; permanece intenção, não garantia da
+implementação. Contrato e limites: `engine/src/conflicts/resolution-execution.md`.
+Testes simulados, Google real e homologação do pacote são evidências distintas.

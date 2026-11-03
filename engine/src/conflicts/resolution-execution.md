@@ -211,3 +211,31 @@ preservação, rollback, cancelamento e interrupção em cada fronteira acima.
 Reabertura/repetição não pode criar cópia falsa, duplicar efeito ou avançar B
 indevidamente. Adicionar ensaios específicos de teclado/leitor de tela e do
 Flatpak instalado; testes de propriedades GTK não os substituem.
+
+
+## Substituição local no caminho gerenciado
+
+Um salvamento por temporário e rename pode trocar o inode. A classificação
+continua `LocalIdentityChanged`/`ConcurrentIdentityChanges`: o inventário não
+possui evidência suficiente para atribuir a troca a um editor. Nome, hash ou
+notificação de filesystem isolados não autorizam adoção automática.
+
+A decisão explícita permite associar a versão observada ao ID remoto confirmado,
+somente no caminho exato de B, com nome/pai remotos inalterados e projeção atual
+coincidente. Rejeitar aliases do inode antigo ou atual. Consultar R e L novamente,
+comparar com o registro pendente exato e persistir consentimento no plano antes
+de preservar ambas as versões. Seguir as mesmas etapas recuperáveis e escritas
+condicionais do executor. Mudança após revisão exige nova observação; nenhuma
+preferência automática se aplica a substituições. Mesclagem de texto e mudanças
+de localização permanecem fora desta autorização.
+
+Pseudocódigo: validar registro pendente → consultar inventário/R/L → revalidar
+proposta → validar caminho/base/projeção/aliases → persistir escolha → preservar
+L/R → revalidar e aplicar efeitos condicionais → verificar efeitos → confirmar B
+e retirar a pendência. Falha mantém cópias e intenção recuperáveis; efeitos
+incertos seguem o replay existente, sem nova decisão automática.
+
+Fundamentação: [GIO replace_contents](https://docs.gtk.org/gio/method.File.replace_contents.html)
+usa substituição por rename atômico para arquivos locais (consultado em
+2026-11-03). Isso explica a troca de inode, mas não comprova sua origem em uma
+observação posterior. O vínculo por consentimento é política do DriveSync.
