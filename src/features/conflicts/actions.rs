@@ -46,7 +46,7 @@ pub(super) fn open(
     window.set_transient_for(parent.as_ref());
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    let later = gtk::Button::with_label("Decide later");
+    let later = gtk::Button::with_label(&gettextrs::gettext("Decide later"));
     header.pack_end(&later);
     toolbar.add_top_bar(&header);
     let content = crate::ui::content();
@@ -56,7 +56,7 @@ pub(super) fn open(
         &identity,
     )));
     let label = gtk::Label::builder()
-        .label(format!("Account: {identity}"))
+        .label(gettextrs::gettext("Account: {account}").replace("{account}", &identity))
         .wrap(true)
         .selectable(true)
         .xalign(0.0)
@@ -117,9 +117,9 @@ pub(super) fn open(
         .child(&status)
         .build();
     toolbar.add_bottom_bar(&status_scroll);
-    let refresh = gtk::Button::with_label("Reload saved observations");
+    let refresh = gtk::Button::with_label(&gettextrs::gettext("Check current versions"));
     content.append(&refresh);
-    let pause = gtk::Button::with_label("Pause safely");
+    let pause = gtk::Button::with_label(&gettextrs::gettext("Pause safely"));
     pause.set_visible(false);
     toolbar.add_bottom_bar(&pause);
     let list = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -127,7 +127,7 @@ pub(super) fn open(
     let navigation = adw::NavigationView::new();
     let root_page = adw::NavigationPage::with_tag(
         &crate::ui::scroll(&content, 760),
-        "Pending items",
+        &gettextrs::gettext("Pending items"),
         "pending",
     );
     navigation.add(&root_page);
@@ -152,7 +152,7 @@ pub(super) fn open(
     });
     let close = center.clone();
     window.connect_close_request(move |_| {
-        if close.busy.get() {close.job.pause();close.status.set_label("Pausing at a safe boundary. Accepted effects remain saved and may require recovery.");gtk::glib::Propagation::Stop} else {gtk::glib::Propagation::Proceed}
+        if close.busy.get() {close.job.pause();close.status.set_label(&gettextrs::gettext("Pausing at a safe boundary. Accepted effects remain saved and may require recovery."));gtk::glib::Propagation::Stop} else {gtk::glib::Propagation::Proceed}
     });
     let weak = window.downgrade();
     center.later.connect_clicked(move |_| {
@@ -163,16 +163,16 @@ pub(super) fn open(
     let weak = Rc::downgrade(&center);
     center.refresh.connect_clicked(move |_| {
         if let Some(center) = weak.upgrade() {
-            center.load(None)
+            center.run(ResolutionTask::Recheck)
         }
     });
     let weak = Rc::downgrade(&center);
     center.pause.connect_clicked(move |_| {
         if let Some(center) = weak.upgrade() {
             center.job.pause();
-            center.status.set_label(
+            center.status.set_label(&gettextrs::gettext(
                 "Pausing safely. This does not undo accepted effects; recovery may be required.",
-            );
+            ));
         }
     });
     center.load(None);
@@ -198,10 +198,18 @@ impl Center {
             return;
         }
         let content = crate::ui::content();
+        let check = gtk::Button::with_label(&gettextrs::gettext("Check current versions"));
+        let weak = Rc::downgrade(self);
+        check.connect_clicked(move |_| {
+            if let Some(center) = weak.upgrade() {
+                center.run(ResolutionTask::Recheck);
+            }
+        });
+        content.append(&check);
         if let Some(record) = &item.record {
             content.append(
                 &gtk::Label::builder()
-                    .label(record.diagnosis.description())
+                    .label(gettextrs::gettext(record.diagnosis.description()))
                     .use_markup(false)
                     .wrap(true)
                     .xalign(0.0)
@@ -273,7 +281,8 @@ impl Center {
         }
         self.refresh.set_sensitive(false);
         self.list.set_sensitive(false);
-        self.status.set_label("Loading saved observations…");
+        self.status
+            .set_label(&gettextrs::gettext("Loading saved observations…"));
         let engine = self.engine.clone();
         let id = self.id.clone();
         let center = self.clone();
@@ -289,18 +298,18 @@ impl Center {
                 center.refresh.set_sensitive(true);
                 center.list.set_sensitive(true);
                 match result {
-                Err(error)=>center.status.set_label(&format!("Saved state could not be loaded: {error}. Retry reloading. Existing evidence has not been cleared.")),
+                Err(error)=>center.status.set_label(&gettextrs::gettext("Saved state could not be loaded: {error}. Retry checking current versions. Existing evidence has not been cleared.").replace("{error}", &gettextrs::gettext(error.to_string()))),
                 Ok((records,progress))=>{
                     while let Some(child)=center.list.first_child(){center.list.remove(&child)}
                     let items=models::pending(&records).into_iter().filter(|item| center.kind.is_none_or(|kind| kind.includes(item.category))).collect::<Vec<_>>();
-                    let message=if items.is_empty(){"No saved pending items. This is not a new synchronization check."}else{"Saved observations may be outdated. No network check was made. Decide later keeps unaccepted items pending."};
-                    center.status.set_label(&notice.map(|notice|format!("{notice}\n\n{message}")).unwrap_or_else(||message.into()));
-                    if !progress.is_empty() && center.kind != Some(ReviewKind::Problems) {
-                        let group=adw::PreferencesGroup::builder().title("Accepted decisions awaiting recovery").description("These choices are already saved. Paths below are planned or previously verified; current copy availability has not been checked.").build();
+                    let message = gettextrs::gettext(if items.is_empty(){"No saved pending items. A version check does not transfer pending files."}else{"These are saved observations. Use Check current versions to refresh them. Decide later keeps unaccepted items pending."});
+                    center.status.set_label(&notice.map(|notice|format!("{notice}\n\n{message}")).unwrap_or(message));
+                    if !progress.is_empty() {
+                        let group=adw::PreferencesGroup::builder().title(gettextrs::gettext("Accepted decisions awaiting recovery")).description(gettextrs::gettext("These choices are already saved. Paths below are planned or previously verified; current copy availability has not been checked.")).build();
                         for operation in progress {
                             let row=adw::ActionRow::builder().title(operation.source_path.display().to_string()).subtitle(format!("Choice: {:?}. Stage: {:?}. Target: {}\nPreservation locations: {}{}",operation.choice,operation.state,operation.target_path.display(),operation.preserved_paths.iter().map(|p|p.display().to_string()).collect::<Vec<_>>().join("; "),operation.additional_path.map(|p|format!("\nAdditional synchronized file: {}",p.display())).unwrap_or_default())).use_markup(false).subtitle_selectable(true).build();row.set_title_lines(0);row.set_subtitle_lines(0);group.add(&row);
                         }
-                        let resume=gtk::Button::with_label("Resume accepted decisions");let weak=Rc::downgrade(&center);resume.connect_clicked(move |_|{if let Some(center)=weak.upgrade(){center.run(ResolutionTask::ResumeAccepted)}});group.add(&resume);center.list.append(&group);
+                        let resume=gtk::Button::with_label(&gettextrs::gettext("Resume accepted decisions"));let weak=Rc::downgrade(&center);resume.connect_clicked(move |_|{if let Some(center)=weak.upgrade(){center.run(ResolutionTask::ResumeAccepted)}});group.add(&resume);center.list.append(&group);
                     }
                     present_items(&center.list,&items,Some(&center));
                 }
@@ -318,19 +327,28 @@ impl Center {
         self.refresh.set_sensitive(false);
         self.later.set_sensitive(false);
         self.pause.set_visible(true);
-        self.status.set_label("Revalidating the accepted decision and preserving versions. Pause requests stop at a safe boundary; they do not undo completed effects.");
+        let recheck = matches!(task, ResolutionTask::Recheck);
+        self.status.set_label(&gettextrs::gettext(if recheck {
+            "Checking current local and Drive versions. No version will be selected."
+        } else {
+            "Revalidating the accepted decision and preserving versions. Pause requests stop at a safe boundary; they do not undo completed effects."
+        }));
         let center = self.clone();
         if !self.job.run_resolution(self.engine.clone(),task,move |result| {
             center.busy.set(false);center.navigation.set_sensitive(true);center.later.set_sensitive(true);center.pause.set_visible(false);
-            let succeeded = result.is_ok();
             let notice=match result {
-                Ok(reports)=>format!("Verified {} decision(s). {}",reports.len(),reports.iter().map(|report|format!("Active file: {}. Preserved versions: {}{}",report.path.display(),report.preserved_paths.iter().map(|p|p.display().to_string()).collect::<Vec<_>>().join("; "),report.additional_path.as_ref().map(|p|format!(". Additional synchronized file: {}",p.display())).unwrap_or_default())).collect::<Vec<_>>().join("\n")),
-                Err(error)=>format!("Decision not confirmed: {error}. Copies and accepted intentions are retained. If evidence changed, synchronize again and review the new observation. Use recovery for an already accepted decision; do not assume it was undone."),
+                Ok(_) if recheck => gettextrs::gettext("Current versions checked. Review the updated observations before choosing."),
+                Ok(reports) => gettextrs::gettext("Verified {count} decision(s). Active files and preserved versions: {paths}")
+                    .replace("{count}", &reports.len().to_string())
+                    .replace("{paths}", &reports.iter().flat_map(|report| std::iter::once(&report.path).chain(report.additional_path.iter()).chain(report.preserved_paths.iter())).map(|p| p.display().to_string()).collect::<Vec<_>>().join("; ")),
+                Err(error) => gettextrs::gettext("Operation not confirmed: {error}. Copies and accepted decisions are retained. Check current versions if evidence changed. Resume accepted decisions when recovery is pending.")
+                    .replace("{error}", &gettextrs::gettext(error.to_string())),
             };
-            if succeeded { center.navigation.pop_to_page(&center.root_page); center.load(Some(notice)); } else { center.status.set_label(&notice); center.list.set_sensitive(true); center.refresh.set_sensitive(true); }
+            center.navigation.pop_to_page(&center.root_page);
+            center.load(Some(notice));
         }) {
             self.busy.set(false);self.navigation.set_sensitive(true);self.list.set_sensitive(true);self.refresh.set_sensitive(true);self.later.set_sensitive(true);self.pause.set_visible(false);
-            self.status.set_label("The account is busy or unavailable. Wait for its current operation to stop, then retry. No new decision was dispatched.");
+            self.status.set_label(&gettextrs::gettext("The account is busy or unavailable. Wait for its current operation to stop, then retry. No new decision was dispatched."));
         }
     }
 }
@@ -348,9 +366,9 @@ fn choice_label(choice: ResolutionChoice) -> &'static str {
 fn choice_effect(choice: ResolutionChoice) -> &'static str {
     match choice {
         ResolutionChoice::MergeText=>"The reviewed plain-text candidate replaces both active versions at the existing Drive ID. Base, local and Drive versions are preserved. The positional merge requires review of the whole candidate; it cannot establish semantic compatibility.",
-        ResolutionChoice::KeepLocal=>"The local bytes will replace the observed Drive version at its original ID. Available versions are preserved before replacement.",
+        ResolutionChoice::KeepLocal=>"The computer version will replace the Drive version. Both observed versions will be preserved before replacement.",
         ResolutionChoice::KeepRemote=>"The observed Drive bytes will become the active local version. The displaced local version is preserved beside the file.",
-        ResolutionChoice::KeepBoth=>"The local version stays at the original file name and Drive ID. The observed Drive version becomes another synchronized file named with ‘DriveSync remote conflict’ and a unique operation ID. Both observed versions are also preserved locally.",
+        ResolutionChoice::KeepBoth=>"Both versions will be preserved under different synchronized names. The computer version keeps the original name.",
     }
 }
 
@@ -370,7 +388,7 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
         center.navigation.set_sensitive(false);
         center.list.set_sensitive(false);
         center.refresh.set_sensitive(false);
-        center.status.set_label("Reading and verifying observed versions…");
+        center.status.set_label(&gettextrs::gettext("Reading and verifying observed versions…"));
         let engine = center.engine.clone();
         let id = center.id.clone();
         let record = comparison_record.clone();
@@ -388,13 +406,13 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
             center.refresh.set_sensitive(true);
             match result {
                 Ok(comparison) => {
-                    center.status.set_label("Snapshots verified. No decision was accepted. Choices still require a live revalidation.");
+                    center.status.set_label(&gettextrs::gettext("Snapshots verified. No decision was accepted. Choices still require a live revalidation."));
                     if let Some(window) = center.window.upgrade().filter(|w| w.is_visible()) {
                         let content = super::comparison_page::content(&window, &center.account, &comparison);
                         center.push("Compare observed versions", &content);
                     }
                 }
-                Err(error) => center.status.set_label(&format!("Comparison unavailable: {error}. Original versions and the pending item remain. Synchronize and review again if evidence changed.")),
+                Err(error) => center.status.set_label(&gettextrs::gettext("Comparison unavailable: {error}. Original versions and the pending item remain. Use Check current versions and review again.").replace("{error}", &gettextrs::gettext(error.to_string()))),
             }
         });
     });
@@ -409,7 +427,7 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
         center.navigation.set_sensitive(false);
         center.list.set_sensitive(false);
         center.refresh.set_sensitive(false);
-        center.status.set_label("Verifying the retained common base and both observed versions…");
+        center.status.set_label(&gettextrs::gettext("Verifying the retained common base and both observed versions…"));
         let engine = center.engine.clone();
         let id = center.id.clone();
         let record = merge_record.clone();
@@ -427,7 +445,7 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
                 center.refresh.set_sensitive(true);
                 match result {
                     Ok(candidate) => {
-                        center.status.set_label("Plain-text candidate verified for review. No decision accepted.");
+                        center.status.set_label(&gettextrs::gettext("Plain-text candidate verified for review. No decision accepted."));
                         if center.window.upgrade().is_some_and(|w| w.is_visible()) {
                             let (content, apply) = super::text_merge_page::page(&center.account, &record, &candidate);
                             let weak = Rc::downgrade(&center);
@@ -442,9 +460,15 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
             }
         });
     });
-    buttons.append(&merge);
+    if !matches!(
+        record.diagnosis,
+        drivesync_engine::ChangeKind::LocalIdentityChanged
+            | drivesync_engine::ChangeKind::ConcurrentIdentityChanges
+    ) {
+        buttons.append(&merge);
+    }
     let selection = Rc::new(Cell::new(None));
-    let apply = gtk::Button::with_label(&gettextrs::gettext("Apply choice"));
+    let apply = gtk::Button::with_label(&gettextrs::gettext("Confirm choice"));
     apply.add_css_class("suggested-action");
     apply.set_sensitive(false);
     let mut first = None;
@@ -485,6 +509,9 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
                 }
             }
         });
+        if choice == ResolutionChoice::KeepBoth {
+            option.set_active(true);
+        }
         buttons.append(&option);
     }
     let record = record.clone();
@@ -511,7 +538,13 @@ mod tests {
     /// Exercises navigation, consent and job exclusion without remote mutations.
     #[test]
     #[ignore = "requires an isolated GTK display"]
-    fn review_navigation_keeps_one_window_and_requires_explicit_choice() {
+    fn review_navigation_keeps_one_window_and_requires_explicit_confirmation() {
+        if let Ok(locale) = std::env::var("DRIVESYNC_RESOLUTION_UI_LOCALE") {
+            // This ignored test runs alone in a dedicated process before GTK.
+            crate::core::i18n::init();
+            gettextrs::bindtextdomain("drivesync", locale).unwrap();
+            gettextrs::textdomain("drivesync").unwrap();
+        }
         adw::init().unwrap();
         let window = adw::Window::builder()
             .default_width(360)
@@ -560,7 +593,7 @@ mod tests {
             remote_parent_id: Some("root".into()),
             remote_name: Some("<report>&.txt".into()),
             relative_path: Some("<report>&.txt".into()),
-            diagnosis: drivesync_engine::ChangeKind::ConcurrentChanges,
+            diagnosis: drivesync_engine::ChangeKind::LocalIdentityChanged,
             status: drivesync_engine::ConflictStatus::Pending,
             local_size: Some(10),
             local_modified_unix: None,
@@ -625,11 +658,12 @@ mod tests {
         );
         let apply = buttons
             .iter()
-            .find(|b| b.label().as_deref() == Some("Apply choice"))
+            .find(|b| b.label().as_deref() == Some(gettextrs::gettext("Confirm choice").as_str()))
             .unwrap();
         assert_eq!(options.len(), 3);
-        assert!(options.iter().all(|b| !b.is_active()));
-        assert!(!apply.is_sensitive());
+        assert!(options[0].is_active());
+        assert!(options[1..].iter().all(|b| !b.is_active()));
+        assert!(apply.is_sensitive());
         options[0].set_active(true);
         assert!(apply.is_sensitive());
         options[1].set_active(true);

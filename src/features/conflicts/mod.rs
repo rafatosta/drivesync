@@ -89,7 +89,10 @@ fn present_items(
             continue;
         }
         let group = adw::PreferencesGroup::builder()
-            .title(format!("{} · {count}", category.title()))
+            .title(format!(
+                "{} · {count}",
+                gettextrs::gettext(category.title())
+            ))
             .build();
         for item in items.iter().filter(|item| item.category == category) {
             let row = adw::ActionRow::builder()

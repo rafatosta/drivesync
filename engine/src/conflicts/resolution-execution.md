@@ -6,7 +6,7 @@ Este contrato especifica o executor necessário para concluir #15 e #16. O motor
 oferece a API explícita `resolve_conflict`, com preservação, intenção durável e
 confirmação de efeitos e resumos de retomada. O coordenador seleciona candidatos
 C09/C07 de mesmo pai quando uploads estão habilitados e revalida sua continuidade.
-A central GNOME apresenta decisões explícitas, confirmação sem vencedor padrão e
+A central GNOME apresenta decisões explícitas, manter ambas selecionado inicialmente, confirmação explícita e
 retomada de intenções aceitas, usando a exclusão do coordenador por conta. O experimento de precondições abaixo permanece
 uma ferramenta separada; não é invocado pelo sincronizador.
 
@@ -211,3 +211,44 @@ preservação, rollback, cancelamento e interrupção em cada fronteira acima.
 Reabertura/repetição não pode criar cópia falsa, duplicar efeito ou avançar B
 indevidamente. Adicionar ensaios específicos de teclado/leitor de tela e do
 Flatpak instalado; testes de propriedades GTK não os substituem.
+
+
+## Substituição local no caminho gerenciado
+
+Um salvamento por temporário e rename pode trocar o inode. A classificação
+continua `LocalIdentityChanged`/`ConcurrentIdentityChanges`: o inventário não
+possui evidência suficiente para atribuir a troca a um editor. Nome, hash ou
+notificação de filesystem isolados não autorizam adoção automática.
+
+A decisão explícita permite associar a versão observada ao ID remoto confirmado,
+somente no caminho exato de B, com nome/pai remotos inalterados e projeção atual
+coincidente. Rejeitar aliases do inode antigo ou atual. Consultar R e L novamente,
+comparar com o registro pendente exato e persistir consentimento no plano antes
+de preservar ambas as versões. Seguir as mesmas etapas recuperáveis e escritas
+condicionais do executor. Mudança após revisão exige nova observação; nenhuma
+preferência automática se aplica a substituições. Mesclagem de texto e mudanças
+de localização permanecem fora desta autorização.
+
+Pseudocódigo: validar registro pendente → consultar inventário/R/L → revalidar
+proposta → validar caminho/base/projeção/aliases → persistir escolha → preservar
+L/R → revalidar e aplicar efeitos condicionais → verificar efeitos → confirmar B
+e retirar a pendência. Falha mantém cópias e intenção recuperáveis; efeitos
+incertos seguem o replay existente, sem nova decisão automática.
+
+Fundamentação: [GIO replace_contents](https://docs.gtk.org/gio/method.File.replace_contents.html)
+usa substituição por rename atômico para arquivos locais (consultado em
+2026-11-03). Isso explica a troca de inode, mas não comprova sua origem em uma
+observação posterior. O vínculo por consentimento é política do DriveSync.
+
+
+## Edições locais sem substituição de identidade
+
+Com uploads habilitados, uma edição binária no mesmo inode e caminho de B pode
+ser enviada automaticamente se a revisão, nome e pai remotos continuam iguais
+a B. Exigir candidato único sem aliases, conteúdo local diferente, inventário
+completo e as revalidações/ETag do executor. Persistir intenção automática antes
+de preservar L/R; usar o mesmo ID remoto. Não selecionar substituições, ausência,
+movimentos, tipos especiais ou versão remota diferente. Preferências de conflito
+só se aplicam quando ambos os lados mudaram. O teste de salvamentos repetidos
+exercita duas atualizações e confirmação de B usando filesystem/SQLite reais e
+provedor simulado; não comprova execução real do coordenador Google.

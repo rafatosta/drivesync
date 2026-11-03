@@ -1,4 +1,4 @@
-//! Same-parent rename candidates; classification is revalidated before execution.
+//! Verified same-path edits and same-parent renames; execution revalidates both.
 use super::ResolutionChoice;
 use crate::{
     local::{Evidence, Inventory},
@@ -28,7 +28,7 @@ pub(crate) fn candidate(
         local_path,
     } = &entry.action
     else {
-        return None;
+        return content_candidate(item, entry, base, local);
     };
     if !matches!(
         decision.kind,
@@ -92,6 +92,41 @@ pub(crate) fn candidate(
         target,
         fingerprint,
         choice,
+    })
+}
+
+/// Uploads a verified edit of the same inode only when the remote revision and
+/// both locations still equal B. The facade still gates uploads and revalidates
+/// current metadata, local bytes and conditional server authority before effects.
+fn content_candidate(
+    item: &InventoryEntry,
+    entry: &PlanEntry,
+    base: &ConfirmedBase,
+    local: &Inventory,
+) -> Option<Candidate> {
+    let location = base.location.as_ref()?;
+    let path = entry.relative_path.as_ref()?;
+    let LocalObservation::Verified(fingerprint) = local.observe(path) else {
+        return None;
+    };
+    let (hash, dev, ino) = crate::planner::fingerprint_parts(&fingerprint)?;
+    let (old_hash, old_dev, old_ino) = crate::planner::fingerprint_parts(&base.local_fingerprint)?;
+    if entry.action != PlanAction::Blocked(crate::ConflictReason::LocalChanged)
+        || item.kind != InventoryKind::Binary || item.id != entry.remote_id
+        || item.version != Some(base.remote_version) || base.remote_version == 0
+        || entry.expected_remote_version != item.version
+        || entry.expected_local != LocalObservation::Verified(fingerprint.clone())
+        || path != &location.relative_path
+        || item.name != location.remote_name || item.parent_id != location.remote_parent
+        || path.file_name()?.to_str()? != item.name
+        || (dev, ino) != (old_dev, old_ino) || hash.eq_ignore_ascii_case(old_hash)
+        || local.entries.values().filter(|e| matches!(e, Evidence::Stable {stamp, ..} if (stamp.device, stamp.inode) == (dev, ino))).count() != 1
+    { return None; }
+    Some(Candidate {
+        origin: path.clone(),
+        target: path.clone(),
+        fingerprint,
+        choice: ResolutionChoice::KeepLocal,
     })
 }
 

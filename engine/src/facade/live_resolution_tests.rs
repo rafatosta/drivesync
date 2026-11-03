@@ -285,3 +285,264 @@ fn real_resolution_choices_use_the_production_adapter() {
         json!({"step":"passed","case_selection":selection,"personal_files_modified":false,"installed_flatpak_validated":false}),
     );
 }
+
+/// Runs against generated files only; the configured profile supplies credentials
+/// but its association, user files and synchronization state are never changed.
+#[test]
+#[ignore = "explicit opt-in; creates fresh disposable real Drive editor-save fixtures"]
+fn real_editor_replacement_choices_and_repeated_saves() {
+    assert_eq!(
+        std::env::var("DRIVESYNC_REAL_RESOLUTION_TEST").as_deref(),
+        Ok("1")
+    );
+    let selected_case =
+        std::env::var("DRIVESYNC_REAL_EDITOR_CASE").unwrap_or_else(|_| "all".into());
+    assert!(matches!(
+        selected_case.as_str(),
+        "all" | "local" | "remote" | "both"
+    ));
+    let rounds = std::env::var("DRIVESYNC_REAL_EDITOR_ROUNDS")
+        .map(|v| v.parse::<usize>().expect("round count"))
+        .unwrap_or(2);
+    assert!((1..=2).contains(&rounds));
+    let output_path = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_REAL_RESOLUTION_EVIDENCE")
+            .expect("new private evidence directory"),
+    );
+    assert!(output_path.is_absolute());
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&output_path)
+        .unwrap();
+    let mut output = File::create(output_path.join("steps.jsonl")).unwrap();
+    let configured = DriveSyncEngine::new();
+    let mut accounts = configured.list_accounts().expect("configured test profile");
+    assert_eq!(accounts.len(), 1);
+    let account = accounts.remove(0);
+    let config = auth::OAuthConfig::load().unwrap();
+    let root_id = configured
+        .auth_upload_access(&config, &account.id, |token| {
+            Ok(create_root(
+                token,
+                "DriveSync editor replacement acceptance",
+            ))
+        })
+        .unwrap();
+    evidence(
+        &mut output,
+        json!({"step":"created_root","remote_root":root_id}),
+    );
+    let engine = DriveSyncEngine {
+        accounts: crate::accounts::Accounts::for_test(output_path.join("profile/accounts.json")),
+        ..DriveSyncEngine::new()
+    };
+    engine
+        .accounts
+        .record(&config.client_id, account.clone())
+        .unwrap();
+    let local = output_path.join("files");
+    fs::create_dir(&local).unwrap();
+    engine
+        .configure_folder(&account.id, &root_id, &local)
+        .unwrap();
+    let cancel = Cancellation::new();
+    for (name, choice) in [
+        ("local", crate::ResolutionChoice::KeepLocal),
+        ("remote", crate::ResolutionChoice::KeepRemote),
+        ("both", crate::ResolutionChoice::KeepBoth),
+    ] {
+        if selected_case != "all" && selected_case != name {
+            continue;
+        }
+        let filename = format!("{name}.txt");
+        let file = configured
+            .auth_upload_access(&config, &account.id, |token| {
+                Ok(create_file(token, &root_id, &filename))
+            })
+            .unwrap();
+        evidence(
+            &mut output,
+            json!({"step":"created_file","file_id":file.0,"case":name}),
+        );
+        let mut initialized = false;
+        for attempt in 0..3 {
+            let initial = engine.download_once(&account.id, &cancel, |_| {}).unwrap();
+            if initial.issues.is_empty() {
+                initialized = true;
+                break;
+            }
+            assert!(
+                initial
+                    .issues
+                    .iter()
+                    .all(|issue| issue.error == EngineError::RemoteChanged),
+                "sanitized initial download issues: {:?}",
+                initial.issues
+            );
+            evidence(
+                &mut output,
+                json!({"step":"initial_observation_changed","case":name,"attempt":attempt}),
+            );
+        }
+        assert!(
+            initialized,
+            "initial download must converge within bounded attempts"
+        );
+        for round in 0..rounds {
+            let path = local.join(&filename);
+            let _old = File::open(&path).unwrap();
+            let selected = format!("editor save {round}").into_bytes();
+            let temporary = local.join(".editor-save.tmp");
+            fs::write(&temporary, &selected).unwrap();
+            fs::rename(&temporary, &path).unwrap();
+            let remote_bytes: &[u8] = if round == 0 {
+                b"base"
+            } else {
+                b"concurrent Drive edit"
+            };
+            if round == 1 {
+                configured
+                    .auth_upload_access(&config, &account.id, |token| {
+                        external_edit(token, &file, remote_bytes);
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+            let mut inspected = None;
+            for attempt in 0..3 {
+                engine
+                    .prepare_downloads(&account.id, &cancel)
+                    .expect("fresh replacement observation");
+                let record = engine
+                    .saved_conflicts(&account.id)
+                    .unwrap()
+                    .into_iter()
+                    .find(|r| r.remote_id.as_deref() == Some(file.0.as_str()))
+                    .expect("replacement pending");
+                assert!(matches!(
+                    record.diagnosis,
+                    crate::ChangeKind::LocalIdentityChanged
+                        | crate::ChangeKind::ConcurrentIdentityChanges
+                ));
+                match engine.compare_conflict(&account.id, &record, &cancel) {
+                    Ok(comparison) => {
+                        inspected = Some((record, comparison));
+                        break;
+                    }
+                    Err(EngineError::RemoteChanged) if attempt < 2 => evidence(
+                        &mut output,
+                        json!({"step":"comparison_changed","case":name,"round":round,"attempt":attempt}),
+                    ),
+                    Err(error) => {
+                        panic!("sanitized comparison failure in {name}/{round}: {error:?}")
+                    }
+                }
+            }
+            let (record, comparison) =
+                inspected.expect("stable comparison within bounded attempts");
+            assert_eq!(
+                comparison.content,
+                crate::ComparisonContent::Available {
+                    local: selected.clone(),
+                    remote: remote_bytes.into()
+                }
+            );
+            let request = crate::ResolutionRequest::from_record(&record, choice).unwrap();
+            let report = engine
+                .resolve_conflict(&account.id, &request, &cancel)
+                .expect("live replacement resolution");
+            let expected = if choice == crate::ResolutionChoice::KeepRemote {
+                remote_bytes
+            } else {
+                &selected
+            };
+            assert_eq!(fs::read(&path).unwrap(), expected);
+            let preserved: Vec<_> = report
+                .preserved_paths
+                .iter()
+                .map(|p| fs::read(local.join(p)).unwrap())
+                .collect();
+            assert!(preserved.contains(&selected));
+            assert!(preserved.contains(&remote_bytes.to_vec()));
+            if let Some(copy) = &report.additional_path {
+                assert_eq!(fs::read(local.join(copy)).unwrap(), remote_bytes);
+            }
+            assert_eq!(
+                engine
+                    .resolve_conflict(&account.id, &request, &cancel)
+                    .unwrap(),
+                report
+            );
+            assert!(!engine
+                .saved_conflicts(&account.id)
+                .unwrap()
+                .iter()
+                .any(|r| r.remote_id.as_deref() == Some(file.0.as_str())));
+            evidence(
+                &mut output,
+                json!({"step":"verified","case":name,"round":round,"operation_id":report.operation_id,"preserved_paths":report.preserved_paths}),
+            );
+        }
+    }
+    evidence(
+        &mut output,
+        json!({"step":"passed","case_selection":selected_case,"rounds":rounds,"personal_files_modified":false,"installed_flatpak_validated":false}),
+    );
+}
+
+/// Resumes only a previously generated acceptance fixture after its test process
+/// was interrupted. The configured personal profile is never used as a target.
+#[test]
+#[ignore = "explicit opt-in; resumes accepted work in an existing generated Drive fixture"]
+fn real_editor_fixture_recovers_after_process_interruption() {
+    assert_eq!(
+        std::env::var("DRIVESYNC_REAL_RESOLUTION_TEST").as_deref(),
+        Ok("1")
+    );
+    let path = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_REAL_RESOLUTION_EVIDENCE")
+            .expect("existing acceptance fixture"),
+    );
+    assert!(path.is_absolute());
+    let events = fs::read_to_string(path.join("steps.jsonl")).unwrap();
+    let created: Value = serde_json::from_str(events.lines().next().unwrap()).unwrap();
+    assert_eq!(created["step"], "created_root");
+    let engine = DriveSyncEngine {
+        accounts: crate::accounts::Accounts::for_test(path.join("profile/accounts.json")),
+        ..DriveSyncEngine::new()
+    };
+    let accounts = engine.list_accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    let account = &accounts[0];
+    let folder = engine.saved_folder(&account.id).unwrap().unwrap();
+    assert_eq!(folder.local, path.join("files"));
+    assert_eq!(
+        Some(folder.remote.id.as_str()),
+        created["remote_root"].as_str()
+    );
+    let before = engine.saved_resolutions(&account.id).unwrap();
+    assert!(
+        !before.is_empty(),
+        "interrupted accepted intention required"
+    );
+    let reports = engine
+        .resume_resolutions(&account.id, &Cancellation::new())
+        .unwrap();
+    assert!(!reports.is_empty());
+    for report in &reports {
+        for relative in &report.preserved_paths {
+            assert!(folder.local.join(relative).is_file());
+        }
+        assert!(folder.local.join(&report.path).is_file());
+    }
+    assert!(engine.saved_resolutions(&account.id).unwrap().is_empty());
+    assert!(engine.saved_conflicts(&account.id).unwrap().is_empty());
+    let mut output = fs::OpenOptions::new()
+        .append(true)
+        .open(path.join("steps.jsonl"))
+        .unwrap();
+    evidence(
+        &mut output,
+        json!({"step":"recovered_after_process_interruption","verified_operations":reports.len(),"personal_files_modified":false,"power_loss_validated":false}),
+    );
+}

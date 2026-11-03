@@ -311,6 +311,9 @@ impl Fixture {
         }
     }
     fn begin(&self, plan: Plan) -> Intent {
+        self.begin_with_id(plan, "a".repeat(64))
+    }
+    fn begin_with_id(&self, plan: Plan, id: String) -> Intent {
         let root = Root::open(&self.root).unwrap();
         let store = Store::open(&self.db).unwrap();
         let cancel = Cancellation::new();
@@ -323,7 +326,7 @@ impl Fixture {
                 cancel: &cancel,
             },
             plan,
-            "a".repeat(64),
+            id,
         )
         .unwrap()
     }
@@ -1538,5 +1541,284 @@ fn p05_corrupt_preserved_ancestor_and_local_race_after_upload_block_confirmation
         assert_eq!(remote.effects, 1);
         assert!(fixture.bases().is_empty());
         assert_ne!(fixture.intent().stage, Stage::Confirmed);
+    }
+}
+
+/// Atomic editor saves change inode even when the path remains managed. Only
+/// exact explicit consent permits binding the replacement to the existing ID.
+#[test]
+fn editor_replacement_choices_preserve_versions_and_replay() {
+    for (choice, remote_changed) in [
+        ResolutionChoice::KeepLocal,
+        ResolutionChoice::KeepRemote,
+        ResolutionChoice::KeepBoth,
+    ]
+    .into_iter()
+    .flat_map(|choice| [false, true].map(|changed| (choice, changed)))
+    {
+        let fixture = Fixture::new(b"base");
+        let old_file = File::open(fixture.root.join("report.txt")).unwrap();
+        fs::write(fixture.root.join(".editor-save.tmp"), b"editor version 1").unwrap();
+        fs::rename(
+            fixture.root.join(".editor-save.tmp"),
+            fixture.root.join("report.txt"),
+        )
+        .unwrap();
+        let mut remote = Provider::new(b"base");
+        remote.objects.get_mut("file").unwrap().version = if remote_changed { 2 } else { 1 };
+        let root = Root::open(&fixture.root).unwrap();
+        let cancel = Cancellation::new();
+        let inventory = RemoteInventory {
+            account_id: fixture.scope.account_id.clone(),
+            root_id: "root".into(),
+            entries: vec![remote.observe("file").unwrap().item],
+        };
+        let local = crate::local::scan(&root, &cancel).unwrap();
+        let prepared = crate::changes::prepare(
+            &inventory,
+            &root,
+            &fixture.bases(),
+            &local,
+            &mut remote,
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.entries[0].action,
+            crate::PlanAction::Blocked(if remote_changed {
+                crate::ConflictReason::ConcurrentIdentityChanges
+            } else {
+                crate::ConflictReason::LocalIdentityChanged
+            })
+        );
+        let observation = crate::state::Reconciliation::new(
+            local,
+            inventory,
+            prepared,
+            fixture.bases(),
+            vec![],
+            None,
+        );
+        let scope = crate::state::CheckpointScope {
+            client: "client",
+            account: &fixture.scope.account_id,
+            remote: "root",
+            local: &fixture.root,
+        };
+        let mut history =
+            crate::state::ConflictHistory::open(&fixture.directory.join("history.sqlite3"))
+                .unwrap();
+        history
+            .record_pending(&scope, &observation, &cancel)
+            .unwrap();
+        let record = history.records(&scope).unwrap().remove(0);
+        assert_eq!(
+            record.diagnosis,
+            if remote_changed {
+                crate::ChangeKind::ConcurrentIdentityChanges
+            } else {
+                crate::ChangeKind::LocalIdentityChanged
+            }
+        );
+        assert!(ConflictPreference::KeepLocal.request(&record).is_none());
+        let request = ResolutionRequest::from_record(&record, choice).unwrap();
+        let comparison = crate::comparison::inspect(&root, &mut remote, &record, &cancel).unwrap();
+        assert_eq!(
+            comparison.content,
+            crate::ComparisonContent::Available {
+                local: b"editor version 1".to_vec(),
+                remote: b"base".to_vec()
+            }
+        );
+        drop(root);
+        let mut plan = fixture.plan(&mut remote, request.choice, "report.txt", "report.txt");
+        plan.conflict = Some(record.conflict_id.clone());
+        // Automatic reconciliation must retain the strict identity boundary.
+        let mut automatic = plan.clone();
+        automatic.conflict = None;
+        assert!(!automatic.explicit_replacement());
+        fixture.begin(plan);
+        let report = fixture.run(&mut remote).unwrap();
+        let expected = if choice == ResolutionChoice::KeepRemote {
+            b"base".as_slice()
+        } else {
+            b"editor version 1".as_slice()
+        };
+        assert_eq!(fs::read(fixture.root.join("report.txt")).unwrap(), expected);
+        assert_eq!(remote.objects["file"].bytes, expected);
+        let preserved: Vec<_> = report
+            .preserved_paths
+            .iter()
+            .map(|p| fs::read(fixture.root.join(p)).unwrap())
+            .collect();
+        assert!(preserved.contains(&b"editor version 1".to_vec()));
+        assert!(preserved.contains(&b"base".to_vec()));
+        let effects = remote.effects;
+        assert_eq!(fixture.run(&mut remote).unwrap(), report);
+        assert_eq!(remote.effects, effects);
+        history
+            .complete_resolution(&scope, &fixture.intent())
+            .unwrap();
+        assert!(history.records(&scope).unwrap().is_empty());
+        drop(old_file);
+    }
+}
+
+#[test]
+fn editor_replacement_requires_consent_and_rejects_stale_versions() {
+    for fault in ["automatic", "moved", "renamed", "local-race", "remote-race"] {
+        let fixture = Fixture::new(b"base");
+        let _old = File::open(fixture.root.join("report.txt")).unwrap();
+        fs::write(fixture.root.join(".editor-save.tmp"), b"replacement").unwrap();
+        fs::rename(
+            fixture.root.join(".editor-save.tmp"),
+            fixture.root.join("report.txt"),
+        )
+        .unwrap();
+        let mut remote = Provider::new(b"remote");
+        let mut plan = fixture.plan(
+            &mut remote,
+            ResolutionChoice::KeepLocal,
+            "report.txt",
+            "report.txt",
+        );
+        match fault {
+            "automatic" => plan.conflict = None,
+            "moved" => {
+                plan.base
+                    .as_mut()
+                    .unwrap()
+                    .location
+                    .as_mut()
+                    .unwrap()
+                    .relative_path = "other/report.txt".into()
+            }
+            "renamed" => plan.remote.item.name = "other.txt".into(),
+            _ => {}
+        }
+        if matches!(fault, "automatic" | "moved" | "renamed") {
+            let root = Root::open(&fixture.root).unwrap();
+            let store = Store::open(&fixture.db).unwrap();
+            let cancel = Cancellation::new();
+            let ctx = Context {
+                client: "client",
+                scope: &fixture.scope,
+                root: &root,
+                store: &store,
+                cancel: &cancel,
+            };
+            assert!(execution::begin(&ctx, plan, "c".repeat(64)).is_err());
+        } else {
+            fixture.begin(plan);
+            if fault == "local-race" {
+                fs::write(fixture.root.join("report.txt"), b"newer local").unwrap();
+            } else {
+                remote.objects.get_mut("file").unwrap().version += 1;
+            }
+            assert!(fixture.run(&mut remote).is_err());
+        }
+        assert_eq!(remote.effects, 0);
+        assert_eq!(remote.objects["file"].bytes, b"remote");
+        assert_eq!(
+            fs::read(fixture.root.join("report.txt")).unwrap(),
+            if fault == "local-race" {
+                b"newer local".as_slice()
+            } else {
+                b"replacement".as_slice()
+            }
+        );
+    }
+}
+
+#[test]
+fn editor_replacement_recovers_uncertain_effect_without_duplicate_update() {
+    let fixture = Fixture::new(b"base");
+    let _old = File::open(fixture.root.join("report.txt")).unwrap();
+    fs::write(fixture.root.join(".save.tmp"), b"edited").unwrap();
+    fs::rename(
+        fixture.root.join(".save.tmp"),
+        fixture.root.join("report.txt"),
+    )
+    .unwrap();
+    let mut remote = Provider::new(b"remote");
+    let plan = fixture.plan(
+        &mut remote,
+        ResolutionChoice::KeepBoth,
+        "report.txt",
+        "report.txt",
+    );
+    fixture.begin(plan);
+    remote.lose_update = true;
+    assert!(fixture.run(&mut remote).is_err());
+    assert_eq!(remote.effects, 1);
+    assert_eq!(remote.copies, 1);
+    assert!(fixture.bases().is_empty());
+    assert_eq!(fixture.run(&mut remote), Err(EngineError::UploadDeferred));
+    remote.now = 2000;
+    let report = fixture.run(&mut remote).unwrap();
+    assert_eq!((remote.effects, remote.copies), (1, 1));
+    assert_eq!(fs::read(fixture.root.join(report.path)).unwrap(), b"edited");
+    assert_eq!(fixture.intent().stage, Stage::Confirmed);
+}
+
+#[test]
+fn repeated_same_inode_edits_select_automatic_upload_only_against_unchanged_remote() {
+    let mut fixture = Fixture::new(b"edited");
+    let mut remote = Provider::new(b"base");
+    remote.objects.get_mut("file").unwrap().version = 1;
+    for (index, bytes) in [b"first save".as_slice(), b"second save".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        fs::write(fixture.root.join("report.txt"), bytes).unwrap();
+        let root = Root::open(&fixture.root).unwrap();
+        let cancel = Cancellation::new();
+        let local = crate::local::scan(&root, &cancel).unwrap();
+        let inventory = RemoteInventory {
+            account_id: fixture.scope.account_id.clone(),
+            root_id: "root".into(),
+            entries: vec![remote.observe("file").unwrap().item],
+        };
+        let prepared = crate::changes::prepare(
+            &inventory,
+            &root,
+            &fixture.bases(),
+            &local,
+            &mut remote,
+            &cancel,
+        )
+        .unwrap();
+        let selected = planning::candidate(
+            &inventory.entries[0],
+            &prepared.entries[0],
+            &fixture.base,
+            &local,
+        )
+        .expect("same-object local-only edit");
+        let mut changed = inventory.entries[0].clone();
+        changed.version = Some(changed.version.unwrap() + 1);
+        assert!(
+            planning::candidate(&changed, &prepared.entries[0], &fixture.base, &local).is_none()
+        );
+        let mut aliases = local.clone();
+        aliases.entries.insert(
+            "alias.txt".into(),
+            local.entries[std::path::Path::new("report.txt")].clone(),
+        );
+        assert!(planning::candidate(
+            &inventory.entries[0],
+            &prepared.entries[0],
+            &fixture.base,
+            &aliases
+        )
+        .is_none());
+        drop(root);
+        let mut plan = fixture.plan(&mut remote, selected.choice, "report.txt", "report.txt");
+        plan.conflict = None;
+        fixture.begin_with_id(plan, if index == 0 { "a" } else { "b" }.repeat(64));
+        let report = fixture.run(&mut remote).unwrap();
+        assert_eq!(remote.objects["file"].bytes, bytes);
+        assert_eq!(fs::read(fixture.root.join(report.path)).unwrap(), bytes);
+        fixture.base = fixture.bases().remove("file").unwrap();
     }
 }

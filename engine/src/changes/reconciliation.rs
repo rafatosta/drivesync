@@ -55,7 +55,7 @@ impl ChangeKind {
             Self::Conciliable => "The name, location or content changes are compatible under verified identity. Supported same-parent renames require uploads enabled; other combinations remain pending.",
             Self::LocationConflict => "This file has incompatible name or location changes. Review the destinations; no version was selected.",
             Self::Equivalent => "The same content was verified on this computer and Google Drive. No copy or replacement was needed.",
-            Self::LocalIdentityChanged | Self::ConcurrentIdentityChanges => "This local file was replaced. Its contents were preserved; matching names or content do not authorize adoption.",
+            Self::LocalIdentityChanged | Self::ConcurrentIdentityChanges => "The local file was replaced at its synchronized path. This can happen when an editor saves. Check current versions, then choose how to continue; no version was selected.",
             Self::ExistingLocalData => "This file already exists locally and has no confirmed synchronization history. Its contents were preserved.",
             Self::LocalMissingRemoteChanged => "The local copy is missing and Google Drive has changed since the last confirmed synchronization. The Drive version was preserved; review this item before restoring a local copy.",
             Self::LocalMissing => "No local copy was observed. This does not request deletion on Google Drive.",

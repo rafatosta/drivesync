@@ -24,6 +24,7 @@ pub struct ResolutionRequest {
 }
 impl ResolutionRequest {
     /// Requires a pending binary-file proposal with both observed identities.
+    /// Same-path replacements require explicit consent and fresh executor checks.
     /// The executor independently revalidates the record and live versions.
     pub fn from_record(
         record: &ConflictRecord,
@@ -36,6 +37,8 @@ impl ResolutionRequest {
         if !matches!(
             record.diagnosis,
             crate::ChangeKind::ConcurrentChanges
+                | crate::ChangeKind::LocalIdentityChanged
+                | crate::ChangeKind::ConcurrentIdentityChanges
                 | crate::ChangeKind::LocalChanged
                 | crate::ChangeKind::RemoteChanged
                 | crate::ChangeKind::LocationConflict
@@ -91,6 +94,28 @@ pub(crate) struct Plan {
     pub desired_name: String,
     pub copy_name: Option<String>,
     pub copy_id: Option<String>,
+}
+
+impl Plan {
+    /// Consent may bind a new local inode only at the exact confirmed path and
+    /// unchanged remote location. Automatic plans and text merges cannot adopt it.
+    pub(crate) fn explicit_replacement(&self) -> bool {
+        self.conflict.is_some()
+            && self.merge.is_none()
+            && self.choice != ResolutionChoice::MergeText
+            && self.origin == self.target
+            && self
+                .base
+                .as_ref()
+                .and_then(|b| b.location.as_ref())
+                .is_some_and(|l| {
+                    l.relative_path == self.origin
+                        && l.remote_name == self.remote.item.name
+                        && l.remote_parent == self.remote.item.parent_id
+                        && self.origin.file_name().and_then(|v| v.to_str())
+                            == Some(l.remote_name.as_str())
+                })
+    }
 }
 
 /// Ordered durable boundaries. Unknown remote effects remain Pending on retry.
@@ -182,7 +207,10 @@ impl Intent {
             && self.plan.base.as_ref().is_some_and(|base| {
                 let old = crate::planner::fingerprint_parts(&base.local_fingerprint);
                 let current = crate::planner::fingerprint_parts(&self.plan.local_fingerprint);
-                matches!((old,current),(Some((_,d,i)),Some((_,cd,ci))) if (d,i)==(cd,ci))
+                old.is_some()
+                    && current.is_some()
+                    && (matches!((old,current),(Some((_,d,i)),Some((_,cd,ci))) if (d,i)==(cd,ci))
+                        || self.plan.explicit_replacement())
                     && self
                         .plan
                         .remote

@@ -352,6 +352,70 @@ pub(super) fn continuity(
     Ok(())
 }
 
+/// Explicitly binds a replacement to the exact managed path after live proposal
+/// revalidation. This never supplies continuity to automatic reconciliation.
+fn replacement(
+    root: &crate::download::filesystem::Root,
+    inventory: &crate::RemoteInventory,
+    request: &ResolutionRequest,
+    remote: &RemoteVersion,
+    base: &crate::ConfirmedBase,
+    cancel: &Cancellation,
+) -> Result<(), EngineError> {
+    let origin = request
+        .record
+        .relative_path
+        .as_ref()
+        .ok_or(EngineError::InvalidPlan)?;
+    let fingerprint = request
+        .record
+        .local_fingerprint
+        .as_deref()
+        .ok_or(EngineError::InvalidPlan)?;
+    let location = base
+        .location
+        .as_ref()
+        .ok_or(EngineError::ObservationUnknown)?;
+    let (_, old_dev, old_ino) = crate::planner::fingerprint_parts(&base.local_fingerprint)
+        .ok_or(EngineError::ObservationUnknown)?;
+    let (_, dev, ino) =
+        crate::planner::fingerprint_parts(fingerprint).ok_or(EngineError::ObservationUnknown)?;
+    if origin != &location.relative_path
+        || origin.file_name().and_then(|v| v.to_str()) != Some(location.remote_name.as_str())
+        || remote.item.name != location.remote_name
+        || remote.item.parent_id != location.remote_parent
+        || remote.item.version.is_none_or(|v| v < base.remote_version)
+        || request.choice == ResolutionChoice::MergeText
+    {
+        return Err(EngineError::ObservationUnknown);
+    }
+    let local = crate::local::scan(root, cancel)?;
+    if local.observe(origin) != crate::LocalObservation::Verified(fingerprint.into()) {
+        return Err(EngineError::DownloadConflict);
+    }
+    // Another alias of either inode makes the intended association ambiguous.
+    if local.entries.iter().any(|(path, entry)| {
+        path != origin
+            && matches!(entry,
+        crate::local::Evidence::Stable {stamp, ..}
+        if [(dev, ino), (old_dev, old_ino)].contains(&(stamp.device, stamp.inode)))
+    }) {
+        return Err(EngineError::ObservationUnknown);
+    }
+    let projected =
+        crate::planner::plan(inventory, root.path(), |_| crate::LocalObservation::Unknown)?;
+    if projected
+        .entries
+        .iter()
+        .find(|e| e.remote_id == remote.item.id)
+        .and_then(|e| e.relative_path.as_ref())
+        != Some(origin)
+    {
+        return Err(EngineError::ObservationUnknown);
+    }
+    Ok(())
+}
+
 pub(super) fn copy_name(origin: &Path, id: &str) -> Result<String, EngineError> {
     let stem = origin
         .file_stem()
@@ -482,15 +546,23 @@ impl DriveSyncEngine {
                     .confirmed_bases(&config.client_id, id, &folder.remote.id, &folder.local)?
                     .remove(remote_id)
                     .ok_or(EngineError::ObservationUnknown)?;
-                continuity(
-                    root,
-                    &inventory,
-                    origin,
-                    &fingerprint,
-                    &remote,
-                    &base,
-                    cancel,
-                )?;
+                if matches!(
+                    request.record.diagnosis,
+                    crate::ChangeKind::LocalIdentityChanged
+                        | crate::ChangeKind::ConcurrentIdentityChanges
+                ) {
+                    replacement(root, &inventory, request, &remote, &base, cancel)?;
+                } else {
+                    continuity(
+                        root,
+                        &inventory,
+                        origin,
+                        &fingerprint,
+                        &remote,
+                        &base,
+                        cancel,
+                    )?;
+                }
                 if let Some(proof) = &request.merge {
                     let mut expected_scope = scope.clone();
                     expected_scope.entries.clear();
@@ -556,5 +628,105 @@ impl DriveSyncEngine {
                 Ok(report)
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod replacement_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_binding_checks_exact_path_projection_and_both_inode_aliases() {
+        let directory = std::env::temp_dir().join(format!(
+            "drivesync-replacement-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("note.txt");
+        std::fs::write(&path, b"base").unwrap();
+        let root = crate::download::filesystem::Root::open(&directory).unwrap();
+        let cancel = Cancellation::new();
+        let fingerprint =
+            crate::download::filesystem::fingerprint_root(&root, Path::new("note.txt"), &cancel)
+                .unwrap()
+                .unwrap();
+        let base = crate::ConfirmedBase {
+            remote_version: 1,
+            local_fingerprint: fingerprint,
+            location: Some(crate::ConfirmedLocation {
+                relative_path: "note.txt".into(),
+                remote_name: "note.txt".into(),
+                remote_parent: "root".into(),
+            }),
+        };
+        // Keep the old inode allocated to avoid inode reuse in the fixture.
+        let _old = std::fs::File::open(&path).unwrap();
+        std::fs::hard_link(&path, directory.join("old-alias.txt")).unwrap();
+        std::fs::write(directory.join(".editor.tmp"), b"edited").unwrap();
+        std::fs::rename(directory.join(".editor.tmp"), &path).unwrap();
+        let fingerprint =
+            crate::download::filesystem::fingerprint_root(&root, Path::new("note.txt"), &cancel)
+                .unwrap()
+                .unwrap();
+        let remote = RemoteVersion {
+            etag: "\"v1\"".into(),
+            item: crate::InventoryEntry {
+                id: "file".into(),
+                parent_id: "root".into(),
+                name: "note.txt".into(),
+                mime_type: "text/plain".into(),
+                version: Some(1),
+                size: Some(4),
+                md5_checksum: Some("a".repeat(32)),
+                web_view_link: None,
+                kind: crate::InventoryKind::Binary,
+            },
+        };
+        let inventory = crate::RemoteInventory {
+            account_id: AccountId("account".into()),
+            root_id: "root".into(),
+            entries: vec![remote.item.clone()],
+        };
+        let record = crate::ConflictRecord {
+            conflict_id: "a".repeat(64),
+            remote_id: Some("file".into()),
+            remote_parent_id: Some("root".into()),
+            remote_name: Some("note.txt".into()),
+            relative_path: Some("note.txt".into()),
+            diagnosis: crate::ChangeKind::LocalIdentityChanged,
+            status: crate::ConflictStatus::Pending,
+            local_size: Some(6),
+            local_modified_unix: None,
+            remote_size: Some(4),
+            local_fingerprint: Some(fingerprint.clone()),
+            remote_version: Some(1),
+            outcomes: vec![],
+        };
+        let request = ResolutionRequest::from_record(&record, ResolutionChoice::KeepBoth).unwrap();
+        assert!(continuity(
+            &root,
+            &inventory,
+            Path::new("note.txt"),
+            &fingerprint,
+            &remote,
+            &base,
+            &cancel
+        )
+        .is_err());
+        assert!(replacement(&root, &inventory, &request, &remote, &base, &cancel).is_err());
+        std::fs::remove_file(directory.join("old-alias.txt")).unwrap();
+        assert!(replacement(&root, &inventory, &request, &remote, &base, &cancel).is_ok());
+        std::fs::hard_link(&path, directory.join("new-alias.txt")).unwrap();
+        assert!(replacement(&root, &inventory, &request, &remote, &base, &cancel).is_err());
+        std::fs::remove_file(directory.join("new-alias.txt")).unwrap();
+        let mut renamed = remote.clone();
+        renamed.item.name = "renamed.txt".into();
+        assert!(replacement(&root, &inventory, &request, &renamed, &base, &cancel).is_err());
+        let mut projected = inventory.clone();
+        projected.entries[0].name = "renamed.txt".into();
+        assert!(replacement(&root, &projected, &request, &remote, &base, &cancel).is_err());
+        std::fs::write(&path, b"newer edits").unwrap();
+        assert!(replacement(&root, &inventory, &request, &remote, &base, &cancel).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
