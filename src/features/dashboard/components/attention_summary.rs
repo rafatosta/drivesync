@@ -111,7 +111,8 @@ fn card(
     row.set_margin_bottom(12);
     row.set_margin_start(12);
     row.set_margin_end(12);
-    let image = gtk::Image::from_icon_name(icon);
+    let theme = gtk::IconTheme::for_display(&button.display());
+    let image = gtk::Image::from_icon_name(review_icon(&theme, icon));
     image.set_pixel_size(28);
     image.add_css_class(class);
     row.append(&image);
@@ -137,9 +138,60 @@ fn card(
     count
 }
 
+/// GTK provides the question symbol even when a custom theme is unavailable
+/// inside Flatpak. Keep the preferred artwork when that theme can resolve it.
+fn review_icon<'a>(theme: &gtk::IconTheme, requested: &'a str) -> &'a str {
+    if theme.has_icon(requested) {
+        requested
+    } else {
+        "dialog-question-symbolic"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires an isolated GTK display"]
+    fn missing_custom_theme_keeps_review_icons_available() {
+        adw::init().unwrap();
+        let settings = gtk::Settings::default().unwrap();
+        let original = settings.gtk_icon_theme_name();
+        settings.set_gtk_icon_theme_name(Some("DriveSyncUnavailableTestTheme"));
+        let conflicts = gtk::Button::new();
+        let problems = gtk::Button::new();
+        let _summary = AttentionSummary::new(&conflicts, &problems);
+        let image = conflicts
+            .child()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Image>()
+            .unwrap();
+        let theme = gtk::IconTheme::for_display(&conflicts.display());
+        assert!(!theme.has_icon("document-properties-symbolic"));
+        assert_eq!(
+            image.icon_name().as_deref(),
+            Some("dialog-question-symbolic")
+        );
+        assert!(theme.has_icon(&image.icon_name().unwrap()));
+        settings.set_gtk_icon_theme_name(Some("Adwaita"));
+        let standard_conflicts = gtk::Button::new();
+        let _standard = AttentionSummary::new(&standard_conflicts, &gtk::Button::new());
+        let standard_image = standard_conflicts
+            .child()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Image>()
+            .unwrap();
+        assert_eq!(
+            standard_image.icon_name().as_deref(),
+            Some("document-properties-symbolic")
+        );
+        settings.set_gtk_icon_theme_name(original.as_deref());
+    }
+
     #[test]
     #[ignore = "requires an isolated GTK display"]
     fn attention_cards_keep_independent_actions_and_counts() {
