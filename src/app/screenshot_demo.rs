@@ -208,6 +208,7 @@ fn demonstration_screenshots() {
             );
         }
         list.select_row(list.row_at_index(1).as_ref());
+        settle();
         capture(&window, &output, &format!("06-dashboard-trabalho-{width}"));
         let actions = menu(window.upcast_ref(), "Account actions").unwrap();
         actions.popup();
