@@ -55,7 +55,8 @@ pub(crate) fn inspect(
     }
     let (parent, name) = root.parent(path)?;
     let parent_id = filesystem::identity(&parent)?;
-    let mut file = filesystem::read(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
+    let mut file =
+        filesystem::read_transfer(&parent, &name)?.ok_or(EngineError::DownloadConflict)?;
     let stamp = crate::local::Stamp::read(&file)?;
     let observation = ResolutionObservation {
         relative_path: path.clone(),
@@ -120,7 +121,7 @@ pub(crate) fn inspect(
         return Err(EngineError::RemoteChanged);
     }
     root.validate_parent(path, parent_id)?;
-    if filesystem::read(&parent, &name)?
+    if filesystem::read_transfer(&parent, &name)?
         .as_ref()
         .map(crate::local::Stamp::read)
         .transpose()?

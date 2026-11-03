@@ -34,7 +34,7 @@ pub(super) fn inspect(
     name: &OsStr,
     cancel: &Cancellation,
 ) -> Result<Option<Blob>, EngineError> {
-    let Some(mut file) = filesystem::read(parent, name)? else {
+    let Some(mut file) = filesystem::read_transfer(parent, name)? else {
         return Ok(None);
     };
     let stamp = crate::local::Stamp::read(&file)?;
@@ -60,7 +60,7 @@ pub(super) fn inspect(
     }
     if size != stamp.size
         || crate::local::Stamp::read(&file)? != stamp
-        || filesystem::read(parent, name)?
+        || filesystem::read_transfer(parent, name)?
             .as_ref()
             .map(crate::local::Stamp::read)
             .transpose()?
@@ -161,7 +161,7 @@ pub(super) fn snapshot_local(
 ) -> Result<Blob, EngineError> {
     let blob = original(root, intent, cancel)?;
     let directory = parent(root, intent)?;
-    let mut file = filesystem::read(
+    let mut file = filesystem::read_transfer(
         &directory,
         intent
             .plan
@@ -213,7 +213,7 @@ pub(super) fn snapshot_file(
     )? {
         return Err(EngineError::DownloadIntegrity);
     }
-    filesystem::read(&directory, OsStr::new(&name))?.ok_or(EngineError::DownloadIntegrity)
+    filesystem::read_transfer(&directory, OsStr::new(&name))?.ok_or(EngineError::DownloadIntegrity)
 }
 
 /// Prepares immutable installation bytes before the LocalPending boundary.
@@ -465,7 +465,7 @@ pub(super) fn winner_file(
     if !matches(&directory, OsStr::new(&name), intent.winner()?, cancel)? {
         return Err(EngineError::DownloadIntegrity);
     }
-    filesystem::read(&directory, OsStr::new(&name))?.ok_or(EngineError::DownloadIntegrity)
+    filesystem::read_transfer(&directory, OsStr::new(&name))?.ok_or(EngineError::DownloadIntegrity)
 }
 
 /// Reads bounded verified preservation bytes for atomic baseline retention.

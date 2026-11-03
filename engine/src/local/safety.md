@@ -11,8 +11,8 @@ Contrato e política: [especificação](../../../docs/SOFTWARE_SPECIFICATION.md#
    tentam flock compartilhado não bloqueante: contenção vira LocalWriting.
    Somente ENOSYS/EOPNOTSUPP permitem leitura otimista, com assinatura, hash,
    identidade e cadeia de descritores revalidados. Outros erros permanecem erros.
-   Execução de decisões de conflitos continua usando a leitura estrita,
-   que retorna LocalLockUnsupported sem autorizar efeitos remotos.
+   Comparação e execução de decisões também admitem essa ausência de capacidade,
+   com o protocolo de preservação e revalidação descrito abaixo.
 4. Comparar assinatura após quiescência, calcular hash e revalidar assinatura,
    pai e raiz. Trocas ou alterações adiam; não reutilizar observação após reinício.
 5. Upload retém o descritor da origem durante os efeitos remotos, tenta flock
@@ -40,14 +40,16 @@ mesmo com journal existente; nenhuma identidade ou base é migrada ou regravada
 para satisfazer a verificação. O teste opt-in de seleção do portal verifica essa
 continuidade e a preservação das evidências.
 
-## Download sem flock de arquivo regular
+## Transferências e decisões sem flock de arquivo regular
 
 O lock de raiz e o lock privado por conta continuam exclusivos e obrigatórios.
 Leituras de transferências verificadas, observação e captura de base usam a
 política otimista. Upload de itens novos exige autorização por conta, snapshot
 privado e hashes da origem antes de enviar o bloco final. Cada bloco verifica
-a assinatura do snapshot antes do envio. Decisões de conflito continuam usando
-a leitura estrita; esta política não autoriza sobrescrita remota.
+a assinatura do snapshot antes do envio. Decisões de conflito exigem ainda o
+consentimento aplicável, snapshots verificados de ambas as versões, revalidação
+da origem e escrita remota condicional; a ausência de flock nunca autoriza uma
+escolha ou uma sobrescrita por si só.
 A instalação mantém staging exclusivo, tamanho/MD5/SHA-256, fsync e NOREPLACE.
 Revalidar staging após consultas remotas e verificar o destino instalado antes
 de confirmar Installed/Updated. Falha conserva o journal recuperável e os bytes;
@@ -95,3 +97,36 @@ Consultada em 2026-11-01:
   lock advisory vinculado ao descritor; compartilhado para leitores cooperativos.
 - [Linux flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html):
   duração por open file description e ausência de coordenação geral com fcntl.
+
+
+## Resolução e comparação pelo document portal
+
+A leitura regular tenta flock compartilhado; somente ENOSYS/EOPNOTSUPP permitem
+prosseguir com descritores sem seguir links. Contenção e demais erros continuam
+bloqueando. A comparação verifica assinatura/identidade/hash de L e consulta R
+antes/depois. Decisões persistem intenção, preservam L/R, revalidam hashes e a
+origem em cada fronteira, usam precondição remota forte e mantêm instalação
+NOREPLACE. O replay confere snapshots, arquivo deslocado e resultado antes de
+confirmar B. Locks de raiz/conta não têm fallback. Nenhuma vista direta é adotada
+e nenhuma permissão ou identidade salva é modificada.
+
+A política é a mesma usada contra escritores não cooperantes em acesso direto:
+flock é advisory, não uma transação com o editor. Se um escritor continuar no
+inode deslocado, os bytes ficam no backup e a confirmação de B é recusada quando
+a alteração é observada. Corrupção de snapshots, aliases e mudanças de raiz,
+origem ou revisão continuam erros, com evidências preservadas.
+
+Oráculos: `unsupported_file_locks_preserve_comparison_resolution_and_recovery`
+executa escolhas, propostas obsoletas, substituições, conteúdo concorrente,
+colisões, links, corrupção, rollback e replay com ENOSYS injetado somente em
+arquivos regulares. `supported_file_lock_contention_still_blocks_resolution_without_effects`
+conserva a recusa de contenção real. O ensaio opt-in
+`real_document_portal_supports_verified_conflict_decisions` exige exportação nova,
+confirma flock não suportado no backend real e executa escolhas e recuperação
+sem injeção, com remoto simulado. Esses testes não comprovam Google real nem
+acessibilidade da interface instalada.
+
+Fundamentação reconsultada em 2026-11-03: o portal 1.22.1 não implementa flock;
+[flock(2)](https://man7.org/linux/man-pages/man2/flock.2.html) descreve a cooperação
+por descritor. A autorização por intenção/snapshot/precondição é política do
+DriveSync, não capacidade fornecida por flock ou pelo portal.

@@ -196,10 +196,13 @@ impl Fixture {
         Self::with_base(local, b"base")
     }
     fn with_base(local: &[u8], base_bytes: &[u8]) -> Self {
-        let directory = std::env::temp_dir().join(format!(
-            "drivesync-resolution-{}",
-            oauth2::CsrfToken::new_random().secret()
-        ));
+        let directory = std::env::var_os("DRIVESYNC_RESOLUTION_FIXTURE_PARENT")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(format!(
+                "drivesync-resolution-{}",
+                oauth2::CsrfToken::new_random().secret()
+            ));
         let root = directory.join("root");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("report.txt"), base_bytes).unwrap();
@@ -1821,4 +1824,92 @@ fn repeated_same_inode_edits_select_automatic_upload_only_against_unchanged_remo
         assert_eq!(fs::read(fixture.root.join(report.path)).unwrap(), bytes);
         fixture.base = fixture.bases().remove("file").unwrap();
     }
+}
+
+/// Missing advisory-file-lock capability must not disable the verified snapshot
+/// protocol. Root/account exclusion, hashes, conditional writes and replay remain.
+#[test]
+fn unsupported_file_locks_preserve_comparison_resolution_and_recovery() {
+    filesystem::with_unsupported_file_locks(|| {
+        p03_all_choices_preserve_versions_confirm_b_and_replay_without_effects();
+        editor_replacement_choices_preserve_versions_and_replay();
+        editor_replacement_requires_consent_and_rejects_stale_versions();
+        editor_replacement_recovers_uncertain_effect_without_duplicate_update();
+        repeated_same_inode_edits_select_automatic_upload_only_against_unchanged_remote();
+        comparison_preserves_versions_and_pending_history_across_reopen_and_repeat();
+        comparison_rejects_offline_corrupt_media_and_concurrent_versions_without_effects();
+        comparison_bounds_content_and_rejects_stale_cancelled_and_symlink_inputs();
+        uncertain_update_recovers_after_reopen_without_duplicate_mutation();
+        stale_pre_effect_evidence_aborts_and_retains_originals_and_old_b();
+        concurrent_local_edit_after_remote_effect_is_preserved_and_never_confirms_b();
+        displaced_inode_edits_after_cutover_are_preserved_without_b_confirmation();
+        interrupted_local_publication_reopens_and_recognizes_its_exact_inode();
+        destination_collisions_and_snapshot_symlinks_never_replace_other_files();
+        cancelled_start_does_not_publish_authority_and_root_replacement_stops_replay();
+        final_baseline_failure_rolls_back_confirmation_and_replays_local_installation();
+        p05_reviewed_merge_preserves_three_versions_confirms_new_base_and_replays_once();
+        p05_corrupt_preserved_ancestor_and_local_race_after_upload_block_confirmation();
+    });
+}
+
+#[test]
+fn supported_file_lock_contention_still_blocks_resolution_without_effects() {
+    let fixture = Fixture::new(b"local");
+    let mut remote = Provider::new(b"remote");
+    let plan = fixture.plan(
+        &mut remote,
+        ResolutionChoice::KeepLocal,
+        "report.txt",
+        "report.txt",
+    );
+    fixture.begin(plan);
+    let writer = File::open(fixture.root.join("report.txt")).unwrap();
+    rustix::fs::flock(
+        &writer,
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .unwrap();
+    assert_eq!(fixture.run(&mut remote), Err(EngineError::LocalWriting));
+    assert_eq!(remote.effects, 0);
+    assert_eq!(fs::read(fixture.root.join("report.txt")).unwrap(), b"local");
+}
+
+/// Uses a fresh exported directory and the real FUSE backend with a simulated
+/// conditional remote. No Google account, personal tree or permission changes.
+#[test]
+#[ignore = "requires a fresh disposable document-portal directory export"]
+fn real_document_portal_supports_verified_conflict_decisions() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let parent = PathBuf::from(
+        std::env::var_os("DRIVESYNC_RESOLUTION_FIXTURE_PARENT")
+            .expect("explicit document portal directory"),
+    );
+    assert!(parent.is_absolute());
+    assert!(parent.starts_with("/run/flatpak/doc") || parent.starts_with("/run/user"));
+    let probe = parent.join(format!(
+        ".drivesync-capability-{}",
+        oauth2::CsrfToken::new_random().secret()
+    ));
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&probe)
+        .unwrap();
+    assert!(
+        matches!(
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockShared),
+            Err(rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP)
+        ),
+        "the test must exercise an actual unsupported flock backend"
+    );
+    drop(file);
+    fs::remove_file(probe).unwrap();
+    // Run without injected errors: every effect uses the real exported view.
+    p03_all_choices_preserve_versions_confirm_b_and_replay_without_effects();
+    editor_replacement_choices_preserve_versions_and_replay();
+    uncertain_update_recovers_after_reopen_without_duplicate_mutation();
+    comparison_rejects_offline_corrupt_media_and_concurrent_versions_without_effects();
+    displaced_inode_edits_after_cutover_are_preserved_without_b_confirmation();
 }
