@@ -58,9 +58,9 @@ fn apply_grant(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay, gran
     if !grant.background || !grant.autostart {
         window.present();
         let message = if !grant.background {
-            "Background execution was not allowed. Keep DriveSync open to synchronize."
+            "Background execution was not allowed. Keep DriveSync open to manage accounts."
         } else {
-            "Automatic startup could not be enabled. Open DriveSync manually to synchronize."
+            "Automatic startup could not be enabled. Open DriveSync manually to manage accounts."
         };
         toasts.add_toast(adw::Toast::new(message));
     } else {

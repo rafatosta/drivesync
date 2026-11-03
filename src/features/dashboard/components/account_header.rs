@@ -1,6 +1,4 @@
-//! Encapsulated account identity and operational state. The dashboard supplies
-//! snapshots and a command callback; callers never mutate the header's widgets.
-use crate::features::synchronization::automatic::{Phase, Snapshot};
+//! Encapsulated account identity and authentication status.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;
@@ -9,9 +7,6 @@ use std::sync::Arc;
 pub(in crate::features::dashboard) struct AccountHeader {
     root: gtk::Box,
     title: gtk::Label,
-    status: gtk::Label,
-    toggle: gtk::Button,
-    fallback: String,
 }
 impl AccountHeader {
     pub fn new(name: &str, initial_status: &str) -> Self {
@@ -43,28 +38,13 @@ impl AccountHeader {
         identity.append(&title);
         identity.append(&status);
         root.append(&identity);
-        let toggle = gtk::Button::from_icon_name("media-playback-start-symbolic");
-        toggle.set_widget_name("account-sync-toggle");
-        toggle.set_tooltip_text(Some("Start or resume synchronization"));
-        toggle.set_valign(gtk::Align::Center);
-        toggle.set_sensitive(false);
-        root.append(&toggle);
-        Self {
-            root,
-            title,
-            status,
-            toggle,
-            fallback: initial_status.into(),
-        }
+        Self { root, title }
     }
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
     pub fn set_menu(&self, menu: &gtk::MenuButton) {
         self.root.append(menu);
-    }
-    pub fn connect_toggle(&self, callback: impl Fn() + 'static) {
-        self.toggle.connect_clicked(move |_| callback());
     }
     /// Delegates saving to the existing description adapter, keeping identity
     /// widgets private and sidebar identity updates in the same transaction.
@@ -78,45 +58,5 @@ impl AccountHeader {
         avatar: &adw::Avatar,
     ) {
         super::description::bind(engine, saved, entry, group, &self.title, user, avatar);
-    }
-    pub fn present(&self, snapshot: &Snapshot) {
-        let status = if snapshot.phase == Phase::Unconfigured {
-            self.fallback.as_str()
-        } else {
-            super::super::presentation::status(snapshot)
-        };
-        self.status.set_label(status);
-        let (icon, tip, enabled) = match snapshot.phase {
-            Phase::Running if snapshot.pausing => {
-                ("view-refresh-symbolic", "Pausing safely…", false)
-            }
-            Phase::Running => (
-                "media-playback-pause-symbolic",
-                "Pause synchronization",
-                true,
-            ),
-            Phase::Paused => (
-                "media-playback-start-symbolic",
-                "Resume synchronization",
-                true,
-            ),
-            Phase::Unconfigured => (
-                "media-playback-start-symbolic",
-                "Choose a folder to enable synchronization",
-                false,
-            ),
-            _ => (
-                "media-playback-start-symbolic",
-                "Start or resume synchronization",
-                true,
-            ),
-        };
-        self.toggle.set_icon_name(icon);
-        self.toggle.set_tooltip_text(Some(&gettextrs::gettext(tip)));
-        self.toggle.set_sensitive(enabled);
-    }
-    #[cfg(test)]
-    pub fn status_for_test(&self) -> gtk::Label {
-        self.status.clone()
     }
 }

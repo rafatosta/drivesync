@@ -299,9 +299,6 @@ fn demonstration_screenshots() {
         );
         window.close();
     }
-    crate::features::dashboard::verify_download_progress(|window, name| {
-        capture(window, &output, name)
-    });
     app.activate_action("about", None);
     settle();
     let about = gtk::Window::list_toplevels()

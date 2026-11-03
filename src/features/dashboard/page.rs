@@ -3,7 +3,7 @@ use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveSyncEngine, RestoredAccount};
 use std::sync::Arc;
 
-/// Builds account navigation with account-scoped configuration and automatic downloads.
+/// Builds account navigation with account-scoped configuration.
 pub fn build(
     engine: Arc<DriveSyncEngine>,
     accounts: Vec<RestoredAccount>,
@@ -21,7 +21,6 @@ pub fn build_selected(
     toasts: &adw::ToastOverlay,
     selected: Option<&str>,
 ) -> adw::NavigationPage {
-    crate::features::synchronization::automatic::reconcile(engine.clone(), &accounts);
     let split = adw::NavigationSplitView::builder()
         .min_sidebar_width(280.0)
         .max_sidebar_width(440.0)
@@ -182,15 +181,4 @@ fn update_sidebar_width(split: &adw::NavigationSplitView, list: &gtk::ListBox) {
         }
     }
     split.set_max_sidebar_width(preferred.clamp(280.0, 440.0));
-}
-
-#[cfg(test)]
-pub(crate) fn verify_download_worker_failure() {
-    super::synchronization_view::verify_worker_failure();
-}
-
-#[cfg(test)]
-pub(crate) fn verify_download_progress(mut capture: impl FnMut(&adw::Window, &str)) {
-    crate::features::preferences::verify_upload_presentations(&mut capture);
-    super::synchronization_view::verify_progress_presentations(capture);
 }

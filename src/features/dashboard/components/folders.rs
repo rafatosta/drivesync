@@ -42,12 +42,9 @@ struct Widgets {
     local_button: gtk::glib::WeakRef<gtk::Button>,
     feedback: gtk::glib::WeakRef<gtk::Label>,
     warning: gtk::glib::WeakRef<gtk::Image>,
-    sync: gtk::glib::WeakRef<adw::ActionRow>,
-    status: gtk::glib::WeakRef<gtk::Label>,
     editable: bool,
     open_local: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
     open_remote: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
-    start: gtk::glib::WeakRef<gtk::Button>,
 }
 impl Widgets {
     fn refresh(&self, draft: &Selection, busy: bool) {
@@ -103,43 +100,6 @@ impl Widgets {
                 button.set_sensitive(self.editable && !busy);
             }
         }
-        if let Some(status) = self.status.upgrade() {
-            status.set_label(if busy {
-                "Saving folder configuration…"
-            } else if draft.dirty() {
-                "Folder configuration incomplete"
-            } else if draft.saved.is_some() && draft.local_available == Some(false) {
-                "Local folder unavailable"
-            } else if draft.saved.is_some() && draft.local_available.is_none() {
-                "Checking the saved local folder…"
-            } else if draft.saved.is_some() {
-                "Configuration saved"
-            } else {
-                "Configuration required"
-            });
-        }
-        if let Some(start) = self.start.upgrade() {
-            start.set_sensitive(
-                self.editable
-                    && draft.saved.is_some()
-                    && draft.local_available == Some(true)
-                    && !draft.dirty()
-                    && !busy,
-            );
-        }
-        if let Some(sync) = self.sync.upgrade() {
-            sync.set_subtitle(
-                if draft.saved.is_some()
-                    && draft.local_available == Some(true)
-                    && !draft.dirty()
-                    && !busy
-                {
-                    "Folders are configured"
-                } else {
-                    "Choose folders before synchronization"
-                },
-            );
-        }
     }
     fn message(&self, text: &str) {
         if let Some(label) = self.feedback.upgrade() {
@@ -151,7 +111,7 @@ impl Widgets {
 
 /// Owns folder editing and account-local open commands. Open commands always use
 /// the last saved pair, never an incomplete draft, and remain independent of the
-/// editor's sensitivity while a synchronization worker is running.
+/// editor's sensitivity while a folder operation is running.
 pub(in crate::features::dashboard) struct FolderSetup {
     root: gtk::Box,
     actions: gtk::gio::SimpleActionGroup,
@@ -182,9 +142,6 @@ fn remote_uri(id: &str) -> Option<String> {
 pub(in crate::features::dashboard) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
-    sync: &adw::ActionRow,
-    status: &gtk::Label,
-    start: &gtk::Button,
     host: &gtk::Widget,
 ) -> FolderSetup {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -241,12 +198,17 @@ pub(in crate::features::dashboard) fn build(
         local_button: local_button.downgrade(),
         feedback: feedback.downgrade(),
         warning: warning.downgrade(),
-        sync: sync.downgrade(),
-        status: status.downgrade(),
-        editable: crate::features::synchronization::automatic::eligible(saved),
+        editable: matches!(
+            saved.error,
+            None | Some(
+                drivesync_engine::AuthError::Network
+                    | drivesync_engine::AuthError::ProviderUnavailable
+                    | drivesync_engine::AuthError::TimedOut
+                    | drivesync_engine::AuthError::Busy
+            )
+        ),
         open_local: open_local.downgrade(),
         open_remote: open_remote.downgrade(),
-        start: start.downgrade(),
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
     for (action, remote) in [(&open_local, false), (&open_remote, true)] {
@@ -417,7 +379,6 @@ fn autosave(
         move |result| {
             match result {
                 Ok(Some(saved)) => {
-                    crate::features::synchronization::automatic::configured(saved.clone());
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
                     draft.borrow_mut().local_available = Some(true);
                     ui.message("");
@@ -463,17 +424,8 @@ mod tests {
                     local_display: path,
                 }),
             };
-            let start = gtk::Button::new();
-            let sync = adw::ActionRow::new();
-            let status = gtk::Label::new(None);
-            let setup = build(
-                Arc::new(DriveSyncEngine::new()),
-                &saved,
-                &sync,
-                &status,
-                &start,
-                sync.upcast_ref(),
-            );
+            let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let setup = build(Arc::new(DriveSyncEngine::new()), &saved, host.upcast_ref());
             let feedback = setup
                 .widget()
                 .last_child()
@@ -496,7 +448,6 @@ mod tests {
             });
             wait.run();
             assert_eq!(feedback.has_css_class("error"), !available);
-            assert_eq!(start.is_sensitive(), available);
         }
     }
     #[test]
