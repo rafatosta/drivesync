@@ -1,5 +1,13 @@
 # Especificação de Software — DriveSync
 
+> **Escopo atual:** a interface permite autenticação, gerenciamento de contas e
+> configuração de pastas; não executa sincronização, transferências, resolução
+> de conflitos ou propagação de exclusões. Requisitos de sincronização nas
+> seções seguintes descrevem intenção e contratos para revisão futura, não
+> funcionalidades disponíveis nesta interface. Código legado da engine ainda
+> está em processo de isolamento. A validação real com Google Drive e do pacote
+> Flatpak não decorre dos testes locais.
+
 ## Sumário
 
 - [1. Identificação e controle do documento](#1-identificacao-e-controle-do-documento)
