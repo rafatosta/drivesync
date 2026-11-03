@@ -20,6 +20,8 @@ use std::{
 pub(crate) enum ResolutionTask {
     Apply(Box<drivesync_engine::ResolutionRequest>),
     ResumeAccepted,
+    /// Collects fresh observations without transferring files or accepting choices.
+    Recheck,
 }
 
 type ResultReport = Result<DownloadReport, EngineError>;
@@ -243,15 +245,32 @@ impl Controller {
     ) -> bool {
         self.start_resolution(
             move |id, cancel| {
-                let reports = match task {
+                let (reports, skipped) = match task {
                     ResolutionTask::Apply(request) => engine
                         .resolve_conflict(id, &request, cancel)
-                        .map(|report| vec![report]),
-                    ResolutionTask::ResumeAccepted => engine.resume_resolutions(id, cancel),
+                        .map(|report| (vec![report], 0)),
+                    ResolutionTask::ResumeAccepted => engine
+                        .resume_resolutions(id, cancel)
+                        .map(|reports| (reports, 0)),
+                    ResolutionTask::Recheck => engine.prepare_downloads(id, cancel).map(|plan| {
+                        let pending = plan
+                            .entries
+                            .iter()
+                            .filter(|entry| {
+                                !matches!(
+                                    entry.action,
+                                    drivesync_engine::PlanAction::NoOp
+                                        | drivesync_engine::PlanAction::Equivalent
+                                )
+                            })
+                            .count();
+                        (vec![], pending)
+                    }),
                 }?;
                 let pending = engine.saved_conflicts(id);
                 let report = DownloadReport {
                     updated: reports.len(),
+                    skipped,
                     preserved_copies: reports
                         .iter()
                         .flat_map(|report| report.preserved_paths.clone())

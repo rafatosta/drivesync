@@ -1,4 +1,4 @@
-//! Native opt-in for new uploads and verified same-parent rename reconciliation.
+//! Native opt-in for uploads, verified managed edits and same-parent renames.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AuthError, Cancellation, DriveSyncEngine, EngineError, RestoredAccount};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
@@ -6,9 +6,9 @@ fn present(row: &adw::SwitchRow, group: &adw::PreferencesGroup, active: bool, gu
     guard.set(true);
     row.set_active(active);
     guard.set(false);
-    group.set_description(Some(if active {"New local files and folders can be uploaded. Verified independent rename and content changes can be combined for managed files. Simultaneous file edits follow your conflict preference; the default is to ask. Deletions are not sent."} else {"Automatic uploads are disabled. Downloads continue and explicit conflict decisions remain available. Disabling uploads does not cancel already accepted decisions."}));
+    group.set_description(Some(&gettextrs::gettext(if active {"New files and verified edits of managed files can be uploaded. Compatible renames are reconciled. Replaced files require an explicit decision. Simultaneous edits follow your conflict preference; the default is to ask. Deletions are not sent."} else {"Automatic uploads are disabled. Downloads continue and explicit conflict decisions remain available. Disabling uploads does not cancel already accepted decisions."})));
     row.set_subtitle(
-        "New items and supported renames only. Conflict preferences apply only to supported file edits; no deletions.",
+        &gettextrs::gettext("New items, verified file edits and supported renames. Replaced files require review; no deletions."),
     );
 }
 pub(super) fn build(
@@ -18,8 +18,10 @@ pub(super) fn build(
     job: crate::features::synchronization::automatic::Controller,
 ) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder()
-        .title("Upload new items and reconcile renames")
-        .subtitle("Download only until enabled")
+        .title(gettextrs::gettext(
+            "Upload local changes and reconcile renames",
+        ))
+        .subtitle(gettextrs::gettext("Download only until enabled"))
         .sensitive(false)
         .build();
     row.set_subtitle_lines(0);
@@ -174,7 +176,9 @@ pub(crate) fn verify_presentations(mut capture: impl FnMut(&adw::Window, &str)) 
             .title("Synchronization")
             .build();
         let row = adw::SwitchRow::builder()
-            .title("Upload new items and reconcile renames")
+            .title(gettextrs::gettext(
+                "Upload local changes and reconcile renames",
+            ))
             .build();
         row.set_title_lines(0);
         row.set_subtitle_lines(0);

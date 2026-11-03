@@ -31,29 +31,35 @@ pub(super) struct Item {
 pub(super) fn pending(records: &[ConflictRecord]) -> Vec<Item> {
     records.iter().filter(|r| r.status == ConflictStatus::Pending).map(|r| {
         let category = match r.diagnosis {
-            ChangeKind::ConcurrentChanges | ChangeKind::LocationConflict | ChangeKind::EditDeleteConflict => Category::Conflicts,
-            ChangeKind::MetadataUnavailable | ChangeKind::Unsupported | ChangeKind::LocalIdentityChanged | ChangeKind::ConcurrentIdentityChanges | ChangeKind::ExistingLocalData | ChangeKind::Conciliable => Category::Incompatibilities,
+            ChangeKind::ConcurrentChanges | ChangeKind::LocationConflict | ChangeKind::EditDeleteConflict | ChangeKind::LocalIdentityChanged | ChangeKind::ConcurrentIdentityChanges => Category::Conflicts,
+            ChangeKind::MetadataUnavailable | ChangeKind::Unsupported | ChangeKind::ExistingLocalData | ChangeKind::Conciliable => Category::Incompatibilities,
             _ => Category::Errors,
         };
-        let path = r.relative_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Path unavailable".into());
-        let mut details = format!("{}\nLocal version: {}\nGoogle Drive version: {}\nDates and sizes below describe saved observations, not current files.\nAccess: not checked now; loss of access does not prove deletion.\nPreservation: available originals were left in place; their current availability requires a new check.", r.diagnosis.description(), if r.local_fingerprint.is_some() { "observed" } else { "unverified" }, r.remote_version.map(|v| v.to_string()).unwrap_or_else(|| "unverified".into()));
-        let size = |value: Option<u64>| value.map(|n| format!("{n} bytes")).unwrap_or_else(|| "unavailable".into());
-        let modified = r.local_modified_unix.and_then(|seconds| adw::gtk::glib::DateTime::from_unix_utc(seconds).ok()).and_then(|date| date.format("%Y-%m-%d %H:%M:%S UTC").ok()).map(|text| text.to_string()).unwrap_or_else(|| "unavailable".into());
-        details.push_str(&format!("\nObserved local size: {}. Local modified: {modified}.\nObserved Drive size: {}. Drive modified date: unavailable.", size(r.local_size), size(r.remote_size)));
+        let path = r.relative_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| gettextrs::gettext("Path unavailable"));
+        let mut details = gettextrs::gettext(r.diagnosis.description());
+        details.push_str(&gettextrs::gettext("\nGoogle Drive version: {version}.").replace("{version}", &r.remote_version.map(|v| v.to_string()).unwrap_or_else(|| gettextrs::gettext("unavailable"))));
+        details.push_str(&gettextrs::gettext("\nDates and sizes describe saved observations, not current files. Access is not checked now; loss of access does not prove deletion. Available originals were left in place; check current versions before choosing."));
+        let size = |value: Option<u64>| value.map(|n| format!("{n} bytes")).unwrap_or_else(|| gettextrs::gettext("unavailable"));
+        let modified = r.local_modified_unix.and_then(|seconds| adw::gtk::glib::DateTime::from_unix_utc(seconds).ok()).and_then(|date| date.format("%Y-%m-%d %H:%M:%S UTC").ok()).map(|text| text.to_string()).unwrap_or_else(|| gettextrs::gettext("unavailable"));
+        details.push_str(&gettextrs::gettext("\nObserved local size: {local_size}. Local modified: {modified}.\nObserved Drive size: {remote_size}. Drive modified date: unavailable.")
+            .replace("{local_size}", &size(r.local_size)).replace("{modified}", &modified).replace("{remote_size}", &size(r.remote_size)));
+        if r.local_fingerprint.is_none() || r.remote_version.is_none() {
+            details.push_str(&gettextrs::gettext("\nOne or both versions are unverified. Check current versions before choosing."));
+        }
         for outcome in &r.outcomes {
             match outcome {
-                ConflictOutcome::ResolutionApplied {..} => details.push_str("\nAn earlier decision reached verified effects. A newer observation may still need review."),
-                ConflictOutcome::CopyPreserved { copy_path, remote_version } => details.push_str(&format!("\nVerified preservation at the time of copying: Drive version {remote_version} at {}. Current copy availability is not checked.", copy_path.display())),
-                ConflictOutcome::RetryBlocked { reason } => details.push_str(&format!("\nLast blocked attempt: {reason:?}. No resolution confirmed.")),
-                ConflictOutcome::ResolutionAborted { .. } => details.push_str("\nA previous decision was aborted because evidence changed. Compare again."),
+                ConflictOutcome::ResolutionApplied {..} => details.push_str(&gettextrs::gettext("\nAn earlier decision reached verified effects. A newer observation may still need review.")),
+                ConflictOutcome::CopyPreserved { copy_path, remote_version } => details.push_str(&gettextrs::gettext("\nVerified preservation at the time of copying: Drive version {version} at {path}. Current copy availability is not checked.").replace("{version}", &remote_version.to_string()).replace("{path}", &copy_path.display().to_string())),
+                ConflictOutcome::RetryBlocked { .. } => details.push_str(&gettextrs::gettext("\nThe last attempt was blocked. No resolution confirmed. Check current versions and retry; accepted decisions may require recovery.")),
+                ConflictOutcome::ResolutionAborted { .. } => details.push_str(&gettextrs::gettext("\nA previous decision was aborted because evidence changed. Compare again.")),
             }
         }
-        let record = ResolutionRequest::from_record(r, ResolutionChoice::KeepLocal).ok().map(|_| r.clone());
-        details.push_str(if record.is_some() {
-            "\nChoose a version below. Each decision requires confirmation and a new live check; changed evidence leaves the item pending. Decide later selects no version."
+        let record = ResolutionRequest::from_record(r, ResolutionChoice::KeepBoth).ok().map(|_| r.clone());
+        details.push_str(&gettextrs::gettext(if record.is_some() {
+            "\nChoose a version below. Confirmation checks both versions again. If either changed, check current versions and review again. Decide later keeps the item pending."
         } else {
-            "\nNext step: restore access if needed, synchronize again and compare available versions. Compatible same-parent renames require automatic uploads enabled. A version choice is unavailable without supported identity and version evidence. Decide later leaves this item pending."
-        });
+            "\nNext step: restore access if needed and use Check current versions. Version choices require verified supported files at the confirmed location. Moves, unsupported types or missing evidence remain pending."
+        }));
         Item { category, path, details, record }
     }).collect()
 }
@@ -130,6 +136,15 @@ mod tests {
         item.remote_version = Some(2);
         item.local_fingerprint = Some(format!("{}:1:2", "a".repeat(64)));
         assert_eq!(pending(&[item.clone()])[0].record, Some(item.clone()));
+        for diagnosis in [
+            ChangeKind::LocalIdentityChanged,
+            ChangeKind::ConcurrentIdentityChanges,
+        ] {
+            item.diagnosis = diagnosis;
+            let rows = pending(&[item.clone()]);
+            assert!(rows[0].record.is_some());
+            assert_eq!(rows[0].category, Category::Conflicts);
+        }
         item.diagnosis = ChangeKind::Unknown;
         assert!(pending(&[item.clone()])[0].record.is_none());
         item.diagnosis = ChangeKind::Conciliable;

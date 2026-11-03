@@ -27,6 +27,8 @@ impl Attention {
                     ChangeKind::ConcurrentChanges
                         | ChangeKind::LocationConflict
                         | ChangeKind::EditDeleteConflict
+                        | ChangeKind::LocalIdentityChanged
+                        | ChangeKind::ConcurrentIdentityChanges
                 )
             })
             .map(|e| e.relative_path.clone())
@@ -73,7 +75,11 @@ pub(crate) fn attention_text(report: &DownloadReport) -> String {
         counts.problems.try_into().unwrap_or(u32::MAX),
     )
     .replace("{count}", &counts.problems.to_string());
-    format!("{conflicts} · {problems}")
+    match (counts.conflicts, counts.problems) {
+        (0, _) => problems,
+        (_, 0) => conflicts,
+        _ => format!("{conflicts} · {problems}"),
+    }
 }
 
 /// Completion requires a successful result and finished item progress. A scheduler
@@ -194,6 +200,41 @@ mod tests {
             }
         );
     }
+    #[test]
+    fn replacement_decisions_are_conflicts_and_zero_categories_are_omitted() {
+        for kind in [
+            ChangeKind::LocalIdentityChanged,
+            ChangeKind::ConcurrentIdentityChanges,
+        ] {
+            let report = DownloadReport {
+                reconciliation: vec![ReconciliationEntry {
+                    relative_path: Some("note.txt".into()),
+                    remote_id: Some("file".into()),
+                    kind,
+                }],
+                ..Default::default()
+            };
+            assert_eq!(
+                Attention::from_report(&report),
+                Attention {
+                    conflicts: 1,
+                    problems: 0
+                }
+            );
+            let text = attention_text(&report);
+            assert!(!text.contains("0 problems"));
+        }
+        let report = DownloadReport {
+            reconciliation: vec![ReconciliationEntry {
+                relative_path: Some("note.txt".into()),
+                remote_id: Some("file".into()),
+                kind: ChangeKind::Unknown,
+            }],
+            ..Default::default()
+        };
+        assert!(!attention_text(&report).contains("0 conflicts"));
+    }
+
     #[test]
     fn a_scheduler_success_does_not_override_pending_results() {
         let mut snapshot = Snapshot {

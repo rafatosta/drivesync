@@ -284,3 +284,147 @@ msgstr "{count} precisam de atenção"
 
 msgid "{count} browser shortcuts (Docs, Sheets and Slides: browser only; no offline editing, export or conversion)"
 msgstr "{count} atalhos para o navegador (Docs, Sheets e Slides: apenas no navegador; sem edição offline, exportação ou conversão)"
+
+msgid "Decide later"
+msgstr "Decidir depois"
+
+msgid "Check current versions"
+msgstr "Verificar versões atuais"
+
+msgid "Pause safely"
+msgstr "Pausar com segurança"
+
+msgid "Loading saved observations…"
+msgstr "Carregando observações salvas…"
+
+msgid "Checking current local and Drive versions. No version will be selected."
+msgstr "Verificando as versões atuais no computador e no Drive. Nenhuma versão será escolhida."
+
+msgid "Current versions checked. Review the updated observations before choosing."
+msgstr "Versões atuais verificadas. Revise as informações atualizadas antes de escolher."
+
+msgid "Revalidating the accepted decision and preserving versions. Pause requests stop at a safe boundary; they do not undo completed effects."
+msgstr "Revalidando a decisão e preservando as versões. A pausa ocorre em um ponto seguro e não desfaz operações concluídas."
+
+msgid "No saved pending items. A version check does not transfer pending files."
+msgstr "Nenhuma pendência salva. Verificar versões não transfere arquivos pendentes."
+
+msgid "These are saved observations. Use Check current versions to refresh them. Decide later keeps unaccepted items pending."
+msgstr "Estas informações são observações salvas. Use Verificar versões atuais para atualizá-las. Decidir depois mantém o item pendente."
+
+msgid "Confirm choice"
+msgstr "Confirmar escolha"
+
+msgid "The local file was replaced at its synchronized path. This can happen when an editor saves. Check current versions, then choose how to continue; no version was selected."
+msgstr "O arquivo local foi substituído no caminho sincronizado. Isso pode acontecer ao salvar no editor. Verifique as versões atuais e escolha como continuar; nenhuma versão foi escolhida."
+
+msgid "\nDates and sizes describe saved observations, not current files. Access is not checked now; loss of access does not prove deletion. Available originals were left in place; check current versions before choosing."
+msgstr "\nDatas e tamanhos descrevem observações salvas. O acesso atual ainda precisa ser verificado; perda de acesso não comprova exclusão. Os originais disponíveis foram mantidos. Verifique as versões atuais antes de escolher."
+
+msgid "\nObserved local size: {local_size}. Local modified: {modified}.\nObserved Drive size: {remote_size}. Drive modified date: unavailable."
+msgstr "\nTamanho local observado: {local_size}. Alteração local: {modified}.\nTamanho observado no Drive: {remote_size}. Data de alteração no Drive: indisponível."
+
+msgid "\nOne or both versions are unverified. Check current versions before choosing."
+msgstr "\nUma ou ambas as versões ainda não foram verificadas. Verifique as versões atuais antes de escolher."
+
+msgid "\nAn earlier decision reached verified effects. A newer observation may still need review."
+msgstr "\nUma decisão anterior foi concluída e verificada. Uma observação mais recente pode precisar de revisão."
+
+msgid "\nVerified preservation at the time of copying: Drive version {version} at {path}. Current copy availability is not checked."
+msgstr "\nPreservação verificada ao copiar: versão {version} do Drive em {path}. A disponibilidade atual da cópia ainda precisa ser verificada."
+
+msgid "\nThe last attempt was blocked. No resolution confirmed. Check current versions and retry; accepted decisions may require recovery."
+msgstr "\nA última tentativa foi bloqueada. Nenhuma resolução foi confirmada. Verifique as versões atuais e tente novamente; decisões aceitas podem precisar de recuperação."
+
+msgid "\nA previous decision was aborted because evidence changed. Compare again."
+msgstr "\nUma decisão anterior foi interrompida porque as versões mudaram. Compare novamente."
+
+msgid "\nChoose a version below. Confirmation checks both versions again. If either changed, check current versions and review again. Decide later keeps the item pending."
+msgstr "\nEscolha uma opção abaixo. A confirmação verifica as duas versões novamente. Se alguma mudou, verifique as versões atuais e revise novamente. Decidir depois mantém o item pendente."
+
+msgid "\nNext step: restore access if needed and use Check current versions. Version choices require verified supported files at the confirmed location. Moves, unsupported types or missing evidence remain pending."
+msgstr "\nPróximo passo: restabeleça o acesso, se necessário, e use Verificar versões atuais. As escolhas exigem arquivos compatíveis e verificados no local confirmado. Movimentações, tipos incompatíveis ou informações ausentes mantêm a pendência."
+
+msgid "Verified {count} decision(s). Active files and preserved versions: {paths}"
+msgstr "{count} decisão(ões) verificada(s). Arquivos ativos e versões preservadas: {paths}"
+
+msgid "Operation not confirmed: {error}. Copies and accepted decisions are retained. Check current versions if evidence changed. Resume accepted decisions when recovery is pending."
+msgstr "Operação não confirmada: {error}. As cópias e decisões aceitas foram mantidas. Verifique as versões atuais se houve alterações. Retome as decisões aceitas se houver recuperação pendente."
+
+msgid "Saved state could not be loaded: {error}. Retry checking current versions. Existing evidence has not been cleared."
+msgstr "Não foi possível carregar as informações salvas: {error}. Tente verificar as versões atuais novamente. As informações existentes foram mantidas."
+
+msgid "The account is busy or unavailable. Wait for its current operation to stop, then retry. No new decision was dispatched."
+msgstr "A conta está ocupada ou indisponível. Aguarde a operação atual terminar e tente novamente. Nenhuma nova decisão foi enviada."
+
+msgid "Accepted decisions awaiting recovery"
+msgstr "Decisões aceitas aguardando recuperação"
+
+msgid "These choices are already saved. Paths below are planned or previously verified; current copy availability has not been checked."
+msgstr "Estas escolhas já foram salvas. Os caminhos abaixo são planejados ou foram verificados anteriormente; a disponibilidade atual das cópias ainda precisa ser verificada."
+
+msgid "Resume accepted decisions"
+msgstr "Retomar decisões aceitas"
+
+msgid "Reading and verifying observed versions…"
+msgstr "Lendo e verificando as versões observadas…"
+
+msgid "Snapshots verified. No decision was accepted. Choices still require a live revalidation."
+msgstr "Versões verificadas. Nenhuma decisão foi aceita. As escolhas serão verificadas novamente ao confirmar."
+
+msgid "Path unavailable"
+msgstr "Caminho indisponível"
+
+msgid "unavailable"
+msgstr "indisponível"
+
+msgid "Incompatibilities"
+msgstr "Incompatibilidades"
+
+msgid "Errors"
+msgstr "Erros"
+
+msgid "Both versions will be preserved under different synchronized names. The computer version keeps the original name."
+msgstr "As duas versões serão preservadas com nomes diferentes e sincronizadas. A versão do computador mantém o nome original."
+
+msgid "The computer version will replace the Drive version. Both observed versions will be preserved before replacement."
+msgstr "A versão do computador substituirá a do Drive. As duas versões observadas serão preservadas antes da substituição."
+
+msgid "Upload local changes and reconcile renames"
+msgstr "Enviar alterações locais e conciliar renomeações"
+
+msgid "New files and verified edits of managed files can be uploaded. Compatible renames are reconciled. Replaced files require an explicit decision. Simultaneous edits follow your conflict preference; the default is to ask. Deletions are not sent."
+msgstr "Novos arquivos e edições verificadas de arquivos sincronizados podem ser enviados. Renomeações compatíveis são conciliadas. Arquivos substituídos exigem uma decisão explícita. Edições simultâneas seguem sua preferência de conflitos; o padrão é perguntar. Exclusões não são enviadas."
+
+msgid "New items, verified file edits and supported renames. Replaced files require review; no deletions."
+msgstr "Novos itens, edições verificadas e renomeações compatíveis. Arquivos substituídos exigem revisão; exclusões não são enviadas."
+
+msgid "Comparison unavailable: {error}. Original versions and the pending item remain. Use Check current versions and review again."
+msgstr "Comparação indisponível: {error}. As versões originais e a pendência foram mantidas. Use Verificar versões atuais e revise novamente."
+
+msgid "\nGoogle Drive version: {version}."
+msgstr "\nVersão no Google Drive: {version}."
+
+msgid "Account: {account}"
+msgstr "Conta: {account}"
+
+msgid "Pending items"
+msgstr "Itens pendentes"
+
+msgid "Pausing at a safe boundary. Accepted effects remain saved and may require recovery."
+msgstr "Pausando em um ponto seguro. As operações aceitas foram salvas e podem precisar de recuperação."
+
+msgid "Pausing safely. This does not undo accepted effects; recovery may be required."
+msgstr "Pausando com segurança. Isso não desfaz operações aceitas; pode ser necessário retomar a recuperação."
+
+msgid "A local file or folder conflicts with this download. Existing data was preserved."
+msgstr "Um arquivo ou pasta local impede este download. Os dados existentes foram preservados."
+
+msgid "The item or its folder changed on Google Drive during verification. Run synchronization again. Existing local files were preserved."
+msgstr "O item ou sua pasta mudou no Google Drive durante a verificação. Verifique as versões atuais novamente. Os arquivos locais existentes foram preservados."
+
+msgid "Different edits were verified in the local file and the Google Drive file. Review both observed versions before choosing a version."
+msgstr "Foram verificadas edições diferentes no computador e no Google Drive. Revise as duas versões observadas antes de escolher."
+
+msgid "Local edits differ from the last confirmed synchronization. Review the pending item before replacing a version."
+msgstr "As edições locais diferem da última sincronização confirmada. Revise o item pendente antes de substituir uma versão."
