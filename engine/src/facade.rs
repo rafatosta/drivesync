@@ -1143,6 +1143,16 @@ impl DriveSyncEngine {
                     .map(|folder| roots.lock(&config.client_id, folder))
                     .transpose()
                     .map_err(|_| AuthError::AccountStorage)?;
+                if let Some(folder) = &folder {
+                    crate::state::Uploads::open(
+                        &crate::configuration::identity::uploads_path(folder, &config.client_id)
+                            .map_err(|_| AuthError::AccountStorage)?,
+                        &config.client_id,
+                        folder,
+                    )
+                    .and_then(|store| store.enable(false))
+                    .map_err(|_| AuthError::AccountStorage)?;
+                }
                 self.accounts.forget(&config.client_id, id)
             })
             .map_err(EngineError::Authentication)

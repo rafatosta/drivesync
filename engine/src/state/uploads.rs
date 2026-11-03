@@ -8,7 +8,6 @@ const SCHEMA: &str = "CREATE TABLE settings(scope TEXT PRIMARY KEY,enabled INTEG
 pub(crate) struct Uploads {
     db: Store,
     scope: String,
-    #[cfg(test)]
     local: std::path::PathBuf,
 }
 impl Uploads {
@@ -23,7 +22,6 @@ impl Uploads {
         Ok(Self {
             db: Store::open_format(path, 0x44535550, 2, SCHEMA)?,
             scope,
-            #[cfg(test)]
             local: folder.local.clone(),
         })
     }
@@ -68,7 +66,6 @@ impl Uploads {
             .map(|v| v.unwrap_or(false))
             .map_err(failed)
     }
-    #[cfg(test)]
     pub fn enable(&self, enabled: bool) -> Result<(), EngineError> {
         if enabled {
             let root = crate::download::filesystem::Root::open(&self.local)?;
