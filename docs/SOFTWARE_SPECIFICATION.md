@@ -1670,12 +1670,17 @@ independentes; transferências não significam resolução de conflitos anterior
   não decisões resolvidas nem uma nova leitura remota. Informações anteriores
   continuam acessíveis enquanto outro ciclo está em andamento; um novo resultado
   ou uma reconfiguração substitui as observações.
-- Diagnóstico detalhado, etapas da análise, progresso por arquivo, explicações
-  operacionais ficam em "Synchronization details". A recuperação do estado local
-  fica no menu de ações da conta na sidebar e no cabeçalho, preservando a
-  confirmação explícita e o retorno operacional nos detalhes.
-  Avisos de cópias preservadas e itens ignorados permanecem na área principal.
-  A revisão de mudanças em lote e as confirmações anteriores são preservadas.
+- O card concentra estado, etapas da análise, caminho em processamento e progresso.
+  A barra mede itens do ciclo; bytes, total conhecido e percentual do arquivo
+  atual aparecem separados. Caminhos usam texto literal e quebra de linha.
+- “Atividade recente” reúne os contadores do último resultado, incluindo pastas
+  criadas no Drive, recuperações, itens ignorados, pendências e atalhos de navegador
+  com suas limitações. Avisos de cópias preservadas e itens ignorados permanecem
+  na área principal. Diagnósticos aparecem quando há pendências, junto dos acessos
+  existentes à revisão; não há uma seção “Synchronization details”.
+- A recuperação do estado local fica nos menus da conta da sidebar e do cabeçalho,
+  com confirmação explícita e retorno próprio na página. A revisão de mudanças
+  em lote e as confirmações anteriores são preservadas.
 
 **Contratos de comandos:** os menus da sidebar e do cabeçalho compartilham um
 `GSimpleActionGroup` por conta, independente da seleção atual. O menu continua

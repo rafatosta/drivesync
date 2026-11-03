@@ -118,8 +118,20 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
-        let recovery =
-            super::dialogs::state_recovery::button(engine.clone(), &saved, &status, job.clone());
+        let recovery_status = gtk::Label::builder()
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .xalign(0.0)
+            .selectable(true)
+            .visible(false)
+            .build();
+        recovery_status.set_widget_name("recovery-status");
+        let recovery = super::dialogs::state_recovery::button(
+            engine.clone(),
+            &saved,
+            &recovery_status,
+            job.clone(),
+        );
         content.append(&super::synchronization_view::build_for_job(
             engine.clone(),
             &saved,
@@ -134,6 +146,7 @@ pub(super) fn populate(
             },
             job.clone(),
         ));
+        content.append(&recovery_status);
         details.add_named(&content, Some(&saved.account.id.0));
         menus.push((
             job.clone(),

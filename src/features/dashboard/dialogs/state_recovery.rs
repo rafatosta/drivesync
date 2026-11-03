@@ -14,6 +14,10 @@ pub(in crate::features::dashboard) fn button(
     let id = saved.account.id.clone();
     let status = status.downgrade();
     button.connect_clicked(move |button| {
+        if let Some(status) = status.upgrade() {
+            status.set_label("");
+            status.set_visible(true);
+        }
         job.pause();
         if job.running() {
             if let Some(status) = status.upgrade() {

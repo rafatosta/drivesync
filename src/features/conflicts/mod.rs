@@ -38,14 +38,6 @@ pub(crate) fn button_for(
 /// Loads durable pending observations off the GTK thread each time the user opens
 /// the center. Closing the window has no engine effect and never acknowledges a
 /// conflict. A failed/busy read stays an error rather than an empty success list.
-pub(crate) fn button(
-    engine: Arc<DriveSyncEngine>,
-    saved: &RestoredAccount,
-    job: crate::features::synchronization::automatic::Controller,
-) -> gtk::Button {
-    review_button(engine, saved, job, None)
-}
-
 fn review_button(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,

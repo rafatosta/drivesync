@@ -10,6 +10,7 @@ pub(crate) struct SyncProgressCard {
     icon: gtk::Image,
     title: gtk::Label,
     description: gtk::Label,
+    current_path: gtk::Label,
     percentage: gtk::Label,
     progress: gtk::ProgressBar,
 }
@@ -49,12 +50,23 @@ impl SyncProgressCard {
         header.append(&percentage);
         content.append(&header);
         content.append(&progress);
+        let current_path = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .selectable(true)
+            .visible(false)
+            .css_classes(["dim-label"])
+            .build();
+        current_path.set_widget_name("sync-current-path");
+        content.append(&current_path);
         root.append(&content);
         Self {
             root,
             icon,
             title,
             description,
+            current_path,
             percentage,
             progress: progress.clone(),
         }
@@ -155,6 +167,13 @@ impl SyncProgressCard {
                 }
             }
         }
+        let path = snapshot
+            .progress
+            .as_ref()
+            .filter(|_| matches!(snapshot.phase, Phase::Running | Phase::Paused))
+            .and_then(current_path);
+        self.current_path.set_label(path.as_deref().unwrap_or(""));
+        self.current_path.set_visible(path.is_some());
         let theme = gtk::IconTheme::for_display(&self.root.display());
         let icon = if theme.has_icon(icon) {
             icon
@@ -219,9 +238,44 @@ fn progress_detail(event: &drivesync_engine::DownloadProgress, active: bool) -> 
             DownloadStage::Uploading | DownloadStage::Downloading
         )
     }) {
-        detail.push_str(&format!(" ({})", gtk::glib::format_size(item.received)));
+        let bytes = match item.total.filter(|total| *total > 0) {
+            Some(total) => gettextrs::gettext("Current file: {received} of {total} ({percent}%)")
+                .replace("{received}", &gtk::glib::format_size(item.received))
+                .replace("{total}", &gtk::glib::format_size(total))
+                .replace(
+                    "{percent}",
+                    &format!(
+                        "{:.0}",
+                        (item.received as f64 / total as f64).clamp(0.0, 1.0) * 100.0
+                    ),
+                ),
+            None => gettextrs::gettext("Current file: {received} transferred")
+                .replace("{received}", &gtk::glib::format_size(item.received)),
+        };
+        detail.push_str(&format!("\n{bytes}"));
     }
     detail
+}
+
+/// Keeps provider-controlled paths in a plain-text, separately wrapping label.
+fn current_path(event: &drivesync_engine::DownloadProgress) -> Option<String> {
+    use drivesync_engine::PreparationProgress;
+    let path = match event.preparation.as_ref() {
+        Some(
+            PreparationProgress::Scanning { current_path, .. }
+            | PreparationProgress::PreparingUpload { current_path },
+        ) => Some(current_path.as_path()),
+        Some(_) => None,
+        None => event
+            .current
+            .as_ref()
+            .map(|item| item.relative_path.as_path()),
+    }?;
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path.to_string_lossy().into_owned())
+    }
 }
 
 fn complete(snapshot: &Snapshot) -> bool {
@@ -310,6 +364,10 @@ mod tests {
             assert!(text.contains("3 of 12 items processed"));
             assert!(!text.contains("private"));
             assert_eq!(
+                current_path(&event).as_deref(),
+                Some("private-folder/private-file.txt")
+            );
+            assert_eq!(
                 text.contains(&gtk::glib::format_size(24_600_000).to_string()),
                 matches!(stage, DownloadStage::Uploading | DownloadStage::Downloading)
             );
@@ -322,10 +380,44 @@ mod tests {
         );
         assert!(!preparing.contains("private"));
         event.current = None;
+        assert_eq!(current_path(&event), None);
         assert_eq!(
             progress_detail(&event, true),
             "Synchronization · 3 of 12 items processed"
         );
+    }
+
+    #[test]
+    fn file_totals_and_preparation_paths_keep_their_own_scope() {
+        use drivesync_engine::{DownloadItemProgress, DownloadStage, PreparationProgress};
+        let mut event = DownloadProgress {
+            preparation: None,
+            completed_items: 3,
+            total_items: 12,
+            current: Some(DownloadItemProgress {
+                relative_path: "Folder/<literal>.txt".into(),
+                stage: DownloadStage::Downloading,
+                received: 25,
+                total: Some(100),
+            }),
+        };
+        assert!(progress_detail(&event, true).contains("(25%)"));
+        assert_eq!(
+            current_path(&event).as_deref(),
+            Some("Folder/<literal>.txt")
+        );
+        event.current.as_mut().unwrap().total = None;
+        assert!(!progress_detail(&event, true).contains('%'));
+        event.current.as_mut().unwrap().total = Some(0);
+        assert!(!progress_detail(&event, true).contains('%'));
+        event.preparation = Some(PreparationProgress::Scanning {
+            files: 4,
+            folders: 2,
+            current_path: "Folder/<literal>".into(),
+        });
+        assert_eq!(current_path(&event).as_deref(), Some("Folder/<literal>"));
+        event.preparation = Some(PreparationProgress::Connecting);
+        assert_eq!(current_path(&event), None);
     }
 
     #[test]

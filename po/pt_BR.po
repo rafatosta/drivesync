@@ -260,3 +260,27 @@ msgstr "A versão local mantém o nome e a identidade originais. A versão do Dr
 
 msgid "Recover local state…"
 msgstr "Recuperar estado local…"
+
+msgid "Current file: {received} of {total} ({percent}%)"
+msgstr "Arquivo atual: {received} de {total} ({percent}%)"
+
+msgid "Current file: {received} transferred"
+msgstr "Arquivo atual: {received} transferidos"
+
+msgid "{downloaded} downloaded · {updated} updated · {uploaded} uploaded · {unchanged} unchanged"
+msgstr "{downloaded} baixados · {updated} atualizados · {uploaded} enviados · {unchanged} sem alterações"
+
+msgid "{count} folders created in Drive"
+msgstr "{count} pastas criadas no Drive"
+
+msgid "{count} recovered"
+msgstr "{count} recuperados"
+
+msgid "{count} skipped"
+msgstr "{count} ignorados"
+
+msgid "{count} need attention"
+msgstr "{count} precisam de atenção"
+
+msgid "{count} browser shortcuts (Docs, Sheets and Slides: browser only; no offline editing, export or conversion)"
+msgstr "{count} atalhos para o navegador (Docs, Sheets e Slides: apenas no navegador; sem edição offline, exportação ou conversão)"

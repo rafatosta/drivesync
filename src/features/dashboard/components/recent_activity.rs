@@ -27,10 +27,7 @@ pub(in crate::features::dashboard) fn present(container: &gtk::Box, report: &Dow
         .build();
     let summary = crate::ui::row(
         &gettextrs::gettext("Latest completed check"),
-        &format!(
-            "{} downloaded · {} updated · {} uploaded · {} unchanged",
-            report.downloaded, report.updated, report.uploaded, report.unchanged
-        ),
+        &report_summary(report),
         "document-open-recent-symbolic",
     );
     summary.set_subtitle_lines(0);
@@ -114,4 +111,73 @@ pub(in crate::features::dashboard) fn present(container: &gtk::Box, report: &Dow
         group.add(&details);
     }
     container.append(&group);
+}
+
+/// Keeps all completed-work counters together without claiming pending items succeeded.
+fn report_summary(report: &DownloadReport) -> String {
+    let mut text = gettextrs::gettext(
+        "{downloaded} downloaded · {updated} updated · {uploaded} uploaded · {unchanged} unchanged",
+    )
+    .replace("{downloaded}", &report.downloaded.to_string())
+    .replace("{updated}", &report.updated.to_string())
+    .replace("{uploaded}", &report.uploaded.to_string())
+    .replace("{unchanged}", &report.unchanged.to_string());
+    for (count, label) in [
+        (
+            report.created_remote_folders,
+            "{count} folders created in Drive",
+        ),
+        (report.recovered, "{count} recovered"),
+        (report.skipped, "{count} skipped"),
+        (report.attention().len(), "{count} need attention"),
+    ] {
+        if count > 0 {
+            text.push_str(" · ");
+            text.push_str(&gettextrs::gettext(label).replace("{count}", &count.to_string()));
+        }
+    }
+    if report.linked > 0 {
+        text.push('\n');
+        text.push_str(&gettextrs::gettext("{count} browser shortcuts (Docs, Sheets and Slides: browser only; no offline editing, export or conversion)").replace("{count}", &report.linked.to_string()));
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_keeps_extended_counts_and_browser_only_limitations() {
+        let report = DownloadReport {
+            downloaded: 2,
+            updated: 3,
+            uploaded: 4,
+            unchanged: 5,
+            created_remote_folders: 6,
+            recovered: 7,
+            linked: 8,
+            skipped: 9,
+            issues: vec![drivesync_engine::DownloadIssue {
+                relative_path: None,
+                error: drivesync_engine::EngineError::DownloadConflict,
+            }],
+            ..Default::default()
+        };
+        let text = report_summary(&report);
+        for expected in [
+            "2 downloaded",
+            "3 updated",
+            "4 uploaded",
+            "5 unchanged",
+            "6 folders created in Drive",
+            "7 recovered",
+            "8 browser shortcuts",
+            "9 skipped",
+            "1 need attention",
+            "no offline editing, export or conversion",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+    }
 }
