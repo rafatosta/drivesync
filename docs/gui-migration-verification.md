@@ -1,5 +1,9 @@
 # GUI architectural migration verification
 
+> Historical evidence for the earlier GUI migration, not validation of the
+> current account-only interface. Synchronization and conflict controls described
+> below have since been removed.
+
 Verification scope: relocation from main `72fa6bbcb5ad4b3413a5b649cd7d106521f8688a`
 on branch `refactor/gui-hybrid-architecture`. See the
 [ownership and relocation map](gui-architecture.md). This report records the

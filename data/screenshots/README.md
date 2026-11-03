@@ -1,6 +1,9 @@
 # DriveSync — telas demonstrativas
 
-Capturas dos componentes GTK/Libadwaita atuais, com dados fictícios e contas de Marina para uso pessoal, trabalho e estudos. Os endereços `example.com`, nomes de arquivos e caminhos de demonstração não representam dados reais.
+Capturas históricas com dados fictícios e contas de Marina para uso pessoal,
+trabalho e estudos. Elas não representam necessariamente a interface atual.
+Os endereços `example.com`, nomes de arquivos e caminhos de demonstração não
+representam dados reais.
 
 As imagens mostram apresentações simuladas: nenhuma autenticação, transferência ou operação no Google Drive é executada. Não são evidência de sincronização real.
 
@@ -30,7 +33,8 @@ Menus são capturados também separadamente porque o GTK os desenha em uma super
 
 ## Sincronização e transferências
 
-Estas imagens isolam os componentes reais de sincronização para mostrar seus estados e mensagens. As larguras são 720 e 360 px.
+Estas imagens mostram componentes da implementação anterior, removidos da
+interface atual. As larguras são 720 e 360 px.
 
 | Recurso / estado | Amplo | Compacto |
 | --- | --- | --- |
@@ -50,11 +54,15 @@ Estas imagens isolam os componentes reais de sincronização para mostrar seus e
 
 ## Escopo atual
 
-O upload é opcional e cria somente novos arquivos e pastas. As imagens de atenção e histórico mostram preservação de dados, sem uma tela completa de resolução de conflitos. Não há telas atuais de preferências, integração com o Nautilus ou seleção individual de subpastas. A escolha da pasta local usa o seletor do sistema, que varia conforme o desktop e não está incluído. A autorização Google ocorre no navegador; aqui é exibida a janela do DriveSync que aguarda essa autorização.
+A interface atual gerencia contas e pastas, mas não sincroniza arquivos nem
+oferece upload, resolução de conflitos ou tratamento de exclusões. A escolha da
+pasta local usa o seletor do sistema. A autorização Google ocorre no navegador.
 
 ## Gerar novamente
 
-O teste visual `demonstration_screenshots` gera novamente as capturas com dados fictícios, em tamanhos amplos e compactos. Ele é ignorado na execução normal dos testes.
+O teste visual `demonstration_screenshots` gera capturas da interface de contas
+com dados fictícios, em tamanhos amplos e compactos. Ele não regenera as imagens
+históricas de sincronização. Ele é ignorado na execução normal dos testes.
 
 Requer uma sessão gráfica acessível e o SDK `org.gnome.Sdk//50` com a extensão `org.freedesktop.Sdk.Extension.rust-stable` correspondente, instalados pelo Flathub conforme o [manifesto de desenvolvimento](../../flatpak/com.rtosta.DriveSync.Devel.yml). O comando abaixo usa o Cargo e as bibliotecas GTK4/Libadwaita do SDK; não é necessário instalar Rust/Cargo no host.
 

@@ -1,8 +1,8 @@
 # GUI architecture
 
 The GUI uses responsibility layers inside the application binary. `engine/`
-remains an independent library with no GTK/libadwaita dependency. Public engine
-contracts and application actions, signals, widget names and callbacks are unchanged.
+remains an independent library with no GTK/libadwaita dependency. The interface
+currently exposes account management and folder configuration only.
 
 ## Inventory and relocation map
 
@@ -25,16 +25,11 @@ features or a redesign.
 | `connection/` | `features/accounts/connection/` (`dialog.rs`, `controller.rs`) | Account authorization dialog and auth controller; engine facade and navigation |
 | `session.rs` | `features/accounts/session.rs` | Confirmed sign-out action; engine facade and routing |
 | `folder_picker/` | `features/accounts/folder_picker/` (`dialog.rs`, `controller.rs`) | Folder selection dialog/controller; engine facade and worker |
-| `automatic/` | `features/synchronization/automatic/` | Scheduling policy and runtime controller; engine facade, preferences, background services |
-| `sync_progress_card.rs` | `features/synchronization/components/progress_card.rs` | Typed synchronization presentation; depends on synchronization snapshots and dashboard presentation, so not a generic widget |
-| `preferences/` | `features/preferences/` (`window.rs`, models and controls) | Preferences models, window and per-account controls; engine facade and synchronization |
-| `dashboard/` | `features/dashboard/` | Dashboard page composition and account selection; accounts, preferences, synchronization |
-| `dashboard/problems/` | `features/conflicts/` | Account problem center, comparison and merge dialogs; engine facade and synchronization controller |
+| `preferences/` | `features/preferences/` (`window.rs`, models and controls) | Preferences models, window and per-account controls |
+| `dashboard/` | `features/dashboard/` | Dashboard page composition and account selection |
 | `dashboard/mod.rs` | `features/dashboard/page.rs`, reexported by `mod.rs` | Dashboard page builders and fixture entry points |
-| `dashboard/account_details.rs`, `dashboard/synchronization.rs` | `features/dashboard/account_view.rs`, `features/dashboard/synchronization_view.rs` | Account panel and job presentation; private dashboard composition |
-| `dashboard/account_actions.rs`, `account_header.rs`, `attention_summary.rs`, `description.rs`, `folders.rs`, `recent_activity.rs` | `features/dashboard/components/` (same filenames) | Account widgets, folder controls and presentation bindings |
-| `dashboard/bulk_review.rs`, `state_recovery.rs` | `features/dashboard/dialogs/` (same filenames) | Explicit review and state recovery confirmations |
-| `dashboard/problems/comparison.rs`, `text_merge.rs` | `features/conflicts/comparison_page.rs`, `text_merge_page.rs` | Version comparison and text merge navigation pages |
+| `dashboard/account_details.rs` | `features/dashboard/account_view.rs` | Account panel and private dashboard composition |
+| Account actions, header, description and folders | `features/dashboard/components/` | Account widgets and folder controls |
 
 Dashboard components and views retain private APIs bounded to the dashboard;
 feature modules expose the existing entry functions through their `mod.rs`.
@@ -48,8 +43,7 @@ is introduced: the application menu is built by `app/main_menu.rs`.
 `main` launches `app`; `app` composes `features`, `core` and `ui`. Features use the
 engine facade and shared infrastructure. `ui` holds only domain-independent GTK
 helpers. Current coordination edges are explicit: account flows call app routing,
-background services read preferences, and the progress card uses dashboard
-presentation. These pre-existing edges are retained rather than hidden behind
+background services read preferences. These edges are retained rather than hidden behind
 new traits or duplicated models. Feature controllers never move business rules
 out of the engine.
 
@@ -61,9 +55,7 @@ workspace tests, private rustdoc and doctests there. Opt-in layout fixtures need
 display and an isolated `XDG_DATA_HOME` as described in
 [`data/screenshots/README.md`](../data/screenshots/README.md).
 
-Review relocation diffs for unchanged function bodies, action names, widget names,
-labels, callbacks and engine calls. Verify dashboard selection, connection,
-folder configuration, preferences, conflict dialogs, progress and navigation with
-the existing fixtures. Passing unit tests alone does not establish real Drive
+Verify dashboard selection, connection, folder configuration, preferences and
+navigation with the existing fixtures. Passing unit tests alone does not establish real Drive
 integration or packaged application behavior. Execution evidence and outstanding
 verification limits belong in commit messages and the task verification report.
