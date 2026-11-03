@@ -6,7 +6,7 @@ Este contrato especifica o executor necessário para concluir #15 e #16. O motor
 oferece a API explícita `resolve_conflict`, com preservação, intenção durável e
 confirmação de efeitos e resumos de retomada. O coordenador seleciona candidatos
 C09/C07 de mesmo pai quando uploads estão habilitados e revalida sua continuidade.
-A central GNOME apresenta decisões explícitas, confirmação sem vencedor padrão e
+A central GNOME apresenta decisões explícitas, manter ambas selecionado inicialmente, confirmação explícita e
 retomada de intenções aceitas, usando a exclusão do coordenador por conta. O experimento de precondições abaixo permanece
 uma ferramenta separada; não é invocado pelo sincronizador.
 
@@ -239,3 +239,16 @@ Fundamentação: [GIO replace_contents](https://docs.gtk.org/gio/method.File.rep
 usa substituição por rename atômico para arquivos locais (consultado em
 2026-11-03). Isso explica a troca de inode, mas não comprova sua origem em uma
 observação posterior. O vínculo por consentimento é política do DriveSync.
+
+
+## Edições locais sem substituição de identidade
+
+Com uploads habilitados, uma edição binária no mesmo inode e caminho de B pode
+ser enviada automaticamente se a revisão, nome e pai remotos continuam iguais
+a B. Exigir candidato único sem aliases, conteúdo local diferente, inventário
+completo e as revalidações/ETag do executor. Persistir intenção automática antes
+de preservar L/R; usar o mesmo ID remoto. Não selecionar substituições, ausência,
+movimentos, tipos especiais ou versão remota diferente. Preferências de conflito
+só se aplicam quando ambos os lados mudaram. O teste de salvamentos repetidos
+exercita duas atualizações e confirmação de B usando filesystem/SQLite reais e
+provedor simulado; não comprova execução real do coordenador Google.

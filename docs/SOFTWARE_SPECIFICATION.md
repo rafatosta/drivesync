@@ -1746,3 +1746,9 @@ O reconhecimento automático de salvamentos por editor exige evidência adiciona
 além de nome, conteúdo e inode observado; permanece intenção, não garantia da
 implementação. Contrato e limites: `engine/src/conflicts/resolution-execution.md`.
 Testes simulados, Google real e homologação do pacote são evidências distintas.
+
+Com uploads habilitados, edições locais de arquivos binários gerenciados no mesmo
+inode e caminho podem atualizar o ID remoto existente automaticamente quando a
+revisão, nome e pai remotos permanecem iguais à base confirmada. Preservar as duas
+versões antes da atualização condicional. Mudanças remotas concorrentes seguem
+a preferência de conflito; substituições de inode continuam exigindo decisão.

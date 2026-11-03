@@ -311,6 +311,9 @@ impl Fixture {
         }
     }
     fn begin(&self, plan: Plan) -> Intent {
+        self.begin_with_id(plan, "a".repeat(64))
+    }
+    fn begin_with_id(&self, plan: Plan, id: String) -> Intent {
         let root = Root::open(&self.root).unwrap();
         let store = Store::open(&self.db).unwrap();
         let cancel = Cancellation::new();
@@ -323,7 +326,7 @@ impl Fixture {
                 cancel: &cancel,
             },
             plan,
-            "a".repeat(64),
+            id,
         )
         .unwrap()
     }
@@ -1756,4 +1759,66 @@ fn editor_replacement_recovers_uncertain_effect_without_duplicate_update() {
     assert_eq!((remote.effects, remote.copies), (1, 1));
     assert_eq!(fs::read(fixture.root.join(report.path)).unwrap(), b"edited");
     assert_eq!(fixture.intent().stage, Stage::Confirmed);
+}
+
+#[test]
+fn repeated_same_inode_edits_select_automatic_upload_only_against_unchanged_remote() {
+    let mut fixture = Fixture::new(b"edited");
+    let mut remote = Provider::new(b"base");
+    remote.objects.get_mut("file").unwrap().version = 1;
+    for (index, bytes) in [b"first save".as_slice(), b"second save".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        fs::write(fixture.root.join("report.txt"), bytes).unwrap();
+        let root = Root::open(&fixture.root).unwrap();
+        let cancel = Cancellation::new();
+        let local = crate::local::scan(&root, &cancel).unwrap();
+        let inventory = RemoteInventory {
+            account_id: fixture.scope.account_id.clone(),
+            root_id: "root".into(),
+            entries: vec![remote.observe("file").unwrap().item],
+        };
+        let prepared = crate::changes::prepare(
+            &inventory,
+            &root,
+            &fixture.bases(),
+            &local,
+            &mut remote,
+            &cancel,
+        )
+        .unwrap();
+        let selected = planning::candidate(
+            &inventory.entries[0],
+            &prepared.entries[0],
+            &fixture.base,
+            &local,
+        )
+        .expect("same-object local-only edit");
+        let mut changed = inventory.entries[0].clone();
+        changed.version = Some(changed.version.unwrap() + 1);
+        assert!(
+            planning::candidate(&changed, &prepared.entries[0], &fixture.base, &local).is_none()
+        );
+        let mut aliases = local.clone();
+        aliases.entries.insert(
+            "alias.txt".into(),
+            local.entries[std::path::Path::new("report.txt")].clone(),
+        );
+        assert!(planning::candidate(
+            &inventory.entries[0],
+            &prepared.entries[0],
+            &fixture.base,
+            &aliases
+        )
+        .is_none());
+        drop(root);
+        let mut plan = fixture.plan(&mut remote, selected.choice, "report.txt", "report.txt");
+        plan.conflict = None;
+        fixture.begin_with_id(plan, if index == 0 { "a" } else { "b" }.repeat(64));
+        let report = fixture.run(&mut remote).unwrap();
+        assert_eq!(remote.objects["file"].bytes, bytes);
+        assert_eq!(fs::read(fixture.root.join(report.path)).unwrap(), bytes);
+        fixture.base = fixture.bases().remove("file").unwrap();
+    }
 }
