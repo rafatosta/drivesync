@@ -524,6 +524,7 @@ pub(super) struct Controls<'a> {
     pub status: &'a gtk::Label,
     pub header: &'a super::components::account_header::AccountHeader,
     pub account_row: &'a adw::ActionRow,
+    pub recovery: Option<&'a gtk::Button>,
 }
 
 /// Observes the shared account job. Page disposal stops observation only; the
@@ -553,6 +554,7 @@ pub(super) fn build_for_job(
         status,
         header,
         account_row,
+        recovery,
     } = controls;
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let note = gtk::Label::builder()
@@ -615,8 +617,10 @@ pub(super) fn build_for_job(
     // Visible synchronization actions belong to the header and account menus.
     start.set_visible(false);
     footer.append(start);
-    let recovery =
-        super::dialogs::state_recovery::button(engine.clone(), saved, status, job.clone());
+    let recovery = recovery.cloned().unwrap_or_else(|| {
+        super::dialogs::state_recovery::button(engine.clone(), saved, status, job.clone())
+    });
+    recovery.set_visible(false);
     let weak_diagnostics = diagnostic_row.downgrade();
     recovery.connect_clicked(move |_| {
         if let Some(row) = weak_diagnostics.upgrade() {
@@ -780,6 +784,7 @@ pub(super) fn verify_worker_failure() {
             status: &status,
             header: &header,
             account_row: &account_row,
+            recovery: None,
         },
     );
     start.emit_clicked();
@@ -848,6 +853,7 @@ pub(super) fn verify_progress_presentations(mut capture: impl FnMut(&adw::Window
                 status: &status,
                 header: &header,
                 account_row: &account_row,
+                recovery: None,
             },
         );
         fn collect(

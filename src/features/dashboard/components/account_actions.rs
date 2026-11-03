@@ -130,6 +130,30 @@ impl AccountActions {
         });
         Self { group, model }
     }
+    /// Routes recovery to the existing account-owned confirmation and worker flow.
+    pub fn add_recovery(&self, button: &gtk::Button) {
+        let action = gio::SimpleAction::new("recover-state", None);
+        let weak_button = button.downgrade();
+        action.connect_activate(move |_, _| {
+            if let Some(button) = weak_button.upgrade() {
+                if button.is_sensitive() {
+                    button.emit_clicked();
+                }
+            }
+        });
+        button
+            .bind_property("sensitive", &action, "enabled")
+            .sync_create()
+            .build();
+        self.group.add_action(&action);
+        let section = gio::Menu::new();
+        section.append(
+            Some(&gettext("Recover local state…")),
+            Some("account-controls.recover-state"),
+        );
+        self.model.insert_section(3, None, &section);
+    }
+
     pub fn install(&self, widget: &impl IsA<gtk::Widget>) {
         widget.insert_action_group("account-controls", Some(&self.group));
     }

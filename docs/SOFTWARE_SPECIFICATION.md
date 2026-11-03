@@ -1671,7 +1671,9 @@ independentes; transferências não significam resolução de conflitos anterior
   continuam acessíveis enquanto outro ciclo está em andamento; um novo resultado
   ou uma reconfiguração substitui as observações.
 - Diagnóstico detalhado, etapas da análise, progresso por arquivo, explicações
-  operacionais e recuperação de estado ficam em "Synchronization details".
+  operacionais ficam em "Synchronization details". A recuperação do estado local
+  fica no menu de ações da conta na sidebar e no cabeçalho, preservando a
+  confirmação explícita e o retorno operacional nos detalhes.
   Avisos de cópias preservadas e itens ignorados permanecem na área principal.
   A revisão de mudanças em lote e as confirmações anteriores são preservadas.
 

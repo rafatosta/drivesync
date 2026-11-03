@@ -118,6 +118,8 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
+        let recovery =
+            super::dialogs::state_recovery::button(engine.clone(), &saved, &status, job.clone());
         content.append(&super::synchronization_view::build_for_job(
             engine.clone(),
             &saved,
@@ -128,6 +130,7 @@ pub(super) fn populate(
                 status: &status,
                 header: &heading,
                 account_row: &user,
+                recovery: Some(&recovery),
             },
             job.clone(),
         ));
@@ -139,6 +142,7 @@ pub(super) fn populate(
             user,
             content,
             sign_out,
+            recovery,
             saved.account.id.clone(),
         ));
         settings.push(crate::features::preferences::AccountSettings::new(
@@ -149,7 +153,7 @@ pub(super) fn populate(
         ));
     }
     let settings = crate::features::preferences::Accounts::new(settings);
-    for (job, folders, heading, user, content, sign_out, id) in menus {
+    for (job, folders, heading, user, content, sign_out, recovery, id) in menus {
         let context = settings.clone();
         let weak_content = content.downgrade();
         let actions = super::components::account_actions::AccountActions::new(
@@ -171,6 +175,7 @@ pub(super) fn populate(
                 }
             },
         );
+        actions.add_recovery(&recovery);
         actions.install(&user);
         actions.install(&content);
         let sidebar_menu = actions.menu();

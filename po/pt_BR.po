@@ -257,3 +257,6 @@ msgstr "A versão observada no Drive será usada no computador. A versão local 
 
 msgid "The local version stays at the original file name and Drive ID. The observed Drive version becomes another synchronized file named with ‘DriveSync remote conflict’ and a unique operation ID. Both observed versions are also preserved locally."
 msgstr "A versão local mantém o nome e a identidade originais. A versão do Drive vira outro arquivo sincronizado, com “DriveSync remote conflict” e um identificador único no nome. Ambas também são preservadas no computador."
+
+msgid "Recover local state…"
+msgstr "Recuperar estado local…"
