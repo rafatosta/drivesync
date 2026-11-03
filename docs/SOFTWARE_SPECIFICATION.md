@@ -1268,7 +1268,10 @@ compartilhado nas observações e downloads; somente ENOSYS/EOPNOTSUPP permitem
 seguir com verificação otimista de assinatura, identidade e hashes. Contenção
 continua adiando o item. Upload de itens novos admite a mesma ausência de flock somente com snapshot
 privado, hashes e revalidação de origem por bloco e antes da confirmação.
-Execução de decisões de conflitos continua exigindo lock suportado.
+Comparação e resolução admitem a mesma ausência de capacidade, com revalidação
+por assinatura/identidade/hash, preservação verificada de L/R, escrita remota
+condicional e instalação sem sobrescrita. Locks exclusivos de raiz e conta
+continuam obrigatórios; outros erros não recebem fallback.
 Lock exclusivo concorrente adia o item, sem espera bloqueante ou perda de dados.
 Leitores com locks compartilhados são compatíveis. A proteção é cooperativa:
 flock não coordena locks POSIX fcntl nem escritores que ignoram locks; manter

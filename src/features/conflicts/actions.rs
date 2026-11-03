@@ -82,19 +82,21 @@ pub(super) fn open(
                         issue
                             .relative_path
                             .map(|p| p.display().to_string())
-                            .unwrap_or_else(|| "Account".into()),
-                        issue.error
+                            .unwrap_or_else(|| gettextrs::gettext("Account")),
+                        gettextrs::gettext(issue.error.to_string())
                     )
                 })
                 .collect::<Vec<_>>(),
-            Err(error) => vec![error.to_string()],
+            Err(error) => vec![gettextrs::gettext(error.to_string())],
         };
         if !errors.is_empty() {
             let label = gtk::Label::builder()
-                .label(format!(
-                    "Errors from the latest cycle (saved observations may be older):\n{}",
-                    errors.join("\n")
-                ))
+                .label(
+                    gettextrs::gettext(
+                        "Errors from the latest cycle (saved observations may be older):\n{errors}",
+                    )
+                    .replace("{errors}", &errors.join("\n")),
+                )
                 .wrap(true)
                 .selectable(true)
                 .xalign(0.0)
@@ -298,7 +300,7 @@ impl Center {
                 center.refresh.set_sensitive(true);
                 center.list.set_sensitive(true);
                 match result {
-                Err(error)=>center.status.set_label(&gettextrs::gettext("Saved state could not be loaded: {error}. Retry checking current versions. Existing evidence has not been cleared.").replace("{error}", &gettextrs::gettext(error.to_string()))),
+                Err(error)=>center.status.set_label(&gettextrs::gettext("Saved state could not be loaded: {error}. Retry checking current versions. Existing evidence has not been cleared.").replace("{error}", gettextrs::gettext(error.to_string()).trim_end_matches('.'))),
                 Ok((records,progress))=>{
                     while let Some(child)=center.list.first_child(){center.list.remove(&child)}
                     let items=models::pending(&records).into_iter().filter(|item| center.kind.is_none_or(|kind| kind.includes(item.category))).collect::<Vec<_>>();
@@ -342,7 +344,7 @@ impl Center {
                     .replace("{count}", &reports.len().to_string())
                     .replace("{paths}", &reports.iter().flat_map(|report| std::iter::once(&report.path).chain(report.additional_path.iter()).chain(report.preserved_paths.iter())).map(|p| p.display().to_string()).collect::<Vec<_>>().join("; ")),
                 Err(error) => gettextrs::gettext("Operation not confirmed: {error}. Copies and accepted decisions are retained. Check current versions if evidence changed. Resume accepted decisions when recovery is pending.")
-                    .replace("{error}", &gettextrs::gettext(error.to_string())),
+                    .replace("{error}", gettextrs::gettext(error.to_string()).trim_end_matches('.')),
             };
             center.navigation.pop_to_page(&center.root_page);
             center.load(Some(notice));
@@ -412,7 +414,7 @@ pub(super) fn add_choices(row: &gtk::Box, center: &Rc<Center>, record: &Conflict
                         center.push("Compare observed versions", &content);
                     }
                 }
-                Err(error) => center.status.set_label(&gettextrs::gettext("Comparison unavailable: {error}. Original versions and the pending item remain. Use Check current versions and review again.").replace("{error}", &gettextrs::gettext(error.to_string()))),
+                Err(error) => center.status.set_label(&gettextrs::gettext("Comparison unavailable: {error}. Original versions and the pending item remain. Use Check current versions and review again.").replace("{error}", gettextrs::gettext(error.to_string()).trim_end_matches('.'))),
             }
         });
     });

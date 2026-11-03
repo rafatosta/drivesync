@@ -209,7 +209,8 @@ pub(crate) fn lock_regular(file: &File) -> Result<(), EngineError> {
 /// unsupported. Contention and all other failures still defer the operation.
 /// Callers must verify stamps/hashes and install without replacing destinations.
 /// Upload callers must additionally verify a private snapshot and source before
-/// publication. Conflict execution keeps using `lock_regular`/`read`.
+/// publication. Conflict execution additionally preserves both versions, checks
+/// each snapshot and uses conditional remote writes and no-clobber installation.
 pub(crate) fn lock_transfer(file: &File) -> Result<(), EngineError> {
     match lock_regular(file) {
         Err(EngineError::LocalLockUnsupported) => regular(file),
@@ -245,12 +246,6 @@ fn lock_error(error: rustix::io::Errno) -> EngineError {
         }
         _ => io(error),
     }
-}
-
-/// Opens single-link regular files only; NONBLOCK prevents FIFO blocking.
-/// The shared advisory lock is retained by the returned descriptor.
-pub(crate) fn read(parent: &File, name: &OsStr) -> Result<Option<File>, EngineError> {
-    read_with(parent, name, lock_regular)
 }
 
 /// Opens a verified transfer observation without requiring a regular-file flock
@@ -341,7 +336,7 @@ mod capacity_tests {
             std::fs::write(base.join("file"), b"preserve").unwrap();
             let parent = File::open(&base).unwrap();
             assert!(matches!(
-                read(&parent, OsStr::new("file")),
+                read_with(&parent, OsStr::new("file"), lock_regular),
                 Err(EngineError::LocalLockUnsupported)
             ));
             assert!(read_transfer(&parent, OsStr::new("file"))

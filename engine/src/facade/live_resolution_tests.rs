@@ -340,11 +340,40 @@ fn real_editor_replacement_choices_and_repeated_saves() {
         .accounts
         .record(&config.client_id, account.clone())
         .unwrap();
-    let local = output_path.join("files");
+    let portal_root =
+        std::env::var_os("DRIVESYNC_REAL_RESOLUTION_PORTAL_ROOT").map(std::path::PathBuf::from);
+    let local = portal_root
+        .clone()
+        .unwrap_or_else(|| output_path.join("files"));
+    if portal_root.is_some() {
+        assert!(
+            local.starts_with("/run/flatpak/doc"),
+            "explicit fresh portal root required"
+        );
+    }
     fs::create_dir(&local).unwrap();
-    engine
+    let folder = engine
         .configure_folder(&account.id, &root_id, &local)
         .unwrap();
+    if portal_root.is_some() {
+        assert_eq!(
+            folder.local, local,
+            "the test must retain the portal view instead of direct access"
+        );
+        let probe = local.join(".flock-capability-probe");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .unwrap();
+        assert!(matches!(
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockShared),
+            Err(rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP)
+        ));
+        drop(file);
+        fs::remove_file(probe).unwrap();
+    }
     let cancel = Cancellation::new();
     for (name, choice) in [
         ("local", crate::ResolutionChoice::KeepLocal),
@@ -486,7 +515,7 @@ fn real_editor_replacement_choices_and_repeated_saves() {
     }
     evidence(
         &mut output,
-        json!({"step":"passed","case_selection":selected_case,"rounds":rounds,"personal_files_modified":false,"installed_flatpak_validated":false}),
+        json!({"step":"passed","case_selection":selected_case,"rounds":rounds,"portal_view":portal_root.is_some(),"personal_files_modified":false,"installed_flatpak_validated":false}),
     );
 }
 
@@ -515,7 +544,10 @@ fn real_editor_fixture_recovers_after_process_interruption() {
     assert_eq!(accounts.len(), 1);
     let account = &accounts[0];
     let folder = engine.saved_folder(&account.id).unwrap().unwrap();
-    assert_eq!(folder.local, path.join("files"));
+    let expected_local = std::env::var_os("DRIVESYNC_REAL_RESOLUTION_PORTAL_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| path.join("files"));
+    assert_eq!(folder.local, expected_local);
     assert_eq!(
         Some(folder.remote.id.as_str()),
         created["remote_root"].as_str()
