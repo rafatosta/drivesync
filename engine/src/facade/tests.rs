@@ -1,12 +1,6 @@
 //! Account restoration and folder configuration tests.
 use super::*;
 
-#[test]
-fn engine_status_is_explicit() {
-    let engine = DriveSyncEngine::new();
-    assert_eq!(engine.status(), EngineStatus::NotConfigured);
-}
-
 const CLIENT: &str = "test.apps.googleusercontent.com";
 struct Directory(std::path::PathBuf);
 impl Directory {

@@ -273,12 +273,10 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     fs::create_dir(&local).unwrap();
     fs::write(local.join("user-file.txt"), "keep my files").unwrap();
     let folder = configured("a", local.clone());
-    accounts.configure(CLIENT, folder.clone()).unwrap();
-    let marker_path = local.join(".drivesync/identity.json");
-    assert!(marker_path.is_file());
-    let marker_before_sign_out = fs::read(&marker_path).unwrap();
+    fs::create_dir(local.join(".drivesync")).unwrap();
     let portable_state = local.join(".drivesync/state.sqlite3");
     fs::write(&portable_state, b"preserved existing state").unwrap();
+    accounts.configure(CLIENT, folder.clone()).unwrap();
     let path = accounts.path.as_ref().unwrap();
     accounts
         .forget(CLIENT, &AccountId::from_subject("a"))
@@ -303,19 +301,17 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
         fs::read_to_string(local.join("user-file.txt")).unwrap(),
         "keep my files"
     );
-    assert_eq!(fs::read(&marker_path).unwrap(), marker_before_sign_out);
     assert_eq!(
         fs::read(&portable_state).unwrap(),
         b"preserved existing state"
     );
-    crate::configuration::identity::ensure(&folder, CLIENT).unwrap();
     assert!(!fs::read_to_string(path)
         .unwrap()
         .contains("forgotten@example.com"));
 }
 
 #[test]
-fn configured_root_cannot_be_reinitialized_after_volume_or_marker_loss() {
+fn configuring_folders_does_not_create_or_modify_old_metadata() {
     let dir = Directory::new();
     let accounts = dir.accounts();
     accounts
@@ -325,69 +321,21 @@ fn configured_root_cannot_be_reinitialized_after_volume_or_marker_loss() {
     fs::create_dir(&local).unwrap();
     let folder = configured("a", local.clone());
     accounts.configure(CLIENT, folder.clone()).unwrap();
-    let marker = fs::read(local.join(".drivesync/identity.json")).unwrap();
-    let parked = dir.0.join("parked");
-    fs::rename(&local, &parked).unwrap();
-    fs::create_dir(&local).unwrap();
-    assert!(matches!(
-        accounts.configure(CLIENT, folder.clone()),
-        Err(EngineError::RootSuspended(
-            crate::RootSuspension::IdentityUnverified
-        ))
-    ));
-    assert_eq!(fs::read_dir(&local).unwrap().count(), 0);
-    fs::remove_dir(&local).unwrap();
-    fs::rename(&parked, &local).unwrap();
+    assert!(!local.join(".drivesync").exists());
+    assert!(!dir.0.join("private/roots.sqlite3").exists());
+    fs::create_dir(local.join(".drivesync")).unwrap();
+    let evidence = local.join(".drivesync/identity.json");
+    fs::write(&evidence, b"old evidence").unwrap();
+    let old_registry = dir.0.join("private/roots.sqlite3");
+    fs::write(&old_registry, b"old registry").unwrap();
     accounts.configure(CLIENT, folder.clone()).unwrap();
-    assert_eq!(
-        fs::read(local.join(".drivesync/identity.json")).unwrap(),
-        marker
-    );
-    fs::remove_file(local.join(".drivesync/identity.json")).unwrap();
-    assert!(accounts.configure(CLIENT, folder).is_err());
-    assert!(!local.join(".drivesync/identity.json").exists());
+    assert_eq!(fs::read(evidence).unwrap(), b"old evidence");
+    assert_eq!(fs::read(old_registry).unwrap(), b"old registry");
+    assert_eq!(accounts.folders(CLIENT).unwrap(), vec![folder]);
 }
 
 #[test]
-fn missing_external_binding_does_not_recreate_a_saved_pairs_missing_marker() {
-    let dir = Directory::new();
-    let accounts = dir.accounts();
-    accounts
-        .record(CLIENT, profile("a", "a@example.com"))
-        .unwrap();
-    let local = dir.0.join("volume");
-    fs::create_dir(&local).unwrap();
-    let folder = configured("a", local.clone());
-    accounts.configure(CLIENT, folder.clone()).unwrap();
-    let marker = local.join(".drivesync/identity.json");
-    let original = fs::read(&marker).unwrap();
-    let registry = accounts
-        .path
-        .as_ref()
-        .unwrap()
-        .with_file_name("roots.sqlite3");
-    fs::remove_file(&registry).unwrap();
-    // Explicit reselection can recover the external binding from existing identity.
-    accounts.configure(CLIENT, folder.clone()).unwrap();
-    assert_eq!(fs::read(&marker).unwrap(), original);
-    fs::remove_file(&registry).unwrap();
-    fs::remove_file(&marker).unwrap();
-    let profiles = fs::read(accounts.path.as_ref().unwrap()).unwrap();
-    for _ in 0..2 {
-        assert_eq!(
-            accounts.configure(CLIENT, folder.clone()),
-            Err(EngineError::RootSuspended(
-                crate::RootSuspension::IdentityUnverified
-            ))
-        );
-        assert!(!marker.exists());
-        assert_eq!(fs::read(accounts.path.as_ref().unwrap()).unwrap(), profiles);
-        assert_eq!(fs::read_dir(local.join(".drivesync")).unwrap().count(), 0);
-    }
-}
-
-#[test]
-fn n07_active_scope_refuses_reconfiguration_and_retry_persists_after_restart() {
+fn reconfiguration_persists_after_restart_without_changing_user_files() {
     let dir = Directory::new();
     let accounts = dir.accounts();
     accounts
@@ -400,19 +348,12 @@ fn n07_active_scope_refuses_reconfiguration_and_retry_persists_after_restart() {
     fs::write(old.join("keep"), b"original").unwrap();
     let original = configured("a", old.clone());
     accounts.configure(CLIENT, original.clone()).unwrap();
-    let roots = accounts.roots().unwrap();
-    let active = roots.lock(CLIENT, &original).unwrap();
     let mut changed = configured("a", new.clone());
     changed.remote.id = "different-remote".into();
     let independent = dir.accounts();
-    assert_eq!(
-        independent.configure(CLIENT, changed.clone()),
-        Err(EngineError::SyncBusy)
-    );
     assert_eq!(independent.folders(CLIENT).unwrap(), vec![original.clone()]);
     assert!(!new.join(".drivesync").exists());
     assert_eq!(fs::read(old.join("keep")).unwrap(), b"original");
-    drop(active);
     independent.configure(CLIENT, changed.clone()).unwrap();
     drop(independent);
     let reopened = dir.accounts();

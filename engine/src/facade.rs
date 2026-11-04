@@ -1,7 +1,7 @@
 //! Public boundary for authorization, accounts and folder configuration.
 use crate::{
     accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError, Cancellation,
-    EngineError, EngineStatus, FolderConfiguration, FolderPage, RestoredAccount,
+    EngineError, FolderConfiguration, FolderPage, RestoredAccount,
 };
 
 /// Coordinates account and folder operations without exposing credentials.
@@ -17,11 +17,6 @@ impl DriveSyncEngine {
     /// Constructs the engine using the platform's default adapters.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Returns the reserved coarse configuration placeholder.
-    pub fn status(&self) -> EngineStatus {
-        EngineStatus::NotConfigured
     }
 
     /// Starts OAuth authorization and records the verified account.
@@ -212,7 +207,7 @@ impl DriveSyncEngine {
 
     /// Validates and saves a remote folder and writable local directory.
     ///
-    /// Remote metadata, portal origins, root identity and overlap with other
+    /// Remote metadata, portal origins and overlap with other
     /// accounts are checked before the association is persisted.
     ///
     /// # Errors
@@ -242,39 +237,13 @@ impl DriveSyncEngine {
 
     /// Removes account credentials and app metadata without deleting user files.
     ///
-    /// Old upload consent is revoked while other synchronization evidence is
-    /// retained; no synchronization is performed.
-    ///
     /// # Errors
     ///
     /// Returns configuration, credential-vault, locking or account-storage errors.
     pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         self.auth
-            .sign_out_with(
-                &config,
-                id,
-                || {
-                    let roots = self
-                        .accounts
-                        .roots()
-                        .map_err(|_| AuthError::AccountStorage)?;
-                    let lock = roots
-                        .lock_account(&config.client_id, id)
-                        .map_err(|_| AuthError::AccountStorage)?;
-                    let folder = self
-                        .accounts
-                        .folders(&config.client_id)?
-                        .into_iter()
-                        .find(|folder| &folder.account_id == id);
-                    if let Some(folder) = &folder {
-                        crate::state::revoke_upload_consent(&config.client_id, folder)
-                            .map_err(|_| AuthError::AccountStorage)?;
-                    }
-                    Ok(lock)
-                },
-                |_lock| self.accounts.forget(&config.client_id, id),
-            )
+            .sign_out_then(&config, id, || self.accounts.forget(&config.client_id, id))
             .map_err(EngineError::Authentication)
     }
 }

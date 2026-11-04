@@ -724,32 +724,6 @@ fn logout_reports_profile_cleanup_failure_after_removing_credentials_and_allows_
 }
 
 #[test]
-fn logout_preparation_failure_preserves_credentials_and_profile() {
-    let (provider, store, _) = provider();
-    let account = provider
-        .complete(&config(), tokens("a"), &Cancellation::new())
-        .unwrap();
-    let forgotten = AtomicBool::new(false);
-    assert_eq!(
-        provider.sign_out_with(
-            &config(),
-            &account.id,
-            || Err::<(), _>(AuthError::AccountStorage),
-            |_| {
-                forgotten.store(true, Ordering::SeqCst);
-                Ok(())
-            },
-        ),
-        Err(AuthError::AccountStorage)
-    );
-    assert!(store
-        .load(&config().client_id, &account.id)
-        .unwrap()
-        .is_some());
-    assert!(!forgotten.load(Ordering::SeqCst));
-}
-
-#[test]
 fn initial_authorization_requests_full_drive_access() {
     let challenge =
         PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new("a".repeat(64)));

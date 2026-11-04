@@ -5,9 +5,7 @@
 //! transfer files, start synchronization or perform Google authentication.
 //!
 //! - [`models`]: persisted remote/local configuration data and remote IDs.
-//! - [`identity`]: the portable marker retained in each selected local root.
 //! - [`paths`]: local access checks, host-origin resolution and overlap tests.
-pub(crate) mod identity;
 mod models;
 mod paths;
 

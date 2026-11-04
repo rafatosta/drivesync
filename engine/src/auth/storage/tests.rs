@@ -274,7 +274,6 @@ fn isolated_vault_roundtrip() {
         access_token: "synthetic-access".into(),
         refresh_token: "synthetic-refresh".into(),
         expires_at: 1000,
-        write_access: true,
     };
     vault.save(client, &id, &credential).unwrap();
     for step in 0..500 {

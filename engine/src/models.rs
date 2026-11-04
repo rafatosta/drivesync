@@ -1,14 +1,9 @@
-//! Public account identity, configuration and status models.
+//! Public account identity and configuration models.
 //!
 //! Models describe metadata and capabilities, not independently verified
 //! credentials or a running synchronization.
 use crate::{AuthError, FolderConfiguration};
 
-/// Current high-level engine configuration status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EngineStatus {
-    NotConfigured,
-}
 /// Stable Google account identity derived from the provider subject.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct AccountId(pub String);
@@ -31,10 +26,6 @@ pub struct AccountSummary {
     /// Verified email, when provided by the identity provider.
     pub email: Option<String>,
 }
-/// Identifier reserved for future synchronization roots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SyncRootId(pub u64);
-
 /// A saved identity plus the result of verifying it during this startup.
 /// `error == None` is the only authenticated outcome; failures retain the profile.
 #[derive(Debug, Clone)]
