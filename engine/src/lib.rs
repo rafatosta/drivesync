@@ -16,8 +16,8 @@ pub use configuration::{DriveFolder, FolderConfiguration};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{
-    reconcile_local_inventories, InvalidLocalInventory, LocalEntry, LocalInventory, LocalMetadata,
-    LocalObject, LocalObservation,
+    hash_local_regular_file, reconcile_local_inventories, HashedLocalFile, InvalidLocalInventory,
+    LocalEntry, LocalHashError, LocalInventory, LocalMetadata, LocalObject, LocalObservation,
 };
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;

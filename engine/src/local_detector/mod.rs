@@ -1,9 +1,14 @@
 //! Local inventory observations and conservative change reconciliation.
 //!
-//! This module does not read the filesystem, start a watcher, or persist state.
-//! Callers must provide complete inventories established by a trusted scanner.
+//! The hashing helper reads an already-open file. No scanner, watcher, or
+//! persistent journal is provided yet; callers must establish complete
+//! inventories independently.
 
 use std::collections::BTreeMap;
+
+mod hashing;
+
+pub use hashing::{hash_local_regular_file, HashedLocalFile, LocalHashError};
 
 /// Metadata used to distinguish observed filesystem object versions.
 ///

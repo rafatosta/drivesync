@@ -79,9 +79,12 @@ ela é agendada a cada 15 minutos, além das verificações motivadas por
 notificações. O agendamento não garante conclusão em 15 minutos quando uma
 varredura é demorada ou falha. Limites de trabalho e política de consumo de
 recursos ainda precisam ser definidos e testados.
-A comparação pura entre inventários estruturalmente válidos já existe, mas
-não verifica a completude de uma varredura, não observa o filesystem e não
-persiste eventos.
+A comparação pura entre inventários estruturalmente válidos e o cálculo
+limitado de hash de um arquivo regular já aberto existem isoladamente. O
+cálculo compara metadados antes e depois da leitura, sem garantir um snapshot
+nem verificar se o caminho ainda identifica o arquivo; essas garantias
+permanecem sob responsabilidade do futuro varredor. Não há varredura,
+monitoramento ou persistência implementados.
 
 Pseudocódigo de alto nível:
 
