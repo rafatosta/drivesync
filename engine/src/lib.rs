@@ -16,8 +16,8 @@ pub use configuration::{DriveFolder, FolderConfiguration};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{
-    LocalActivity, LocalBatch, LocalCoverageGap, LocalNotice, LocalScope, LocalWatchError,
-    LocalWatchOptions, LocalWatchState, LocalWatcher,
+    LocalActivity, LocalBatch, LocalCoverageGap, LocalItemKind, LocalNotice, LocalScope,
+    LocalWatchError, LocalWatchOptions, LocalWatchState, LocalWatcher,
 };
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;

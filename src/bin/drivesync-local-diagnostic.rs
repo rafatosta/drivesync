@@ -107,7 +107,7 @@ fn notice_json(notice: &LocalNotice) -> Value {
         LocalActivity::Moved { from } => ("moved", Some(path_json(from)), None),
         LocalActivity::Recheck(reason) => ("recheck", None, Some(reason)),
     };
-    json!({"path": path_json(&notice.path), "is_directory": notice.is_directory,
+    json!({"path": path_json(&notice.path), "object_type": notice.object_type,
         "kind": kind, "from": from, "reason": reason})
 }
 fn batch_json(batch: &LocalBatch) -> Value {
@@ -175,6 +175,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use drivesync_engine::LocalItemKind;
     #[test]
     fn parses_labels_limits_and_rejects_ambiguous_arguments() {
         let base = [
@@ -202,7 +203,7 @@ mod tests {
         let path = PathBuf::from(OsString::from_vec(vec![0xff, b'\n']));
         let notice = LocalNotice {
             path: path.clone(),
-            is_directory: None,
+            object_type: LocalItemKind::Unknown,
             activity: LocalActivity::Moved { from: path },
         };
         let value = notice_json(&notice);

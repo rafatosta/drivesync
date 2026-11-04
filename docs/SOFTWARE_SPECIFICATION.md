@@ -93,7 +93,7 @@ conferência explícita. Árvore por identidade, download, investigação de con
 e execução remota pertencem a etapas posteriores. O observador e o diagnóstico
 independente estão implementados, com fila limitada em memória e falhas de
 cobertura explícitas. O dashboard inicia observadores por conta e exibe um
-histórico temporário de nomes, limitado a 200 registros. Troca de pasta reinicia
+histórico temporário com nome, tipo e atividade observada, limitado a 200 registros. Troca de pasta reinicia
 a sessão; descarte da página e encerramento cancelam a observação. O portal/FUSE
 não possui cobertura estabelecida e produz estado incompleto; iniciar a
 observação não comprova entrega de eventos do host.

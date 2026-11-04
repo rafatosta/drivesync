@@ -17,7 +17,11 @@ criação, remoção, escrita, fechamento após abertura para escrita, metadados
 entrada, saída, movimento correlacionado e necessidade de conferência.
 Movimentos são correlacionados pelo cookie do kernel durante uma janela limitada;
 origem e destino são caminhos históricos, não identidade persistente.
-Arquivos não diretórios têm tipo desconhecido: podem ser links ou especiais.
+O tipo distingue pasta, arquivo regular, link, especial e desconhecido.
+Pastas usam a indicação do kernel; outros tipos usam descritores `O_PATH`
+somente para metadados, sem seguir links ou atravessar montagens. Remoções e
+saídas sem metadados preservados têm tipo desconhecido.
+Essas pistas não comprovam continuidade de identidade sob substituição.
 Renomear e mover usam a mesma operação; nenhum deles exige leitura de conteúdo.
 
 Fila em memória, limitada, em ordem de processamento. `poll` coleta um lote
@@ -106,10 +110,12 @@ a sessão correspondente e limpa o histórico; descartar a página ou encerrar o
 aplicativo cancela seus workers. A fila entre worker e interface é limitada;
 backpressure não descarta lotes silenciosamente.
 
-O histórico temporário exibe somente o nome de cada item afetado, em ordem
+O histórico temporário exibe o nome, tipo observado e atividade de cada item, em ordem
 mais recente primeiro, sem afirmar qual operação definitiva ocorreu. Avisos
 repetidos podem gerar nomes repetidos. Limite de 200 linhas por conta; itens
 mais antigos são retirados, com indicação de que são apenas os mais recentes.
+Tipos desconhecidos são apresentados como itens, sem inventar classificação.
+Escritas e fechamentos não são apresentados como confirmação de salvamento.
 Caminhos completos, timestamps e conteúdo não aparecem nas linhas. Uma mudança
 de pasta reinicia esse feedback para não misturar raízes. Cobertura incompleta,
 falha e ausência de configuração ficam visíveis fora da lista. Não persistir

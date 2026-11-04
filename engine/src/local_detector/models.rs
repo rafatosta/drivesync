@@ -154,12 +154,24 @@ pub enum LocalActivity {
     Recheck(LocalCoverageGap),
 }
 
+/// A type hint from the kernel or a no-follow metadata lookup, not durable identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum LocalItemKind {
+    Directory,
+    File,
+    Symlink,
+    Special,
+    /// Metadata was unavailable, for example after removal or leaving the scope.
+    Unknown,
+}
+
 /// Activity at a relative historical path. Empty path denotes the root.
-/// Non-directory subjects have unknown type and must not be opened blindly.
+/// Type lookup never reads content or follows symlinks. Concurrent replacement
+/// can invalidate a path/type hint; consumers must still investigate identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalNotice {
     pub path: PathBuf,
-    pub is_directory: Option<bool>,
+    pub object_type: LocalItemKind,
     pub activity: LocalActivity,
 }
 

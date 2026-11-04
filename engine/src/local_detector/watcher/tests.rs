@@ -102,7 +102,7 @@ fn create_write_close_metadata_remove_are_activity_hints() {
     assert!(events
         .iter()
         .filter(|e| e.path == Path::new("file"))
-        .all(|e| e.is_directory.is_none()));
+        .all(|e| e.object_type == LocalItemKind::File));
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     collect(&mut w, |e| has(e, "file", &LocalActivity::MetadataChanged));
     fs::remove_file(&path).unwrap();
@@ -135,7 +135,9 @@ fn nested_directory_move_rebases_descendant_watches() {
     let events = collect(&mut w, |e| {
         has(e, "a/b", &LocalActivity::Moved { from: "b".into() })
     });
-    assert!(events.iter().any(|e| e.is_directory == Some(true)));
+    assert!(events
+        .iter()
+        .any(|e| e.object_type == LocalItemKind::Directory));
     fs::write(tree.0.join("a/b/child/file"), b"x").unwrap();
     collect(&mut w, |e| {
         has(e, "a/b/child/file", &LocalActivity::Written)
@@ -558,7 +560,7 @@ fn non_directory_rechecks_do_not_claim_a_directory_type() {
     w.poll();
     w.gap("unknown".into(), LocalCoverageGap::PathChanged);
     let events = w.poll().notices;
-    assert_eq!(events[0].is_directory, None);
+    assert_eq!(events[0].object_type, LocalItemKind::Unknown);
 }
 
 #[test]
@@ -578,7 +580,7 @@ fn event_source_failure_stops_instead_of_silently_polling() {
 }
 
 #[test]
-fn fifo_and_socket_entries_are_not_opened_or_treated_as_regular_files() {
+fn fifo_and_socket_entries_are_only_queried_as_special_metadata() {
     let tree = Tree::new();
     let mut w = tree.watcher();
     w.poll();
@@ -590,6 +592,50 @@ fn fifo_and_socket_entries_are_not_opened_or_treated_as_regular_files() {
     assert!(events
         .iter()
         .filter(|n| n.path == Path::new("fifo") || n.path == Path::new("socket"))
-        .all(|n| n.is_directory.is_none()));
+        .all(|n| n.object_type == LocalItemKind::Special));
     assert_eq!(w.watches.len(), 1);
+}
+
+#[test]
+fn type_hints_distinguish_regular_files_directories_and_links_without_following() {
+    let tree = Tree::new();
+    let mut w = tree.watcher();
+    w.poll();
+    fs::write(tree.0.join("file"), b"preserved").unwrap();
+    fs::create_dir(tree.0.join("folder")).unwrap();
+    symlink("/does-not-exist-drivesync-type-test", tree.0.join("link")).unwrap();
+    let events = collect(&mut w, |e| {
+        has(e, "file", &LocalActivity::Created)
+            && has(e, "folder", &LocalActivity::Created)
+            && has(e, "link", &LocalActivity::Created)
+    });
+    for (name, kind) in [
+        ("file", LocalItemKind::File),
+        ("folder", LocalItemKind::Directory),
+        ("link", LocalItemKind::Symlink),
+    ] {
+        assert!(events.iter().any(|e| e.path == Path::new(name)
+            && e.activity == LocalActivity::Created
+            && e.object_type == kind));
+    }
+    assert_eq!(fs::read(tree.0.join("file")).unwrap(), b"preserved");
+}
+
+#[test]
+fn removed_file_type_is_not_inferred_from_a_replacement_directory() {
+    let tree = Tree::new();
+    fs::write(tree.0.join("replaced"), b"x").unwrap();
+    let mut w = tree.watcher();
+    w.poll();
+    fs::remove_file(tree.0.join("replaced")).unwrap();
+    fs::create_dir(tree.0.join("replaced")).unwrap();
+    let events = collect(&mut w, |e| {
+        has(e, "replaced", &LocalActivity::Removed) && has(e, "replaced", &LocalActivity::Created)
+    });
+    assert!(events.iter().any(|e| e.path == Path::new("replaced")
+        && e.activity == LocalActivity::Removed
+        && e.object_type == LocalItemKind::Unknown));
+    assert!(events.iter().any(|e| e.path == Path::new("replaced")
+        && e.activity == LocalActivity::Created
+        && e.object_type == LocalItemKind::Directory));
 }

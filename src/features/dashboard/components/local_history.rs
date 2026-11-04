@@ -2,7 +2,8 @@
 use crate::core::local_observation::{Observation, Update};
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
-    AccountId, DriveSyncEngine, LocalActivity, LocalBatch, LocalCoverageGap, LocalWatchState,
+    AccountId, DriveSyncEngine, LocalActivity, LocalBatch, LocalCoverageGap, LocalItemKind,
+    LocalNotice, LocalWatchState,
 };
 use gettextrs::gettext;
 use std::{
@@ -172,38 +173,70 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     } else {
         status.remove_css_class("warning");
     }
-    let names: Vec<_> = batch
+    let notices: Vec<_> = batch
         .notices
         .iter()
-        .filter(|n| !matches!(n.activity, LocalActivity::Recheck(_)))
-        .filter_map(|n| n.path.file_name())
+        .filter(|n| {
+            !matches!(n.activity, LocalActivity::Recheck(_)) && n.path.file_name().is_some()
+        })
         .collect();
-    for name in names
+    for notice in notices
         .iter()
-        .skip(names.len().saturating_sub(LIMIT as usize))
+        .skip(notices.len().saturating_sub(LIMIT as usize))
     {
-        // GTK receives plain text; replacement keeps control characters off rows.
+        let Some(name) = notice.path.file_name() else {
+            continue;
+        };
+        // Both title and subtitle are plain text. Never interpret file names as markup.
         let text: String = name
             .to_string_lossy()
             .chars()
             .map(|c| if c.is_control() { '\u{fffd}' } else { c })
             .collect();
-        let label = gtk::Label::builder()
-            .label(&text)
-            .xalign(0.0)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(8)
-            .margin_bottom(8)
+        let (kind, icon) = match notice.object_type {
+            LocalItemKind::Directory => (gettext("Folder"), "folder-symbolic"),
+            LocalItemKind::File => (gettext("File"), "text-x-generic-symbolic"),
+            LocalItemKind::Symlink => (gettext("Link"), "emblem-symbolic-link-symbolic"),
+            LocalItemKind::Special => (gettext("Special item"), "text-x-generic-symbolic"),
+            LocalItemKind::Unknown => (gettext("Item"), "dialog-question-symbolic"),
+        };
+        let detail = format!("{} · {}", kind, activity_label(notice));
+        let row = adw::ActionRow::builder()
+            .title(&text)
+            .subtitle(&detail)
+            .use_markup(false)
             .build();
-        label.set_tooltip_text(Some(&text));
-        list.prepend(&label);
+        row.set_title_lines(1);
+        row.set_subtitle_lines(2);
+        row.set_tooltip_text(Some(&text));
+        row.add_prefix(&gtk::Image::from_icon_name(icon));
+        list.prepend(&row);
         if let Some(oldest) = list.row_at_index(LIMIT) {
             list.remove(&oldest);
         }
     }
     empty.set_visible(list.first_child().is_none());
+}
+
+/// Classifies the observed path transition, without claiming content or identity.
+fn activity_label(notice: &LocalNotice) -> String {
+    match &notice.activity {
+        LocalActivity::Created => gettext("Created"),
+        LocalActivity::Removed => gettext("Removed"),
+        LocalActivity::Written => gettext("Write detected"),
+        LocalActivity::ClosedAfterWrite => gettext("Closed after opening for writing"),
+        LocalActivity::MetadataChanged => gettext("Properties changed"),
+        LocalActivity::MovedIn => gettext("Entered the observed folder"),
+        LocalActivity::MovedOut => gettext("Left the observed folder"),
+        LocalActivity::Moved { from } if from.parent() == notice.path.parent() => {
+            gettext("Renamed")
+        }
+        LocalActivity::Moved { from } if from.file_name() == notice.path.file_name() => {
+            gettext("Moved")
+        }
+        LocalActivity::Moved { .. } => gettext("Moved and renamed"),
+        LocalActivity::Recheck(_) => gettext("Needs review"),
+    }
 }
 
 #[cfg(test)]

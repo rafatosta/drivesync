@@ -16,7 +16,7 @@ controls for transfers, synchronization or conflict resolution. Background
 execution keeps the application available and local observers running, but does
 not synchronize files.
 
-Each account page owns a temporary local activity list (names only, newest first,
+Each account page owns a temporary local activity list (name, observed type and activity, newest first,
 200 entries). Filesystem work runs on cancellable workers; bounded channels apply
 backpressure rather than silently losing batches. Hidden pages keep observing;
 successfully saved folder changes restart only that account's session and clear

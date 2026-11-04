@@ -87,8 +87,8 @@ Em outro terminal, manipule somente a pasta de testes:
 ## Saída e interpretação
 
 Cada linha é JSON. `path.hex` e `from.hex` preservam exatamente os bytes Unix;
-`utf8` é opcional. Caminho vazio representa a raiz. `is_directory: null` significa
-que o tipo não foi determinado; não presumir arquivo regular. Os avisos são
+`utf8` é opcional. Caminho vazio representa a raiz. `object_type` distingue `Directory`, `File`, `Symlink`, `Special` e `Unknown`.
+`Unknown` significa que o tipo não pôde ser consultado; não presumir arquivo regular. Os avisos são
 pistas históricas, não comandos de sincronização ou prova de conteúdo alterado.
 
 `Observing` indica watches ativos, não inventário conferido ou sincronização.

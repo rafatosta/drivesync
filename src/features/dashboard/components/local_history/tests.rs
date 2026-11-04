@@ -1,5 +1,5 @@
 use super::*;
-use drivesync_engine::{LocalNotice, LocalScope};
+use drivesync_engine::{LocalItemKind, LocalNotice, LocalScope};
 use std::{
     path::{Path, PathBuf},
     time::Instant,
@@ -30,11 +30,9 @@ fn titles(list: &gtk::ListBox) -> Vec<String> {
     let mut index = 0;
     while let Some(row) = list.row_at_index(index) {
         result.push(
-            row.child()
+            row.downcast::<adw::ActionRow>()
                 .unwrap()
-                .downcast::<gtk::Label>()
-                .unwrap()
-                .text()
+                .title()
                 .to_string(),
         );
         index += 1;
@@ -95,9 +93,25 @@ fn history_observes_real_changes_switches_roots_and_bounds_rows() {
     wait(|| status.text() == gettextrs::gettext("Observing local changes."));
     std::fs::write(first.join("documento.txt"), b"preserved").unwrap();
     wait(|| titles(&list).iter().any(|t| t == "documento.txt"));
+    assert!(list
+        .row_at_index(0)
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap()
+        .subtitle()
+        .unwrap()
+        .starts_with(&gettext("File")));
+
     std::fs::rename(first.join("documento.txt"), first.join("renomeado.txt")).unwrap();
     wait(|| titles(&list).first().is_some_and(|t| t == "renomeado.txt"));
     assert!(!empty.is_visible());
+    let first_row = list
+        .row_at_index(0)
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap();
+    assert!(first_row.subtitle().unwrap().contains(&gettext("Renamed")));
+
     if let Some(output) = std::env::var_os("DRIVESYNC_HISTORY_SCREENSHOT") {
         wait(|| window.width() > 0 && window.is_mapped());
         let frame = gtk::glib::MainLoop::new(None, false);
@@ -132,7 +146,7 @@ fn history_observes_real_changes_switches_roots_and_bounds_rows() {
         notices: (0..205)
             .map(|i| LocalNotice {
                 path: format!("file-{i}").into(),
-                is_directory: None,
+                object_type: LocalItemKind::Unknown,
                 activity: LocalActivity::Created,
             })
             .collect(),
@@ -288,4 +302,26 @@ fn dashboard_observes_both_accounts_without_selection_or_network() {
     }
     window.set_content(None::<&gtk::Widget>);
     window.close();
+}
+
+#[test]
+fn move_labels_distinguish_name_and_parent_changes_without_content_claims() {
+    for (from, to, expected) in [
+        ("a/old", "a/new", "Renamed"),
+        ("a/name", "b/name", "Moved"),
+        ("a/old", "b/new", "Moved and renamed"),
+    ] {
+        let notice = LocalNotice {
+            path: to.into(),
+            object_type: LocalItemKind::Unknown,
+            activity: LocalActivity::Moved { from: from.into() },
+        };
+        assert_eq!(activity_label(&notice), gettext(expected));
+    }
+    let notice = LocalNotice {
+        path: "file".into(),
+        object_type: LocalItemKind::File,
+        activity: LocalActivity::Written,
+    };
+    assert_eq!(activity_label(&notice), gettext("Write detected"));
 }

@@ -220,3 +220,67 @@ msgstr "A observação está incompleta. Algumas alterações podem não aparece
 #: src/features/dashboard/components/local_history.rs
 msgid "Observation stopped. Check the folder and select it again."
 msgstr "A observação foi interrompida. Verifique a pasta e selecione-a novamente."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Folder"
+msgstr "Pasta"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "File"
+msgstr "Arquivo"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Link"
+msgstr "Link"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Special item"
+msgstr "Item especial"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Item"
+msgstr "Item"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Created"
+msgstr "Criação detectada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Removed"
+msgstr "Remoção detectada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Write detected"
+msgstr "Escrita detectada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Closed after opening for writing"
+msgstr "Fechado após abertura para escrita"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Properties changed"
+msgstr "Propriedades alteradas"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Entered the observed folder"
+msgstr "Entrou na pasta observada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Left the observed folder"
+msgstr "Saiu da pasta observada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Renamed"
+msgstr "Renomeação detectada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Moved"
+msgstr "Movimentação detectada"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Moved and renamed"
+msgstr "Movimentação e renomeação detectadas"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Needs review"
+msgstr "Requer conferência"

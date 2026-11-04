@@ -152,7 +152,7 @@ impl LocalWatcher {
         if std::mem::take(&mut self.queue_lost) {
             notices.push(LocalNotice {
                 path: PathBuf::new(),
-                is_directory: Some(true),
+                object_type: LocalItemKind::Directory,
                 activity: LocalActivity::Recheck(LocalCoverageGap::ApplicationOverflow),
             });
         }
@@ -177,10 +177,14 @@ impl LocalWatcher {
         if !matches!(reason, LocalCoverageGap::Startup) && self.state != LocalWatchState::Stopped {
             self.state = LocalWatchState::Incomplete;
         }
-        let is_directory = path.as_os_str().is_empty().then_some(true);
+        let object_type = if path.as_os_str().is_empty() {
+            LocalItemKind::Directory
+        } else {
+            LocalItemKind::Unknown
+        };
         self.emit(LocalNotice {
             path,
-            is_directory,
+            object_type,
             activity: LocalActivity::Recheck(reason),
         });
     }
@@ -369,9 +373,41 @@ impl LocalWatcher {
             }
             self.emit(LocalNotice {
                 path: movement.path,
-                is_directory: movement.directory.then_some(true),
+                object_type: if movement.directory {
+                    LocalItemKind::Directory
+                } else {
+                    LocalItemKind::Unknown
+                },
                 activity: LocalActivity::MovedOut,
             });
+        }
+    }
+
+    /// Uses a metadata-only handle with the same root, link and mount restrictions.
+    /// O_PATH never reads content or opens special objects for device/FIFO I/O.
+    fn object_type(&self, path: &Path) -> LocalItemKind {
+        use rustix::fs::{fstat, FileType};
+        let Ok(handle) = openat2(
+            &self.root,
+            path,
+            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        ) else {
+            return LocalItemKind::Unknown;
+        };
+        let Ok(metadata) = fstat(handle) else {
+            return LocalItemKind::Unknown;
+        };
+        match FileType::from_raw_mode(metadata.st_mode) {
+            FileType::RegularFile => LocalItemKind::File,
+            FileType::Symlink => LocalItemKind::Symlink,
+            FileType::Fifo
+            | FileType::Socket
+            | FileType::CharacterDevice
+            | FileType::BlockDevice => LocalItemKind::Special,
+            // A directory here contradicts the event's ISDIR flag: it was replaced.
+            _ => LocalItemKind::Unknown,
         }
     }
 
@@ -442,7 +478,13 @@ impl LocalWatcher {
             }
         };
         let directory = flags.contains(F::ISDIR) || name.is_none();
-        let kind = directory.then_some(true);
+        let kind = if directory {
+            LocalItemKind::Directory
+        } else if flags.intersects(F::DELETE | F::MOVED_FROM) {
+            LocalItemKind::Unknown
+        } else {
+            self.object_type(&path)
+        };
         if flags.contains(F::MOVED_FROM) {
             if cookie == 0
                 || self.moves.len() >= self.options.max_pending_moves
@@ -484,7 +526,7 @@ impl LocalWatcher {
             };
             self.emit(LocalNotice {
                 path: path.clone(),
-                is_directory: kind,
+                object_type: kind,
                 activity,
             });
             if directory {
@@ -503,7 +545,7 @@ impl LocalWatcher {
             if flags.contains(flag) {
                 self.emit(LocalNotice {
                     path: path.clone(),
-                    is_directory: kind,
+                    object_type: kind,
                     activity,
                 });
             }
