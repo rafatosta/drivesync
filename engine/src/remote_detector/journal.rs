@@ -441,4 +441,75 @@ mod tests {
                 .is_none());
         }
     }
+
+    #[test]
+    fn killed_writer_recovers_uncommitted_sqlite_transaction() {
+        const CHILD: &str = "DRIVESYNC_TEST_KILLED_JOURNAL";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let journal = Journal::open(Path::new(&path)).unwrap();
+            let result = journal.commit(
+                &scope("a", "root"),
+                Some(1),
+                "new-cursor",
+                b"new-inventory",
+                &[b"new-event".to_vec()],
+            );
+            panic!("writer unexpectedly finished: {result:?}");
+        }
+
+        let directory = Directory::new();
+        let journal = Journal::open(&directory.0).unwrap();
+        let scope = scope("a", "root");
+        journal
+            .commit(
+                &scope,
+                None,
+                "old-cursor",
+                b"old-inventory",
+                &[b"old-event".to_vec()],
+            )
+            .unwrap();
+        let lock = journal.connect().unwrap();
+        // A shared reader lets the writer modify pages but prevents its commit.
+        lock.execute_batch("BEGIN; SELECT count(*) FROM scopes;")
+            .unwrap();
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "remote_detector::journal::tests::killed_writer_recovers_uncommitted_sqlite_transaction",
+                "--nocapture",
+            ])
+            .env(CHILD, &directory.0)
+            .spawn()
+            .unwrap();
+        let rollback_journal = directory.0.join("remote-detector.sqlite3-journal");
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        let mut started = false;
+        while std::time::Instant::now() < deadline {
+            if fs::metadata(&rollback_journal).is_ok_and(|metadata| metadata.len() > 0) {
+                started = true;
+                break;
+            }
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let kill_result = child.kill();
+        let exit = child.wait().unwrap();
+        lock.execute_batch("ROLLBACK;").unwrap();
+        assert!(started, "writer did not start a SQLite transaction");
+        kill_result.expect("writer exited before interruption");
+        assert!(!exit.success());
+
+        let reopened = Journal::open(&directory.0).unwrap();
+        let checkpoint = reopened.load(&scope).unwrap().unwrap();
+        assert_eq!(checkpoint.generation, 1);
+        assert_eq!(checkpoint.cursor, "old-cursor");
+        assert_eq!(checkpoint.inventory, b"old-inventory");
+        let events = reopened.pending(&scope).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload, b"old-event");
+    }
 }

@@ -300,6 +300,41 @@ fn errors_and_nonconvergence_never_commit_cursor_or_events() {
 }
 
 #[test]
+fn continuous_activity_exhausts_default_rounds_without_losing_pending_events() {
+    let dir = Directory::new();
+    let journal = Journal::open(&dir.0).unwrap();
+    let scope = scope("a", "root");
+    check_with(
+        &Fake::new(vec![files()], vec![Ok(end("saved", vec![]))]),
+        &journal,
+        &scope,
+        &Corpus::User,
+        Limits::default(),
+    )
+    .unwrap();
+    let before = journal.load(&scope).unwrap().unwrap();
+    let pending_before = journal.pending(&scope).unwrap();
+    let pages = (0..Limits::default().rounds)
+        .map(|round| {
+            Ok(end(
+                &format!("cursor-{round}"),
+                vec![change("one", Some(files()[2].clone()), false)],
+            ))
+        })
+        .collect();
+    let fake = Fake::new(vec![files()], pages);
+    assert!(matches!(
+        check_with(&fake, &journal, &scope, &Corpus::User, Limits::default()),
+        Err(DetectionError::Incomplete)
+    ));
+    let after = journal.load(&scope).unwrap().unwrap();
+    assert_eq!(after.generation, before.generation);
+    assert_eq!(after.cursor, before.cursor);
+    assert_eq!(after.inventory, before.inventory);
+    assert_eq!(journal.pending(&scope).unwrap(), pending_before);
+}
+
+#[test]
 fn empty_root_and_two_accounts_have_independent_state() {
     let dir = Directory::new();
     let journal = Journal::open(&dir.0).unwrap();
@@ -549,4 +584,118 @@ fn inaccessible_subfolder_and_reconfigured_root_preserve_old_state() {
     assert_eq!(journal.load(&original).unwrap().unwrap().cursor, "a");
     assert_eq!(pending(&journal, &original).unwrap().len(), pending_count);
     assert_eq!(journal.load(&replacement).unwrap().unwrap().cursor, "b");
+}
+
+#[test]
+fn killed_query_preserves_checkpoint_and_pending_events() {
+    const CHILD: &str = "DRIVESYNC_TEST_KILLED_QUERY";
+    struct PausedProvider {
+        fake: Fake,
+        marker: PathBuf,
+    }
+    impl Provider for PausedProvider {
+        fn start(&self, corpus: &Corpus) -> Result<String, ProviderError> {
+            self.fake.start(corpus)
+        }
+        fn changes(&self, _: &Corpus, _: &str) -> Result<ChangePage, ProviderError> {
+            fs::write(&self.marker, b"query in progress").unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            Err(ProviderError::Incomplete)
+        }
+        fn children(
+            &self,
+            corpus: &Corpus,
+            parent: &str,
+            page: Option<&str>,
+        ) -> Result<FilePage, ProviderError> {
+            self.fake.children(corpus, parent, page)
+        }
+        fn file(&self, id: &str) -> Result<File, ProviderError> {
+            self.fake.file(id)
+        }
+    }
+
+    if let Some(path) = std::env::var_os(CHILD) {
+        let path = PathBuf::from(path);
+        let journal = Journal::open(&path).unwrap();
+        let provider = PausedProvider {
+            fake: Fake::new(vec![files()], vec![]),
+            marker: path.join("query-started"),
+        };
+        let result = check_with(
+            &provider,
+            &journal,
+            &scope("a", "root"),
+            &Corpus::User,
+            Limits::default(),
+        );
+        panic!("query unexpectedly finished: {result:?}");
+    }
+
+    let dir = Directory::new();
+    let journal = Journal::open(&dir.0).unwrap();
+    let scope = scope("a", "root");
+    check_with(
+        &Fake::new(vec![files()], vec![Ok(end("saved", vec![]))]),
+        &journal,
+        &scope,
+        &Corpus::User,
+        Limits::default(),
+    )
+    .unwrap();
+    let old_checkpoint = journal.load(&scope).unwrap().unwrap();
+    let old_pending = journal.pending(&scope).unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "remote_detector::detector::tests::killed_query_preserves_checkpoint_and_pending_events",
+            "--nocapture",
+        ])
+        .env(CHILD, &dir.0)
+        .spawn()
+        .unwrap();
+    let marker = dir.0.join("query-started");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    let mut started = false;
+    while std::time::Instant::now() < deadline {
+        if marker.is_file() {
+            started = true;
+            break;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let kill_result = child.kill();
+    let exit = child.wait().unwrap();
+    assert!(started, "provider query did not start");
+    kill_result.expect("query exited before interruption");
+    assert!(!exit.success());
+
+    let journal = Journal::open(&dir.0).unwrap();
+    let checkpoint = journal.load(&scope).unwrap().unwrap();
+    assert_eq!(checkpoint.generation, old_checkpoint.generation);
+    assert_eq!(checkpoint.cursor, old_checkpoint.cursor);
+    assert_eq!(checkpoint.inventory, old_checkpoint.inventory);
+    assert_eq!(journal.pending(&scope).unwrap(), old_pending);
+
+    let fake = Fake::new(
+        vec![files()],
+        vec![
+            Ok(end(
+                "next",
+                vec![change("one", Some(files()[2].clone()), false)],
+            )),
+            Ok(end("stable", vec![])),
+        ],
+    );
+    assert!(matches!(
+        check_with(&fake, &journal, &scope, &Corpus::User, Limits::default()),
+        Ok(Check::Changes(_))
+    ));
+    let pending = journal.pending(&scope).unwrap();
+    assert_eq!(&pending[..old_pending.len()], old_pending);
+    assert_eq!(pending.len(), old_pending.len() + 1);
+    assert_eq!(journal.load(&scope).unwrap().unwrap().cursor, "stable");
 }
