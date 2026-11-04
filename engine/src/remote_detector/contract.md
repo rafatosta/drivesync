@@ -95,6 +95,9 @@ bancos antigos, com permissões restritas. Não há leitura, migração ou remo�
 dos dados da engine anterior. O inventário inclui IDs, relações de parentesco
 e metadados necessários à comparação; o cursor e a fila pendente são escopados
 pela mesma identidade. Não persistir credenciais nesse armazenamento.
+O banco inicial é preparado em arquivo privado e publicado sem substituir
+um arquivo existente. Uma interrupção antes da publicação pode deixar um
+arquivo temporário, que não é interpretado como banco ativo.
 
 Publicações usam transação SQLite e controle de concorrência que impede duas
 consultas da mesma geração de confirmar resultados incompatíveis. A consulta

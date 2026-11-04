@@ -63,23 +63,44 @@ impl Journal {
         }
 
         let path = directory.join("remote-detector.sqlite3");
-        let created = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(_) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Self::initialize(directory, &path)?;
+            }
             Err(_) => return Err(JournalError::Storage),
-        };
+        }
         let metadata = fs::symlink_metadata(&path).map_err(|_| JournalError::Storage)?;
         if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o077 != 0 {
             return Err(JournalError::Storage);
         }
         let journal = Self { path };
-        let mut connection = journal.connect()?;
-        if created {
+        let version: i64 = journal
+            .connect()?
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(|_| JournalError::Storage)?;
+        if version != 1 {
+            return Err(JournalError::Incompatible);
+        }
+        Ok(journal)
+    }
+
+    /// Publishes a fully initialized database without replacing an existing
+    /// file. Concurrent creators can race safely; abandoned temporary files
+    /// are never interpreted as the active database.
+    fn initialize(directory: &Path, path: &Path) -> Result<(), JournalError> {
+        let temporary = directory.join(format!(
+            ".remote-detector-{}.tmp",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(|_| JournalError::Storage)?;
+        let result = (|| {
+            let mut connection = Self::connect_path(&temporary)?;
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|_| JournalError::Storage)?;
@@ -103,23 +124,31 @@ impl Journal {
                 )
                 .map_err(|_| JournalError::Storage)?;
             transaction.commit().map_err(|_| JournalError::Storage)?;
+            drop(connection);
+            File::open(&temporary)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| JournalError::Storage)?;
+            match fs::hard_link(&temporary, path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(_) => return Err(JournalError::Storage),
+            }
             File::open(directory)
                 .and_then(|dir| dir.sync_all())
                 .map_err(|_| JournalError::Storage)?;
-        } else {
-            let version: i64 = connection
-                .pragma_query_value(None, "user_version", |row| row.get(0))
-                .map_err(|_| JournalError::Storage)?;
-            if version != 1 {
-                return Err(JournalError::Incompatible);
-            }
-        }
-        Ok(journal)
+            Ok(())
+        })();
+        let cleanup = fs::remove_file(&temporary).map_err(|_| JournalError::Storage);
+        result.and(cleanup)
     }
 
     fn connect(&self) -> Result<Connection, JournalError> {
+        Self::connect_path(&self.path)
+    }
+
+    fn connect_path(path: &Path) -> Result<Connection, JournalError> {
         let connection = Connection::open_with_flags(
-            &self.path,
+            path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
         .map_err(|_| JournalError::Storage)?;
@@ -374,5 +403,42 @@ mod tests {
             Journal::open(&directory.0),
             Err(JournalError::Storage)
         ));
+    }
+
+    #[test]
+    fn interrupted_initialization_does_not_publish_partial_database() {
+        let directory = Directory::new();
+        DirBuilder::new().mode(0o700).create(&directory.0).unwrap();
+        let abandoned = directory.0.join(".remote-detector-interrupted.tmp");
+        fs::write(&abandoned, b"partial").unwrap();
+        let journal = Journal::open(&directory.0).unwrap();
+        assert!(journal.load(&scope("a", "root")).unwrap().is_none());
+        assert_eq!(fs::read(abandoned).unwrap(), b"partial");
+    }
+
+    #[test]
+    fn concurrent_initialization_publishes_one_complete_database() {
+        use std::sync::{Arc, Barrier};
+        let directory = Directory::new();
+        DirBuilder::new().mode(0o700).create(&directory.0).unwrap();
+        let barrier = Arc::new(Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let path = directory.0.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Journal::open(&path).unwrap()
+                })
+            })
+            .collect();
+        for thread in threads {
+            assert!(thread
+                .join()
+                .unwrap()
+                .load(&scope("a", "root"))
+                .unwrap()
+                .is_none());
+        }
     }
 }
