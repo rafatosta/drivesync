@@ -24,7 +24,7 @@ Fila em memória, limitada, em ordem de processamento. `poll` coleta um lote
 limitado e transfere os avisos ao consumidor (sem confirmação persistente).
 Não há promessa de entrega após queda do processo. Overflow da fila da aplicação
 ou do kernel sinaliza perda explicitamente. Não agrupar avisos na aplicação;
-o kernel já pode agrupá-los. Limites de watches, eventos por lote e movimentos
+o kernel já pode agrupá-los. Limites de watches (inclusive IDs removidos aguardando confirmação do kernel), eventos por lote e movimentos
 pendentes são configuráveis e finitos.
 
 ## Cobertura e segurança
@@ -53,8 +53,11 @@ produzem conferência explícita. Perda da raiz para a sessão; demais falhas
 mantêm os watches restantes em estado incompleto. Remover watches de subárvores
 que saíram e atualizar caminhos dos watches em movimentos internos. Durante
 movimento pendente de diretório, não atribuir eventos descendentes a caminhos
-possivelmente antigos: exigir conferência. Não prometer cobertura de mudanças
-via mmap, filesystem remoto/FUSE ou operações por links externos.
+possivelmente antigos: exigir conferência. Filesystems fora de ext, Btrfs, XFS, tmpfs e overlay iniciam incompletos
+com `FilesystemUnverified`, incluindo FUSE do portal de documentos. Essa lista
+não prova cobertura total: mmap e operações por links externos continuam sendo
+pontos cegos. O teste no portal deve distinguir início da sessão de entrega real
+de notificações originadas no host.
 
 ## Algoritmo
 
@@ -86,6 +89,7 @@ Flatpak instalado são validações separadas, com resultados explicitados.
   relativa, NO_SYMLINKS, BENEATH e NO_XDEV; sem fallback que enfraqueça restrições.
 - [rustix inotify](https://docs.rs/rustix/latest/rustix/fs/inotify/index.html):
   interface segura às operações Linux, reutilizando a dependência existente.
+- [Linux filesystem magic](https://github.com/torvalds/linux/blob/master/include/uapi/linux/magic.h): identificação conservadora do backend; não prova cobertura.
 - [Flatpak](https://docs.flatpak.org/en/latest/sandbox-permissions.html): acesso
   concedido à pasta não implica cobertura comprovada pelo portal.
 

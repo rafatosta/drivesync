@@ -511,3 +511,85 @@ fn open_writer_produces_write_before_close() {
     drop(file);
     collect(&mut w, |e| has(e, "open", &LocalActivity::ClosedAfterWrite));
 }
+
+#[test]
+fn removed_watch_bookkeeping_is_bounded_when_ignored_events_are_lost() {
+    let tree = Tree::new();
+    let mut w = tree.with_options(LocalWatchOptions {
+        max_watches: 2,
+        ..Default::default()
+    });
+    w.poll();
+    // Inject the state left by lost IGNORED notifications, then retire one more ID.
+    w.retired.extend([123456, 123457]);
+    let wd = root_wd(&w);
+    assert!(!w.retire(wd));
+    assert_eq!(w.state(), LocalWatchState::Stopped);
+    assert!(w.retired.is_empty());
+    assert!(has(
+        &w.poll().notices,
+        "",
+        &LocalActivity::Recheck(LocalCoverageGap::ResourceLimit)
+    ));
+}
+
+#[test]
+fn inaccessible_directory_is_reported_without_preventing_root_events() {
+    let tree = Tree::new();
+    let child = tree.0.join("denied");
+    fs::create_dir(&child).unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o0)).unwrap();
+    let mut w = tree.watcher();
+    // Restore access before assertions so fixture cleanup remains reliable.
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(has(
+        &w.poll().notices,
+        "denied",
+        &LocalActivity::Recheck(LocalCoverageGap::Inaccessible)
+    ));
+    fs::write(tree.0.join("available"), b"x").unwrap();
+    collect(&mut w, |e| has(e, "available", &LocalActivity::Written));
+}
+
+#[test]
+fn non_directory_rechecks_do_not_claim_a_directory_type() {
+    let tree = Tree::new();
+    let mut w = tree.watcher();
+    w.poll();
+    w.gap("unknown".into(), LocalCoverageGap::PathChanged);
+    let events = w.poll().notices;
+    assert_eq!(events[0].is_directory, None);
+}
+
+#[test]
+fn event_source_failure_stops_instead_of_silently_polling() {
+    let tree = Tree::new();
+    let mut w = tree.watcher();
+    w.poll();
+    // A readable descriptor which cannot supply inotify events injects EOF.
+    w.source = File::open("/dev/null").unwrap().into();
+    let batch = w.poll();
+    assert_eq!(batch.state, LocalWatchState::Stopped);
+    assert!(has(
+        &batch.notices,
+        "",
+        &LocalActivity::Recheck(LocalCoverageGap::SourceFailed)
+    ));
+}
+
+#[test]
+fn fifo_and_socket_entries_are_not_opened_or_treated_as_regular_files() {
+    let tree = Tree::new();
+    let mut w = tree.watcher();
+    w.poll();
+    rustix::fs::mkfifoat(CWD, tree.0.join("fifo"), Mode::RUSR | Mode::WUSR).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(tree.0.join("socket")).unwrap();
+    let events = collect(&mut w, |e| {
+        has(e, "fifo", &LocalActivity::Created) && has(e, "socket", &LocalActivity::Created)
+    });
+    assert!(events
+        .iter()
+        .filter(|n| n.path == Path::new("fifo") || n.path == Path::new("socket"))
+        .all(|n| n.is_directory.is_none()));
+    assert_eq!(w.watches.len(), 1);
+}

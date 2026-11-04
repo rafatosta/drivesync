@@ -56,7 +56,7 @@ impl LocalScope {
 /// Finite resource limits. Defaults suit an interactive diagnostic, not every tree.
 #[derive(Clone, Debug)]
 pub struct LocalWatchOptions {
-    /// Maximum directory watches, including the root.
+    /// Maximum directory watches and separately retained removed-watch IDs, including the root.
     pub max_watches: usize,
     /// Maximum queued application notices, excluding one reserved loss marker.
     pub max_queued: usize,
@@ -128,12 +128,14 @@ pub enum LocalCoverageGap {
     RootChanged,
     /// Events could not safely be assigned while a directory move was pending.
     MoveUncertain,
+    /// Filesystem notification behavior is not established (including document-portal FUSE).
+    FilesystemUnverified,
     /// Reading the event source failed.
     SourceFailed,
 }
 
 /// Observed activity, never an instruction to synchronize or proof of identity.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalActivity {
     Created,
     Removed,

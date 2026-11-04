@@ -75,6 +75,18 @@ impl LocalWatcher {
             state: LocalWatchState::Initializing,
         };
         watcher.gap(PathBuf::new(), LocalCoverageGap::Startup);
+        // Linux filesystem magic values from include/uapi/linux/magic.h.
+        // Known local backends still have inotify blind spots; all other backends
+        // require explicit investigation rather than implied notification coverage.
+        let known_local = rustix::fs::fstatfs(&watcher.root).is_ok_and(|fs| {
+            matches!(
+                fs.f_type as u64,
+                0xef53 | 0x9123683e | 0x58465342 | 0x01021994 | 0x794c7630
+            )
+        });
+        if !known_local {
+            watcher.gap(PathBuf::new(), LocalCoverageGap::FilesystemUnverified);
+        }
         watcher.install_tree(Path::new(""));
         if watcher.state == LocalWatchState::Initializing {
             watcher.state = LocalWatchState::Observing;
@@ -165,9 +177,10 @@ impl LocalWatcher {
         if !matches!(reason, LocalCoverageGap::Startup) && self.state != LocalWatchState::Stopped {
             self.state = LocalWatchState::Incomplete;
         }
+        let is_directory = path.as_os_str().is_empty().then_some(true);
         self.emit(LocalNotice {
             path,
-            is_directory: Some(true),
+            is_directory,
             activity: LocalActivity::Recheck(reason),
         });
     }
@@ -180,6 +193,18 @@ impl LocalWatcher {
             let _ = inotify::remove_watch(&self.source, *wd);
         }
         self.watches.clear();
+        self.retired.clear();
+    }
+    /// Removed IDs are retained only until IGNORED arrives. If it was lost,
+    /// stop at the same finite limit as active watches rather than growing forever.
+    fn retire(&mut self, wd: i32) -> bool {
+        let _ = inotify::remove_watch(&self.source, wd);
+        if self.retired.len() >= self.options.max_watches {
+            self.stop(LocalCoverageGap::ResourceLimit);
+            return false;
+        }
+        self.retired.insert(wd);
+        true
     }
     fn check_root(&mut self) {
         if self.state == LocalWatchState::Stopped {
@@ -221,6 +246,9 @@ impl LocalWatcher {
         let mut pending = VecDeque::from([start.to_path_buf()]);
         let mut examined = 0;
         while let Some(path) = pending.pop_front() {
+            if self.state == LocalWatchState::Stopped {
+                return;
+            }
             if self.watches.values().any(|w| w.path == path) {
                 continue;
             }
@@ -267,8 +295,7 @@ impl LocalWatcher {
                 identity: id,
             };
             if !self.watch_matches(&watch) {
-                self.retired.insert(wd);
-                let _ = inotify::remove_watch(&self.source, wd);
+                self.retire(wd);
                 self.gap(path, LocalCoverageGap::PathChanged);
                 continue;
             }
@@ -313,8 +340,9 @@ impl LocalWatcher {
             .collect();
         for wd in ids {
             self.watches.remove(&wd);
-            self.retired.insert(wd);
-            let _ = inotify::remove_watch(&self.source, wd);
+            if !self.retire(wd) {
+                break;
+            }
         }
     }
     fn rebase(&mut self, from: &Path, to: &Path) {
@@ -370,6 +398,10 @@ impl LocalWatcher {
                 self.stop(LocalCoverageGap::RootChanged);
             } else {
                 self.remove_tree(&base);
+                // IGNORED itself has already acknowledged this removed ID.
+                if flags.contains(F::IGNORED) {
+                    self.retired.remove(&wd);
+                }
                 self.gap(base, LocalCoverageGap::WatchLost);
             }
             return;

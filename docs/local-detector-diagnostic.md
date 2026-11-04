@@ -69,6 +69,12 @@ que o tipo não foi determinado; não presumir arquivo regular. Os avisos são
 pistas históricas, não comandos de sincronização ou prova de conteúdo alterado.
 
 `Observing` indica watches ativos, não inventário conferido ou sincronização.
+Filesystems sem cobertura estabelecida, incluindo FUSE do portal de documentos,
+produzem `FilesystemUnverified` e iniciam incompletos. A API não resolve links
+simbólicos na raiz: um caminho de portal que atravesse o alias simbólico de
+`/run/user/.../doc` será rejeitado; mesmo um caminho canônico aceito não prova
+entrega de notificações de alterações feitas pelo host.
+
 `Incomplete` persiste até o fim da sessão; avisos posteriores continuam úteis,
 mas uma conferência separada é necessária. `Stopped` encerra a coleta e retorna
 código 2. Argumentos inválidos e falhas de início/saída também retornam 2.

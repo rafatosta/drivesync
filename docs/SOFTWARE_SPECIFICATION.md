@@ -90,5 +90,8 @@ O [contrato do detector local](../engine/src/local_detector/contract.md)
 define um observador de atividade separado da investigação e da sincronização.
 Avisos identificam escopo e caminhos afetados; perda de cobertura exige
 conferência explícita. Árvore por identidade, download, investigação de conteúdo
-e execução remota pertencem a etapas posteriores. Integração automática ao
-aplicativo e validação pelo portal são separadas.
+e execução remota pertencem a etapas posteriores. O observador e o diagnóstico
+independente estão implementados, com fila limitada em memória e falhas de
+cobertura explícitas. Integração automática ao aplicativo não faz parte desta
+entrega. O portal/FUSE não possui cobertura estabelecida e produz estado
+incompleto; iniciar a observação não comprova entrega de eventos do host.
