@@ -97,3 +97,38 @@ fn runtime_portal_alias_preserves_host_origin_and_inode() {
     assert_eq!(super::paths::local_origin(&selected).unwrap(), expected);
     assert_eq!(super::paths::local_origin(&access).unwrap(), expected);
 }
+
+/// Requires a fresh disposable export and a read-only direct sandbox grant.
+#[test]
+#[ignore = "requires explicit disposable portal export and read-only direct grant"]
+fn saved_portal_observation_uses_read_only_direct_access() {
+    let selected = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_PATH").expect("portal path"),
+    );
+    let origin = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_ORIGIN").expect("host origin"),
+    );
+    assert!(Path::new("/.flatpak-info").is_file());
+    let before = std::fs::read_dir(&origin).unwrap().count();
+    assert_eq!(
+        super::paths::observation_root(&selected, &origin).unwrap(),
+        origin
+    );
+    assert!(super::paths::observation_root(&selected, &origin.join("different")).is_err());
+    assert_eq!(std::fs::read_dir(&origin).unwrap().count(), before);
+}
+
+#[test]
+fn observation_rejects_changed_origins_without_touching_content() {
+    let root = std::env::temp_dir().join(format!(
+        "drivesync-origin-check-{}",
+        oauth2::CsrfToken::new_random().secret()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("preserved"), b"preserved").unwrap();
+    assert_eq!(super::paths::observation_root(&root, &root).unwrap(), root);
+    assert!(super::paths::observation_root(&root, &root.join("different")).is_err());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    assert_eq!(std::fs::read(root.join("preserved")).unwrap(), b"preserved");
+    std::fs::remove_dir_all(root).unwrap();
+}

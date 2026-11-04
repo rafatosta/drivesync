@@ -115,3 +115,9 @@ de pasta reinicia esse feedback para não misturar raízes. Cobertura incompleta
 falha e ausência de configuração ficam visíveis fora da lista. Não persistir
 esse histórico nem iniciar transferências. Reconstruir o dashboard também
 reinicia o feedback, sem prometer histórico entre sessões.
+
+Para configurações salvas por portal, a integração consulta novamente a origem
+no portal e compara com a origem salva. Se houver acesso direto de leitura já
+concedido a essa mesma pasta, o observador o utiliza sem regravar configurações
+nem criar arquivos de teste. Sem essa permissão, permanece no portal e sinaliza
+suas limitações. O aplicativo não amplia permissões automaticamente.

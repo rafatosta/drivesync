@@ -58,6 +58,24 @@ fn fresh_root_access(selected: &Path, origin: &Path) -> PathBuf {
     origin.into()
 }
 
+/// Selects a read-capable path for observation without rewriting saved settings.
+///
+/// A portal root is mapped again through the live portal before using an
+/// already-authorized host origin. Read-only access is sufficient; no probe
+/// file is created and no additional sandbox permission is requested.
+/// # Errors
+/// Returns an identity error when the live origin differs from the saved one.
+pub(crate) fn observation_root(
+    selected: &Path,
+    expected_origin: &Path,
+) -> Result<PathBuf, EngineError> {
+    let origin = local_origin(selected)?;
+    if origin != expected_origin {
+        return Err(EngineError::LocalFolderIdentity);
+    }
+    Ok(fresh_root_access(selected, &origin))
+}
+
 /// Opens each absolute directory component without following symbolic links.
 fn open_directory(path: &Path) -> Result<std::fs::File, EngineError> {
     if !path.is_absolute() {
