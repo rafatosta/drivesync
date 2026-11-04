@@ -60,6 +60,10 @@ explicitamente quando não consegue estabelecer um resultado confiável.
   seus destinos. A resolução e a observação devem permanecer dentro da raiz
   mesmo sob renomeação ou substituição concorrente de componentes. Arquivos
   especiais não são abertos como arquivos regulares.
+- Não atravessar pontos de montagem dentro da raiz; uma subárvore montada
+  torna a verificação incompleta. Comparar apenas IDs de dispositivo não basta
+  para detectar todos os bind mounts; a técnica e sua disponibilidade no
+  Flatpak precisam ser demonstradas antes de declarar cobertura completa.
 - Uma identidade baseada em inode e dispositivo pode ser reutilizada ou
   representar múltiplos hard links; ela não prova por si só continuidade ou
   renomeação. Ausência, acesso negado e falhas de leitura não autorizam
