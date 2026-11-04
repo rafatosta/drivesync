@@ -27,6 +27,15 @@ o aplicativo estava fechado pode não deixar vestígios observáveis.
   resolução relativa a um diretório e as restrições de links podem ajudar a
   impedir que percursos saiam da raiz. A disponibilidade no kernel e no
   sandbox exige verificação; nenhuma alternativa pode enfraquecer o limite.
+- [rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html): mover um
+  arquivo não invalida descritores já abertos. Restringir a resolução com
+  `openat2` não impede, por si só, a leitura após uma movimentação para fora
+  da raiz.
+- [Subvolumes Btrfs](https://btrfs.readthedocs.io/en/latest/Subvolumes.html):
+  snapshots somente de leitura são uma hipótese para obter uma visão estável,
+  não uma solução geral demonstrada. Snapshots de subvolumes não incluem
+  recursivamente subvolumes internos; escopo, permissões, pontos de montagem,
+  acesso pelo Flatpak e ciclo de vida precisam ser verificados.
 - [Permissões Flatpak](https://docs.flatpak.org/en/latest/sandbox-permissions.html):
   acesso a pastas fora do sandbox depende da concessão correspondente. Acesso
   por portal e notificações do filesystem precisam de validação no aplicativo
@@ -87,6 +96,13 @@ permanecem sob responsabilidade do futuro varredor. Um diário SQLite isolado
 persiste inventários e observações transacionalmente, mas não consegue
 verificar a completude de uma varredura nem o vínculo da raiz ao caminho.
 Não há varredura nem monitoramento implementados.
+
+A abertura restrita, a comparação posterior de metadados e notificações de
+movimentação não garantem que uma leitura permaneça dentro da raiz durante
+uma corrida. Enquanto não houver mecanismo que assegure essa propriedade e
+cobertura suficiente, a varredura deve retornar resultado incompleto, sem
+publicar inventário nem avançar o diário. Não há mecanismo implementado para
+declarar essa garantia atualmente.
 
 Pseudocódigo de alto nível:
 
