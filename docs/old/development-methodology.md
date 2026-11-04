@@ -169,10 +169,9 @@ aceite e instruções úteis; não são diários de implementação. Motivaçõe
 alterações, comandos/testes realmente executados, resultados, riscos e pendências
 de uma tarefa devem ser registrados no corpo do commit ou PR, conforme `AGENTS.md`.
 
-Durante o primeiro MVP, `docs/MVP.md` é um plano temporário. Não sincronizar
-preventivamente os documentos de arquitetura e de módulos a cada pequena mudança.
-Depois da conclusão do MVP, confrontar a implementação real com o planejamento,
-revisar e consolidar a documentação técnica e decidir a retirada do plano.
+Manter requisitos atuais em `docs/SOFTWARE_SPECIFICATION.md` e contratos nos
+módulos relevantes. Não reescrever preventivamente toda a documentação a cada
+pequena mudança.
 
 Exceção: corrigir imediatamente instruções operacionais ou informações de
 segurança que se tornem incorretas e possam causar erro ou perda de dados.
@@ -211,19 +210,19 @@ Não marcar um módulo como validado por ter código compilando. É possível qu
 
 ## Política de testes
 
-- **Teste unitário:** injeta dados válidos/simulados sem Google real. Ex.: autenticação real não é pré-requisito para testar Planner.
+- **Teste unitário:** injeta dados válidos/simulados sem Google real.
 - **Teste de contrato:** substitui implementações mantendo entradas/saídas/erros e semântica.
-- **Teste de integração:** usa filesystem e SQLite reais isolados; rede simulada com respostas controladas.
+- **Teste de integração:** usa filesystem isolado e rede simulada com respostas controladas, conforme a responsabilidade testada.
 - **Teste real E2E:** conta Google de teste, pasta exclusiva e arquivos dispensáveis; nunca dados pessoais.
 - **Falhas adversas:** interrupção entre efeito externo e confirmação, timeout, evento perdido, alteração concorrente e corrupção.
 
 ## Regras de segurança
 
-Sem operações destrutivas quando identidade, versão ou estado estiverem `UNKNOWN`. Um HTTP 404 pode indicar falta de acesso, não apenas exclusão. Falha de rede não pode propagar exclusão. O banco SQLite não é reinicializado silenciosamente. Conflitos preservam versões até decisão segura.
+Sem operações destrutivas quando identidade, versão ou estado estiverem `UNKNOWN`. Um HTTP 404 pode indicar falta de acesso, não apenas exclusão. Falha de rede não pode propagar exclusão. Dados incompatíveis não são reinicializados silenciosamente. Conflitos preservam versões até decisão segura.
 
 ## Responsabilidades da IA
 
 Pode: procurar alternativas, sintetizar referências com links, propor pseudocódigo, implementar escopo aprovado, criar fixtures e testes, identificar falhas e explicar Rust.
 Não pode: inventar capacidades da Drive API, decidir política destrutiva sem aprovação, enfraquecer invariantes para passar testes, alterar contratos de outros módulos silenciosamente, escolher dependências sem justificativa ou substituir testes por alegações.
 
-Consultar `docs/algorithm-spec-template.md`, `docs/reference-catalog.md`, `docs/ai-development-guidelines.md` e `docs/feasibility-validation.md`.
+Consultar `docs/old/algorithm-spec-template.md`, `docs/old/reference-catalog.md` e `docs/old/ai-development-guidelines.md`.

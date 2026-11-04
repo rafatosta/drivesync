@@ -10,7 +10,7 @@ accounts,remote.
 Objetos conceituais validados, identificadores estáveis, contexto de cancelamento e, quando pertinente, versões esperadas.
 
 ## Saída
-Resultado tipado ou erro explícito e classificável: temporário, definitivo, conflito ou resultado ambíguo.
+Resultado tipado ou erro explícito de autenticação ou armazenamento.
 
 ## Responsabilidade e limites
 Autenticação OAuth 2.0 com PKCE e refresh. Não assumir responsabilidades de outros módulos nem depender da implementação gráfica.
@@ -36,9 +36,9 @@ HTTPS (`sub`, e-mail verificado opcional), sem tokens na API pública.
 1. Validar configuração; adquirir exclusão do login no motor; criar listener
    somente em 127.0.0.1 com porta efêmera, state aleatório e PKCE S256.
 2. Solicitar `openid email drive`, acesso offline e consentimento explícito no
-   cadastro da conta. O escopo completo cobre leitura e criação de arquivos; o
-   upload continua desativado por padrão e só é usado após opt-in. Ver
-   `docs/google-oauth.md`.
+   cadastro da conta. O escopo completo concede acesso amplo, embora esta
+   versão apenas consulte metadados de pastas. Ver
+   [Google OAuth](../../../docs/old/google-oauth.md).
 3. Abrir navegador via porta da UI (GIO/portal); aguardar até cinco minutos.
    Cancelamento, erro do navegador e timeout nunca criam uma conta.
 4. Aceitar GET apenas no host/porta/path exatos, sem parâmetros duplicados,
@@ -55,6 +55,5 @@ na troca de código (resultado pode ser ambíguo). Cancelar durante HTTP produz
 resposta em até o timeout de 30 segundos; antes da persistência, verificar de novo.
 
 Interrupção após autorização remota e antes do cofre exige repetir login; não há
-sucesso local parcial. Credenciais persistidas sobrevivem ao processo; a descoberta
-automática de perfis ao iniciar fica para a persistência de accounts/state (F07/F08).
-AUTH-003 (revogação remota/desvinculação) permanece fora desta integração.
+sucesso local parcial. Perfis salvos são restaurados por accounts. Logoff
+explícito remove a credencial local e o perfil, mas não revoga acesso no Google.

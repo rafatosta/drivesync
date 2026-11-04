@@ -1,10 +1,8 @@
 # Welcome, folder setup and dashboard
 
-`src/welcome.rs` builds the centered GTK4/Libadwaita introduction and connection
-action. `src/main.rs` owns one engine, one application window, a ToastOverlay and
-an AdwNavigationView. `src/setup.rs` selects folders; `src/dashboard.rs` displays
-saved settings and connection state.
-The setup instruction cards remain removed.
+`src/features/welcome` builds the introduction and connection action.
+`src/app` owns application navigation and lifecycle; `src/features/accounts`
+selects folders and `src/features/dashboard` displays the saved settings.
 
 ## Behavior
 

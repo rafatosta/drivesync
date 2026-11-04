@@ -11,10 +11,10 @@ unreadable backend bytes before JSON parsing, while `Decode/InvalidData`
 indicates malformed credential JSON and is never retried. An unreadable
 response does not by itself establish permanent corruption of the saved entry. This recovery does not replay
 writes, deletions, JSON decoding or remote operations. A second failure blocks
-synchronization and remains visible. `recovery=FreshSession` on stderr means the
+the affected account operation and remains visible. `recovery=FreshSession` on stderr means the
 second read succeeded; it does not mean the external backend has been repaired.
 
-Do not reset synchronization state or delete keyring entries to investigate a
+Do not delete keyring entries to investigate a
 vault access failure. An unlocked default collection and a Flatpak permission
 for `org.freedesktop.secrets` rule out those specific configuration problems;
 they do not prove that every encrypted operation succeeds.
@@ -63,6 +63,6 @@ runner's environment. A wrong executable is rejected rather than reporting a
 successful run with zero matching tests.
 
 This tests the real oo7 service with the engine adapter in an SDK sandbox.
-It does not validate Google Drive access, production Flatpak permissions or
-an end-to-end synchronization cycle. Intermittent failures in other operations
+It does not validate Google Drive access or production Flatpak permissions.
+Intermittent failures in other operations
 can still fail the test and must not be hidden by rerunning until it passes.

@@ -1,36 +1,14 @@
-# Contrato de configuração
+# Contrato de configuração de pastas
 
-## Responsabilidades
-Validar e persistir preferências por perfil de conta e por aplicativo, incluindo `start_with_session`, `auto_sync` e `close_to_background` (na v1, fechar normalmente oculta; saída explícita termina).
+Cada conta pode guardar uma pasta remota existente e uma pasta local. A escolha
+remota é revalidada pela API usando a credencial da conta. A pasta local deve
+ser absoluta, existente, gravável e distinta da raiz do filesystem. O caminho é
+normalizado e aliases do Documents portal são resolvidos para comparação.
 
-## Pré-condições
-Autostart só pode ser marcado efetivo após autorização/integração com o ambiente; preferência desejada não equivale à permissão concedida.
+Não aceitar caminhos iguais ou aninhados entre contas ou clientes OAuth. A
+checagem e a gravação do índice são serializadas; cancelamento ou erro não
+confirma a nova seleção. Verificar a pasta local cria e remove apenas um
+arquivo temporário exclusivo.
 
-## Saídas
-`RequestedAutostart`, `AutostartEnabled`, `AutostartDenied`, `AutostartUnsupported`; configuração validada, persistida e auditável.
-
-## Invariantes
-Nenhuma preferência de ciclo de vida modifica implicitamente filtros de exclusão ou resultados de sincronização.
-
-## Preferências multi-conta
-
-Aplicativo tem preferências globais (iniciar na sessão, fechar para segundo plano) e preferências **por conta/raiz** (ativar sincronização, pausa, pasta local, política). Cada root referencia uma `AccountId`; não permitir que roots locais de duas contas coincidam ou se sobreponham. Validar caminhos normalizados e symlinks com segurança, não somente prefixos textuais. Preferência global jamais modifica silenciosamente o estado individual das contas.
-
-## Configuração inicial de pasta (CONFIG-003)
-
-Uma pasta remota e um destino local por conta, separados por cliente OAuth.
-`configure_folder` revalida metadados do Drive, acesso local e sobreposição antes
-de salvar; erro/cancelamento não conclui a configuração. `saved_folder` recupera
-a escolha. `RestoredAccount.folder` orienta o roteamento para seleção ou dashboard,
-independentemente de falhas temporárias de autenticação. Regras e armazenamento:
-[CONFIG-003](algorithms.md#config-003--configuração-inicial-e-roteamento).
-
-
-## Mudança de escopo — SYNC-021
-
-A troca de pasta usa o mesmo lock estável cliente/conta dos ciclos, mesmo quando
-ambos os destinos mudam. `SyncBusy` preserva a seleção anterior; repetir após o
-ciclo terminar ou cancelar com segurança. O índice completo é atualizado sob lock
-entre processos, evitando perda de configurações de outras contas. Não há mudança
-de escopo aceita durante um ciclo ativo. Contrato e limites em
-[SYNC-021](../../../docs/SOFTWARE_SPECIFICATION.md#concorrência-e-mudanças-de-configuração--sync-021).
+Configurar, trocar ou restaurar pastas não transfere nem apaga arquivos.
+Nenhum estado de sincronização anterior é lido ou migrado.

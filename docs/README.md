@@ -1,20 +1,14 @@
 # Documentação do DriveSync
 
-- [**Especificação de Software — DriveSync (estrutura inicial)**](SOFTWARE_SPECIFICATION.md)
-- [GUI architecture and relocation map](gui-architecture.md)
-- [GUI migration verification](gui-migration-verification.md)
-- [Credential vault diagnostics and isolated oo7 test](credential-vault.md)
-- [Telas demonstrativas e geração de screenshots](../data/screenshots/README.md#gerar-novamente)
-
-A documentação anterior foi preservada integralmente em [`old/`](old/README.md), mantendo seus arquivos e subpastas como referência histórica para a revisão e consolidação da nova especificação de software.
-
-- [Índice original da documentação](old/README.md)
-- [Requisitos anteriores](old/requirements.md)
-- [Arquitetura anterior](old/architecture.md)
+- [Especificação atual](SOFTWARE_SPECIFICATION.md)
+- [Arquitetura da interface](gui-architecture.md)
+- [Diagnóstico do cofre de credenciais](credential-vault.md)
+- [Capturas da interface com dados fictícios](../data/screenshots/README.md)
+- [OAuth Google para desktop](old/google-oauth.md)
+- [Configuração de um cliente Google Cloud](old/google-cloud-setup.md)
+- [Perfis de compilação](old/build-profiles.md)
+- [Invariantes de segurança](old/invariants.md)
 - [Metodologia de desenvolvimento](old/development-methodology.md)
-- [Plano de publicação e verificação Google](old/google-publication-plan.md)
-- [Plano do site público](old/website-plan.md)
 
-**Estado:** migração de organização, sem alteração do conteúdo original. Links relativos que partem dos documentos arquivados para código-fonte fora de `docs/` podem necessitar de atualização durante a revisão. Para consultar um documento por seu caminho antigo, use `docs/old/<caminho-original-em-docs>`.
-
-A nova documentação de engenharia será criada após a revisão do acervo. O conteúdo arquivado não deve ser tratado automaticamente como a especificação vigente do aplicativo.
+Os contratos de contas, autenticação e pastas estão junto aos módulos da
+engine, conforme os links da especificação.

@@ -29,8 +29,8 @@ exist only under `cfg(test)`; production uses Google HTTPS and Secret Service.
 | Profile idempotency | Same subject, changed email, another subject | Update same account, preserve other account |
 
 Real Google, browser portal, desktop vault persistence and Flatpak integration
-remain manual checks in `docs/google-oauth.md`. These tests do not validate
-AUTH-003 revocation, file scopes on existing folders, or synchronization.
+remain manual checks in `docs/old/google-oauth.md`. These tests do not validate
+remote revocation or Drive permissions on existing folders.
 
 ## Distribution configuration
 

@@ -13,15 +13,14 @@ GTK handles only the browser launch, progress, cancellation and navigation.
 
 AUTH-001/002 and account restoration have automated tests. Startup discovers saved
 profiles and verifies them through the vault and Google; failures preserve profiles
-with retry/reconnect actions. Older accounts need one reconnection to register a
-profile. Storage and restoration rules: [ACCT-003](../engine/src/accounts/algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
-Folder selection uses read-only Drive folder metadata; file synchronization and
-AUTH-003 remain unimplemented.
+with retry/reconnect actions. Storage and restoration rules:
+[accounts](../../engine/src/accounts/algorithms.md).
+Folder selection uses Drive folder metadata; the application does not transfer files.
 
 ## Maintainer: one-time Google Cloud configuration
 
 1. Create/select the official DriveSync project in Google Cloud Console. Enable the
-   **Google Drive API** for the eventual download MVP.
+   **Google Drive API** for folder selection.
 2. Configure Google Auth Platform branding, audience and support contact. If the
    audience is External and publishing status is Testing, add the intended test
    users. Do not use a service-account or web-application OAuth client.
@@ -31,7 +30,7 @@ AUTH-003 remain unimplemented.
    `https://www.googleapis.com/auth/drive` in Data Access as applicable.
    The application requests these scopes, offline access and an explicit account
    choice/consent at account connection. Google may omit an email; the stable
-   subject is sufficient. Upload remains disabled until the user opts in.
+   subject is sufficient.
 5. Desktop loopback redirects use
    `http://127.0.0.1:<ephemeral-port>/oauth/callback`. The application binds the
    port before opening the browser and sends the same URI when exchanging the
@@ -56,13 +55,11 @@ Reviewed on 2026-10-20.
 
 `openid` identifies the account; `email` enables an optional verified display
 address. The DriveSync requests the full `drive` scope at initial account
-connection because the implemented features read existing files and may create
-new files when the user explicitly enables upload. The upload preference remains
-off by default; disabling it prevents DriveSync from creating local-file upload
-operations, but does not narrow the OAuth grant. `drive.file` does not by itself
+connection, although the implemented features only read folder metadata and do
+not transfer files. This does not narrow the OAuth grant. `drive.file` does not by itself
 satisfy discovery of arbitrary existing folders.
 
-`drive` is a restricted scope and grants broader access than download-only use.
+`drive` is a restricted scope and grants broader access than the current use.
 Public distribution may require Google's verification and additional assessment
 depending on how restricted data is used. Testing restrictions and refresh-token
 lifetimes depend on Google's project status/policies. Real access to an existing
@@ -103,11 +100,10 @@ The build validates Desktop metadata and embeds only
 A malformed or unreadable supplied file fails the build with a sanitized error.
 Cargo tracks file changes and both build settings to prevent stale configuration.
 
-```sh
-DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE=/path/to/desktop-client.json cargo build --release --locked
-# Publication gate: fail rather than ship an unconfigured binary.
-DRIVESYNC_REQUIRE_GOOGLE_OAUTH=1 cargo build --release --locked
-```
+Set these variables inside the configured Flatpak build environment; execute
+Cargo only inside that SDK. `DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE` selects the
+client metadata, and `DRIVESYNC_REQUIRE_GOOGLE_OAUTH=1` fails the build if a
+configured client is unavailable.
 
 For Flatpak/GNOME Builder, place the testing Desktop OAuth file at
 `data/oauth/development.json` in the
@@ -195,7 +191,7 @@ See [implementation evidence](auth-validation.md).
   duplicate parameters, invalid methods and oversized requests.
 - `reqwest` 0.12 with Rustls provides HTTPS with 10-second connection and 30-second
   total timeouts and redirects disabled. Only the small Google token/UserInfo
-  adapter uses it; no `remote` implementation is introduced. Response bodies are
+  adapter and folder metadata adapter use it. Auth response bodies are
   bounded to 64 KiB and errors exposed to the UI contain no provider payload.
 - `keyring` 3.6 with the persistent Secret Service backend and Rust cryptography
   provides per-account storage; vendored D-Bus avoids a host development-library
@@ -205,5 +201,5 @@ See [implementation evidence](auth-validation.md).
 - Identity comes from authenticated HTTPS UserInfo. The application never decodes
   an unverified ID token as proof of identity.
 - A crash after Google grants permission but before vault persistence requires a
-  new login. The UI cannot claim success before secure persistence. Remote
-  revocation and destructive account removal are outside this task.
+  new login. The UI cannot claim success before secure persistence. Explicit
+  sign-out removes the local credential and profile without remote revocation.

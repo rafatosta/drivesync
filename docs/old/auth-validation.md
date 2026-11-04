@@ -6,7 +6,8 @@ cada etapa devem ficar nas mensagens de commit ou PR correspondentes.
 
 ## Verificação automatizada
 
-No ambiente de desenvolvimento com dependências GTK/Libadwaita e Rust disponíveis:
+Somente dentro do SDK Flatpak e da extensão Rust definidos por
+`flatpak/com.rtosta.DriveSync.Devel.yml`, execute:
 
 ```sh
 cargo fmt --all --check
