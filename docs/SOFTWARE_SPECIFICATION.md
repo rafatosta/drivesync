@@ -85,3 +85,8 @@ Contratos detalhados: [autenticação](../engine/src/auth/contract.md),
 O [contrato do detector remoto](../engine/src/remote_detector/contract.md)
 define suas garantias e limitações. O diagnóstico é invocado manualmente; a
 validação com Google Drive real e o aplicativo empacotado ainda é necessária.
+
+O [contrato proposto do detector local](../engine/src/local_detector/contract.md)
+descreve monitoramento automático e reconciliação após reinício como intenção
+futura. Ele ainda não foi aprovado nem implementado; não há monitoramento
+local automático na versão atual.
