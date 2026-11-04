@@ -70,8 +70,11 @@ explicitamente quando não consegue estabelecer um resultado confiável.
 O mecanismo concreto deve ser validado antes da integração: notificações
 locais são usadas para antecipar verificações, e reconciliações completas
 recuperam diferenças de estado. Uma reconciliação periódica também é necessária
-para mudanças que não gerem notificações. Intervalos, limites de trabalho e
-política de consumo de recursos ainda precisam ser definidos e testados.
+para mudanças que não gerem notificações: quando o aplicativo estiver ativo,
+ela é agendada a cada 15 minutos, além das verificações motivadas por
+notificações. O agendamento não garante conclusão em 15 minutos quando uma
+varredura é demorada ou falha. Limites de trabalho e política de consumo de
+recursos ainda precisam ser definidos e testados.
 A comparação pura entre inventários estruturalmente válidos já existe, mas
 não verifica a completude de uma varredura, não observa o filesystem e não
 persiste eventos.
