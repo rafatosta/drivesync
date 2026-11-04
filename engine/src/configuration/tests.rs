@@ -132,3 +132,19 @@ fn observation_rejects_changed_origins_without_touching_content() {
     assert_eq!(std::fs::read(root.join("preserved")).unwrap(), b"preserved");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn observation_normalizes_portal_style_trailing_separator_for_scope_validation() {
+    use std::os::unix::ffi::OsStrExt;
+    let root = std::env::temp_dir().join(format!(
+        "drivesync-trailing-root-{}",
+        oauth2::CsrfToken::new_random().secret()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let trailing = std::path::PathBuf::from(format!("{}/", root.display()));
+    let observed = super::paths::observation_root(&trailing, &trailing).unwrap();
+    assert_eq!(observed.as_os_str().as_bytes(), root.as_os_str().as_bytes());
+    assert!(crate::LocalScope::new("client", "account", &observed).is_ok());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    std::fs::remove_dir(root).unwrap();
+}

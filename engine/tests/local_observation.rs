@@ -50,3 +50,29 @@ fn resolves_scoped_local_configuration_without_touching_files_or_credentials() {
     assert_eq!(fs::read(&index).unwrap(), b"corrupt");
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Explicit read-only diagnosis against a saved configuration; no auth or writes.
+#[test]
+#[ignore = "requires explicit account label and permission to inspect its configured root"]
+fn diagnose_saved_local_observer_without_modifying_files() {
+    let id = AccountId(
+        std::env::var("DRIVESYNC_LOCAL_DIAGNOSTIC_ACCOUNT").expect("explicit diagnostic account"),
+    );
+    let scope = DriveSyncEngine::new()
+        .local_observation_scope(&id)
+        .expect("scope resolution")
+        .expect("saved scope");
+    println!("resolved_root={:?}", scope.root());
+    let mut watcher = drivesync_engine::LocalWatcher::start(
+        scope,
+        drivesync_engine::LocalWatchOptions::default(),
+    )
+    .expect("observer startup");
+    let batch = watcher.poll();
+    println!("state={:?}", batch.state);
+    for notice in batch.notices {
+        if let drivesync_engine::LocalActivity::Recheck(reason) = notice.activity {
+            println!("coverage_gap={reason:?}");
+        }
+    }
+}

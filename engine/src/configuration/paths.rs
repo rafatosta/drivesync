@@ -73,7 +73,9 @@ pub(crate) fn observation_root(
     if origin != expected_origin {
         return Err(EngineError::LocalFolderIdentity);
     }
-    Ok(fresh_root_access(selected, &origin))
+    // Portal host paths may end with a separator. Normalize lexically only;
+    // never resolve user symlinks or change the persisted folder identity.
+    Ok(fresh_root_access(selected, &origin).components().collect())
 }
 
 /// Opens each absolute directory component without following symbolic links.
