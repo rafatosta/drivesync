@@ -68,7 +68,7 @@ pub(super) fn build() -> WelcomeView {
     description.set_halign(gtk::Align::Center);
     content.append(&description);
     content.append(&text(
-        &gettext("Download only · Technical preview"),
+        &gettext("Account management · Technical preview"),
         "caption",
     ));
 
