@@ -5,6 +5,29 @@ sincronização. `--client` e `--account` são rótulos de teste: não acessam c
 OAuth, credenciais ou o banco do aplicativo. Use uma pasta exclusiva com arquivos
 dispensáveis, fora de pastas pessoais. Os caminhos aparecem na saída.
 
+## Execução pelo GNOME Builder
+
+Selecione o manifesto `flatpak/com.rtosta.DriveSync.Devel.yml`. Ele concede
+acesso direto somente de leitura a `DriveSync-Test` dentro de Documentos,
+usando `--filesystem=xdg-documents/DriveSync-Test:ro`. Crie essa pasta pelo
+sistema antes de executar; a concessão de leitura não a cria automaticamente.
+Escolha essa pasta ou uma de suas subpastas na configuração da conta.
+
+Após alterar o manifesto, pare a execução anterior, compile novamente e execute
+pelo Builder. As permissões são aplicadas ao criar um novo ambiente, não a uma
+janela que já estava aberta. Overrides da instalação separada não substituem
+as permissões da execução pelo Builder.
+
+Crie, edite, mova e remova arquivos pelo gerenciador de arquivos nessa área.
+O detector apenas observa e pode usar a concessão direta mesmo quando a seleção
+foi feita pelo portal. A lista temporária apresenta nomes; o estado de cobertura
+permanece separado. Acesso somente de leitura é suficiente para esta etapa;
+download e outras escritas locais exigirão uma revisão explícita da permissão.
+
+O manifesto de produção não recebe essa autorização. Pastas fora dessa árvore
+continuam sujeitas às limitações do portal ou a uma concessão própria. Use apenas
+dados descartáveis na área de testes.
+
 ## Execução
 
 Compile exclusivamente no SDK definido pelo manifesto de desenvolvimento:
