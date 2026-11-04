@@ -22,6 +22,18 @@ pub(super) fn request(
     endpoint: &str,
     params: &[(&str, &str)],
 ) -> Result<Vec<u8>, EngineError> {
+    let (code, body) = request_status(token, endpoint, params)?;
+    response_status(code, &body)?;
+    Ok(body)
+}
+
+/// Performs the same bounded request while leaving status interpretation to
+/// the caller. Response bodies must not be exposed in errors or logs.
+pub(crate) fn request_status(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+) -> Result<(u16, Vec<u8>), EngineError> {
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -44,6 +56,5 @@ pub(super) fn request(
     if body.len() as u64 > MAX_BODY {
         return Err(EngineError::Authentication(AuthError::InvalidResponse));
     }
-    response_status(code, &body)?;
-    Ok(body)
+    Ok((code, body))
 }

@@ -2,3 +2,4 @@
 //!
 //! The journal does not perform synchronization or access the network.
 mod journal;
+mod provider;

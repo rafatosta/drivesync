@@ -13,6 +13,8 @@ mod errors;
 mod folders;
 mod models;
 
+pub(crate) use client::request_status;
+pub(crate) use errors::response_status;
 pub(crate) use folders::{get, list};
 pub use models::FolderPage;
 
