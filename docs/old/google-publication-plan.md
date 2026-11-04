@@ -61,8 +61,8 @@ Não há necessidade técnica de uma branch `develop` permanente apenas porque e
 O código atual solicita `openid`, `email` e `https://www.googleapis.com/auth/drive`. Este último é **restrito**, permitindo leitura/escrita ampla. Segundo o Google, aplicativos de backup e sincronização podem se qualificar para esse escopo, mas devem justificar necessidade e cumprir a política de dados.
 
 - [ ] Confirmar se os escopos usados pelo código correspondem exatamente aos declarados no Console.
-- [ ] Documentar por que `drive` é necessário para selecionar e sincronizar **pastas preexistentes arbitrárias**.
-- [ ] Avaliar `drive.file` com rigor, sem substituí-lo automaticamente: pode exigir Picker/seleção por arquivo e mudar a experiência do sincronizador.
+- [ ] Avaliar e justificar o escopo `drive` para a seleção de **pastas preexistentes arbitrárias**.
+- [ ] Avaliar `drive.file` com rigor, sem substituí-lo automaticamente: pode exigir Picker ou seleção por arquivo.
 - [ ] Criar/separar projeto Google Cloud Production e habilitar Drive API.
 - [ ] Criar cliente OAuth do tipo **Desktop app**, não Web nem Service Account.
 - [ ] Configurar o projeto como público **External**, com e-mail de suporte e contatos consistentes.
@@ -94,11 +94,10 @@ O detalhamento fica em [Plano do site](website-plan.md). Para o envio ao Google,
 
 ## 6. Revisão de segurança e privacidade
 
-- [ ] Fazer inventário dos fluxos de dados: API Google ↔ dispositivo, cache e arquivos locais, estado SQLite/`.drivesync/`, Secret Service, diagnósticos e eventuais serviços de terceiros.
+- [ ] Fazer inventário dos fluxos de dados: API Google ↔ dispositivo, índice de contas, Secret Service, diagnósticos e eventuais serviços de terceiros.
 - [ ] Garantir que refresh tokens não saiam do armazenamento de credenciais do usuário e não apareçam em logs.
 - [ ] Documentar revogação, desconexão, exclusão dos dados locais gerenciados pelo app e limites de recuperação.
 - [ ] Testar falhas/retries, escopos insuficientes, tokens expirados, navegação OAuth cancelada e indisponibilidade do cofre.
-- [ ] Validar regras para conflitos, deleções e operações incompletas antes de oferecer sincronização destrutiva automática.
 - [ ] Informar claramente se **não** há servidores intermediários; não afirmar isso antes de auditar código/telemetria/dependências.
 - [ ] Confirmar com o Google se há exigência de **avaliação independente CASA**: ela pode se aplicar quando dados de escopo restrito passam por servidores de terceiros. Não presumir isenção automática por ser desktop/local.
 - [ ] Verificar a conformidade com a política de **Limited Use** e eventuais atualizações da política Google.
@@ -122,7 +121,7 @@ O detalhamento fica em [Plano do site](website-plan.md). Para o envio ao Google,
 - [ ] Publicar instruções de instalação, limitações, reporte de bugs e reversão.
 - [ ] Criar cadastro opcional de interessados em testar (coleta mínima e política de privacidade).
 - [ ] Liberar artifact a testadores controlados; posteriormente criar prerelease pública se apropriado.
-- [ ] Nunca anunciar aprovação OAuth/segurança geral sem evidência; a verificação Google **não** atesta que o sincronizador está livre de bugs.
+- [ ] Nunca anunciar aprovação OAuth/segurança geral sem evidência; a verificação Google **não** atesta que o aplicativo está livre de bugs.
 - [ ] Acompanhar issues, falhas OAuth, retenção e renovações de consentimento.
 
 ## 9. Critérios de conclusão desta iniciativa

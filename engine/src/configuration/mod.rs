@@ -5,15 +5,13 @@
 //! transfer files, start synchronization or perform Google authentication.
 //!
 //! - [`models`]: persisted remote/local configuration data and remote IDs.
-//! - [`identity`]: the portable marker retained in each selected local root.
 //! - [`paths`]: local access checks, host-origin resolution and overlap tests.
-pub(crate) mod identity;
 mod models;
 mod paths;
 
 pub(crate) use models::valid_id;
 pub use models::{DriveFolder, FolderConfiguration};
-pub(crate) use paths::{access_path, local_folder, local_origin, overlap};
+pub(crate) use paths::{local_folder, local_origin, overlap};
 
 #[cfg(test)]
 mod tests;

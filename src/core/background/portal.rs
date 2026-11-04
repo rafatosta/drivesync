@@ -54,8 +54,7 @@ fn options(token: &str) -> HashMap<&str, glib::Variant> {
         ("handle_token", token.to_variant()),
         (
             "reason",
-            "Start DriveSync at login and continue synchronizing when its window is closed"
-                .to_variant(),
+            "Start DriveSync at login and keep it running when its window is closed".to_variant(),
         ),
         ("autostart", true.to_variant()),
         (

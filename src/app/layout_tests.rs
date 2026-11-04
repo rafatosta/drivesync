@@ -116,22 +116,10 @@ fn folder_setup_and_dashboard_layouts() {
     let metadata = std::path::Path::new(&data).join("drivesync");
     std::fs::create_dir_all(&metadata).unwrap();
     std::fs::write(metadata.join("accounts.json"), r#"{"version":2,"clients":{"ui-test.apps.googleusercontent.com":[{"id":"google:layout-fixture","provider_subject":"layout-fixture","email":"preview@example.com"},{"id":"google:second-fixture","provider_subject":"second-fixture","email":"second@example.com"}]},"folders":{}}"#).unwrap();
-    crate::features::dashboard::verify_download_worker_failure();
     let engine = Arc::new(DriveSyncEngine::new());
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_icon_theme_name(Some("Adwaita"));
         settings.set_gtk_enable_animations(false);
-    }
-    if !accounts_only {
-        crate::features::dashboard::verify_download_progress(|window, name| {
-            let node = rendered(window);
-            window
-                .renderer()
-                .unwrap()
-                .render_texture(&node, None)
-                .save_to_png(format!("{output}/{name}.png"))
-                .unwrap();
-        });
     }
     for width in [1000, 360] {
         for screen in ["welcome", "dashboard"] {
@@ -239,8 +227,7 @@ fn folder_setup_and_dashboard_layouts() {
                     split.width() <= window.width(),
                     "dashboard content overflow"
                 );
-                let start = find_named(window.upcast_ref(), "start-synchronization").unwrap();
-                assert!(!start.is_sensitive());
+                assert!(find_named(window.upcast_ref(), "start-synchronization").is_none());
                 assert!(find_button(window.upcast_ref(), "Account Details…").is_none());
                 assert!(find_named(window.upcast_ref(), "account-display-name").is_none());
                 page.activate_action("account.preferences", None).unwrap();
@@ -287,8 +274,7 @@ fn folder_setup_and_dashboard_layouts() {
                         .unwrap()
                         .downcast::<adw::ActionRow>()
                         .unwrap();
-                    // The isolated fixture has no valid saved root binding; restoring availability reports a problem.
-                    assert_eq!(account_row.subtitle().as_deref(), Some("Needs attention"));
+                    assert_eq!(account_row.subtitle().as_deref(), Some("Connected"));
                     assert_eq!(
                         account_row.tooltip_text().as_deref(),
                         Some("preview@example.com")
@@ -348,9 +334,7 @@ fn folder_setup_and_dashboard_layouts() {
                 );
                 let unconfigured = details.visible_child().unwrap();
                 assert!(find_named(&unconfigured, "save-folders").is_none());
-                assert!(!find_named(&unconfigured, "start-synchronization")
-                    .unwrap()
-                    .is_sensitive());
+                assert!(find_named(&unconfigured, "start-synchronization").is_none());
                 assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 list.select_row(list.row_at_index(0).as_ref());
                 assert_eq!(
@@ -656,27 +640,3 @@ fn folder_setup_and_dashboard_layouts() {
 
 #[path = "screenshot_demo.rs"]
 mod screenshot_demo;
-
-/// Exercises synchronization diagnoses without the account setup fixture.
-#[test]
-#[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
-fn reconciliation_status_layouts() {
-    adw::init().unwrap();
-    let output =
-        std::env::var("DRIVESYNC_UI_PREVIEW_DIR").expect("explicit preview output directory");
-    let data = std::env::var("XDG_DATA_HOME").expect("isolated profile directory");
-    assert!(data.starts_with("/tmp/drivesync-ui-"));
-    if let Some(settings) = gtk::Settings::default() {
-        settings.set_gtk_icon_theme_name(Some("Adwaita"));
-        settings.set_gtk_enable_animations(false);
-    }
-    crate::features::dashboard::verify_download_progress(|window, name| {
-        let node = rendered(window);
-        window
-            .renderer()
-            .unwrap()
-            .render_texture(&node, None)
-            .save_to_png(format!("{output}/{name}.png"))
-            .unwrap();
-    });
-}

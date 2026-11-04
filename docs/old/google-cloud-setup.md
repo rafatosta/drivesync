@@ -42,11 +42,11 @@ A interface do Google Cloud pode apresentar nomes ligeiramente diferentes confor
 | --- | --- |
 | `openid` | Identifica a conta Google autenticada. |
 | `email` | Permite obter o endereço de e-mail da conta, quando disponibilizado pelo Google. |
-| `https://www.googleapis.com/auth/drive` | Permite ler os arquivos existentes e criar novos arquivos quando o upload opcional for ativado. |
+| `https://www.googleapis.com/auth/drive` | Concede acesso amplo de leitura e escrita ao Drive; o aplicativo atual consulta apenas metadados de pastas. |
 
 3. Salve as permissões selecionadas.
 
-**Atenção:** `drive` é uma permissão **restrita** e ampla. O DriveSync solicita essa permissão já na conexão inicial para evitar uma segunda autorização ao ativar upload. A opção de upload continua desativada inicialmente, e nenhuma operação de upload ocorre até que o usuário a habilite. Para distribuição pública, o Google pode exigir verificação do aplicativo e requisitos adicionais. Consulte a [classificação oficial dos escopos](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+**Atenção:** `drive` é uma permissão **restrita** e ampla, apesar de o aplicativo não transferir arquivos. Para distribuição pública, o Google pode exigir verificação do aplicativo e requisitos adicionais. Consulte a [classificação oficial dos escopos](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
 
 ## 5. Adicionar usuários de teste
 
@@ -93,7 +93,9 @@ Não é necessário modificar o código Rust, configurar um servidor ou copiar t
 
 ### Compilação personalizada
 
-O build também permite indicar outro JSON explicitamente:
+O build também permite indicar outro JSON explicitamente, com a variável abaixo
+e o Cargo executados **dentro do SDK Flatpak** definido pelo manifesto de
+desenvolvimento:
 
 ```bash
 DRIVESYNC_BUILD_GOOGLE_OAUTH_FILE=/caminho/cliente-desktop.json cargo build

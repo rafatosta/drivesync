@@ -1,7 +1,7 @@
 //! GTK application startup, window composition and shutdown cancellation.
 use super::{main_menu, restoration};
 use crate::core::{background, i18n};
-use crate::features::{preferences, synchronization::automatic};
+use crate::features::preferences;
 use adw::prelude::*;
 use drivesync_engine::DriveSyncEngine;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -20,7 +20,6 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
     background::configure_application(&app);
     // Startup runs once for the primary application, even on repeated activation.
     app.connect_startup(|app| {
-        automatic::install(app);
         let engine = Arc::new(DriveSyncEngine::new());
         let window = adw::ApplicationWindow::builder()
             .application(app)

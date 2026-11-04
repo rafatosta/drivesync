@@ -69,45 +69,14 @@ pub(super) fn populate(
         editor.append(&description);
         heading.bind_description(engine.clone(), &saved, &entry, &description, &user, &avatar);
 
-        let sync_state = crate::ui::row(
-            "Not started",
-            "Choose folders before synchronization",
-            "folder-download-symbolic",
-        );
-        let status = gtk::Label::builder()
-            .xalign(0.0)
-            .hexpand(true)
-            .wrap(true)
-            .css_classes(["dim-label"])
-            .build();
-        let start = gtk::Button::with_label("Synchronize Now");
-        start.set_sensitive(false);
-        start.set_widget_name("start-synchronization");
-        let folders = super::components::folders::build(
-            engine.clone(),
-            &saved,
-            &sync_state,
-            &status,
-            &start,
-            content.upcast_ref(),
-        );
+        let folders =
+            super::components::folders::build(engine.clone(), &saved, content.upcast_ref());
         editor.append(folders.widget());
-        let job =
-            crate::features::synchronization::automatic::Controller::attach(engine.clone(), &saved);
         let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));
         configure.set_action_name(Some("account-controls.configure"));
         configure.set_widget_name("initial-account-configuration");
         configure.set_visible(saved.folder.is_none());
         content.append(&configure);
-        let weak_configure = configure.downgrade();
-        let configure_job = job.clone();
-        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            let Some(button) = weak_configure.upgrade() else {
-                return gtk::glib::ControlFlow::Break;
-            };
-            button.set_visible(configure_job.folder().is_none());
-            gtk::glib::ControlFlow::Continue
-        });
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -118,59 +87,24 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
-        let recovery_status = gtk::Label::builder()
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .xalign(0.0)
-            .selectable(true)
-            .visible(false)
-            .build();
-        recovery_status.set_widget_name("recovery-status");
-        let recovery = super::dialogs::state_recovery::button(
-            engine.clone(),
-            &saved,
-            &recovery_status,
-            job.clone(),
-        );
-        content.append(&super::synchronization_view::build_for_job(
-            engine.clone(),
-            &saved,
-            super::synchronization_view::Controls {
-                folders: folders.widget(),
-                start: &start,
-                row: &sync_state,
-                status: &status,
-                header: &heading,
-                account_row: &user,
-                recovery: Some(&recovery),
-            },
-            job.clone(),
-        ));
-        content.append(&recovery_status);
         details.add_named(&content, Some(&saved.account.id.0));
         menus.push((
-            job.clone(),
             folders.actions().clone(),
             heading,
             user,
             content,
             sign_out,
-            recovery,
             saved.account.id.clone(),
         ));
         settings.push(crate::features::preferences::AccountSettings::new(
-            engine.clone(),
-            saved,
-            job,
-            editor,
+            saved, editor,
         ));
     }
     let settings = crate::features::preferences::Accounts::new(settings);
-    for (job, folders, heading, user, content, sign_out, recovery, id) in menus {
+    for (folders, heading, user, content, sign_out, id) in menus {
         let context = settings.clone();
         let weak_content = content.downgrade();
         let actions = super::components::account_actions::AccountActions::new(
-            job,
             &folders,
             &sign_out,
             move || {
@@ -188,7 +122,6 @@ pub(super) fn populate(
                 }
             },
         );
-        actions.add_recovery(&recovery);
         actions.install(&user);
         actions.install(&content);
         let sidebar_menu = actions.menu();
@@ -241,23 +174,8 @@ mod tests {
             &nav,
             &toasts,
         );
-        let start = {
-            let button = named(page.upcast_ref(), "start-synchronization").unwrap();
-            assert!(
-                !button.is_visible(),
-                "the header replaces the redundant dashboard button"
-            );
-            button.downgrade()
-        };
-        assert!(named(page.upcast_ref(), "account-sync-toggle")
-            .unwrap()
-            .is_visible());
-        let header_toggle = named(page.upcast_ref(), "account-sync-toggle")
-            .unwrap()
-            .downgrade();
-        let attention = named(page.upcast_ref(), "attention-summary")
-            .unwrap()
-            .downgrade();
+        assert!(named(page.upcast_ref(), "start-synchronization").is_none());
+        assert!(named(page.upcast_ref(), "account-sync-toggle").is_none());
         let page_ref = page.downgrade();
         drop(page);
         let wait = gtk::glib::MainLoop::new(None, false);
@@ -267,8 +185,5 @@ mod tests {
         });
         wait.run();
         assert!(page_ref.upgrade().is_none());
-        assert!(start.upgrade().is_none());
-        assert!(header_toggle.upgrade().is_none());
-        assert!(attention.upgrade().is_none());
     }
 }

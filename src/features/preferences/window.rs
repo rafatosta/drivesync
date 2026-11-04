@@ -1,5 +1,5 @@
 //! Native preferences window built with libadwaita components.
-use super::{ColorScheme, Preferences, SYNC_INTERVALS};
+use super::{ColorScheme, Preferences};
 use adw::{gtk, prelude::*};
 use drivesync_engine::AccountId;
 use std::rc::Rc;
@@ -142,27 +142,6 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
     appearance_page.add(&appearance);
     pages.add_named(&appearance_page, Some("appearance"));
 
-    let synchronization_page = adw::PreferencesPage::new();
-    let synchronization = adw::PreferencesGroup::builder()
-        .title("Synchronization")
-        .build();
-    let intervals = gtk::StringList::new(&SYNC_INTERVALS.map(|(_, label)| label));
-    let interval = adw::ComboRow::builder()
-        .title("Check for Changes")
-        .subtitle("How often DriveSync looks for new changes automatically")
-        .model(&intervals)
-        .build();
-    interval.set_widget_name("preferences-interval");
-    interval.set_selected(
-        SYNC_INTERVALS
-            .iter()
-            .position(|(secs, _)| *secs == current.sync_interval)
-            .unwrap_or(0) as u32,
-    );
-    synchronization.add(&interval);
-    synchronization_page.add(&synchronization);
-    pages.add_named(&synchronization_page, Some("synchronization"));
-
     let account_context = accounts
         .clone()
         .unwrap_or_else(|| super::Accounts::new(vec![]));
@@ -171,13 +150,11 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
     let background_page = adw::PreferencesPage::new();
     let background = adw::PreferencesGroup::builder()
         .title("Background")
-        .description("DriveSync keeps synchronizing after the window is closed when background execution is allowed.")
+        .description("DriveSync can continue running after the window is closed when background execution is allowed.")
         .build();
     let keep = adw::SwitchRow::builder()
         .title("Continue in Background When Closed")
-        .subtitle(
-            "Keep synchronizing after the window is closed; otherwise closing quits DriveSync",
-        )
+        .subtitle("Keep DriveSync running after the window is closed; otherwise closing quits")
         .active(current.keep_running)
         .build();
     keep.set_widget_name("preferences-keep-running");
@@ -195,9 +172,8 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
 
     let sections = [
         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
-        ("accounts", "Accounts", "system-users-symbolic", "account accounts identity description email folders local google drive upload simultaneous edits conflicts settings conta contas pastas descrição envio conflitos"),
-        ("synchronization", "Synchronization", "view-refresh-symbolic", "check for changes how often drivesync looks for new changes automatically every minute 5 15 30 hour"),
-        ("background", "Background", "application-x-executable-symbolic", "drivesync keeps synchronizing after the window is closed when background execution is allowed continue in background when closed keep synchronizing after the window is closed otherwise closing quits drivesync notify when running in background show a notification when the window is closed"),
+        ("accounts", "Accounts", "system-users-symbolic", "account accounts identity description email folders local google drive settings conta contas pastas descrição"),
+        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed"),
     ];
     for (_, title, icon, _) in sections {
         let row = adw::ActionRow::builder()
@@ -291,14 +267,6 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
     });
     let save_theme = report.clone();
     let save_keep = report.clone();
-    let save_interval = report.clone();
-    interval.connect_selected_notify(move |row| {
-        if let Some((secs, _)) = SYNC_INTERVALS.get(row.selected() as usize) {
-            let mut value = Preferences::load();
-            value.sync_interval = *secs;
-            save_interval(value.save());
-        }
-    });
     theme.connect_selected_notify(move |row| {
         let scheme = ColorScheme::ALL
             .get(row.selected() as usize)
@@ -348,7 +316,6 @@ mod tests {
     #[ignore = "requires a desktop display"]
     fn account_preferences_select_reuse_and_release_the_correct_editors() {
         adw::init().unwrap();
-        let engine = std::sync::Arc::new(drivesync_engine::DriveSyncEngine::new());
         let parent = adw::Window::new();
         let mut records = vec![];
         let mut editors = vec![];
@@ -366,16 +333,7 @@ mod tests {
             let draft = adw::EntryRow::builder().title("Draft").build();
             draft.set_text(id);
             editor.append(&draft);
-            let job = crate::features::synchronization::automatic::Controller::attach(
-                engine.clone(),
-                &saved,
-            );
-            records.push(super::super::AccountSettings::new(
-                engine.clone(),
-                saved,
-                job,
-                editor.clone(),
-            ));
+            records.push(super::super::AccountSettings::new(saved, editor.clone()));
             editors.push((editor, draft));
         }
         let context = super::super::Accounts::new(records);
@@ -449,7 +407,7 @@ mod tests {
             .unwrap()
             .downcast::<gtk::SearchEntry>()
             .unwrap();
-        search.set_text("upload");
+        search.set_text("folders");
         search.emit_by_name::<()>("search-changed", &[]);
         assert_eq!(sections.visible_child_name().as_deref(), Some("accounts"));
         search.set_text("closed notification");
@@ -521,10 +479,7 @@ mod tests {
             .unwrap()
             .downcast::<adw::SwitchRow>()
             .unwrap();
-        let interval = find(root, "preferences-interval")
-            .unwrap()
-            .downcast::<adw::ComboRow>()
-            .unwrap();
+        assert!(find(root, "preferences-interval").is_none());
         let theme = find(root, "preferences-theme")
             .unwrap()
             .downcast::<adw::ComboRow>()
@@ -532,10 +487,7 @@ mod tests {
 
         assert_eq!(pages.visible_child_name().as_deref(), Some("appearance"));
         list.select_row(list.row_at_index(2).as_ref());
-        assert_eq!(
-            pages.visible_child_name().as_deref(),
-            Some("synchronization")
-        );
+        assert_eq!(pages.visible_child_name().as_deref(), Some("background"));
         split.set_collapsed(true);
         assert!(!split.property::<bool>("show-content"));
         let selected = list.selected_row().unwrap();
@@ -546,7 +498,7 @@ mod tests {
         search.emit_by_name::<()>("search-changed", &[]);
         assert_eq!(pages.visible_child_name().as_deref(), Some("background"));
         assert!(!list.row_at_index(0).unwrap().property::<bool>("visible"));
-        assert!(list.row_at_index(3).unwrap().property::<bool>("visible"));
+        assert!(list.row_at_index(2).unwrap().property::<bool>("visible"));
         search.set_text("no such setting");
         search.emit_by_name::<()>("search-changed", &[]);
         assert!(list.selected_row().is_none());
@@ -559,12 +511,10 @@ mod tests {
         keep.set_active(true);
         assert!(notify.is_sensitive());
         notify.set_active(false);
-        interval.set_selected(2);
         theme.set_selected(2);
         let saved = Preferences::load();
         assert!(saved.keep_running);
         assert!(!saved.notify_on_close);
-        assert_eq!(saved.sync_interval, 900);
         assert_eq!(saved.color_scheme, ColorScheme::Dark);
         window.close();
         parent.close();

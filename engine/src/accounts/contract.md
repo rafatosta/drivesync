@@ -1,37 +1,18 @@
-# Contrato — accounts
+# Contrato — contas
 
-## Propósito
-Identidade de contas e vínculos com pastas.
+O perfil usa `google:<sub>` como identidade estável e pertence a um cliente
+OAuth. O e-mail é metadado opcional, não chave. Reautorizar a mesma identidade
+atualiza o perfil sem duplicá-lo; clientes e contas distintos permanecem
+isolados. Perfis e configurações não contêm tokens.
 
-## Consumidores
-coordinator,ui.
+Listar perfis não comprova autenticação. Restaurar verifica as credenciais de
+cada conta e retorna erros individuais; falha de rede ou do cofre não apaga
+perfis. Ausência confirmada de credencial permite remover o perfil.
 
-## Entrada
-Objetos conceituais validados, identificadores estáveis, contexto de cancelamento e, quando pertinente, versões esperadas.
+Sair é uma ação explícita: remove a credencial local e o perfil da conta,
+incluindo a configuração de pastas. Falhas são reportadas; não se excluem
+arquivos locais ou remotos nem se revoga o acesso no Google.
 
-## Saída
-Resultado tipado ou erro explícito e classificável: temporário, definitivo, conflito ou resultado ambíguo.
-
-## Responsabilidade e limites
-Identidade de contas e vínculos com pastas. Não assumir responsabilidades de outros módulos nem depender da implementação gráfica.
-
-## Invariante
-Desvincular nunca apaga conteúdo local ou remoto.
-
-## Qualidade de contrato
-Toda operação deverá especificar efeitos colaterais, idempotência, concorrência permitida, pré/pós-condições e recuperação após interrupções. Nenhuma falha pode ser interpretada como sucesso.
-
-## Multi-conta: identidade e ciclo de vida
-
-Gerenciar coleção de contas com `AccountId` interno e identificador estável do Google, sem depender apenas de e-mail exibido. Contas podem ser adicionadas/desvinculadas durante vida do mesmo motor. Toda raiz pertence a exatamente uma conta. Desvincular suspende operações da conta afetada e **não apaga arquivos locais**; outras contas continuam.
-
-Consumidores obtêm perfis sanitizados. Falhas de uma conta não alteram perfis de outras. Testes: vincular duas contas, e-mail alterado, desconectar A durante download de B, reiniciar com duas contas.
-
-## Integração mínima de login
-
-Após auth persistir credenciais, registrar perfil por `AccountId = google:<sub>`
-conforme [ACCT-003](algorithms.md#acct-003--persistir-e-restaurar-perfis-na-abertura).
-Reautorizar atualiza sem duplicar; e-mail não é chave. `list_accounts` retorna
-metadados, sem afirmar autenticação; `restore_accounts` verifica por auth e retorna
-falhas por conta sem apagar perfis. Tokens permanecem no cofre; erro de persistência
-não pode ser apresentado como sucesso. Raízes e desvinculação continuam pendentes.
+O índice tem formato versionado atual; formatos inválidos ou incompatíveis
+são rejeitados sem apagar dados. As gravações são serializadas entre processos
+e usam substituição atômica. Veja [persistência](algorithms.md).

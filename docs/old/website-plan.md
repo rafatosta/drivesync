@@ -75,9 +75,9 @@ Os caminhos são **propostas** e não precisam ser esses nomes exatos. A homepag
 
 - [ ] Nome exibido é **DriveSync**, consistente no aplicativo, site e tela de consentimento.
 - [ ] Identifica responsável ou mantenedor e e-mail de suporte real.
-- [ ] Explica que é um aplicativo Linux/GNOME de sincronização de arquivos do Google Drive.
-- [ ] Descreve com exatidão o que já funciona: conexão, seleção de pasta, download, criação opcional de arquivos remotos, consultas de mudanças e modos de sincronização disponíveis.
-- [ ] Declara limitações relevantes: versão de testes; sem sincronização destrutiva ou sobrescrita bidirecional integral; não é ferramenta de backup.
+- [ ] Explica que é um aplicativo Linux/GNOME experimental para gerenciar contas Google e selecionar pastas.
+- [ ] Descreve com exatidão o que já funciona: conexão de contas e seleção de pastas locais e remotas.
+- [ ] Declara limitações relevantes: versão de testes, sem transferência ou sincronização de arquivos; não é ferramenta de backup.
 - [ ] Justifica por que pede acesso a dados do Drive, inclusive o alcance amplo do escopo `drive`.
 - [ ] Evita apresentar como cliente oficial do Google ou afirmar aprovação/certificação antes que ocorra.
 - [ ] Apresenta link para **Política de privacidade** com a **mesma URL** cadastrada no Google Cloud.
@@ -88,11 +88,11 @@ Os caminhos são **propostas** e não precisam ser esses nomes exatos. A homepag
 A política precisa descrever o comportamento **comprovado do software**. Não publicar uma declaração genérica nem prometer ações não auditadas. Preparar texto claro em português; versão inglesa pode ajudar na análise internacional e deve ser consistente.
 
 - [ ] Identificar aplicativo, mantenedor e forma de contato.
-- [ ] Listar dados autorizados pela conta Google: ID da conta, e-mail quando concedido, metadados, conteúdo dos arquivos e pastas usados na sincronização.
+- [ ] Listar dados acessados da conta Google: ID, e-mail quando concedido e metadados de pastas; distinguir o alcance amplo da autorização dos dados realmente utilizados.
 - [ ] Especificar para quais funções esses dados são acessados, usados e transformados.
 - [ ] Informar o escopo OAuth `https://www.googleapis.com/auth/drive` e por que o aplicativo necessita desse alcance.
 - [ ] Descrever **fluxos de dados**: Google Drive API ↔ aplicativo local; verificar eventual passagem por servidores, integrações ou serviços externos.
-- [ ] Detalhar armazenamento local: arquivos sincronizados, configuração, índices e estado em `.drivesync/`, armazenamento das credenciais via Secret Service; corrigir após inventário técnico final.
+- [ ] Detalhar armazenamento local: configuração e índice de contas, credenciais via Secret Service; confirmar após inventário técnico final.
 - [ ] Declarar existência (ou ausência comprovada) de analytics, telemetria, crash reports, anúncios e monetização com dados.
 - [ ] Informar se dados são compartilhados com terceiros e para quais finalidades (incluindo eventual formulário de inscrições, caso aplicável).
 - [ ] Explicar duração/retensão dos dados, desconexão, revogação de permissão, exclusão dos dados mantidos e limitações.
@@ -118,7 +118,7 @@ A política precisa descrever o comportamento **comprovado do software**. Não p
 
 - [ ] Gravar vídeo funcional de ponta a ponta, com nome e identidade visual iguais à página pública.
 - [ ] Incluir consentimento OAuth completo com **idioma inglês**, mostrando os escopos solicitados.
-- [ ] Demonstrar as funcionalidades que justificam o acesso amplo (pasta existente, listagem, download/upload permitido).
+- [ ] Demonstrar as funcionalidades existentes de seleção e listagem de pastas e justificar o acesso solicitado.
 - [ ] Usar conta e arquivos descartáveis, sem dados pessoais em gravações.
 - [ ] Hospedar vídeo não listado em URL acessível ao revisor e fornecer link no formulário de verificação.
 - [ ] Oferecer documentação sobre como instalar/operar build de teste quando solicitada pela equipe Google.

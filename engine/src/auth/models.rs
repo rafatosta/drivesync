@@ -19,8 +19,6 @@ pub(super) struct Credential {
     pub(super) refresh_token: String,
     /// Unix expiration timestamp, in seconds.
     pub(super) expires_at: u64,
-    #[serde(default)]
-    pub(super) write_access: bool,
 }
 /// OAuth tokens returned by a provider exchange or refresh.
 /// A refresh response may omit a new refresh token; retain the stored one.

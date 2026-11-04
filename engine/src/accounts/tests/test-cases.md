@@ -1,16 +1,9 @@
-# Matriz de testes — accounts
+# Casos de teste — contas
 
-| ID | Cenário | Resultado esperado |
-|---|---|---|
-| ACCOUNTS-T01 | Entrada e estado normais | Resultado corresponde ao contrato |
-| ACCOUNTS-T02 | Parâmetros inválidos | Erro tipado, sem efeitos |
-| ACCOUNTS-T03 | Rede ou disco indisponível | Preservação, retry controlado |
-| ACCOUNTS-T04 | Interrupção antes da persistência final | Reconciliação sem perda de dados |
-| ACCOUNTS-T05 | Execução repetida | Idempotência ou bloqueio com reconciliação |
-| ACCOUNTS-T06 | Concorrência e dados alterados | Conflito explícito, sem sobrescrita silenciosa |
+Os testes em [`tests.rs`](../tests.rs) exercitam persistência e restauração,
+isolamento por cliente e conta, rejeição de dados inválidos, concorrência,
+falhas de armazenamento e configuração de pastas. Verificam também que
+metadados preexistentes não são criados ou apagados pela configuração.
 
-Critérios de aprovação devem ser independentes da implementação. Antes de programar, completar fixtures de entrada, estado anterior e estado esperado para cada caso.
-
-ACCT-003: [testes automatizados](../tests.rs) cobrem reinício, isolamento de clientes,
-corrupção/versão futura, falhas de escrita e verificação, concorrência e retry.
-Aceitação com conta/cofre reais: [validação](../../../../docs/auth-validation.md).
+Testes com dados sintéticos não substituem a
+[aceitação com contas e cofre reais](../../../../docs/old/auth-validation.md).

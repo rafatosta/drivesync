@@ -34,7 +34,6 @@ pub(crate) fn show_accounts(
 ) {
     match crate::app::navigation::initial_destination(&accounts) {
         crate::app::navigation::InitialDestination::Accounts => {
-            crate::features::synchronization::automatic::reconcile(engine.clone(), &accounts);
             let welcome = crate::features::welcome::build(engine, nav, toasts, cancellation);
             nav.replace(&[adw::NavigationPage::new(&welcome, &gettext("Welcome"))]);
         }

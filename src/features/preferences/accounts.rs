@@ -1,55 +1,18 @@
 //! Account editors shared with their dashboard adapters. Editors have one owner
 //! and are mounted only in Preferences; reopening preserves incomplete drafts.
-use crate::features::synchronization::automatic::Controller;
 use adw::{gtk, prelude::*};
-use drivesync_engine::{AccountId, DriveSyncEngine, RestoredAccount};
+use drivesync_engine::{AccountId, RestoredAccount};
 use gettextrs::gettext;
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{cell::Cell, rc::Rc};
 
-/// One account's existing editors and controller. Synchronization options are
-/// constructed on first open and use the same controller as its dashboard.
+/// One account's editor, retained across preference-window reopenings.
 pub(crate) struct AccountSettings {
     saved: RestoredAccount,
-    engine: Arc<DriveSyncEngine>,
-    job: Controller,
     editor: gtk::Box,
-    initialized: Cell<bool>,
 }
 impl AccountSettings {
-    pub(crate) fn new(
-        engine: Arc<DriveSyncEngine>,
-        saved: RestoredAccount,
-        job: Controller,
-        editor: gtk::Box,
-    ) -> Self {
-        Self {
-            saved,
-            engine,
-            job,
-            editor,
-            initialized: Cell::new(false),
-        }
-    }
-    fn initialize(&self) {
-        if self.initialized.replace(true) {
-            return;
-        }
-        let mut saved = self.saved.clone();
-        saved.folder = self.job.folder();
-        let options = adw::PreferencesGroup::builder()
-            .title(gettext("Account synchronization"))
-            .build();
-        options.add(&super::upload_mode::build(
-            self.engine.clone(),
-            &saved,
-            &options,
-            self.job.clone(),
-        ));
-        options.add(&super::conflict_preferences::build(
-            self.engine.clone(),
-            self.job.clone(),
-        ));
-        self.editor.append(&options);
+    pub(crate) fn new(saved: RestoredAccount, editor: gtk::Box) -> Self {
+        Self { saved, editor }
     }
 }
 
@@ -187,7 +150,6 @@ impl Accounts {
             editors.add_named(&record.editor, Some(&record.saved.account.id.0));
         }
         if let Some(record) = self.records.get(self.selected.get()) {
-            record.initialize();
             editors.set_visible_child_name(&record.saved.account.id.0);
         }
         let weak_editors = editors.downgrade();
@@ -195,7 +157,6 @@ impl Accounts {
         selector.connect_selected_notify(move |selector| {
             let index = selector.selected() as usize;
             if let (Some(editors), Some(id)) = (weak_editors.upgrade(), context.id_at(index)) {
-                context.records[index].initialize();
                 context.selected.set(index);
                 editors.set_visible_child_name(&id.0);
             }

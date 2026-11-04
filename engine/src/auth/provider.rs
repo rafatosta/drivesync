@@ -1,4 +1,4 @@
-//! OAuth workflow orchestration and account-scoped synchronization.
+//! OAuth workflow orchestration and account-scoped locking.
 //!
 //! Does not implement HTTP or platform vault APIs directly. Those services
 //! are injected through ports and have production adapters in sibling modules.
@@ -134,11 +134,6 @@ impl AuthProvider {
         cancel.check()?;
         let identity = self.api.identify(&tokens.access_token)?;
         let account = identity.summary()?;
-        let write_access = tokens.scope.as_deref().is_some_and(|scope| {
-            scope
-                .split_whitespace()
-                .any(|granted| granted == google::DRIVE_SCOPE)
-        });
         let lock = self.account_lock(&account.id)?;
         let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
         let old = self.store.load(&config.client_id, &account.id)?;
@@ -158,7 +153,6 @@ impl AuthProvider {
             access_token: tokens.access_token,
             refresh_token: refresh,
             expires_at: now()?.saturating_add(tokens.expires_in),
-            write_access,
         };
         cancel.check()?;
         self.store
@@ -166,22 +160,6 @@ impl AuthProvider {
         Ok(account)
     }
 
-    pub(crate) fn can_upload(
-        &self,
-        config: &OAuthConfig,
-        id: &AccountId,
-    ) -> Result<bool, AuthError> {
-        let lock = self.account_lock(id)?;
-        let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
-        let credential = self
-            .store
-            .load(&config.client_id, id)?
-            .ok_or(AuthError::ReauthorizationRequired)?;
-        if AccountId::from_subject(&credential.subject) != *id {
-            return Err(AuthError::IdentityMismatch);
-        }
-        Ok(credential.write_access)
-    }
     /// Removes old profile metadata only when the vault confirms no entry.
     ///
     /// A locked, unavailable or malformed vault is never evidence of logout.
@@ -212,7 +190,7 @@ impl AuthProvider {
     pub(crate) fn sign_out(&self, config: &OAuthConfig, id: &AccountId) -> Result<(), AuthError> {
         self.sign_out_then(config, id, || Ok(()))
     }
-    /// Removes a stored credential and then runs app-metadata cleanup.
+    /// Removes a credential and then runs account-metadata cleanup.
     ///
     /// Login and logout share an interactive gate; the account mutex also
     /// waits for any in-flight account work. A failed metadata cleanup may
@@ -221,7 +199,7 @@ impl AuthProvider {
     /// # Errors
     ///
     /// Returns [`AuthError::Busy`] during login, or propagates vault,
-    /// synchronization and metadata-cleanup errors.
+    /// metadata-cleanup errors.
     pub(crate) fn sign_out_then(
         &self,
         config: &OAuthConfig,
@@ -317,10 +295,6 @@ impl AuthProvider {
         if renewed {
             let tokens = self.api.refresh(config, &credential.refresh_token)?;
             validate_tokens(&tokens)?;
-            if let Some(scope) = &tokens.scope {
-                credential.write_access =
-                    scope.split_whitespace().any(|s| s == google::DRIVE_SCOPE);
-            }
             credential.access_token = tokens.access_token;
             if let Some(refresh) = tokens.refresh_token.filter(|s| !s.is_empty()) {
                 credential.refresh_token = refresh;

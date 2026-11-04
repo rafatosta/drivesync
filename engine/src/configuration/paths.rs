@@ -3,25 +3,24 @@
 //! The functions here validate local roots, map portal aliases back to host
 //! locations and compare canonical roots without touching user file contents.
 use crate::EngineError;
+use rustix::fs::{self as unix_fs, Mode, OFlags};
 use std::{
     fs::{self, OpenOptions},
     os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
-/// Selects and probes a writable local directory for verified downloads.
+/// Selects and probes a writable local directory for folder configuration.
 ///
 /// The `path` must be absolute and refer to an existing directory other than
 /// the filesystem root. A unique, mode-`0600` temporary file is created and
-/// removed to check write access and attempt shared locks; no user files are changed.
-/// A fresh portal selection uses its host origin when already accessible through
-/// no-follow descriptors. Existing `.drivesync` state prevents this selection.
+/// removed to check write access; no user files are changed. A portal selection
+/// uses its host origin when already accessible through no-follow descriptors.
 ///
 /// # Errors
 ///
 /// Returns [`EngineError::InvalidFolder`] when the path is invalid,
 /// cannot be canonicalized, is not a directory, or the access probe fails.
-/// Unsupported regular-file flock does not prevent verified downloads.
 pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
     if !path.is_absolute() {
         return Err(EngineError::InvalidFolder);
@@ -42,25 +41,45 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .mode(0o600)
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
-    let capability = crate::download::filesystem::lock_transfer(&file);
     drop(file);
     fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
-    capability?;
     Ok(path)
 }
 
-/// Selects an already sandbox-authorized host origin only before any root state
-/// exists. Portal and direct inode evidence is never interchangeable. An absent
-/// or inaccessible origin keeps the selected view; no permission is requested.
+/// Selects an already sandbox-authorized host origin without requesting access.
 fn fresh_root_access(selected: &Path, origin: &Path) -> PathBuf {
     if selected == origin
-        || !matches!(fs::symlink_metadata(selected.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
-        || !matches!(fs::symlink_metadata(origin.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
-        || crate::download::filesystem::Root::observe(origin).is_err()
+        || access_path(origin)
+            .and_then(|path| open_directory(&path))
+            .is_err()
     {
         return selected.into();
     }
     origin.into()
+}
+
+/// Opens each absolute directory component without following symbolic links.
+fn open_directory(path: &Path) -> Result<std::fs::File, EngineError> {
+    if !path.is_absolute() {
+        return Err(EngineError::InvalidFolder);
+    }
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut directory = std::fs::File::from(
+        unix_fs::open("/", flags, Mode::empty()).map_err(|_| EngineError::InvalidFolder)?,
+    );
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                directory = std::fs::File::from(
+                    unix_fs::openat(&directory, name, flags, Mode::empty())
+                        .map_err(|_| EngineError::InvalidFolder)?,
+                );
+            }
+            _ => return Err(EngineError::InvalidFolder),
+        }
+    }
+    Ok(directory)
 }
 /// Resolves a Flatpak document-portal alias to its host-side location.
 ///
@@ -208,7 +227,7 @@ fn portal_alias_target(path: &Path, target: &Path) -> Option<PathBuf> {
 mod access_tests {
     use super::*;
     #[test]
-    fn fresh_portal_selection_uses_only_accessible_origins_without_existing_state() {
+    fn portal_selection_uses_only_accessible_origins() {
         let base = std::env::temp_dir().join(format!(
             "drivesync-access-{}",
             oauth2::CsrfToken::new_random().secret()
@@ -225,7 +244,7 @@ mod access_tests {
         );
         fs::create_dir(selected.join(".drivesync")).unwrap();
         fs::write(selected.join(".drivesync/evidence"), b"preserve").unwrap();
-        assert_eq!(fresh_root_access(&selected, &origin), selected);
+        assert_eq!(fresh_root_access(&selected, &origin), origin);
         assert_eq!(
             fs::read(selected.join(".drivesync/evidence")).unwrap(),
             b"preserve"
@@ -249,6 +268,7 @@ mod access_tests {
         assert_eq!(fs::read_dir(&base).unwrap().count(), 1);
         fs::remove_dir_all(base).unwrap();
     }
+
     #[test]
     fn only_the_fixed_flatpak_runtime_alias_is_translated() {
         for target in ["../../flatpak/doc", "/run/flatpak/doc"] {

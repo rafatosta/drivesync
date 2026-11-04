@@ -6,10 +6,10 @@ use super::{
 use std::path::Path;
 
 /// Requires a freshly exported disposable directory with direct sandbox access.
-/// Does not authenticate or configure an account, and never creates root state.
+/// Does not authenticate or configure an account.
 #[test]
 #[ignore = "requires an explicit fresh disposable portal export and scoped direct grant"]
-fn fresh_portal_folder_selects_direct_access_before_recording_inode_evidence() {
+fn fresh_portal_folder_selects_direct_access() {
     let selected = std::path::PathBuf::from(
         std::env::var_os("DRIVESYNC_PORTAL_TEST_PATH").expect("portal path"),
     );
@@ -23,15 +23,7 @@ fn fresh_portal_folder_selects_direct_access_before_recording_inode_evidence() {
     assert!(!selected.join(".drivesync").exists());
     std::fs::create_dir(selected.join(".drivesync")).unwrap();
     std::fs::write(selected.join(".drivesync/evidence"), b"preserve").unwrap();
-    crate::local::scan(
-        &crate::download::filesystem::Root::open(&selected).unwrap(),
-        &crate::Cancellation::new(),
-    )
-    .unwrap();
-    assert_eq!(
-        super::paths::local_folder(&selected).unwrap(),
-        super::paths::access_path(&selected).unwrap()
-    );
+    assert_eq!(super::paths::local_folder(&selected).unwrap(), origin);
     assert_eq!(
         std::fs::read(selected.join(".drivesync/evidence")).unwrap(),
         b"preserve"

@@ -49,7 +49,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
                     crate::core::build_info::REVISION
                 ))
                 .comments(gettext(
-                    "Download files from Google Drive. Local edits are preserved.",
+                    "Manage Google accounts and choose local and Drive folders. Files are not synchronized.",
                 ))
                 .build();
             about.present();
