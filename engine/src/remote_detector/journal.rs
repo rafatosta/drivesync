@@ -227,15 +227,15 @@ impl Journal {
     }
 
     /// Idempotently acknowledges a single event within its exact scope.
-    pub fn acknowledge(&self, scope: &Scope, id: i64) -> Result<(), JournalError> {
+    pub fn acknowledge(&self, scope: &Scope, id: i64) -> Result<bool, JournalError> {
         let connection = self.connect()?;
-        connection
+        let removed = connection
             .execute(
                 "DELETE FROM events WHERE id=?1 AND client=?2 AND account=?3 AND root=?4 AND corpus=?5",
                 params![id, scope.client, scope.account, scope.root, scope.corpus],
             )
             .map_err(|_| JournalError::Storage)?;
-        Ok(())
+        Ok(removed != 0)
     }
 }
 
@@ -292,11 +292,11 @@ mod tests {
         assert_eq!(checkpoint.inventory, b"inventory-a");
         assert!(journal.load(&other_root).unwrap().is_none());
         let event = journal.pending(&a).unwrap().remove(0);
-        journal.acknowledge(&b, event.id).unwrap();
+        assert!(!journal.acknowledge(&b, event.id).unwrap());
         assert_eq!(journal.pending(&a).unwrap(), vec![event]);
         let id = journal.pending(&a).unwrap()[0].id;
-        journal.acknowledge(&a, id).unwrap();
-        journal.acknowledge(&a, id).unwrap();
+        assert!(journal.acknowledge(&a, id).unwrap());
+        assert!(!journal.acknowledge(&a, id).unwrap());
         assert!(journal.pending(&a).unwrap().is_empty());
         assert_eq!(journal.pending(&b).unwrap().len(), 1);
     }

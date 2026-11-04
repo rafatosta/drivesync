@@ -6,27 +6,48 @@ use crate::{configuration::valid_id, remote, EngineError};
 use serde::{Deserialize, Serialize};
 
 const API: &str = "https://www.googleapis.com/drive/v3";
-const FILE_FIELDS: &str = "id,name,mimeType,parents,trashed,version,modifiedTime,driveId";
+const FILE_FIELDS: &str =
+    "id,name,mimeType,parents,trashed,version,modifiedTime,driveId,capabilities(canListChildren)";
 
 /// Change-log identity. A shared-drive log must be used for a member's drive.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Corpus {
+pub enum Corpus {
+    /// The authenticated user's own change log.
     User,
+    /// The change log of a shared drive for which the account is a member.
     SharedDrive(String),
 }
 
 /// A provider item is a metadata observation, not an operation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct File {
+pub struct File {
+    /// Stable Drive item identifier.
     pub id: String,
+    /// Available name, which is not an identity.
     pub name: Option<String>,
+    /// Drive MIME type, when returned.
     pub mime_type: Option<String>,
+    /// Observed parent identifiers, when returned.
     pub parents: Option<Vec<String>>,
+    /// Trashed state, when returned.
     pub trashed: Option<bool>,
+    /// Provider version, when returned.
     pub version: Option<String>,
+    /// Provider modification timestamp, when returned.
     pub modified_time: Option<String>,
+    /// Shared-drive identifier, when applicable.
     pub drive_id: Option<String>,
+    /// Listing capability for folders, when returned.
+    pub capabilities: Option<FileCapabilities>,
+}
+
+/// Provider-reported folder-listing capability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileCapabilities {
+    /// Whether this account can list the folder's children.
+    pub can_list_children: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -89,7 +110,7 @@ impl Transport for Http<'_> {
 }
 
 /// A provider bound to an already verified account's short-lived access token.
-pub(super) struct GoogleDrive<'a> {
+pub(crate) struct GoogleDrive<'a> {
     transport: Http<'a>,
 }
 
@@ -100,15 +121,19 @@ impl<'a> GoogleDrive<'a> {
         }
     }
 
-    pub fn start(&self, corpus: &Corpus) -> Result<String, ProviderError> {
+    pub(super) fn start(&self, corpus: &Corpus) -> Result<String, ProviderError> {
         start(&self.transport, corpus)
     }
 
-    pub fn changes(&self, corpus: &Corpus, cursor: &str) -> Result<ChangePage, ProviderError> {
+    pub(super) fn changes(
+        &self,
+        corpus: &Corpus,
+        cursor: &str,
+    ) -> Result<ChangePage, ProviderError> {
         changes(&self.transport, corpus, cursor)
     }
 
-    pub fn children(
+    pub(super) fn children(
         &self,
         corpus: &Corpus,
         parent: &str,
@@ -117,7 +142,7 @@ impl<'a> GoogleDrive<'a> {
         children(&self.transport, corpus, parent, page)
     }
 
-    pub fn file(&self, id: &str) -> Result<File, ProviderError> {
+    pub(super) fn file(&self, id: &str) -> Result<File, ProviderError> {
         file(&self.transport, id)
     }
 }
@@ -192,7 +217,11 @@ fn changes(
         return Err(ProviderError::InvalidResponse);
     }
     for change in &page.changes {
-        if change.file_id.as_deref().is_some_and(|id| !valid_id(id))
+        if !matches!(change.change_type.as_deref(), Some("file" | "drive"))
+            || (change.change_type.as_deref() == Some("file") && change.file_id.is_none())
+            || (change.change_type.as_deref() == Some("drive") && change.drive_id.is_none())
+            || change.file_id.as_deref().is_some_and(|id| !valid_id(id))
+            || change.drive_id.as_deref().is_some_and(|id| !valid_id(id))
             || change.file.as_ref().is_some_and(|f| !valid_id(&f.id))
             || change
                 .file
@@ -308,7 +337,7 @@ mod tests {
         assert!(params.contains(&("driveId".into(), "shared-1".into())));
         drop(req);
         let provider =
-            fake(br#"{"nextPageToken":"next","changes":[{"fileId":"file-1","removed":true}]}"#);
+            fake(br#"{"nextPageToken":"next","changes":[{"changeType":"file","fileId":"file-1","removed":true}]}"#);
         let page = changes(&provider, &corpus, "cursor").unwrap();
         assert_eq!(page.next_page_token.as_deref(), Some("next"));
         assert!(page.changes[0].removed);
@@ -334,7 +363,7 @@ mod tests {
         for response in [
             br#"{"changes":[]}"#.as_slice(),
             br#"{"changes":[],"nextPageToken":"a","newStartPageToken":"b"}"#.as_slice(),
-            br#"{"changes":[{"fileId":"one","file":{"id":"two"}}],"newStartPageToken":"b"}"#
+            br#"{"changes":[{"changeType":"file","fileId":"one","file":{"id":"two"}}],"newStartPageToken":"b"}"#
                 .as_slice(),
         ] {
             assert!(matches!(

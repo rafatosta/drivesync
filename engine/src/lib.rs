@@ -8,7 +8,6 @@ mod error;
 mod facade;
 mod models;
 mod remote;
-#[allow(dead_code)]
 mod remote_detector;
 
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
@@ -17,3 +16,7 @@ pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;
+pub use remote_detector::{
+    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteDelivery,
+    RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata, RemoteMembership,
+};

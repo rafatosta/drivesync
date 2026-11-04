@@ -1,7 +1,8 @@
 //! Public boundary for authorization, accounts and folder configuration.
 use crate::{
-    accounts, auth, configuration, remote, AccountId, AccountSummary, AuthError, Cancellation,
-    EngineError, FolderConfiguration, FolderPage, RestoredAccount,
+    accounts, auth, configuration, remote, remote_detector, AccountId, AccountSummary, AuthError,
+    Cancellation, DetectionCheck, DetectionCorpus, DetectionError, EngineError,
+    FolderConfiguration, FolderPage, RemoteDelivery, RestoredAccount,
 };
 
 /// Coordinates account and folder operations without exposing credentials.
@@ -203,6 +204,80 @@ impl DriveSyncEngine {
             .map_err(EngineError::Authentication)?
             .into_iter()
             .find(|f| &f.account_id == id))
+    }
+
+    /// Performs a bounded, read-only remote check for the configured folder.
+    ///
+    /// The caller selects the change-log corpus explicitly. This blocks during
+    /// authentication and network I/O and must not run on the GUI thread.
+    /// Pending events are retained until individually acknowledged.
+    ///
+    /// # Errors
+    ///
+    /// Returns incomplete, retryable, intervention or sanitized account/provider
+    /// errors. If a storage commit fails ambiguously, reload pending state
+    /// before retrying.
+    pub fn check_remote_changes(
+        &self,
+        id: &AccountId,
+        corpus: &DetectionCorpus,
+    ) -> Result<DetectionCheck, DetectionError> {
+        let config = auth::OAuthConfig::load()
+            .map_err(|error| DetectionError::Provider(EngineError::Authentication(error)))?;
+        let folder = self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(|error| DetectionError::Provider(EngineError::Authentication(error)))?
+            .into_iter()
+            .find(|f| &f.account_id == id)
+            .ok_or(DetectionError::Intervention)?;
+        self.auth
+            .with_access_config(&config, id, |token| {
+                Ok(remote_detector::check(
+                    &remote_detector::GoogleDrive::new(token),
+                    &config.client_id,
+                    id,
+                    &folder.remote.id,
+                    corpus,
+                ))
+            })
+            .map_err(DetectionError::Provider)?
+    }
+
+    /// Reads pending events for a specific account, root and corpus without
+    /// requiring network access or acknowledging the events. An old root can
+    /// still be queried after a folder reconfiguration.
+    ///
+    /// # Errors
+    ///
+    /// Returns configuration, invalid scope or journal errors.
+    pub fn remote_events(
+        &self,
+        id: &AccountId,
+        root: &str,
+        corpus: &DetectionCorpus,
+    ) -> Result<Vec<RemoteDelivery>, DetectionError> {
+        let config = auth::OAuthConfig::load()
+            .map_err(|error| DetectionError::Provider(EngineError::Authentication(error)))?;
+        remote_detector::pending(&config.client_id, id, root, corpus)
+    }
+
+    /// Idempotently acknowledges one event in its exact account/root/corpus.
+    /// Returns whether a pending event was actually removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns configuration, invalid scope or journal errors.
+    pub fn acknowledge_remote_event(
+        &self,
+        id: &AccountId,
+        root: &str,
+        corpus: &DetectionCorpus,
+        event_id: i64,
+    ) -> Result<bool, DetectionError> {
+        let config = auth::OAuthConfig::load()
+            .map_err(|error| DetectionError::Provider(EngineError::Authentication(error)))?;
+        remote_detector::acknowledge(&config.client_id, id, root, corpus, event_id)
     }
 
     /// Validates and saves a remote folder and writable local directory.

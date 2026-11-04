@@ -6,9 +6,10 @@ DriveSync é um aplicativo Linux experimental para autenticar e gerenciar contas
 Google e escolher uma pasta local e uma pasta do Google Drive para cada conta.
 A interface usa GTK4/Libadwaita e o aplicativo é distribuído como Flatpak.
 
-O aplicativo **não sincroniza, monitora, transfere ou exclui arquivos**, nem
-resolve conflitos. Selecionar pastas não inicia operações sobre seu conteúdo.
-Não há detector de alterações remotas nesta versão. DriveSync não é um backup.
+O aplicativo **não sincroniza, transfere ou exclui arquivos**, nem resolve
+conflitos. Selecionar pastas não inicia operações sobre seu conteúdo. Um
+diagnóstico explícito consulta metadados e alterações remotas; não há
+monitoramento automático. DriveSync não é um backup.
 
 ## Autenticação e contas
 
@@ -81,6 +82,6 @@ Contratos detalhados: [autenticação](../engine/src/auth/contract.md),
 [configuração](../engine/src/configuration/contract.md) e
 [pastas remotas](../engine/src/remote/contract.md).
 
-O [contrato proposto do detector remoto](../engine/src/remote_detector/contract.md)
-define requisitos para uma etapa futura; ainda não descreve uma implementação
-ou validação disponível.
+O [contrato do detector remoto](../engine/src/remote_detector/contract.md)
+define suas garantias e limitações. O diagnóstico é invocado manualmente; a
+validação com Google Drive real e o aplicativo empacotado ainda é necessária.

@@ -1,7 +1,7 @@
 # Contrato proposto — detector de alterações remotas
 
-**Estado: especificação para revisão; o detector ainda não está implementado.**
-Este contrato não autoriza operações sobre conteúdo local ou remoto.
+**Estado: implementação experimental; validação real pendente.** Este contrato
+não autoriza operações sobre conteúdo local ou remoto.
 
 ## Limites e fontes
 
@@ -126,5 +126,18 @@ Testes reais, separados dos automatizados, usam somente conta e pasta de teste
 isoladas com autorização adequada. A pessoa executa no Drive criação, edição,
 renomeação, movimentação e exclusão de arquivos dispensáveis, e compara cada
 estado observado com diagnóstico sanitizado. Não registrar tokens nem dados
-pessoais. O roteiro operacional concreto depende da ferramenta de diagnóstico
-efetivamente implementada.
+pessoais. O [roteiro operacional](../../../docs/remote-detector-diagnostic.md)
+descreve o comando e a execução manual.
+
+## Limitações da implementação
+
+Cada verificação faz uma nova varredura da árvore e exige um intervalo sem
+alterações no registro inteiro do corpus; atividade contínua pode produzir
+resultado incompleto. O limite é de 10.000 requisições, 100.000 itens e oito
+rodadas por verificação. Pastas sem capacidade confirmada de listar filhos
+interrompem a verificação. Um token rejeitado requer intervenção; não há
+reconstrução automática. O acompanhamento de uma pasta em drive compartilhado
+requer selecionar explicitamente o registro do drive e acesso de membro; o
+caso de acesso individual por não membro não está implementado. A perda de
+acesso ou mudança de corpus da raiz bloqueia a verificação em vez de trocar
+de registro silenciosamente.

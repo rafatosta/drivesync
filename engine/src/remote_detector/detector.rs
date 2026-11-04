@@ -32,51 +32,134 @@ impl Default for Limits {
 
 /// Membership is based on complete inventories, not file names or paths.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum Membership {
+pub enum Membership {
+    /// The item is inside the monitored tree.
     Inside,
+    /// The item is outside the monitored tree.
     Outside,
+    /// The available information cannot establish membership.
     Unknown,
 }
 
 /// Baseline entries and subsequent observations have distinct meanings.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum EventKind {
+pub enum EventKind {
+    /// A baseline item, not an inferred creation.
     Initial,
+    /// The initial inventory was completely recorded.
     InitialComplete,
+    /// The item or subtree needs re-evaluation.
     Reevaluate,
 }
 
 /// An observation contains no operation decision and may require rechecking.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct Event {
+pub struct Event {
+    /// Account identifier.
     pub account: String,
+    /// Monitored root identifier.
     pub root: String,
+    /// Baseline or later observation.
     pub kind: EventKind,
+    /// File identifier, absent for the initial completion marker.
     pub file_id: Option<String>,
+    /// Membership at the previous confirmed inventory.
     pub before: Membership,
+    /// Membership at the new inventory, or unknown.
     pub after: Membership,
+    /// Previously observed metadata, when available.
     pub previous: Option<File>,
+    /// Current or provider-reported metadata, when available.
     pub current: Option<File>,
 }
 
 /// Event IDs are assigned durably and remain stable across redelivery.
-pub(super) struct DeliveredEvent {
+#[derive(Debug, Serialize)]
+pub struct DeliveredEvent {
+    /// Stable identifier used to acknowledge this delivery.
     pub id: i64,
+    /// Observed change, not an operation decision.
     pub event: Event,
 }
 
-pub(super) enum Check {
+/// A completed check; returning events never acknowledges them.
+#[derive(Debug, Serialize)]
+pub enum Check {
+    /// The initial inventory and pending observations.
     Initialized(Vec<DeliveredEvent>),
+    /// Pending observations, including previously unacknowledged ones.
     Changes(Vec<DeliveredEvent>),
+    /// No pending observations remain.
     NoChanges,
 }
 
+/// Sanitized failure. A storage commit error can have an ambiguous outcome.
 #[derive(Debug)]
-pub(super) enum DetectionError {
+pub enum DetectionError {
+    /// The result is incomplete or a configured work limit was reached.
     Incomplete,
+    /// Retry after a concurrent change or a temporary storage failure.
     Retry,
+    /// Configuration, provider response or persisted state needs intervention.
+    Intervention,
+    /// Drive rejected the stored cursor; state must not be reset silently.
+    CursorRejected,
+    /// The provider response was malformed or internally inconsistent.
+    InvalidResponse,
+    /// The on-disk database uses an unsupported format.
+    IncompatibleState,
+    /// Sanitized account, vault or remote provider failure.
+    Provider(EngineError),
+}
+
+/// High-level action required after a failed check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectionFailureKind {
+    /// The bounded check did not establish a complete result.
+    Incomplete,
+    /// Retry after a transient problem or conflicting writer.
+    Recoverable,
+    /// User or operator intervention is required.
     Intervention,
 }
+
+impl DetectionError {
+    /// Classifies the failure without exposing provider response bodies.
+    pub fn kind(&self) -> DetectionFailureKind {
+        match self {
+            Self::Incomplete => DetectionFailureKind::Incomplete,
+            Self::Retry
+            | Self::Provider(EngineError::RemoteRateLimited)
+            | Self::Provider(EngineError::Authentication(
+                AuthError::Network
+                | AuthError::ProviderUnavailable
+                | AuthError::TimedOut
+                | AuthError::Busy,
+            )) => DetectionFailureKind::Recoverable,
+            Self::Intervention
+            | Self::CursorRejected
+            | Self::InvalidResponse
+            | Self::IncompatibleState
+            | Self::Provider(_) => DetectionFailureKind::Intervention,
+        }
+    }
+}
+
+impl std::fmt::Display for DetectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Incomplete => f.write_str("Remote verification is incomplete; no checkpoint was committed."),
+            Self::Retry => f.write_str("Remote verification could not commit; retry after checking storage or concurrent activity."),
+            Self::Intervention => f.write_str("Remote verification requires intervention; existing state was preserved."),
+            Self::CursorRejected => f.write_str("Google Drive rejected the change cursor; existing state and pending events were preserved."),
+            Self::InvalidResponse => f.write_str("Google Drive returned an invalid response; existing state was preserved."),
+            Self::IncompatibleState => f.write_str("Remote detection state has an unsupported format; existing data was preserved."),
+            Self::Provider(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for DetectionError {}
 
 /// Port implemented by the production adapter and deterministic test provider.
 trait Provider {
@@ -115,7 +198,7 @@ impl From<JournalError> for DetectionError {
     fn from(error: JournalError) -> Self {
         match error {
             JournalError::Stale | JournalError::Storage => Self::Retry,
-            JournalError::Incompatible => Self::Intervention,
+            JournalError::Incompatible => Self::IncompatibleState,
         }
     }
 }
@@ -124,12 +207,9 @@ impl From<ProviderError> for DetectionError {
     fn from(error: ProviderError) -> Self {
         match error {
             ProviderError::Incomplete => Self::Incomplete,
-            ProviderError::RejectedCursor | ProviderError::InvalidResponse => Self::Intervention,
-            ProviderError::Request(EngineError::Authentication(
-                AuthError::Network | AuthError::ProviderUnavailable | AuthError::TimedOut,
-            ))
-            | ProviderError::Request(EngineError::RemoteRateLimited) => Self::Retry,
-            ProviderError::Request(_) => Self::Intervention,
+            ProviderError::RejectedCursor => Self::CursorRejected,
+            ProviderError::InvalidResponse => Self::InvalidResponse,
+            ProviderError::Request(error) => Self::Provider(error),
         }
     }
 }
@@ -373,6 +453,7 @@ fn validate_inventory(inventory: &Inventory, root: &str) -> Result<(), Detection
             || file.name.is_none()
             || file.mime_type.is_none()
             || file.trashed != Some(false)
+            || (file.mime_type.as_deref() == Some(FOLDER) && !can_list(file))
         {
             return Err(DetectionError::Intervention);
         }
@@ -412,6 +493,7 @@ fn scan(
         || root_file.name.is_none()
         || root_file.mime_type.as_deref() != Some(FOLDER)
         || root_file.trashed != Some(false)
+        || !can_list(&root_file)
     {
         return Err(DetectionError::Intervention);
     }
@@ -454,6 +536,9 @@ fn scan(
                     return Err(DetectionError::Incomplete);
                 }
                 if file.mime_type.as_deref() == Some(FOLDER) {
+                    if !can_list(&file) {
+                        return Err(DetectionError::Incomplete);
+                    }
                     folders.push_back(file.id.clone());
                 }
                 inventory.insert(file.id.clone(), file);
@@ -468,6 +553,10 @@ fn scan(
         }
     }
     Ok(inventory)
+}
+
+fn can_list(file: &File) -> bool {
+    file.capabilities.as_ref().and_then(|c| c.can_list_children) == Some(true)
 }
 
 fn read_changes(

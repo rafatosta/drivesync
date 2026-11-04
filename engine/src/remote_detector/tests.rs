@@ -1,4 +1,5 @@
 use super::*;
+use crate::{AuthError, RemoteFileCapabilities};
 use std::{cell::RefCell, fs, path::PathBuf};
 
 struct Directory(PathBuf);
@@ -35,6 +36,9 @@ fn item(id: &str, parent: Option<&str>, folder: bool, name: &str) -> File {
         version: Some("1".into()),
         modified_time: None,
         drive_id: None,
+        capabilities: folder.then_some(RemoteFileCapabilities {
+            can_list_children: Some(true),
+        }),
     }
 }
 
@@ -269,7 +273,9 @@ fn errors_and_nonconvergence_never_commit_cursor_or_events() {
     );
     assert!(matches!(
         check_with(&fail, &journal, &scope, &Corpus::User, Limits::default()),
-        Err(DetectionError::Retry)
+        Err(DetectionError::Provider(EngineError::Authentication(
+            AuthError::Network
+        )))
     ));
     let changing = Fake::new(
         vec![files()],
@@ -500,8 +506,47 @@ fn multiple_changes_are_redelivered_and_invalid_cursor_preserves_queue() {
     let invalid = Fake::new(vec![files()], vec![Err(ProviderError::RejectedCursor)]);
     assert!(matches!(
         check_with(&invalid, &journal, &scope, &Corpus::User, Limits::default()),
-        Err(DetectionError::Intervention)
+        Err(DetectionError::CursorRejected)
     ));
     assert_eq!(journal.load(&scope).unwrap().unwrap().cursor, "c");
     assert_eq!(pending(&journal, &scope).unwrap().len(), 2);
+}
+
+#[test]
+fn inaccessible_subfolder_and_reconfigured_root_preserve_old_state() {
+    let dir = Directory::new();
+    let journal = Journal::open(&dir.0).unwrap();
+    let original = scope("a", "root");
+    check_with(
+        &Fake::new(vec![files()], vec![Ok(end("a", vec![]))]),
+        &journal,
+        &original,
+        &Corpus::User,
+        Limits::default(),
+    )
+    .unwrap();
+    let pending_count = pending(&journal, &original).unwrap().len();
+    let mut inaccessible = files();
+    inaccessible[1].capabilities = None;
+    let fake = Fake::new(vec![inaccessible], vec![]);
+    assert!(matches!(
+        check_with(&fake, &journal, &original, &Corpus::User, Limits::default()),
+        Err(DetectionError::Incomplete)
+    ));
+    let replacement = scope("a", "other-root");
+    let fake = Fake::new(
+        vec![vec![item("other-root", None, true, "Other")]],
+        vec![Ok(end("b", vec![]))],
+    );
+    check_with(
+        &fake,
+        &journal,
+        &replacement,
+        &Corpus::User,
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(journal.load(&original).unwrap().unwrap().cursor, "a");
+    assert_eq!(pending(&journal, &original).unwrap().len(), pending_count);
+    assert_eq!(journal.load(&replacement).unwrap().unwrap().cursor, "b");
 }
