@@ -4,9 +4,18 @@
 > configuração de pastas; não executa sincronização, transferências, resolução
 > de conflitos ou propagação de exclusões. Requisitos de sincronização nas
 > seções seguintes descrevem intenção e contratos para revisão futura, não
-> funcionalidades disponíveis nesta interface. Código legado da engine ainda
-> está em processo de isolamento. A validação real com Google Drive e do pacote
+> funcionalidades disponíveis no aplicativo. A engine compilada restringe-se
+> a contas, autenticação e pastas; código e modelos legados de sincronização
+> permanecem como referência e não integram a execução. Afirmações posteriores
+> sobre implementação e interface de sincronização são históricas e não
+> descrevem o aplicativo atual. A validação real com Google Drive e do pacote
 > Flatpak não decorre dos testes locais.
+>
+> Ao sair de uma conta, o consentimento anterior de upload para a associação é
+> revogado sem apagar evidências de operações; metadados inválidos bloqueiam a
+> saída antes da exclusão das credenciais. A engine não cria nem permite alterar
+> configurações de sincronização. Implementações futuras não devem reutilizar
+> consentimentos antigos como nova autorização.
 
 ## Sumário
 

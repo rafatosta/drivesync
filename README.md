@@ -6,7 +6,7 @@ DriveSync is an early-stage Linux application for managing Google accounts and c
 
 ## What you can do today
 
-**The current interface does not synchronize files.** Choosing folders does not
+**The current application does not synchronize files.** Choosing folders does not
 download, upload, monitor, resolve conflicts or delete their contents. DriveSync
 is not a backup service.
 

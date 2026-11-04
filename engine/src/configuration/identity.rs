@@ -10,12 +10,11 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::unix::fs::MetadataExt,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
 };
 
 const DIRECTORY: &str = ".drivesync";
 const IDENTITY: &str = "identity.json";
-const STATE: &str = "state.sqlite3";
 const MAX_MARKER: usize = 16 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,48 +154,6 @@ pub(crate) fn verify_at(
     Ok(marker.id)
 }
 
-/// Returns the operation-journal path carried with this root.
-///
-/// Verifies the existing root marker before returning the location. The
-/// journal contains no credentials and is stored in a file ignored by uploads.
-pub(crate) fn state_path(
-    folder: &FolderConfiguration,
-    client: &str,
-) -> Result<PathBuf, EngineError> {
-    metadata_path(folder, client, STATE)
-}
-
-/// Returns the per-root remote change checkpoint path after validating its root.
-///
-/// # Errors
-/// Returns an error if the existing root identity cannot be verified safely.
-pub(crate) fn changes_path(
-    folder: &FolderConfiguration,
-    client: &str,
-) -> Result<PathBuf, EngineError> {
-    metadata_path(folder, client, "changes.sqlite3")
-}
-
-/// Returns the per-root upload settings and intent path after validating its root.
-///
-/// # Errors
-/// Returns an error if the existing root identity cannot be verified safely.
-pub(crate) fn uploads_path(
-    folder: &FolderConfiguration,
-    client: &str,
-) -> Result<PathBuf, EngineError> {
-    metadata_path(folder, client, "uploads.sqlite3")
-}
-
-pub(crate) fn metadata_path(
-    folder: &FolderConfiguration,
-    client: &str,
-    name: &str,
-) -> Result<PathBuf, EngineError> {
-    verify(folder, client)?;
-    crate::state::recovery::resolve(&folder.local.join(DIRECTORY), name)
-}
-
 /// Creates or opens the private metadata directory without following symlinks.
 fn open_state_dir(root: &File) -> Result<File, EngineError> {
     match fs::mkdirat(root, DIRECTORY, Mode::RWXU) {
@@ -217,7 +174,7 @@ fn open_state_dir(root: &File) -> Result<File, EngineError> {
 }
 
 /// Opens every root component without following symlinks.
-fn open_root(path: &Path) -> Result<File, EngineError> {
+pub(super) fn open_root(path: &Path) -> Result<File, EngineError> {
     if !path.is_absolute() {
         return Err(EngineError::FolderIdentityStorage);
     }
@@ -316,18 +273,7 @@ mod tests {
         let folder = dir.folder();
         ensure(&folder, "client-a").unwrap();
         let path = dir.0.join(DIRECTORY).join(IDENTITY);
-        assert_eq!(
-            state_path(&folder, "client-a").unwrap(),
-            dir.0.join(DIRECTORY).join(STATE)
-        );
-        assert_eq!(
-            changes_path(&folder, "client-a").unwrap(),
-            dir.0.join(DIRECTORY).join("changes.sqlite3")
-        );
-        assert_eq!(
-            uploads_path(&folder, "client-a").unwrap(),
-            dir.0.join(DIRECTORY).join("uploads.sqlite3")
-        );
+        assert!(!verify(&folder, "client-a").unwrap().is_empty());
         let first = fs::read(&path).unwrap();
         ensure(&folder, "client-a").unwrap();
         assert_eq!(fs::read(&path).unwrap(), first);

@@ -5,11 +5,11 @@
 use crate::EngineError;
 use std::{
     fs::{self, OpenOptions},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
-/// Selects and probes a writable local directory for verified downloads.
+/// Selects and probes a writable local directory for folder configuration.
 ///
 /// The `path` must be absolute and refer to an existing directory other than
 /// the filesystem root. A unique, mode-`0600` temporary file is created and
@@ -21,7 +21,7 @@ use std::{
 ///
 /// Returns [`EngineError::InvalidFolder`] when the path is invalid,
 /// cannot be canonicalized, is not a directory, or the access probe fails.
-/// Unsupported regular-file flock does not prevent verified downloads.
+/// Unsupported regular-file flock does not prevent folder configuration.
 pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
     if !path.is_absolute() {
         return Err(EngineError::InvalidFolder);
@@ -42,11 +42,40 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .mode(0o600)
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
-    let capability = crate::download::filesystem::lock_transfer(&file);
+    let capability = probe_lock(&file);
     drop(file);
     fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
     capability?;
     Ok(path)
+}
+
+/// Preserves the existing no-hardlink and cooperative-lock checks for the probe.
+fn probe_lock(file: &std::fs::File) -> Result<(), EngineError> {
+    let regular = || {
+        let metadata = file.metadata().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                EngineError::LocalAccessDenied
+            } else {
+                EngineError::DownloadIo
+            }
+        })?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(EngineError::DownloadConflict);
+        }
+        Ok(())
+    };
+    regular()?;
+    match rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockShared) {
+        Ok(()) | Err(rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP) => regular(),
+        Err(rustix::io::Errno::WOULDBLOCK) => Err(EngineError::LocalWriting),
+        Err(rustix::io::Errno::ACCESS | rustix::io::Errno::PERM) => {
+            Err(EngineError::LocalAccessDenied)
+        }
+        Err(rustix::io::Errno::NOSPC | rustix::io::Errno::DQUOT) => {
+            Err(EngineError::LocalStorageFull)
+        }
+        Err(_) => Err(EngineError::DownloadIo),
+    }
 }
 
 /// Selects an already sandbox-authorized host origin only before any root state
@@ -56,7 +85,9 @@ fn fresh_root_access(selected: &Path, origin: &Path) -> PathBuf {
     if selected == origin
         || !matches!(fs::symlink_metadata(selected.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
         || !matches!(fs::symlink_metadata(origin.join(".drivesync")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
-        || crate::download::filesystem::Root::observe(origin).is_err()
+        || access_path(origin)
+            .and_then(|path| super::identity::open_root(&path))
+            .is_err()
     {
         return selected.into();
     }
@@ -249,6 +280,34 @@ mod access_tests {
         assert_eq!(fs::read_dir(&base).unwrap().count(), 1);
         fs::remove_dir_all(base).unwrap();
     }
+
+    #[test]
+    fn probe_rejects_hardlinks_and_contended_locks() {
+        let base = std::env::temp_dir().join(format!(
+            "drivesync-probe-{}",
+            oauth2::CsrfToken::new_random().secret()
+        ));
+        fs::create_dir(&base).unwrap();
+        let path = base.join("file");
+        fs::write(&path, b"preserve").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        fs::hard_link(&path, base.join("link")).unwrap();
+        assert_eq!(probe_lock(&file), Err(EngineError::DownloadConflict));
+        fs::remove_file(base.join("link")).unwrap();
+        let exclusive = std::fs::File::open(&path).unwrap();
+        rustix::fs::flock(
+            &exclusive,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .unwrap();
+        assert_eq!(probe_lock(&file), Err(EngineError::LocalWriting));
+        drop(exclusive);
+        assert_eq!(probe_lock(&file), Ok(()));
+        assert_eq!(fs::read(path).unwrap(), b"preserve");
+        drop(file);
+        fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn only_the_fixed_flatpak_runtime_alias_is_translated() {
         for target in ["../../flatpak/doc", "/run/flatpak/doc"] {

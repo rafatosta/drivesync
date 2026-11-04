@@ -10,8 +10,6 @@ name = "drivesync_engine"
 path = "src/lib.rs"
 
 [dependencies]
-caseless = "0.2.2"
-unicode-normalization = "0.1"
 dbus = { version = "0.9", features = ["vendored"] }
 oauth2 = { version = "5", default-features = false, features = ["timing-resistant-secret-traits"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -23,7 +21,6 @@ url = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 rustix = { version = "1.1", features = ["fs"] }
-md-5 = "0.10"
 sha2 = "0.10"
 
 [build-dependencies]

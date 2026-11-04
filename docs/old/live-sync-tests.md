@@ -1,5 +1,9 @@
 # Controlled live synchronization checks
 
+> Historical reference only. The synchronization facade and `sync-cycle`
+> example are not available in the current application; do not run the
+> commands below against current or previously installed builds.
+
 ## Contract and oracles
 
 `sync-cycle` is an opt-in developer example, not a scheduler. It calls the public

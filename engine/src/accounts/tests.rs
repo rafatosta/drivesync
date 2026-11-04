@@ -277,8 +277,8 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
     let marker_path = local.join(".drivesync/identity.json");
     assert!(marker_path.is_file());
     let marker_before_sign_out = fs::read(&marker_path).unwrap();
-    let portable_state = crate::configuration::identity::state_path(&folder, CLIENT).unwrap();
-    drop(crate::state::Store::open(&portable_state).unwrap());
+    let portable_state = local.join(".drivesync/state.sqlite3");
+    fs::write(&portable_state, b"preserved existing state").unwrap();
     let path = accounts.path.as_ref().unwrap();
     accounts
         .forget(CLIENT, &AccountId::from_subject("a"))
@@ -304,8 +304,10 @@ fn forgetting_account_removes_its_metadata_but_keeps_user_files() {
         "keep my files"
     );
     assert_eq!(fs::read(&marker_path).unwrap(), marker_before_sign_out);
-    assert!(portable_state.is_file());
-    drop(crate::state::Store::open(&portable_state).unwrap());
+    assert_eq!(
+        fs::read(&portable_state).unwrap(),
+        b"preserved existing state"
+    );
     crate::configuration::identity::ensure(&folder, CLIENT).unwrap();
     assert!(!fs::read_to_string(path)
         .unwrap()

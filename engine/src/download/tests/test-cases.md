@@ -1,5 +1,8 @@
 # Casos de teste — download
 
+> Referência histórica: a engine atual não executa downloads e o exemplo
+> `sync-cycle` não está disponível. Não execute as baterias abaixo.
+
 | ID | Entrada/condição | Resultado obrigatório |
 |---|---|---|
 | DOWNLOAD-T01 | Fluxo nominal | Saída tipada conforme contrato |

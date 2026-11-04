@@ -1,14 +1,10 @@
-//! Unit tests for explicit unsupported engine operations.
+//! Account restoration and folder configuration tests.
 use super::*;
 
 #[test]
-fn unimplemented_operations_are_explicit() {
+fn engine_status_is_explicit() {
     let engine = DriveSyncEngine::new();
     assert_eq!(engine.status(), EngineStatus::NotConfigured);
-    assert!(matches!(
-        engine.start_sync(SyncRootId(1)),
-        Err(EngineError::NotImplemented(_))
-    ));
 }
 
 const CLIENT: &str = "test.apps.googleusercontent.com";

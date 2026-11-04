@@ -1,4 +1,4 @@
-//! OAuth workflow orchestration and account-scoped synchronization.
+//! OAuth workflow orchestration and account-scoped locking.
 //!
 //! Does not implement HTTP or platform vault APIs directly. Those services
 //! are injected through ports and have production adapters in sibling modules.
@@ -166,22 +166,6 @@ impl AuthProvider {
         Ok(account)
     }
 
-    pub(crate) fn can_upload(
-        &self,
-        config: &OAuthConfig,
-        id: &AccountId,
-    ) -> Result<bool, AuthError> {
-        let lock = self.account_lock(id)?;
-        let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
-        let credential = self
-            .store
-            .load(&config.client_id, id)?
-            .ok_or(AuthError::ReauthorizationRequired)?;
-        if AccountId::from_subject(&credential.subject) != *id {
-            return Err(AuthError::IdentityMismatch);
-        }
-        Ok(credential.write_access)
-    }
     /// Removes old profile metadata only when the vault confirms no entry.
     ///
     /// A locked, unavailable or malformed vault is never evidence of logout.
@@ -212,7 +196,17 @@ impl AuthProvider {
     pub(crate) fn sign_out(&self, config: &OAuthConfig, id: &AccountId) -> Result<(), AuthError> {
         self.sign_out_then(config, id, || Ok(()))
     }
-    /// Removes a stored credential and then runs app-metadata cleanup.
+    #[cfg(test)]
+    pub(crate) fn sign_out_then(
+        &self,
+        config: &OAuthConfig,
+        id: &AccountId,
+        forget: impl FnOnce() -> Result<(), AuthError>,
+    ) -> Result<(), AuthError> {
+        self.sign_out_with(config, id, || Ok(()), |_| forget())
+    }
+
+    /// Runs safety preparation before credential removal and metadata cleanup.
     ///
     /// Login and logout share an interactive gate; the account mutex also
     /// waits for any in-flight account work. A failed metadata cleanup may
@@ -221,12 +215,13 @@ impl AuthProvider {
     /// # Errors
     ///
     /// Returns [`AuthError::Busy`] during login, or propagates vault,
-    /// synchronization and metadata-cleanup errors.
-    pub(crate) fn sign_out_then(
+    /// preparation and metadata-cleanup errors.
+    pub(crate) fn sign_out_with<T>(
         &self,
         config: &OAuthConfig,
         id: &AccountId,
-        forget: impl FnOnce() -> Result<(), AuthError>,
+        prepare: impl FnOnce() -> Result<T, AuthError>,
+        forget: impl FnOnce(T) -> Result<(), AuthError>,
     ) -> Result<(), AuthError> {
         // Share the interactive-operation gate: an in-flight login must not
         // recreate credentials after successful logout.
@@ -236,8 +231,9 @@ impl AuthProvider {
         let _login_guard = LoginGuard(&self.authorizing);
         let lock = self.account_lock(id)?;
         let _guard = lock.lock().map_err(|_| AuthError::Internal)?;
+        let prepared = prepare()?;
         self.store.delete(&config.client_id, id)?;
-        forget()
+        forget(prepared)
     }
 
     /// Performs an engine operation with a verified access token.

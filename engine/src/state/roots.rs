@@ -1,6 +1,6 @@
 //! Durable root bindings and actionable suspension reasons outside user volumes.
 use super::{failed, Store};
-use crate::{EngineError, FolderConfiguration, RootSuspension};
+use crate::{AccountId, EngineError, FolderConfiguration, RootSuspension};
 use rusqlite::{params, OptionalExtension};
 use std::path::Path;
 
@@ -26,8 +26,16 @@ impl Roots {
         client: &str,
         folder: &FolderConfiguration,
     ) -> Result<RootLock, EngineError> {
+        self.lock_account(client, &folder.account_id)
+    }
+
+    pub(crate) fn lock_account(
+        &self,
+        client: &str,
+        account: &AccountId,
+    ) -> Result<RootLock, EngineError> {
         use sha2::Digest;
-        let scope = serde_json::to_vec(&(client, &folder.account_id)).map_err(failed)?;
+        let scope = serde_json::to_vec(&(client, account)).map_err(failed)?;
         let name = format!("root-{:x}.lock", sha2::Sha256::digest(scope));
         let file = rustix::fs::open(
             self.1.join(name),
@@ -82,34 +90,5 @@ impl Roots {
         folder: &FolderConfiguration,
     ) -> Result<Option<String>, EngineError> {
         self.0.0.query_row("SELECT marker FROM bindings WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4", params![client,folder.account_id.0,folder.remote.id,folder.local.to_str().ok_or(EngineError::InvalidPlan)?], |r|r.get(0)).optional().map_err(failed)
-    }
-    pub(crate) fn reason(
-        &self,
-        client: &str,
-        folder: &FolderConfiguration,
-    ) -> Result<Option<RootSuspension>, EngineError> {
-        let reason: Option<Option<String>> = self.0.0.query_row("SELECT reason FROM bindings WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4", params![client,folder.account_id.0,folder.remote.id,folder.local.to_str().ok_or(EngineError::InvalidPlan)?], |r|r.get(0)).optional().map_err(failed)?;
-        reason
-            .flatten()
-            .map(|s| serde_json::from_str(&s).map_err(failed))
-            .transpose()
-    }
-    /// Updating availability never advances observations or baseline.
-    pub(crate) fn suspend(
-        &self,
-        client: &str,
-        folder: &FolderConfiguration,
-        reason: Option<RootSuspension>,
-    ) -> Result<(), EngineError> {
-        let reason = reason
-            .map(|r| serde_json::to_string(&r).map_err(failed))
-            .transpose()?;
-        let changed = self.0.0.execute("UPDATE bindings SET reason=?5 WHERE client=?1 AND account=?2 AND remote=?3 AND local=?4", params![client,folder.account_id.0,folder.remote.id,folder.local.to_str().ok_or(EngineError::InvalidPlan)?,reason]).map_err(failed)?;
-        if changed != 1 {
-            return Err(EngineError::RootSuspended(
-                RootSuspension::IdentityUnverified,
-            ));
-        }
-        Ok(())
     }
 }
