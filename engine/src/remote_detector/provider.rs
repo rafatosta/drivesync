@@ -101,7 +101,7 @@ impl Transport for Http<'_> {
     fn get(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Vec<u8>, ProviderError> {
         let (status, body) =
             remote::request_status(self.token, endpoint, params).map_err(ProviderError::Request)?;
-        if endpoint.ends_with("/changes") && (status == 400 || status == 410) {
+        if endpoint.ends_with("/changes") && status == 410 {
             return Err(ProviderError::RejectedCursor);
         }
         remote::response_status(status, &body).map_err(ProviderError::Request)?;

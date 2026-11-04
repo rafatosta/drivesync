@@ -136,7 +136,8 @@ alterações no registro inteiro do corpus; atividade contínua pode produzir
 resultado incompleto. O limite é de 10.000 requisições, 100.000 itens e oito
 rodadas por verificação. Pastas sem capacidade confirmada de listar filhos
 interrompem a verificação. Um token rejeitado requer intervenção; não há
-reconstrução automática. O acompanhamento de uma pasta em drive compartilhado
+reconstrução automática. Uma resposta HTTP 400 genérica não comprova que o
+cursor seja inválido. O acompanhamento de uma pasta em drive compartilhado
 requer selecionar explicitamente o registro do drive e acesso de membro; o
 caso de acesso individual por não membro não está implementado. A perda de
 acesso ou mudança de corpus da raiz bloqueia a verificação em vez de trocar
