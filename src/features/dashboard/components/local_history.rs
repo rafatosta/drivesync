@@ -176,17 +176,12 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     let notices: Vec<_> = batch
         .notices
         .iter()
-        .filter(|n| {
-            !matches!(n.activity, LocalActivity::Recheck(_)) && n.path.file_name().is_some()
-        })
+        .filter_map(|notice| Some((notice, notice.path.file_name()?, activity_label(notice)?)))
         .collect();
-    for notice in notices
+    for (notice, name, activity) in notices
         .iter()
         .skip(notices.len().saturating_sub(LIMIT as usize))
     {
-        let Some(name) = notice.path.file_name() else {
-            continue;
-        };
         // Both title and subtitle are plain text. Never interpret file names as markup.
         let text: String = name
             .to_string_lossy()
@@ -200,7 +195,7 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
             LocalItemKind::Special => (gettext("Special item"), "text-x-generic-symbolic"),
             LocalItemKind::Unknown => (gettext("Item"), "dialog-question-symbolic"),
         };
-        let detail = format!("{} · {}", kind, activity_label(notice));
+        let detail = format!("{} · {}", kind, activity);
         let row = adw::ActionRow::builder()
             .title(&text)
             .subtitle(&detail)
@@ -218,9 +213,9 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     empty.set_visible(list.first_child().is_none());
 }
 
-/// Classifies the observed path transition, without claiming content or identity.
-fn activity_label(notice: &LocalNotice) -> String {
-    match &notice.activity {
+/// Labels activity rows, excluding coverage notices handled by the status label.
+fn activity_label(notice: &LocalNotice) -> Option<String> {
+    Some(match &notice.activity {
         LocalActivity::Created => gettext("Created"),
         LocalActivity::Removed => gettext("Removed"),
         LocalActivity::Written => gettext("Write detected"),
@@ -235,8 +230,8 @@ fn activity_label(notice: &LocalNotice) -> String {
             gettext("Moved")
         }
         LocalActivity::Moved { .. } => gettext("Moved and renamed"),
-        LocalActivity::Recheck(_) => gettext("Needs review"),
-    }
+        LocalActivity::Recheck(_) => return None,
+    })
 }
 
 #[cfg(test)]

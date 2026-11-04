@@ -280,7 +280,3 @@ msgstr "Movimentação detectada"
 #: src/features/dashboard/components/local_history.rs
 msgid "Moved and renamed"
 msgstr "Movimentação e renomeação detectadas"
-
-#: src/features/dashboard/components/local_history.rs
-msgid "Needs review"
-msgstr "Requer conferência"

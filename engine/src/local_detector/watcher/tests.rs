@@ -164,7 +164,7 @@ fn new_directories_and_received_subtrees_are_watched_and_require_review() {
         "received",
         &LocalActivity::Recheck(LocalCoverageGap::SubtreeAttached)
     ));
-    assert_eq!(w.state(), LocalWatchState::Incomplete);
+    assert_eq!(w.state, LocalWatchState::Incomplete);
     fs::write(tree.0.join("received/child/next"), b"x").unwrap();
     collect(&mut w, |e| {
         has(e, "received/child/next", &LocalActivity::Written)
@@ -526,7 +526,7 @@ fn removed_watch_bookkeeping_is_bounded_when_ignored_events_are_lost() {
     w.retired.extend([123456, 123457]);
     let wd = root_wd(&w);
     assert!(!w.retire(wd));
-    assert_eq!(w.state(), LocalWatchState::Stopped);
+    assert_eq!(w.state, LocalWatchState::Stopped);
     assert!(w.retired.is_empty());
     assert!(has(
         &w.poll().notices,

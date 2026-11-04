@@ -316,12 +316,17 @@ fn move_labels_distinguish_name_and_parent_changes_without_content_claims() {
             object_type: LocalItemKind::Unknown,
             activity: LocalActivity::Moved { from: from.into() },
         };
-        assert_eq!(activity_label(&notice), gettext(expected));
+        assert_eq!(activity_label(&notice), Some(gettext(expected)));
     }
     let notice = LocalNotice {
         path: "file".into(),
         object_type: LocalItemKind::File,
         activity: LocalActivity::Written,
     };
-    assert_eq!(activity_label(&notice), gettext("Write detected"));
+    assert_eq!(activity_label(&notice), Some(gettext("Write detected")));
+    let coverage = LocalNotice {
+        activity: LocalActivity::Recheck(LocalCoverageGap::Startup),
+        ..notice
+    };
+    assert_eq!(activity_label(&coverage), None);
 }

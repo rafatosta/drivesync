@@ -95,11 +95,6 @@ impl LocalWatcher {
         Ok(watcher)
     }
 
-    /// Current state; incomplete is sticky and stopped requires a new session.
-    pub fn state(&self) -> LocalWatchState {
-        self.state
-    }
-
     /// Collects a bounded number of kernel buffers and transfers queued notices.
     ///
     /// The final reserved application-overflow notice follows retained notices.
