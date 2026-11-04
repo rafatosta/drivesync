@@ -12,6 +12,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
+  # Read-only native notifications for the dedicated development test tree.
+  - --filesystem=xdg-documents/DriveSync-Test:ro
   # Per-account OAuth credentials in the desktop Secret Service.
   - --talk-name=org.freedesktop.secrets
 build-options:
@@ -33,6 +35,8 @@ modules:
       - cargo --version
       - cargo build --release --locked
       - install -Dm755 target/release/drivesync /app/bin/drivesync
+      - install -Dm755 target/release/drivesync-remote-diagnostic /app/bin/drivesync-remote-diagnostic
+      - install -Dm755 target/release/drivesync-local-diagnostic /app/bin/drivesync-local-diagnostic
       - install -d /app/share/locale/pt_BR/LC_MESSAGES
       - msgfmt --check -o /app/share/locale/pt_BR/LC_MESSAGES/drivesync.mo po/pt_BR.po
       - install -Dm644 data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg /app/share/icons/hicolor/scalable/apps/com.rtosta.DriveSync.Devel.svg

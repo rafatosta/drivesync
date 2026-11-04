@@ -11,7 +11,7 @@ mod paths;
 
 pub(crate) use models::valid_id;
 pub use models::{DriveFolder, FolderConfiguration};
-pub(crate) use paths::{local_folder, local_origin, overlap};
+pub(crate) use paths::{local_folder, local_origin, observation_root, overlap};
 
 #[cfg(test)]
 mod tests;

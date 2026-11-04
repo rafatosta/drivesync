@@ -15,7 +15,7 @@ use std::{
 /// The `path` must be absolute and refer to an existing directory other than
 /// the filesystem root. A unique, mode-`0600` temporary file is created and
 /// removed to check write access; no user files are changed. A portal selection
-/// uses its host origin when already accessible through no-follow descriptors.
+/// uses its host origin only when that origin also passes the write probe.
 ///
 /// # Errors
 ///
@@ -30,7 +30,17 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         return Err(EngineError::InvalidFolder);
     }
     let origin = local_origin(&path)?;
-    let path = fresh_root_access(&path, &origin);
+    let preferred = fresh_root_access(&path, &origin);
+    if preferred != path && probe_writable(&preferred).is_ok() {
+        return Ok(preferred);
+    }
+    // A read-only native monitoring grant must not replace the writable portal
+    // capability selected by the user. Preserve it for configuration instead.
+    probe_writable(&path)?;
+    Ok(path)
+}
+
+fn probe_writable(path: &Path) -> Result<(), EngineError> {
     let probe = path.join(format!(
         ".drivesync-access-{}",
         oauth2::CsrfToken::new_random().secret()
@@ -42,8 +52,7 @@ pub(crate) fn local_folder(path: &Path) -> Result<PathBuf, EngineError> {
         .open(&probe)
         .map_err(|_| EngineError::InvalidFolder)?;
     drop(file);
-    fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)?;
-    Ok(path)
+    fs::remove_file(probe).map_err(|_| EngineError::InvalidFolder)
 }
 
 /// Selects an already sandbox-authorized host origin without requesting access.
@@ -56,6 +65,26 @@ fn fresh_root_access(selected: &Path, origin: &Path) -> PathBuf {
         return selected.into();
     }
     origin.into()
+}
+
+/// Selects a read-capable path for observation without rewriting saved settings.
+///
+/// A portal root is mapped again through the live portal before using an
+/// already-authorized host origin. Read-only access is sufficient; no probe
+/// file is created and no additional sandbox permission is requested.
+/// # Errors
+/// Returns an identity error when the live origin differs from the saved one.
+pub(crate) fn observation_root(
+    selected: &Path,
+    expected_origin: &Path,
+) -> Result<PathBuf, EngineError> {
+    let origin = local_origin(selected)?;
+    if origin != expected_origin {
+        return Err(EngineError::LocalFolderIdentity);
+    }
+    // Portal host paths may end with a separator. Normalize lexically only;
+    // never resolve user symlinks or change the persisted folder identity.
+    Ok(fresh_root_access(selected, &origin).components().collect())
 }
 
 /// Opens each absolute directory component without following symbolic links.

@@ -6,9 +6,10 @@ DriveSync é um aplicativo Linux experimental para autenticar e gerenciar contas
 Google e escolher uma pasta local e uma pasta do Google Drive para cada conta.
 A interface usa GTK4/Libadwaita e o aplicativo é distribuído como Flatpak.
 
-O aplicativo **não sincroniza, monitora, transfere ou exclui arquivos**, nem
-resolve conflitos. Selecionar pastas não inicia operações sobre seu conteúdo.
-Não há detector de alterações remotas nesta versão. DriveSync não é um backup.
+O aplicativo **não sincroniza, transfere ou exclui arquivos**, nem resolve
+conflitos. Selecionar pastas não inicia operações sobre seu conteúdo. Um
+diagnóstico explícito consulta metadados e alterações remotas; não há
+monitoramento automático. DriveSync não é um backup.
 
 ## Autenticação e contas
 
@@ -80,3 +81,19 @@ Contratos detalhados: [autenticação](../engine/src/auth/contract.md),
 [contas](../engine/src/accounts/contract.md),
 [configuração](../engine/src/configuration/contract.md) e
 [pastas remotas](../engine/src/remote/contract.md).
+
+O [contrato do detector remoto](../engine/src/remote_detector/contract.md)
+define suas garantias e limitações. O diagnóstico é invocado manualmente; a
+validação com Google Drive real e o aplicativo empacotado ainda é necessária.
+
+O [contrato do detector local](../engine/src/local_detector/contract.md)
+define um observador de atividade separado da investigação e da sincronização.
+Avisos identificam escopo e caminhos afetados; perda de cobertura exige
+conferência explícita. Árvore por identidade, download, investigação de conteúdo
+e execução remota pertencem a etapas posteriores. O observador e o diagnóstico
+independente estão implementados, com fila limitada em memória e falhas de
+cobertura explícitas. O dashboard inicia observadores por conta e exibe um
+histórico temporário com nome, tipo e atividade observada, limitado a 200 registros. Troca de pasta reinicia
+a sessão; descarte da página e encerramento cancelam a observação. O portal/FUSE
+não possui cobertura estabelecida e produz estado incompleto; iniciar a
+observação não comprova entrega de eventos do host.

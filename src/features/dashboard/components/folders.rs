@@ -3,6 +3,8 @@ use adw::{gtk, prelude::*};
 use drivesync_engine::{DriveFolder, DriveSyncEngine, FolderConfiguration, RestoredAccount};
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc};
 
+type SavedCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+
 #[derive(Clone, Default)]
 struct Selection {
     remote: Option<DriveFolder>,
@@ -36,6 +38,7 @@ impl Selection {
 /// Weak handles prevent chooser callbacks from retaining removed account pages.
 #[derive(Clone)]
 struct Widgets {
+    on_saved: SavedCallback,
     remote: gtk::glib::WeakRef<adw::ActionRow>,
     local: gtk::glib::WeakRef<adw::ActionRow>,
     remote_button: gtk::glib::WeakRef<gtk::Button>,
@@ -115,8 +118,13 @@ impl Widgets {
 pub(in crate::features::dashboard) struct FolderSetup {
     root: gtk::Box,
     actions: gtk::gio::SimpleActionGroup,
+    on_saved: SavedCallback,
 }
 impl FolderSetup {
+    /// Notifies account-local consumers only after configuration is persisted.
+    pub fn connect_saved(&self, callback: impl Fn() + 'static) {
+        *self.on_saved.borrow_mut() = Some(Box::new(callback));
+    }
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
@@ -191,7 +199,9 @@ pub(in crate::features::dashboard) fn build(
     let open_remote = gtk::gio::SimpleAction::new("open-remote", None);
     actions.add_action(&open_local);
     actions.add_action(&open_remote);
+    let on_saved = SavedCallback::default();
     let ui = Widgets {
+        on_saved: on_saved.clone(),
         remote: remote.downgrade(),
         local: local.downgrade(),
         remote_button: remote_button.downgrade(),
@@ -345,6 +355,7 @@ pub(in crate::features::dashboard) fn build(
     FolderSetup {
         root: content,
         actions,
+        on_saved,
     }
 }
 
@@ -382,6 +393,9 @@ fn autosave(
                     *draft.borrow_mut() = Selection::from_saved(Some(saved));
                     draft.borrow_mut().local_available = Some(true);
                     ui.message("");
+                    if let Some(callback) = ui.on_saved.borrow().as_ref() {
+                        callback();
+                    }
                 }
                 Ok(None) => ui.message("Could not load the saved folders. Please try again."),
                 Err(e) => ui.message(&e.to_string()),
