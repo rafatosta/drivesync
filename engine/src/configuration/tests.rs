@@ -148,3 +148,24 @@ fn observation_normalizes_portal_style_trailing_separator_for_scope_validation()
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
     std::fs::remove_dir(root).unwrap();
 }
+
+/// Requires a writable disposable portal export and read-only direct grant.
+#[test]
+#[ignore = "requires disposable writable portal export and read-only native access"]
+fn read_only_native_observation_preserves_writable_portal_configuration() {
+    let selected = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_PATH").expect("portal path"),
+    );
+    let origin = std::path::PathBuf::from(
+        std::env::var_os("DRIVESYNC_PORTAL_TEST_ORIGIN").expect("host origin"),
+    );
+    assert!(Path::new("/.flatpak-info").is_file());
+    let canonical = std::fs::canonicalize(&selected).unwrap();
+    let before = std::fs::read_dir(&selected).unwrap().count();
+    assert_eq!(super::paths::local_folder(&selected).unwrap(), canonical);
+    assert_eq!(
+        super::paths::observation_root(&selected, &origin).unwrap(),
+        origin
+    );
+    assert_eq!(std::fs::read_dir(&selected).unwrap().count(), before);
+}
