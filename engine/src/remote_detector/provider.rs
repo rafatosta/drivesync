@@ -29,7 +29,7 @@ pub(super) struct File {
     pub drive_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Change {
     pub file_id: Option<String>,
@@ -40,7 +40,7 @@ pub(super) struct Change {
     pub drive_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ChangePage {
     #[serde(default)]
@@ -49,7 +49,7 @@ pub(super) struct ChangePage {
     pub new_start_page_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct FilePage {
     #[serde(default)]
