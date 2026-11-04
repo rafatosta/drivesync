@@ -71,6 +71,13 @@ pub(super) fn populate(
 
         let folders =
             super::components::folders::build(engine.clone(), &saved, content.upcast_ref());
+        let history = super::components::local_history::LocalHistory::new(
+            engine.clone(),
+            saved.account.id.clone(),
+        );
+        let restart = history.restart_callback();
+        folders.connect_saved(move || restart());
+        content.append(history.widget());
         editor.append(folders.widget());
         let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));
         configure.set_action_name(Some("account-controls.configure"));

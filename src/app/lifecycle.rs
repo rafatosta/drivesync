@@ -37,6 +37,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
         navigation.add(&startup);
         window.set_content(Some(&toasts));
         app.connect_shutdown(move |_| {
+            crate::core::local_observation::stop_all();
             if let Some(cancel) = cancellation.borrow().as_ref() {
                 cancel.cancel();
             }

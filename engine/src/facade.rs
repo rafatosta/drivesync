@@ -206,6 +206,31 @@ impl DriveSyncEngine {
             .find(|f| &f.account_id == id))
     }
 
+    /// Resolves the configured local observation scope without network or vault access.
+    ///
+    /// This reads local account configuration and must run off the GUI thread.
+    /// It does not open the directory or establish notification coverage.
+    /// # Errors
+    /// Returns OAuth configuration, account-storage or invalid-scope errors.
+    pub fn local_observation_scope(
+        &self,
+        id: &AccountId,
+    ) -> Result<Option<crate::LocalScope>, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let folder = self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(EngineError::Authentication)?
+            .into_iter()
+            .find(|f| &f.account_id == id);
+        folder
+            .map(|folder| {
+                crate::LocalScope::new(&config.client_id, &id.0, &folder.local)
+                    .map_err(|_| EngineError::InvalidFolder)
+            })
+            .transpose()
+    }
+
     /// Performs a bounded, read-only remote check for the configured folder.
     ///
     /// The caller selects the change-log corpus explicitly. This blocks during

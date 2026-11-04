@@ -180,3 +180,43 @@ msgstr "Entre com segurança pelo navegador"
 #: src/features/welcome/page.rs:85
 msgid "A calmer place for the files that matter to you."
 msgstr "Um lugar mais tranquilo para os arquivos importantes para você."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Local changes"
+msgstr "Alterações locais"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Temporary history · Most recent 200 entries"
+msgstr "Histórico temporário · 200 registros mais recentes"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "No changes detected in this session."
+msgstr "Nenhuma alteração identificada nesta sessão."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Starting local observation…"
+msgstr "Iniciando observação local…"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Choose a local folder to observe changes."
+msgstr "Escolha uma pasta local para observar alterações."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Could not observe this folder. Check its access permissions."
+msgstr "Não foi possível observar esta pasta. Verifique as permissões de acesso."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Observing local changes."
+msgstr "Observando alterações locais."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "This folder cannot reliably report changes. Some changes may not appear."
+msgstr "Esta pasta não informa alterações de forma confiável. Algumas alterações podem não aparecer."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Observation is incomplete. Some changes may not appear."
+msgstr "A observação está incompleta. Algumas alterações podem não aparecer."
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Observation stopped. Check the folder and select it again."
+msgstr "A observação foi interrompida. Verifique a pasta e selecione-a novamente."

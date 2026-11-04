@@ -96,3 +96,22 @@ Flatpak instalado são validações separadas, com resultados explicitados.
 Referências verificadas em 2026-11-04. O registro de árvore, versões anteriores,
 identidades do Drive, investigação de conteúdo, reconciliação periódica e fila
 durável são requisitos de etapas futuras, não funções deste observador.
+
+## Integração desktop e feedback temporário
+
+A página de cada conta inicia uma sessão para a pasta configurada sem depender
+de rede. Trabalho de filesystem ocorre em worker, fora da thread GTK. A troca
+de conta selecionada não interrompe outras contas. Trocar a configuração reinicia
+a sessão correspondente e limpa o histórico; descartar a página ou encerrar o
+aplicativo cancela seus workers. A fila entre worker e interface é limitada;
+backpressure não descarta lotes silenciosamente.
+
+O histórico temporário exibe somente o nome de cada item afetado, em ordem
+mais recente primeiro, sem afirmar qual operação definitiva ocorreu. Avisos
+repetidos podem gerar nomes repetidos. Limite de 200 linhas por conta; itens
+mais antigos são retirados, com indicação de que são apenas os mais recentes.
+Caminhos completos, timestamps e conteúdo não aparecem nas linhas. Uma mudança
+de pasta reinicia esse feedback para não misturar raízes. Cobertura incompleta,
+falha e ausência de configuração ficam visíveis fora da lista. Não persistir
+esse histórico nem iniciar transferências. Reconstruir o dashboard também
+reinicia o feedback, sem prometer histórico entre sessões.
