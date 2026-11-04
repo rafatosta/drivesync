@@ -87,8 +87,8 @@ define suas garantias e limitações. O diagnóstico é invocado manualmente; a
 validação com Google Drive real e o aplicativo empacotado ainda é necessária.
 
 O [contrato do detector local](../engine/src/local_detector/contract.md)
-descreve monitoramento automático e reconciliação após reinício como intenção
-futura. A comparação de inventários, o hash limitado de arquivos já abertos e
-um diário SQLite transacional são implementados isoladamente. O diário depende
-de um inventário completo fornecido pelo chamador; varredura, monitoramento
-automático e integração ao aplicativo ainda não estão implementados.
+define um observador de atividade separado da investigação e da sincronização.
+Avisos identificam escopo e caminhos afetados; perda de cobertura exige
+conferência explícita. Árvore por identidade, download, investigação de conteúdo
+e execução remota pertencem a etapas posteriores. Integração automática ao
+aplicativo e validação pelo portal são separadas.
