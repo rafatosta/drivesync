@@ -6,6 +6,7 @@ mod auth;
 mod configuration;
 mod error;
 mod facade;
+mod local_detector;
 mod models;
 mod remote;
 mod remote_detector;
@@ -14,6 +15,10 @@ pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
+pub use local_detector::{
+    reconcile_local_inventories, InvalidLocalInventory, LocalEntry, LocalInventory, LocalMetadata,
+    LocalObject, LocalObservation,
+};
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;
 pub use remote_detector::{

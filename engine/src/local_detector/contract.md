@@ -1,6 +1,6 @@
 # Contrato proposto — detector de alterações locais
 
-**Estado: proposta para revisão; não implementado.** A aprovação deste
+**Estado: requisitos aprovados; implementação parcial.** A aprovação deste
 contrato não declara o detector remoto validado nem autoriza sincronização.
 
 ## Responsabilidade
@@ -72,6 +72,9 @@ locais são usadas para antecipar verificações, e reconciliações completas
 recuperam diferenças de estado. Uma reconciliação periódica também é necessária
 para mudanças que não gerem notificações. Intervalos, limites de trabalho e
 política de consumo de recursos ainda precisam ser definidos e testados.
+A comparação pura entre inventários estruturalmente válidos já existe, mas
+não verifica a completude de uma varredura, não observa o filesystem e não
+persiste eventos.
 
 Pseudocódigo de alto nível:
 
