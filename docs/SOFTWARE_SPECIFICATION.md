@@ -80,3 +80,7 @@ Contratos detalhados: [autenticação](../engine/src/auth/contract.md),
 [contas](../engine/src/accounts/contract.md),
 [configuração](../engine/src/configuration/contract.md) e
 [pastas remotas](../engine/src/remote/contract.md).
+
+O [contrato proposto do detector remoto](../engine/src/remote_detector/contract.md)
+define requisitos para uma etapa futura; ainda não descreve uma implementação
+ou validação disponível.
