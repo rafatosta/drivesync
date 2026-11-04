@@ -88,6 +88,7 @@ validação com Google Drive real e o aplicativo empacotado ainda é necessária
 
 O [contrato do detector local](../engine/src/local_detector/contract.md)
 descreve monitoramento automático e reconciliação após reinício como intenção
-futura. A comparação de inventários e o hash limitado de arquivos já abertos
-são implementados isoladamente; varredura, persistência e monitoramento
-automático ainda não estão implementados.
+futura. A comparação de inventários, o hash limitado de arquivos já abertos e
+um diário SQLite transacional são implementados isoladamente. O diário depende
+de um inventário completo fornecido pelo chamador; varredura, monitoramento
+automático e integração ao aplicativo ainda não estão implementados.

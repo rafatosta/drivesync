@@ -17,7 +17,8 @@ pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{
     hash_local_regular_file, reconcile_local_inventories, HashedLocalFile, InvalidLocalInventory,
-    LocalEntry, LocalHashError, LocalInventory, LocalMetadata, LocalObject, LocalObservation,
+    LocalCheckpoint, LocalDelivery, LocalEntry, LocalHashError, LocalInventory, LocalJournal,
+    LocalJournalError, LocalMetadata, LocalObject, LocalObservation, LocalScope,
 };
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;

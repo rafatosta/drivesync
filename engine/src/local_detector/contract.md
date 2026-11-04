@@ -83,8 +83,10 @@ A comparação pura entre inventários estruturalmente válidos e o cálculo
 limitado de hash de um arquivo regular já aberto existem isoladamente. O
 cálculo compara metadados antes e depois da leitura, sem garantir um snapshot
 nem verificar se o caminho ainda identifica o arquivo; essas garantias
-permanecem sob responsabilidade do futuro varredor. Não há varredura,
-monitoramento ou persistência implementados.
+permanecem sob responsabilidade do futuro varredor. Um diário SQLite isolado
+persiste inventários e observações transacionalmente, mas não consegue
+verificar a completude de uma varredura nem o vínculo da raiz ao caminho.
+Não há varredura nem monitoramento implementados.
 
 Pseudocódigo de alto nível:
 
@@ -125,6 +127,12 @@ confirmação explícita e idempotente os remove. O consumidor deduplica pelo ID
 A troca de pasta e o encerramento do aplicativo não eliminam a fila anterior.
 Limites de armazenamento, recuperação de disco cheio e concorrência entre
 processos devem ser tratados explicitamente no desenho detalhado.
+
+O diário implementado mantém gerações para rejeitar escritores obsoletos e
+recusa uma mudança observada de dispositivo ou inode da raiz; essa comparação
+não prova identidade contínua. Eventos permanecem na fila até confirmação
+individual. A implementação ainda não está integrada a um varredor ou ao
+ciclo de vida do aplicativo, e não estabelece limites de armazenamento.
 
 ## Oráculos antes da implementação
 

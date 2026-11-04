@@ -1,21 +1,23 @@
 //! Local inventory observations and conservative change reconciliation.
 //!
-//! The hashing helper reads an already-open file. No scanner, watcher, or
-//! persistent journal is provided yet; callers must establish complete
-//! inventories independently.
+//! The hashing helper reads an already-open file. The journal stores
+//! inventories and observations atomically. No scanner or watcher is
+//! provided yet; callers must establish complete inventories independently.
 
 use std::collections::BTreeMap;
 
 mod hashing;
+mod journal;
 
 pub use hashing::{hash_local_regular_file, HashedLocalFile, LocalHashError};
+pub use journal::{LocalCheckpoint, LocalDelivery, LocalJournal, LocalJournalError, LocalScope};
 
 /// Metadata used to distinguish observed filesystem object versions.
 ///
 /// Device and inode identify an observation, not a durable identity: inodes
 /// can be reused and hard links can share them. Timestamps use nanoseconds
 /// since the Unix epoch, including negative values for earlier timestamps.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LocalMetadata {
     /// Filesystem device of the observed object.
     pub device: u64,
@@ -32,7 +34,7 @@ pub struct LocalMetadata {
 }
 
 /// The object observed at a path without following symbolic links.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalObject {
     /// A directory which can contain further inventory entries.
     Directory,
@@ -51,7 +53,7 @@ pub enum LocalObject {
 }
 
 /// A scanner's observation at a single relative path.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LocalEntry {
     /// Object metadata observed without following symbolic links.
     pub metadata: LocalMetadata,
@@ -120,7 +122,7 @@ fn valid_path(path: &[u8]) -> bool {
 }
 
 /// A baseline observation or an item requiring later re-evaluation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalObservation {
     /// An existing item in the initial inventory, not an inferred creation.
     Initial {
