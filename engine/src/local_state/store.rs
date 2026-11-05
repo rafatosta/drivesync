@@ -17,21 +17,44 @@ const APPLICATION_ID: i64 = 0x44534c53;
 /// Separate current-format state; methods never open observed files or contact Google.
 pub struct LocalStateStore {
     path: PathBuf,
+    portable: Option<LocalScope>,
 }
 impl LocalStateStore {
-    /// Opens the application-owned state directory without accessing any observed root.
-    /// # Errors
-    /// Rejects relative XDG paths, missing home configuration or unsafe storage.
-    pub fn application() -> Result<Self, LocalStateError> {
-        let base = match std::env::var_os("XDG_DATA_HOME") {
-            Some(value) => PathBuf::from(value),
-            None => PathBuf::from(std::env::var_os("HOME").ok_or(LocalStateError::Invalid)?)
-                .join(".local/share"),
+    pub(crate) fn portable(
+        destination: &Path,
+        scope: &LocalScope,
+        remote: &str,
+    ) -> Result<Self, LocalStateError> {
+        let mut store = Self::open(&destination.join(".drivesync"))?;
+        let key = LocalScope::new(remote, scope.account(), Path::new("/drivesync"))
+            .map_err(|_| LocalStateError::Invalid)?;
+        store.portable = Some(key);
+        if store.load(scope)?.is_none() {
+            match store.mutate(scope, Some(None), |_| Ok(())) {
+                Ok(_) | Err(LocalStateError::Stale) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(store)
+    }
+
+    fn scope<'a>(
+        &'a self,
+        connection: &Connection,
+        scope: &'a LocalScope,
+    ) -> Result<&'a LocalScope, LocalStateError> {
+        let Some(key) = &self.portable else {
+            return Ok(scope);
         };
-        if !base.is_absolute() {
+        let foreign: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM state_scopes WHERE client != ?1 OR account != ?2 OR root != ?3)",
+            params![key.client(), key.account(), key.root().as_os_str().as_bytes()],
+            |row| row.get(0),
+        ).map_err(storage)?;
+        if foreign {
             return Err(LocalStateError::Invalid);
         }
-        Self::open(&base.join("drivesync/local-state"))
+        Ok(key)
     }
 
     /// Opens/creates a private database, preserving incompatible existing data.
@@ -61,7 +84,10 @@ impl LocalStateStore {
         if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
             return Err(LocalStateError::Storage);
         }
-        let store = Self { path };
+        let store = Self {
+            path,
+            portable: None,
+        };
         let connection = store.connect()?;
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -69,7 +95,7 @@ impl LocalStateStore {
         let app: i64 = connection
             .pragma_query_value(None, "application_id", |r| r.get(0))
             .map_err(storage)?;
-        if version != 1 || app != APPLICATION_ID {
+        if version != 2 || app != APPLICATION_ID {
             return Err(LocalStateError::Incompatible);
         }
         connection
@@ -99,7 +125,7 @@ impl LocalStateStore {
                 client TEXT NOT NULL, account TEXT NOT NULL, root BLOB NOT NULL,
                 generation INTEGER NOT NULL CHECK(generation > 0), payload BLOB NOT NULL,
                 PRIMARY KEY(client, account, root));
-                PRAGMA user_version = 1; PRAGMA application_id = 1146309715;",
+                PRAGMA user_version = 2; PRAGMA application_id = 1146309715;",
             )
             .map_err(storage)?;
             tx.commit().map_err(storage)?;
@@ -128,8 +154,33 @@ impl LocalStateStore {
         &self,
         scope: &LocalScope,
     ) -> Result<Option<LocalStateCheckpoint>, LocalStateError> {
-        load(&self.connect()?, scope)
+        let connection = self.connect()?;
+        load(&connection, self.scope(&connection, scope)?)
             .map(|value| value.map(|(generation, document)| checkpoint(generation, document)))
+    }
+
+    pub(crate) fn initial_download_complete(
+        &self,
+        scope: &LocalScope,
+    ) -> Result<bool, LocalStateError> {
+        let connection = self.connect()?;
+        Ok(load(&connection, self.scope(&connection, scope)?)?
+            .is_some_and(|(_, document)| document.initial_download_complete))
+    }
+
+    pub(crate) fn finish_initial_download(
+        &self,
+        scope: &LocalScope,
+        root_item: &ItemId,
+    ) -> Result<(), LocalStateError> {
+        self.mutate(scope, None, |document| {
+            if document.root.as_ref() != Some(root_item) {
+                return Err(LocalStateError::Stale);
+            }
+            document.initial_download_complete = true;
+            Ok(())
+        })
+        .map(|_| ())
     }
 
     /// Registers an explicitly verified item. Raw events must never call this method.
@@ -243,7 +294,7 @@ impl LocalStateStore {
         connectivity: LocalConnectivity,
     ) -> Result<i64, LocalStateError> {
         // Never observe writes to our own state as new user work indefinitely.
-        if self.path.starts_with(batch.scope.root()) {
+        if self.portable.is_none() && self.path.starts_with(batch.scope.root()) {
             return Err(LocalStateError::Invalid);
         }
         self.mutate(&batch.scope, None, |document| {
@@ -282,7 +333,8 @@ impl LocalStateStore {
         scope: &LocalScope,
         confirmed: bool,
     ) -> Result<std::collections::BTreeMap<Vec<u8>, ItemId>, LocalStateError> {
-        let Some((_, document)) = load(&self.connect()?, scope)? else {
+        let connection = self.connect()?;
+        let Some((_, document)) = load(&connection, self.scope(&connection, scope)?)? else {
             return Ok(Default::default());
         };
         document.paths(confirmed)
@@ -300,6 +352,7 @@ impl LocalStateStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
+        let scope = self.scope(&tx, scope)?;
         let old = load(&tx, scope)?;
         let generation = old.as_ref().map(|(g, _)| *g);
         if expected.is_some_and(|expected| expected != generation) {
@@ -396,3 +449,53 @@ fn checkpoint(generation: i64, document: Document) -> LocalStateCheckpoint {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+
+    #[test]
+    fn portable_checkpoint_survives_relocation_and_rejects_other_bindings() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let base = std::env::temp_dir().join(format!("drivesync-portable-{}", suffix.secret()));
+        let original = base.join("original");
+        let moved = base.join("moved");
+        let before = LocalScope::new("old-client", "same-account", &original).unwrap();
+        let mut state = LocalStateStore::open(&original.join(".drivesync")).unwrap();
+        state.portable =
+            Some(LocalScope::new("remote-root", "same-account", Path::new("/drivesync")).unwrap());
+        let (root, _) = state
+            .register_verified_item(
+                &before,
+                None,
+                Some("remote-root".into()),
+                ItemSnapshot {
+                    parent: None,
+                    name: vec![],
+                    kind: crate::LocalItemKind::Directory,
+                    content_version: None,
+                    remote_version: None,
+                },
+                true,
+            )
+            .unwrap();
+        state.finish_initial_download(&before, &root).unwrap();
+        drop(state);
+        fs::rename(&original, &moved).unwrap();
+
+        let after = LocalScope::new("new-client", "same-account", &moved).unwrap();
+        let state = LocalStateStore::portable(&moved, &after, "remote-root").unwrap();
+        assert!(state.initial_download_complete(&after).unwrap());
+        assert_eq!(state.load(&after).unwrap().unwrap().items[0].id, root);
+        assert!(matches!(
+            LocalStateStore::portable(&moved, &after, "other-root"),
+            Err(LocalStateError::Invalid)
+        ));
+        let other = LocalScope::new("new-client", "other-account", &moved).unwrap();
+        assert!(matches!(
+            LocalStateStore::portable(&moved, &other, "remote-root"),
+            Err(LocalStateError::Invalid)
+        ));
+        fs::remove_dir_all(base).unwrap();
+    }
+}

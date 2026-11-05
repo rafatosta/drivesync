@@ -1,0 +1,659 @@
+//! Initial materialization of a configured Drive tree.
+use crate::{
+    configuration::valid_id, remote, EngineError, FolderConfiguration, ItemId, ItemSnapshot,
+    ItemState, LocalItemKind, LocalScope, LocalStateError, LocalStateStore,
+};
+use rustix::fs::{self, Mode, OFlags, RenameFlags, ResolveFlags, CWD};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashSet,
+    fs::File,
+    io::{self, Read, Seek, Write},
+    path::Path,
+    time::Duration,
+};
+
+const FILES: &str = "https://www.googleapis.com/drive/v3/files";
+const FOLDER: &str = "application/vnd.google-apps.folder";
+const FIELDS: &str = "id,name,mimeType,version,size,trashed,parents";
+const DIR: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::CLOEXEC);
+
+/// Progress on a completed initial download. Earlier commits survive a failure.
+#[derive(Debug, Default)]
+pub struct InitialDownload {
+    pub files: usize,
+    pub directories: usize,
+    pub already_registered: usize,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct Entry {
+    id: String,
+    name: String,
+    mime_type: String,
+    version: String,
+    size: Option<String>,
+    #[serde(default)]
+    trashed: bool,
+    #[serde(default)]
+    parents: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Page {
+    files: Vec<Entry>,
+    next_page_token: Option<String>,
+    #[serde(default)]
+    incomplete_search: bool,
+}
+
+fn metadata(token: &str, id: &str) -> Result<Entry, EngineError> {
+    if !valid_id(id) {
+        return Err(EngineError::DownloadIncomplete);
+    }
+    let body = remote::request(
+        token,
+        &format!("{FILES}/{id}"),
+        &[("fields", FIELDS), ("supportsAllDrives", "true")],
+    )?;
+    serde_json::from_slice(&body).map_err(|_| EngineError::DownloadIncomplete)
+}
+
+fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
+    let query = format!("'{parent}' in parents and trashed = false");
+    let fields = format!("nextPageToken,incompleteSearch,files({FIELDS})");
+    let mut entries = Vec::new();
+    let mut pages = HashSet::new();
+    let mut names = HashSet::new();
+    let mut next = None;
+    loop {
+        let mut params = vec![
+            ("q", query.as_str()),
+            ("fields", fields.as_str()),
+            ("pageSize", "200"),
+            ("supportsAllDrives", "true"),
+            ("includeItemsFromAllDrives", "true"),
+        ];
+        if let Some(page) = next.as_deref() {
+            params.push(("pageToken", page));
+        }
+        let page: Page = serde_json::from_slice(&remote::request(token, FILES, &params)?)
+            .map_err(|_| EngineError::DownloadIncomplete)?;
+        if page.incomplete_search || entries.len() + page.files.len() >= 10_000 {
+            return Err(EngineError::DownloadIncomplete);
+        }
+        for entry in page.files {
+            if !entry.valid_child(parent) || !names.insert(entry.name.clone()) {
+                return Err(EngineError::DownloadConflict);
+            }
+            entries.push(entry);
+        }
+        match page.next_page_token {
+            None => return Ok(entries),
+            Some(page)
+                if !page.is_empty()
+                    && page.len() <= 4096
+                    && pages.len() < 100
+                    && pages.insert(page.clone()) =>
+            {
+                next = Some(page)
+            }
+            Some(_) => return Err(EngineError::DownloadIncomplete),
+        }
+    }
+}
+
+impl Entry {
+    fn valid_child(&self, parent: &str) -> bool {
+        valid_id(&self.id)
+            && !self.trashed
+            && self.parents.iter().any(|id| id == parent)
+            && valid_name(&self.name)
+    }
+
+    fn kind(&self) -> Result<LocalItemKind, EngineError> {
+        if self.mime_type == FOLDER {
+            Ok(LocalItemKind::Directory)
+        } else if self.mime_type.starts_with("application/vnd.google-apps.") || self.size.is_none()
+        {
+            Err(EngineError::DownloadUnsupported)
+        } else {
+            Ok(LocalItemKind::File)
+        }
+    }
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\0'])
+        && name != ".drivesync"
+        && !name.starts_with(".drivesync-download-")
+}
+
+pub(crate) fn run(
+    token: &str,
+    folder: &FolderConfiguration,
+    scope: &LocalScope,
+) -> Result<InitialDownload, EngineError> {
+    let directory = fs::openat2(
+        CWD,
+        &folder.local,
+        DIR,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map_err(|_| EngineError::DownloadLocal)?;
+    fs::flock(&directory, fs::FlockOperation::NonBlockingLockExclusive).map_err(|error| {
+        if error == rustix::io::Errno::WOULDBLOCK {
+            EngineError::DownloadBusy
+        } else {
+            EngineError::DownloadLocal
+        }
+    })?;
+    let store = LocalStateStore::portable(&folder.local, scope, &folder.remote.id)
+        .map_err(EngineError::DownloadState)?;
+    let completed = store
+        .initial_download_complete(scope)
+        .map_err(EngineError::DownloadState)?;
+    let root = metadata(token, &folder.remote.id)?;
+    if root.trashed || root.mime_type != FOLDER || !valid_id(&root.id) {
+        return Err(EngineError::DownloadIncomplete);
+    }
+    let mut job = Job {
+        token,
+        scope,
+        store,
+        root: directory.into(),
+        seen: HashSet::from([root.id.clone()]),
+        report: InitialDownload::default(),
+    };
+    let id = job.register(&root, None, LocalItemKind::Directory, || Ok(()))?;
+    job.walk(&root.id, &id, Path::new("."), 0)?;
+    let checkpoint = job.store.load(scope).map_err(EngineError::DownloadState)?;
+    if checkpoint
+        .iter()
+        .flat_map(|state| &state.items)
+        .any(|item| {
+            item.remote_id
+                .as_ref()
+                .is_some_and(|id| !job.seen.contains(id))
+        })
+    {
+        return Err(EngineError::DownloadConflict);
+    }
+    if !completed {
+        job.store
+            .finish_initial_download(scope, &id)
+            .map_err(EngineError::DownloadState)?;
+    }
+    Ok(job.report)
+}
+
+struct Job<'a> {
+    token: &'a str,
+    scope: &'a LocalScope,
+    store: LocalStateStore,
+    root: File,
+    seen: HashSet<String>,
+    report: InitialDownload,
+}
+
+impl Job<'_> {
+    fn walk(
+        &mut self,
+        remote_id: &str,
+        id: &ItemId,
+        path: &Path,
+        depth: usize,
+    ) -> Result<(), EngineError> {
+        if depth >= 64 {
+            return Err(EngineError::DownloadIncomplete);
+        }
+        for entry in children(self.token, remote_id)? {
+            if self.seen.len() >= 10_000 || !self.seen.insert(entry.id.clone()) {
+                return Err(EngineError::DownloadIncomplete);
+            }
+            let kind = entry.kind()?;
+            let child = path.join(&entry.name);
+            let directory = self.open_directory(path)?;
+            let conflict = || EngineError::DownloadConflictAt(child.clone());
+            let pending = PendingFile::new(&entry, &directory);
+            let item = self
+                .register(&entry, Some(id), kind, || {
+                    if kind == LocalItemKind::Directory {
+                        fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
+                            .map_err(local_error)?;
+                        directory
+                            .sync_all()
+                            .map_err(|_| EngineError::DownloadLocal)?;
+                    } else {
+                        pending.install(self.token)?;
+                    }
+                    Ok(())
+                })
+                .map_err(|error| match error {
+                    EngineError::DownloadConflict => conflict(),
+                    other => other,
+                })?;
+            let local = fs::statat(
+                &directory,
+                entry.name.as_str(),
+                fs::AtFlags::SYMLINK_NOFOLLOW,
+            )
+            .map_err(|_| conflict())?;
+            let expected = if kind == LocalItemKind::Directory {
+                fs::FileType::Directory
+            } else {
+                fs::FileType::RegularFile
+            };
+            if fs::FileType::from_raw_mode(local.st_mode) != expected
+                || (kind == LocalItemKind::File
+                    && entry
+                        .size
+                        .as_deref()
+                        .and_then(|size| size.parse::<i64>().ok())
+                        != Some(local.st_size))
+            {
+                return Err(conflict());
+            }
+            if kind == LocalItemKind::Directory {
+                self.walk(&entry.id, &item, &child, depth + 1)?;
+            } else {
+                pending.clear()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn open_directory(&self, path: &Path) -> Result<File, EngineError> {
+        fs::openat2(
+            &self.root,
+            path,
+            DIR,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        )
+        .map(File::from)
+        .map_err(|_| EngineError::DownloadLocal)
+    }
+
+    fn register(
+        &mut self,
+        entry: &Entry,
+        parent: Option<&ItemId>,
+        kind: LocalItemKind,
+        install: impl FnOnce() -> Result<(), EngineError>,
+    ) -> Result<ItemId, EngineError> {
+        let snapshot = ItemSnapshot {
+            parent: parent.cloned(),
+            name: parent.map_or_else(Vec::new, |_| entry.name.as_bytes().to_vec()),
+            kind,
+            content_version: None,
+            remote_version: (kind == LocalItemKind::File).then(|| entry.version.clone()),
+        };
+        let mut checkpoint = self
+            .store
+            .load(self.scope)
+            .map_err(EngineError::DownloadState)?;
+        if let Some(existing) = checkpoint.iter().flat_map(|c| &c.items).find(|item| {
+            item.remote_id.as_deref() == Some(&entry.id)
+                || matches!(&item.observed, ItemState::Present(s) if s.parent == snapshot.parent && s.name == snapshot.name)
+        }) {
+            let expected = ItemState::Present(snapshot);
+            if existing.remote_id.as_deref() != Some(&entry.id)
+                || existing.confirmed.as_ref() != Some(&expected) || existing.observed != expected
+            {
+                return Err(EngineError::DownloadConflict);
+            }
+            self.report.already_registered += usize::from(parent.is_some());
+            return Ok(existing.id.clone());
+        }
+        install()?;
+        for _ in 0..8 {
+            match self.store.register_verified_item(
+                self.scope,
+                checkpoint.as_ref().map(|c| c.generation),
+                Some(entry.id.clone()),
+                snapshot.clone(),
+                true,
+            ) {
+                Ok((id, _)) => {
+                    if parent.is_some() {
+                        if kind == LocalItemKind::Directory {
+                            self.report.directories += 1;
+                        } else {
+                            self.report.files += 1;
+                        }
+                    }
+                    return Ok(id);
+                }
+                Err(LocalStateError::Stale) => {
+                    checkpoint = self
+                        .store
+                        .load(self.scope)
+                        .map_err(EngineError::DownloadState)?;
+                }
+                Err(error) => return Err(EngineError::DownloadState(error)),
+            }
+        }
+        Err(EngineError::DownloadState(LocalStateError::Stale))
+    }
+}
+
+fn local_error(error: rustix::io::Errno) -> EngineError {
+    if error == rustix::io::Errno::EXIST {
+        EngineError::DownloadConflict
+    } else {
+        EngineError::DownloadLocal
+    }
+}
+
+/// A verified staged file and its digest survive until the identity commits.
+struct PendingFile<'a> {
+    entry: &'a Entry,
+    directory: &'a File,
+    staged: String,
+    digest: String,
+}
+
+impl<'a> PendingFile<'a> {
+    fn new(entry: &'a Entry, directory: &'a File) -> Self {
+        let key =
+            Sha256::digest(format!("{}\0{}\0{}", entry.id, entry.version, entry.name).as_bytes());
+        Self {
+            entry,
+            directory,
+            staged: format!(".drivesync-download-{key:x}.ready"),
+            digest: format!(".drivesync-download-{key:x}.digest"),
+        }
+    }
+
+    fn install(&self, token: &str) -> Result<(), EngineError> {
+        let target = self.stat(&self.entry.name)?;
+        let staged = self.stat(&self.staged)?;
+        if let Some(target) = target {
+            let Some(staged) = staged else {
+                return Err(EngineError::DownloadConflict);
+            };
+            if (target.st_dev, target.st_ino) != (staged.st_dev, staged.st_ino) {
+                return Err(EngineError::DownloadConflict);
+            }
+            self.verify()?;
+        } else {
+            if staged.is_none() {
+                download_file(token, self)?;
+            }
+            self.verify()?;
+            fs::linkat(
+                self.directory,
+                self.staged.as_str(),
+                self.directory,
+                self.entry.name.as_str(),
+                fs::AtFlags::empty(),
+            )
+            .map_err(local_error)?;
+        }
+        self.directory
+            .sync_all()
+            .map_err(|_| EngineError::DownloadLocal)
+    }
+
+    fn stat(&self, name: &str) -> Result<Option<fs::Stat>, EngineError> {
+        match fs::statat(self.directory, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => Ok(Some(stat)),
+            Err(rustix::io::Errno::NOENT) => Ok(None),
+            Err(error) => Err(local_error(error)),
+        }
+    }
+
+    fn verify(&self) -> Result<(), EngineError> {
+        let staged = self.open(&self.staged)?;
+        let size = self
+            .entry
+            .size
+            .as_deref()
+            .and_then(|size| size.parse::<u64>().ok())
+            .ok_or(EngineError::DownloadIncomplete)?;
+        if staged
+            .metadata()
+            .map_err(|_| EngineError::DownloadLocal)?
+            .len()
+            != size
+        {
+            return Err(EngineError::DownloadConflict);
+        }
+        let mut expected = Vec::new();
+        self.open(&self.digest)?
+            .take(33)
+            .read_to_end(&mut expected)
+            .map_err(|_| EngineError::DownloadLocal)?;
+        if checksum(staged.take(size.saturating_add(1)))?.as_slice() != expected {
+            return Err(EngineError::DownloadConflict);
+        }
+        Ok(())
+    }
+
+    fn open(&self, name: &str) -> Result<File, EngineError> {
+        let file = fs::openat2(
+            self.directory,
+            name,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        )
+        .map(File::from)
+        .map_err(|_| EngineError::DownloadConflict)?;
+        if !file.metadata().is_ok_and(|m| m.is_file()) {
+            return Err(EngineError::DownloadConflict);
+        }
+        Ok(file)
+    }
+
+    fn clear(&self) -> Result<(), EngineError> {
+        for name in [&self.staged, &self.digest] {
+            match fs::unlinkat(self.directory, name.as_str(), fs::AtFlags::empty()) {
+                Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+                Err(error) => return Err(local_error(error)),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn checksum(mut input: impl Read) -> Result<[u8; 32], EngineError> {
+    let mut digest = Sha256::new();
+    io::copy(&mut input, &mut digest).map_err(|_| EngineError::DownloadLocal)?;
+    Ok(digest.finalize().into())
+}
+
+fn download_file(token: &str, pending: &PendingFile<'_>) -> Result<(), EngineError> {
+    let entry = pending.entry;
+    let directory = pending.directory;
+    let size = entry
+        .size
+        .as_deref()
+        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|size| size.checked_add(1))
+        .ok_or(EngineError::DownloadIncomplete)?;
+    let response = remote::stream(
+        token,
+        &format!("{FILES}/{}", entry.id),
+        &[("alt", "media"), ("supportsAllDrives", "true")],
+        Duration::from_secs(600),
+    )?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        remote::response_status(status, &[])?;
+        return Err(EngineError::DownloadIncomplete);
+    }
+    let suffix = oauth2::CsrfToken::new_random();
+    let temporary = format!(".drivesync-download-{}", suffix.secret());
+    let mut file = File::from(
+        fs::openat(
+            directory,
+            temporary.as_str(),
+            OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(local_error)?,
+    );
+    let result = (|| {
+        let copied = io::copy(&mut response.take(size), &mut file)
+            .map_err(|_| EngineError::DownloadLocal)?;
+        if copied != size - 1 || metadata(token, &entry.id)? != *entry {
+            return Err(EngineError::DownloadIncomplete);
+        }
+        file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
+        file.rewind().map_err(|_| EngineError::DownloadLocal)?;
+        let digest = checksum(&file)?;
+        // A proof without a ready file cannot authorize adopting a destination.
+        match fs::unlinkat(directory, pending.digest.as_str(), fs::AtFlags::empty()) {
+            Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+            Err(error) => return Err(local_error(error)),
+        }
+        let mut proof = File::from(
+            fs::openat(
+                directory,
+                pending.digest.as_str(),
+                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            )
+            .map_err(local_error)?,
+        );
+        proof
+            .write_all(&digest)
+            .and_then(|()| proof.sync_all())
+            .map_err(|_| EngineError::DownloadLocal)?;
+        fs::renameat_with(
+            directory,
+            temporary.as_str(),
+            directory,
+            pending.staged.as_str(),
+            RenameFlags::NOREPLACE,
+        )
+        .map_err(local_error)?;
+        directory.sync_all().map_err(|_| EngineError::DownloadLocal)
+    })();
+    if result.is_err() {
+        let _ = fs::unlinkat(directory, temporary.as_str(), fs::AtFlags::empty());
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_names_cannot_escape_or_collide_with_staging() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "/root",
+            "a/b",
+            "a\0b",
+            ".drivesync-download-temp",
+            ".drivesync",
+        ] {
+            assert!(!valid_name(name));
+        }
+        assert!(valid_name("Relatório final.pdf"));
+    }
+
+    #[test]
+    fn interrupted_publication_is_recovered_without_adopting_a_collision_or_edit() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let path = std::env::temp_dir().join(format!("drivesync-recovery-{}", suffix.secret()));
+        std::fs::create_dir(&path).unwrap();
+        let directory = File::open(&path).unwrap();
+        let entry = Entry {
+            id: "drive-id".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            version: "1".into(),
+            size: Some("4".into()),
+            trashed: false,
+            parents: vec![],
+        };
+        let pending = PendingFile::new(&entry, &directory);
+        std::fs::write(path.join(&pending.staged), b"data").unwrap();
+        std::fs::write(path.join(&pending.digest), checksum(&b"data"[..]).unwrap()).unwrap();
+
+        let target = path.join(&entry.name);
+        std::fs::write(&target, b"data").unwrap();
+        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(std::fs::read(&target).unwrap(), b"data");
+        std::fs::remove_file(&target).unwrap();
+
+        pending.install("").unwrap();
+        // Simulate restart before committing the identity.
+        PendingFile::new(&entry, &directory).install("").unwrap();
+        std::fs::write(&target, b"edit").unwrap();
+        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(std::fs::read(&target).unwrap(), b"edit");
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn retry_keeps_the_registered_identity_and_does_not_install_again() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let directory =
+            std::env::temp_dir().join(format!("drivesync-download-test-{}", suffix.secret()));
+        let destination = directory.join("destination");
+        let state = directory.join("state");
+        std::fs::create_dir_all(&destination).unwrap();
+        let scope = LocalScope::new("client", "account", &destination).unwrap();
+        let mut job = Job {
+            token: "",
+            scope: &scope,
+            store: LocalStateStore::open(&state).unwrap(),
+            root: File::open(&destination).unwrap(),
+            seen: HashSet::new(),
+            report: InitialDownload::default(),
+        };
+        let entry = Entry {
+            id: "remote-id".into(),
+            name: "My Drive".into(),
+            mime_type: FOLDER.into(),
+            version: "1".into(),
+            size: None,
+            trashed: false,
+            parents: vec![],
+        };
+        let first = job
+            .register(&entry, None, LocalItemKind::Directory, || Ok(()))
+            .unwrap();
+        assert!(!job.store.initial_download_complete(&scope).unwrap());
+        job.store.finish_initial_download(&scope, &first).unwrap();
+        drop(job.store);
+        job.store = LocalStateStore::open(&state).unwrap();
+        assert!(job.store.initial_download_complete(&scope).unwrap());
+        let second = job
+            .register(&entry, None, LocalItemKind::Directory, || {
+                panic!("already registered")
+            })
+            .unwrap();
+        assert_eq!(first, second);
+        let other = Entry {
+            id: "other-id".into(),
+            ..entry
+        };
+        assert_eq!(
+            job.register(&other, None, LocalItemKind::Directory, || panic!(
+                "conflicting root"
+            )),
+            Err(EngineError::DownloadConflict)
+        );
+        drop(job);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

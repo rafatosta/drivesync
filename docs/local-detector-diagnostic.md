@@ -8,8 +8,8 @@ dispensáveis, fora de pastas pessoais. Os caminhos aparecem na saída.
 ## Execução pelo GNOME Builder
 
 Selecione o manifesto `flatpak/com.rtosta.DriveSync.Devel.yml`. Ele concede
-acesso direto somente de leitura a `DriveSync-Test` dentro de Documentos,
-usando `--filesystem=xdg-documents/DriveSync-Test:ro`. Crie essa pasta pelo
+acesso direto de leitura e escrita a `DriveSync-Test` dentro de Documentos,
+usando `--filesystem=xdg-documents/DriveSync-Test`. Crie essa pasta pelo
 sistema antes de executar; a concessão de leitura não a cria automaticamente.
 Escolha essa pasta ou uma de suas subpastas na configuração da conta.
 

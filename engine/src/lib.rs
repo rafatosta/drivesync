@@ -1,9 +1,10 @@
 //! Account authorization and folder configuration engine.
 //!
-//! The public facade performs no file synchronization or conflict resolution.
+//! Initial download is explicit and separate from ongoing synchronization.
 mod accounts;
 mod auth;
 mod configuration;
+mod download;
 mod error;
 mod facade;
 mod local_detector;
@@ -14,6 +15,7 @@ mod remote_detector;
 
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
+pub use download::InitialDownload;
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{

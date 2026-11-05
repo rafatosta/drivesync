@@ -29,15 +29,20 @@ pub(crate) struct Observation {
 }
 impl Observation {
     /// Resolves local configuration and observes on a worker, without network I/O.
+    #[cfg(test)]
     pub fn start(
         resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
     ) -> Self {
-        Self::start_with(resolve, LocalStateStore::application)
+        Self::start_with(resolve, |scope| {
+            LocalStateStore::open(&scope.root().with_extension("test-state"))
+        })
     }
 
-    fn start_with(
+    pub(crate) fn start_with(
         resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
-        open_state: impl FnOnce() -> Result<LocalStateStore, LocalStateError> + Send + 'static,
+        open_state: impl FnOnce(&LocalScope) -> Result<LocalStateStore, LocalStateError>
+            + Send
+            + 'static,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -61,7 +66,7 @@ impl Observation {
             if flag.load(Ordering::Acquire) {
                 return;
             }
-            let state_store = match open_state() {
+            let state_store = match open_state(&scope) {
                 Ok(store) => store,
                 Err(_) => {
                     deliver(&tx, &flag, Update::PersistenceFailed);
@@ -157,7 +162,7 @@ mod tests {
         let saved_state = state_dir.clone();
         let session = Observation::start_with(
             move || Ok(Some(scope)),
-            move || LocalStateStore::open(&state_dir),
+            move |_| LocalStateStore::open(&state_dir),
         );
         assert!(matches!(
             session
@@ -234,7 +239,7 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         let scope = LocalScope::new("test", "account", &path).unwrap();
         let session =
-            Observation::start_with(move || Ok(Some(scope)), || Err(LocalStateError::Storage));
+            Observation::start_with(move || Ok(Some(scope)), |_| Err(LocalStateError::Storage));
         assert!(matches!(
             session
                 .receiver

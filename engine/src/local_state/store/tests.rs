@@ -459,11 +459,13 @@ fn incompatible_corrupt_and_unsafe_storage_are_preserved() {
             .unwrap(),
         b"invalid"
     );
-    c.pragma_update(None, "user_version", 2).unwrap();
-    assert!(matches!(
-        f.store_result(),
-        Err(LocalStateError::Incompatible)
-    ));
+    for unsupported in [1, 3] {
+        c.pragma_update(None, "user_version", unsupported).unwrap();
+        assert!(matches!(
+            f.store_result(),
+            Err(LocalStateError::Incompatible)
+        ));
+    }
     let alias = f.0.join("alias");
     symlink(f.0.join("private"), &alias).unwrap();
     assert!(LocalStateStore::open(&alias).is_err());

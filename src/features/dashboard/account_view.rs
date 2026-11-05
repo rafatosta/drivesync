@@ -76,7 +76,13 @@ pub(super) fn populate(
             saved.account.id.clone(),
         );
         let restart = history.restart_callback();
-        folders.connect_saved(move || restart());
+        let (download, refresh_download) =
+            super::components::initial_download::build(engine.clone(), &saved);
+        folders.connect_saved(move || {
+            restart();
+            refresh_download();
+        });
+        content.append(&download);
         content.append(history.widget());
         editor.append(folders.widget());
         let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));

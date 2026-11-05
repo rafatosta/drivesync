@@ -26,7 +26,12 @@ impl LocalHistory {
         Self::build(move || {
             let engine = engine.clone();
             let id = id.clone();
-            Observation::start(move || engine.local_observation_scope(&id).map_err(|_| ()))
+            let resolver = engine.clone();
+            let account = id.clone();
+            Observation::start_with(
+                move || resolver.local_observation_scope(&account).map_err(|_| ()),
+                move |scope| engine.folder_state(&id, scope),
+            )
         })
     }
     pub fn widget(&self) -> &gtk::Box {

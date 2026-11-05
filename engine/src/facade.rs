@@ -233,6 +233,49 @@ impl DriveSyncEngine {
             .transpose()
     }
 
+    /// Opens portable state for the saved folder pair.
+    pub fn folder_state(
+        &self,
+        id: &AccountId,
+        scope: &crate::LocalScope,
+    ) -> Result<crate::LocalStateStore, crate::LocalStateError> {
+        let folder = self
+            .saved_folder(id)
+            .map_err(|_| crate::LocalStateError::Storage)?
+            .ok_or(crate::LocalStateError::Missing)?;
+        let root = configuration::observation_root(&folder.local, &folder.local_display)
+            .map_err(|_| crate::LocalStateError::Storage)?;
+        if scope.root() != root || scope.account() != id.0 {
+            return Err(crate::LocalStateError::Stale);
+        }
+        crate::LocalStateStore::portable(&folder.local, scope, &folder.remote.id)
+    }
+
+    /// Resumes the saved Drive tree, installing and recording new remote items.
+    ///
+    /// This blocking, explicit operation requires write access to the configured
+    /// local directory. Run it while no other program edits or moves that tree.
+    ///
+    /// # Errors
+    /// Returns provider, local I/O, identity or conflict errors. Items already
+    /// installed remain on disk, even if their identity could not be saved.
+    pub fn initial_download(&self, id: &AccountId) -> Result<crate::InitialDownload, EngineError> {
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let folder = self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(EngineError::Authentication)?
+            .into_iter()
+            .find(|folder| &folder.account_id == id)
+            .ok_or(EngineError::InvalidFolder)?;
+        let root = configuration::observation_root(&folder.local, &folder.local_display)?;
+        let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
+            .map_err(|_| EngineError::InvalidFolder)?;
+        self.auth.with_access_config(&config, id, |token| {
+            crate::download::run(token, &folder, &scope)
+        })
+    }
+
     /// Performs a bounded, read-only remote check for the configured folder.
     ///
     /// The caller selects the change-log corpus explicitly. This blocks during

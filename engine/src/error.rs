@@ -15,6 +15,13 @@ pub enum EngineError {
     RemoteRateLimited,
     RemoteStorageFull,
     RemoteQuotaExceeded,
+    DownloadConflict,
+    DownloadConflictAt(std::path::PathBuf),
+    DownloadBusy,
+    DownloadIncomplete,
+    DownloadUnsupported,
+    DownloadLocal,
+    DownloadState(crate::LocalStateError),
 }
 
 impl std::fmt::Display for EngineError {
@@ -31,6 +38,13 @@ impl std::fmt::Display for EngineError {
             Self::RemoteRateLimited => f.write_str("Google Drive is receiving too many requests. Please try again later."),
             Self::RemoteStorageFull => f.write_str("Google Drive storage is full. Free space or increase this account’s storage."),
             Self::RemoteQuotaExceeded => f.write_str("The app’s Google Drive API quota was exceeded. Contact the DriveSync distributor or wait for the quota to reset."),
+            Self::DownloadBusy => f.write_str("An initial download is already running for this folder."),
+            Self::DownloadConflictAt(path) => write!(f, "Initial download paused at {:?}. Existing files were preserved.", path),
+            Self::DownloadConflict => f.write_str("Initial download stopped at a name or identity conflict. Existing files were preserved."),
+            Self::DownloadIncomplete => f.write_str("Initial download stopped because the remote tree or file version could not be verified."),
+            Self::DownloadUnsupported => f.write_str("Initial download stopped at a Google-native document or another unsupported item."),
+            Self::DownloadLocal => f.write_str("Initial download could not write or make the local item durable."),
+            Self::DownloadState(error) => write!(f, "Initial download could not save the identity record: {error}"),
         }
     }
 }

@@ -314,6 +314,9 @@ impl LocalWatcher {
                 }
                 match entry.and_then(|e| Ok((e.file_name(), e.file_type()?))) {
                     Ok((name, kind)) if kind.is_dir() => {
+                        if reserved(&path.join(&name)) {
+                            continue;
+                        }
                         if pending.len() + self.watches.len() >= self.options.max_watches {
                             self.gap(path.clone(), LocalCoverageGap::ResourceLimit);
                         } else {
@@ -472,6 +475,9 @@ impl LocalWatcher {
                 return;
             }
         };
+        if reserved(&path) {
+            return;
+        }
         let directory = flags.contains(F::ISDIR) || name.is_none();
         let kind = if directory {
             LocalItemKind::Directory
@@ -573,3 +579,10 @@ fn open_root(path: &Path) -> std::io::Result<File> {
 
 #[cfg(test)]
 mod tests;
+
+fn reserved(path: &Path) -> bool {
+    path.starts_with(".drivesync")
+        || path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b".drivesync-download-"))
+}

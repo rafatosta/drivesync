@@ -284,3 +284,19 @@ msgstr "Movimentação e renomeação detectadas"
 #: src/features/dashboard/components/local_history.rs
 msgid "Local changes could not be saved. Observation stopped."
 msgstr "Não foi possível registrar as alterações locais. A observação foi interrompida."
+
+#: src/features/dashboard/components/initial_download.rs
+msgid "Checking initial download…"
+msgstr "Verificando o download inicial…"
+
+#: src/features/dashboard/components/initial_download.rs
+msgid "Initial download complete."
+msgstr "Download inicial concluído."
+
+#: src/features/dashboard/components/initial_download.rs
+msgid "Retry after resolving the conflict"
+msgstr "Tentar novamente após resolver o conflito"
+
+#: src/features/dashboard/components/initial_download.rs
+msgid "Resolve the conflict while keeping a copy of your files, then retry."
+msgstr "Resolva o conflito mantendo uma cópia dos seus arquivos e tente novamente."

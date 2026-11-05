@@ -140,6 +140,7 @@ pub(super) struct Document {
     pub items: Vec<TrackedItem>,
     pub pending: Vec<PendingInvestigation>,
     pub next_pending: i64,
+    pub initial_download_complete: bool,
 }
 impl Default for Document {
     fn default() -> Self {
@@ -148,6 +149,7 @@ impl Default for Document {
             items: Vec::new(),
             pending: Vec::new(),
             next_pending: 1,
+            initial_download_complete: false,
         }
     }
 }
