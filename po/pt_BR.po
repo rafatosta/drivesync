@@ -381,3 +381,18 @@ msgstr "Caminho"
 
 msgid "Activity details"
 msgstr "Detalhes da atividade"
+
+msgid "Remote check interval"
+msgstr "Intervalo de verificação remota"
+
+msgid "Minutes between checks for changes in Google Drive"
+msgstr "Minutos entre verificações de alterações no Google Drive"
+
+msgid "Checking for remote changes…"
+msgstr "Verificando alterações remotas…"
+
+msgid "Remote changes are pending review."
+msgstr "Há alterações remotas pendentes de revisão."
+
+msgid "Remote check complete."
+msgstr "Verificação remota concluída."

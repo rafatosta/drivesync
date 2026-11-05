@@ -161,13 +161,25 @@ pub(crate) fn build(
         .build();
     notify.set_widget_name("preferences-notify");
     background.add(&notify);
+    let remote = adw::PreferencesGroup::builder()
+        .title(gettextrs::gettext("Google Drive"))
+        .build();
+    let interval = adw::SpinRow::with_range(1.0, 1440.0, 1.0);
+    interval.set_widget_name("preferences-interval");
+    interval.set_title(&gettextrs::gettext("Remote check interval"));
+    interval.set_subtitle(&gettextrs::gettext(
+        "Minutes between checks for changes in Google Drive",
+    ));
+    interval.set_value(f64::from(current.remote_check_minutes));
+    remote.add(&interval);
     background_page.add(&background);
+    background_page.add(&remote);
     pages.add_named(&background_page, Some("background"));
 
     let sections = [
         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
         ("accounts", "Accounts", "system-users-symbolic", "account accounts identity description email folders local google drive settings conta contas pastas descrição"),
-        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed"),
+        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed remote check interval google drive minutes"),
     ];
     for (_, title, icon, _) in sections {
         let row = adw::ActionRow::builder()
@@ -244,6 +256,12 @@ pub(crate) fn build(
         if let (Err(_), Some(toasts)) = (result, weak_toasts.upgrade()) {
             toasts.add_toast(adw::Toast::new("Preferences could not be saved"));
         }
+    });
+    let save_interval = report.clone();
+    interval.connect_value_notify(move |row| {
+        let mut value = Preferences::load();
+        value.remote_check_minutes = row.value() as u32;
+        save_interval(value.save());
     });
     let save_theme = report.clone();
     let save_keep = report.clone();
@@ -440,7 +458,12 @@ mod tests {
             .unwrap()
             .downcast::<adw::SwitchRow>()
             .unwrap();
-        assert!(find(root, "preferences-interval").is_none());
+        let interval = find(root, "preferences-interval")
+            .unwrap()
+            .downcast::<adw::SpinRow>()
+            .unwrap();
+        assert_eq!(interval.value(), 5.0);
+        interval.set_value(12.0);
         let theme = find(root, "preferences-theme")
             .unwrap()
             .downcast::<adw::ComboRow>()
@@ -477,6 +500,7 @@ mod tests {
         assert!(saved.keep_running);
         assert!(!saved.notify_on_close);
         assert_eq!(saved.color_scheme, ColorScheme::Dark);
+        assert_eq!(saved.remote_check_minutes, 12);
         parent.close();
     }
 }

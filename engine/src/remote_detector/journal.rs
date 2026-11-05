@@ -161,6 +161,20 @@ impl Journal {
         Ok(connection)
     }
 
+    pub fn known_corpus(
+        &self,
+        client: &str,
+        account: &str,
+        root: &str,
+    ) -> Result<Option<String>, JournalError> {
+        let connection = self.connect()?;
+        connection.query_row(
+            "SELECT CASE WHEN count(*) = 1 THEN min(corpus) END FROM scopes WHERE client=?1 AND account=?2 AND root=?3",
+            params![client, account, root],
+            |row| row.get(0),
+        ).map_err(|_| JournalError::Storage)
+    }
+
     /// Returns the last committed checkpoint, if the scope has been initialized.
     pub fn load(&self, scope: &Scope) -> Result<Option<Checkpoint>, JournalError> {
         let connection = self.connect()?;
@@ -253,6 +267,30 @@ impl Journal {
             .map_err(|_| JournalError::Storage)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|_| JournalError::Storage)
+    }
+
+    pub fn acknowledge_many(&self, scope: &Scope, ids: &[i64]) -> Result<(), JournalError> {
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|_| JournalError::Storage)?;
+        {
+            let mut delete = transaction.prepare(
+                "DELETE FROM events WHERE client=?1 AND account=?2 AND root=?3 AND corpus=?4 AND id=?5"
+            ).map_err(|_| JournalError::Storage)?;
+            for id in ids {
+                delete
+                    .execute(params![
+                        scope.client,
+                        scope.account,
+                        scope.root,
+                        scope.corpus,
+                        id
+                    ])
+                    .map_err(|_| JournalError::Storage)?;
+            }
+        }
+        transaction.commit().map_err(|_| JournalError::Storage)
     }
 
     /// Idempotently acknowledges a single event within its exact scope.

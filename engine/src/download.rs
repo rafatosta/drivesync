@@ -154,6 +154,16 @@ pub(crate) fn run(
     scope: &LocalScope,
     notify: &dyn Fn(&Path, DownloadProgress),
 ) -> Result<InitialDownload, EngineError> {
+    run_selected(token, folder, scope, notify, None)
+}
+
+pub(crate) fn run_selected(
+    token: &str,
+    folder: &FolderConfiguration,
+    scope: &LocalScope,
+    notify: &dyn Fn(&Path, DownloadProgress),
+    targets: Option<&HashSet<String>>,
+) -> Result<InitialDownload, EngineError> {
     let directory = fs::openat2(
         CWD,
         &folder.local,
@@ -178,9 +188,46 @@ pub(crate) fn run(
     if root.trashed || root.mime_type != FOLDER || !valid_id(&root.id) {
         return Err(EngineError::DownloadIncomplete);
     }
+    let paths = if let Some(targets) = targets {
+        let checkpoint = store.load(scope).map_err(EngineError::DownloadState)?;
+        let known: HashSet<_> = checkpoint
+            .iter()
+            .flat_map(|state| &state.items)
+            .filter_map(|item| item.remote_id.as_deref())
+            .collect();
+        let mut paths = HashSet::new();
+        for target in targets
+            .iter()
+            .filter(|target| !known.contains(target.as_str()))
+        {
+            let mut id = target.clone();
+            let mut chain = HashSet::new();
+            while id != root.id && !paths.contains(&id) {
+                if chain.len() >= 64 || !chain.insert(id.clone()) {
+                    return Err(EngineError::DownloadIncomplete);
+                }
+                let entry = metadata(token, &id)?;
+                if entry.id != id || entry.trashed {
+                    return Err(EngineError::DownloadIncomplete);
+                }
+                let [parent] = entry.parents.as_slice() else {
+                    return Err(EngineError::DownloadIncomplete);
+                };
+                id = parent.clone();
+            }
+            paths.extend(chain);
+        }
+        if paths.is_empty() {
+            return Ok(InitialDownload::default());
+        }
+        Some(paths)
+    } else {
+        None
+    };
     let mut job = Job {
         token,
         notify,
+        selected: paths.as_ref(),
         scope,
         store,
         root: directory.into(),
@@ -189,6 +236,12 @@ pub(crate) fn run(
     };
     let id = job.register(&root, None, LocalItemKind::Directory, || Ok(()))?;
     job.walk(&root.id, &id, Path::new("."), 0)?;
+    if let Some(paths) = &paths {
+        if !paths.is_subset(&job.seen) {
+            return Err(EngineError::DownloadIncomplete);
+        }
+        return Ok(job.report);
+    }
     let checkpoint = job.store.load(scope).map_err(EngineError::DownloadState)?;
     if checkpoint
         .iter()
@@ -212,6 +265,7 @@ pub(crate) fn run(
 struct Job<'a> {
     token: &'a str,
     notify: &'a dyn Fn(&Path, DownloadProgress),
+    selected: Option<&'a HashSet<String>>,
     scope: &'a LocalScope,
     store: LocalStateStore,
     root: File,
@@ -231,6 +285,9 @@ impl Job<'_> {
             return Err(EngineError::DownloadIncomplete);
         }
         for entry in children(self.token, remote_id)? {
+            if self.selected.is_some_and(|ids| !ids.contains(&entry.id)) {
+                continue;
+            }
             if self.seen.len() >= 10_000 || !self.seen.insert(entry.id.clone()) {
                 return Err(EngineError::DownloadIncomplete);
             }
@@ -725,6 +782,7 @@ mod tests {
         let mut job = Job {
             token: "",
             notify: &|_, _| {},
+            selected: None,
             scope: &scope,
             store: LocalStateStore::open(&state).unwrap(),
             root: File::open(&destination).unwrap(),

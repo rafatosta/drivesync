@@ -246,16 +246,29 @@ pub(super) fn check(
     scope: &Scope,
     corpus: &Corpus,
     limits: Limits,
+    incremental: bool,
 ) -> Result<Check, DetectionError> {
-    check_with(provider, journal, scope, corpus, limits)
+    verify(provider, journal, scope, corpus, limits, incremental)
 }
 
+#[cfg(test)]
 fn check_with(
     provider: &impl Provider,
     journal: &Journal,
     scope: &Scope,
     corpus: &Corpus,
     limits: Limits,
+) -> Result<Check, DetectionError> {
+    verify(provider, journal, scope, corpus, limits, false)
+}
+
+fn verify(
+    provider: &impl Provider,
+    journal: &Journal,
+    scope: &Scope,
+    corpus: &Corpus,
+    limits: Limits,
+    incremental: bool,
 ) -> Result<Check, DetectionError> {
     if !valid_id(&scope.root)
         || scope.account.is_empty()
@@ -289,15 +302,37 @@ fn check_with(
     };
     let mut seen_changes = Vec::new();
     let mut stable = None;
-    for _ in 0..limits.rounds {
-        let inventory = scan(provider, corpus, &scope.root, &mut budget)?;
-        let (next, changes) = read_changes(provider, corpus, &cursor, &mut budget)?;
-        cursor = next;
-        if changes.is_empty() {
-            stable = Some(inventory);
-            break;
+    if incremental {
+        if let Some(checkpoint) = &old {
+            let (next, changes) = read_changes(provider, corpus, &cursor, &mut budget)?;
+            cursor = next;
+            if changes.is_empty() {
+                if cursor != checkpoint.cursor {
+                    journal.commit(
+                        scope,
+                        Some(checkpoint.generation),
+                        &cursor,
+                        &checkpoint.inventory,
+                        &[],
+                    )?;
+                }
+                return pending_check(journal, scope);
+            }
+            stable = apply_file_changes(&previous, &changes, &scope.root, corpus);
+            seen_changes.extend(changes);
         }
-        seen_changes.extend(changes);
+    }
+    if stable.is_none() {
+        for _ in 0..limits.rounds {
+            let inventory = scan(provider, corpus, &scope.root, &mut budget)?;
+            let (next, changes) = read_changes(provider, corpus, &cursor, &mut budget)?;
+            cursor = next;
+            if changes.is_empty() {
+                stable = Some(inventory);
+                break;
+            }
+            seen_changes.extend(changes);
+        }
     }
     let current = stable.ok_or(DetectionError::Incomplete)?;
     let mut events = Vec::new();
@@ -411,14 +446,62 @@ fn check_with(
         &inventory,
         &payloads,
     )?;
-    let pending = pending(journal, scope)?;
     if old.is_none() {
-        Ok(Check::Initialized(pending))
-    } else if pending.is_empty() {
+        Ok(Check::Initialized(pending(journal, scope)?))
+    } else {
+        pending_check(journal, scope)
+    }
+}
+
+fn pending_check(journal: &Journal, scope: &Scope) -> Result<Check, DetectionError> {
+    let events = pending(journal, scope)?;
+    if events.is_empty() {
         Ok(Check::NoChanges)
     } else {
-        Ok(Check::Changes(pending))
+        Ok(Check::Changes(events))
     }
+}
+
+/// Apply unambiguous file metadata without listing folders. Folder changes,
+/// missing metadata and unknown parents keep the full reconciliation path.
+fn apply_file_changes(
+    previous: &Inventory,
+    changes: &[Change],
+    root: &str,
+    corpus: &Corpus,
+) -> Option<Inventory> {
+    let mut current = previous.clone();
+    for change in changes {
+        let id = change.file_id.as_deref()?;
+        let file = change.file.as_ref()?;
+        if change.removed
+            || id == root
+            || id != file.id
+            || !valid_id(id)
+            || file.name.is_none()
+            || file.trashed != Some(false)
+            || file.mime_type.as_deref()? == FOLDER
+            || previous
+                .get(id)
+                .is_some_and(|entry| entry.mime_type.as_deref() == Some(FOLDER))
+            || match (corpus, file.drive_id.as_deref()) {
+                (Corpus::User, None) => false,
+                (Corpus::SharedDrive(expected), Some(actual)) => expected != actual,
+                _ => true,
+            }
+        {
+            return None;
+        }
+        let [parent] = file.parents.as_deref()? else {
+            return None;
+        };
+        let parent = previous.get(parent)?;
+        if parent.mime_type.as_deref() != Some(FOLDER) {
+            return None;
+        }
+        current.insert(id.into(), file.clone());
+    }
+    Some(current)
 }
 
 pub(super) fn pending(

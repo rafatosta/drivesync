@@ -300,6 +300,108 @@ impl DriveSyncEngine {
         })
     }
 
+    /// Checks the remote cursor and installs newly observed items. Existing remote
+    /// edits remain pending for a future reconciliation decision.
+    pub fn poll_remote_downloads(
+        &self,
+        id: &AccountId,
+        notify: impl Fn(&std::path::Path, crate::DownloadProgress),
+    ) -> Result<bool, EngineError> {
+        use crate::{DetectionCheck, RemoteEventKind, RemoteMembership};
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let folder = self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(EngineError::Authentication)?
+            .into_iter()
+            .find(|folder| &folder.account_id == id)
+            .ok_or(EngineError::InvalidFolder)?;
+        self.auth.with_access_config(&config, id, |token| {
+            let provider = remote_detector::GoogleDrive::new(token);
+            let corpus = remote_detector::configured_corpus(
+                &provider,
+                &folder.remote.id,
+                &config.client_id,
+                id,
+            )
+            .map_err(map_detection_error)?;
+            let events = match remote_detector::check(
+                &provider,
+                &config.client_id,
+                id,
+                &folder.remote.id,
+                &corpus,
+                true,
+            )
+            .map_err(map_detection_error)?
+            {
+                DetectionCheck::NoChanges => return Ok(false),
+                DetectionCheck::Initialized(events) | DetectionCheck::Changes(events) => events,
+            };
+            let latest: std::collections::HashMap<_, _> = events
+                .iter()
+                .filter_map(|delivery| delivery.event.file_id.as_ref().map(|id| (id, delivery.id)))
+                .collect();
+            let arrivals: std::collections::HashSet<_> = events
+                .iter()
+                .filter_map(|delivery| {
+                    let event = &delivery.event;
+                    (event.after == RemoteMembership::Inside
+                        && (event.kind == RemoteEventKind::Initial
+                            || event.before == RemoteMembership::Outside))
+                        .then_some(event.file_id.as_ref())
+                        .flatten()
+                })
+                .collect();
+            let mut targets = std::collections::HashSet::new();
+            let mut acknowledge = Vec::new();
+            let mut unresolved = false;
+            for delivery in &events {
+                let event = &delivery.event;
+                let is_latest = event
+                    .file_id
+                    .as_ref()
+                    .is_none_or(|id| latest.get(id) == Some(&delivery.id));
+                if !is_latest || event.kind == RemoteEventKind::InitialComplete {
+                    acknowledge.push(delivery.id);
+                } else {
+                    if event.after == RemoteMembership::Inside {
+                        if let Some(target) =
+                            event.file_id.as_ref().filter(|id| arrivals.contains(id))
+                        {
+                            if target != &folder.remote.id {
+                                targets.insert(target.clone());
+                            }
+                        }
+                    }
+                    if event.after == RemoteMembership::Inside
+                        && (event.kind == RemoteEventKind::Initial
+                            || event.before == RemoteMembership::Outside)
+                    {
+                        acknowledge.push(delivery.id);
+                    } else {
+                        unresolved = true;
+                    }
+                }
+            }
+            if !targets.is_empty() {
+                let root = configuration::observation_root(&folder.local, &folder.local_display)?;
+                let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
+                    .map_err(|_| EngineError::InvalidFolder)?;
+                crate::download::run_selected(token, &folder, &scope, &notify, Some(&targets))?;
+            }
+            remote_detector::acknowledge_many(
+                &config.client_id,
+                id,
+                &folder.remote.id,
+                &corpus,
+                &acknowledge,
+            )
+            .map_err(map_detection_error)?;
+            Ok(unresolved)
+        })
+    }
+
     /// Performs a bounded, read-only remote check for the configured folder.
     ///
     /// The caller selects the change-log corpus explicitly. This blocks during
@@ -333,6 +435,7 @@ impl DriveSyncEngine {
                     id,
                     &folder.remote.id,
                     corpus,
+                    false,
                 ))
             })
             .map_err(DetectionError::Provider)?
@@ -419,3 +522,11 @@ impl DriveSyncEngine {
 
 #[cfg(test)]
 mod tests;
+
+fn map_detection_error(error: DetectionError) -> EngineError {
+    match error {
+        DetectionError::Provider(error) => error,
+        DetectionError::Retry => EngineError::DownloadBusy,
+        _ => EngineError::RemoteCheckIncomplete,
+    }
+}

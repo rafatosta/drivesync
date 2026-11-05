@@ -699,3 +699,71 @@ fn killed_query_preserves_checkpoint_and_pending_events() {
     assert_eq!(pending.len(), old_pending.len() + 1);
     assert_eq!(journal.load(&scope).unwrap().unwrap().cursor, "stable");
 }
+
+#[test]
+fn incremental_checks_skip_tree_walk_for_empty_feed_and_known_parent_file() {
+    let directory = Directory::new();
+    let journal = Journal::open(&directory.0).unwrap();
+    let scope = scope("account", "root");
+    let baseline = Fake::new(vec![files()], vec![Ok(end("baseline", vec![]))]);
+    verify(
+        &baseline,
+        &journal,
+        &scope,
+        &Corpus::User,
+        Limits::default(),
+        true,
+    )
+    .unwrap();
+    ack(&journal, &scope);
+
+    let quiet = Fake::new(vec![], vec![Ok(end("quiet", vec![]))]);
+    assert!(matches!(
+        verify(
+            &quiet,
+            &journal,
+            &scope,
+            &Corpus::User,
+            Limits::default(),
+            true
+        )
+        .unwrap(),
+        Check::NoChanges
+    ));
+    assert_eq!(journal.load(&scope).unwrap().unwrap().cursor, "quiet");
+    let added = item("fresh", Some("sub"), false, "Fresh");
+    let changed = Fake::new(
+        vec![],
+        vec![Ok(end(
+            "updated",
+            vec![change("fresh", Some(added), false)],
+        ))],
+    );
+    let Check::Changes(events) = verify(
+        &changed,
+        &journal,
+        &scope,
+        &Corpus::User,
+        Limits::default(),
+        true,
+    )
+    .unwrap() else {
+        panic!("expected a new event")
+    };
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event.before, Membership::Outside);
+    assert_eq!(events[0].event.after, Membership::Inside);
+    let pending = Fake::new(vec![], vec![Ok(end("updated", vec![]))]);
+    let Check::Changes(redelivered) = verify(
+        &pending,
+        &journal,
+        &scope,
+        &Corpus::User,
+        Limits::default(),
+        true,
+    )
+    .unwrap() else {
+        panic!("expected pending event")
+    };
+    assert_eq!(redelivered[0].id, events[0].id);
+}
