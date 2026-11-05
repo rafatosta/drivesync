@@ -205,6 +205,8 @@ fn retryable(error: &EngineError) -> bool {
     matches!(
         error,
         EngineError::DownloadBusy
+            | EngineError::DownloadIncomplete
+            | EngineError::DownloadIncompleteAt(_)
             | EngineError::RemoteRateLimited
             | EngineError::Authentication(
                 AuthError::Network | AuthError::ProviderUnavailable | AuthError::TimedOut

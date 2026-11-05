@@ -125,6 +125,21 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
 }
 
 impl Entry {
+    fn same_download_version(&self, current: &Self) -> bool {
+        self.id == current.id
+            && self.version == current.version
+            && self.name == current.name
+            && self.parents == current.parents
+            && self.mime_type == current.mime_type
+            && self.size == current.size
+            && !current.trashed
+            && self
+                .sha256_checksum
+                .as_ref()
+                .zip(current.sha256_checksum.as_ref())
+                .is_none_or(|(before, after)| before == after)
+    }
+
     fn valid_child(&self, parent: &str) -> bool {
         valid_id(&self.id)
             && !self.trashed
@@ -339,6 +354,9 @@ impl Job<'_> {
                 })
                 .map_err(|error| match error {
                     EngineError::DownloadConflict => conflict(),
+                    EngineError::DownloadIncomplete => {
+                        EngineError::DownloadIncompleteAt(child.clone())
+                    }
                     other => other,
                 })?;
             if self.revisiting
@@ -1404,7 +1422,8 @@ fn download_file(
     );
     let result = (|| {
         let copied = copy_with_progress(response.take(size), &mut file, size - 1, notify)?;
-        if copied != size - 1 || metadata(token, &entry.id)? != *entry {
+        let current = metadata(token, &entry.id)?;
+        if copied != size - 1 || !entry.same_download_version(&current) {
             return Err(EngineError::DownloadIncomplete);
         }
         if let Some(time) = entry
@@ -1421,6 +1440,7 @@ fn download_file(
         if entry
             .sha256_checksum
             .as_ref()
+            .or(current.sha256_checksum.as_ref())
             .is_some_and(|expected| *expected != hex_digest(digest))
         {
             return Err(EngineError::DownloadIncomplete);
