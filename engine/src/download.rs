@@ -11,13 +11,14 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{self, Read, Seek, Write},
+    os::unix::ffi::OsStrExt,
     path::Path,
     time::{Duration, Instant},
 };
 
 const FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const FOLDER: &str = "application/vnd.google-apps.folder";
-const FIELDS: &str = "id,name,mimeType,version,size,trashed,parents";
+const FIELDS: &str = "id,name,mimeType,version,size,trashed,parents,sha256Checksum";
 const DIR: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::CLOEXEC);
@@ -47,6 +48,7 @@ struct Entry {
     mime_type: String,
     version: String,
     size: Option<String>,
+    sha256_checksum: Option<String>,
     #[serde(default)]
     trashed: bool,
     #[serde(default)]
@@ -228,13 +230,14 @@ pub(crate) fn run_selected(
         token,
         notify,
         selected: paths.as_ref(),
+        revisiting: completed && paths.is_none(),
         scope,
         store,
         root: directory.into(),
         seen: HashSet::from([root.id.clone()]),
         report: InitialDownload::default(),
     };
-    let id = job.register(&root, None, LocalItemKind::Directory, || Ok(()))?;
+    let id = job.register(&root, None, LocalItemKind::Directory, None, || Ok(None))?;
     job.walk(&root.id, &id, Path::new("."), 0)?;
     if let Some(paths) = &paths {
         if !paths.is_subset(&job.seen) {
@@ -243,14 +246,15 @@ pub(crate) fn run_selected(
         return Ok(job.report);
     }
     let checkpoint = job.store.load(scope).map_err(EngineError::DownloadState)?;
-    if checkpoint
-        .iter()
-        .flat_map(|state| &state.items)
-        .any(|item| {
-            item.remote_id
-                .as_ref()
-                .is_some_and(|id| !job.seen.contains(id))
-        })
+    if !completed
+        && checkpoint
+            .iter()
+            .flat_map(|state| &state.items)
+            .any(|item| {
+                item.remote_id
+                    .as_ref()
+                    .is_some_and(|id| !job.seen.contains(id))
+            })
     {
         return Err(EngineError::DownloadConflict);
     }
@@ -266,6 +270,7 @@ struct Job<'a> {
     token: &'a str,
     notify: &'a dyn Fn(&Path, DownloadProgress),
     selected: Option<&'a HashSet<String>>,
+    revisiting: bool,
     scope: &'a LocalScope,
     store: LocalStateStore,
     root: File,
@@ -302,8 +307,9 @@ impl Job<'_> {
                 path: child.strip_prefix(".").unwrap_or(&child),
                 active: Cell::new(false),
             };
+            let registered_before = self.report.already_registered;
             let item = self
-                .register(&entry, Some(id), kind, || {
+                .register(&entry, Some(id), kind, Some(&pending), || {
                     if kind == LocalItemKind::Directory {
                         fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
                             .map_err(local_error)?;
@@ -311,14 +317,22 @@ impl Job<'_> {
                             .sync_all()
                             .map_err(|_| EngineError::DownloadLocal)?;
                     } else {
-                        pending.install(self.token, |progress| transfer.emit(progress))?;
+                        return pending
+                            .install(self.token, |progress| transfer.emit(progress))
+                            .map(Some);
                     }
-                    Ok(())
+                    Ok(None)
                 })
                 .map_err(|error| match error {
                     EngineError::DownloadConflict => conflict(),
                     other => other,
                 })?;
+            if self.revisiting
+                && kind == LocalItemKind::File
+                && registered_before != self.report.already_registered
+            {
+                continue;
+            }
             let local = fs::statat(
                 &directory,
                 entry.name.as_str(),
@@ -367,9 +381,10 @@ impl Job<'_> {
         entry: &Entry,
         parent: Option<&ItemId>,
         kind: LocalItemKind,
-        install: impl FnOnce() -> Result<(), EngineError>,
+        pending: Option<&PendingFile<'_>>,
+        install: impl FnOnce() -> Result<Option<String>, EngineError>,
     ) -> Result<ItemId, EngineError> {
-        let snapshot = ItemSnapshot {
+        let mut snapshot = ItemSnapshot {
             parent: parent.cloned(),
             name: parent.map_or_else(Vec::new, |_| entry.name.as_bytes().to_vec()),
             kind,
@@ -384,16 +399,45 @@ impl Job<'_> {
             item.remote_id.as_deref() == Some(&entry.id)
                 || matches!(&item.observed, ItemState::Present(s) if s.parent == snapshot.parent && s.name == snapshot.name)
         }) {
+            if let ItemState::Present(current) = &existing.observed {
+                snapshot.content_version = current.content_version.clone();
+                if self.revisiting && kind == LocalItemKind::File {
+                    snapshot.remote_version = current.remote_version.clone();
+                }
+            }
+            if self.revisiting && kind == LocalItemKind::File
+                && existing.remote_id.as_deref() == Some(&entry.id)
+                && matches!(&existing.observed, ItemState::Present(current)
+                    if current.kind == LocalItemKind::File
+                        && (current.name != snapshot.name || current.parent != snapshot.parent))
+            {
+                self.report.already_registered += 1;
+                return Ok(existing.id.clone());
+            }
             let expected = ItemState::Present(snapshot);
             if existing.remote_id.as_deref() != Some(&entry.id)
                 || existing.confirmed.as_ref() != Some(&expected) || existing.observed != expected
             {
                 return Err(EngineError::DownloadConflict);
             }
+            if let (Some(pending), Some(digest), ItemState::Present(current)) =
+                (pending, entry.sha256_checksum.as_ref(), &existing.observed)
+            {
+                if current.kind == LocalItemKind::File && current.content_version.is_none()
+                    && current.remote_version.as_ref() == Some(&entry.version)
+                    && verify_digest(pending, &entry.name, digest).is_ok()
+                {
+                    let mut confirmed = current.clone();
+                    confirmed.content_version = Some(digest.clone());
+                    self.store.commit_remote_file(
+                        self.scope, &existing.id, &existing.observed, ItemState::Present(confirmed),
+                    ).map_err(EngineError::DownloadState)?;
+                }
+            }
             self.report.already_registered += usize::from(parent.is_some());
             return Ok(existing.id.clone());
         }
-        install()?;
+        snapshot.content_version = install()?;
         for _ in 0..8 {
             match self.store.register_verified_item(
                 self.scope,
@@ -423,6 +467,188 @@ impl Job<'_> {
         }
         Err(EngineError::DownloadState(LocalStateError::Stale))
     }
+}
+
+/// Reconciles a registered file at the same name and parent. Ambiguous
+/// disappearances, changed local content and unverified baselines remain pending.
+pub(crate) fn reconcile_file(
+    token: &str,
+    folder: &FolderConfiguration,
+    scope: &LocalScope,
+    event: &crate::RemoteEvent,
+    notify: &dyn Fn(&Path, DownloadProgress),
+) -> Result<bool, EngineError> {
+    let Some(remote) = &event.current else {
+        return Ok(false);
+    };
+    if event.file_id.as_deref() != Some(&remote.id)
+        || event.before != crate::RemoteMembership::Inside
+        || (remote.trashed != Some(true) && event.after != crate::RemoteMembership::Inside)
+    {
+        return Ok(false);
+    }
+    let root = fs::openat2(
+        CWD,
+        &folder.local,
+        DIR,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map_err(|_| EngineError::DownloadLocal)?;
+    fs::flock(&root, fs::FlockOperation::NonBlockingLockExclusive)
+        .map_err(|_| EngineError::DownloadBusy)?;
+    let store = LocalStateStore::portable(&folder.local, scope, &folder.remote.id)
+        .map_err(EngineError::DownloadState)?;
+    let checkpoint = store.load(scope).map_err(EngineError::DownloadState)?;
+    let Some(state) = checkpoint else {
+        return Ok(false);
+    };
+    let Some(item) = state
+        .items
+        .iter()
+        .find(|item| item.remote_id.as_deref() == Some(&remote.id))
+    else {
+        return Ok(false);
+    };
+    if item.confirmed.as_ref() != Some(&item.observed) {
+        return Ok(false);
+    }
+    let ItemState::Present(snapshot) = &item.observed else {
+        return Ok(remote.trashed == Some(true));
+    };
+    let (Some(old_digest), Some(old_version), Some(parent)) = (
+        &snapshot.content_version,
+        &snapshot.remote_version,
+        &snapshot.parent,
+    ) else {
+        return Ok(false);
+    };
+    if snapshot.kind != LocalItemKind::File {
+        return Ok(false);
+    }
+    let Some(parent_remote) = state
+        .items
+        .iter()
+        .find(|item| &item.id == parent)
+        .and_then(|item| item.remote_id.as_deref())
+    else {
+        return Ok(false);
+    };
+    let entry = match metadata(token, &remote.id) {
+        Ok(entry) => entry,
+        Err(EngineError::RemoteFolderUnavailable | EngineError::RemoteForbidden) => {
+            return Ok(false)
+        }
+        Err(error) => return Err(error),
+    };
+    if entry.id != remote.id
+        || entry.name.as_bytes() != snapshot.name
+        || entry.parents.as_slice() != [parent_remote]
+        || entry.trashed != (remote.trashed == Some(true))
+        || entry.mime_type.starts_with("application/vnd.google-apps.")
+        || (!entry.trashed && entry.kind()? != LocalItemKind::File)
+    {
+        return Ok(false);
+    }
+    if !entry.trashed && old_version == &entry.version {
+        return Ok(true);
+    }
+    let paths = store
+        .item_paths(scope, true)
+        .map_err(EngineError::DownloadState)?;
+    let Some((path, _)) = paths.iter().find(|(_, id)| *id == &item.id) else {
+        return Ok(false);
+    };
+    let path = Path::new(std::ffi::OsStr::from_bytes(path));
+    let parent_path = path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let directory = File::from(
+        fs::openat2(
+            &root,
+            parent_path,
+            DIR,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        )
+        .map_err(|_| EngineError::DownloadConflictAt(path.into()))?,
+    );
+    let pending = PendingFile::new(&entry, &directory);
+    let backup = format!(
+        ".drivesync-download-{:x}.backup",
+        Sha256::digest(format!("{}\0{}\0{}", entry.id, old_version, entry.name).as_bytes())
+    );
+    let transfer = Transfer {
+        notify,
+        path,
+        active: Cell::new(false),
+    };
+    if pending.stat(&backup)?.is_none() {
+        verify_digest(&pending, &entry.name, old_digest)?;
+        if !entry.trashed && pending.stat(&pending.staged)?.is_none() {
+            download_file(token, &pending, |progress| transfer.emit(progress))?;
+        }
+        preserve_confirmed_file(&pending, &backup, old_digest)?;
+    } else {
+        verify_digest(&pending, &backup, old_digest)?;
+    }
+    let after = if entry.trashed {
+        if pending.stat(&entry.name)?.is_some() {
+            return Err(EngineError::DownloadConflictAt(path.into()));
+        }
+        ItemState::Absent
+    } else {
+        let digest = pending.install(token, |progress| transfer.emit(progress))?;
+        let mut next = snapshot.clone();
+        next.content_version = Some(digest);
+        next.remote_version = Some(entry.version.clone());
+        ItemState::Present(next)
+    };
+    store
+        .commit_remote_file(scope, &item.id, &item.observed, after)
+        .map_err(EngineError::DownloadState)?;
+    transfer.complete();
+    pending.clear()?;
+    Ok(true)
+}
+
+fn preserve_confirmed_file(
+    pending: &PendingFile<'_>,
+    backup: &str,
+    expected: &str,
+) -> Result<(), EngineError> {
+    verify_digest(pending, &pending.entry.name, expected)?;
+    fs::renameat_with(
+        pending.directory,
+        pending.entry.name.as_str(),
+        pending.directory,
+        backup,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(local_error)?;
+    pending
+        .directory
+        .sync_all()
+        .map_err(|_| EngineError::DownloadLocal)?;
+    if let Err(error) = verify_digest(pending, backup, expected) {
+        let _ = fs::renameat_with(
+            pending.directory,
+            backup,
+            pending.directory,
+            pending.entry.name.as_str(),
+            RenameFlags::NOREPLACE,
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn verify_digest(pending: &PendingFile<'_>, name: &str, expected: &str) -> Result<(), EngineError> {
+    if hex_digest(checksum(pending.open(name)?)?) != expected {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(())
 }
 
 fn local_error(error: rustix::io::Errno) -> EngineError {
@@ -480,22 +706,26 @@ impl<'a> PendingFile<'a> {
         }
     }
 
-    fn install(&self, token: &str, notify: impl Fn(DownloadProgress)) -> Result<(), EngineError> {
+    fn install(
+        &self,
+        token: &str,
+        notify: impl Fn(DownloadProgress),
+    ) -> Result<String, EngineError> {
         let target = self.stat(&self.entry.name)?;
         let staged = self.stat(&self.staged)?;
-        if let Some(target) = target {
+        let digest = if let Some(target) = target {
             let Some(staged) = staged else {
                 return Err(EngineError::DownloadConflict);
             };
             if (target.st_dev, target.st_ino) != (staged.st_dev, staged.st_ino) {
                 return Err(EngineError::DownloadConflict);
             }
-            self.verify()?;
+            self.verify()?
         } else {
             if staged.is_none() {
                 download_file(token, self, notify)?;
             }
-            self.verify()?;
+            let digest = self.verify()?;
             fs::linkat(
                 self.directory,
                 self.staged.as_str(),
@@ -504,10 +734,12 @@ impl<'a> PendingFile<'a> {
                 fs::AtFlags::empty(),
             )
             .map_err(local_error)?;
-        }
+            digest
+        };
         self.directory
             .sync_all()
-            .map_err(|_| EngineError::DownloadLocal)
+            .map_err(|_| EngineError::DownloadLocal)?;
+        Ok(digest)
     }
 
     fn stat(&self, name: &str) -> Result<Option<fs::Stat>, EngineError> {
@@ -518,7 +750,7 @@ impl<'a> PendingFile<'a> {
         }
     }
 
-    fn verify(&self) -> Result<(), EngineError> {
+    fn verify(&self) -> Result<String, EngineError> {
         let staged = self.open(&self.staged)?;
         let size = self
             .entry
@@ -539,10 +771,11 @@ impl<'a> PendingFile<'a> {
             .take(33)
             .read_to_end(&mut expected)
             .map_err(|_| EngineError::DownloadLocal)?;
-        if checksum(staged.take(size.saturating_add(1)))?.as_slice() != expected {
+        let actual = checksum(staged.take(size.saturating_add(1)))?;
+        if actual.as_slice() != expected {
             return Err(EngineError::DownloadConflict);
         }
-        Ok(())
+        Ok(hex_digest(actual))
     }
 
     fn open(&self, name: &str) -> Result<File, EngineError> {
@@ -570,6 +803,10 @@ impl<'a> PendingFile<'a> {
         }
         Ok(())
     }
+}
+
+fn hex_digest(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn checksum(mut input: impl Read) -> Result<[u8; 32], EngineError> {
@@ -740,6 +977,7 @@ mod tests {
             mime_type: "application/octet-stream".into(),
             version: "1".into(),
             size: Some("4".into()),
+            sha256_checksum: None,
             trashed: false,
             parents: vec![],
         };
@@ -771,6 +1009,37 @@ mod tests {
     }
 
     #[test]
+    fn remote_removal_preserves_the_confirmed_file_and_refuses_local_edits() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let path = std::env::temp_dir().join(format!("drivesync-remote-trash-{}", suffix.secret()));
+        std::fs::create_dir(&path).unwrap();
+        let directory = File::open(&path).unwrap();
+        let entry = Entry {
+            id: "drive-id".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            version: "2".into(),
+            size: Some("4".into()),
+            sha256_checksum: None,
+            trashed: true,
+            parents: vec![],
+        };
+        let pending = PendingFile::new(&entry, &directory);
+        let digest = hex_digest(checksum(&b"base"[..]).unwrap());
+        std::fs::write(path.join("file"), b"edit").unwrap();
+        assert_eq!(
+            preserve_confirmed_file(&pending, "backup", &digest),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(std::fs::read(path.join("file")).unwrap(), b"edit");
+        std::fs::write(path.join("file"), b"base").unwrap();
+        preserve_confirmed_file(&pending, "backup", &digest).unwrap();
+        assert!(!path.join("file").exists());
+        verify_digest(&pending, "backup", &digest).unwrap();
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     fn retry_keeps_the_registered_identity_and_does_not_install_again() {
         let suffix = oauth2::CsrfToken::new_random();
         let directory =
@@ -783,6 +1052,7 @@ mod tests {
             token: "",
             notify: &|_, _| {},
             selected: None,
+            revisiting: false,
             scope: &scope,
             store: LocalStateStore::open(&state).unwrap(),
             root: File::open(&destination).unwrap(),
@@ -795,11 +1065,12 @@ mod tests {
             mime_type: FOLDER.into(),
             version: "1".into(),
             size: None,
+            sha256_checksum: None,
             trashed: false,
             parents: vec![],
         };
         let first = job
-            .register(&entry, None, LocalItemKind::Directory, || Ok(()))
+            .register(&entry, None, LocalItemKind::Directory, None, || Ok(None))
             .unwrap();
         assert!(!job.store.initial_download_complete(&scope).unwrap());
         job.store.finish_initial_download(&scope, &first).unwrap();
@@ -807,7 +1078,7 @@ mod tests {
         job.store = LocalStateStore::open(&state).unwrap();
         assert!(job.store.initial_download_complete(&scope).unwrap());
         let second = job
-            .register(&entry, None, LocalItemKind::Directory, || {
+            .register(&entry, None, LocalItemKind::Directory, None, || {
                 panic!("already registered")
             })
             .unwrap();
@@ -817,7 +1088,7 @@ mod tests {
             ..entry
         };
         assert_eq!(
-            job.register(&other, None, LocalItemKind::Directory, || panic!(
+            job.register(&other, None, LocalItemKind::Directory, None, || panic!(
                 "conflicting root"
             )),
             Err(EngineError::DownloadConflict)

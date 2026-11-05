@@ -300,8 +300,8 @@ impl DriveSyncEngine {
         })
     }
 
-    /// Checks the remote cursor and installs newly observed items. Existing remote
-    /// edits remain pending for a future reconciliation decision.
+    /// Checks the remote cursor, installs new items and applies verified file
+    /// edits or trash events. Unverified changes remain pending.
     pub fn poll_remote_downloads(
         &self,
         id: &AccountId,
@@ -353,6 +353,9 @@ impl DriveSyncEngine {
                         .flatten()
                 })
                 .collect();
+            let root = configuration::observation_root(&folder.local, &folder.local_display)?;
+            let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
+                .map_err(|_| EngineError::InvalidFolder)?;
             let mut targets = std::collections::HashSet::new();
             let mut acknowledge = Vec::new();
             let mut unresolved = false;
@@ -380,14 +383,20 @@ impl DriveSyncEngine {
                     {
                         acknowledge.push(delivery.id);
                     } else {
-                        unresolved = true;
+                        match crate::download::reconcile_file(
+                            token, &folder, &scope, event, &notify,
+                        ) {
+                            Ok(true) => acknowledge.push(delivery.id),
+                            Ok(false)
+                            | Err(
+                                EngineError::DownloadConflict | EngineError::DownloadConflictAt(_),
+                            ) => unresolved = true,
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
             }
             if !targets.is_empty() {
-                let root = configuration::observation_root(&folder.local, &folder.local_display)?;
-                let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
-                    .map_err(|_| EngineError::InvalidFolder)?;
                 crate::download::run_selected(token, &folder, &scope, &notify, Some(&targets))?;
             }
             remote_detector::acknowledge_many(

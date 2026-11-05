@@ -264,6 +264,29 @@ impl LocalStateStore {
         .map(|(_, generation)| generation)
     }
 
+    pub(crate) fn commit_remote_file(
+        &self,
+        scope: &LocalScope,
+        id: &ItemId,
+        before: &ItemState,
+        after: ItemState,
+    ) -> Result<(), LocalStateError> {
+        self.mutate(scope, None, |document| {
+            let item = document
+                .items
+                .iter_mut()
+                .find(|item| &item.id == id)
+                .ok_or(LocalStateError::Missing)?;
+            if &item.observed != before || item.confirmed.as_ref() != Some(before) {
+                return Err(LocalStateError::Stale);
+            }
+            item.observed = after.clone();
+            item.confirmed = Some(after);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     /// Marks current states confirmed only after the caller has verified external results.
     /// This method executes no transfer and does not acknowledge investigation work.
     pub fn confirm_observed(
