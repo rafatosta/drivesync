@@ -301,7 +301,7 @@ impl DriveSyncEngine {
     }
 
     /// Checks the remote cursor, installs new items and applies verified file
-    /// edits or trash events. Unverified changes remain pending.
+    /// edits, renames or trash events. Unverified changes remain pending.
     pub fn poll_remote_downloads(
         &self,
         id: &AccountId,
