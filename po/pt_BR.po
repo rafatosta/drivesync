@@ -300,3 +300,9 @@ msgstr "Resolva o conflito mantendo uma cópia dos seus arquivos e tente novamen
 #: src/features/preferences/window.rs
 msgid "Back"
 msgstr "Voltar"
+
+msgid "Activities"
+msgstr "Atividades"
+
+msgid "All accounts"
+msgstr "Todas as contas"

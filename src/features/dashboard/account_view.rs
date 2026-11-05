@@ -11,10 +11,11 @@ pub(super) fn populate(
     toasts: &adw::ToastOverlay,
     list: &gtk::ListBox,
     details: &gtk::Stack,
+    activities: &super::components::activities::Activities,
 ) -> std::rc::Rc<crate::features::preferences::Accounts> {
     let mut settings = vec![];
     let mut menus = vec![];
-    for saved in accounts {
+    for (index, saved) in accounts.into_iter().enumerate() {
         let name = saved.account.email.as_deref().unwrap_or("Google Account");
         let state = saved
             .error
@@ -74,6 +75,7 @@ pub(super) fn populate(
         let history = super::components::local_history::LocalHistory::new(
             engine.clone(),
             saved.account.id.clone(),
+            activities.receiver(index),
         );
         let restart = history.restart_callback();
         let (download, refresh_download) =

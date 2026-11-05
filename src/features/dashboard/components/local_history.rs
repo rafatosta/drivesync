@@ -22,17 +22,24 @@ pub(in crate::features::dashboard) struct LocalHistory {
     restart: Rc<dyn Fn()>,
 }
 impl LocalHistory {
-    pub fn new(engine: Arc<DriveSyncEngine>, id: AccountId) -> Self {
-        Self::build(move || {
-            let engine = engine.clone();
-            let id = id.clone();
-            let resolver = engine.clone();
-            let account = id.clone();
-            Observation::start_with(
-                move || resolver.local_observation_scope(&account).map_err(|_| ()),
-                move |scope| engine.folder_state(&id, scope),
-            )
-        })
+    pub fn new(
+        engine: Arc<DriveSyncEngine>,
+        id: AccountId,
+        publish: impl Fn(&LocalBatch) + 'static,
+    ) -> Self {
+        Self::build_with(
+            move || {
+                let engine = engine.clone();
+                let id = id.clone();
+                let resolver = engine.clone();
+                let account = id.clone();
+                Observation::start_with(
+                    move || resolver.local_observation_scope(&account).map_err(|_| ()),
+                    move |scope| engine.folder_state(&id, scope),
+                )
+            },
+            publish,
+        )
     }
     pub fn widget(&self) -> &gtk::Box {
         &self.root
@@ -42,7 +49,15 @@ impl LocalHistory {
         self.restart.clone()
     }
 
+    #[cfg(test)]
     fn build(start: impl Fn() -> Observation + 'static) -> Self {
+        Self::build_with(start, |_| {})
+    }
+
+    fn build_with(
+        start: impl Fn() -> Observation + 'static,
+        publish: impl Fn(&LocalBatch) + 'static,
+    ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
         root.set_widget_name("local-activity-history");
         let group = adw::PreferencesGroup::builder()
@@ -124,6 +139,7 @@ impl LocalHistory {
                 match received {
                     Some(Ok(Update::Batch(batch))) => {
                         render(&list, &empty, &status, &batch);
+                        publish(&batch);
                         if batch.state == LocalWatchState::Stopped {
                             session.borrow_mut().take();
                             break;
@@ -186,44 +202,53 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     } else {
         status.remove_css_class("warning");
     }
-    let notices: Vec<_> = batch
+    for row in batch
         .notices
         .iter()
-        .filter_map(|notice| Some((notice, notice.path.file_name()?, activity_label(notice)?)))
-        .collect();
-    for (notice, name, activity) in notices
-        .iter()
-        .skip(notices.len().saturating_sub(LIMIT as usize))
+        .filter_map(|notice| activity_row(notice, None))
     {
-        // Both title and subtitle are plain text. Never interpret file names as markup.
-        let text: String = name
-            .to_string_lossy()
-            .chars()
-            .map(|c| if c.is_control() { '\u{fffd}' } else { c })
-            .collect();
-        let (kind, icon) = match notice.object_type {
-            LocalItemKind::Directory => (gettext("Folder"), "folder-symbolic"),
-            LocalItemKind::File => (gettext("File"), "text-x-generic-symbolic"),
-            LocalItemKind::Symlink => (gettext("Link"), "emblem-symbolic-link-symbolic"),
-            LocalItemKind::Special => (gettext("Special item"), "text-x-generic-symbolic"),
-            LocalItemKind::Unknown => (gettext("Item"), "dialog-question-symbolic"),
-        };
-        let detail = format!("{} · {}", kind, activity);
-        let row = adw::ActionRow::builder()
-            .title(&text)
-            .subtitle(&detail)
-            .use_markup(false)
-            .build();
-        row.set_title_lines(1);
-        row.set_subtitle_lines(2);
-        row.set_tooltip_text(Some(&text));
-        row.add_prefix(&gtk::Image::from_icon_name(icon));
         list.prepend(&row);
         if let Some(oldest) = list.row_at_index(LIMIT) {
             list.remove(&oldest);
         }
     }
     empty.set_visible(list.first_child().is_none());
+}
+
+pub(super) fn activity_row(notice: &LocalNotice, account: Option<&str>) -> Option<adw::ActionRow> {
+    let name = if account.is_some() {
+        notice.path.as_os_str()
+    } else {
+        notice.path.file_name()?
+    };
+    let activity = activity_label(notice)?;
+    // Both title and subtitle are plain text. Never interpret file names as markup.
+    let text: String = name
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect();
+    let (kind, icon) = match notice.object_type {
+        LocalItemKind::Directory => (gettext("Folder"), "folder-symbolic"),
+        LocalItemKind::File => (gettext("File"), "text-x-generic-symbolic"),
+        LocalItemKind::Symlink => (gettext("Link"), "emblem-symbolic-link-symbolic"),
+        LocalItemKind::Special => (gettext("Special item"), "text-x-generic-symbolic"),
+        LocalItemKind::Unknown => (gettext("Item"), "dialog-question-symbolic"),
+    };
+    let mut detail = format!("{kind} · {activity}");
+    if let Some(account) = account {
+        detail.push_str(&format!(" · {account}"));
+    }
+    let row = adw::ActionRow::builder()
+        .title(&text)
+        .subtitle(&detail)
+        .use_markup(false)
+        .build();
+    row.set_title_lines(1);
+    row.set_subtitle_lines(2);
+    row.set_tooltip_text(Some(&text));
+    row.add_prefix(&gtk::Image::from_icon_name(icon));
+    Some(row)
 }
 
 /// Labels activity rows, excluding coverage notices handled by the status label.
