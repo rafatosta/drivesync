@@ -12,7 +12,7 @@ use std::{
 };
 
 const PAGE_SIZE: usize = 100;
-const RENAME_WINDOW: i64 = 3;
+const REPLACEMENT_WINDOW: i64 = 3;
 
 /// Operation confirmed by the remote-to-local synchronization flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -154,15 +154,19 @@ impl ActivityHistory {
         )
         .map_err(storage)?;
         let tx = self.0.transaction().map_err(storage)?;
-        let mut check_renames = false;
+        let mut check_replacements = false;
         {
             let mut insert = tx.prepare(
                 "INSERT INTO activity(client, account, observed_at, notice) VALUES(?1, ?2, ?3, ?4)",
             ).map_err(storage)?;
             for notice in notices {
-                check_renames |= matches!(
+                check_replacements |= matches!(
                     notice.remote,
-                    Some(RemoteActivity::Renamed | RemoteActivity::RenamedAndUpdated)
+                    Some(
+                        RemoteActivity::Renamed
+                            | RemoteActivity::RenamedAndUpdated
+                            | RemoteActivity::Updated
+                    )
                 ) || (notice.remote.is_none()
                     && matches!(
                         notice.notice.activity,
@@ -179,8 +183,8 @@ impl ActivityHistory {
                     .map_err(storage)?;
             }
         }
-        if check_renames {
-            group_rename_echoes(&tx, scope, observed_at)?;
+        if check_replacements {
+            group_replacement_echoes(&tx, scope, observed_at)?;
         }
         tx.commit().map_err(storage)
     }
@@ -233,7 +237,7 @@ impl ActivityHistory {
 
 // Group only complete, unambiguous pairs. Keep the original rows so this
 // presentation rule never changes the observation or synchronization records.
-fn group_rename_echoes(
+fn group_replacement_echoes(
     db: &Connection,
     scope: &crate::LocalScope,
     now: i64,
@@ -251,8 +255,8 @@ fn group_rename_echoes(
             params![
                 scope.client(),
                 scope.account(),
-                now - 2 * RENAME_WINDOW,
-                now + RENAME_WINDOW
+                now - 2 * REPLACEMENT_WINDOW,
+                now + REPLACEMENT_WINDOW
             ],
             |row| {
                 Ok((
@@ -279,7 +283,11 @@ fn group_rename_echoes(
     for (rename_id, time, record) in &records {
         if !matches!(
             record.remote,
-            Some(RemoteActivity::Renamed | RemoteActivity::RenamedAndUpdated)
+            Some(
+                RemoteActivity::Renamed
+                    | RemoteActivity::RenamedAndUpdated
+                    | RemoteActivity::Updated
+            )
         ) {
             continue;
         }
@@ -293,12 +301,17 @@ fn group_rename_echoes(
         if grouped {
             continue;
         }
-        let LocalActivity::Moved { from } = &record.notice.activity else {
-            continue;
+        let from = match (&record.remote, &record.notice.activity) {
+            (Some(RemoteActivity::Updated), LocalActivity::Written) => &record.notice.path,
+            (
+                Some(RemoteActivity::Renamed | RemoteActivity::RenamedAndUpdated),
+                LocalActivity::Moved { from },
+            ) => from,
+            _ => continue,
         };
         let matching = |path: &Path, activity: LocalActivity| {
             let mut matches = records.iter().filter(|(_, observed, candidate)| {
-                observed.abs_diff(*time) <= RENAME_WINDOW as u64
+                observed.abs_diff(*time) <= REPLACEMENT_WINDOW as u64
                     && candidate.remote.is_none()
                     && candidate.notice.path == path
                     && candidate.notice.activity == activity
@@ -339,6 +352,42 @@ mod tests {
     use super::*;
     use crate::{LocalActivity, LocalCoverageGap, LocalItemKind, LocalScope, LocalWatchState};
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    #[test]
+    fn confirmed_content_update_groups_replacement_at_the_same_path() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let directory = std::env::temp_dir().join(format!("drivesync-update-{}", suffix.secret()));
+        let mut history = ActivityHistory::open(&directory).unwrap();
+        let scope = LocalScope::new("client", "account", Path::new("/test")).unwrap();
+        let event = |activity, remote| StoredNotice {
+            notice: LocalNotice {
+                path: "file".into(),
+                object_type: LocalItemKind::File,
+                activity,
+            },
+            remote,
+            root: b"/test".to_vec(),
+        };
+        history
+            .append_notices(
+                &scope,
+                [
+                    event(LocalActivity::Written, Some(RemoteActivity::Updated)),
+                    event(LocalActivity::Created, None),
+                ],
+            )
+            .unwrap();
+        history
+            .append_notices(&scope, [event(LocalActivity::MovedOut, None)])
+            .unwrap();
+        let page = history
+            .page("client", &[AccountId("account".into())], None)
+            .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].remote, Some(RemoteActivity::Updated));
+        drop(history);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn confirmed_rename_groups_one_pair_and_preserves_independent_activity() {
