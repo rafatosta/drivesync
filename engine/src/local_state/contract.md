@@ -65,8 +65,8 @@ inteiro é validado e gravado por transação; otimização para árvores maiore
 uma etapa posterior. Atingir o limite de pendências substitui a lista por uma
 conferência abrangente da raiz, preservando necessidade de confirmação. Não
 confundir isso com conclusão das pendências anteriores. Atingir outros limites
-retorna erro preservando o estado confirmado no banco. Não há coleta automática
-de escopos antigos; não prometer limite global de disco entre infinitos escopos.
+retorna erro preservando o estado confirmado no banco. O armazenamento deve ficar fora da raiz observada para evitar realimentação
+de avisos sobre o próprio banco. Não há coleta automática de escopos antigos; não prometer limite global de disco entre infinitos escopos.
 
 ## Algoritmo e verificação
 

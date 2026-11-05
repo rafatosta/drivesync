@@ -155,7 +155,7 @@ pub enum LocalActivity {
 }
 
 /// A type hint from the kernel or a no-follow metadata lookup, not durable identity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalItemKind {
     Directory,
     File,
