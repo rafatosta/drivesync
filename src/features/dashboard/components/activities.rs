@@ -111,6 +111,15 @@ impl Activities {
         Self { root, controller }
     }
 
+    pub fn refresh_callback(&self) -> impl Fn() + 'static {
+        let state = Rc::downgrade(&self.controller);
+        move || {
+            if let Some(state) = state.upgrade() {
+                state.refresh();
+            }
+        }
+    }
+
     pub fn receiver(&self) -> impl Fn(&LocalBatch) + 'static {
         let state = Rc::downgrade(&self.controller);
         move |batch| {

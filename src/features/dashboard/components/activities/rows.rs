@@ -1,6 +1,6 @@
 //! Day groups and individual observed activity rows.
 use adw::{gtk, prelude::*};
-use drivesync_engine::{AccountId, ActivityRecord, LocalActivity, LocalItemKind, LocalNotice};
+use drivesync_engine::{AccountId, ActivityRecord, LocalActivity, LocalItemKind, RemoteActivity};
 use gettextrs::gettext;
 use std::path::Path;
 use std::rc::Rc;
@@ -84,6 +84,10 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
         detail.push_str(" · ");
         detail.push_str(account);
     }
+    if record.remote.is_some() {
+        detail.push_str(" · ");
+        detail.push_str(&origin(record));
+    }
     let icon = match notice.activity {
         LocalActivity::Created | LocalActivity::MovedIn => "list-add-symbolic",
         LocalActivity::Removed | LocalActivity::MovedOut => "edit-delete-symbolic",
@@ -91,7 +95,7 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
         _ => "document-edit-symbolic",
     };
     let row = adw::ActionRow::builder()
-        .title(activity_title(notice))
+        .title(activity_title(record))
         .subtitle(&detail)
         .use_markup(false)
         .activatable(true)
@@ -106,13 +110,35 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
     row
 }
 
-pub(super) fn activity_title(notice: &LocalNotice) -> String {
+pub(super) fn origin(record: &ActivityRecord) -> String {
+    if record.remote.is_some() {
+        gettext("Google Drive → local folder")
+    } else {
+        gettext("Local folder")
+    }
+}
+
+pub(super) fn activity_title(record: &ActivityRecord) -> String {
+    let notice = &record.notice;
     let kind = match notice.object_type {
         LocalItemKind::File => gettext("File"),
         LocalItemKind::Directory => gettext("Folder"),
         LocalItemKind::Symlink => gettext("Link"),
         _ => gettext("Item"),
     };
+    if let Some(remote) = record.remote {
+        let action = match remote {
+            RemoteActivity::Added if notice.object_type == LocalItemKind::Directory => {
+                gettext("Created")
+            }
+            RemoteActivity::Added => gettext("Downloaded"),
+            RemoteActivity::Renamed => gettext("Renamed"),
+            RemoteActivity::Updated => gettext("Updated"),
+            RemoteActivity::RenamedAndUpdated => gettext("Renamed and updated"),
+            RemoteActivity::Removed => gettext("Removed from the local folder"),
+        };
+        return format!("{kind} · {action}");
+    }
     let action = super::super::local_history::activity_label(notice).unwrap_or_default();
     if notice.activity == LocalActivity::Removed {
         format!("{kind} · {}", gettext("Removed from the local folder"))
@@ -137,6 +163,7 @@ pub(super) fn path_text(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use drivesync_engine::LocalNotice;
 
     #[test]
     #[ignore = "requires a desktop display"]
@@ -148,6 +175,7 @@ mod tests {
             id: date.to_unix(),
             account: AccountId("test".into()),
             observed_at: date.to_unix(),
+            remote: Some(RemoteActivity::Renamed),
             notice: LocalNotice {
                 path: "new/report.pdf".into(),
                 object_type: LocalItemKind::File,
@@ -193,7 +221,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             row.subtitle().as_deref(),
-            Some("old/report.pdf → new/report.pdf · Test account")
+            Some(
+                format!(
+                    "old/report.pdf → new/report.pdf · Test account · {}",
+                    gettext("Google Drive → local folder")
+                )
+                .as_str()
+            )
         );
         adw::prelude::ActionRowExt::activate(&row);
         assert!(split.property::<bool>("show-content"));

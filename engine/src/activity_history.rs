@@ -10,6 +10,24 @@ use std::{
 
 const PAGE_SIZE: usize = 100;
 
+/// Operation confirmed by the remote-to-local synchronization flow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RemoteActivity {
+    Added,
+    Renamed,
+    Updated,
+    RenamedAndUpdated,
+    Removed,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredNotice {
+    #[serde(flatten)]
+    notice: LocalNotice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remote: Option<RemoteActivity>,
+}
+
 /// One observed local activity, ordered by the durable sequence number.
 #[derive(Debug)]
 pub struct ActivityRecord {
@@ -17,6 +35,7 @@ pub struct ActivityRecord {
     pub account: AccountId,
     pub observed_at: i64,
     pub notice: LocalNotice,
+    pub remote: Option<RemoteActivity>,
 }
 
 /// One page and its cursor for older records, when available.
@@ -89,7 +108,33 @@ impl ActivityHistory {
         let notices = batch
             .notices
             .iter()
-            .filter(|notice| !matches!(notice.activity, crate::LocalActivity::Recheck(_)));
+            .filter(|notice| !matches!(notice.activity, crate::LocalActivity::Recheck(_)))
+            .map(|notice| StoredNotice {
+                notice: notice.clone(),
+                remote: None,
+            });
+        self.append_notices(&batch.scope, notices)
+    }
+
+    pub(crate) fn append_remote(
+        scope: &crate::LocalScope,
+        notice: LocalNotice,
+        remote: RemoteActivity,
+    ) -> Result<(), LocalStateError> {
+        Self::application()?.append_notices(
+            scope,
+            [StoredNotice {
+                notice,
+                remote: Some(remote),
+            }],
+        )
+    }
+
+    fn append_notices(
+        &mut self,
+        scope: &crate::LocalScope,
+        notices: impl IntoIterator<Item = StoredNotice>,
+    ) -> Result<(), LocalStateError> {
         let observed_at = i64::try_from(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -103,11 +148,11 @@ impl ActivityHistory {
                 "INSERT INTO activity(client, account, observed_at, notice) VALUES(?1, ?2, ?3, ?4)",
             ).map_err(storage)?;
             for notice in notices {
-                let payload = serde_json::to_vec(notice).map_err(storage)?;
+                let payload = serde_json::to_vec(&notice).map_err(storage)?;
                 insert
                     .execute(params![
-                        batch.scope.client(),
-                        batch.scope.account(),
+                        scope.client(),
+                        scope.account(),
                         observed_at,
                         payload
                     ])
@@ -148,12 +193,14 @@ impl ActivityHistory {
                 break;
             }
             let payload: Vec<u8> = row.get(3).map_err(storage)?;
+            let stored: StoredNotice =
+                serde_json::from_slice(&payload).map_err(|_| LocalStateError::Incompatible)?;
             page.records.push(ActivityRecord {
                 id: row.get(0).map_err(storage)?,
                 account: AccountId(row.get(1).map_err(storage)?),
                 observed_at: row.get(2).map_err(storage)?,
-                notice: serde_json::from_slice(&payload)
-                    .map_err(|_| LocalStateError::Incompatible)?,
+                notice: stored.notice,
+                remote: stored.remote,
             });
         }
         Ok(page)
@@ -198,6 +245,15 @@ mod tests {
             .unwrap();
         store.append(&batch("client", "second", 1)).unwrap();
         store.append(&batch("other-client", "first", 1)).unwrap();
+        store
+            .append_notices(
+                &batch("client", "second", 0).scope,
+                [StoredNotice {
+                    notice: notice.clone(),
+                    remote: Some(RemoteActivity::Renamed),
+                }],
+            )
+            .unwrap();
         drop(store);
 
         let store = ActivityHistory::open(&directory).unwrap();
@@ -207,6 +263,8 @@ mod tests {
             .page("client", &[first.clone(), second.clone()], None)
             .unwrap();
         assert_eq!(all.records[0].account, second);
+        assert_eq!(all.records[0].remote, Some(RemoteActivity::Renamed));
+        assert_eq!(all.records[1].remote, None);
         let page = store
             .page("client", std::slice::from_ref(&first), None)
             .unwrap();

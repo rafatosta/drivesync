@@ -13,6 +13,7 @@ pub(in crate::features::dashboard) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
     transfers: super::transfers::TransferFeed,
+    refresh_activities: impl Fn() + 'static,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
     group.set_visible(saved.folder.is_some());
@@ -40,6 +41,7 @@ pub(in crate::features::dashboard) fn build(
     let retry_factor = backoff.clone();
     let (check_remote, checked_at) = (periodic.clone(), last_check.clone());
     let (running, changed) = (busy.clone(), configuration_changed.clone());
+    let refresh_activities = Rc::new(refresh_activities);
     button.connect_clicked(move |button| {
         let Some(status) = weak_status.upgrade() else {
             return;
@@ -70,6 +72,7 @@ pub(in crate::features::dashboard) fn build(
         let check_remote = check_remote.clone();
         let checked_at = checked_at.clone();
         let retry_factor = retry_factor.clone();
+        let refresh_activities = refresh_activities.clone();
         crate::core::worker::work(
             move || {
                 let report = |path: &std::path::Path, progress| transfers.report(&account, &label, path, progress);
@@ -81,6 +84,7 @@ pub(in crate::features::dashboard) fn build(
             },
             move |result| {
                 let _hold = hold;
+                refresh_activities();
                 running.set(false);
                 checked_at.set(Instant::now());
                 let (Some(button), Some(status)) = (button.upgrade(), status.upgrade()) else {

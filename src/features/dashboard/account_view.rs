@@ -82,8 +82,12 @@ pub(super) fn populate(
             activities.receiver(),
         );
         let restart = history.restart_callback();
-        let (download, refresh_download) =
-            super::components::initial_download::build(engine.clone(), &saved, transfers.clone());
+        let (download, refresh_download) = super::components::initial_download::build(
+            engine.clone(),
+            &saved,
+            transfers.clone(),
+            activities.refresh_callback(),
+        );
         folders.connect_saved(move || {
             restart();
             refresh_download();

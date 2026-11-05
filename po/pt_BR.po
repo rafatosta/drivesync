@@ -396,3 +396,15 @@ msgstr "Há alterações remotas pendentes de revisão."
 
 msgid "Remote check complete."
 msgstr "Verificação remota concluída."
+
+msgid "Google Drive → local folder"
+msgstr "Google Drive → pasta local"
+
+msgid "Downloaded"
+msgstr "Baixado"
+
+msgid "Updated"
+msgstr "Atualizado"
+
+msgid "Renamed and updated"
+msgstr "Renomeado e atualizado"

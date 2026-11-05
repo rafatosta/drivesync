@@ -1,5 +1,5 @@
 //! Read-only details for an observed activity.
-use super::rows::{activity_title, formatted, path_text};
+use super::rows::{activity_title, formatted, origin, path_text};
 use adw::{gtk, prelude::*};
 use drivesync_engine::{ActivityRecord, LocalActivity};
 use gettextrs::gettext;
@@ -51,13 +51,13 @@ impl Details {
         };
         super::clear(&fields);
         empty.set_visible(false);
-        let title = gtk::Label::new(Some(&activity_title(&record.notice)));
+        let title = gtk::Label::new(Some(&activity_title(record)));
         title.set_wrap(true);
         title.set_xalign(0.0);
         title.add_css_class("title-3");
         fields.append(&title);
         Self::field(&fields, &gettext("Account"), account);
-        Self::field(&fields, &gettext("Origin"), &gettext("Local folder"));
+        Self::field(&fields, &gettext("Origin"), &origin(record));
         if let Ok(date) = gtk::glib::DateTime::from_unix_local(record.observed_at) {
             Self::field(
                 &fields,

@@ -309,6 +309,7 @@ impl Job<'_> {
                 active: Cell::new(false),
             };
             let registered_before = self.report.already_registered;
+            let installed_before = self.report.files + self.report.directories;
             let item = self
                 .register(&entry, Some(id), kind, Some(&pending), || {
                     if kind == LocalItemKind::Directory {
@@ -355,11 +356,23 @@ impl Job<'_> {
             {
                 return Err(conflict());
             }
+            transfer.complete();
+            if installed_before != self.report.files + self.report.directories {
+                crate::ActivityHistory::append_remote(
+                    self.scope,
+                    crate::LocalNotice {
+                        path: child.strip_prefix(".").unwrap_or(&child).into(),
+                        object_type: kind,
+                        activity: crate::LocalActivity::Created,
+                    },
+                    crate::RemoteActivity::Added,
+                )
+                .map_err(EngineError::ActivityHistory)?;
+            }
             if kind == LocalItemKind::Directory {
                 self.walk(&entry.id, &item, &child, depth + 1)?;
             } else {
                 pending.clear()?;
-                transfer.complete();
             }
         }
         Ok(())
@@ -660,10 +673,33 @@ pub(crate) fn reconcile_file(
     store
         .commit_remote_file(scope, &item.id, &item.observed, after)
         .map_err(EngineError::DownloadState)?;
+    use crate::{LocalActivity, RemoteActivity};
+    let (action, activity) = match (entry.trashed, renamed, content_changed) {
+        (true, _, _) => (RemoteActivity::Removed, LocalActivity::Removed),
+        (false, true, true) => (
+            RemoteActivity::RenamedAndUpdated,
+            LocalActivity::Moved { from: path.into() },
+        ),
+        (false, true, false) => (
+            RemoteActivity::Renamed,
+            LocalActivity::Moved { from: path.into() },
+        ),
+        _ => (RemoteActivity::Updated, LocalActivity::Written),
+    };
     transfer.complete();
     if renamed && !content_changed {
         fs::unlinkat(&directory, backup.as_str(), fs::AtFlags::empty()).map_err(local_error)?;
     }
+    crate::ActivityHistory::append_remote(
+        scope,
+        crate::LocalNotice {
+            path: destination.clone(),
+            object_type: LocalItemKind::File,
+            activity,
+        },
+        action,
+    )
+    .map_err(EngineError::ActivityHistory)?;
     pending.clear()?;
     Ok(true)
 }
