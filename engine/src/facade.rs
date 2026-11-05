@@ -383,7 +383,7 @@ impl DriveSyncEngine {
                     {
                         acknowledge.push(delivery.id);
                     } else {
-                        match crate::download::reconcile_file(
+                        match crate::download::reconcile_item(
                             token, &folder, &scope, event, &notify,
                         ) {
                             Ok(true) => acknowledge.push(delivery.id),

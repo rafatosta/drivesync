@@ -175,7 +175,9 @@ impl ActivityHistory {
                 ) || (notice.remote.is_none()
                     && matches!(
                         notice.notice.activity,
-                        LocalActivity::MovedOut | LocalActivity::Created
+                        LocalActivity::MovedOut
+                            | LocalActivity::Created
+                            | LocalActivity::Moved { .. }
                     ));
                 let payload = serde_json::to_vec(&notice).map_err(storage)?;
                 insert
@@ -333,6 +335,14 @@ fn group_replacement_echoes(
             let first = matches.next()?.0;
             matches.next().is_none().then_some(first)
         };
+        if record.notice.object_type == crate::LocalItemKind::Directory
+            && record.remote == Some(RemoteActivity::Moved)
+        {
+            if let Some(echo) = matching(&record.notice.path, record.notice.activity.clone()) {
+                pairs.push((*rename_id, echo, None));
+            }
+            continue;
+        }
         let Some(source) = matching(from, LocalActivity::MovedOut) else {
             continue;
         };

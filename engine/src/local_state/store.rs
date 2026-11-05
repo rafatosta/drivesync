@@ -264,7 +264,7 @@ impl LocalStateStore {
         .map(|(_, generation)| generation)
     }
 
-    pub(crate) fn commit_remote_file(
+    pub(crate) fn commit_remote_item(
         &self,
         scope: &LocalScope,
         id: &ItemId,
