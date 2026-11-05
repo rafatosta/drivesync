@@ -89,8 +89,8 @@ validação com Google Drive real e o aplicativo empacotado ainda é necessária
 O [contrato do detector local](../engine/src/local_detector/contract.md)
 define um observador de atividade separado da investigação e da sincronização.
 Avisos identificam escopo e caminhos afetados; perda de cobertura exige
-conferência explícita. Árvore por identidade, download, investigação de conteúdo
-e execução remota pertencem a etapas posteriores. O observador e o diagnóstico
+conferência explícita. O preenchimento automático da árvore por identidade, download, investigação
+de conteúdo e execução remota pertencem a etapas posteriores. O observador e o diagnóstico
 independente estão implementados, com fila limitada em memória e falhas de
 cobertura explícitas. O dashboard inicia observadores por conta e exibe um
 histórico temporário com nome, tipo e atividade observada, limitado a 200 registros. Troca de pasta reinicia
@@ -104,3 +104,9 @@ separa pistas do observador de associações verificadas entre documentos. Mant�
 persistentes. Alterações locais têm prioridade de agendamento; estado offline
 ou desconhecido requer confirmação futura. Este componente não autoriza nem
 implementa upload, download, exclusão, investigação de conteúdo ou conflitos.
+
+A integração desktop persiste pendências antes da entrega do lote ao histórico.
+Falhas de armazenamento interrompem a sessão e permanecem visíveis. A fila
+agrupa avisos sem inferir identidade; o registro de estados verificados é uma
+API para futuros download/investigador. Não há detecção automática de
+conectividade nem interface de confirmação offline nesta entrega.

@@ -127,3 +127,9 @@ no portal e compara com a origem salva. Se houver acesso direto de leitura já
 concedido a essa mesma pasta, o observador o utiliza sem regravar configurações
 nem criar arquivos de teste. Sem essa permissão, permanece no portal e sinaliza
 suas limitações. O aplicativo não amplia permissões automaticamente.
+
+A integração desktop grava os lotes no [registro local](../local_state/contract.md)
+antes da entrega à interface. A fila do observador permanece volátil; somente
+lotes confirmados no registro são duráveis. Startup exige conferência para
+mudanças ocorridas antes desse commit ou durante uma interrupção. O histórico
+visual não é a fila de trabalho persistente.

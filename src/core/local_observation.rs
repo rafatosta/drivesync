@@ -1,5 +1,8 @@
 //! Bounded worker transport for local observation; no GTK objects cross threads.
-use drivesync_engine::{LocalBatch, LocalScope, LocalWatchOptions, LocalWatchState, LocalWatcher};
+use drivesync_engine::{
+    LocalBatch, LocalConnectivity, LocalScope, LocalStateError, LocalStateStore, LocalWatchOptions,
+    LocalWatchState, LocalWatcher,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -15,6 +18,7 @@ pub(crate) enum Update {
     Batch(LocalBatch),
     Unconfigured,
     Failed,
+    PersistenceFailed,
 }
 
 /// Owns cancellation and a bounded receiver. Drop cancels without blocking GTK.
@@ -27,6 +31,13 @@ impl Observation {
     /// Resolves local configuration and observes on a worker, without network I/O.
     pub fn start(
         resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
+    ) -> Self {
+        Self::start_with(resolve, LocalStateStore::application)
+    }
+
+    fn start_with(
+        resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
+        open_state: impl FnOnce() -> Result<LocalStateStore, LocalStateError> + Send + 'static,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -50,6 +61,13 @@ impl Observation {
             if flag.load(Ordering::Acquire) {
                 return;
             }
+            let state_store = match open_state() {
+                Ok(store) => store,
+                Err(_) => {
+                    deliver(&tx, &flag, Update::PersistenceFailed);
+                    return;
+                }
+            };
             let mut watcher = match LocalWatcher::start(scope, LocalWatchOptions::default()) {
                 Ok(watcher) => watcher,
                 Err(_) => {
@@ -61,10 +79,17 @@ impl Observation {
             while !flag.load(Ordering::Acquire) {
                 let batch = watcher.poll();
                 let state = batch.state;
-                if (!batch.notices.is_empty() || previous != Some(state))
-                    && !deliver(&tx, &flag, Update::Batch(batch))
-                {
-                    break;
+                if !batch.notices.is_empty() || previous != Some(state) {
+                    if state_store
+                        .ingest(&batch, LocalConnectivity::Unknown)
+                        .is_err()
+                    {
+                        deliver(&tx, &flag, Update::PersistenceFailed);
+                        break;
+                    }
+                    if !deliver(&tx, &flag, Update::Batch(batch)) {
+                        break;
+                    }
                 }
                 previous = Some(state);
                 if state == LocalWatchState::Stopped {
@@ -127,7 +152,13 @@ mod tests {
         let path = std::env::temp_dir().join(format!("drivesync-worker-{}", std::process::id()));
         std::fs::create_dir(&path).unwrap();
         let scope = LocalScope::new("test", "account", &path).unwrap();
-        let session = Observation::start(move || Ok(Some(scope)));
+        let expected_scope = scope.clone();
+        let state_dir = path.with_extension("state");
+        let saved_state = state_dir.clone();
+        let session = Observation::start_with(
+            move || Ok(Some(scope)),
+            move || LocalStateStore::open(&state_dir),
+        );
         assert!(matches!(
             session
                 .receiver
@@ -152,6 +183,15 @@ mod tests {
                 }
             }
         }
+        let persisted = LocalStateStore::open(&saved_state)
+            .unwrap()
+            .load(&expected_scope)
+            .unwrap()
+            .unwrap();
+        assert!(persisted
+            .pending
+            .iter()
+            .any(|p| p.path == b"file" && p.requires_confirmation));
         // Fill the transport without consuming, then cancel it.
         for n in 0..8 {
             std::fs::write(path.join(format!("file-{n}")), b"x").unwrap();
@@ -166,6 +206,7 @@ mod tests {
         assert_eq!(std::fs::read(path.join("file")).unwrap(), b"unchanged");
         drop(session);
         std::fs::remove_dir_all(path).unwrap();
+        std::fs::remove_dir_all(saved_state).unwrap();
     }
     #[test]
     fn missing_configuration_and_failed_resolution_are_distinct() {
@@ -185,5 +226,27 @@ mod tests {
                 .unwrap(),
             Update::Failed
         ));
+    }
+    #[test]
+    fn persistence_failure_is_reported_before_any_batch_is_delivered() {
+        let path =
+            std::env::temp_dir().join(format!("drivesync-failed-state-{}", std::process::id()));
+        std::fs::create_dir(&path).unwrap();
+        let scope = LocalScope::new("test", "account", &path).unwrap();
+        let session =
+            Observation::start_with(move || Ok(Some(scope)), || Err(LocalStateError::Storage));
+        assert!(matches!(
+            session
+                .receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            Update::PersistenceFailed
+        ));
+        assert!(session
+            .receiver
+            .recv_timeout(Duration::from_secs(2))
+            .is_err());
+        drop(session);
+        std::fs::remove_dir(path).unwrap();
     }
 }

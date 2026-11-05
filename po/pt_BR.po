@@ -280,3 +280,7 @@ msgstr "Movimentação detectada"
 #: src/features/dashboard/components/local_history.rs
 msgid "Moved and renamed"
 msgstr "Movimentação e renomeação detectadas"
+
+#: src/features/dashboard/components/local_history.rs
+msgid "Local changes could not be saved. Observation stopped."
+msgstr "Não foi possível registrar as alterações locais. A observação foi interrompida."

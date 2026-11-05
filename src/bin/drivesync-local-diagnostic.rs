@@ -1,7 +1,7 @@
 //! Read-only activity diagnostic. Scope labels do not access accounts or credentials.
 use drivesync_engine::{
-    LocalActivity, LocalBatch, LocalNotice, LocalScope, LocalWatchOptions, LocalWatchState,
-    LocalWatcher,
+    LocalActivity, LocalBatch, LocalConnectivity, LocalNotice, LocalScope, LocalStateStore,
+    LocalWatchOptions, LocalWatchState, LocalWatcher,
 };
 use serde_json::{json, Value};
 use std::{
@@ -14,19 +14,29 @@ use std::{
     time::{Duration, Instant},
 };
 
-const USAGE: &str = "Usage: drivesync-local-diagnostic --client LABEL --account LABEL --root ABSOLUTE_PATH [--seconds N] [--poll-ms N] [--max-watches N] [--max-queued N]\nOutputs JSON lines with byte-exact paths. No synchronization or persistent delivery. Ctrl+C stops observation.";
+const USAGE: &str = "Usage: drivesync-local-diagnostic --client LABEL --account LABEL --root ABSOLUTE_PATH [--seconds N] [--poll-ms N] [--max-watches N] [--max-queued N] [--state-dir DIRECTORY] [--pending]\nOutputs JSON lines with byte-exact paths. No synchronization or persistent delivery. Ctrl+C stops observation.";
 
 struct Arguments {
     scope: LocalScope,
     options: LocalWatchOptions,
     duration: Option<Duration>,
     interval: Duration,
+    state_dir: Option<PathBuf>,
+    pending_only: bool,
 }
 fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Arguments, &'static str> {
     let mut values = HashMap::new();
+    let mut pending_only = false;
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
         let flag = flag.into_string().map_err(|_| USAGE)?;
+        if flag == "--pending" {
+            if pending_only {
+                return Err(USAGE);
+            }
+            pending_only = true;
+            continue;
+        }
         if ![
             "--client",
             "--account",
@@ -35,6 +45,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Arguments, &'static
             "--poll-ms",
             "--max-watches",
             "--max-queued",
+            "--state-dir",
         ]
         .contains(&flag.as_str())
         {
@@ -81,7 +92,13 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Arguments, &'static
     if let Some(n) = number("--max-queued")? {
         options.max_queued = usize::try_from(n).map_err(|_| USAGE)?;
     }
+    let state_dir = values.get("--state-dir").map(PathBuf::from);
+    if pending_only && state_dir.is_none() {
+        return Err(USAGE);
+    }
     Ok(Arguments {
+        state_dir,
+        pending_only,
         scope,
         options,
         duration: seconds.map(Duration::from_secs),
@@ -121,12 +138,33 @@ fn line(output: &mut impl Write, value: &Value) -> io::Result<()> {
     output.flush()
 }
 fn run(args: Arguments) -> Result<bool, Box<dyn std::error::Error>> {
-    let mut watcher = LocalWatcher::start(args.scope, args.options)?;
+    let state = args
+        .state_dir
+        .as_ref()
+        .map(|directory| LocalStateStore::open(directory))
+        .transpose()?;
     let mut output = io::stdout().lock();
+    if args.pending_only {
+        let checkpoint = state
+            .as_ref()
+            .expect("validated state directory")
+            .load(&args.scope)?;
+        let value = match checkpoint {
+            Some(checkpoint) => json!({"type":"pending_state","generation":checkpoint.generation,
+                "items":checkpoint.items,"pending":checkpoint.pending}),
+            None => json!({"type":"pending_state","generation":null,"items":[],"pending":[]}),
+        };
+        line(&mut output, &value)?;
+        return Ok(true);
+    }
+    let mut watcher = LocalWatcher::start(args.scope, args.options)?;
     let started = Instant::now();
     loop {
         let batch = watcher.poll();
         if !batch.notices.is_empty() {
+            if let Some(state) = &state {
+                state.ingest(&batch, LocalConnectivity::Unknown)?;
+            }
             line(&mut output, &batch_json(&batch))?;
         }
         if batch.state == LocalWatchState::Stopped {

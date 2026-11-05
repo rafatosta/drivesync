@@ -109,3 +109,24 @@ A fila é volátil e limitada (4096 avisos por padrão). Um aviso reservado info
 ou sinalizar `KernelOverflow`. Não usar esse fluxo para contar salvamentos ou
 recuperar todas as versões. `--max-queued`, `--max-watches` e `--poll-ms`
 ajustam o diagnóstico; os demais limites estão na API da engine.
+
+## Pendências persistentes
+
+Por padrão, o diagnóstico continua volátil. Para exercitar o registro durável,
+use `--state-dir /caminho/privado/estado`, fora da raiz observada. O diretório é
+criado com permissão privada; um diretório existente deve ser privado também.
+Cada lote é gravado antes de aparecer na saída. A aplicação desktop usa o
+registro privado em `XDG_DATA_HOME/drivesync/local-state` automaticamente.
+
+Depois de encerrar, execute o mesmo diagnóstico com os mesmos rótulos `--client`,
+`--account`, `--root`, `--state-dir` e acrescente `--pending`. Essa opção consulta
+estado, IDs e pendências sem iniciar o observador nem confirmar o consumo.
+Os caminhos das pendências são arrays de bytes Unix; `generation` permite
+recusar decisões baseadas em estado antigo. Conexão desconhecida marca revisão
+necessária, não constitui autorização para aplicar mudanças ao Drive.
+
+O registro persiste necessidades de investigação, não todas as ações ou versões.
+Avisos repetidos são agrupados por caminho; nomes iguais não criam identidade.
+Vínculos por ID somente são registrados por chamadas explícitas da API depois
+de verificação pelo chamador. Startup e perda de cobertura requerem conferência;
+o registro não reconstrói mudanças intermediárias ocorridas enquanto parado.

@@ -12,15 +12,22 @@ use std::{
 struct Fixture {
     root: PathBuf,
     child: Child,
+    state: Option<PathBuf>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.root);
+        if let Some(state) = &self.state {
+            let _ = fs::remove_dir_all(state);
+        }
     }
 }
 fn start() -> (Fixture, Receiver<Value>) {
+    start_with_state(false)
+}
+fn start_with_state(persist: bool) -> (Fixture, Receiver<Value>) {
     let root = std::env::temp_dir().join(format!(
         "drivesync-cli-{}-{}",
         std::process::id(),
@@ -30,7 +37,12 @@ fn start() -> (Fixture, Receiver<Value>) {
             .as_nanos()
     ));
     fs::create_dir(&root).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_drivesync-local-diagnostic"))
+    let state = persist.then(|| root.with_extension("state"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_drivesync-local-diagnostic"));
+    if let Some(state) = &state {
+        command.arg("--state-dir").arg(state);
+    }
+    let mut child = command
         .args([
             "--client",
             "diagnostic",
@@ -60,7 +72,7 @@ fn start() -> (Fixture, Receiver<Value>) {
             }
         }
     });
-    (Fixture { root, child }, rx)
+    (Fixture { root, child, state }, rx)
 }
 fn wait_for(rx: &Receiver<Value>, mut matches: impl FnMut(&Value) -> bool) -> Value {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -128,4 +140,50 @@ fn diagnostic_stops_on_root_loss_with_nonzero_exit() {
         .iter()
         .any(|n| n["reason"] == "RootChanged"));
     assert_eq!(fixture.child.wait().unwrap().code(), Some(2));
+}
+
+#[test]
+fn persisted_pending_work_survives_restart_and_reading_does_not_acknowledge_it() {
+    let (mut fixture, rx) = start_with_state(true);
+    wait_for(&rx, |v| v["type"] == "activity");
+    fs::write(fixture.root.join("pending.txt"), b"preserved").unwrap();
+    wait_for(&rx, |v| has(v, "written", "pending.txt"));
+    wait_for(&rx, |v| v["type"] == "session_ended");
+    assert!(fixture.child.wait().unwrap().success());
+    let read = || {
+        let result = Command::new(env!("CARGO_BIN_EXE_drivesync-local-diagnostic"))
+            .args([
+                "--client",
+                "diagnostic",
+                "--account",
+                "disposable",
+                "--root",
+            ])
+            .arg(&fixture.root)
+            .arg("--state-dir")
+            .arg(fixture.state.as_ref().unwrap())
+            .arg("--pending")
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        serde_json::from_slice::<Value>(&result.stdout).unwrap()
+    };
+    let saved = read();
+    assert_eq!(saved, read());
+    assert!(
+        saved["items"].as_array().unwrap().is_empty(),
+        "events must not invent identity"
+    );
+    let pending = saved["pending"].as_array().unwrap();
+    assert!(pending
+        .iter()
+        .any(|w| w["path"] == serde_json::json!(b"pending.txt".to_vec())
+            && w["requires_confirmation"] == true));
+    assert!(pending
+        .iter()
+        .any(|w| w["path"] == serde_json::json!([]) && w["coverage_uncertain"] == true));
+    assert_eq!(
+        fs::read(fixture.root.join("pending.txt")).unwrap(),
+        b"preserved"
+    );
 }

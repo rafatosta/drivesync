@@ -129,6 +129,14 @@ impl LocalHistory {
                         session.borrow_mut().take();
                         break;
                     }
+                    Some(Ok(Update::PersistenceFailed)) => {
+                        status.set_label(&gettext(
+                            "Local changes could not be saved. Observation stopped.",
+                        ));
+                        status.add_css_class("warning");
+                        session.borrow_mut().take();
+                        break;
+                    }
                     Some(Ok(Update::Failed)) | Some(Err(TryRecvError::Disconnected)) => {
                         status.set_label(&gettext(
                             "Could not observe this folder. Check its access permissions.",

@@ -27,3 +27,9 @@ durable history or a classification of synchronization operations.
 GTK fixtures require a display and isolated profile. Their results do not prove
 real Google Drive integration or installed Flatpak behavior. See the
 [screenshot fixture instructions](../data/screenshots/README.md).
+
+Local observation batches are committed to the engine's private local-state
+store before UI delivery. Persistence failure stops that session and has a
+separate visible error. The temporary 200-row list remains independent of the
+durable, coalesced investigation queue. The current worker supplies unknown
+connectivity; pending work requires future review and is never executed here.
