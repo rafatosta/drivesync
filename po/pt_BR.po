@@ -354,3 +354,30 @@ msgstr "Download concluído"
 
 msgid "Download failed"
 msgstr "Falha no download"
+
+msgid "Back to activities"
+msgstr "Voltar às atividades"
+
+msgid "Select an activity to see its details."
+msgstr "Selecione uma atividade para ver seus detalhes."
+
+msgid "Origin"
+msgstr "Origem"
+
+msgid "Local folder"
+msgstr "Pasta local"
+
+msgid "Date and time"
+msgstr "Data e hora"
+
+msgid "Previous path"
+msgstr "Caminho anterior"
+
+msgid "New path"
+msgstr "Novo caminho"
+
+msgid "Path"
+msgstr "Caminho"
+
+msgid "Activity details"
+msgstr "Detalhes da atividade"

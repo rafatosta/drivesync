@@ -140,7 +140,10 @@ pub fn build_selected(
         (&activities, &feed),
     );
     details.add_named(&activities.root, Some(PAGE));
-    details.add_named(&transfers::build(feed), Some(transfers::PAGE));
+    details.add_named(
+        &crate::ui::scroll(&transfers::build(feed), 760),
+        Some(transfers::PAGE),
+    );
     let (weak_list, weak_details, weak_split) =
         (list.downgrade(), details.downgrade(), split.downgrade());
     activity_nav.connect_row_activated(move |_, row| {
@@ -196,7 +199,7 @@ pub fn build_selected(
         }
     });
     list.select_row(list.row_at_index(initial as i32).as_ref());
-    toolbar.set_content(Some(&crate::ui::scroll(&details, 760)));
+    toolbar.set_content(Some(&details));
     let content = adw::NavigationPage::new(&toolbar, &gettextrs::gettext("Account"));
     let weak_content = content.downgrade();
     details.connect_visible_child_name_notify(move |details| {

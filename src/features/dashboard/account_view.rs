@@ -106,7 +106,7 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
-        details.add_named(&content, Some(&saved.account.id.0));
+        details.add_named(&crate::ui::scroll(&content, 760), Some(&saved.account.id.0));
         menus.push((
             folders.actions().clone(),
             heading,

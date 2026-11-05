@@ -1,4 +1,5 @@
 //! Persistent activity timeline and account filter.
+mod details;
 mod rows;
 
 use adw::{gtk, prelude::*};
@@ -11,14 +12,37 @@ use std::{cell::Cell, rc::Rc, sync::Arc};
 pub(in crate::features::dashboard) const PAGE: &str = "activities";
 
 pub(in crate::features::dashboard) struct Activities {
-    pub root: gtk::Box,
+    pub root: adw::BreakpointBin,
     controller: Rc<Timeline>,
 }
 
 impl Activities {
     pub fn new(engine: Arc<DriveSyncEngine>, accounts: &[RestoredAccount]) -> Self {
-        let root = crate::ui::content();
+        let root = adw::BreakpointBin::new();
         root.set_widget_name("activities-page");
+        let split = adw::NavigationSplitView::builder()
+            .min_sidebar_width(280.0)
+            .max_sidebar_width(540.0)
+            .sidebar_width_fraction(0.56)
+            .build();
+        let body = crate::ui::content();
+        let (detail_body, details) = details::Details::new(&split);
+        split.set_sidebar(Some(&adw::NavigationPage::new(
+            &crate::ui::scroll(&body, 760),
+            &gettext("Activities"),
+        )));
+        split.set_content(Some(&adw::NavigationPage::new(
+            &crate::ui::scroll(&detail_body, 520),
+            &gettext("Activity details"),
+        )));
+        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            700.0,
+            adw::LengthUnit::Sp,
+        ));
+        breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
+        root.set_child(Some(&split));
+        root.add_breakpoint(breakpoint);
         let accounts: Vec<_> = accounts
             .iter()
             .map(|account| {
@@ -34,26 +58,30 @@ impl Activities {
         let filter = account_filter(&accounts);
         let group = adw::PreferencesGroup::new();
         group.add(&filter);
-        root.append(&group);
+        body.append(&group);
 
         let status = gtk::Label::new(None);
         status.set_wrap(true);
         status.add_css_class("dim-label");
-        root.append(&status);
+        body.append(&status);
 
         let list = gtk::Box::new(gtk::Orientation::Vertical, 12);
         list.set_widget_name("activities-list");
-        root.append(&list);
+        body.append(&list);
         let latest = gtk::Button::with_label(&gettext("Back to latest"));
         let older = gtk::Button::with_label(&gettext("Older activities"));
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.append(&latest);
         buttons.append(&older);
-        root.append(&buttons);
+        body.append(&buttons);
 
         let controller = Rc::new(Timeline {
             engine,
             accounts,
+            split: split.downgrade(),
+            details,
+            selected: Cell::new(None),
+            selected_row: Default::default(),
             filter: filter.downgrade(),
             status: status.downgrade(),
             list: list.downgrade(),
@@ -115,6 +143,10 @@ fn account_filter(accounts: &[(AccountId, String)]) -> adw::ComboRow {
 
 struct Timeline {
     engine: Arc<DriveSyncEngine>,
+    split: gtk::glib::WeakRef<adw::NavigationSplitView>,
+    details: details::Details,
+    selected: Cell<Option<i64>>,
+    selected_row: gtk::glib::WeakRef<gtk::ListBoxRow>,
     accounts: Vec<(AccountId, String)>,
     filter: gtk::glib::WeakRef<adw::ComboRow>,
     status: gtk::glib::WeakRef<gtk::Label>,
@@ -143,6 +175,7 @@ impl Timeline {
 
     fn show(self: &Rc<Self>, before: Option<i64>) {
         self.before.set(before);
+        self.clear_selection();
         self.next.set(None);
         self.generation.set(self.generation.get().wrapping_add(1));
         self.dirty.set(true);
@@ -204,7 +237,7 @@ impl Timeline {
     }
 
     fn render(
-        &self,
+        self: &Rc<Self>,
         result: Result<ActivityPage, drivesync_engine::EngineError>,
         show_account: bool,
     ) {
@@ -222,21 +255,75 @@ impl Timeline {
                 status.set_visible(page.records.is_empty());
                 self.next.set(page.older);
                 older.set_visible(page.older.is_some());
-                rows::render_days(&list, page.records, |id| {
-                    show_account
-                        .then(|| {
-                            self.accounts
-                                .iter()
-                                .find(|(account, _)| account == id)
-                                .map(|(_, label)| label.as_str())
-                        })
-                        .flatten()
-                });
+                if self
+                    .selected
+                    .get()
+                    .is_some_and(|id| !page.records.iter().any(|record| record.id == id))
+                {
+                    self.clear_selection();
+                }
+                let weak = Rc::downgrade(self);
+                let selected_row = rows::render_days(
+                    &list,
+                    page.records,
+                    |id| {
+                        show_account
+                            .then(|| {
+                                self.accounts
+                                    .iter()
+                                    .find(|(account, _)| account == id)
+                                    .map(|(_, label)| label.as_str())
+                            })
+                            .flatten()
+                    },
+                    self.selected.get(),
+                    move |record, row| {
+                        if let Some(state) = weak.upgrade() {
+                            state.select(record, row);
+                        }
+                    },
+                );
+                self.selected_row
+                    .set(selected_row.as_ref().map(gtk::prelude::Cast::upcast_ref));
             }
             Err(_) => {
                 status.set_label(&gettext("Could not load activity history."));
                 status.set_visible(true);
             }
+        }
+    }
+    fn account_label<'a>(&'a self, id: &'a AccountId) -> &'a str {
+        self.accounts
+            .iter()
+            .find(|(account, _)| account == id)
+            .map_or(id.0.as_str(), |(_, label)| label.as_str())
+    }
+
+    fn select(&self, record: &drivesync_engine::ActivityRecord, row: &gtk::ListBoxRow) {
+        if let Some(previous) = self
+            .selected_row
+            .upgrade()
+            .filter(|previous| previous != row)
+        {
+            if let Some(list) = previous.parent().and_downcast::<gtk::ListBox>() {
+                list.unselect_row(&previous);
+            }
+        }
+        self.selected.set(Some(record.id));
+        self.selected_row.set(Some(row));
+        self.details
+            .show(record, self.account_label(&record.account));
+        if let Some(split) = self.split.upgrade() {
+            split.set_show_content(true);
+        }
+    }
+
+    fn clear_selection(&self) {
+        self.selected.set(None);
+        self.selected_row.set(None);
+        self.details.clear();
+        if let Some(split) = self.split.upgrade() {
+            split.set_show_content(false);
         }
     }
 }
