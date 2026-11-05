@@ -54,6 +54,21 @@ pub fn build_selected(
         .child(&list)
         .build();
     side_content.append(&scroller);
+    let settings = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["navigation-sidebar"])
+        .build();
+    let preferences_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Preferences"))
+        .activatable(true)
+        .action_name("account.preferences")
+        .build();
+    preferences_row.set_widget_name("sidebar-preferences");
+    preferences_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+    preferences_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    settings.append(&preferences_row);
+    side_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    side_content.append(&settings);
     sidebar.set_content(Some(&side_content));
     let version = gtk::Label::builder()
         .label(crate::core::build_info::VERSION)
@@ -144,25 +159,35 @@ pub fn build_selected(
         .build();
     let actions = gtk::gio::SimpleActionGroup::new();
     let open = gtk::gio::SimpleAction::new("preferences", None);
+    let settings_page = crate::features::preferences::build(nav, toasts, preferences.clone());
+    let weak_nav = nav.downgrade();
     let weak_list = list.downgrade();
+    let context = preferences.clone();
+    let settings = settings_page.clone();
     open.connect_activate(move |_, _| {
-        let Some(list) = weak_list.upgrade() else {
-            return;
-        };
-        if let Some(parent) = list.root().and_downcast::<gtk::Window>() {
+        if let (Some(nav), Some(list)) = (weak_nav.upgrade(), weak_list.upgrade()) {
             let row = list.selected_row();
             let id = row
                 .as_ref()
-                .and_then(|row| preferences.id_at(row.index() as usize));
-            crate::features::preferences::present_with_accounts(
-                &parent,
-                preferences.clone(),
-                id,
-                false,
-            );
+                .and_then(|row| context.id_at(row.index() as usize));
+            crate::features::preferences::open(&nav, &settings, &context, id, false);
         }
     });
     actions.add_action(&open);
+    let configure = gtk::gio::SimpleAction::new("configure", Some(gtk::glib::VariantTy::STRING));
+    let weak_nav = nav.downgrade();
+    configure.connect_activate(move |_, id| {
+        if let (Some(nav), Some(id)) = (weak_nav.upgrade(), id.and_then(|id| id.str())) {
+            crate::features::preferences::open(
+                &nav,
+                &settings_page,
+                &preferences,
+                Some(&drivesync_engine::AccountId(id.into())),
+                true,
+            );
+        }
+    });
+    actions.add_action(&configure);
     page.insert_action_group("account", Some(&actions));
     page
 }

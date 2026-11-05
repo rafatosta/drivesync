@@ -53,7 +53,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
         background::install(app, &window);
         background::install_startup(app, &window, &toasts);
         main_menu::install(app, &window);
-        preferences::install(app, &window, &navigation);
+        preferences::install(app, &navigation, &toasts);
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     });
     app.run()

@@ -115,23 +115,13 @@ pub(super) fn populate(
     }
     let settings = crate::features::preferences::Accounts::new(settings);
     for (folders, heading, user, content, sign_out, id) in menus {
-        let context = settings.clone();
         let weak_content = content.downgrade();
         let actions = super::components::account_actions::AccountActions::new(
             &folders,
             &sign_out,
             move || {
-                if let Some(parent) = weak_content
-                    .upgrade()
-                    .and_then(|w| w.root())
-                    .and_downcast::<gtk::Window>()
-                {
-                    crate::features::preferences::present_with_accounts(
-                        &parent,
-                        context.clone(),
-                        Some(&id),
-                        true,
-                    );
+                if let Some(content) = weak_content.upgrade() {
+                    let _ = content.activate_action("account.configure", Some(&id.0.to_variant()));
                 }
             },
         );
