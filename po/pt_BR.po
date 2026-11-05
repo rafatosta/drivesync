@@ -408,3 +408,6 @@ msgstr "Atualizado"
 
 msgid "Renamed and updated"
 msgstr "Renomeado e atualizado"
+
+msgid "Moved and updated"
+msgstr "Movido e atualizado"

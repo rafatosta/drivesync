@@ -21,6 +21,8 @@ pub enum RemoteActivity {
     Renamed,
     Updated,
     RenamedAndUpdated,
+    Moved,
+    MovedAndUpdated,
     Removed,
 }
 
@@ -165,6 +167,8 @@ impl ActivityHistory {
                     Some(
                         RemoteActivity::Renamed
                             | RemoteActivity::RenamedAndUpdated
+                            | RemoteActivity::Moved
+                            | RemoteActivity::MovedAndUpdated
                             | RemoteActivity::Updated
                             | RemoteActivity::Removed
                     )
@@ -287,6 +291,8 @@ fn group_replacement_echoes(
             Some(
                 RemoteActivity::Renamed
                     | RemoteActivity::RenamedAndUpdated
+                    | RemoteActivity::Moved
+                    | RemoteActivity::MovedAndUpdated
                     | RemoteActivity::Updated
                     | RemoteActivity::Removed
             )
@@ -307,7 +313,12 @@ fn group_replacement_echoes(
             (Some(RemoteActivity::Removed), LocalActivity::Removed) => (&record.notice.path, false),
             (Some(RemoteActivity::Updated), LocalActivity::Written) => (&record.notice.path, true),
             (
-                Some(RemoteActivity::Renamed | RemoteActivity::RenamedAndUpdated),
+                Some(
+                    RemoteActivity::Renamed
+                    | RemoteActivity::RenamedAndUpdated
+                    | RemoteActivity::Moved
+                    | RemoteActivity::MovedAndUpdated,
+                ),
                 LocalActivity::Moved { from },
             ) => (from, true),
             _ => continue,

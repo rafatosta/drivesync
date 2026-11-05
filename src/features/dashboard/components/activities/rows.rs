@@ -133,6 +133,8 @@ pub(super) fn activity_title(record: &ActivityRecord) -> String {
             }
             RemoteActivity::Added => gettext("Downloaded"),
             RemoteActivity::Renamed => gettext("Renamed"),
+            RemoteActivity::Moved => gettext("Moved"),
+            RemoteActivity::MovedAndUpdated => gettext("Moved and updated"),
             RemoteActivity::Updated => gettext("Updated"),
             RemoteActivity::RenamedAndUpdated => gettext("Renamed and updated"),
             RemoteActivity::Removed => gettext("Removed from the local folder"),

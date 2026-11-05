@@ -486,7 +486,7 @@ impl Job<'_> {
     }
 }
 
-/// Reconciles a registered file within the same parent. Ambiguous
+/// Reconciles a registered file within the configured tree. Ambiguous
 /// disappearances, changed local content and unverified baselines remain pending.
 pub(crate) fn reconcile_file(
     token: &str,
@@ -543,14 +543,6 @@ pub(crate) fn reconcile_file(
     if snapshot.kind != LocalItemKind::File {
         return Ok(false);
     }
-    let Some(parent_remote) = state
-        .items
-        .iter()
-        .find(|item| &item.id == parent)
-        .and_then(|item| item.remote_id.as_deref())
-    else {
-        return Ok(false);
-    };
     let entry = match metadata(token, &remote.id) {
         Ok(entry) => entry,
         Err(EngineError::RemoteFolderUnavailable | EngineError::RemoteForbidden) => {
@@ -561,11 +553,22 @@ pub(crate) fn reconcile_file(
     if entry.id != remote.id
         || !valid_name(&entry.name)
         || (entry.trashed && (!entry.explicitly_trashed || entry.name.as_bytes() != snapshot.name))
-        || entry.parents.as_slice() != [parent_remote]
         || entry.trashed != (remote.trashed == Some(true))
         || entry.mime_type.starts_with("application/vnd.google-apps.")
         || (!entry.trashed && entry.kind()? != LocalItemKind::File)
     {
+        return Ok(false);
+    }
+    let [remote_parent] = entry.parents.as_slice() else {
+        return Ok(false);
+    };
+    let Some(destination_parent) = state.items.iter().find(|candidate| {
+        candidate.remote_id.as_ref() == Some(remote_parent)
+            && candidate.confirmed.as_ref() == Some(&candidate.observed)
+            && matches!(&candidate.observed, ItemState::Present(value) if value.kind == LocalItemKind::Directory)
+    }) else { return Ok(false) };
+    let moved = &destination_parent.id != parent;
+    if moved && entry.trashed {
         return Ok(false);
     }
     if !entry.trashed && old_version == &entry.version {
@@ -579,7 +582,7 @@ pub(crate) fn reconcile_file(
     } else {
         return Ok(false);
     };
-    if !entry.trashed && !renamed && !content_changed {
+    if !entry.trashed && !moved && !renamed && !content_changed {
         let mut next = snapshot.clone();
         next.remote_version = Some(entry.version);
         store
@@ -592,7 +595,8 @@ pub(crate) fn reconcile_file(
         .as_deref()
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|date| date.to_utc());
-    if !entry.trashed && remote_time.is_none() {
+    let require_newer = content_changed || renamed && !entry.trashed;
+    if require_newer && remote_time.is_none() {
         return Ok(false);
     }
     let paths = store
@@ -618,8 +622,41 @@ pub(crate) fn reconcile_file(
     );
     let old_name = std::str::from_utf8(&snapshot.name)
         .map_err(|_| EngineError::DownloadConflictAt(path.into()))?;
-    let destination = path.with_file_name(&entry.name);
-    let pending = PendingFile::new(&entry, &directory);
+    let Some((destination_parent_path, _)) =
+        paths.iter().find(|(_, id)| *id == &destination_parent.id)
+    else {
+        return Ok(false);
+    };
+    let destination =
+        Path::new(std::ffi::OsStr::from_bytes(destination_parent_path)).join(&entry.name);
+    if paths
+        .get(destination.as_os_str().as_bytes())
+        .is_some_and(|id| id != &item.id)
+    {
+        return Err(EngineError::DownloadConflictAt(destination));
+    }
+    let destination_directory = if moved {
+        let parent_path = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        File::from(
+            fs::openat2(
+                &root,
+                parent_path,
+                DIR,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+            )
+            .map_err(|_| EngineError::DownloadConflictAt(destination.clone()))?,
+        )
+    } else {
+        directory
+            .try_clone()
+            .map_err(|_| EngineError::DownloadLocal)?
+    };
+    let source = PendingFile::new(&entry, &directory);
+    let pending = PendingFile::new(&entry, &destination_directory);
     let backup = format!(
         ".drivesync-download-{:x}.backup",
         Sha256::digest(format!("{}\0{}\0{}", entry.id, old_version, old_name).as_bytes())
@@ -629,29 +666,29 @@ pub(crate) fn reconcile_file(
         path: &destination,
         active: Cell::new(false),
     };
-    let recovering = pending.stat(&backup)?.is_some();
+    let recovering = source.stat(&backup)?.is_some();
     let local_name = if recovering { &backup } else { old_name };
-    if !entry.trashed && !is_remote_newer(&pending.open(local_name)?, remote_time)? {
+    if require_newer && !is_remote_newer(&source.open(local_name)?, remote_time)? {
         return Ok(false);
     }
     if !recovering {
-        verify_digest(&pending, old_name, old_digest)?;
-        if renamed && pending.stat(&entry.name)?.is_some() {
+        verify_digest(&source, old_name, old_digest)?;
+        if (renamed || moved) && pending.stat(&entry.name)?.is_some() {
             return Err(EngineError::DownloadConflictAt(destination.clone()));
         }
         if content_changed && pending.stat(&pending.staged)?.is_none() {
             download_file(token, &pending, |progress| transfer.emit(progress))?;
         }
-        if renamed && !content_changed && metadata(token, &entry.id)? != entry {
+        if (renamed || moved) && !content_changed && metadata(token, &entry.id)? != entry {
             return Ok(false);
         }
-        if !entry.trashed && !is_remote_newer(&pending.open(old_name)?, remote_time)? {
+        if require_newer && !is_remote_newer(&source.open(old_name)?, remote_time)? {
             return Ok(false);
         }
-        preserve_confirmed_file(&pending, old_name, &backup, old_digest)?;
+        preserve_confirmed_file(&source, old_name, &backup, old_digest)?;
     } else {
-        verify_digest(&pending, &backup, old_digest)?;
-        if renamed && pending.stat(old_name)?.is_some() {
+        verify_digest(&source, &backup, old_digest)?;
+        if (renamed || moved) && source.stat(old_name)?.is_some() {
             return Err(EngineError::DownloadConflictAt(path.into()));
         }
     }
@@ -664,11 +701,12 @@ pub(crate) fn reconcile_file(
         let digest = if content_changed {
             pending.install(token, |progress| transfer.emit(progress))?
         } else {
-            publish_rename(&pending, &backup)?;
+            publish_rename(&source, &pending, &backup)?;
             old_digest.clone()
         };
         let mut next = snapshot.clone();
         next.name = entry.name.as_bytes().to_vec();
+        next.parent = Some(destination_parent.id.clone());
         next.content_version = Some(digest);
         next.remote_version = Some(entry.version.clone());
         ItemState::Present(next)
@@ -677,20 +715,28 @@ pub(crate) fn reconcile_file(
         .commit_remote_file(scope, &item.id, &item.observed, after)
         .map_err(EngineError::DownloadState)?;
     use crate::{LocalActivity, RemoteActivity};
-    let (action, activity) = match (entry.trashed, renamed, content_changed) {
-        (true, _, _) => (RemoteActivity::Removed, LocalActivity::Removed),
-        (false, true, true) => (
+    let (action, activity) = match (entry.trashed, moved, renamed, content_changed) {
+        (false, true, _, updated) => (
+            if updated {
+                RemoteActivity::MovedAndUpdated
+            } else {
+                RemoteActivity::Moved
+            },
+            LocalActivity::Moved { from: path.into() },
+        ),
+        (true, _, _, _) => (RemoteActivity::Removed, LocalActivity::Removed),
+        (false, false, true, true) => (
             RemoteActivity::RenamedAndUpdated,
             LocalActivity::Moved { from: path.into() },
         ),
-        (false, true, false) => (
+        (false, false, true, false) => (
             RemoteActivity::Renamed,
             LocalActivity::Moved { from: path.into() },
         ),
         _ => (RemoteActivity::Updated, LocalActivity::Written),
     };
     transfer.complete();
-    if renamed && !content_changed {
+    if (renamed || moved) && !content_changed {
         fs::unlinkat(&directory, backup.as_str(), fs::AtFlags::empty()).map_err(local_error)?;
     }
     crate::ActivityHistory::append_remote(
@@ -718,15 +764,21 @@ fn is_remote_newer(
     Ok(remote.is_some_and(|remote| remote > chrono::DateTime::<chrono::Utc>::from(local)))
 }
 
-fn publish_rename(pending: &PendingFile<'_>, backup: &str) -> Result<(), EngineError> {
+fn publish_rename(
+    original: &PendingFile<'_>,
+    pending: &PendingFile<'_>,
+    backup: &str,
+) -> Result<(), EngineError> {
     if let Some(target) = pending.stat(&pending.entry.name)? {
-        let source = pending.stat(backup)?.ok_or(EngineError::DownloadConflict)?;
+        let source = original
+            .stat(backup)?
+            .ok_or(EngineError::DownloadConflict)?;
         if (target.st_dev, target.st_ino) != (source.st_dev, source.st_ino) {
             return Err(EngineError::DownloadConflict);
         }
     } else {
         fs::linkat(
-            pending.directory,
+            original.directory,
             backup,
             pending.directory,
             pending.entry.name.as_str(),
@@ -1187,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_uses_the_original_bytes_and_requires_a_strictly_newer_remote_time() {
+    fn move_uses_the_original_bytes_across_directories_and_checks_edit_timestamps() {
         let suffix = oauth2::CsrfToken::new_random();
         let path = std::env::temp_dir().join(format!("drivesync-rename-{}", suffix.secret()));
         std::fs::create_dir(&path).unwrap();
@@ -1204,7 +1256,11 @@ mod tests {
             explicitly_trashed: false,
             parents: vec![],
         };
+        let destination = path.join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        let destination_directory = File::open(&destination).unwrap();
         let pending = PendingFile::new(&entry, &directory);
+        let target = PendingFile::new(&entry, &destination_directory);
         std::fs::write(path.join("old"), b"base").unwrap();
         let original = pending.open("old").unwrap();
         let local =
@@ -1217,16 +1273,16 @@ mod tests {
 
         let digest = hex_digest(checksum(&b"base"[..]).unwrap());
         preserve_confirmed_file(&pending, "old", "backup", &digest).unwrap();
-        std::fs::write(path.join("new"), b"edit").unwrap();
+        std::fs::write(destination.join("new"), b"edit").unwrap();
         assert_eq!(
-            publish_rename(&pending, "backup"),
+            publish_rename(&pending, &target, "backup"),
             Err(EngineError::DownloadConflict)
         );
-        assert_eq!(std::fs::read(path.join("new")).unwrap(), b"edit");
-        std::fs::remove_file(path.join("new")).unwrap();
-        publish_rename(&pending, "backup").unwrap();
-        publish_rename(&pending, "backup").unwrap();
-        assert_eq!(std::fs::read(path.join("new")).unwrap(), b"base");
+        assert_eq!(std::fs::read(destination.join("new")).unwrap(), b"edit");
+        std::fs::remove_file(destination.join("new")).unwrap();
+        publish_rename(&pending, &target, "backup").unwrap();
+        publish_rename(&pending, &target, "backup").unwrap();
+        assert_eq!(std::fs::read(destination.join("new")).unwrap(), b"base");
         assert!(!path.join("old").exists());
         std::fs::remove_dir_all(path).unwrap();
     }
