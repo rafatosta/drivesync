@@ -573,13 +573,8 @@ pub(crate) fn reconcile_item(
         if entry.trashed {
             return Ok(false);
         }
-        if !moved {
-            return Ok(snapshot.name == entry.name.as_bytes()
-                && event
-                    .previous
-                    .as_ref()
-                    .and_then(|previous| previous.parents.as_ref())
-                    .is_some_and(|previous| previous != &entry.parents));
+        if !moved && snapshot.name == entry.name.as_bytes() {
+            return Ok(true);
         }
         return reconcile_directory(
             &root.into(),
@@ -851,7 +846,11 @@ fn reconcile_directory(
                 from: source.into(),
             },
         },
-        crate::RemoteActivity::Moved,
+        if before.parent.as_ref() == Some(&parent.id) {
+            crate::RemoteActivity::Renamed
+        } else {
+            crate::RemoteActivity::Moved
+        },
     )
     .map_err(EngineError::ActivityHistory)?;
     Ok(true)
@@ -1321,6 +1320,27 @@ mod tests {
             move_directory(&from, old, &to, "new", ".other-proof"),
             Err(EngineError::DownloadConflict)
         ));
+        move_directory(
+            &to,
+            std::ffi::OsStr::new("new"),
+            &to,
+            "renamed",
+            ".rename-proof",
+        )
+        .unwrap();
+        move_directory(
+            &to,
+            std::ffi::OsStr::new("new"),
+            &to,
+            "renamed",
+            ".rename-proof",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("parent/renamed/nested/report")).unwrap(),
+            b"local bytes"
+        );
+        assert!(!root.join("parent/new").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

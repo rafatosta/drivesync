@@ -336,7 +336,10 @@ fn group_replacement_echoes(
             matches.next().is_none().then_some(first)
         };
         if record.notice.object_type == crate::LocalItemKind::Directory
-            && record.remote == Some(RemoteActivity::Moved)
+            && matches!(
+                record.remote,
+                Some(RemoteActivity::Moved | RemoteActivity::Renamed)
+            )
         {
             if let Some(echo) = matching(&record.notice.path, record.notice.activity.clone()) {
                 pairs.push((*rename_id, echo, None));
