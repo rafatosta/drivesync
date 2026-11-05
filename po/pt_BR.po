@@ -411,3 +411,6 @@ msgstr "Renomeado e atualizado"
 
 msgid "Moved and updated"
 msgstr "Movido e atualizado"
+
+msgid "Applying changes to the local folder…"
+msgstr "Aplicando alterações na pasta local…"

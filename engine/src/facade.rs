@@ -306,6 +306,7 @@ impl DriveSyncEngine {
         &self,
         id: &AccountId,
         notify: impl Fn(&std::path::Path, crate::DownloadProgress),
+        applying: impl Fn(),
     ) -> Result<bool, EngineError> {
         use crate::{DetectionCheck, RemoteEventKind, RemoteMembership};
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
@@ -358,7 +359,7 @@ impl DriveSyncEngine {
                 .map_err(|_| EngineError::InvalidFolder)?;
             let mut targets = std::collections::HashSet::new();
             let mut acknowledge = Vec::new();
-            let mut unresolved = false;
+            let mut existing = Vec::new();
             for delivery in &events {
                 let event = &delivery.event;
                 let is_latest = event
@@ -383,22 +384,32 @@ impl DriveSyncEngine {
                     {
                         acknowledge.push(delivery.id);
                     } else {
-                        match crate::download::reconcile_item(
-                            token, &folder, &scope, event, &notify,
-                        ) {
-                            Ok(true) => acknowledge.push(delivery.id),
-                            Ok(false)
-                            | Err(
-                                EngineError::DownloadConflict | EngineError::DownloadConflictAt(_),
-                            ) => unresolved = true,
-                            Err(error) => return Err(error),
-                        }
+                        existing.push(delivery);
                     }
                 }
             }
-            if !targets.is_empty() {
-                crate::download::run_selected(token, &folder, &scope, &notify, Some(&targets))?;
+            if !targets.is_empty() || !existing.is_empty() {
+                applying();
             }
+            // Existing items may need a destination introduced by this same batch.
+            let additions = if targets.is_empty() {
+                Ok(crate::InitialDownload::default())
+            } else {
+                crate::download::run_selected(token, &folder, &scope, &notify, Some(&targets))
+            };
+            let mut unresolved = false;
+            for delivery in existing {
+                let event = &delivery.event;
+                match crate::download::reconcile_item(token, &folder, &scope, event, &notify) {
+                    Ok(true) => acknowledge.push(delivery.id),
+                    Ok(false)
+                    | Err(EngineError::DownloadConflict | EngineError::DownloadConflictAt(_)) => {
+                        unresolved = true
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            additions?;
             remote_detector::acknowledge_many(
                 &config.client_id,
                 id,

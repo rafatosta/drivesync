@@ -73,11 +73,31 @@ pub(in crate::features::dashboard) fn build(
         let checked_at = checked_at.clone();
         let retry_factor = retry_factor.clone();
         let refresh_activities = refresh_activities.clone();
+        let applying = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if is_periodic {
+            let (applying, running, status, attempt) =
+                (applying.clone(), running.clone(), status.clone(), attempt.clone());
+            gtk::glib::timeout_add_local(Duration::from_millis(150), move || {
+                use std::sync::atomic::Ordering;
+                if !running.get() || attempt.get() != current {
+                    return gtk::glib::ControlFlow::Break;
+                }
+                if applying.load(Ordering::Relaxed) {
+                    if let Some(status) = status.upgrade() {
+                        status.set_label(&gettext("Applying changes to the local folder…"));
+                    }
+                    return gtk::glib::ControlFlow::Break;
+                }
+                gtk::glib::ControlFlow::Continue
+            });
+        }
         crate::core::worker::work(
             move || {
                 let report = |path: &std::path::Path, progress| transfers.report(&account, &label, path, progress);
                 if is_periodic {
-                    engine.poll_remote_downloads(&account, report)
+                    engine.poll_remote_downloads(&account, report, || {
+                        applying.store(true, std::sync::atomic::Ordering::Relaxed);
+                    })
                 } else {
                     engine.initial_download_with_progress(&account, report).map(|_| false)
                 }
@@ -99,6 +119,11 @@ pub(in crate::features::dashboard) fn build(
                     retry_factor.set((retry_factor.get() * 2).min(8));
                 } else {
                     retry_factor.set(1);
+                }
+                if !is_periodic && result.is_ok() {
+                    check_remote.set(true);
+                    button.emit_clicked();
+                    return;
                 }
                 match result {
                     Ok(unresolved) => status.set_label(&gettext(if unresolved {
