@@ -97,3 +97,10 @@ histórico temporário com nome, tipo e atividade observada, limitado a 200 regi
 a sessão; descarte da página e encerramento cancelam a observação. O portal/FUSE
 não possui cobertura estabelecida e produz estado incompleto; iniciar a
 observação não comprova entrega de eventos do host.
+
+O [registro local de identidade, estado e pendências](../engine/src/local_state/contract.md)
+separa pistas do observador de associações verificadas entre documentos. Mantém
+árvore por IDs, estado confirmado/observado e necessidades de investigação
+persistentes. Alterações locais têm prioridade de agendamento; estado offline
+ou desconhecido requer confirmação futura. Este componente não autoriza nem
+implementa upload, download, exclusão, investigação de conteúdo ou conflitos.
