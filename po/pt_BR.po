@@ -306,3 +306,30 @@ msgstr "Atividades"
 
 msgid "All accounts"
 msgstr "Todas as contas"
+
+msgid "Back to latest"
+msgstr "Voltar às mais recentes"
+
+msgid "Older activities"
+msgstr "Atividades anteriores"
+
+msgid "Loading activities…"
+msgstr "Carregando atividades…"
+
+msgid "No activities recorded."
+msgstr "Nenhuma atividade registrada."
+
+msgid "Could not load activity history."
+msgstr "Não foi possível carregar o histórico de atividades."
+
+msgid "Today"
+msgstr "Hoje"
+
+msgid "Yesterday"
+msgstr "Ontem"
+
+msgid "Some activities could not be saved to history."
+msgstr "Algumas atividades não puderam ser salvas no histórico."
+
+msgid "Removed from the local folder"
+msgstr "Removido da pasta local"

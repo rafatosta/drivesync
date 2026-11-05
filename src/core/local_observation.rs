@@ -1,7 +1,7 @@
 //! Bounded worker transport for local observation; no GTK objects cross threads.
 use drivesync_engine::{
-    LocalBatch, LocalConnectivity, LocalScope, LocalStateError, LocalStateStore, LocalWatchOptions,
-    LocalWatchState, LocalWatcher,
+    ActivityHistory, LocalBatch, LocalConnectivity, LocalScope, LocalStateError, LocalStateStore,
+    LocalWatchOptions, LocalWatchState, LocalWatcher,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -19,6 +19,7 @@ pub(crate) enum Update {
     Unconfigured,
     Failed,
     PersistenceFailed,
+    HistoryFailed,
 }
 
 /// Owns cancellation and a bounded receiver. Drop cancels without blocking GTK.
@@ -38,11 +39,31 @@ impl Observation {
         })
     }
 
+    pub(crate) fn start_recording(
+        resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
+        open_state: impl FnOnce(&LocalScope) -> Result<LocalStateStore, LocalStateError>
+            + Send
+            + 'static,
+    ) -> Self {
+        Self::spawn(resolve, open_state, true)
+    }
+
+    #[cfg(test)]
     pub(crate) fn start_with(
         resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
         open_state: impl FnOnce(&LocalScope) -> Result<LocalStateStore, LocalStateError>
             + Send
             + 'static,
+    ) -> Self {
+        Self::spawn(resolve, open_state, false)
+    }
+
+    fn spawn(
+        resolve: impl FnOnce() -> Result<Option<LocalScope>, ()> + Send + 'static,
+        open_state: impl FnOnce(&LocalScope) -> Result<LocalStateStore, LocalStateError>
+            + Send
+            + 'static,
+        record_history: bool,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
@@ -73,6 +94,17 @@ impl Observation {
                     return;
                 }
             };
+            let mut history = if record_history {
+                match ActivityHistory::application() {
+                    Ok(history) => Some(history),
+                    Err(_) => {
+                        deliver(&tx, &flag, Update::HistoryFailed);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             let mut watcher = match LocalWatcher::start(scope, LocalWatchOptions::default()) {
                 Ok(watcher) => watcher,
                 Err(_) => {
@@ -91,6 +123,14 @@ impl Observation {
                     {
                         deliver(&tx, &flag, Update::PersistenceFailed);
                         break;
+                    }
+                    if let Some(history) = &mut history {
+                        if !batch.notices.is_empty()
+                            && history.append(&batch).is_err()
+                            && !deliver(&tx, &flag, Update::HistoryFailed)
+                        {
+                            break;
+                        }
                     }
                     if !deliver(&tx, &flag, Update::Batch(batch)) {
                         break;

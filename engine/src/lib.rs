@@ -2,6 +2,7 @@
 //!
 //! Initial download is explicit and separate from ongoing synchronization.
 mod accounts;
+mod activity_history;
 mod auth;
 mod configuration;
 mod download;
@@ -13,6 +14,7 @@ mod models;
 mod remote;
 mod remote_detector;
 
+pub use activity_history::{ActivityHistory, ActivityPage, ActivityRecord};
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use download::InitialDownload;

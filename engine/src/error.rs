@@ -22,6 +22,7 @@ pub enum EngineError {
     DownloadUnsupported,
     DownloadLocal,
     DownloadState(crate::LocalStateError),
+    ActivityHistory(crate::LocalStateError),
 }
 
 impl std::fmt::Display for EngineError {
@@ -44,6 +45,7 @@ impl std::fmt::Display for EngineError {
             Self::DownloadIncomplete => f.write_str("Initial download stopped because the remote tree or file version could not be verified."),
             Self::DownloadUnsupported => f.write_str("Initial download stopped at a Google-native document or another unsupported item."),
             Self::DownloadLocal => f.write_str("Initial download could not write or make the local item durable."),
+            Self::ActivityHistory(error) => write!(f, "Could not read activity history: {error}"),
             Self::DownloadState(error) => write!(f, "Initial download could not save the identity record: {error}"),
         }
     }

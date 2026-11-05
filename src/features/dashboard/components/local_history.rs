@@ -33,7 +33,7 @@ impl LocalHistory {
                 let id = id.clone();
                 let resolver = engine.clone();
                 let account = id.clone();
-                Observation::start_with(
+                Observation::start_recording(
                     move || resolver.local_observation_scope(&account).map_err(|_| ()),
                     move |scope| engine.folder_state(&id, scope),
                 )
@@ -69,6 +69,14 @@ impl LocalHistory {
         status.set_widget_name("local-activity-status");
         status.add_css_class("dim-label");
         body.append(&status);
+        let history_warning = gtk::Label::builder()
+            .label(gettext("Some activities could not be saved to history."))
+            .xalign(0.0)
+            .wrap(true)
+            .visible(false)
+            .css_classes(["warning"])
+            .build();
+        body.append(&history_warning);
         let empty = gtk::Label::builder()
             .label(gettext("No changes detected in this session."))
             .xalign(0.0)
@@ -98,6 +106,7 @@ impl LocalHistory {
             let list = list.downgrade();
             let status = status.downgrade();
             let empty = empty.downgrade();
+            let history_warning = history_warning.downgrade();
             Rc::new(move || {
                 if root.upgrade().is_none() {
                     session.borrow_mut().take();
@@ -116,6 +125,9 @@ impl LocalHistory {
                     status.set_label(&gettext("Starting local observation…"));
                     status.remove_css_class("warning");
                 }
+                if let Some(warning) = history_warning.upgrade() {
+                    warning.set_visible(false);
+                }
                 *session.borrow_mut() = Some(start());
             })
         };
@@ -124,6 +136,7 @@ impl LocalHistory {
         let weak_list = list.downgrade();
         let weak_status = status.downgrade();
         let weak_empty = empty.downgrade();
+        let weak_warning = history_warning.downgrade();
         gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
             let (Some(_root), Some(list), Some(status), Some(empty)) = (
                 weak_root.upgrade(),
@@ -149,6 +162,11 @@ impl LocalHistory {
                         status.set_label(&gettext("Choose a local folder to observe changes."));
                         session.borrow_mut().take();
                         break;
+                    }
+                    Some(Ok(Update::HistoryFailed)) => {
+                        if let Some(warning) = weak_warning.upgrade() {
+                            warning.set_visible(true);
+                        }
                     }
                     Some(Ok(Update::PersistenceFailed)) => {
                         status.set_label(&gettext(
@@ -202,11 +220,7 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     } else {
         status.remove_css_class("warning");
     }
-    for row in batch
-        .notices
-        .iter()
-        .filter_map(|notice| activity_row(notice, None))
-    {
+    for row in batch.notices.iter().filter_map(activity_row) {
         list.prepend(&row);
         if let Some(oldest) = list.row_at_index(LIMIT) {
             list.remove(&oldest);
@@ -215,12 +229,8 @@ fn render(list: &gtk::ListBox, empty: &gtk::Label, status: &gtk::Label, batch: &
     empty.set_visible(list.first_child().is_none());
 }
 
-pub(super) fn activity_row(notice: &LocalNotice, account: Option<&str>) -> Option<adw::ActionRow> {
-    let name = if account.is_some() {
-        notice.path.as_os_str()
-    } else {
-        notice.path.file_name()?
-    };
+fn activity_row(notice: &LocalNotice) -> Option<adw::ActionRow> {
+    let name = notice.path.file_name()?;
     let activity = activity_label(notice)?;
     // Both title and subtitle are plain text. Never interpret file names as markup.
     let text: String = name
@@ -235,10 +245,7 @@ pub(super) fn activity_row(notice: &LocalNotice, account: Option<&str>) -> Optio
         LocalItemKind::Special => (gettext("Special item"), "text-x-generic-symbolic"),
         LocalItemKind::Unknown => (gettext("Item"), "dialog-question-symbolic"),
     };
-    let mut detail = format!("{kind} · {activity}");
-    if let Some(account) = account {
-        detail.push_str(&format!(" · {account}"));
-    }
+    let detail = format!("{kind} · {activity}");
     let row = adw::ActionRow::builder()
         .title(&text)
         .subtitle(&detail)
@@ -252,7 +259,7 @@ pub(super) fn activity_row(notice: &LocalNotice, account: Option<&str>) -> Optio
 }
 
 /// Labels activity rows, excluding coverage notices handled by the status label.
-fn activity_label(notice: &LocalNotice) -> Option<String> {
+pub(super) fn activity_label(notice: &LocalNotice) -> Option<String> {
     Some(match &notice.activity {
         LocalActivity::Created => gettext("Created"),
         LocalActivity::Removed => gettext("Removed"),

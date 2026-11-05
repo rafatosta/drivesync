@@ -233,6 +233,21 @@ impl DriveSyncEngine {
             .transpose()
     }
 
+    /// Reads recorded activity for the selected accounts under this OAuth client.
+    pub fn activity_history(
+        &self,
+        accounts: &[AccountId],
+        before: Option<i64>,
+    ) -> Result<crate::ActivityPage, EngineError> {
+        if accounts.is_empty() {
+            return Ok(crate::ActivityPage::default());
+        }
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        crate::ActivityHistory::application()
+            .and_then(|history| history.page(&config.client_id, accounts, before))
+            .map_err(EngineError::ActivityHistory)
+    }
+
     /// Opens portable state for the saved folder pair.
     pub fn folder_state(
         &self,

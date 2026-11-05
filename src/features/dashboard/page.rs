@@ -118,7 +118,7 @@ pub fn build_selected(
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
     use super::components::activities::{Activities, PAGE};
-    let activities = Activities::new(&accounts);
+    let activities = Activities::new(engine.clone(), &accounts);
     let preferences =
         super::account_view::populate(engine, accounts, nav, toasts, &list, &details, &activities);
     details.add_named(&activities.root, Some(PAGE));

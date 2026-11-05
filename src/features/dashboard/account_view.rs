@@ -15,7 +15,7 @@ pub(super) fn populate(
 ) -> std::rc::Rc<crate::features::preferences::Accounts> {
     let mut settings = vec![];
     let mut menus = vec![];
-    for (index, saved) in accounts.into_iter().enumerate() {
+    for saved in accounts {
         let name = saved.account.email.as_deref().unwrap_or("Google Account");
         let state = saved
             .error
@@ -75,7 +75,7 @@ pub(super) fn populate(
         let history = super::components::local_history::LocalHistory::new(
             engine.clone(),
             saved.account.id.clone(),
-            activities.receiver(index),
+            activities.receiver(),
         );
         let restart = history.restart_callback();
         let (download, refresh_download) =
