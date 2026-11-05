@@ -18,7 +18,8 @@ use std::{
 
 const FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const FOLDER: &str = "application/vnd.google-apps.folder";
-const FIELDS: &str = "id,name,mimeType,version,size,trashed,parents,sha256Checksum,modifiedTime";
+const FIELDS: &str =
+    "id,name,mimeType,version,size,trashed,explicitlyTrashed,parents,sha256Checksum,modifiedTime";
 const DIR: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::CLOEXEC);
@@ -52,6 +53,8 @@ struct Entry {
     modified_time: Option<String>,
     #[serde(default)]
     trashed: bool,
+    #[serde(default)]
+    explicitly_trashed: bool,
     #[serde(default)]
     parents: Vec<String>,
 }
@@ -557,7 +560,7 @@ pub(crate) fn reconcile_file(
     };
     if entry.id != remote.id
         || !valid_name(&entry.name)
-        || (entry.trashed && entry.name.as_bytes() != snapshot.name)
+        || (entry.trashed && (!entry.explicitly_trashed || entry.name.as_bytes() != snapshot.name))
         || entry.parents.as_slice() != [parent_remote]
         || entry.trashed != (remote.trashed == Some(true))
         || entry.mime_type.starts_with("application/vnd.google-apps.")
@@ -1120,6 +1123,7 @@ mod tests {
             sha256_checksum: None,
             modified_time: None,
             trashed: false,
+            explicitly_trashed: false,
             parents: vec![],
         };
         let pending = PendingFile::new(&entry, &directory);
@@ -1164,6 +1168,7 @@ mod tests {
             sha256_checksum: None,
             modified_time: None,
             trashed: true,
+            explicitly_trashed: true,
             parents: vec![],
         };
         let pending = PendingFile::new(&entry, &directory);
@@ -1196,6 +1201,7 @@ mod tests {
             sha256_checksum: None,
             modified_time: None,
             trashed: false,
+            explicitly_trashed: false,
             parents: vec![],
         };
         let pending = PendingFile::new(&entry, &directory);
@@ -1254,6 +1260,7 @@ mod tests {
             sha256_checksum: None,
             modified_time: None,
             trashed: false,
+            explicitly_trashed: false,
             parents: vec![],
         };
         let first = job

@@ -166,6 +166,7 @@ impl ActivityHistory {
                         RemoteActivity::Renamed
                             | RemoteActivity::RenamedAndUpdated
                             | RemoteActivity::Updated
+                            | RemoteActivity::Removed
                     )
                 ) || (notice.remote.is_none()
                     && matches!(
@@ -287,6 +288,7 @@ fn group_replacement_echoes(
                 RemoteActivity::Renamed
                     | RemoteActivity::RenamedAndUpdated
                     | RemoteActivity::Updated
+                    | RemoteActivity::Removed
             )
         ) {
             continue;
@@ -301,12 +303,13 @@ fn group_replacement_echoes(
         if grouped {
             continue;
         }
-        let from = match (&record.remote, &record.notice.activity) {
-            (Some(RemoteActivity::Updated), LocalActivity::Written) => &record.notice.path,
+        let (from, replacement) = match (&record.remote, &record.notice.activity) {
+            (Some(RemoteActivity::Removed), LocalActivity::Removed) => (&record.notice.path, false),
+            (Some(RemoteActivity::Updated), LocalActivity::Written) => (&record.notice.path, true),
             (
                 Some(RemoteActivity::Renamed | RemoteActivity::RenamedAndUpdated),
                 LocalActivity::Moved { from },
-            ) => from,
+            ) => (from, true),
             _ => continue,
         };
         let matching = |path: &Path, activity: LocalActivity| {
@@ -319,25 +322,38 @@ fn group_replacement_echoes(
             let first = matches.next()?.0;
             matches.next().is_none().then_some(first)
         };
-        if let (Some(source), Some(destination)) = (
-            matching(from, LocalActivity::MovedOut),
-            matching(&record.notice.path, LocalActivity::Created),
-        ) {
-            pairs.push((*rename_id, source, destination));
-        }
+        let Some(source) = matching(from, LocalActivity::MovedOut) else {
+            continue;
+        };
+        let destination = if replacement {
+            let Some(destination) = matching(&record.notice.path, LocalActivity::Created) else {
+                continue;
+            };
+            Some(destination)
+        } else {
+            None
+        };
+        pairs.push((*rename_id, source, destination));
     }
-    for &(rename_id, source, destination) in &pairs {
+    for &(operation, source, destination) in &pairs {
         if pairs
             .iter()
-            .filter(|(_, a, b)| *a == source || *b == destination)
+            .filter(|(_, a, b)| *a == source || (destination.is_some() && *b == destination))
             .count()
             == 1
         {
             db.execute(
-                "INSERT OR IGNORE INTO activity_echoes(id, rename_id) VALUES (?1, ?3), (?2, ?3)",
-                params![source, destination, rename_id],
+                "INSERT OR IGNORE INTO activity_echoes(id, rename_id) VALUES (?1, ?2)",
+                params![source, operation],
             )
             .map_err(storage)?;
+            if let Some(destination) = destination {
+                db.execute(
+                    "INSERT OR IGNORE INTO activity_echoes(id, rename_id) VALUES (?1, ?2)",
+                    params![destination, operation],
+                )
+                .map_err(storage)?;
+            }
         }
     }
     Ok(())
@@ -352,6 +368,41 @@ mod tests {
     use super::*;
     use crate::{LocalActivity, LocalCoverageGap, LocalItemKind, LocalScope, LocalWatchState};
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    #[test]
+    fn confirmed_removal_groups_the_local_exit_without_hiding_independent_creation() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let directory = std::env::temp_dir().join(format!("drivesync-removal-{}", suffix.secret()));
+        let mut history = ActivityHistory::open(&directory).unwrap();
+        let scope = LocalScope::new("client", "account", Path::new("/test")).unwrap();
+        let event = |activity, remote| StoredNotice {
+            notice: LocalNotice {
+                path: "file".into(),
+                object_type: LocalItemKind::File,
+                activity,
+            },
+            remote,
+            root: b"/test".to_vec(),
+        };
+        history
+            .append_notices(
+                &scope,
+                [
+                    event(LocalActivity::Removed, Some(RemoteActivity::Removed)),
+                    event(LocalActivity::MovedOut, None),
+                    event(LocalActivity::Created, None),
+                ],
+            )
+            .unwrap();
+        let page = history
+            .page("client", &[AccountId("account".into())], None)
+            .unwrap();
+        assert_eq!(page.records.len(), 2);
+        assert_eq!(page.records[0].notice.activity, LocalActivity::Created);
+        assert_eq!(page.records[1].remote, Some(RemoteActivity::Removed));
+        drop(history);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn confirmed_content_update_groups_replacement_at_the_same_path() {
