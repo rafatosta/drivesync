@@ -8,11 +8,11 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     cell::Cell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{self, Read, Seek, Write},
     os::unix::ffi::OsStrExt,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -571,7 +571,10 @@ pub(crate) fn reconcile_item(
     let moved = &destination_parent.id != parent;
     if snapshot.kind == LocalItemKind::Directory {
         if entry.trashed {
-            return Ok(false);
+            if moved {
+                return Ok(false);
+            }
+            return trash_directory(&root.into(), &store, scope, &state.items, item, &entry);
         }
         if !moved && snapshot.name == entry.name.as_bytes() {
             return Ok(true);
@@ -773,6 +776,173 @@ pub(crate) fn reconcile_item(
     .map_err(EngineError::ActivityHistory)?;
     pending.clear()?;
     Ok(true)
+}
+
+fn trash_directory(
+    root: &File,
+    store: &LocalStateStore,
+    scope: &LocalScope,
+    items: &[crate::TrackedItem],
+    item: &crate::TrackedItem,
+    entry: &Entry,
+) -> Result<bool, EngineError> {
+    let paths = store
+        .item_paths(scope, true)
+        .map_err(EngineError::DownloadState)?;
+    let Some((source, _)) = paths.iter().find(|(_, id)| *id == &item.id) else {
+        return Ok(false);
+    };
+    let source = Path::new(std::ffi::OsStr::from_bytes(source));
+    let by_id: HashMap<_, _> = items.iter().map(|item| (&item.id, item)).collect();
+    let mut expected = HashMap::new();
+    let mut states = Vec::new();
+    for (path, id) in &paths {
+        let Ok(relative) = Path::new(std::ffi::OsStr::from_bytes(path)).strip_prefix(source) else {
+            continue;
+        };
+        let tracked = by_id[id];
+        let ItemState::Present(snapshot) = &tracked.observed else {
+            return Ok(false);
+        };
+        if tracked.confirmed.as_ref() != Some(&tracked.observed) || tracked.remote_id.is_none() {
+            return Ok(false);
+        }
+        states.push((id.clone(), tracked.observed.clone()));
+        if !relative.as_os_str().is_empty() {
+            expected.insert(relative.to_path_buf(), snapshot.clone());
+        }
+    }
+    let parent_path = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = open_move_directory(root, parent_path)?;
+    let backup = format!(
+        ".drivesync-download-{:x}.backup",
+        Sha256::digest(format!("folder-trash\0{}\0{}", entry.id, entry.version).as_bytes())
+    );
+    preserve_directory(&parent, &entry.name, &backup, &expected).map_err(|error| {
+        if error == EngineError::DownloadConflict {
+            EngineError::DownloadConflictAt(source.into())
+        } else {
+            error
+        }
+    })?;
+    store
+        .commit_remote_removal(scope, &states)
+        .map_err(EngineError::DownloadState)?;
+    crate::ActivityHistory::append_remote(
+        scope,
+        crate::LocalNotice {
+            path: source.into(),
+            object_type: LocalItemKind::Directory,
+            activity: crate::LocalActivity::Removed,
+        },
+        crate::RemoteActivity::Removed,
+    )
+    .map_err(EngineError::ActivityHistory)?;
+    Ok(true)
+}
+
+fn preserve_directory(
+    parent: &File,
+    name: &str,
+    backup: &str,
+    expected: &HashMap<PathBuf, ItemSnapshot>,
+) -> Result<(), EngineError> {
+    let existing = |name| match fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => Ok(true),
+        Err(rustix::io::Errno::NOENT) => Ok(false),
+        Err(error) => Err(local_error(error)),
+    };
+    let source_exists = existing(name)?;
+    if source_exists {
+        if existing(backup)? {
+            return Err(EngineError::DownloadConflict);
+        }
+        let source = open_move_directory(parent, Path::new(name))?;
+        verify_directory(&source, expected)?;
+        let opened = fs::fstat(&source).map_err(local_error)?;
+        let named = fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW).map_err(local_error)?;
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino) {
+            return Err(EngineError::DownloadConflict);
+        }
+        fs::renameat_with(parent, name, parent, backup, RenameFlags::NOREPLACE)
+            .map_err(local_error)?;
+    }
+    let verified = open_move_directory(parent, Path::new(backup))
+        .and_then(|directory| verify_directory(&directory, expected));
+    if let Err(error) = verified {
+        if source_exists {
+            let _ = fs::renameat_with(parent, backup, parent, name, RenameFlags::NOREPLACE);
+        }
+        return Err(error);
+    }
+    parent.sync_all().map_err(|_| EngineError::DownloadLocal)
+}
+
+fn verify_directory(
+    root: &File,
+    expected: &HashMap<PathBuf, ItemSnapshot>,
+) -> Result<(), EngineError> {
+    let mut pending = vec![(
+        PathBuf::new(),
+        root.try_clone().map_err(|_| EngineError::DownloadLocal)?,
+    )];
+    let mut seen = 0;
+    while let Some((relative, directory)) = pending.pop() {
+        for entry in fs::Dir::read_from(&directory).map_err(local_error)? {
+            let entry = entry.map_err(local_error)?;
+            let bytes = entry.file_name().to_bytes();
+            if matches!(bytes, b"." | b"..") {
+                continue;
+            }
+            let name = std::ffi::OsStr::from_bytes(bytes);
+            let path = relative.join(name);
+            let Some(snapshot) = expected.get(&path) else {
+                let recovery = bytes
+                    .strip_prefix(b".drivesync-download-")
+                    .and_then(|suffix| suffix.strip_suffix(b".backup"))
+                    .is_some_and(|digest| {
+                        digest.len() == 64 && digest.iter().all(u8::is_ascii_hexdigit)
+                    });
+                if recovery {
+                    continue;
+                }
+                return Err(EngineError::DownloadConflict);
+            };
+            seen += 1;
+            if snapshot.kind == LocalItemKind::Directory {
+                pending.push((path, open_move_directory(&directory, Path::new(name))?));
+                continue;
+            }
+            let Some(digest) = snapshot
+                .content_version
+                .as_deref()
+                .filter(|_| snapshot.kind == LocalItemKind::File)
+            else {
+                return Err(EngineError::DownloadConflict);
+            };
+            let file = fs::openat2(
+                &directory,
+                name,
+                OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+            )
+            .map(File::from)
+            .map_err(|_| EngineError::DownloadConflict)?;
+            if !file.metadata().is_ok_and(|metadata| metadata.is_file())
+                || hex_digest(checksum(file)?) != digest
+            {
+                return Err(EngineError::DownloadConflict);
+            }
+        }
+    }
+    if seen != expected.len() {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(())
 }
 
 fn reconcile_directory(
@@ -1292,6 +1462,58 @@ fn download_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_trash_preserves_tree_and_rejects_untracked_or_modified_content() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let root = std::env::temp_dir().join(format!("drivesync-trash-tree-{}", suffix.secret()));
+        std::fs::create_dir_all(root.join("folder/nested")).unwrap();
+        let original = root.join("folder/nested/file");
+        std::fs::write(&original, b"base").unwrap();
+        let parent = File::open(&root).unwrap();
+        let snapshot = |kind, content_version| ItemSnapshot {
+            parent: None,
+            name: Vec::new(),
+            kind,
+            content_version,
+            remote_version: None,
+        };
+        let expected = HashMap::from([
+            (
+                PathBuf::from("nested"),
+                snapshot(LocalItemKind::Directory, None),
+            ),
+            (
+                PathBuf::from("nested/file"),
+                snapshot(
+                    LocalItemKind::File,
+                    Some(hex_digest(checksum(&b"base"[..]).unwrap())),
+                ),
+            ),
+        ]);
+        let extra = root.join("folder/new");
+        std::fs::write(&extra, b"new").unwrap();
+        assert_eq!(
+            preserve_directory(&parent, "folder", "backup", &expected),
+            Err(EngineError::DownloadConflict)
+        );
+        std::fs::remove_file(extra).unwrap();
+        std::fs::write(&original, b"edit").unwrap();
+        assert_eq!(
+            preserve_directory(&parent, "folder", "backup", &expected),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(std::fs::read(&original).unwrap(), b"edit");
+        std::fs::write(&original, b"base").unwrap();
+        preserve_directory(&parent, "folder", "backup", &expected).unwrap();
+        preserve_directory(&parent, "folder", "backup", &expected).unwrap();
+        assert!(!root.join("folder").exists());
+        assert_eq!(
+            std::fs::read(root.join("backup/nested/file")).unwrap(),
+            b"base"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn folder_move_preserves_descendants_refuses_collision_and_recovers() {
