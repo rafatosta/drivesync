@@ -120,10 +120,6 @@ msgstr "Abrir pasta local"
 msgid "Open Google Drive folder"
 msgstr "Abrir pasta no Google Drive"
 
-#: src/features/dashboard/components/account_actions.rs:58
-msgid "Account preferences…"
-msgstr "Preferências da conta…"
-
 #: src/features/dashboard/components/account_actions.rs:63
 msgid "Sign Out"
 msgstr "Sair da conta"
