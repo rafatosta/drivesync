@@ -129,6 +129,7 @@ pub(super) fn populate(
         actions.install(&content);
         let sidebar_menu = actions.menu();
         sidebar_menu.set_widget_name("sidebar-account-menu");
+        sidebar_menu.add_css_class("flat");
         user.add_suffix(&sidebar_menu);
         let menu = actions.menu();
         menu.set_widget_name("dashboard-account-menu");
