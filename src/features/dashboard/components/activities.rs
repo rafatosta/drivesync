@@ -19,6 +19,8 @@ pub(in crate::features::dashboard) struct Activities {
 impl Activities {
     pub fn new(engine: Arc<DriveSyncEngine>, accounts: &[RestoredAccount]) -> Self {
         let root = adw::BreakpointBin::new();
+        root.set_width_request(320);
+        root.set_height_request(320);
         root.set_widget_name("activities-page");
         let split = adw::NavigationSplitView::builder()
             .min_sidebar_width(280.0)
