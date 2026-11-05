@@ -7,11 +7,12 @@ use rustix::fs::{self, Mode, OFlags, RenameFlags, ResolveFlags, CWD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
+    cell::Cell,
     collections::HashSet,
     fs::File,
     io::{self, Read, Seek, Write},
     path::Path,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const FILES: &str = "https://www.googleapis.com/drive/v3/files";
@@ -27,6 +28,15 @@ pub struct InitialDownload {
     pub files: usize,
     pub directories: usize,
     pub already_registered: usize,
+}
+
+/// Progress for one real file download. Completion means the identity was saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadProgress {
+    Started { total: u64 },
+    Receiving { received: u64, total: u64 },
+    Completed,
+    Failed,
 }
 
 #[derive(Deserialize, PartialEq, Eq)]
@@ -142,6 +152,7 @@ pub(crate) fn run(
     token: &str,
     folder: &FolderConfiguration,
     scope: &LocalScope,
+    notify: &dyn Fn(&Path, DownloadProgress),
 ) -> Result<InitialDownload, EngineError> {
     let directory = fs::openat2(
         CWD,
@@ -169,6 +180,7 @@ pub(crate) fn run(
     }
     let mut job = Job {
         token,
+        notify,
         scope,
         store,
         root: directory.into(),
@@ -199,6 +211,7 @@ pub(crate) fn run(
 
 struct Job<'a> {
     token: &'a str,
+    notify: &'a dyn Fn(&Path, DownloadProgress),
     scope: &'a LocalScope,
     store: LocalStateStore,
     root: File,
@@ -226,6 +239,12 @@ impl Job<'_> {
             let directory = self.open_directory(path)?;
             let conflict = || EngineError::DownloadConflictAt(child.clone());
             let pending = PendingFile::new(&entry, &directory);
+            let notify = self.notify;
+            let transfer = Transfer {
+                notify,
+                path: child.strip_prefix(".").unwrap_or(&child),
+                active: Cell::new(false),
+            };
             let item = self
                 .register(&entry, Some(id), kind, || {
                     if kind == LocalItemKind::Directory {
@@ -235,7 +254,7 @@ impl Job<'_> {
                             .sync_all()
                             .map_err(|_| EngineError::DownloadLocal)?;
                     } else {
-                        pending.install(self.token)?;
+                        pending.install(self.token, |progress| transfer.emit(progress))?;
                     }
                     Ok(())
                 })
@@ -268,6 +287,7 @@ impl Job<'_> {
                 self.walk(&entry.id, &item, &child, depth + 1)?;
             } else {
                 pending.clear()?;
+                transfer.complete();
             }
         }
         Ok(())
@@ -356,6 +376,33 @@ fn local_error(error: rustix::io::Errno) -> EngineError {
     }
 }
 
+struct Transfer<'a> {
+    notify: &'a dyn Fn(&Path, DownloadProgress),
+    path: &'a Path,
+    active: Cell<bool>,
+}
+
+impl Transfer<'_> {
+    fn emit(&self, progress: DownloadProgress) {
+        self.active.set(true);
+        (self.notify)(self.path, progress);
+    }
+
+    fn complete(&self) {
+        if self.active.replace(false) {
+            (self.notify)(self.path, DownloadProgress::Completed);
+        }
+    }
+}
+
+impl Drop for Transfer<'_> {
+    fn drop(&mut self) {
+        if self.active.get() {
+            (self.notify)(self.path, DownloadProgress::Failed);
+        }
+    }
+}
+
 /// A verified staged file and its digest survive until the identity commits.
 struct PendingFile<'a> {
     entry: &'a Entry,
@@ -376,7 +423,7 @@ impl<'a> PendingFile<'a> {
         }
     }
 
-    fn install(&self, token: &str) -> Result<(), EngineError> {
+    fn install(&self, token: &str, notify: impl Fn(DownloadProgress)) -> Result<(), EngineError> {
         let target = self.stat(&self.entry.name)?;
         let staged = self.stat(&self.staged)?;
         if let Some(target) = target {
@@ -389,7 +436,7 @@ impl<'a> PendingFile<'a> {
             self.verify()?;
         } else {
             if staged.is_none() {
-                download_file(token, self)?;
+                download_file(token, self, notify)?;
             }
             self.verify()?;
             fs::linkat(
@@ -474,7 +521,41 @@ fn checksum(mut input: impl Read) -> Result<[u8; 32], EngineError> {
     Ok(digest.finalize().into())
 }
 
-fn download_file(token: &str, pending: &PendingFile<'_>) -> Result<(), EngineError> {
+fn copy_with_progress(
+    mut input: impl Read,
+    mut output: impl Write,
+    total: u64,
+    notify: impl Fn(DownloadProgress),
+) -> Result<u64, EngineError> {
+    let mut buffer = [0; 64 * 1024];
+    let mut received = 0;
+    let mut last_update = Instant::now();
+    loop {
+        let count = match input.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result.map_err(|_| EngineError::Authentication(crate::AuthError::Network))?,
+        };
+        if count == 0 {
+            return Ok(received);
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|_| EngineError::DownloadLocal)?;
+        received += count as u64;
+        if received <= total
+            && (received == total || last_update.elapsed() >= Duration::from_millis(100))
+        {
+            notify(DownloadProgress::Receiving { received, total });
+            last_update = Instant::now();
+        }
+    }
+}
+
+fn download_file(
+    token: &str,
+    pending: &PendingFile<'_>,
+    notify: impl Fn(DownloadProgress),
+) -> Result<(), EngineError> {
     let entry = pending.entry;
     let directory = pending.directory;
     let size = entry
@@ -483,6 +564,7 @@ fn download_file(token: &str, pending: &PendingFile<'_>) -> Result<(), EngineErr
         .and_then(|s| s.parse::<u64>().ok())
         .and_then(|size| size.checked_add(1))
         .ok_or(EngineError::DownloadIncomplete)?;
+    notify(DownloadProgress::Started { total: size - 1 });
     let response = remote::stream(
         token,
         &format!("{FILES}/{}", entry.id),
@@ -506,8 +588,7 @@ fn download_file(token: &str, pending: &PendingFile<'_>) -> Result<(), EngineErr
         .map_err(local_error)?,
     );
     let result = (|| {
-        let copied = io::copy(&mut response.take(size), &mut file)
-            .map_err(|_| EngineError::DownloadLocal)?;
+        let copied = copy_with_progress(response.take(size), &mut file, size - 1, notify)?;
         if copied != size - 1 || metadata(token, &entry.id)? != *entry {
             return Err(EngineError::DownloadIncomplete);
         }
@@ -553,6 +634,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn download_progress_counts_written_bytes_without_marking_installation_complete() {
+        let input = b"download body";
+        let updates = std::cell::RefCell::new(Vec::new());
+        let mut destination = Vec::new();
+        let total = input.len() as u64;
+        let copied = copy_with_progress(&input[..], &mut destination, total, |progress| {
+            updates.borrow_mut().push(progress);
+        })
+        .unwrap();
+        assert_eq!(copied, total);
+        assert_eq!(destination, input);
+        assert_eq!(
+            updates.into_inner(),
+            [DownloadProgress::Receiving {
+                received: total,
+                total
+            }]
+        );
+    }
+
+    #[test]
     fn remote_names_cannot_escape_or_collide_with_staging() {
         for name in [
             "",
@@ -590,15 +692,23 @@ mod tests {
 
         let target = path.join(&entry.name);
         std::fs::write(&target, b"data").unwrap();
-        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(
+            pending.install("", |_| {}),
+            Err(EngineError::DownloadConflict)
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"data");
         std::fs::remove_file(&target).unwrap();
 
-        pending.install("").unwrap();
+        pending.install("", |_| {}).unwrap();
         // Simulate restart before committing the identity.
-        PendingFile::new(&entry, &directory).install("").unwrap();
+        PendingFile::new(&entry, &directory)
+            .install("", |_| {})
+            .unwrap();
         std::fs::write(&target, b"edit").unwrap();
-        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(
+            pending.install("", |_| {}),
+            Err(EngineError::DownloadConflict)
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"edit");
         std::fs::remove_dir_all(path).unwrap();
     }
@@ -614,6 +724,7 @@ mod tests {
         let scope = LocalScope::new("client", "account", &destination).unwrap();
         let mut job = Job {
             token: "",
+            notify: &|_, _| {},
             scope: &scope,
             store: LocalStateStore::open(&state).unwrap(),
             root: File::open(&destination).unwrap(),

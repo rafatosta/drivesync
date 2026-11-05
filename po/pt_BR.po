@@ -333,3 +333,24 @@ msgstr "Algumas atividades não puderam ser salvas no histórico."
 
 msgid "Removed from the local folder"
 msgstr "Removido da pasta local"
+
+msgid "Transfers"
+msgstr "Transferências"
+
+msgid "No downloads in this session."
+msgstr "Nenhum download nesta sessão."
+
+msgid "Starting download…"
+msgstr "Iniciando download…"
+
+msgid "Verifying download…"
+msgstr "Verificando download…"
+
+msgid "Downloading"
+msgstr "Baixando"
+
+msgid "Download completed"
+msgstr "Download concluído"
+
+msgid "Download failed"
+msgstr "Falha no download"

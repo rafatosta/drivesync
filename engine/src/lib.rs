@@ -17,7 +17,7 @@ mod remote_detector;
 pub use activity_history::{ActivityHistory, ActivityPage, ActivityRecord};
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
-pub use download::InitialDownload;
+pub use download::{DownloadProgress, InitialDownload};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{

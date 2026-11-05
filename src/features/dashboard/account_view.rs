@@ -11,8 +11,12 @@ pub(super) fn populate(
     toasts: &adw::ToastOverlay,
     list: &gtk::ListBox,
     details: &gtk::Stack,
-    activities: &super::components::activities::Activities,
+    services: (
+        &super::components::activities::Activities,
+        &super::components::transfers::TransferFeed,
+    ),
 ) -> std::rc::Rc<crate::features::preferences::Accounts> {
+    let (activities, transfers) = services;
     let mut settings = vec![];
     let mut menus = vec![];
     for saved in accounts {
@@ -79,7 +83,7 @@ pub(super) fn populate(
         );
         let restart = history.restart_callback();
         let (download, refresh_download) =
-            super::components::initial_download::build(engine.clone(), &saved);
+            super::components::initial_download::build(engine.clone(), &saved, transfers.clone());
         folders.connect_saved(move || {
             restart();
             refresh_download();

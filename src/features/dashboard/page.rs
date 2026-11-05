@@ -46,6 +46,13 @@ pub fn build_selected(
         .build();
     activity_row.set_widget_name("sidebar-activities");
     activity_row.add_prefix(&gtk::Image::from_icon_name("view-list-symbolic"));
+    let transfers_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Transfers"))
+        .activatable(true)
+        .build();
+    transfers_row.set_widget_name("sidebar-transfers");
+    transfers_row.add_prefix(&gtk::Image::from_icon_name("folder-download-symbolic"));
+    activity_nav.append(&transfers_row);
     activity_nav.append(&activity_row);
     side_content.append(&activity_nav);
     side_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -117,21 +124,38 @@ pub fn build_selected(
     let initial = selected
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
-    use super::components::activities::{Activities, PAGE};
+    use super::components::{
+        activities::{Activities, PAGE},
+        transfers,
+    };
+    let feed = transfers::TransferFeed::default();
     let activities = Activities::new(engine.clone(), &accounts);
-    let preferences =
-        super::account_view::populate(engine, accounts, nav, toasts, &list, &details, &activities);
+    let preferences = super::account_view::populate(
+        engine,
+        accounts,
+        nav,
+        toasts,
+        &list,
+        &details,
+        (&activities, &feed),
+    );
     details.add_named(&activities.root, Some(PAGE));
+    details.add_named(&transfers::build(feed), Some(transfers::PAGE));
     let (weak_list, weak_details, weak_split) =
         (list.downgrade(), details.downgrade(), split.downgrade());
-    activity_nav.connect_row_activated(move |_, _| {
+    activity_nav.connect_row_activated(move |_, row| {
         if let (Some(list), Some(details), Some(split)) = (
             weak_list.upgrade(),
             weak_details.upgrade(),
             weak_split.upgrade(),
         ) {
             list.unselect_all();
-            details.set_visible_child_name(PAGE);
+            let destination = if row.index() == 0 {
+                transfers::PAGE
+            } else {
+                PAGE
+            };
+            details.set_visible_child_name(destination);
             split.set_show_content(true);
         }
     });
@@ -177,10 +201,10 @@ pub fn build_selected(
     let weak_content = content.downgrade();
     details.connect_visible_child_name_notify(move |details| {
         if let Some(content) = weak_content.upgrade() {
-            let title = if details.visible_child_name().as_deref() == Some(PAGE) {
-                gettextrs::gettext("Activities")
-            } else {
-                gettextrs::gettext("Account")
+            let title = match details.visible_child_name().as_deref() {
+                Some(PAGE) => gettextrs::gettext("Activities"),
+                Some(transfers::PAGE) => gettextrs::gettext("Transfers"),
+                _ => gettextrs::gettext("Account"),
             };
             content.set_title(&title);
         }

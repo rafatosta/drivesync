@@ -7,6 +7,7 @@ use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 pub(in crate::features::dashboard) fn build(
     engine: Arc<DriveSyncEngine>,
     saved: &RestoredAccount,
+    transfers: super::transfers::TransferFeed,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
     group.set_visible(saved.folder.is_some());
@@ -20,6 +21,11 @@ pub(in crate::features::dashboard) fn build(
     let busy = Rc::new(Cell::new(false));
     let configuration_changed = Rc::new(Cell::new(false));
     let account = saved.account.id.clone();
+    let label = saved
+        .account
+        .email
+        .clone()
+        .unwrap_or_else(|| account.0.clone());
     let weak_status = status.downgrade();
     let attempt = Rc::new(Cell::new(0_u64));
     let (running, changed) = (busy.clone(), configuration_changed.clone());
@@ -41,10 +47,13 @@ pub(in crate::features::dashboard) fn build(
         let hold = button.root().and_downcast::<gtk::ApplicationWindow>()
             .and_then(|window| window.application()).map(|app| app.hold());
         let (engine, account) = (engine.clone(), account.clone());
+        let (transfers, label) = (transfers.clone(), label.clone());
         let (button, status) = (button.downgrade(), status.downgrade());
         let (running, changed) = (running.clone(), changed.clone());
         crate::core::worker::work(
-            move || engine.initial_download(&account),
+            move || engine.initial_download_with_progress(&account, |path, progress| {
+                transfers.report(&account, &label, path, progress);
+            }),
             move |result| {
                 let _hold = hold;
                 running.set(false);

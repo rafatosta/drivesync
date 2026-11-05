@@ -7,3 +7,5 @@ pub(super) mod initial_download;
 pub(super) mod local_history;
 
 pub(super) mod activities;
+
+pub(super) mod transfers;
