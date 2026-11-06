@@ -100,7 +100,7 @@ pub(in crate::features::dashboard) fn build(
         let retry_factor = retry_factor.clone();
         let refresh_activities = refresh_activities.clone();
         let phase = Arc::new(std::sync::Mutex::new(None));
-        if is_periodic {
+        {
             let (phase, running, status, attempt) =
                 (phase.clone(), running.clone(), status.clone(), attempt.clone());
             gtk::glib::timeout_add_local(Duration::from_millis(150), move || {
@@ -121,16 +121,17 @@ pub(in crate::features::dashboard) fn build(
         crate::core::worker::work(
             move || {
                 let report = |path: &std::path::Path, progress| transfers.report(&account, &label, path, progress);
+                let report_phase = |progress: drivesync_engine::RemoteCheckProgress| {
+                    transfers.phase(&account, &label, Some(progress.clone()));
+                    if let Ok(mut phase) = phase.lock() {
+                        *phase = Some(progress);
+                    }
+                };
                 if is_periodic {
-                    transfers.phase(&account, &label, Some(drivesync_engine::RemoteCheckProgress::ReadingChanges));
-                    engine.poll_remote_downloads(&account, report, |progress| {
-                        transfers.phase(&account, &label, Some(progress.clone()));
-                        if let Ok(mut phase) = phase.lock() {
-                            *phase = Some(progress);
-                        }
-                    })
+                    report_phase(drivesync_engine::RemoteCheckProgress::ReadingChanges);
+                    engine.poll_remote_downloads(&account, report, report_phase)
                 } else {
-                    engine.initial_download_with_progress(&account, report).map(|report| (false, report.unsupported))
+                    engine.initial_download_with_progress(&account, report, report_phase).map(|report| (false, report.unsupported))
                 }
             },
             move |result| {
@@ -177,7 +178,7 @@ pub(in crate::features::dashboard) fn build(
                     })),
                     Err(error) => {
                         status.add_css_class("error");
-                        if matches!(error, EngineError::DownloadConflict | EngineError::DownloadConflictAt(_)) {
+                        if matches!(error, EngineError::DownloadConflict | EngineError::DownloadConflictAt(_) | EngineError::DownloadListingConflict(..)) {
                             status.set_label(&format!("{}\n{}", error, gettext("Resolve the conflict while keeping a copy of your files, then retry.")));
                             button.set_visible(true);
                         } else {

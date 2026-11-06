@@ -83,12 +83,13 @@ fn metadata(token: &str, id: &str) -> Result<Entry, EngineError> {
     serde_json::from_slice(&body).map_err(|_| EngineError::DownloadIncomplete)
 }
 
-fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
+fn children(token: &str, parent: &str, path: &Path) -> Result<Vec<Entry>, EngineError> {
     let query = format!("'{parent}' in parents and trashed = false");
     let fields = format!("nextPageToken,incompleteSearch,files({FIELDS})");
     let mut entries = Vec::new();
     let mut pages = HashSet::new();
     let mut names = HashSet::new();
+    let mut destinations = HashMap::new();
     let mut next = None;
     loop {
         let mut params = vec![
@@ -107,8 +108,37 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
             return Err(EngineError::DownloadIncomplete);
         }
         for entry in page.files {
-            if !entry.valid_child(parent) || !names.insert(entry.name.clone()) {
-                return Err(EngineError::DownloadConflict);
+            if !entry.valid_child(parent) {
+                return Err(EngineError::DownloadListingConflict(
+                    path.join(&entry.name),
+                    "Google Drive returned an item with an invalid name or inconsistent metadata"
+                        .into(),
+                ));
+            }
+            if !names.insert(entry.name.clone()) {
+                return Err(EngineError::DownloadListingConflict(
+                    path.join(&entry.name),
+                    "more than one Google Drive item has this name in the same folder".into(),
+                ));
+            }
+            let destination = if entry.is_workspace_link() && entry.name.len() <= 250 {
+                Some(format!("{}.html", entry.name))
+            } else if entry.kind().is_ok() {
+                Some(entry.name.clone())
+            } else {
+                None
+            };
+            if let Some(destination) = destination {
+                if let Some(previous) = destinations.insert(destination.clone(), entry.name.clone())
+                {
+                    return Err(EngineError::DownloadListingConflict(
+                        path.join(destination),
+                        format!(
+                            "Google Drive items {:?} and {:?} map to the same local name",
+                            previous, entry.name
+                        ),
+                    ));
+                }
             }
             entries.push(entry);
         }
@@ -227,8 +257,9 @@ pub(crate) fn run(
     folder: &FolderConfiguration,
     scope: &LocalScope,
     notify: &dyn Fn(&Path, DownloadProgress),
+    phase: &dyn Fn(crate::RemoteCheckProgress),
 ) -> Result<InitialDownload, EngineError> {
-    run_selected(token, folder, scope, notify, None)
+    run_selected(token, folder, scope, notify, phase, None)
 }
 
 pub(crate) fn run_selected(
@@ -236,6 +267,7 @@ pub(crate) fn run_selected(
     folder: &FolderConfiguration,
     scope: &LocalScope,
     notify: &dyn Fn(&Path, DownloadProgress),
+    phase: &dyn Fn(crate::RemoteCheckProgress),
     targets: Option<&HashSet<String>>,
 ) -> Result<InitialDownload, EngineError> {
     let directory = fs::openat2(
@@ -302,6 +334,7 @@ pub(crate) fn run_selected(
     let mut job = Job {
         token,
         notify,
+        phase,
         selected: paths.as_ref(),
         revisiting: completed && paths.is_none(),
         scope,
@@ -342,6 +375,7 @@ pub(crate) fn run_selected(
 struct Job<'a> {
     token: &'a str,
     notify: &'a dyn Fn(&Path, DownloadProgress),
+    phase: &'a dyn Fn(crate::RemoteCheckProgress),
     selected: Option<&'a HashSet<String>>,
     revisiting: bool,
     scope: &'a LocalScope,
@@ -362,7 +396,10 @@ impl Job<'_> {
         if depth >= 64 {
             return Err(EngineError::DownloadIncomplete);
         }
-        for entry in children(self.token, remote_id)? {
+        (self.phase)(crate::RemoteCheckProgress::ListingFolder(
+            path.display().to_string(),
+        ));
+        for entry in children(self.token, remote_id, path)? {
             if self.selected.is_some_and(|ids| !ids.contains(&entry.id)) {
                 continue;
             }
@@ -390,6 +427,9 @@ impl Job<'_> {
                 continue;
             }
             let child = path.join(&entry.name);
+            (self.phase)(crate::RemoteCheckProgress::CheckingItem(
+                child.display().to_string(),
+            ));
             let directory = self.open_directory(path)?;
             let conflict = || EngineError::DownloadConflictAt(child.clone());
             let relative = child.strip_prefix(".").unwrap_or(&child);
@@ -420,7 +460,10 @@ impl Job<'_> {
                     Ok(None)
                 })
                 .map_err(|error| match error {
-                    EngineError::DownloadConflict => conflict(),
+                    EngineError::DownloadConflict => EngineError::DownloadListingConflict(
+                        relative.into(),
+                        "the local destination or its saved identity conflicts with this Google Drive item".into(),
+                    ),
                     EngineError::DownloadIncomplete => {
                         EngineError::DownloadIncompleteAt(child.clone())
                     }
@@ -1936,6 +1979,7 @@ mod tests {
         let mut job = Job {
             token: "",
             notify: &|_, _| {},
+            phase: &|_| {},
             selected: None,
             revisiting: false,
             scope: &scope,

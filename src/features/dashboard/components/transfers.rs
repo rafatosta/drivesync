@@ -114,12 +114,17 @@ impl Update {
 pub(super) fn phase_label(phase: &RemoteCheckProgress) -> String {
     match phase {
         RemoteCheckProgress::ReadingChanges => gettext("Reading the Google Drive change log…"),
-        RemoteCheckProgress::ListingFolder(name) => {
+        RemoteCheckProgress::ListingFolder(name) | RemoteCheckProgress::CheckingItem(name) => {
             let name: String = name
                 .chars()
                 .filter(|character| !character.is_control())
                 .collect();
-            gettext("Checking folder: %s").replace("%s", &name)
+            let message = if matches!(phase, RemoteCheckProgress::CheckingItem(_)) {
+                "Checking item: %s"
+            } else {
+                "Checking folder: %s"
+            };
+            gettext(message).replace("%s", &name)
         }
         RemoteCheckProgress::ApplyingChanges => gettext("Applying changes to the local folder…"),
     }

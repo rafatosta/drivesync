@@ -245,6 +245,7 @@ impl Budget {
 pub enum RemoteCheckProgress {
     ReadingChanges,
     ListingFolder(String),
+    CheckingItem(String),
     ApplyingChanges,
 }
 

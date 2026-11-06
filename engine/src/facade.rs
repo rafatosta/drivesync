@@ -275,7 +275,7 @@ impl DriveSyncEngine {
     /// Returns provider, local I/O, identity or conflict errors. Items already
     /// installed remain on disk, even if their identity could not be saved.
     pub fn initial_download(&self, id: &AccountId) -> Result<crate::InitialDownload, EngineError> {
-        self.initial_download_with_progress(id, |_, _| {})
+        self.initial_download_with_progress(id, |_, _| {}, |_| {})
     }
 
     /// Resumes downloads and reports actual file transfers on the calling thread.
@@ -283,6 +283,7 @@ impl DriveSyncEngine {
         &self,
         id: &AccountId,
         notify: impl Fn(&std::path::Path, crate::DownloadProgress),
+        phase: impl Fn(crate::RemoteCheckProgress),
     ) -> Result<crate::InitialDownload, EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let folder = self
@@ -296,7 +297,7 @@ impl DriveSyncEngine {
         let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
             .map_err(|_| EngineError::InvalidFolder)?;
         self.auth.with_access_config(&config, id, |token| {
-            crate::download::run(token, &folder, &scope, &notify)
+            crate::download::run(token, &folder, &scope, &notify, &phase)
         })
     }
 
@@ -396,7 +397,14 @@ impl DriveSyncEngine {
             let additions = if targets.is_empty() {
                 Ok(crate::InitialDownload::default())
             } else {
-                crate::download::run_selected(token, &folder, &scope, &notify, Some(&targets))
+                crate::download::run_selected(
+                    token,
+                    &folder,
+                    &scope,
+                    &notify,
+                    &progress,
+                    Some(&targets),
+                )
             };
             let mut unresolved = false;
             for delivery in existing {
