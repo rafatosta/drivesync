@@ -88,18 +88,6 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
         detail.push_str(" · ");
         detail.push_str(&origin(record));
     }
-    let icon = if record.remote == Some(RemoteActivity::Added)
-        && notice.object_type == LocalItemKind::File
-    {
-        "folder-download-symbolic"
-    } else {
-        match notice.activity {
-            LocalActivity::Created | LocalActivity::MovedIn => "list-add-symbolic",
-            LocalActivity::Removed | LocalActivity::MovedOut => "edit-delete-symbolic",
-            LocalActivity::Moved { .. } => "go-jump-symbolic",
-            _ => "document-edit-symbolic",
-        }
-    };
     let row = adw::ActionRow::builder()
         .title(activity_title(record))
         .subtitle(&detail)
@@ -109,11 +97,47 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
         .build();
     row.set_subtitle_lines(2);
     row.set_tooltip_text(Some(&detail));
-    row.add_prefix(&gtk::Image::from_icon_name(icon));
+    row.add_prefix(&gtk::Image::from_icon_name(activity_icon(record)));
     let time = gtk::Label::new(Some(time));
     time.add_css_class("dim-label");
     row.add_suffix(&time);
     row
+}
+
+fn activity_icon(record: &ActivityRecord) -> &'static str {
+    let notice = &record.notice;
+    let create = if notice.object_type == LocalItemKind::Directory {
+        "folder-new-symbolic"
+    } else {
+        "document-new-symbolic"
+    };
+    if let Some(action) = record.remote {
+        return match action {
+            RemoteActivity::Added if notice.object_type == LocalItemKind::Directory => create,
+            RemoteActivity::Added => "folder-download-symbolic",
+            RemoteActivity::IntegrityFailed => "dialog-error-symbolic",
+            RemoteActivity::Removed => "user-trash-symbolic",
+            RemoteActivity::Renamed => "insert-text-symbolic",
+            RemoteActivity::Moved => "go-jump-symbolic",
+            RemoteActivity::Updated
+            | RemoteActivity::RenamedAndUpdated
+            | RemoteActivity::MovedAndUpdated => "document-edit-symbolic",
+        };
+    }
+    match &notice.activity {
+        LocalActivity::Created => create,
+        LocalActivity::Removed => "user-trash-symbolic",
+        LocalActivity::MovedIn => "go-next-symbolic",
+        LocalActivity::MovedOut => "go-previous-symbolic",
+        LocalActivity::Moved { from } if from.parent() == notice.path.parent() => {
+            "insert-text-symbolic"
+        }
+        LocalActivity::Moved { .. } => "go-jump-symbolic",
+        LocalActivity::Written => "document-edit-symbolic",
+        LocalActivity::ClosedAfterWrite => "document-save-symbolic",
+        LocalActivity::MetadataChanged => "document-properties-symbolic",
+        LocalActivity::Recheck(_) => "dialog-warning-symbolic",
+    }
 }
 
 pub(super) fn origin(record: &ActivityRecord) -> String {
