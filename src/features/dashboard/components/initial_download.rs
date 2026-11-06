@@ -24,7 +24,11 @@ pub(in crate::features::dashboard) fn build(
         .css_classes(["heading"])
         .build();
     group.append(&initial_state);
-    let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
+    let status = gtk::Label::builder()
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .xalign(0.0)
+        .build();
     group.append(&status);
     let unsupported = gtk::Label::builder()
         .label(gettext(

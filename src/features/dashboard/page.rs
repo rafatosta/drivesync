@@ -78,7 +78,7 @@ pub fn build_selected(
         .build();
     list.set_widget_name("account-list");
     let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vexpand(true)
         .child(&list)
         .build();
@@ -127,6 +127,7 @@ pub fn build_selected(
     toolbar.add_top_bar(&header);
     let details = gtk::Stack::new();
     details.set_widget_name("account-details");
+    details.set_hhomogeneous(false);
     let ids: Vec<_> = accounts.iter().map(|a| a.account.id.0.clone()).collect();
     let initial = selected
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
