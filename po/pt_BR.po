@@ -414,3 +414,6 @@ msgstr "Movido e atualizado"
 
 msgid "Applying changes to the local folder…"
 msgstr "Aplicando alterações na pasta local…"
+
+msgid "Sync now"
+msgstr "Sincronizar agora"

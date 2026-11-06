@@ -14,6 +14,7 @@ pub(in crate::features::dashboard) fn build(
     saved: &RestoredAccount,
     transfers: super::transfers::TransferFeed,
     refresh_activities: impl Fn() + 'static,
+    sync: &gtk::Button,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
     group.set_visible(saved.folder.is_some());
@@ -36,6 +37,16 @@ pub(in crate::features::dashboard) fn build(
     let attempt = Rc::new(Cell::new(0_u64));
     let periodic = Rc::new(Cell::new(false));
     let enabled = Rc::new(Cell::new(saved.folder.is_some() && saved.error.is_none()));
+    sync.set_sensitive(enabled.get());
+    let (retry, ready, running) = (button.downgrade(), enabled.clone(), busy.clone());
+    sync.connect_clicked(move |_| {
+        if ready.get() && !running.get() {
+            if let Some(retry) = retry.upgrade() {
+                retry.emit_clicked();
+            }
+        }
+    });
+    let sync_button = sync.downgrade();
     let last_check = Rc::new(Cell::new(Instant::now()));
     let backoff = Rc::new(Cell::new(1_u64));
     let retry_factor = backoff.clone();
@@ -49,6 +60,10 @@ pub(in crate::features::dashboard) fn build(
         if running.replace(true) {
             return;
         }
+        if let Some(sync) = sync_button.upgrade() {
+            sync.set_sensitive(false);
+        }
+        let sync_button = sync_button.clone();
         changed.set(false);
         let is_periodic = check_remote.get();
         checked_at.set(Instant::now());
@@ -124,6 +139,9 @@ pub(in crate::features::dashboard) fn build(
                     check_remote.set(true);
                     button.emit_clicked();
                     return;
+                }
+                if let Some(sync) = sync_button.upgrade() {
+                    sync.set_sensitive(true);
                 }
                 match result {
                     Ok(unresolved) => status.set_label(&gettext(if unresolved {

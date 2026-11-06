@@ -82,11 +82,17 @@ pub(super) fn populate(
             activities.receiver(),
         );
         let restart = history.restart_callback();
+        let sync = gtk::Button::from_icon_name("view-refresh-symbolic");
+        sync.set_widget_name("sync-account-now");
+        sync.set_valign(gtk::Align::Center);
+        sync.set_tooltip_text(Some(&gettextrs::gettext("Sync now")));
+        heading.widget().append(&sync);
         let (download, refresh_download) = super::components::initial_download::build(
             engine.clone(),
             &saved,
             transfers.clone(),
             activities.refresh_callback(),
+            &sync,
         );
         folders.connect_saved(move || {
             restart();
