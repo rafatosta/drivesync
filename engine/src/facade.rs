@@ -5,6 +5,21 @@ use crate::{
     FolderConfiguration, FolderPage, RemoteDelivery, RestoredAccount,
 };
 
+use std::{collections::HashMap, sync::Mutex};
+
+struct ActiveSync<'a> {
+    jobs: &'a Mutex<HashMap<AccountId, Cancellation>>,
+    id: &'a AccountId,
+}
+
+impl Drop for ActiveSync<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut jobs) = self.jobs.lock() {
+            jobs.remove(self.id);
+        }
+    }
+}
+
 /// Coordinates account and folder operations without exposing credentials.
 ///
 /// Blocking operations must run outside the GTK main thread.
@@ -12,12 +27,41 @@ use crate::{
 pub struct DriveSyncEngine {
     auth: auth::AuthProvider,
     accounts: accounts::Accounts,
+    sync_jobs: Mutex<HashMap<AccountId, Cancellation>>,
 }
 
 impl DriveSyncEngine {
     /// Constructs the engine using the platform's default adapters.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn syncing(&self, id: &AccountId) -> bool {
+        self.sync_jobs
+            .lock()
+            .is_ok_and(|jobs| jobs.contains_key(id))
+    }
+
+    fn start_sync<'a>(
+        &'a self,
+        id: &'a AccountId,
+    ) -> Result<(ActiveSync<'a>, Cancellation), EngineError> {
+        let mut jobs = self
+            .sync_jobs
+            .lock()
+            .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let std::collections::hash_map::Entry::Vacant(slot) = jobs.entry(id.clone()) else {
+            return Err(EngineError::DownloadBusy);
+        };
+        let cancel = Cancellation::new();
+        slot.insert(cancel.clone());
+        Ok((
+            ActiveSync {
+                jobs: &self.sync_jobs,
+                id,
+            },
+            cancel,
+        ))
     }
 
     /// Starts OAuth authorization and records the verified account.
@@ -115,6 +159,9 @@ impl DriveSyncEngine {
             .list(&config.client_id)
             .map_err(EngineError::Authentication)?
         {
+            if self.syncing(&profile.id) {
+                continue;
+            }
             self.auth
                 .prune_if_missing(&config, &profile.id, || {
                     self.accounts.forget(&config.client_id, &profile.id)
@@ -141,25 +188,37 @@ impl DriveSyncEngine {
             .map_err(EngineError::Authentication)?;
         Ok(profiles
             .into_iter()
-            .map(|cached| match verify(&cached.id) {
-                Ok(account) if account.id == cached.id => {
-                    let error = self.accounts.record(client, account.clone()).err();
-                    RestoredAccount {
-                        folder: folders.iter().find(|f| f.account_id == account.id).cloned(),
-                        account,
-                        error,
+            .map(|cached| {
+                match if self.syncing(&cached.id) {
+                    // The active operation already uses this account's credentials.
+                    // Rebuilding navigation must not wait on its transfer lock.
+                    return RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: None,
+                    };
+                } else {
+                    verify(&cached.id)
+                } {
+                    Ok(account) if account.id == cached.id => {
+                        let error = self.accounts.record(client, account.clone()).err();
+                        RestoredAccount {
+                            folder: folders.iter().find(|f| f.account_id == account.id).cloned(),
+                            account,
+                            error,
+                        }
                     }
+                    Ok(_) => RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: Some(AuthError::IdentityMismatch),
+                    },
+                    Err(error) => RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: Some(error),
+                    },
                 }
-                Ok(_) => RestoredAccount {
-                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
-                    account: cached,
-                    error: Some(AuthError::IdentityMismatch),
-                },
-                Err(error) => RestoredAccount {
-                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
-                    account: cached,
-                    error: Some(error),
-                },
             })
             .collect())
     }
@@ -296,8 +355,12 @@ impl DriveSyncEngine {
         let root = configuration::observation_root(&folder.local, &folder.local_display)?;
         let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
             .map_err(|_| EngineError::InvalidFolder)?;
-        self.auth.with_access_config(&config, id, |token| {
-            crate::download::run(token, &folder, &scope, &notify, &phase)
+        let (_job, cancel) = self.start_sync(id)?;
+        remote::with_cancellation(cancel, || {
+            self.auth.with_access_config(&config, id, |token| {
+                remote::check_cancelled()?;
+                crate::download::run(token, &folder, &scope, &notify, &phase)
+            })
         })
     }
 
@@ -318,7 +381,10 @@ impl DriveSyncEngine {
             .into_iter()
             .find(|folder| &folder.account_id == id)
             .ok_or(EngineError::InvalidFolder)?;
-        self.auth.with_access_config(&config, id, |token| {
+        let (_job, cancel) = self.start_sync(id)?;
+        remote::with_cancellation(cancel, || {
+            self.auth.with_access_config(&config, id, |token| {
+            remote::check_cancelled()?;
             let provider = remote_detector::GoogleDrive::new(token);
             let corpus = remote_detector::configured_corpus(
                 &provider,
@@ -408,6 +474,7 @@ impl DriveSyncEngine {
             };
             let mut unresolved = false;
             for delivery in existing {
+                remote::check_cancelled()?;
                 let event = &delivery.event;
                 match crate::download::reconcile_item(token, &folder, &scope, event, &notify) {
                     Ok(true) => acknowledge.push(delivery.id),
@@ -428,6 +495,7 @@ impl DriveSyncEngine {
             )
             .map_err(map_detection_error)?;
             Ok((unresolved, report.unsupported))
+        })
         })
     }
 
@@ -543,6 +611,11 @@ impl DriveSyncEngine {
     ///
     /// Returns configuration, credential-vault, locking or account-storage errors.
     pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
+        if let Ok(jobs) = self.sync_jobs.lock() {
+            if let Some(cancel) = jobs.get(id) {
+                cancel.cancel();
+            }
+        }
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         self.auth
             .sign_out_then(&config, id, || self.accounts.forget(&config.client_id, id))

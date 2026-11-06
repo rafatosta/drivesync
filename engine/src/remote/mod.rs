@@ -13,7 +13,9 @@ mod errors;
 mod folders;
 mod models;
 
-pub(crate) use client::{get_with_range as stream, request, request_status};
+pub(crate) use client::{
+    check_cancelled, get_with_range as stream, request, request_status, with_cancellation,
+};
 pub(crate) use errors::response_status;
 pub(crate) use folders::{get, list};
 pub use models::FolderPage;

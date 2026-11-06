@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// Builds a sign-out action requiring explicit user confirmation.
 ///
 /// Runs the engine logout on a worker thread, temporarily disabling
-/// navigation and refreshing the saved-account state on success.
+/// the account action and refreshing the saved-account state on success.
 pub fn sign_out_button(
     engine: Arc<DriveSyncEngine>,
     id: AccountId,
@@ -26,16 +26,18 @@ pub fn sign_out_button(
         dialog.add_responses(&[("cancel", "Cancel"), ("sign-out", "Sign Out")]);
         dialog.set_response_appearance("sign-out", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel")); dialog.set_close_response("cancel");
+        let weak_button = button.downgrade();
         let engine = engine.clone(); let id = id.clone();
         let weak_nav = weak_nav.clone(); let weak_toasts = weak_toasts.clone();
         dialog.connect_response(None, move |_, response| {
             if response != "sign-out" { return; }
-            if let Some(nav) = weak_nav.upgrade() { nav.set_sensitive(false); }
+            if let Some(button) = weak_button.upgrade() { button.set_sensitive(false); }
+            let weak_button = weak_button.clone();
             let worker = engine.clone(); let id = id.clone();
             let weak_nav = weak_nav.clone(); let weak_toasts = weak_toasts.clone();
             crate::core::worker::work(move || worker.sign_out(&id), move |result| {
+                if let Some(button) = weak_button.upgrade() { button.set_sensitive(true); }
                 if let Some(nav) = weak_nav.upgrade() {
-                    nav.set_sensitive(true);
                     if let Some(toasts) = weak_toasts.upgrade() {
                         match result {
                             Ok(()) => {

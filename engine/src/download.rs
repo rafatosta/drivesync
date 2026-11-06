@@ -403,6 +403,7 @@ impl Job<'_> {
             }
         }
         for entry in entries {
+            remote::check_cancelled()?;
             if self.selected.is_some_and(|ids| !ids.contains(&entry.id)) {
                 continue;
             }
@@ -1570,10 +1571,12 @@ fn copy_with_progress(
     let mut received = 0;
     let mut last_update = Instant::now();
     loop {
+        remote::check_cancelled()?;
         let count = match input.read(&mut buffer) {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             result => result.map_err(|_| EngineError::Authentication(crate::AuthError::Network))?,
         };
+        remote::check_cancelled()?;
         if count == 0 {
             return Ok(received);
         }
