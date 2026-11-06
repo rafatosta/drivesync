@@ -3,6 +3,8 @@ use crate::{
     configuration::valid_id, remote, EngineError, FolderConfiguration, ItemId, ItemSnapshot,
     ItemState, LocalItemKind, LocalScope, LocalStateError, LocalStateStore,
 };
+mod resume;
+
 use rustix::fs::{self, Mode, OFlags, RenameFlags, ResolveFlags, CWD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -1417,89 +1419,66 @@ fn download_file(
     let size = entry
         .size
         .as_deref()
-        .and_then(|s| s.parse::<u64>().ok())
-        .and_then(|size| size.checked_add(1))
+        .and_then(|size| size.parse::<u64>().ok())
         .ok_or(EngineError::DownloadIncomplete)?;
-    notify(DownloadProgress::Started { total: size - 1 });
-    let response = remote::stream(
-        token,
-        &format!("{FILES}/{}", entry.id),
-        &[("alt", "media"), ("supportsAllDrives", "true")],
-        Duration::from_secs(600),
-    )?;
-    let status = response.status().as_u16();
-    if status != 200 {
-        remote::response_status(status, &[])?;
+    let mut partial = resume::PartialDownload::open(pending, size)?;
+    partial.receive(token, entry, &notify)?;
+    let current = metadata(token, &entry.id)?;
+    if !entry.same_download_version(&current) {
+        partial.invalidate()?;
         return Err(EngineError::DownloadIncomplete);
     }
-    let suffix = oauth2::CsrfToken::new_random();
-    let temporary = format!(".drivesync-download-{}", suffix.secret());
-    let mut file = File::from(
+    let file = &mut partial.file;
+    if let Some(time) = entry
+        .modified_time
+        .as_deref()
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+    {
+        file.set_times(std::fs::FileTimes::new().set_modified(time.into()))
+            .map_err(|_| EngineError::DownloadLocal)?;
+    }
+    file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
+    file.rewind().map_err(|_| EngineError::DownloadLocal)?;
+    let digest = checksum(&*file)?;
+    if entry
+        .sha256_checksum
+        .as_ref()
+        .or(current.sha256_checksum.as_ref())
+        .is_some_and(|expected| *expected != hex_digest(digest))
+    {
+        partial.invalidate()?;
+        return Err(EngineError::DownloadIncomplete);
+    }
+    // A proof without a ready file cannot authorize adopting a destination.
+    match fs::unlinkat(directory, pending.digest.as_str(), fs::AtFlags::empty()) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+        Err(error) => return Err(local_error(error)),
+    }
+    let mut proof = File::from(
         fs::openat(
             directory,
-            temporary.as_str(),
-            OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::CLOEXEC,
+            pending.digest.as_str(),
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
             Mode::RUSR | Mode::WUSR,
         )
         .map_err(local_error)?,
     );
-    let result = (|| {
-        let copied = copy_with_progress(response.take(size), &mut file, size - 1, notify)?;
-        let current = metadata(token, &entry.id)?;
-        if copied != size - 1 || !entry.same_download_version(&current) {
-            return Err(EngineError::DownloadIncomplete);
-        }
-        if let Some(time) = entry
-            .modified_time
-            .as_deref()
-            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
-        {
-            file.set_times(std::fs::FileTimes::new().set_modified(time.into()))
-                .map_err(|_| EngineError::DownloadLocal)?;
-        }
-        file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
-        file.rewind().map_err(|_| EngineError::DownloadLocal)?;
-        let digest = checksum(&file)?;
-        if entry
-            .sha256_checksum
-            .as_ref()
-            .or(current.sha256_checksum.as_ref())
-            .is_some_and(|expected| *expected != hex_digest(digest))
-        {
-            return Err(EngineError::DownloadIncomplete);
-        }
-        // A proof without a ready file cannot authorize adopting a destination.
-        match fs::unlinkat(directory, pending.digest.as_str(), fs::AtFlags::empty()) {
-            Ok(()) | Err(rustix::io::Errno::NOENT) => {}
-            Err(error) => return Err(local_error(error)),
-        }
-        let mut proof = File::from(
-            fs::openat(
-                directory,
-                pending.digest.as_str(),
-                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-                Mode::RUSR | Mode::WUSR,
-            )
-            .map_err(local_error)?,
-        );
-        proof
-            .write_all(&digest)
-            .and_then(|()| proof.sync_all())
-            .map_err(|_| EngineError::DownloadLocal)?;
-        fs::renameat_with(
-            directory,
-            temporary.as_str(),
-            directory,
-            pending.staged.as_str(),
-            RenameFlags::NOREPLACE,
-        )
-        .map_err(local_error)?;
-        directory.sync_all().map_err(|_| EngineError::DownloadLocal)
-    })();
-    if result.is_err() {
-        let _ = fs::unlinkat(directory, temporary.as_str(), fs::AtFlags::empty());
-    }
-    result
+    proof
+        .write_all(&digest)
+        .and_then(|()| proof.sync_all())
+        .map_err(|_| EngineError::DownloadLocal)?;
+    fs::renameat_with(
+        directory,
+        partial.path.as_str(),
+        directory,
+        pending.staged.as_str(),
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(local_error)?;
+    directory
+        .sync_all()
+        .map_err(|_| EngineError::DownloadLocal)?;
+    partial.clear_checkpoint()
 }
 
 #[cfg(test)]

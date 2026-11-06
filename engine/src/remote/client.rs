@@ -54,6 +54,16 @@ pub(crate) fn get(
     params: &[(&str, &str)],
     timeout: Duration,
 ) -> Result<reqwest::blocking::Response, EngineError> {
+    get_with_range(token, endpoint, params, timeout, None)
+}
+
+pub(crate) fn get_with_range(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+    timeout: Duration,
+    offset: Option<u64>,
+) -> Result<reqwest::blocking::Response, EngineError> {
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -61,10 +71,11 @@ pub(crate) fn get(
         .user_agent("DriveSync/0.1")
         .build()
         .map_err(|_| EngineError::Authentication(AuthError::Network))?;
-    client
-        .get(endpoint)
-        .bearer_auth(token)
-        .query(params)
+    let mut request = client.get(endpoint).bearer_auth(token).query(params);
+    if let Some(offset) = offset {
+        request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+    }
+    request
         .send()
         .map_err(|_| EngineError::Authentication(AuthError::Network))
 }
