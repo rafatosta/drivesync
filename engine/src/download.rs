@@ -128,17 +128,24 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
 }
 
 impl Entry {
-    fn workspace_editor(&self) -> Option<&'static str> {
-        match self.mime_type.as_str() {
-            "application/vnd.google-apps.document" => Some("document"),
-            "application/vnd.google-apps.spreadsheet" => Some("spreadsheets"),
-            "application/vnd.google-apps.presentation" => Some("presentation"),
-            _ => None,
-        }
+    fn is_workspace_link(&self) -> bool {
+        matches!(
+            self.mime_type.as_str(),
+            "application/vnd.google-apps.document"
+                | "application/vnd.google-apps.spreadsheet"
+                | "application/vnd.google-apps.presentation"
+                | "application/vnd.google-apps.drawing"
+                | "application/vnd.google-apps.form"
+                | "application/vnd.google-apps.map"
+                | "application/vnd.google-apps.site"
+                | "application/vnd.google-apps.script"
+                | "application/vnd.google-apps.vid"
+                | "application/vnd.google.colaboratory"
+        )
     }
 
     fn local_representation(mut self) -> Result<Self, EngineError> {
-        if self.workspace_editor().is_some() {
+        if self.is_workspace_link() {
             if !valid_name(&self.name) || self.name.len() > 250 || !valid_id(&self.id) {
                 return Err(EngineError::DownloadUnsupported);
             }
@@ -150,11 +157,20 @@ impl Entry {
     }
 
     fn workspace_html(&self) -> Option<String> {
-        let editor = self.workspace_editor()?;
-        if !valid_id(&self.id) {
+        if !self.is_workspace_link() || !valid_id(&self.id) {
             return None;
         }
-        let url = format!("https://docs.google.com/{editor}/d/{}/preview", self.id);
+        let editor = match self.mime_type.as_str() {
+            "application/vnd.google-apps.document" => Some("document"),
+            "application/vnd.google-apps.spreadsheet" => Some("spreadsheets"),
+            "application/vnd.google-apps.presentation" => Some("presentation"),
+            "application/vnd.google-apps.drawing" => Some("drawings"),
+            _ => None,
+        };
+        let url = match editor {
+            Some(editor) => format!("https://docs.google.com/{editor}/d/{}/preview", self.id),
+            None => format!("https://drive.google.com/file/d/{}/preview", self.id),
+        };
         Some(format!(
             "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open read-only preview in Google Drive</a></p>\n"
         ))
@@ -186,7 +202,7 @@ impl Entry {
         if self.mime_type == FOLDER {
             Ok(LocalItemKind::Directory)
         } else if (self.mime_type.starts_with("application/vnd.google-apps.")
-            && self.workspace_editor().is_none())
+            && !self.is_workspace_link())
             || self.size.is_none()
         {
             Err(EngineError::DownloadUnsupported)
@@ -719,7 +735,7 @@ pub(crate) fn reconcile_item(
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|date| date.to_utc());
     let require_newer =
-        entry.workspace_editor().is_none() && (content_changed || renamed && !entry.trashed);
+        !entry.is_workspace_link() && (content_changed || renamed && !entry.trashed);
     if require_newer && remote_time.is_none() {
         return Ok(false);
     }
@@ -1372,7 +1388,7 @@ impl<'a> PendingFile<'a> {
                 download_file(token, self, notify)?;
             }
             let digest = self.verify()?;
-            if self.entry.workspace_editor().is_some() {
+            if self.entry.is_workspace_link() {
                 let staged = self.open(&self.staged)?;
                 staged
                     .set_permissions(std::fs::Permissions::from_mode(0o444))
