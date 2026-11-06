@@ -32,6 +32,7 @@ pub struct InitialDownload {
     pub files: usize,
     pub directories: usize,
     pub already_registered: usize,
+    pub unsupported: usize,
 }
 
 /// Progress for one real file download. Completion means the identity was saved.
@@ -318,7 +319,14 @@ impl Job<'_> {
             if self.seen.len() >= 10_000 || !self.seen.insert(entry.id.clone()) {
                 return Err(EngineError::DownloadIncomplete);
             }
-            let kind = entry.kind()?;
+            let kind = match entry.kind() {
+                Ok(kind) => kind,
+                Err(EngineError::DownloadUnsupported) => {
+                    self.report.unsupported += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if self.revisiting && kind == LocalItemKind::Directory
                 && self.store.load(self.scope).map_err(EngineError::DownloadState)?
                     .iter().flat_map(|checkpoint| &checkpoint.items)
@@ -603,7 +611,7 @@ pub(crate) fn reconcile_item(
         || !valid_name(&entry.name)
         || (entry.trashed && (!entry.explicitly_trashed || entry.name.as_bytes() != snapshot.name))
         || entry.trashed != (remote.trashed == Some(true))
-        || entry.kind()? != snapshot.kind
+        || entry.kind().ok() != Some(snapshot.kind)
     {
         return Ok(false);
     }

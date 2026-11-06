@@ -20,6 +20,17 @@ pub(in crate::features::dashboard) fn build(
     group.set_visible(saved.folder.is_some());
     let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
     group.append(&status);
+    let unsupported = gtk::Label::builder()
+        .label(gettext(
+            "Some items were skipped because their formats are not supported.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .css_classes(["warning"])
+        .build();
+    group.append(&unsupported);
+    let weak_unsupported = unsupported.downgrade();
     let button = gtk::Button::with_label(&gettext("Retry after resolving the conflict"));
     button.set_halign(gtk::Align::Start);
     button.set_visible(false);
@@ -104,6 +115,7 @@ pub(in crate::features::dashboard) fn build(
                 gtk::glib::ControlFlow::Continue
             });
         }
+        let weak_unsupported = weak_unsupported.clone();
         let completion_feed = transfers.clone();
         let completion_account = account.clone();
         crate::core::worker::work(
@@ -118,7 +130,7 @@ pub(in crate::features::dashboard) fn build(
                         }
                     })
                 } else {
-                    engine.initial_download_with_progress(&account, report).map(|_| false)
+                    engine.initial_download_with_progress(&account, report).map(|report| (false, report.unsupported))
                 }
             },
             move |result| {
@@ -140,6 +152,13 @@ pub(in crate::features::dashboard) fn build(
                 } else {
                     retry_factor.set(1);
                 }
+                if let Ok((_, skipped)) = &result {
+                    if *skipped > 0 {
+                        if let Some(warning) = weak_unsupported.upgrade() {
+                            warning.set_visible(true);
+                        }
+                    }
+                }
                 if !is_periodic && result.is_ok() {
                     check_remote.set(true);
                     button.emit_clicked();
@@ -149,7 +168,7 @@ pub(in crate::features::dashboard) fn build(
                     sync.set_sensitive(true);
                 }
                 match result {
-                    Ok(unresolved) => status.set_label(&gettext(if unresolved {
+                    Ok((unresolved, _)) => status.set_label(&gettext(if unresolved {
                         "Remote changes are pending review."
                     } else if is_periodic {
                         "Remote check complete."
@@ -212,6 +231,7 @@ pub(in crate::features::dashboard) fn build(
     let on_saved = move || {
         if let (Some(group), Some(button)) = (weak_group.upgrade(), weak_button.upgrade()) {
             group.set_visible(true);
+            unsupported.set_visible(false);
             enabled.set(true);
             periodic.set(false);
             if busy.get() {

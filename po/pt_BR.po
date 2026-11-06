@@ -450,3 +450,6 @@ msgstr "Consultando o registro de alterações do Google Drive…"
 
 msgid "Checking folder: %s"
 msgstr "Conferindo a pasta %s"
+
+msgid "Some items were skipped because their formats are not supported."
+msgstr "Alguns itens foram ignorados porque seus formatos ainda não são suportados."

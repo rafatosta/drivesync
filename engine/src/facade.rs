@@ -307,7 +307,7 @@ impl DriveSyncEngine {
         id: &AccountId,
         notify: impl Fn(&std::path::Path, crate::DownloadProgress),
         progress: impl Fn(crate::RemoteCheckProgress),
-    ) -> Result<bool, EngineError> {
+    ) -> Result<(bool, usize), EngineError> {
         use crate::{DetectionCheck, RemoteEventKind, RemoteMembership};
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let folder = self
@@ -337,7 +337,7 @@ impl DriveSyncEngine {
             )
             .map_err(map_detection_error)?
             {
-                DetectionCheck::NoChanges => return Ok(false),
+                DetectionCheck::NoChanges => return Ok((false, 0)),
                 DetectionCheck::Initialized(events) | DetectionCheck::Changes(events) => events,
             };
             let latest: std::collections::HashMap<_, _> = events
@@ -410,7 +410,7 @@ impl DriveSyncEngine {
                     Err(error) => return Err(error),
                 }
             }
-            additions?;
+            let report = additions?;
             remote_detector::acknowledge_many(
                 &config.client_id,
                 id,
@@ -419,7 +419,7 @@ impl DriveSyncEngine {
                 &acknowledge,
             )
             .map_err(map_detection_error)?;
-            Ok(unresolved)
+            Ok((unresolved, report.unsupported))
         })
     }
 
