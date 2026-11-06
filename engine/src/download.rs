@@ -171,11 +171,11 @@ impl Entry {
             _ => None,
         };
         let url = match editor {
-            Some(editor) => format!("https://docs.google.com/{editor}/d/{}/preview", self.id),
-            None => format!("https://drive.google.com/file/d/{}/preview", self.id),
+            Some(editor) => format!("https://docs.google.com/{editor}/d/{}/edit", self.id),
+            None => format!("https://drive.google.com/open?id={}", self.id),
         };
         Some(format!(
-            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"0; url={url}\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open read-only preview in Google Drive</a></p>\n"
+            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"0; url={url}\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open in Google Drive</a></p>\n"
         ))
     }
 
@@ -602,7 +602,7 @@ impl Job<'_> {
             if let ItemState::Present(current) = &existing.observed {
                 snapshot.content_version = current.content_version.clone();
                 // Remote edits can change a native document's version while its
-                // generated preview link remains identical.
+                // generated link remains identical.
                 let unchanged_workspace_link = if let (Some(html), Some(pending), Some(digest)) =
                     (entry.workspace_html(), pending, current.content_version.as_ref())
                 {
@@ -1704,11 +1704,9 @@ mod tests {
         assert_eq!(entry.name, "Report.html");
         assert_eq!(renamed.name, "Renamed.html");
         let html = entry.workspace_html().unwrap();
-        let preview = "https://docs.google.com/document/d/document-id/preview";
-        assert!(html.contains(&format!(
-            r#"http-equiv="refresh" content="0; url={preview}""#
-        )));
-        assert!(html.contains(&format!(r#"href="{preview}""#)));
+        let url = "https://docs.google.com/document/d/document-id/edit";
+        assert!(html.contains(&format!(r#"http-equiv="refresh" content="0; url={url}""#)));
+        assert!(html.contains(&format!(r#"href="{url}""#)));
         assert_eq!(renamed.workspace_html().as_deref(), Some(html.as_str()));
 
         let suffix = oauth2::CsrfToken::new_random();
