@@ -578,7 +578,17 @@ impl Job<'_> {
             }
             if let ItemState::Present(current) = &existing.observed {
                 snapshot.content_version = current.content_version.clone();
-                if self.revisiting && kind == LocalItemKind::File {
+                // Remote edits can change a native document's version while its
+                // generated preview link remains identical.
+                let unchanged_workspace_link = if let (Some(html), Some(pending), Some(digest)) =
+                    (entry.workspace_html(), pending, current.content_version.as_ref())
+                {
+                    hex_digest(checksum(html.as_bytes())?) == *digest
+                        && verify_digest(pending, &entry.name, digest).is_ok()
+                } else {
+                    false
+                };
+                if (self.revisiting && kind == LocalItemKind::File) || unchanged_workspace_link {
                     snapshot.remote_version = current.remote_version.clone();
                 }
             }
