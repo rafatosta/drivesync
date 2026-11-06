@@ -13,6 +13,7 @@ pub(in crate::features::dashboard) const PAGE: &str = "transfers";
 const RECENT_LIMIT: usize = 200;
 const RATE_WINDOW: Duration = Duration::from_secs(3);
 type Key = (AccountId, PathBuf);
+type ConflictDetails = (String, String, String);
 
 #[derive(Clone, Default)]
 pub(in crate::features::dashboard) struct TransferFeed(Arc<Mutex<FeedState>>);
@@ -21,7 +22,7 @@ pub(in crate::features::dashboard) struct TransferFeed(Arc<Mutex<FeedState>>);
 struct FeedState {
     updates: VecDeque<Update>,
     dirty: bool,
-    conflicts: HashMap<Key, (String, String, String)>,
+    conflicts: HashMap<Key, ConflictDetails>,
     phases: HashMap<AccountId, (String, RemoteCheckProgress)>,
 }
 
@@ -35,18 +36,59 @@ struct Update {
 }
 
 impl TransferFeed {
+    pub fn load() -> Self {
+        let conflicts = std::fs::read(Self::conflicts_path())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<(Key, ConflictDetails)>>(&bytes).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        Self(Arc::new(Mutex::new(FeedState {
+            conflicts,
+            ..FeedState::default()
+        })))
+    }
+
+    fn conflicts_path() -> PathBuf {
+        gtk::glib::user_data_dir()
+            .join("drivesync")
+            .join("conflicts.json")
+    }
+
+    fn save_conflicts(conflicts: &HashMap<Key, ConflictDetails>) {
+        let path = Self::conflicts_path();
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let entries: Vec<_> = conflicts.iter().collect();
+            gtk::glib::file_set_contents(path, &serde_json::to_vec(&entries)?)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            gtk::glib::g_warning!("drivesync", "Could not save conflicts: {error}");
+        }
+    }
+
     pub fn clear_conflicts(&self, id: &AccountId) {
         if let Ok(mut state) = self.0.lock() {
+            let count = state.conflicts.len();
             state.conflicts.retain(|(account, _), _| account != id);
+            if count != state.conflicts.len() {
+                Self::save_conflicts(&state.conflicts);
+            }
         }
     }
 
     pub fn phase(&self, id: &AccountId, account: &str, phase: Option<RemoteCheckProgress>) {
         if let Ok(mut state) = self.0.lock() {
             if let Some(RemoteCheckProgress::Conflict(path, reason, folder)) = phase {
-                state
-                    .conflicts
-                    .insert((id.clone(), path), (account.into(), reason, folder));
+                let key = (id.clone(), path);
+                let details = (account.into(), reason, folder);
+                if state.conflicts.get(&key) != Some(&details) {
+                    state.conflicts.insert(key, details);
+                    Self::save_conflicts(&state.conflicts);
+                }
             } else if let Some(phase) = phase {
                 state.phases.insert(id.clone(), (account.into(), phase));
             } else {
@@ -302,7 +344,10 @@ impl TransferRow {
     }
 }
 
-pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> adw::BreakpointBin {
+pub(in crate::features::dashboard) fn build_conflicts(
+    feed: TransferFeed,
+    accounts: Vec<String>,
+) -> adw::BreakpointBin {
     let page = adw::BreakpointBin::new();
     page.set_width_request(320);
     page.set_height_request(320);
@@ -345,7 +390,7 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> adw
         gtk::LinkButton::with_label("", &gettext("Open folder in Google Drive (recommended)"));
     open.set_visible(false);
     details.append(&open);
-    let keep = gtk::Button::with_label(&gettext("Keep both with distinct local names"));
+    let keep = gtk::Button::with_label(&gettext("Rename through DriveSync"));
     keep.set_sensitive(false);
     keep.set_visible(false);
     keep.set_tooltip_text(Some(&gettext("This option is not available yet.")));
@@ -376,6 +421,7 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> adw
         let mut rows: Vec<_> = state
             .conflicts
             .iter()
+            .filter(|((id, _), _)| accounts.contains(&id.0))
             .map(|((_, path), (account, reason, folder))| {
                 (
                     account.clone(),

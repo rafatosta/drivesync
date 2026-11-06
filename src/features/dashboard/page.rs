@@ -135,7 +135,7 @@ pub fn build_selected(
         activities::{Activities, PAGE},
         transfers,
     };
-    let feed = transfers::TransferFeed::default();
+    let feed = transfers::TransferFeed::load();
     let activities = Activities::new(engine.clone(), &accounts);
     let preferences = super::account_view::populate(
         engine,
@@ -151,7 +151,10 @@ pub fn build_selected(
         &crate::ui::scroll(&transfers::build(feed.clone()), 760),
         Some(transfers::PAGE),
     );
-    details.add_named(&transfers::build_conflicts(feed), Some("conflicts"));
+    details.add_named(
+        &transfers::build_conflicts(feed, ids.clone()),
+        Some("conflicts"),
+    );
     let (weak_list, weak_details, weak_split) =
         (list.downgrade(), details.downgrade(), split.downgrade());
     activity_nav.connect_row_activated(move |_, row| {

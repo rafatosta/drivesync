@@ -136,14 +136,16 @@ pub(in crate::features::dashboard) fn build(
                         *phase = Some(progress);
                     }
                 };
-                transfers.clear_conflicts(&account);
                 if is_periodic {
                     report_phase(drivesync_engine::RemoteCheckProgress::ReadingChanges);
                     engine.poll_remote_downloads(&account, report, report_phase)
                 } else {
-                    engine
-                        .initial_download_with_progress(&account, report, report_phase)
-                        .map(|report| (false, report.unsupported))
+                    let result =
+                        engine.initial_download_with_progress(&account, report, report_phase);
+                    if result.is_ok() {
+                        transfers.clear_conflicts(&account);
+                    }
+                    result.map(|report| (false, report.unsupported))
                 }
             },
             move |result| {
@@ -174,8 +176,6 @@ pub(in crate::features::dashboard) fn build(
                 }
                 if !is_periodic && result.is_ok() {
                     check_remote.set(true);
-                    button.emit_clicked();
-                    return;
                 }
                 if let Some(sync) = sync_button.upgrade() {
                     sync.set_sensitive(true);
@@ -201,6 +201,7 @@ pub(in crate::features::dashboard) fn build(
                                 error,
                                 gettext("Review deferred items in Conflicts, then retry.")
                             ));
+                            check_remote.set(false);
                             button.set_visible(true);
                         } else {
                             status.set_label(&error.to_string());
@@ -230,12 +231,7 @@ pub(in crate::features::dashboard) fn build(
         });
     }
     let timer_button = button.downgrade();
-    let (running, ready, mode, last) = (
-        busy.clone(),
-        enabled.clone(),
-        periodic.clone(),
-        last_check.clone(),
-    );
+    let (running, ready, last) = (busy.clone(), enabled.clone(), last_check.clone());
     gtk::glib::timeout_add_local(Duration::from_secs(5), move || {
         let Some(button) = timer_button.upgrade() else {
             return gtk::glib::ControlFlow::Break;
@@ -244,7 +240,6 @@ pub(in crate::features::dashboard) fn build(
             let minutes = crate::features::preferences::Preferences::load().remote_check_minutes;
             if last.get().elapsed() >= Duration::from_secs(u64::from(minutes) * 60 * backoff.get())
             {
-                mode.set(true);
                 button.emit_clicked();
             }
         }
