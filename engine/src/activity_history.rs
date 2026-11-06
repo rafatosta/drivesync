@@ -179,7 +179,8 @@ impl ActivityHistory {
                 check_replacements |= matches!(
                     notice.remote,
                     Some(
-                        RemoteActivity::Renamed
+                        RemoteActivity::Added
+                            | RemoteActivity::Renamed
                             | RemoteActivity::RenamedAndUpdated
                             | RemoteActivity::Moved
                             | RemoteActivity::MovedAndUpdated
@@ -306,7 +307,8 @@ fn group_replacement_echoes(
         if !matches!(
             record.remote,
             Some(
-                RemoteActivity::Renamed
+                RemoteActivity::Added
+                    | RemoteActivity::Renamed
                     | RemoteActivity::RenamedAndUpdated
                     | RemoteActivity::Moved
                     | RemoteActivity::MovedAndUpdated
@@ -327,6 +329,7 @@ fn group_replacement_echoes(
             continue;
         }
         let (from, replacement) = match (&record.remote, &record.notice.activity) {
+            (Some(RemoteActivity::Added), LocalActivity::Created) => (&record.notice.path, false),
             (Some(RemoteActivity::Removed), LocalActivity::Removed) => (&record.notice.path, false),
             (Some(RemoteActivity::Updated), LocalActivity::Written) => (&record.notice.path, true),
             (
@@ -344,12 +347,20 @@ fn group_replacement_echoes(
             let mut matches = records.iter().filter(|(_, observed, candidate)| {
                 observed.abs_diff(*time) <= REPLACEMENT_WINDOW as u64
                     && candidate.remote.is_none()
+                    && (candidate.notice.object_type == record.notice.object_type
+                        || candidate.notice.object_type == crate::LocalItemKind::Unknown)
                     && candidate.notice.path == path
                     && candidate.notice.activity == activity
             });
             let first = matches.next()?.0;
             matches.next().is_none().then_some(first)
         };
+        if record.remote == Some(RemoteActivity::Added) {
+            if let Some(echo) = matching(&record.notice.path, LocalActivity::Created) {
+                pairs.push((*rename_id, echo, None));
+            }
+            continue;
+        }
         if record.notice.object_type == crate::LocalItemKind::Directory
             && matches!(
                 record.remote,
@@ -377,7 +388,11 @@ fn group_replacement_echoes(
     for &(operation, source, destination) in &pairs {
         if pairs
             .iter()
-            .filter(|(_, a, b)| *a == source || (destination.is_some() && *b == destination))
+            .filter(|(_, a, b)| {
+                *a == source
+                    || *b == Some(source)
+                    || destination.is_some_and(|id| *a == id || *b == Some(id))
+            })
             .count()
             == 1
         {
@@ -407,6 +422,59 @@ mod tests {
     use super::*;
     use crate::{LocalActivity, LocalCoverageGap, LocalItemKind, LocalScope, LocalWatchState};
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    #[test]
+    fn download_groups_its_creation_in_either_order_and_preserves_local_creation() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let directory = std::env::temp_dir().join(format!("drivesync-add-{}", suffix.secret()));
+        let mut history = ActivityHistory::open(&directory).unwrap();
+        let scope = LocalScope::new("client", "account", Path::new("/test")).unwrap();
+        let event = |name: &str, remote| StoredNotice {
+            notice: LocalNotice {
+                path: name.into(),
+                object_type: LocalItemKind::File,
+                activity: LocalActivity::Created,
+            },
+            remote,
+            root: b"/test".to_vec(),
+            integrity: None,
+        };
+        history
+            .append_notices(
+                &scope,
+                [
+                    event("first", None),
+                    event("second", Some(RemoteActivity::Added)),
+                    event("independent", None),
+                ],
+            )
+            .unwrap();
+        history
+            .append_notices(
+                &scope,
+                [
+                    event("first", Some(RemoteActivity::Added)),
+                    event("second", None),
+                ],
+            )
+            .unwrap();
+        let page = history
+            .page("client", &[AccountId("account".into())], None)
+            .unwrap();
+        assert_eq!(page.records.len(), 3);
+        assert_eq!(
+            page.records
+                .iter()
+                .filter(|record| record.remote == Some(RemoteActivity::Added))
+                .count(),
+            2
+        );
+        assert!(page.records.iter().any(
+            |record| record.remote.is_none() && record.notice.path == Path::new("independent")
+        ));
+        drop(history);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn confirmed_removal_groups_the_local_exit_without_hiding_independent_creation() {

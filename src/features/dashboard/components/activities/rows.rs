@@ -88,11 +88,17 @@ fn activity_row(record: &ActivityRecord, account: Option<&str>, time: &str) -> a
         detail.push_str(" · ");
         detail.push_str(&origin(record));
     }
-    let icon = match notice.activity {
-        LocalActivity::Created | LocalActivity::MovedIn => "list-add-symbolic",
-        LocalActivity::Removed | LocalActivity::MovedOut => "edit-delete-symbolic",
-        LocalActivity::Moved { .. } => "go-jump-symbolic",
-        _ => "document-edit-symbolic",
+    let icon = if record.remote == Some(RemoteActivity::Added)
+        && notice.object_type == LocalItemKind::File
+    {
+        "folder-download-symbolic"
+    } else {
+        match notice.activity {
+            LocalActivity::Created | LocalActivity::MovedIn => "list-add-symbolic",
+            LocalActivity::Removed | LocalActivity::MovedOut => "edit-delete-symbolic",
+            LocalActivity::Moved { .. } => "go-jump-symbolic",
+            _ => "document-edit-symbolic",
+        }
     };
     let row = adw::ActionRow::builder()
         .title(activity_title(record))
@@ -143,7 +149,9 @@ pub(super) fn activity_title(record: &ActivityRecord) -> String {
         return format!("{kind} · {action}");
     }
     let action = super::super::local_history::activity_label(notice).unwrap_or_default();
-    if notice.activity == LocalActivity::Removed {
+    if notice.activity == LocalActivity::Created {
+        format!("{kind} · {}", gettext("Created locally"))
+    } else if notice.activity == LocalActivity::Removed {
         format!("{kind} · {}", gettext("Removed from the local folder"))
     } else {
         format!("{kind} · {action}")

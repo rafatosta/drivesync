@@ -441,3 +441,6 @@ msgstr "Assinatura remota indisponível para comparação"
 
 msgid "Download integrity"
 msgstr "Integridade do download"
+
+msgid "Created locally"
+msgstr "Criado localmente"
