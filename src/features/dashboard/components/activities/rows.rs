@@ -132,6 +132,7 @@ pub(super) fn activity_title(record: &ActivityRecord) -> String {
                 gettext("Created")
             }
             RemoteActivity::Added => gettext("Downloaded"),
+            RemoteActivity::IntegrityFailed => gettext("Download integrity check failed"),
             RemoteActivity::Renamed => gettext("Renamed"),
             RemoteActivity::Moved => gettext("Moved"),
             RemoteActivity::MovedAndUpdated => gettext("Moved and updated"),
@@ -178,6 +179,7 @@ mod tests {
             account: AccountId("test".into()),
             observed_at: date.to_unix(),
             remote: Some(RemoteActivity::Renamed),
+            integrity: None,
             notice: LocalNotice {
                 path: "new/report.pdf".into(),
                 object_type: LocalItemKind::File,

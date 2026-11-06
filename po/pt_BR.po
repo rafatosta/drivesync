@@ -417,3 +417,27 @@ msgstr "Aplicando alterações na pasta local…"
 
 msgid "Sync now"
 msgstr "Sincronizar agora"
+
+msgid "Download integrity check failed"
+msgstr "Falha na verificação de integridade do download"
+
+msgid "SHA-256 of downloaded bytes"
+msgstr "SHA-256 dos bytes baixados"
+
+msgid "Google Drive SHA-256"
+msgstr "SHA-256 do Google Drive"
+
+msgid "Unavailable"
+msgstr "Indisponível"
+
+msgid "Checksums match"
+msgstr "As assinaturas coincidem"
+
+msgid "Checksums differ"
+msgstr "As assinaturas divergem"
+
+msgid "Remote checksum unavailable for comparison"
+msgstr "Assinatura remota indisponível para comparação"
+
+msgid "Download integrity"
+msgstr "Integridade do download"

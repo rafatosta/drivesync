@@ -23,7 +23,15 @@ pub enum RemoteActivity {
     RenamedAndUpdated,
     Moved,
     MovedAndUpdated,
+    IntegrityFailed,
     Removed,
+}
+
+/// SHA-256 values captured while validating a download.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DownloadIntegrity {
+    pub local: String,
+    pub remote: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -34,6 +42,8 @@ struct StoredNotice {
     remote: Option<RemoteActivity>,
     #[serde(default)]
     root: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    integrity: Option<DownloadIntegrity>,
 }
 
 /// One observed local activity, ordered by the durable sequence number.
@@ -44,6 +54,7 @@ pub struct ActivityRecord {
     pub observed_at: i64,
     pub notice: LocalNotice,
     pub remote: Option<RemoteActivity>,
+    pub integrity: Option<DownloadIntegrity>,
 }
 
 /// One page and its cursor for older records, when available.
@@ -124,6 +135,7 @@ impl ActivityHistory {
                 notice: notice.clone(),
                 remote: None,
                 root: batch.scope.root().as_os_str().as_bytes().to_vec(),
+                integrity: None,
             });
         self.append_notices(&batch.scope, notices)
     }
@@ -132,12 +144,14 @@ impl ActivityHistory {
         scope: &crate::LocalScope,
         notice: LocalNotice,
         remote: RemoteActivity,
+        integrity: Option<DownloadIntegrity>,
     ) -> Result<(), LocalStateError> {
         Self::application()?.append_notices(
             scope,
             [StoredNotice {
                 notice,
                 remote: Some(remote),
+                integrity,
                 root: scope.root().as_os_str().as_bytes().to_vec(),
             }],
         )
@@ -236,6 +250,7 @@ impl ActivityHistory {
                 observed_at: row.get(2).map_err(storage)?,
                 notice: stored.notice,
                 remote: stored.remote,
+                integrity: stored.integrity,
             });
         }
         Ok(page)
@@ -407,6 +422,7 @@ mod tests {
             },
             remote,
             root: b"/test".to_vec(),
+            integrity: None,
         };
         history
             .append_notices(
@@ -442,6 +458,7 @@ mod tests {
             },
             remote,
             root: b"/test".to_vec(),
+            integrity: None,
         };
         history
             .append_notices(
@@ -478,6 +495,7 @@ mod tests {
             },
             remote,
             root: root.to_vec(),
+            integrity: None,
         };
         history
             .append_notices(
@@ -571,8 +589,12 @@ mod tests {
                 &batch("client", "second", 0).scope,
                 [StoredNotice {
                     notice: notice.clone(),
-                    remote: Some(RemoteActivity::Renamed),
+                    remote: Some(RemoteActivity::IntegrityFailed),
                     root: b"/test".to_vec(),
+                    integrity: Some(DownloadIntegrity {
+                        local: "local".into(),
+                        remote: Some("remote".into()),
+                    }),
                 }],
             )
             .unwrap();
@@ -585,7 +607,11 @@ mod tests {
             .page("client", &[first.clone(), second.clone()], None)
             .unwrap();
         assert_eq!(all.records[0].account, second);
-        assert_eq!(all.records[0].remote, Some(RemoteActivity::Renamed));
+        assert_eq!(all.records[0].remote, Some(RemoteActivity::IntegrityFailed));
+        let integrity = all.records[0].integrity.as_ref().unwrap();
+        assert_eq!(integrity.local, "local");
+        assert_eq!(integrity.remote.as_deref(), Some("remote"));
+        assert!(all.records[1].integrity.is_none());
         assert_eq!(all.records[1].remote, None);
         let page = store
             .page("client", std::slice::from_ref(&first), None)

@@ -14,7 +14,9 @@ mod models;
 mod remote;
 mod remote_detector;
 
-pub use activity_history::{ActivityHistory, ActivityPage, ActivityRecord, RemoteActivity};
+pub use activity_history::{
+    ActivityHistory, ActivityPage, ActivityRecord, DownloadIntegrity, RemoteActivity,
+};
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
 pub use download::{DownloadProgress, InitialDownload};

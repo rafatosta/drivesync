@@ -9,7 +9,7 @@ use rustix::fs::{self, Mode, OFlags, RenameFlags, ResolveFlags, CWD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     fs::File,
     io::{self, Read, Seek, Write},
@@ -331,7 +331,9 @@ impl Job<'_> {
             let child = path.join(&entry.name);
             let directory = self.open_directory(path)?;
             let conflict = || EngineError::DownloadConflictAt(child.clone());
-            let pending = PendingFile::new(&entry, &directory);
+            let relative = child.strip_prefix(".").unwrap_or(&child);
+            let pending = PendingFile::new(&entry, &directory).with_activity(self.scope, relative);
+            let mut integrity = None;
             let notify = self.notify;
             let transfer = Transfer {
                 notify,
@@ -349,9 +351,10 @@ impl Job<'_> {
                             .sync_all()
                             .map_err(|_| EngineError::DownloadLocal)?;
                     } else {
-                        return pending
-                            .install(self.token, |progress| transfer.emit(progress))
-                            .map(Some);
+                        let digest =
+                            pending.install(self.token, |progress| transfer.emit(progress))?;
+                        integrity = Some(pending.integrity(digest.clone()));
+                        return Ok(Some(digest));
                     }
                     Ok(None)
                 })
@@ -399,6 +402,7 @@ impl Job<'_> {
                         activity: crate::LocalActivity::Created,
                     },
                     crate::RemoteActivity::Added,
+                    integrity,
                 )
                 .map_err(EngineError::ActivityHistory)?;
             }
@@ -724,7 +728,8 @@ pub(crate) fn reconcile_item(
             .map_err(|_| EngineError::DownloadLocal)?
     };
     let source = PendingFile::new(&entry, &directory);
-    let pending = PendingFile::new(&entry, &destination_directory);
+    let pending =
+        PendingFile::new(&entry, &destination_directory).with_activity(scope, &destination);
     let backup = format!(
         ".drivesync-download-{:x}.backup",
         Sha256::digest(format!("{}\0{}\0{}", entry.id, old_version, old_name).as_bytes())
@@ -760,6 +765,7 @@ pub(crate) fn reconcile_item(
             return Err(EngineError::DownloadConflictAt(path.into()));
         }
     }
+    let mut integrity = None;
     let after = if entry.trashed {
         if pending.stat(old_name)?.is_some() {
             return Err(EngineError::DownloadConflictAt(path.into()));
@@ -767,7 +773,9 @@ pub(crate) fn reconcile_item(
         ItemState::Absent
     } else {
         let digest = if content_changed {
-            pending.install(token, |progress| transfer.emit(progress))?
+            let digest = pending.install(token, |progress| transfer.emit(progress))?;
+            integrity = Some(pending.integrity(digest.clone()));
+            digest
         } else {
             publish_rename(&source, &pending, &backup)?;
             old_digest.clone()
@@ -815,6 +823,7 @@ pub(crate) fn reconcile_item(
             activity,
         },
         action,
+        integrity,
     )
     .map_err(EngineError::ActivityHistory)?;
     pending.clear()?;
@@ -882,6 +891,7 @@ fn trash_directory(
             activity: crate::LocalActivity::Removed,
         },
         crate::RemoteActivity::Removed,
+        None,
     )
     .map_err(EngineError::ActivityHistory)?;
     Ok(true)
@@ -1064,6 +1074,7 @@ fn reconcile_directory(
         } else {
             crate::RemoteActivity::Moved
         },
+        None,
     )
     .map_err(EngineError::ActivityHistory)?;
     Ok(true)
@@ -1256,6 +1267,8 @@ struct PendingFile<'a> {
     directory: &'a File,
     staged: String,
     digest: String,
+    activity: Option<(&'a LocalScope, &'a Path)>,
+    remote_checksum: RefCell<Option<String>>,
 }
 
 impl<'a> PendingFile<'a> {
@@ -1264,9 +1277,23 @@ impl<'a> PendingFile<'a> {
             Sha256::digest(format!("{}\0{}\0{}", entry.id, entry.version, entry.name).as_bytes());
         Self {
             entry,
+            activity: None,
+            remote_checksum: RefCell::new(entry.sha256_checksum.clone()),
             directory,
             staged: format!(".drivesync-download-{key:x}.ready"),
             digest: format!(".drivesync-download-{key:x}.digest"),
+        }
+    }
+
+    fn with_activity(mut self, scope: &'a LocalScope, path: &'a Path) -> Self {
+        self.activity = Some((scope, path));
+        self
+    }
+
+    fn integrity(&self, local: String) -> crate::DownloadIntegrity {
+        crate::DownloadIntegrity {
+            local,
+            remote: self.remote_checksum.borrow().clone(),
         }
     }
 
@@ -1440,13 +1467,27 @@ fn download_file(
     file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
     file.rewind().map_err(|_| EngineError::DownloadLocal)?;
     let digest = checksum(&*file)?;
-    if entry
+    let expected = entry
         .sha256_checksum
         .as_ref()
-        .or(current.sha256_checksum.as_ref())
-        .is_some_and(|expected| *expected != hex_digest(digest))
-    {
+        .or(current.sha256_checksum.as_ref());
+    pending.remote_checksum.replace(expected.cloned());
+    let actual = hex_digest(digest);
+    if expected.is_some_and(|expected| expected != &actual) {
         partial.invalidate()?;
+        if let Some((scope, path)) = pending.activity {
+            crate::ActivityHistory::append_remote(
+                scope,
+                crate::LocalNotice {
+                    path: path.into(),
+                    object_type: LocalItemKind::File,
+                    activity: crate::LocalActivity::Written,
+                },
+                crate::RemoteActivity::IntegrityFailed,
+                Some(pending.integrity(actual)),
+            )
+            .map_err(EngineError::ActivityHistory)?;
+        }
         return Err(EngineError::DownloadIncomplete);
     }
     // A proof without a ready file cannot authorize adopting a destination.

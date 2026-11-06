@@ -75,6 +75,27 @@ impl Details {
         } else {
             Self::field(&fields, &gettext("Path"), &path_text(&record.notice.path));
         }
+        if let Some(integrity) = &record.integrity {
+            Self::field(
+                &fields,
+                &gettext("SHA-256 of downloaded bytes"),
+                &integrity.local,
+            );
+            Self::field(
+                &fields,
+                &gettext("Google Drive SHA-256"),
+                integrity
+                    .remote
+                    .as_deref()
+                    .unwrap_or(&gettext("Unavailable")),
+            );
+            let status = match integrity.remote.as_deref() {
+                Some(remote) if remote == integrity.local => gettext("Checksums match"),
+                Some(_) => gettext("Checksums differ"),
+                None => gettext("Remote checksum unavailable for comparison"),
+            };
+            Self::field(&fields, &gettext("Download integrity"), &status);
+        }
     }
 
     pub fn clear(&self) {
