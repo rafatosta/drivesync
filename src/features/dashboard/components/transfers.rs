@@ -21,6 +21,7 @@ pub(in crate::features::dashboard) struct TransferFeed(Arc<Mutex<FeedState>>);
 struct FeedState {
     updates: VecDeque<Update>,
     dirty: bool,
+    conflicts: HashMap<Key, (String, String)>,
     phases: HashMap<AccountId, (String, RemoteCheckProgress)>,
 }
 
@@ -34,9 +35,19 @@ struct Update {
 }
 
 impl TransferFeed {
+    pub fn clear_conflicts(&self, id: &AccountId) {
+        if let Ok(mut state) = self.0.lock() {
+            state.conflicts.retain(|(account, _), _| account != id);
+        }
+    }
+
     pub fn phase(&self, id: &AccountId, account: &str, phase: Option<RemoteCheckProgress>) {
         if let Ok(mut state) = self.0.lock() {
-            if let Some(phase) = phase {
+            if let Some(RemoteCheckProgress::Conflict(path, reason)) = phase {
+                state
+                    .conflicts
+                    .insert((id.clone(), path), (account.into(), reason));
+            } else if let Some(phase) = phase {
                 state.phases.insert(id.clone(), (account.into(), phase));
             } else {
                 state.phases.remove(id);
@@ -113,6 +124,7 @@ impl Update {
 
 pub(super) fn phase_label(phase: &RemoteCheckProgress) -> String {
     match phase {
+        RemoteCheckProgress::Conflict(_, _) => gettext("Conflict deferred for review."),
         RemoteCheckProgress::ReadingChanges => gettext("Reading the Google Drive change log…"),
         RemoteCheckProgress::ListingFolder(name) | RemoteCheckProgress::CheckingItem(name) => {
             let name: String = name
@@ -288,4 +300,49 @@ impl TransferRow {
             }
         }
     }
+}
+
+pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk::Box {
+    let root = crate::ui::content();
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.set_selection_mode(gtk::SelectionMode::None);
+    let empty = gtk::Label::new(Some(&gettext("No conflicts found.")));
+    root.append(&empty);
+    root.append(&list);
+    let (weak_list, weak_empty) = (list.downgrade(), empty.downgrade());
+    let mut previous = Vec::new();
+    gtk::glib::timeout_add_local(Duration::from_millis(300), move || {
+        let (Some(list), Some(empty)) = (weak_list.upgrade(), weak_empty.upgrade()) else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        let Ok(state) = feed.0.lock() else {
+            return gtk::glib::ControlFlow::Continue;
+        };
+        let mut rows: Vec<_> = state
+            .conflicts
+            .iter()
+            .map(|((_, path), (account, reason))| (account.clone(), path.clone(), reason.clone()))
+            .collect();
+        drop(state);
+        rows.sort();
+        if rows != previous {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            for (account, path, reason) in &rows {
+                let row = adw::ActionRow::builder()
+                    .use_markup(false)
+                    .title(path.to_string_lossy())
+                    .subtitle(format!("{account} · {reason}"))
+                    .build();
+                row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+                list.append(&row);
+            }
+            empty.set_visible(rows.is_empty());
+            previous = rows;
+        }
+        gtk::glib::ControlFlow::Continue
+    });
+    root
 }

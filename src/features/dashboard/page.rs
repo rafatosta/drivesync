@@ -54,6 +54,13 @@ pub fn build_selected(
     transfers_row.add_prefix(&gtk::Image::from_icon_name("folder-download-symbolic"));
     activity_nav.append(&transfers_row);
     activity_nav.append(&activity_row);
+    let conflicts_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Conflicts"))
+        .activatable(true)
+        .build();
+    conflicts_row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+    activity_nav.append(&conflicts_row);
+
     side_content.append(&activity_nav);
     side_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let count = gtk::Label::builder()
@@ -141,8 +148,12 @@ pub fn build_selected(
     );
     details.add_named(&activities.root, Some(PAGE));
     details.add_named(
-        &crate::ui::scroll(&transfers::build(feed), 760),
+        &crate::ui::scroll(&transfers::build(feed.clone()), 760),
         Some(transfers::PAGE),
+    );
+    details.add_named(
+        &crate::ui::scroll(&transfers::build_conflicts(feed), 760),
+        Some("conflicts"),
     );
     let (weak_list, weak_details, weak_split) =
         (list.downgrade(), details.downgrade(), split.downgrade());
@@ -153,10 +164,10 @@ pub fn build_selected(
             weak_split.upgrade(),
         ) {
             list.unselect_all();
-            let destination = if row.index() == 0 {
-                transfers::PAGE
-            } else {
-                PAGE
+            let destination = match row.index() {
+                0 => transfers::PAGE,
+                1 => PAGE,
+                _ => "conflicts",
             };
             details.set_visible_child_name(destination);
             split.set_show_content(true);
@@ -205,6 +216,7 @@ pub fn build_selected(
     details.connect_visible_child_name_notify(move |details| {
         if let Some(content) = weak_content.upgrade() {
             let title = match details.visible_child_name().as_deref() {
+                Some("conflicts") => gettextrs::gettext("Conflicts"),
                 Some(PAGE) => gettextrs::gettext("Activities"),
                 Some(transfers::PAGE) => gettextrs::gettext("Transfers"),
                 _ => gettextrs::gettext("Account"),

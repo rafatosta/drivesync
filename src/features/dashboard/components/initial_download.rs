@@ -89,8 +89,11 @@ pub(in crate::features::dashboard) fn build(
             "Checking initial download…"
         }));
 
-        let hold = button.root().and_downcast::<gtk::ApplicationWindow>()
-            .and_then(|window| window.application()).map(|app| app.hold());
+        let hold = button
+            .root()
+            .and_downcast::<gtk::ApplicationWindow>()
+            .and_then(|window| window.application())
+            .map(|app| app.hold());
         let (engine, account) = (engine.clone(), account.clone());
         let (transfers, label) = (transfers.clone(), label.clone());
         let (button, status) = (button.downgrade(), status.downgrade());
@@ -101,8 +104,12 @@ pub(in crate::features::dashboard) fn build(
         let refresh_activities = refresh_activities.clone();
         let phase = Arc::new(std::sync::Mutex::new(None));
         {
-            let (phase, running, status, attempt) =
-                (phase.clone(), running.clone(), status.clone(), attempt.clone());
+            let (phase, running, status, attempt) = (
+                phase.clone(),
+                running.clone(),
+                status.clone(),
+                attempt.clone(),
+            );
             gtk::glib::timeout_add_local(Duration::from_millis(150), move || {
                 if !running.get() || attempt.get() != current {
                     return gtk::glib::ControlFlow::Break;
@@ -120,18 +127,23 @@ pub(in crate::features::dashboard) fn build(
         let completion_account = account.clone();
         crate::core::worker::work(
             move || {
-                let report = |path: &std::path::Path, progress| transfers.report(&account, &label, path, progress);
+                let report = |path: &std::path::Path, progress| {
+                    transfers.report(&account, &label, path, progress)
+                };
                 let report_phase = |progress: drivesync_engine::RemoteCheckProgress| {
                     transfers.phase(&account, &label, Some(progress.clone()));
                     if let Ok(mut phase) = phase.lock() {
                         *phase = Some(progress);
                     }
                 };
+                transfers.clear_conflicts(&account);
                 if is_periodic {
                     report_phase(drivesync_engine::RemoteCheckProgress::ReadingChanges);
                     engine.poll_remote_downloads(&account, report, report_phase)
                 } else {
-                    engine.initial_download_with_progress(&account, report, report_phase).map(|report| (false, report.unsupported))
+                    engine
+                        .initial_download_with_progress(&account, report, report_phase)
+                        .map(|report| (false, report.unsupported))
                 }
             },
             move |result| {
@@ -178,8 +190,17 @@ pub(in crate::features::dashboard) fn build(
                     })),
                     Err(error) => {
                         status.add_css_class("error");
-                        if matches!(error, EngineError::DownloadConflict | EngineError::DownloadConflictAt(_) | EngineError::DownloadListingConflict(..)) {
-                            status.set_label(&format!("{}\n{}", error, gettext("Resolve the conflict while keeping a copy of your files, then retry.")));
+                        if matches!(
+                            error,
+                            EngineError::DownloadConflict
+                                | EngineError::DownloadConflictAt(_)
+                                | EngineError::DownloadListingConflict(..)
+                        ) {
+                            status.set_label(&format!(
+                                "{}\n{}",
+                                error,
+                                gettext("Review deferred items in Conflicts, then retry.")
+                            ));
                             button.set_visible(true);
                         } else {
                             status.set_label(&error.to_string());
@@ -187,7 +208,9 @@ pub(in crate::features::dashboard) fn build(
                         if !is_periodic && retryable(&error) {
                             let button = button.downgrade();
                             gtk::glib::timeout_add_local_once(Duration::from_secs(60), move || {
-                                if let Some(button) = button.upgrade().filter(|_| attempt.get() == current) {
+                                if let Some(button) =
+                                    button.upgrade().filter(|_| attempt.get() == current)
+                                {
                                     button.emit_clicked();
                                 }
                             });

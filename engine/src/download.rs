@@ -88,8 +88,6 @@ fn children(token: &str, parent: &str, path: &Path) -> Result<Vec<Entry>, Engine
     let fields = format!("nextPageToken,incompleteSearch,files({FIELDS})");
     let mut entries = Vec::new();
     let mut pages = HashSet::new();
-    let mut names = HashSet::new();
-    let mut destinations = HashMap::new();
     let mut next = None;
     loop {
         let mut params = vec![
@@ -114,31 +112,6 @@ fn children(token: &str, parent: &str, path: &Path) -> Result<Vec<Entry>, Engine
                     "Google Drive returned an item with an invalid name or inconsistent metadata"
                         .into(),
                 ));
-            }
-            if !names.insert(entry.name.clone()) {
-                return Err(EngineError::DownloadListingConflict(
-                    path.join(&entry.name),
-                    "more than one Google Drive item has this name in the same folder".into(),
-                ));
-            }
-            let destination = if entry.is_workspace_link() && entry.name.len() <= 250 {
-                Some(format!("{}.html", entry.name))
-            } else if entry.kind().is_ok() {
-                Some(entry.name.clone())
-            } else {
-                None
-            };
-            if let Some(destination) = destination {
-                if let Some(previous) = destinations.insert(destination.clone(), entry.name.clone())
-                {
-                    return Err(EngineError::DownloadListingConflict(
-                        path.join(destination),
-                        format!(
-                            "Google Drive items {:?} and {:?} map to the same local name",
-                            previous, entry.name
-                        ),
-                    ));
-                }
             }
             entries.push(entry);
         }
@@ -342,9 +315,13 @@ pub(crate) fn run_selected(
         root: directory.into(),
         seen: HashSet::from([root.id.clone()]),
         report: InitialDownload::default(),
+        first_conflict: None,
     };
     let id = job.register(&root, None, LocalItemKind::Directory, None, || Ok(None))?;
     job.walk(&root.id, &id, Path::new("."), 0)?;
+    if let Some(error) = job.first_conflict {
+        return Err(error);
+    }
     if let Some(paths) = &paths {
         if !paths.is_subset(&job.seen) {
             return Err(EngineError::DownloadIncomplete);
@@ -383,9 +360,19 @@ struct Job<'a> {
     root: File,
     seen: HashSet<String>,
     report: InitialDownload,
+    first_conflict: Option<EngineError>,
 }
 
 impl Job<'_> {
+    fn defer_conflict(&mut self, path: &Path, reason: String) {
+        (self.phase)(crate::RemoteCheckProgress::Conflict(
+            path.to_owned(),
+            reason.clone(),
+        ));
+        self.first_conflict
+            .get_or_insert_with(|| EngineError::DownloadListingConflict(path.to_owned(), reason));
+    }
+
     fn walk(
         &mut self,
         remote_id: &str,
@@ -399,7 +386,22 @@ impl Job<'_> {
         (self.phase)(crate::RemoteCheckProgress::ListingFolder(
             path.display().to_string(),
         ));
-        for entry in children(self.token, remote_id, path)? {
+        let entries = children(self.token, remote_id, path)?;
+        let mut names = HashSet::new();
+        let mut collisions = HashSet::new();
+        for entry in &entries {
+            let destination = if entry.is_workspace_link() && entry.name.len() <= 250 {
+                format!("{}.html", entry.name)
+            } else if entry.kind().is_ok() {
+                entry.name.clone()
+            } else {
+                continue;
+            };
+            if !names.insert(destination.clone()) {
+                collisions.insert(destination);
+            }
+        }
+        for entry in entries {
             if self.selected.is_some_and(|ids| !ids.contains(&entry.id)) {
                 continue;
             }
@@ -427,11 +429,17 @@ impl Job<'_> {
                 continue;
             }
             let child = path.join(&entry.name);
+            if collisions.contains(&entry.name) {
+                self.defer_conflict(
+                    &child,
+                    "Multiple Google Drive items map to this local name.".into(),
+                );
+                continue;
+            }
             (self.phase)(crate::RemoteCheckProgress::CheckingItem(
                 child.display().to_string(),
             ));
             let directory = self.open_directory(path)?;
-            let conflict = || EngineError::DownloadConflictAt(child.clone());
             let relative = child.strip_prefix(".").unwrap_or(&child);
             let pending = PendingFile::new(&entry, &directory).with_activity(self.scope, relative);
             let mut integrity = None;
@@ -443,44 +451,48 @@ impl Job<'_> {
             };
             let registered_before = self.report.already_registered;
             let installed_before = self.report.files + self.report.directories;
-            let item = self
-                .register(&entry, Some(id), kind, Some(&pending), || {
-                    if kind == LocalItemKind::Directory {
-                        fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
-                            .map_err(local_error)?;
-                        directory
-                            .sync_all()
-                            .map_err(|_| EngineError::DownloadLocal)?;
-                    } else {
-                        let digest =
-                            pending.install(self.token, |progress| transfer.emit(progress))?;
-                        integrity = Some(pending.integrity(digest.clone()));
-                        return Ok(Some(digest));
-                    }
-                    Ok(None)
-                })
-                .map_err(|error| match error {
-                    EngineError::DownloadConflict => EngineError::DownloadListingConflict(
-                        relative.into(),
-                        "the local destination or its saved identity conflicts with this Google Drive item".into(),
-                    ),
-                    EngineError::DownloadIncomplete => {
-                        EngineError::DownloadIncompleteAt(child.clone())
-                    }
-                    other => other,
-                })?;
+            let item = match self.register(&entry, Some(id), kind, Some(&pending), || {
+                if kind == LocalItemKind::Directory {
+                    fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
+                        .map_err(local_error)?;
+                    directory
+                        .sync_all()
+                        .map_err(|_| EngineError::DownloadLocal)?;
+                } else {
+                    let digest = pending.install(self.token, |progress| transfer.emit(progress))?;
+                    integrity = Some(pending.integrity(digest.clone()));
+                    return Ok(Some(digest));
+                }
+                Ok(None)
+            }) {
+                Ok(item) => item,
+                Err(EngineError::DownloadConflict) => {
+                    self.defer_conflict(relative, "The local destination or its saved identity conflicts with this Google Drive item.".into());
+                    continue;
+                }
+                Err(EngineError::DownloadIncomplete) => {
+                    return Err(EngineError::DownloadIncompleteAt(child.clone()))
+                }
+                Err(error) => return Err(error),
+            };
             if self.revisiting
                 && kind == LocalItemKind::File
                 && registered_before != self.report.already_registered
             {
                 continue;
             }
-            let local = fs::statat(
+            let local = match fs::statat(
                 &directory,
                 entry.name.as_str(),
                 fs::AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .map_err(|_| conflict())?;
+            ) {
+                Ok(local) => local,
+                Err(rustix::io::Errno::NOENT) => {
+                    self.defer_conflict(relative, "The registered item is missing locally.".into());
+                    continue;
+                }
+                Err(error) => return Err(local_error(error)),
+            };
             let expected = if kind == LocalItemKind::Directory {
                 fs::FileType::Directory
             } else {
@@ -494,7 +506,11 @@ impl Job<'_> {
                         .and_then(|size| size.parse::<i64>().ok())
                         != Some(local.st_size))
             {
-                return Err(conflict());
+                self.defer_conflict(
+                    relative,
+                    "The local item has an unexpected type or size.".into(),
+                );
+                continue;
             }
             transfer.complete();
             if installed_before != self.report.files + self.report.directories {
@@ -1997,6 +2013,7 @@ mod tests {
             root: File::open(&destination).unwrap(),
             seen: HashSet::new(),
             report: InitialDownload::default(),
+            first_conflict: None,
         };
         let entry = Entry {
             id: "remote-id".into(),
