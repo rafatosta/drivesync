@@ -44,6 +44,7 @@ struct Widgets {
     remote_button: gtk::glib::WeakRef<gtk::Button>,
     local_button: gtk::glib::WeakRef<gtk::Button>,
     feedback: gtk::glib::WeakRef<gtk::Label>,
+    connect: gtk::glib::WeakRef<gtk::Button>,
     warning: gtk::glib::WeakRef<gtk::Image>,
     editable: bool,
     open_local: gtk::glib::WeakRef<gtk::gio::SimpleAction>,
@@ -98,6 +99,10 @@ impl Widgets {
                     .unwrap_or_else(|| "Not configured".into()),
             );
         }
+        if let Some(button) = self.connect.upgrade() {
+            button.set_visible(draft.saved.is_none());
+            button.set_sensitive(self.editable && draft.ready() && !busy);
+        }
         for button in [&self.remote_button, &self.local_button] {
             if let Some(button) = button.upgrade() {
                 button.set_sensitive(self.editable && !busy);
@@ -145,7 +150,7 @@ fn remote_uri(id: &str) -> Option<String> {
     ))
 }
 
-/// Builds independent choosers that save automatically once both folders exist.
+/// Stages the first folder pair until Connect; later changes save automatically.
 /// Existing engine validation, portal handling and account isolation are reused.
 pub(in crate::features::dashboard) fn build(
     engine: Arc<DriveSyncEngine>,
@@ -199,6 +204,13 @@ pub(in crate::features::dashboard) fn build(
     let open_remote = gtk::gio::SimpleAction::new("open-remote", None);
     actions.add_action(&open_local);
     actions.add_action(&open_remote);
+    let connect = gtk::Button::with_label(&gettextrs::gettext("Connect"));
+    connect.set_widget_name("initial-account-connect");
+    connect.add_css_class("suggested-action");
+    connect.set_halign(gtk::Align::Start);
+    if saved.folder.is_none() {
+        content.append(&connect);
+    }
     let on_saved = SavedCallback::default();
     let ui = Widgets {
         on_saved: on_saved.clone(),
@@ -207,6 +219,7 @@ pub(in crate::features::dashboard) fn build(
         remote_button: remote_button.downgrade(),
         local_button: local_button.downgrade(),
         feedback: feedback.downgrade(),
+        connect: connect.downgrade(),
         warning: warning.downgrade(),
         editable: matches!(
             saved.error,
@@ -221,6 +234,21 @@ pub(in crate::features::dashboard) fn build(
         open_remote: open_remote.downgrade(),
     };
     let draft = Rc::new(RefCell::new(Selection::from_saved(saved.folder.clone())));
+    if saved.folder.is_none() {
+        draft.borrow_mut().remote = Some(DriveFolder {
+            id: "root".into(),
+            name: gettextrs::gettext("My Drive"),
+        });
+        let (engine, id, ui, draft) = (
+            engine.clone(),
+            saved.account.id.clone(),
+            ui.clone(),
+            draft.clone(),
+        );
+        connect.connect_clicked(move |_| {
+            autosave(engine.clone(), id.clone(), ui.clone(), draft.clone());
+        });
+    }
     for (action, remote) in [(&open_local, false), (&open_remote, true)] {
         let draft = draft.clone();
         let weak_root = content.downgrade();
@@ -306,7 +334,7 @@ pub(in crate::features::dashboard) fn build(
                 button.root().and_downcast::<gtk::Window>().as_ref(),
                 move |folder| {
                     draft.borrow_mut().remote = Some(folder);
-                    autosave(
+                    selection_changed(
                         save_engine.clone(),
                         save_id.clone(),
                         ui.clone(),
@@ -339,7 +367,12 @@ pub(in crate::features::dashboard) fn build(
                     Ok(file) => {
                         if let Some(path) = file.path() {
                             draft.borrow_mut().local = Some(path);
-                            autosave(engine.clone(), id.clone(), ui.clone(), draft.clone());
+                            selection_changed(
+                                engine.clone(),
+                                id.clone(),
+                                ui.clone(),
+                                draft.clone(),
+                            );
                         } else {
                             ui.message("Choose a folder available on this computer.");
                         }
@@ -356,6 +389,20 @@ pub(in crate::features::dashboard) fn build(
         root: content,
         actions,
         on_saved,
+    }
+}
+
+fn selection_changed(
+    engine: Arc<DriveSyncEngine>,
+    id: drivesync_engine::AccountId,
+    ui: Widgets,
+    draft: Rc<RefCell<Selection>>,
+) {
+    if draft.borrow().saved.is_some() {
+        autosave(engine, id, ui, draft);
+    } else {
+        ui.message("");
+        ui.refresh(&draft.borrow(), false);
     }
 }
 

@@ -34,6 +34,35 @@ pub fn build_selected(
     header.pack_end(&crate::app::main_menu::button());
     sidebar.add_top_bar(&header);
     let side_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let activity_nav = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::Single)
+        .activate_on_single_click(true)
+        .css_classes(["navigation-sidebar"])
+        .margin_top(12)
+        .build();
+    let activity_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Activities"))
+        .activatable(true)
+        .build();
+    activity_row.set_widget_name("sidebar-activities");
+    activity_row.add_prefix(&gtk::Image::from_icon_name("view-list-symbolic"));
+    let transfers_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Transfers"))
+        .activatable(true)
+        .build();
+    transfers_row.set_widget_name("sidebar-transfers");
+    transfers_row.add_prefix(&gtk::Image::from_icon_name("folder-download-symbolic"));
+    activity_nav.append(&transfers_row);
+    activity_nav.append(&activity_row);
+    let conflicts_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Conflicts"))
+        .activatable(true)
+        .build();
+    conflicts_row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+    activity_nav.append(&conflicts_row);
+
+    side_content.append(&activity_nav);
+    side_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let count = gtk::Label::builder()
         .label(format!("Accounts · {}", accounts.len()))
         .xalign(0.0)
@@ -49,11 +78,26 @@ pub fn build_selected(
         .build();
     list.set_widget_name("account-list");
     let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vexpand(true)
         .child(&list)
         .build();
     side_content.append(&scroller);
+    let settings = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["navigation-sidebar"])
+        .build();
+    let preferences_row = adw::ActionRow::builder()
+        .title(gettextrs::gettext("Preferences"))
+        .activatable(true)
+        .action_name("account.preferences")
+        .build();
+    preferences_row.set_widget_name("sidebar-preferences");
+    preferences_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+    preferences_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    settings.append(&preferences_row);
+    side_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    side_content.append(&settings);
     sidebar.set_content(Some(&side_content));
     let version = gtk::Label::builder()
         .label(crate::core::build_info::VERSION)
@@ -83,11 +127,64 @@ pub fn build_selected(
     toolbar.add_top_bar(&header);
     let details = gtk::Stack::new();
     details.set_widget_name("account-details");
+    details.set_hhomogeneous(false);
     let ids: Vec<_> = accounts.iter().map(|a| a.account.id.0.clone()).collect();
     let initial = selected
         .and_then(|id| ids.iter().position(|candidate| candidate == id))
         .unwrap_or(0);
-    let preferences = super::account_view::populate(engine, accounts, nav, toasts, &list, &details);
+    use super::components::{
+        activities::{Activities, PAGE},
+        transfers,
+    };
+    let feed = transfers::TransferFeed::load();
+    let account_choices = accounts
+        .iter()
+        .map(|saved| {
+            let id = saved.account.id.clone();
+            let label = saved.account.email.clone().unwrap_or_else(|| id.0.clone());
+            (id, label)
+        })
+        .collect::<Vec<_>>();
+    let activities = Activities::new(engine.clone(), &accounts);
+    let preferences = super::account_view::populate(
+        engine,
+        accounts,
+        nav,
+        toasts,
+        &list,
+        &details,
+        (&activities, &feed),
+    );
+    details.add_named(&activities.root, Some(PAGE));
+    details.add_named(
+        &crate::ui::scroll(
+            &transfers::build(feed.clone(), account_choices.clone()),
+            760,
+        ),
+        Some(transfers::PAGE),
+    );
+    details.add_named(
+        &transfers::build_conflicts(feed, account_choices),
+        Some("conflicts"),
+    );
+    let (weak_list, weak_details, weak_split) =
+        (list.downgrade(), details.downgrade(), split.downgrade());
+    activity_nav.connect_row_activated(move |_, row| {
+        if let (Some(list), Some(details), Some(split)) = (
+            weak_list.upgrade(),
+            weak_details.upgrade(),
+            weak_split.upgrade(),
+        ) {
+            list.unselect_all();
+            let destination = match row.index() {
+                0 => transfers::PAGE,
+                1 => PAGE,
+                _ => "conflicts",
+            };
+            details.set_visible_child_name(destination);
+            split.set_show_content(true);
+        }
+    });
     update_sidebar_width(&split, &list);
     let mut index = 0;
     while let Some(widget) = list.row_at_index(index) {
@@ -104,9 +201,13 @@ pub fn build_selected(
     }
     let weak_details = details.downgrade();
     let weak_split = split.downgrade();
+    let weak_activity_nav = activity_nav.downgrade();
     list.connect_row_selected(move |_, row| {
         if let (Some(details), Some(row)) = (weak_details.upgrade(), row) {
             if let Some(id) = ids.get(row.index() as usize) {
+                if let Some(nav) = weak_activity_nav.upgrade() {
+                    nav.unselect_all();
+                }
                 details.set_visible_child_name(id);
                 if let Some(split) = weak_split.upgrade() {
                     split.set_show_content(true);
@@ -121,11 +222,24 @@ pub fn build_selected(
         }
     });
     list.select_row(list.row_at_index(initial as i32).as_ref());
-    toolbar.set_content(Some(&crate::ui::scroll(&details, 760)));
-    split.set_content(Some(&adw::NavigationPage::new(
-        &toolbar,
-        &gettextrs::gettext("Account"),
-    )));
+    toolbar.set_content(Some(&details));
+    let content = adw::NavigationPage::new(&toolbar, &gettextrs::gettext("Account"));
+    let weak_content = content.downgrade();
+    details.connect_visible_child_name_notify(move |details| {
+        if let Some(content) = weak_content.upgrade() {
+            let title = match details.visible_child_name().as_deref() {
+                Some("conflicts") => gettextrs::gettext("Conflicts"),
+                Some(PAGE) => gettextrs::gettext("Activities"),
+                Some(transfers::PAGE) => gettextrs::gettext("Transfers"),
+                _ => gettextrs::gettext("Account"),
+            };
+            content.set_title(&title);
+        }
+    });
+    if details.visible_child_name().as_deref() == Some(PAGE) {
+        content.set_title(&gettextrs::gettext("Activities"));
+    }
+    split.set_content(Some(&content));
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         660.0,
@@ -144,25 +258,35 @@ pub fn build_selected(
         .build();
     let actions = gtk::gio::SimpleActionGroup::new();
     let open = gtk::gio::SimpleAction::new("preferences", None);
+    let settings_page = crate::features::preferences::build(nav, toasts, preferences.clone());
+    let weak_nav = nav.downgrade();
     let weak_list = list.downgrade();
+    let context = preferences.clone();
+    let settings = settings_page.clone();
     open.connect_activate(move |_, _| {
-        let Some(list) = weak_list.upgrade() else {
-            return;
-        };
-        if let Some(parent) = list.root().and_downcast::<gtk::Window>() {
+        if let (Some(nav), Some(list)) = (weak_nav.upgrade(), weak_list.upgrade()) {
             let row = list.selected_row();
             let id = row
                 .as_ref()
-                .and_then(|row| preferences.id_at(row.index() as usize));
-            crate::features::preferences::present_with_accounts(
-                &parent,
-                preferences.clone(),
-                id,
-                false,
-            );
+                .and_then(|row| context.id_at(row.index() as usize));
+            crate::features::preferences::open(&nav, &settings, &context, id, false);
         }
     });
     actions.add_action(&open);
+    let configure = gtk::gio::SimpleAction::new("configure", Some(gtk::glib::VariantTy::STRING));
+    let weak_nav = nav.downgrade();
+    configure.connect_activate(move |_, id| {
+        if let (Some(nav), Some(id)) = (weak_nav.upgrade(), id.and_then(|id| id.str())) {
+            crate::features::preferences::open(
+                &nav,
+                &settings_page,
+                &preferences,
+                Some(&drivesync_engine::AccountId(id.into())),
+                true,
+            );
+        }
+    });
+    actions.add_action(&configure);
     page.insert_action_group("account", Some(&actions));
     page
 }

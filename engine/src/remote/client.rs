@@ -7,6 +7,32 @@ use crate::{AuthError, EngineError};
 use reqwest::blocking::Client;
 use std::{io::Read, time::Duration};
 
+thread_local! {
+    static SYNC_CANCEL: std::cell::RefCell<Option<crate::Cancellation>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn with_cancellation<T>(cancel: crate::Cancellation, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<crate::Cancellation>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SYNC_CANCEL.replace(self.0.take());
+        }
+    }
+    let _restore = Restore(SYNC_CANCEL.replace(Some(cancel)));
+    run()
+}
+
+pub(crate) fn check_cancelled() -> Result<(), EngineError> {
+    if SYNC_CANCEL.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(crate::Cancellation::is_cancelled)
+    }) {
+        return Err(EngineError::Authentication(AuthError::Cancelled));
+    }
+    Ok(())
+}
+
 /// Maximum response size for folder metadata (one mebibyte).
 const MAX_BODY: u64 = 1024 * 1024;
 
@@ -54,6 +80,17 @@ pub(crate) fn get(
     params: &[(&str, &str)],
     timeout: Duration,
 ) -> Result<reqwest::blocking::Response, EngineError> {
+    get_with_range(token, endpoint, params, timeout, None)
+}
+
+pub(crate) fn get_with_range(
+    token: &str,
+    endpoint: &str,
+    params: &[(&str, &str)],
+    timeout: Duration,
+    offset: Option<u64>,
+) -> Result<reqwest::blocking::Response, EngineError> {
+    check_cancelled()?;
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -61,10 +98,11 @@ pub(crate) fn get(
         .user_agent("DriveSync/0.1")
         .build()
         .map_err(|_| EngineError::Authentication(AuthError::Network))?;
-    client
-        .get(endpoint)
-        .bearer_auth(token)
-        .query(params)
-        .send()
-        .map_err(|_| EngineError::Authentication(AuthError::Network))
+    let mut request = client.get(endpoint).bearer_auth(token).query(params);
+    if let Some(offset) = offset {
+        request = request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+    }
+    let response = request.send();
+    check_cancelled()?;
+    response.map_err(|_| EngineError::Authentication(AuthError::Network))
 }

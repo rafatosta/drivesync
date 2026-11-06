@@ -230,14 +230,14 @@ fn folder_setup_and_dashboard_layouts() {
                 assert!(find_named(window.upcast_ref(), "start-synchronization").is_none());
                 assert!(find_button(window.upcast_ref(), "Account Details…").is_none());
                 assert!(find_named(window.upcast_ref(), "account-display-name").is_none());
-                page.activate_action("account.preferences", None).unwrap();
-                let preferences = gtk::Window::list_toplevels()
-                    .into_iter()
-                    .find_map(|w| {
-                        (w.widget_name() == "drivesync-preferences")
-                            .then(|| w.downcast::<adw::Window>().unwrap())
-                    })
+                let preferences_row = find_named(window.upcast_ref(), "sidebar-preferences")
+                    .unwrap()
+                    .downcast::<adw::ActionRow>()
                     .unwrap();
+                gtk::prelude::WidgetExt::activate(&preferences_row);
+                let preferences = nav.visible_page().unwrap();
+                assert_eq!(preferences.widget_name(), "drivesync-preferences");
+                assert_eq!(preferences.root(), window.root());
                 let editors = find_named(preferences.upcast_ref(), "preferences-account-editors")
                     .unwrap()
                     .downcast::<gtk::Stack>()
@@ -308,7 +308,7 @@ fn folder_setup_and_dashboard_layouts() {
                 );
                 entry.set_text("Principal");
                 entry.emit_by_name::<()>("apply", &[]);
-                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                assert_eq!(nav.visible_page().as_ref(), Some(&preferences));
                 assert!(find_button(window.upcast_ref(), "Save and Continue").is_none());
                 let configured = editors.child_by_name("google:layout-fixture").unwrap();
                 assert!(find_named(&configured, "save-folders").is_none());
@@ -335,7 +335,7 @@ fn folder_setup_and_dashboard_layouts() {
                 let unconfigured = details.visible_child().unwrap();
                 assert!(find_named(&unconfigured, "save-folders").is_none());
                 assert!(find_named(&unconfigured, "start-synchronization").is_none());
-                assert_eq!(nav.visible_page().as_ref(), Some(&page));
+                assert_eq!(nav.visible_page().as_ref(), Some(&preferences));
                 list.select_row(list.row_at_index(0).as_ref());
                 assert_eq!(
                     details.visible_child_name().as_deref(),
@@ -359,17 +359,22 @@ fn folder_setup_and_dashboard_layouts() {
                 });
                 wait.run();
                 assert!(
-                    preferences.width() <= width.min(850) + 10,
+                    preferences.width() <= width + 10,
                     "account preferences overflow"
                 );
-                let node = rendered(&preferences);
-                preferences
+                let node = rendered(&window);
+                window
                     .renderer()
                     .unwrap()
                     .render_texture(&node, None)
                     .save_to_png(format!("{output}/preferences-accounts-{width}.png"))
                     .unwrap();
-                preferences.close();
+                find_named(preferences.upcast_ref(), "preferences-back")
+                    .unwrap()
+                    .downcast::<gtk::Button>()
+                    .unwrap()
+                    .emit_clicked();
+                assert_eq!(nav.visible_page().as_ref(), Some(&page));
                 let split = find_named(window.upcast_ref(), "dashboard-split")
                     .unwrap()
                     .downcast::<adw::NavigationSplitView>()

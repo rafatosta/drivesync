@@ -5,6 +5,21 @@ use crate::{
     FolderConfiguration, FolderPage, RemoteDelivery, RestoredAccount,
 };
 
+use std::{collections::HashMap, sync::Mutex};
+
+struct ActiveSync<'a> {
+    jobs: &'a Mutex<HashMap<AccountId, Cancellation>>,
+    id: &'a AccountId,
+}
+
+impl Drop for ActiveSync<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut jobs) = self.jobs.lock() {
+            jobs.remove(self.id);
+        }
+    }
+}
+
 /// Coordinates account and folder operations without exposing credentials.
 ///
 /// Blocking operations must run outside the GTK main thread.
@@ -12,12 +27,41 @@ use crate::{
 pub struct DriveSyncEngine {
     auth: auth::AuthProvider,
     accounts: accounts::Accounts,
+    sync_jobs: Mutex<HashMap<AccountId, Cancellation>>,
 }
 
 impl DriveSyncEngine {
     /// Constructs the engine using the platform's default adapters.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn syncing(&self, id: &AccountId) -> bool {
+        self.sync_jobs
+            .lock()
+            .is_ok_and(|jobs| jobs.contains_key(id))
+    }
+
+    fn start_sync<'a>(
+        &'a self,
+        id: &'a AccountId,
+    ) -> Result<(ActiveSync<'a>, Cancellation), EngineError> {
+        let mut jobs = self
+            .sync_jobs
+            .lock()
+            .map_err(|_| EngineError::Authentication(AuthError::Internal))?;
+        let std::collections::hash_map::Entry::Vacant(slot) = jobs.entry(id.clone()) else {
+            return Err(EngineError::DownloadBusy);
+        };
+        let cancel = Cancellation::new();
+        slot.insert(cancel.clone());
+        Ok((
+            ActiveSync {
+                jobs: &self.sync_jobs,
+                id,
+            },
+            cancel,
+        ))
     }
 
     /// Starts OAuth authorization and records the verified account.
@@ -115,6 +159,9 @@ impl DriveSyncEngine {
             .list(&config.client_id)
             .map_err(EngineError::Authentication)?
         {
+            if self.syncing(&profile.id) {
+                continue;
+            }
             self.auth
                 .prune_if_missing(&config, &profile.id, || {
                     self.accounts.forget(&config.client_id, &profile.id)
@@ -141,25 +188,37 @@ impl DriveSyncEngine {
             .map_err(EngineError::Authentication)?;
         Ok(profiles
             .into_iter()
-            .map(|cached| match verify(&cached.id) {
-                Ok(account) if account.id == cached.id => {
-                    let error = self.accounts.record(client, account.clone()).err();
-                    RestoredAccount {
-                        folder: folders.iter().find(|f| f.account_id == account.id).cloned(),
-                        account,
-                        error,
+            .map(|cached| {
+                match if self.syncing(&cached.id) {
+                    // The active operation already uses this account's credentials.
+                    // Rebuilding navigation must not wait on its transfer lock.
+                    return RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: None,
+                    };
+                } else {
+                    verify(&cached.id)
+                } {
+                    Ok(account) if account.id == cached.id => {
+                        let error = self.accounts.record(client, account.clone()).err();
+                        RestoredAccount {
+                            folder: folders.iter().find(|f| f.account_id == account.id).cloned(),
+                            account,
+                            error,
+                        }
                     }
+                    Ok(_) => RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: Some(AuthError::IdentityMismatch),
+                    },
+                    Err(error) => RestoredAccount {
+                        folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
+                        account: cached,
+                        error: Some(error),
+                    },
                 }
-                Ok(_) => RestoredAccount {
-                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
-                    account: cached,
-                    error: Some(AuthError::IdentityMismatch),
-                },
-                Err(error) => RestoredAccount {
-                    folder: folders.iter().find(|f| f.account_id == cached.id).cloned(),
-                    account: cached,
-                    error: Some(error),
-                },
             })
             .collect())
     }
@@ -233,6 +292,21 @@ impl DriveSyncEngine {
             .transpose()
     }
 
+    /// Reads recorded activity for the selected accounts under this OAuth client.
+    pub fn activity_history(
+        &self,
+        accounts: &[AccountId],
+        before: Option<i64>,
+    ) -> Result<crate::ActivityPage, EngineError> {
+        if accounts.is_empty() {
+            return Ok(crate::ActivityPage::default());
+        }
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        crate::ActivityHistory::application()
+            .and_then(|history| history.page(&config.client_id, accounts, before))
+            .map_err(EngineError::ActivityHistory)
+    }
+
     /// Opens portable state for the saved folder pair.
     pub fn folder_state(
         &self,
@@ -260,6 +334,16 @@ impl DriveSyncEngine {
     /// Returns provider, local I/O, identity or conflict errors. Items already
     /// installed remain on disk, even if their identity could not be saved.
     pub fn initial_download(&self, id: &AccountId) -> Result<crate::InitialDownload, EngineError> {
+        self.initial_download_with_progress(id, |_, _| {}, |_| {})
+    }
+
+    /// Resumes downloads and reports actual file transfers on the calling thread.
+    pub fn initial_download_with_progress(
+        &self,
+        id: &AccountId,
+        notify: impl Fn(&std::path::Path, crate::DownloadProgress),
+        phase: impl Fn(crate::RemoteCheckProgress),
+    ) -> Result<crate::InitialDownload, EngineError> {
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         let folder = self
             .accounts
@@ -271,8 +355,147 @@ impl DriveSyncEngine {
         let root = configuration::observation_root(&folder.local, &folder.local_display)?;
         let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
             .map_err(|_| EngineError::InvalidFolder)?;
-        self.auth.with_access_config(&config, id, |token| {
-            crate::download::run(token, &folder, &scope)
+        let (_job, cancel) = self.start_sync(id)?;
+        remote::with_cancellation(cancel, || {
+            self.auth.with_access_config(&config, id, |token| {
+                remote::check_cancelled()?;
+                crate::download::run(token, &folder, &scope, &notify, &phase)
+            })
+        })
+    }
+
+    /// Checks the remote cursor, installs new items and applies verified file
+    /// edits, renames or trash events. Unverified changes remain pending.
+    pub fn poll_remote_downloads(
+        &self,
+        id: &AccountId,
+        notify: impl Fn(&std::path::Path, crate::DownloadProgress),
+        progress: impl Fn(crate::RemoteCheckProgress),
+    ) -> Result<(bool, usize), EngineError> {
+        use crate::{DetectionCheck, RemoteEventKind, RemoteMembership};
+        let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
+        let folder = self
+            .accounts
+            .folders(&config.client_id)
+            .map_err(EngineError::Authentication)?
+            .into_iter()
+            .find(|folder| &folder.account_id == id)
+            .ok_or(EngineError::InvalidFolder)?;
+        let (_job, cancel) = self.start_sync(id)?;
+        remote::with_cancellation(cancel, || {
+            self.auth.with_access_config(&config, id, |token| {
+            remote::check_cancelled()?;
+            let provider = remote_detector::GoogleDrive::new(token);
+            let corpus = remote_detector::configured_corpus(
+                &provider,
+                &folder.remote.id,
+                &config.client_id,
+                id,
+            )
+            .map_err(map_detection_error)?;
+            let events = match remote_detector::check(
+                &provider,
+                &config.client_id,
+                id,
+                &folder.remote.id,
+                &corpus,
+                true,
+                &progress,
+            )
+            .map_err(map_detection_error)?
+            {
+                DetectionCheck::NoChanges => return Ok((false, 0)),
+                DetectionCheck::Initialized(events) | DetectionCheck::Changes(events) => events,
+            };
+            let latest: std::collections::HashMap<_, _> = events
+                .iter()
+                .filter_map(|delivery| delivery.event.file_id.as_ref().map(|id| (id, delivery.id)))
+                .collect();
+            let arrivals: std::collections::HashSet<_> = events
+                .iter()
+                .filter_map(|delivery| {
+                    let event = &delivery.event;
+                    (event.after == RemoteMembership::Inside
+                        && (event.kind == RemoteEventKind::Initial
+                            || event.before == RemoteMembership::Outside))
+                        .then_some(event.file_id.as_ref())
+                        .flatten()
+                })
+                .collect();
+            let root = configuration::observation_root(&folder.local, &folder.local_display)?;
+            let scope = crate::LocalScope::new(&config.client_id, &id.0, &root)
+                .map_err(|_| EngineError::InvalidFolder)?;
+            let mut targets = std::collections::HashSet::new();
+            let mut acknowledge = Vec::new();
+            let mut existing = Vec::new();
+            for delivery in &events {
+                let event = &delivery.event;
+                let is_latest = event
+                    .file_id
+                    .as_ref()
+                    .is_none_or(|id| latest.get(id) == Some(&delivery.id));
+                if !is_latest || event.kind == RemoteEventKind::InitialComplete {
+                    acknowledge.push(delivery.id);
+                } else {
+                    if event.after == RemoteMembership::Inside {
+                        if let Some(target) =
+                            event.file_id.as_ref().filter(|id| arrivals.contains(id))
+                        {
+                            if target != &folder.remote.id {
+                                targets.insert(target.clone());
+                            }
+                        }
+                    }
+                    if event.after == RemoteMembership::Inside
+                        && (event.kind == RemoteEventKind::Initial
+                            || event.before == RemoteMembership::Outside)
+                    {
+                        acknowledge.push(delivery.id);
+                    } else {
+                        existing.push(delivery);
+                    }
+                }
+            }
+            if !targets.is_empty() || !existing.is_empty() {
+                progress(crate::RemoteCheckProgress::ApplyingChanges);
+            }
+            // Existing items may need a destination introduced by this same batch.
+            let additions = if targets.is_empty() {
+                Ok(crate::InitialDownload::default())
+            } else {
+                crate::download::run_selected(
+                    token,
+                    &folder,
+                    &scope,
+                    &notify,
+                    &progress,
+                    Some(&targets),
+                )
+            };
+            let mut unresolved = false;
+            for delivery in existing {
+                remote::check_cancelled()?;
+                let event = &delivery.event;
+                match crate::download::reconcile_item(token, &folder, &scope, event, &notify) {
+                    Ok(true) => acknowledge.push(delivery.id),
+                    Ok(false)
+                    | Err(EngineError::DownloadConflict | EngineError::DownloadConflictAt(_)) => {
+                        unresolved = true
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            let report = additions?;
+            remote_detector::acknowledge_many(
+                &config.client_id,
+                id,
+                &folder.remote.id,
+                &corpus,
+                &acknowledge,
+            )
+            .map_err(map_detection_error)?;
+            Ok((unresolved, report.unsupported))
+        })
         })
     }
 
@@ -309,6 +532,8 @@ impl DriveSyncEngine {
                     id,
                     &folder.remote.id,
                     corpus,
+                    false,
+                    &|_| {},
                 ))
             })
             .map_err(DetectionError::Provider)?
@@ -386,6 +611,11 @@ impl DriveSyncEngine {
     ///
     /// Returns configuration, credential-vault, locking or account-storage errors.
     pub fn sign_out(&self, id: &AccountId) -> Result<(), EngineError> {
+        if let Ok(jobs) = self.sync_jobs.lock() {
+            if let Some(cancel) = jobs.get(id) {
+                cancel.cancel();
+            }
+        }
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
         self.auth
             .sign_out_then(&config, id, || self.accounts.forget(&config.client_id, id))
@@ -395,3 +625,11 @@ impl DriveSyncEngine {
 
 #[cfg(test)]
 mod tests;
+
+fn map_detection_error(error: DetectionError) -> EngineError {
+    match error {
+        DetectionError::Provider(error) => error,
+        DetectionError::Retry => EngineError::DownloadBusy,
+        _ => EngineError::RemoteCheckIncomplete,
+    }
+}

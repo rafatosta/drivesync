@@ -1,11 +1,11 @@
 //! Account editors shared with their dashboard adapters. Editors have one owner
-//! and are mounted only in Preferences; reopening preserves incomplete drafts.
+//! and stay mounted in Preferences so navigation preserves incomplete drafts.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{AccountId, RestoredAccount};
 use gettextrs::gettext;
 use std::{cell::Cell, rc::Rc};
 
-/// One account's editor, retained across preference-window reopenings.
+/// One account's editor, retained while navigating the dashboard.
 pub(crate) struct AccountSettings {
     saved: RestoredAccount,
     editor: gtk::Box,
@@ -16,11 +16,9 @@ impl AccountSettings {
     }
 }
 
-/// Read-only account membership for one dashboard. GTK references to its modal
-/// window are weak; closing detaches editors so they can be mounted again.
+/// Read-only account membership and weak navigation controls for one dashboard.
 pub(crate) struct Accounts {
     records: Vec<AccountSettings>,
-    pub(super) window: gtk::glib::WeakRef<adw::Window>,
     selector: gtk::glib::WeakRef<adw::ComboRow>,
     sections: gtk::glib::WeakRef<gtk::ListBox>,
     split: gtk::glib::WeakRef<adw::NavigationSplitView>,
@@ -31,7 +29,6 @@ impl Accounts {
     pub(crate) fn new(records: Vec<AccountSettings>) -> Rc<Self> {
         Rc::new(Self {
             records,
-            window: Default::default(),
             selector: Default::default(),
             sections: Default::default(),
             split: Default::default(),
@@ -73,18 +70,6 @@ impl Accounts {
         self.search.set(Some(search));
         self.sections.set(Some(sections));
         self.split.set(Some(split));
-    }
-    pub(super) fn detach(&self) {
-        for record in &self.records {
-            if let Some(stack) = record.editor.parent().and_downcast::<gtk::Stack>() {
-                stack.remove(&record.editor);
-            }
-        }
-        self.selector.set(None);
-        self.sections.set(None);
-        self.split.set(None);
-        self.search.set(None);
-        self.window.set(None);
     }
     pub(super) fn page(self: &Rc<Self>) -> gtk::ScrolledWindow {
         let page = crate::ui::content();
@@ -153,8 +138,11 @@ impl Accounts {
             editors.set_visible_child_name(&record.saved.account.id.0);
         }
         let weak_editors = editors.downgrade();
-        let context = self.clone();
+        let context = Rc::downgrade(self);
         selector.connect_selected_notify(move |selector| {
+            let Some(context) = context.upgrade() else {
+                return;
+            };
             let index = selector.selected() as usize;
             if let (Some(editors), Some(id)) = (weak_editors.upgrade(), context.id_at(index)) {
                 context.selected.set(index);

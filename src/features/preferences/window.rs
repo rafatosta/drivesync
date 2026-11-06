@@ -1,4 +1,4 @@
-//! Native preferences window built with libadwaita components.
+//! In-window preferences navigation built with libadwaita components.
 use super::{ColorScheme, Preferences};
 use adw::{gtk, prelude::*};
 use drivesync_engine::AccountId;
@@ -7,70 +7,52 @@ use std::rc::Rc;
 /// Applies the stored color scheme and registers `app.preferences` (Ctrl+,).
 pub(crate) fn install(
     app: &adw::Application,
-    window: &adw::ApplicationWindow,
     navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
 ) {
     adw::StyleManager::default().set_color_scheme(Preferences::load().color_scheme.adw());
     let action = gtk::gio::SimpleAction::new("preferences", None);
-    let weak_window = window.downgrade();
     let weak_navigation = navigation.downgrade();
+    let weak_toasts = toasts.downgrade();
     action.connect_activate(move |_, _| {
-        if let Some(window) = weak_window.upgrade() {
-            if let Some(nav) = weak_navigation.upgrade() {
-                if !nav.is_sensitive() {
-                    return;
-                }
-                if nav
-                    .visible_page()
-                    .is_some_and(|page| page.activate_action("account.preferences", None).is_ok())
-                {
-                    return;
-                }
-            }
-            build(&window, None).present();
+        let (Some(nav), Some(toasts)) = (weak_navigation.upgrade(), weak_toasts.upgrade()) else {
+            return;
+        };
+        if !nav.is_sensitive() {
+            return;
         }
+        if let Some(page) = nav.visible_page() {
+            if page.widget_name() == "drivesync-preferences"
+                || page.activate_action("account.preferences", None).is_ok()
+            {
+                return;
+            }
+        }
+        nav.push(&build(&nav, &toasts, super::Accounts::new(vec![])));
     });
     app.add_action(&action);
     app.set_accels_for_action("app.preferences", &["<Primary>comma"]);
 }
 
-/// Reuses the modal window for this dashboard. Account shortcuts select the
-/// dedicated page; global preferences retain normal section navigation.
-pub(crate) fn present_with_accounts(
-    parent: &impl IsA<gtk::Window>,
-    accounts: Rc<super::Accounts>,
+pub(crate) fn open(
+    navigation: &adw::NavigationView,
+    page: &adw::NavigationPage,
+    accounts: &super::Accounts,
     selected: Option<&AccountId>,
     show_accounts: bool,
 ) {
-    if let Some(window) = accounts.window.upgrade() {
-        if show_accounts {
-            accounts.select(selected, true);
-        }
-        window.present();
-        return;
-    }
-    accounts.select(selected, false);
-    let window = build(parent, Some(accounts.clone()));
-    accounts.window.set(Some(&window));
     accounts.select(selected, show_accounts);
-    window.present();
+    if navigation.visible_page().as_ref() != Some(page) {
+        navigation.push(page);
+    }
 }
 
-/// Presents global and optional account settings without changing their storage.
-fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) -> adw::Window {
-    let parent_width = parent.as_ref().width();
-    let width = if parent_width > 0 {
-        parent_width.min(850)
-    } else {
-        850
-    };
-    let window = adw::Window::builder()
-        .transient_for(parent)
-        .modal(true)
-        .title("Preferences")
-        .default_width(width)
-        .default_height(600)
-        .build();
+/// Builds the preferences submenu and its content inside the main navigation.
+pub(crate) fn build(
+    navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    account_context: Rc<super::Accounts>,
+) -> adw::NavigationPage {
     let split = adw::NavigationSplitView::builder()
         .min_sidebar_width(220.0)
         .max_sidebar_width(280.0)
@@ -78,7 +60,19 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
         .build();
     split.set_widget_name("preferences-split");
     let sidebar = adw::ToolbarView::new();
-    sidebar.add_top_bar(&adw::HeaderBar::new());
+    let sidebar_header = adw::HeaderBar::new();
+    sidebar_header.set_show_back_button(false);
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.set_widget_name("preferences-back");
+    back.set_tooltip_text(Some(&gettextrs::gettext("Back")));
+    let weak_navigation = navigation.downgrade();
+    back.connect_clicked(move |_| {
+        if let Some(nav) = weak_navigation.upgrade() {
+            nav.pop();
+        }
+    });
+    sidebar_header.pack_start(&back);
+    sidebar.add_top_bar(&sidebar_header);
     let sidebar_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search Preferences")
@@ -107,7 +101,10 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
         .child(&sidebar_content)
         .build();
     sidebar.set_content(Some(&sidebar_scroll));
-    split.set_sidebar(Some(&adw::NavigationPage::new(&sidebar, "Preferences")));
+    split.set_sidebar(Some(&adw::NavigationPage::new(
+        &sidebar,
+        &gettextrs::gettext("Preferences"),
+    )));
 
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
@@ -142,9 +139,6 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
     appearance_page.add(&appearance);
     pages.add_named(&appearance_page, Some("appearance"));
 
-    let account_context = accounts
-        .clone()
-        .unwrap_or_else(|| super::Accounts::new(vec![]));
     pages.add_named(&account_context.page(), Some("accounts"));
 
     let background_page = adw::PreferencesPage::new();
@@ -167,13 +161,25 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
         .build();
     notify.set_widget_name("preferences-notify");
     background.add(&notify);
+    let remote = adw::PreferencesGroup::builder()
+        .title(gettextrs::gettext("Google Drive"))
+        .build();
+    let interval = adw::SpinRow::with_range(1.0, 1440.0, 1.0);
+    interval.set_widget_name("preferences-interval");
+    interval.set_title(&gettextrs::gettext("Remote check interval"));
+    interval.set_subtitle(&gettextrs::gettext(
+        "Minutes between checks for changes in Google Drive",
+    ));
+    interval.set_value(f64::from(current.remote_check_minutes));
+    remote.add(&interval);
     background_page.add(&background);
+    background_page.add(&remote);
     pages.add_named(&background_page, Some("background"));
 
     let sections = [
         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
         ("accounts", "Accounts", "system-users-symbolic", "account accounts identity description email folders local google drive settings conta contas pastas descrição"),
-        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed"),
+        ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed remote check interval google drive minutes"),
     ];
     for (_, title, icon, _) in sections {
         let row = adw::ActionRow::builder()
@@ -241,22 +247,8 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
     bin.set_height_request(320);
     bin.set_child(Some(&split));
     bin.add_breakpoint(breakpoint);
-    let toasts = adw::ToastOverlay::new();
-    toasts.set_child(Some(&bin));
-    window.set_content(Some(&toasts));
-
-    window.set_widget_name("drivesync-preferences");
-    window.connect_close_request(move |window| {
-        if account_context
-            .window
-            .upgrade()
-            .as_ref()
-            .is_none_or(|current| current == window)
-        {
-            account_context.detach();
-        }
-        gtk::glib::Propagation::Proceed
-    });
+    let page = adw::NavigationPage::new(&bin, &gettextrs::gettext("Preferences"));
+    page.set_widget_name("drivesync-preferences");
 
     // Handlers re-read the file so each control changes only its own setting.
     let weak_toasts = toasts.downgrade();
@@ -264,6 +256,12 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
         if let (Err(_), Some(toasts)) = (result, weak_toasts.upgrade()) {
             toasts.add_toast(adw::Toast::new("Preferences could not be saved"));
         }
+    });
+    let save_interval = report.clone();
+    interval.connect_value_notify(move |row| {
+        let mut value = Preferences::load();
+        value.remote_check_minutes = row.value() as u32;
+        save_interval(value.save());
     });
     let save_theme = report.clone();
     let save_keep = report.clone();
@@ -291,7 +289,7 @@ fn build(parent: &impl IsA<gtk::Window>, accounts: Option<Rc<super::Accounts>>) 
         value.notify_on_close = row.is_active();
         report(value.save());
     });
-    window
+    page
 }
 
 #[cfg(test)]
@@ -314,9 +312,11 @@ mod tests {
 
     #[test]
     #[ignore = "requires a desktop display"]
-    fn account_preferences_select_reuse_and_release_the_correct_editors() {
+    fn account_preferences_preserve_the_correct_editors() {
         adw::init().unwrap();
-        let parent = adw::Window::new();
+        let nav = adw::NavigationView::new();
+        nav.push(&adw::NavigationPage::new(&gtk::Box::default(), "Dashboard"));
+        let toasts = adw::ToastOverlay::new();
         let mut records = vec![];
         let mut editors = vec![];
         for id in ["google:settings-one", "google:settings-two"] {
@@ -338,8 +338,8 @@ mod tests {
         }
         let context = super::super::Accounts::new(records);
         let second = AccountId("google:settings-two".into());
-        present_with_accounts(&parent, context.clone(), Some(&second), true);
-        let window = context.window.upgrade().unwrap();
+        let window = build(&nav, &toasts, context.clone());
+        open(&nav, &window, &context, Some(&second), true);
         let sections = find(window.upcast_ref(), "preferences-pages")
             .unwrap()
             .downcast::<gtk::Stack>()
@@ -373,16 +373,11 @@ mod tests {
             Some(editors[1].0.upcast_ref())
         );
         editors[1].1.set_text("unsaved second account draft");
-        present_with_accounts(
-            &parent,
-            context.clone(),
-            Some(&AccountId("google:settings-one".into())),
-            false,
-        );
+        open(&nav, &window, &context, None, false);
         assert_eq!(
             selected.selected(),
             1,
-            "focusing global preferences preserves the account chosen inside the modal"
+            "focusing global preferences preserves the account chosen inside Preferences"
         );
         selected.set_selected(0);
         assert_eq!(
@@ -397,8 +392,8 @@ mod tests {
         );
         assert_eq!(editors[0].1.text(), "google:settings-one");
         let first = AccountId("google:settings-one".into());
-        present_with_accounts(&parent, context.clone(), Some(&first), true);
-        assert_eq!(context.window.upgrade().as_ref(), Some(&window));
+        open(&nav, &window, &context, Some(&first), true);
+        assert_eq!(nav.visible_page().as_ref(), Some(&window));
         assert_eq!(
             account_pages.visible_child_name().as_deref(),
             Some(first.0.as_str())
@@ -413,32 +408,14 @@ mod tests {
         search.set_text("closed notification");
         search.emit_by_name::<()>("search-changed", &[]);
         assert_eq!(sections.visible_child_name().as_deref(), Some("background"));
-        present_with_accounts(&parent, context.clone(), Some(&second), true);
+        open(&nav, &window, &context, Some(&second), true);
         assert!(search.text().is_empty());
         assert_eq!(selected.selected(), 1);
         assert_eq!(sections.visible_child_name().as_deref(), Some("accounts"));
-        window.close();
-        for (editor, _) in &editors {
-            assert!(editor.parent().is_none());
-        }
-        present_with_accounts(&parent, context.clone(), Some(&second), true);
-        let reopened = context.window.upgrade().unwrap();
-        assert_ne!(reopened, window);
+        assert!(nav.pop());
+        open(&nav, &window, &context, Some(&second), true);
+        assert_eq!(nav.visible_page().as_ref(), Some(&window));
         assert_eq!(editors[1].1.text(), "unsaved second account draft");
-        let account_pages = find(reopened.upcast_ref(), "preferences-account-editors")
-            .unwrap()
-            .downcast::<gtk::Stack>()
-            .unwrap();
-        assert_eq!(
-            account_pages.visible_child().as_ref(),
-            Some(editors[1].0.upcast_ref())
-        );
-        window.close();
-        assert!(
-            editors[1].0.parent().is_some(),
-            "an old modal must not detach a reopened editor"
-        );
-        reopened.close();
     }
 
     #[test]
@@ -453,7 +430,9 @@ mod tests {
             .register(None::<&gtk::gio::Cancellable>)
             .unwrap();
         let parent = adw::ApplicationWindow::new(&application);
-        let window = build(&parent, None);
+        let nav = adw::NavigationView::new();
+        let toasts = adw::ToastOverlay::new();
+        let window = build(&nav, &toasts, super::super::Accounts::new(vec![]));
         let root = window.upcast_ref::<gtk::Widget>();
         let list = find(root, "preferences-list")
             .unwrap()
@@ -479,7 +458,12 @@ mod tests {
             .unwrap()
             .downcast::<adw::SwitchRow>()
             .unwrap();
-        assert!(find(root, "preferences-interval").is_none());
+        let interval = find(root, "preferences-interval")
+            .unwrap()
+            .downcast::<adw::SpinRow>()
+            .unwrap();
+        assert_eq!(interval.value(), 5.0);
+        interval.set_value(12.0);
         let theme = find(root, "preferences-theme")
             .unwrap()
             .downcast::<adw::ComboRow>()
@@ -516,7 +500,7 @@ mod tests {
         assert!(saved.keep_running);
         assert!(!saved.notify_on_close);
         assert_eq!(saved.color_scheme, ColorScheme::Dark);
-        window.close();
+        assert_eq!(saved.remote_check_minutes, 12);
         parent.close();
     }
 }

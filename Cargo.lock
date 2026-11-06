@@ -442,6 +442,7 @@ dependencies = [
 name = "drivesync-engine"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dbus",
  "dbus-secret-service",
  "keyring",

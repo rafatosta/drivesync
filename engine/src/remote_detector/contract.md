@@ -134,9 +134,13 @@ descreve o comando e a execução manual.
 
 ## Limitações da implementação
 
-Cada verificação faz uma nova varredura da árvore e exige um intervalo sem
-alterações no registro inteiro do corpus; atividade contínua pode produzir
-resultado incompleto. O limite é de 10.000 requisições, 100.000 itens e oito
+O diagnóstico manual faz uma nova varredura da árvore e exige um intervalo
+sem alterações no registro inteiro do corpus. A verificação periódica consulta
+primeiro o cursor salvo. Sem mudanças, preserva o inventário e evita a
+varredura. Mudanças de arquivos com metadados completos e pai conhecido podem
+ser aplicadas diretamente ao inventário. Mudanças de pasta, itens com pais
+desconhecidos ou metadados insuficientes recorrem à varredura completa. Nessa
+varredura, atividade contínua pode produzir resultado incompleto. O limite é de 10.000 requisições, 100.000 itens e oito
 rodadas por verificação. Pastas sem capacidade confirmada de listar filhos
 interrompem a verificação. Um token rejeitado requer intervenção; não há
 reconstrução automática. Uma resposta HTTP 400 genérica não comprova que o

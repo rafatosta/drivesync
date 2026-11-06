@@ -9,8 +9,8 @@ fn main() {
     };
     match DriveSyncEngine::new().initial_download(&AccountId(account.clone())) {
         Ok(report) => println!(
-            "{} files downloaded, {} directories created, {} items already registered.",
-            report.files, report.directories, report.already_registered
+            "{} files downloaded, {} directories created, {} items already registered, {} unsupported items skipped.",
+            report.files, report.directories, report.already_registered, report.unsupported
         ),
         Err(error) => {
             eprintln!("{error} Completed items may already be on disk.");

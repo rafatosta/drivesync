@@ -56,6 +56,7 @@ pub(crate) struct Preferences {
     pub keep_running: bool,
     /// Posts a notification when the window is hidden and DriveSync keeps running.
     pub notify_on_close: bool,
+    pub remote_check_minutes: u32,
 }
 
 impl Default for Preferences {
@@ -64,6 +65,7 @@ impl Default for Preferences {
             color_scheme: ColorScheme::default(),
             keep_running: true,
             notify_on_close: true,
+            remote_check_minutes: 5,
         }
     }
 }
@@ -104,6 +106,11 @@ impl Preferences {
             keep_running: file
                 .boolean(GROUP, "keep-running")
                 .unwrap_or(defaults.keep_running),
+            remote_check_minutes: file
+                .integer(GROUP, "remote-check-minutes")
+                .ok()
+                .filter(|minutes| (1..=1440).contains(minutes))
+                .map_or(defaults.remote_check_minutes, |minutes| minutes as u32),
             notify_on_close: file
                 .boolean(GROUP, "notify-on-close")
                 .unwrap_or(defaults.notify_on_close),
@@ -115,6 +122,11 @@ impl Preferences {
         file.set_string(GROUP, "color-scheme", self.color_scheme.key());
         file.set_boolean(GROUP, "keep-running", self.keep_running);
         file.set_boolean(GROUP, "notify-on-close", self.notify_on_close);
+        file.set_integer(
+            GROUP,
+            "remote-check-minutes",
+            self.remote_check_minutes as i32,
+        );
         file
     }
 }
@@ -129,12 +141,14 @@ mod tests {
             color_scheme: ColorScheme::Dark,
             keep_running: false,
             notify_on_close: false,
+            remote_check_minutes: 12,
         };
         assert_eq!(Preferences::from_key_file(&value.to_key_file()), value);
         let invalid = glib::KeyFile::new();
         invalid.set_string(GROUP, "color-scheme", "neon");
         invalid.set_string(GROUP, "notify-on-close", "maybe");
         invalid.set_string(GROUP, "keep-running", "maybe");
+        invalid.set_integer(GROUP, "remote-check-minutes", 0);
         assert_eq!(Preferences::from_key_file(&invalid), Preferences::default());
     }
 }

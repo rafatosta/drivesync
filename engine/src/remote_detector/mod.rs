@@ -10,7 +10,7 @@ use detector::Limits;
 pub use detector::{
     Check as DetectionCheck, DeliveredEvent as RemoteDelivery, DetectionError,
     DetectionFailureKind, Event as RemoteEvent, EventKind as RemoteEventKind,
-    Membership as RemoteMembership,
+    Membership as RemoteMembership, RemoteCheckProgress,
 };
 pub(crate) use provider::GoogleDrive;
 pub use provider::{
@@ -54,15 +54,46 @@ fn journal() -> Result<journal::Journal, DetectionError> {
     journal::Journal::open(&base.join("drivesync/remote-detector")).map_err(Into::into)
 }
 
+pub(crate) fn configured_corpus(
+    provider: &GoogleDrive<'_>,
+    root: &str,
+    client: &str,
+    account: &AccountId,
+) -> Result<DetectionCorpus, DetectionError> {
+    match journal()?
+        .known_corpus(client, &account.0, root)?
+        .as_deref()
+    {
+        Some("user") => Ok(DetectionCorpus::User),
+        Some(key) if key.strip_prefix("drive:").is_some_and(valid_id) => {
+            Ok(DetectionCorpus::SharedDrive(key["drive:".len()..].into()))
+        }
+        _ => Ok(provider
+            .file(root)?
+            .drive_id
+            .map_or(DetectionCorpus::User, DetectionCorpus::SharedDrive)),
+    }
+}
+
 pub(crate) fn check(
     provider: &GoogleDrive<'_>,
     client: &str,
     account: &AccountId,
     root: &str,
     corpus: &DetectionCorpus,
+    incremental: bool,
+    progress: &dyn Fn(RemoteCheckProgress),
 ) -> Result<DetectionCheck, DetectionError> {
     let scope = scope(client, account, root, corpus)?;
-    detector::check(provider, &journal()?, &scope, corpus, Limits::default())
+    detector::check(
+        provider,
+        &journal()?,
+        &scope,
+        corpus,
+        Limits::default(),
+        incremental,
+        progress,
+    )
 }
 
 pub(crate) fn pending(
@@ -86,5 +117,20 @@ pub(crate) fn acknowledge(
     }
     journal()?
         .acknowledge(&scope(client, account, root, corpus)?, event_id)
+        .map_err(Into::into)
+}
+
+pub(crate) fn acknowledge_many(
+    client: &str,
+    account: &AccountId,
+    root: &str,
+    corpus: &DetectionCorpus,
+    ids: &[i64],
+) -> Result<(), DetectionError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    journal()?
+        .acknowledge_many(&scope(client, account, root, corpus)?, ids)
         .map_err(Into::into)
 }

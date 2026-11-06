@@ -106,7 +106,7 @@ pub enum LocalWatchState {
 }
 
 /// Reasons to investigate state rather than infer operations from missing notices.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalCoverageGap {
     /// No historical events or baseline are available, including after restart.
     Startup,
@@ -135,7 +135,7 @@ pub enum LocalCoverageGap {
 }
 
 /// Observed activity, never an instruction to synchronize or proof of identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalActivity {
     Created,
     Removed,
@@ -148,6 +148,7 @@ pub enum LocalActivity {
     MovedOut,
     /// Kernel cookie correlated both names; does not establish durable identity.
     Moved {
+        #[serde(with = "raw_path")]
         from: PathBuf,
     },
     /// State must be investigated for the given path/subtree.
@@ -168,8 +169,9 @@ pub enum LocalItemKind {
 /// Activity at a relative historical path. Empty path denotes the root.
 /// Type lookup never reads content or follows symlinks. Concurrent replacement
 /// can invalidate a path/type hint; consumers must still investigate identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LocalNotice {
+    #[serde(with = "raw_path")]
     pub path: PathBuf,
     pub object_type: LocalItemKind,
     pub activity: LocalActivity,
@@ -198,3 +200,20 @@ impl std::fmt::Display for LocalWatchError {
     }
 }
 impl std::error::Error for LocalWatchError {}
+
+mod raw_path {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::{
+        ffi::OsString,
+        os::unix::ffi::{OsStrExt, OsStringExt},
+        path::{Path, PathBuf},
+    };
+
+    pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+        path.as_os_str().as_bytes().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf, D::Error> {
+        Vec::<u8>::deserialize(deserializer).map(|bytes| OsString::from_vec(bytes).into())
+    }
+}

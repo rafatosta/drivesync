@@ -11,7 +11,12 @@ pub(super) fn populate(
     toasts: &adw::ToastOverlay,
     list: &gtk::ListBox,
     details: &gtk::Stack,
+    services: (
+        &super::components::activities::Activities,
+        &super::components::transfers::TransferFeed,
+    ),
 ) -> std::rc::Rc<crate::features::preferences::Accounts> {
+    let (activities, transfers) = services;
     let mut settings = vec![];
     let mut menus = vec![];
     for saved in accounts {
@@ -44,7 +49,12 @@ pub(super) fn populate(
         );
         sign_out.set_visible(false);
         content.append(&sign_out);
-        content.append(heading.widget());
+        let needs_setup = saved.folder.is_none();
+        let dashboard = gtk::Box::new(gtk::Orientation::Vertical, 24);
+        dashboard.set_visible(!needs_setup);
+        dashboard.append(heading.widget());
+        content.append(&dashboard);
+        let preferences_editor = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let editor = gtk::Box::new(gtk::Orientation::Vertical, 24);
         editor.set_widget_name("account-settings-editor");
@@ -74,22 +84,58 @@ pub(super) fn populate(
         let history = super::components::local_history::LocalHistory::new(
             engine.clone(),
             saved.account.id.clone(),
+            activities.receiver(),
         );
         let restart = history.restart_callback();
-        let (download, refresh_download) =
-            super::components::initial_download::build(engine.clone(), &saved);
+        let sync = gtk::Button::from_icon_name("view-refresh-symbolic");
+        sync.set_widget_name("sync-account-now");
+        sync.set_valign(gtk::Align::Center);
+        sync.set_tooltip_text(Some(&gettextrs::gettext("Sync now")));
+        heading.widget().append(&sync);
+        let (download, refresh_download) = super::components::initial_download::build(
+            engine.clone(),
+            &saved,
+            transfers.clone(),
+            activities.refresh_callback(),
+            &sync,
+        );
+        editor.append(folders.widget());
+        if needs_setup {
+            content.append(&editor);
+        } else {
+            preferences_editor.append(&editor);
+        }
+        let (weak_content, weak_editor, weak_preferences, weak_dashboard, weak_entry) = (
+            content.downgrade(),
+            editor.downgrade(),
+            preferences_editor.downgrade(),
+            dashboard.downgrade(),
+            entry.downgrade(),
+        );
         folders.connect_saved(move || {
+            if let (Some(content), Some(editor), Some(preferences), Some(dashboard)) = (
+                weak_content.upgrade(),
+                weak_editor.upgrade(),
+                weak_preferences.upgrade(),
+                weak_dashboard.upgrade(),
+            ) {
+                if !dashboard.is_visible() {
+                    if let Some(entry) = weak_entry
+                        .upgrade()
+                        .filter(|entry| !entry.text().is_empty())
+                    {
+                        entry.emit_by_name::<()>("apply", &[]);
+                    }
+                    content.remove(&editor);
+                    preferences.append(&editor);
+                    dashboard.set_visible(true);
+                }
+            }
             restart();
             refresh_download();
         });
-        content.append(&download);
-        content.append(history.widget());
-        editor.append(folders.widget());
-        let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));
-        configure.set_action_name(Some("account-controls.configure"));
-        configure.set_widget_name("initial-account-configuration");
-        configure.set_visible(saved.folder.is_none());
-        content.append(&configure);
+        dashboard.append(&download);
+        dashboard.append(history.widget());
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -100,7 +146,7 @@ pub(super) fn populate(
             });
             content.append(&reconnect);
         }
-        details.add_named(&content, Some(&saved.account.id.0));
+        details.add_named(&crate::ui::scroll(&content, 760), Some(&saved.account.id.0));
         menus.push((
             folders.actions().clone(),
             heading,
@@ -110,28 +156,19 @@ pub(super) fn populate(
             saved.account.id.clone(),
         ));
         settings.push(crate::features::preferences::AccountSettings::new(
-            saved, editor,
+            saved,
+            preferences_editor,
         ));
     }
     let settings = crate::features::preferences::Accounts::new(settings);
     for (folders, heading, user, content, sign_out, id) in menus {
-        let context = settings.clone();
         let weak_content = content.downgrade();
         let actions = super::components::account_actions::AccountActions::new(
             &folders,
             &sign_out,
             move || {
-                if let Some(parent) = weak_content
-                    .upgrade()
-                    .and_then(|w| w.root())
-                    .and_downcast::<gtk::Window>()
-                {
-                    crate::features::preferences::present_with_accounts(
-                        &parent,
-                        context.clone(),
-                        Some(&id),
-                        true,
-                    );
+                if let Some(content) = weak_content.upgrade() {
+                    let _ = content.activate_action("account.configure", Some(&id.0.to_variant()));
                 }
             },
         );
@@ -139,6 +176,7 @@ pub(super) fn populate(
         actions.install(&content);
         let sidebar_menu = actions.menu();
         sidebar_menu.set_widget_name("sidebar-account-menu");
+        sidebar_menu.add_css_class("flat");
         user.add_suffix(&sidebar_menu);
         let menu = actions.menu();
         menu.set_widget_name("dashboard-account-menu");

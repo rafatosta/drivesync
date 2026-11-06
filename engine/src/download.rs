@@ -3,20 +3,25 @@ use crate::{
     configuration::valid_id, remote, EngineError, FolderConfiguration, ItemId, ItemSnapshot,
     ItemState, LocalItemKind, LocalScope, LocalStateError, LocalStateStore,
 };
+mod resume;
+
 use rustix::fs::{self, Mode, OFlags, RenameFlags, ResolveFlags, CWD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
     fs::File,
     io::{self, Read, Seek, Write},
-    path::Path,
-    time::Duration,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 const FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const FOLDER: &str = "application/vnd.google-apps.folder";
-const FIELDS: &str = "id,name,mimeType,version,size,trashed,parents";
+const FIELDS: &str =
+    "id,name,mimeType,version,size,trashed,explicitlyTrashed,parents,sha256Checksum,modifiedTime";
 const DIR: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::CLOEXEC);
@@ -27,6 +32,16 @@ pub struct InitialDownload {
     pub files: usize,
     pub directories: usize,
     pub already_registered: usize,
+    pub unsupported: usize,
+}
+
+/// Progress for one real file download. Completion means the identity was saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadProgress {
+    Started { total: u64 },
+    Receiving { received: u64, total: u64 },
+    Completed,
+    Failed,
 }
 
 #[derive(Deserialize, PartialEq, Eq)]
@@ -37,8 +52,12 @@ struct Entry {
     mime_type: String,
     version: String,
     size: Option<String>,
+    sha256_checksum: Option<String>,
+    modified_time: Option<String>,
     #[serde(default)]
     trashed: bool,
+    #[serde(default)]
+    explicitly_trashed: bool,
     #[serde(default)]
     parents: Vec<String>,
 }
@@ -64,12 +83,11 @@ fn metadata(token: &str, id: &str) -> Result<Entry, EngineError> {
     serde_json::from_slice(&body).map_err(|_| EngineError::DownloadIncomplete)
 }
 
-fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
+fn children(token: &str, parent: &str, path: &Path) -> Result<Vec<Entry>, EngineError> {
     let query = format!("'{parent}' in parents and trashed = false");
     let fields = format!("nextPageToken,incompleteSearch,files({FIELDS})");
     let mut entries = Vec::new();
     let mut pages = HashSet::new();
-    let mut names = HashSet::new();
     let mut next = None;
     loop {
         let mut params = vec![
@@ -88,8 +106,12 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
             return Err(EngineError::DownloadIncomplete);
         }
         for entry in page.files {
-            if !entry.valid_child(parent) || !names.insert(entry.name.clone()) {
-                return Err(EngineError::DownloadConflict);
+            if !entry.valid_child(parent) {
+                return Err(EngineError::DownloadListingConflict(
+                    path.join(&entry.name),
+                    "Google Drive returned an item with an invalid name or inconsistent metadata"
+                        .into(),
+                ));
             }
             entries.push(entry);
         }
@@ -109,6 +131,69 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
 }
 
 impl Entry {
+    fn is_workspace_link(&self) -> bool {
+        matches!(
+            self.mime_type.as_str(),
+            "application/vnd.google-apps.document"
+                | "application/vnd.google-apps.spreadsheet"
+                | "application/vnd.google-apps.presentation"
+                | "application/vnd.google-apps.drawing"
+                | "application/vnd.google-apps.form"
+                | "application/vnd.google-apps.map"
+                | "application/vnd.google-apps.site"
+                | "application/vnd.google-apps.script"
+                | "application/vnd.google-apps.vid"
+                | "application/vnd.google.colaboratory"
+        )
+    }
+
+    fn local_representation(mut self) -> Result<Self, EngineError> {
+        if self.is_workspace_link() {
+            if !valid_name(&self.name) || self.name.len() > 250 || !valid_id(&self.id) {
+                return Err(EngineError::DownloadUnsupported);
+            }
+            self.name.push_str(".html");
+            self.size = self.workspace_html().map(|html| html.len().to_string());
+            self.sha256_checksum = None;
+        }
+        Ok(self)
+    }
+
+    fn workspace_html(&self) -> Option<String> {
+        if !self.is_workspace_link() || !valid_id(&self.id) {
+            return None;
+        }
+        let editor = match self.mime_type.as_str() {
+            "application/vnd.google-apps.document" => Some("document"),
+            "application/vnd.google-apps.spreadsheet" => Some("spreadsheets"),
+            "application/vnd.google-apps.presentation" => Some("presentation"),
+            "application/vnd.google-apps.drawing" => Some("drawings"),
+            _ => None,
+        };
+        let url = match editor {
+            Some(editor) => format!("https://docs.google.com/{editor}/d/{}/edit", self.id),
+            None => format!("https://drive.google.com/open?id={}", self.id),
+        };
+        Some(format!(
+            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"0; url={url}\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open in Google Drive</a></p>\n"
+        ))
+    }
+
+    fn same_download_version(&self, current: &Self) -> bool {
+        self.id == current.id
+            && self.version == current.version
+            && self.name == current.name
+            && self.parents == current.parents
+            && self.mime_type == current.mime_type
+            && self.size == current.size
+            && !current.trashed
+            && self
+                .sha256_checksum
+                .as_ref()
+                .zip(current.sha256_checksum.as_ref())
+                .is_none_or(|(before, after)| before == after)
+    }
+
     fn valid_child(&self, parent: &str) -> bool {
         valid_id(&self.id)
             && !self.trashed
@@ -119,7 +204,9 @@ impl Entry {
     fn kind(&self) -> Result<LocalItemKind, EngineError> {
         if self.mime_type == FOLDER {
             Ok(LocalItemKind::Directory)
-        } else if self.mime_type.starts_with("application/vnd.google-apps.") || self.size.is_none()
+        } else if (self.mime_type.starts_with("application/vnd.google-apps.")
+            && !self.is_workspace_link())
+            || self.size.is_none()
         {
             Err(EngineError::DownloadUnsupported)
         } else {
@@ -142,6 +229,19 @@ pub(crate) fn run(
     token: &str,
     folder: &FolderConfiguration,
     scope: &LocalScope,
+    notify: &dyn Fn(&Path, DownloadProgress),
+    phase: &dyn Fn(crate::RemoteCheckProgress),
+) -> Result<InitialDownload, EngineError> {
+    run_selected(token, folder, scope, notify, phase, None)
+}
+
+pub(crate) fn run_selected(
+    token: &str,
+    folder: &FolderConfiguration,
+    scope: &LocalScope,
+    notify: &dyn Fn(&Path, DownloadProgress),
+    phase: &dyn Fn(crate::RemoteCheckProgress),
+    targets: Option<&HashSet<String>>,
 ) -> Result<InitialDownload, EngineError> {
     let directory = fs::openat2(
         CWD,
@@ -167,25 +267,77 @@ pub(crate) fn run(
     if root.trashed || root.mime_type != FOLDER || !valid_id(&root.id) {
         return Err(EngineError::DownloadIncomplete);
     }
+    let paths = if let Some(targets) = targets {
+        let checkpoint = store.load(scope).map_err(EngineError::DownloadState)?;
+        let known: HashSet<_> = checkpoint
+            .iter()
+            .flat_map(|state| &state.items)
+            .filter(|item| matches!(item.observed, ItemState::Present(_)))
+            .filter_map(|item| item.remote_id.as_deref())
+            .collect();
+        let mut paths = HashSet::new();
+        for target in targets
+            .iter()
+            .filter(|target| !known.contains(target.as_str()))
+        {
+            let mut id = target.clone();
+            let mut chain = HashSet::new();
+            while id != root.id && !paths.contains(&id) {
+                if chain.len() >= 64 || !chain.insert(id.clone()) {
+                    return Err(EngineError::DownloadIncomplete);
+                }
+                let entry = metadata(token, &id)?;
+                if entry.id != id || entry.trashed {
+                    return Err(EngineError::DownloadIncomplete);
+                }
+                let [parent] = entry.parents.as_slice() else {
+                    return Err(EngineError::DownloadIncomplete);
+                };
+                id = parent.clone();
+            }
+            paths.extend(chain);
+        }
+        if paths.is_empty() {
+            return Ok(InitialDownload::default());
+        }
+        Some(paths)
+    } else {
+        None
+    };
     let mut job = Job {
         token,
+        notify,
+        phase,
+        selected: paths.as_ref(),
+        revisiting: completed && paths.is_none(),
         scope,
         store,
         root: directory.into(),
         seen: HashSet::from([root.id.clone()]),
         report: InitialDownload::default(),
+        first_conflict: None,
     };
-    let id = job.register(&root, None, LocalItemKind::Directory, || Ok(()))?;
+    let id = job.register(&root, None, LocalItemKind::Directory, None, || Ok(None))?;
     job.walk(&root.id, &id, Path::new("."), 0)?;
+    if let Some(error) = job.first_conflict {
+        return Err(error);
+    }
+    if let Some(paths) = &paths {
+        if !paths.is_subset(&job.seen) {
+            return Err(EngineError::DownloadIncomplete);
+        }
+        return Ok(job.report);
+    }
     let checkpoint = job.store.load(scope).map_err(EngineError::DownloadState)?;
-    if checkpoint
-        .iter()
-        .flat_map(|state| &state.items)
-        .any(|item| {
-            item.remote_id
-                .as_ref()
-                .is_some_and(|id| !job.seen.contains(id))
-        })
+    if !completed
+        && checkpoint
+            .iter()
+            .flat_map(|state| &state.items)
+            .any(|item| {
+                item.remote_id
+                    .as_ref()
+                    .is_some_and(|id| !job.seen.contains(id))
+            })
     {
         return Err(EngineError::DownloadConflict);
     }
@@ -199,14 +351,29 @@ pub(crate) fn run(
 
 struct Job<'a> {
     token: &'a str,
+    notify: &'a dyn Fn(&Path, DownloadProgress),
+    phase: &'a dyn Fn(crate::RemoteCheckProgress),
+    selected: Option<&'a HashSet<String>>,
+    revisiting: bool,
     scope: &'a LocalScope,
     store: LocalStateStore,
     root: File,
     seen: HashSet<String>,
     report: InitialDownload,
+    first_conflict: Option<EngineError>,
 }
 
 impl Job<'_> {
+    fn defer_conflict(&mut self, remote_folder: &str, path: &Path, reason: String) {
+        (self.phase)(crate::RemoteCheckProgress::Conflict(
+            path.to_owned(),
+            reason.clone(),
+            remote_folder.to_owned(),
+        ));
+        self.first_conflict
+            .get_or_insert_with(|| EngineError::DownloadListingConflict(path.to_owned(), reason));
+    }
+
     fn walk(
         &mut self,
         remote_id: &str,
@@ -217,38 +384,122 @@ impl Job<'_> {
         if depth >= 64 {
             return Err(EngineError::DownloadIncomplete);
         }
-        for entry in children(self.token, remote_id)? {
+        (self.phase)(crate::RemoteCheckProgress::ListingFolder(
+            path.display().to_string(),
+        ));
+        let entries = children(self.token, remote_id, path)?;
+        let mut names = HashSet::new();
+        let mut collisions = HashSet::new();
+        for entry in &entries {
+            let destination = if entry.is_workspace_link() && entry.name.len() <= 250 {
+                format!("{}.html", entry.name)
+            } else if entry.kind().is_ok() {
+                entry.name.clone()
+            } else {
+                continue;
+            };
+            if !names.insert(destination.clone()) {
+                collisions.insert(destination);
+            }
+        }
+        for entry in entries {
+            remote::check_cancelled()?;
+            if self.selected.is_some_and(|ids| !ids.contains(&entry.id)) {
+                continue;
+            }
             if self.seen.len() >= 10_000 || !self.seen.insert(entry.id.clone()) {
                 return Err(EngineError::DownloadIncomplete);
             }
-            let kind = entry.kind()?;
+            let (entry, kind) = match entry
+                .local_representation()
+                .and_then(|entry| entry.kind().map(|kind| (entry, kind)))
+            {
+                Ok(value) => value,
+                Err(EngineError::DownloadUnsupported) => {
+                    self.report.unsupported += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if self.revisiting && kind == LocalItemKind::Directory
+                && self.store.load(self.scope).map_err(EngineError::DownloadState)?
+                    .iter().flat_map(|checkpoint| &checkpoint.items)
+                    .any(|item| item.remote_id.as_deref() == Some(&entry.id)
+                        && matches!(&item.observed, ItemState::Present(snapshot)
+                            if snapshot.parent.as_ref() != Some(id) || snapshot.name != entry.name.as_bytes()))
+            {
+                continue;
+            }
             let child = path.join(&entry.name);
+            if collisions.contains(&entry.name) {
+                self.defer_conflict(
+                    remote_id,
+                    &child,
+                    "Multiple Google Drive items map to this local name.".into(),
+                );
+                continue;
+            }
+            (self.phase)(crate::RemoteCheckProgress::CheckingItem(
+                child.display().to_string(),
+            ));
             let directory = self.open_directory(path)?;
-            let conflict = || EngineError::DownloadConflictAt(child.clone());
-            let pending = PendingFile::new(&entry, &directory);
-            let item = self
-                .register(&entry, Some(id), kind, || {
-                    if kind == LocalItemKind::Directory {
-                        fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
-                            .map_err(local_error)?;
-                        directory
-                            .sync_all()
-                            .map_err(|_| EngineError::DownloadLocal)?;
-                    } else {
-                        pending.install(self.token)?;
-                    }
-                    Ok(())
-                })
-                .map_err(|error| match error {
-                    EngineError::DownloadConflict => conflict(),
-                    other => other,
-                })?;
-            let local = fs::statat(
+            let relative = child.strip_prefix(".").unwrap_or(&child);
+            let pending = PendingFile::new(&entry, &directory).with_activity(self.scope, relative);
+            let mut integrity = None;
+            let notify = self.notify;
+            let transfer = Transfer {
+                notify,
+                path: child.strip_prefix(".").unwrap_or(&child),
+                active: Cell::new(false),
+            };
+            let registered_before = self.report.already_registered;
+            let installed_before = self.report.files + self.report.directories;
+            let item = match self.register(&entry, Some(id), kind, Some(&pending), || {
+                if kind == LocalItemKind::Directory {
+                    fs::mkdirat(&directory, entry.name.as_str(), Mode::RWXU)
+                        .map_err(local_error)?;
+                    directory
+                        .sync_all()
+                        .map_err(|_| EngineError::DownloadLocal)?;
+                } else {
+                    let digest = pending.install(self.token, |progress| transfer.emit(progress))?;
+                    integrity = Some(pending.integrity(digest.clone()));
+                    return Ok(Some(digest));
+                }
+                Ok(None)
+            }) {
+                Ok(item) => item,
+                Err(EngineError::DownloadConflict) => {
+                    self.defer_conflict(remote_id, relative, "The local destination or its saved identity conflicts with this Google Drive item.".into());
+                    continue;
+                }
+                Err(EngineError::DownloadIncomplete) => {
+                    return Err(EngineError::DownloadIncompleteAt(child.clone()))
+                }
+                Err(error) => return Err(error),
+            };
+            if self.revisiting
+                && kind == LocalItemKind::File
+                && registered_before != self.report.already_registered
+            {
+                continue;
+            }
+            let local = match fs::statat(
                 &directory,
                 entry.name.as_str(),
                 fs::AtFlags::SYMLINK_NOFOLLOW,
-            )
-            .map_err(|_| conflict())?;
+            ) {
+                Ok(local) => local,
+                Err(rustix::io::Errno::NOENT) => {
+                    self.defer_conflict(
+                        remote_id,
+                        relative,
+                        "The registered item is missing locally.".into(),
+                    );
+                    continue;
+                }
+                Err(error) => return Err(local_error(error)),
+            };
             let expected = if kind == LocalItemKind::Directory {
                 fs::FileType::Directory
             } else {
@@ -262,7 +513,26 @@ impl Job<'_> {
                         .and_then(|size| size.parse::<i64>().ok())
                         != Some(local.st_size))
             {
-                return Err(conflict());
+                self.defer_conflict(
+                    remote_id,
+                    relative,
+                    "The local item has an unexpected type or size.".into(),
+                );
+                continue;
+            }
+            transfer.complete();
+            if installed_before != self.report.files + self.report.directories {
+                crate::ActivityHistory::append_remote(
+                    self.scope,
+                    crate::LocalNotice {
+                        path: child.strip_prefix(".").unwrap_or(&child).into(),
+                        object_type: kind,
+                        activity: crate::LocalActivity::Created,
+                    },
+                    crate::RemoteActivity::Added,
+                    integrity,
+                )
+                .map_err(EngineError::ActivityHistory)?;
             }
             if kind == LocalItemKind::Directory {
                 self.walk(&entry.id, &item, &child, depth + 1)?;
@@ -290,9 +560,10 @@ impl Job<'_> {
         entry: &Entry,
         parent: Option<&ItemId>,
         kind: LocalItemKind,
-        install: impl FnOnce() -> Result<(), EngineError>,
+        pending: Option<&PendingFile<'_>>,
+        install: impl FnOnce() -> Result<Option<String>, EngineError>,
     ) -> Result<ItemId, EngineError> {
-        let snapshot = ItemSnapshot {
+        let mut snapshot = ItemSnapshot {
             parent: parent.cloned(),
             name: parent.map_or_else(Vec::new, |_| entry.name.as_bytes().to_vec()),
             kind,
@@ -307,16 +578,77 @@ impl Job<'_> {
             item.remote_id.as_deref() == Some(&entry.id)
                 || matches!(&item.observed, ItemState::Present(s) if s.parent == snapshot.parent && s.name == snapshot.name)
         }) {
+            if parent.is_some()
+                && existing.remote_id.as_deref() == Some(&entry.id)
+                && existing.observed == ItemState::Absent
+                && existing.confirmed == Some(ItemState::Absent)
+            {
+                if checkpoint.iter().flat_map(|state| &state.items).any(|item| {
+                    matches!(&item.observed, ItemState::Present(current)
+                        if current.parent == snapshot.parent && current.name == snapshot.name)
+                }) {
+                    return Err(EngineError::DownloadConflict);
+                }
+                snapshot.content_version = install()?;
+                self.store.commit_remote_item(
+                    self.scope, &existing.id, &ItemState::Absent, ItemState::Present(snapshot),
+                ).map_err(EngineError::DownloadState)?;
+                if kind == LocalItemKind::Directory {
+                    self.report.directories += 1;
+                } else {
+                    self.report.files += 1;
+                }
+                return Ok(existing.id.clone());
+            }
+            if let ItemState::Present(current) = &existing.observed {
+                snapshot.content_version = current.content_version.clone();
+                // Remote edits can change a native document's version while its
+                // generated link remains identical.
+                let unchanged_workspace_link = if let (Some(html), Some(pending), Some(digest)) =
+                    (entry.workspace_html(), pending, current.content_version.as_ref())
+                {
+                    hex_digest(checksum(html.as_bytes())?) == *digest
+                        && verify_digest(pending, &entry.name, digest).is_ok()
+                } else {
+                    false
+                };
+                if (self.revisiting && kind == LocalItemKind::File) || unchanged_workspace_link {
+                    snapshot.remote_version = current.remote_version.clone();
+                }
+            }
+            if self.revisiting && kind == LocalItemKind::File
+                && existing.remote_id.as_deref() == Some(&entry.id)
+                && matches!(&existing.observed, ItemState::Present(current)
+                    if current.kind == LocalItemKind::File
+                        && (current.name != snapshot.name || current.parent != snapshot.parent))
+            {
+                self.report.already_registered += 1;
+                return Ok(existing.id.clone());
+            }
             let expected = ItemState::Present(snapshot);
             if existing.remote_id.as_deref() != Some(&entry.id)
                 || existing.confirmed.as_ref() != Some(&expected) || existing.observed != expected
             {
                 return Err(EngineError::DownloadConflict);
             }
+            if let (Some(pending), Some(digest), ItemState::Present(current)) =
+                (pending, entry.sha256_checksum.as_ref(), &existing.observed)
+            {
+                if current.kind == LocalItemKind::File && current.content_version.is_none()
+                    && current.remote_version.as_ref() == Some(&entry.version)
+                    && verify_digest(pending, &entry.name, digest).is_ok()
+                {
+                    let mut confirmed = current.clone();
+                    confirmed.content_version = Some(digest.clone());
+                    self.store.commit_remote_item(
+                        self.scope, &existing.id, &existing.observed, ItemState::Present(confirmed),
+                    ).map_err(EngineError::DownloadState)?;
+                }
+            }
             self.report.already_registered += usize::from(parent.is_some());
             return Ok(existing.id.clone());
         }
-        install()?;
+        snapshot.content_version = install()?;
         for _ in 0..8 {
             match self.store.register_verified_item(
                 self.scope,
@@ -348,11 +680,732 @@ impl Job<'_> {
     }
 }
 
+/// Reconciles a registered item within the configured tree. Ambiguous
+/// disappearances, changed local content and unverified baselines remain pending.
+pub(crate) fn reconcile_item(
+    token: &str,
+    folder: &FolderConfiguration,
+    scope: &LocalScope,
+    event: &crate::RemoteEvent,
+    notify: &dyn Fn(&Path, DownloadProgress),
+) -> Result<bool, EngineError> {
+    let Some(remote) = &event.current else {
+        return Ok(false);
+    };
+    if event.file_id.as_deref() != Some(&remote.id)
+        || event.before != crate::RemoteMembership::Inside
+        || (remote.trashed != Some(true) && event.after != crate::RemoteMembership::Inside)
+    {
+        return Ok(false);
+    }
+    let root = fs::openat2(
+        CWD,
+        &folder.local,
+        DIR,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map_err(|_| EngineError::DownloadLocal)?;
+    fs::flock(&root, fs::FlockOperation::NonBlockingLockExclusive)
+        .map_err(|_| EngineError::DownloadBusy)?;
+    let store = LocalStateStore::portable(&folder.local, scope, &folder.remote.id)
+        .map_err(EngineError::DownloadState)?;
+    let checkpoint = store.load(scope).map_err(EngineError::DownloadState)?;
+    let Some(state) = checkpoint else {
+        return Ok(false);
+    };
+    let Some(item) = state
+        .items
+        .iter()
+        .find(|item| item.remote_id.as_deref() == Some(&remote.id))
+    else {
+        return Ok(false);
+    };
+    if item.confirmed.as_ref() != Some(&item.observed) {
+        return Ok(false);
+    }
+    let ItemState::Present(snapshot) = &item.observed else {
+        return Ok(remote.trashed == Some(true));
+    };
+    let Some(parent) = &snapshot.parent else {
+        return Ok(false);
+    };
+    let entry = match metadata(token, &remote.id) {
+        Ok(entry) => match entry.local_representation() {
+            Ok(entry) => entry,
+            Err(EngineError::DownloadUnsupported) => return Ok(false),
+            Err(error) => return Err(error),
+        },
+        Err(EngineError::RemoteFolderUnavailable | EngineError::RemoteForbidden) => {
+            return Ok(false)
+        }
+        Err(error) => return Err(error),
+    };
+    if entry.id != remote.id
+        || !valid_name(&entry.name)
+        || (entry.trashed && (!entry.explicitly_trashed || entry.name.as_bytes() != snapshot.name))
+        || entry.trashed != (remote.trashed == Some(true))
+        || entry.kind().ok() != Some(snapshot.kind)
+    {
+        return Ok(false);
+    }
+    let [remote_parent] = entry.parents.as_slice() else {
+        return Ok(false);
+    };
+    let Some(destination_parent) = state.items.iter().find(|candidate| {
+        candidate.remote_id.as_ref() == Some(remote_parent)
+            && candidate.confirmed.as_ref() == Some(&candidate.observed)
+            && matches!(&candidate.observed, ItemState::Present(value) if value.kind == LocalItemKind::Directory)
+    }) else { return Ok(false) };
+    let moved = &destination_parent.id != parent;
+    if snapshot.kind == LocalItemKind::Directory {
+        if entry.trashed {
+            if moved {
+                return Ok(false);
+            }
+            return trash_directory(&root.into(), &store, scope, &state.items, item, &entry);
+        }
+        if !moved && snapshot.name == entry.name.as_bytes() {
+            return Ok(true);
+        }
+        return reconcile_directory(
+            &root.into(),
+            &store,
+            scope,
+            item,
+            destination_parent,
+            &entry,
+        );
+    }
+    let (Some(old_digest), Some(old_version)) =
+        (&snapshot.content_version, &snapshot.remote_version)
+    else {
+        return Ok(false);
+    };
+    if moved && entry.trashed {
+        return Ok(false);
+    }
+    if !entry.trashed && old_version == &entry.version {
+        return Ok(true);
+    }
+    let renamed = entry.name.as_bytes() != snapshot.name;
+    let content_changed = if entry.trashed {
+        false
+    } else if let Some(html) = entry.workspace_html() {
+        hex_digest(checksum(html.as_bytes())?) != *old_digest
+    } else if let Some(digest) = &entry.sha256_checksum {
+        digest != old_digest
+    } else {
+        return Ok(false);
+    };
+    if !entry.trashed && !moved && !renamed && !content_changed {
+        let mut next = snapshot.clone();
+        next.remote_version = Some(entry.version);
+        store
+            .commit_remote_item(scope, &item.id, &item.observed, ItemState::Present(next))
+            .map_err(EngineError::DownloadState)?;
+        return Ok(true);
+    }
+    let remote_time = entry
+        .modified_time
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|date| date.to_utc());
+    let require_newer =
+        !entry.is_workspace_link() && (content_changed || renamed && !entry.trashed);
+    if require_newer && remote_time.is_none() {
+        return Ok(false);
+    }
+    let paths = store
+        .item_paths(scope, true)
+        .map_err(EngineError::DownloadState)?;
+    let Some((path, _)) = paths.iter().find(|(_, id)| *id == &item.id) else {
+        return Ok(false);
+    };
+    let path = Path::new(std::ffi::OsStr::from_bytes(path));
+    let parent_path = path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let directory = File::from(
+        fs::openat2(
+            &root,
+            parent_path,
+            DIR,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+        )
+        .map_err(|_| EngineError::DownloadConflictAt(path.into()))?,
+    );
+    let old_name = std::str::from_utf8(&snapshot.name)
+        .map_err(|_| EngineError::DownloadConflictAt(path.into()))?;
+    let Some((destination_parent_path, _)) =
+        paths.iter().find(|(_, id)| *id == &destination_parent.id)
+    else {
+        return Ok(false);
+    };
+    let destination =
+        Path::new(std::ffi::OsStr::from_bytes(destination_parent_path)).join(&entry.name);
+    if paths
+        .get(destination.as_os_str().as_bytes())
+        .is_some_and(|id| id != &item.id)
+    {
+        return Err(EngineError::DownloadConflictAt(destination));
+    }
+    let destination_directory = if moved {
+        let parent_path = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        File::from(
+            fs::openat2(
+                &root,
+                parent_path,
+                DIR,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+            )
+            .map_err(|_| EngineError::DownloadConflictAt(destination.clone()))?,
+        )
+    } else {
+        directory
+            .try_clone()
+            .map_err(|_| EngineError::DownloadLocal)?
+    };
+    let source = PendingFile::new(&entry, &directory);
+    let pending =
+        PendingFile::new(&entry, &destination_directory).with_activity(scope, &destination);
+    let backup = format!(
+        ".drivesync-download-{:x}.backup",
+        Sha256::digest(format!("{}\0{}\0{}", entry.id, old_version, old_name).as_bytes())
+    );
+    let transfer = Transfer {
+        notify,
+        path: &destination,
+        active: Cell::new(false),
+    };
+    let recovering = source.stat(&backup)?.is_some();
+    let local_name = if recovering { &backup } else { old_name };
+    if require_newer && !is_remote_newer(&source.open(local_name)?, remote_time)? {
+        return Ok(false);
+    }
+    if !recovering {
+        verify_digest(&source, old_name, old_digest)?;
+        if (renamed || moved) && pending.stat(&entry.name)?.is_some() {
+            return Err(EngineError::DownloadConflictAt(destination.clone()));
+        }
+        if content_changed && pending.stat(&pending.staged)?.is_none() {
+            download_file(token, &pending, |progress| transfer.emit(progress))?;
+        }
+        if (renamed || moved)
+            && !content_changed
+            && metadata(token, &entry.id)?.local_representation()? != entry
+        {
+            return Ok(false);
+        }
+        if require_newer && !is_remote_newer(&source.open(old_name)?, remote_time)? {
+            return Ok(false);
+        }
+        preserve_confirmed_file(&source, old_name, &backup, old_digest)?;
+    } else {
+        verify_digest(&source, &backup, old_digest)?;
+        if (renamed || moved) && source.stat(old_name)?.is_some() {
+            return Err(EngineError::DownloadConflictAt(path.into()));
+        }
+    }
+    let mut integrity = None;
+    let after = if entry.trashed {
+        if pending.stat(old_name)?.is_some() {
+            return Err(EngineError::DownloadConflictAt(path.into()));
+        }
+        ItemState::Absent
+    } else {
+        let digest = if content_changed {
+            let digest = pending.install(token, |progress| transfer.emit(progress))?;
+            integrity = Some(pending.integrity(digest.clone()));
+            digest
+        } else {
+            publish_rename(&source, &pending, &backup)?;
+            old_digest.clone()
+        };
+        let mut next = snapshot.clone();
+        next.name = entry.name.as_bytes().to_vec();
+        next.parent = Some(destination_parent.id.clone());
+        next.content_version = Some(digest);
+        next.remote_version = Some(entry.version.clone());
+        ItemState::Present(next)
+    };
+    store
+        .commit_remote_item(scope, &item.id, &item.observed, after)
+        .map_err(EngineError::DownloadState)?;
+    use crate::{LocalActivity, RemoteActivity};
+    let (action, activity) = match (entry.trashed, moved, renamed, content_changed) {
+        (false, true, _, updated) => (
+            if updated {
+                RemoteActivity::MovedAndUpdated
+            } else {
+                RemoteActivity::Moved
+            },
+            LocalActivity::Moved { from: path.into() },
+        ),
+        (true, _, _, _) => (RemoteActivity::Removed, LocalActivity::Removed),
+        (false, false, true, true) => (
+            RemoteActivity::RenamedAndUpdated,
+            LocalActivity::Moved { from: path.into() },
+        ),
+        (false, false, true, false) => (
+            RemoteActivity::Renamed,
+            LocalActivity::Moved { from: path.into() },
+        ),
+        _ => (RemoteActivity::Updated, LocalActivity::Written),
+    };
+    transfer.complete();
+    if (renamed || moved) && !content_changed {
+        fs::unlinkat(&directory, backup.as_str(), fs::AtFlags::empty()).map_err(local_error)?;
+    }
+    crate::ActivityHistory::append_remote(
+        scope,
+        crate::LocalNotice {
+            path: destination.clone(),
+            object_type: LocalItemKind::File,
+            activity,
+        },
+        action,
+        integrity,
+    )
+    .map_err(EngineError::ActivityHistory)?;
+    pending.clear()?;
+    Ok(true)
+}
+
+fn trash_directory(
+    root: &File,
+    store: &LocalStateStore,
+    scope: &LocalScope,
+    items: &[crate::TrackedItem],
+    item: &crate::TrackedItem,
+    entry: &Entry,
+) -> Result<bool, EngineError> {
+    let paths = store
+        .item_paths(scope, true)
+        .map_err(EngineError::DownloadState)?;
+    let Some((source, _)) = paths.iter().find(|(_, id)| *id == &item.id) else {
+        return Ok(false);
+    };
+    let source = Path::new(std::ffi::OsStr::from_bytes(source));
+    let by_id: HashMap<_, _> = items.iter().map(|item| (&item.id, item)).collect();
+    let mut expected = HashMap::new();
+    let mut states = Vec::new();
+    for (path, id) in &paths {
+        let Ok(relative) = Path::new(std::ffi::OsStr::from_bytes(path)).strip_prefix(source) else {
+            continue;
+        };
+        let tracked = by_id[id];
+        let ItemState::Present(snapshot) = &tracked.observed else {
+            return Ok(false);
+        };
+        if tracked.confirmed.as_ref() != Some(&tracked.observed) || tracked.remote_id.is_none() {
+            return Ok(false);
+        }
+        states.push((id.clone(), tracked.observed.clone()));
+        if !relative.as_os_str().is_empty() {
+            expected.insert(relative.to_path_buf(), snapshot.clone());
+        }
+    }
+    let parent_path = source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = open_move_directory(root, parent_path)?;
+    let backup = format!(
+        ".drivesync-download-{:x}.backup",
+        Sha256::digest(format!("folder-trash\0{}\0{}", entry.id, entry.version).as_bytes())
+    );
+    preserve_directory(&parent, &entry.name, &backup, &expected).map_err(|error| {
+        if error == EngineError::DownloadConflict {
+            EngineError::DownloadConflictAt(source.into())
+        } else {
+            error
+        }
+    })?;
+    store
+        .commit_remote_removal(scope, &states)
+        .map_err(EngineError::DownloadState)?;
+    crate::ActivityHistory::append_remote(
+        scope,
+        crate::LocalNotice {
+            path: source.into(),
+            object_type: LocalItemKind::Directory,
+            activity: crate::LocalActivity::Removed,
+        },
+        crate::RemoteActivity::Removed,
+        None,
+    )
+    .map_err(EngineError::ActivityHistory)?;
+    Ok(true)
+}
+
+fn preserve_directory(
+    parent: &File,
+    name: &str,
+    backup: &str,
+    expected: &HashMap<PathBuf, ItemSnapshot>,
+) -> Result<(), EngineError> {
+    let existing = |name| match fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => Ok(true),
+        Err(rustix::io::Errno::NOENT) => Ok(false),
+        Err(error) => Err(local_error(error)),
+    };
+    let source_exists = existing(name)?;
+    if source_exists {
+        if existing(backup)? {
+            return Err(EngineError::DownloadConflict);
+        }
+        let source = open_move_directory(parent, Path::new(name))?;
+        verify_directory(&source, expected)?;
+        let opened = fs::fstat(&source).map_err(local_error)?;
+        let named = fs::statat(parent, name, fs::AtFlags::SYMLINK_NOFOLLOW).map_err(local_error)?;
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino) {
+            return Err(EngineError::DownloadConflict);
+        }
+        fs::renameat_with(parent, name, parent, backup, RenameFlags::NOREPLACE)
+            .map_err(local_error)?;
+    }
+    let verified = open_move_directory(parent, Path::new(backup))
+        .and_then(|directory| verify_directory(&directory, expected));
+    if let Err(error) = verified {
+        if source_exists {
+            let _ = fs::renameat_with(parent, backup, parent, name, RenameFlags::NOREPLACE);
+        }
+        return Err(error);
+    }
+    parent.sync_all().map_err(|_| EngineError::DownloadLocal)
+}
+
+fn verify_directory(
+    root: &File,
+    expected: &HashMap<PathBuf, ItemSnapshot>,
+) -> Result<(), EngineError> {
+    let mut pending = vec![(
+        PathBuf::new(),
+        root.try_clone().map_err(|_| EngineError::DownloadLocal)?,
+    )];
+    let mut seen = 0;
+    while let Some((relative, directory)) = pending.pop() {
+        for entry in fs::Dir::read_from(&directory).map_err(local_error)? {
+            let entry = entry.map_err(local_error)?;
+            let bytes = entry.file_name().to_bytes();
+            if matches!(bytes, b"." | b"..") {
+                continue;
+            }
+            let name = std::ffi::OsStr::from_bytes(bytes);
+            let path = relative.join(name);
+            let Some(snapshot) = expected.get(&path) else {
+                let recovery = bytes
+                    .strip_prefix(b".drivesync-download-")
+                    .and_then(|suffix| suffix.strip_suffix(b".backup"))
+                    .is_some_and(|digest| {
+                        digest.len() == 64 && digest.iter().all(u8::is_ascii_hexdigit)
+                    });
+                if recovery {
+                    continue;
+                }
+                return Err(EngineError::DownloadConflict);
+            };
+            seen += 1;
+            if snapshot.kind == LocalItemKind::Directory {
+                pending.push((path, open_move_directory(&directory, Path::new(name))?));
+                continue;
+            }
+            let Some(digest) = snapshot
+                .content_version
+                .as_deref()
+                .filter(|_| snapshot.kind == LocalItemKind::File)
+            else {
+                return Err(EngineError::DownloadConflict);
+            };
+            let file = fs::openat2(
+                &directory,
+                name,
+                OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+            )
+            .map(File::from)
+            .map_err(|_| EngineError::DownloadConflict)?;
+            if !file.metadata().is_ok_and(|metadata| metadata.is_file())
+                || hex_digest(checksum(file)?) != digest
+            {
+                return Err(EngineError::DownloadConflict);
+            }
+        }
+    }
+    if seen != expected.len() {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(())
+}
+
+fn reconcile_directory(
+    root: &File,
+    store: &LocalStateStore,
+    scope: &LocalScope,
+    item: &crate::TrackedItem,
+    parent: &crate::TrackedItem,
+    entry: &Entry,
+) -> Result<bool, EngineError> {
+    let paths = store
+        .item_paths(scope, true)
+        .map_err(EngineError::DownloadState)?;
+    let locate = |id: &ItemId| {
+        paths
+            .iter()
+            .find(|(_, candidate)| *candidate == id)
+            .map(|(path, _)| Path::new(std::ffi::OsStr::from_bytes(path)))
+    };
+    let (Some(source), Some(parent_path), ItemState::Present(before)) =
+        (locate(&item.id), locate(&parent.id), &item.observed)
+    else {
+        return Ok(false);
+    };
+    let destination = parent_path.join(&entry.name);
+    if parent_path.starts_with(source) || paths.contains_key(destination.as_os_str().as_bytes()) {
+        return Err(EngineError::DownloadConflictAt(destination));
+    }
+    let original_parent = source.parent().ok_or(EngineError::DownloadIncomplete)?;
+    let open = |path: &Path| {
+        let path = if path.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            path
+        };
+        open_move_directory(root, path)
+    };
+    let from = open(original_parent)?;
+    let to = open(parent_path)?;
+    let old_name = source.file_name().ok_or(EngineError::DownloadIncomplete)?;
+    let marker = format!(
+        ".drivesync-download-{:x}.move",
+        Sha256::digest(
+            format!(
+                "{}\0{}\0{:?}\0{:?}",
+                entry.id, entry.version, source, destination
+            )
+            .as_bytes()
+        )
+    );
+    let moved = move_directory(&from, old_name, &to, &entry.name, &marker).map_err(|error| {
+        if error == EngineError::DownloadConflict {
+            EngineError::DownloadConflictAt(destination.clone())
+        } else {
+            error
+        }
+    })?;
+    let mut next = before.clone();
+    next.parent = Some(parent.id.clone());
+    next.name = entry.name.as_bytes().to_vec();
+    store
+        .commit_remote_item(scope, &item.id, &item.observed, ItemState::Present(next))
+        .map_err(EngineError::DownloadState)?;
+    fs::unlinkat(&moved, marker.as_str(), fs::AtFlags::empty()).map_err(local_error)?;
+    crate::ActivityHistory::append_remote(
+        scope,
+        crate::LocalNotice {
+            path: destination,
+            object_type: LocalItemKind::Directory,
+            activity: crate::LocalActivity::Moved {
+                from: source.into(),
+            },
+        },
+        if before.parent.as_ref() == Some(&parent.id) {
+            crate::RemoteActivity::Renamed
+        } else {
+            crate::RemoteActivity::Moved
+        },
+        None,
+    )
+    .map_err(EngineError::ActivityHistory)?;
+    Ok(true)
+}
+
+fn open_move_directory(parent: &File, name: &Path) -> Result<File, EngineError> {
+    fs::openat2(
+        parent,
+        name,
+        DIR,
+        Mode::empty(),
+        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_XDEV,
+    )
+    .map(File::from)
+    .map_err(|_| EngineError::DownloadConflict)
+}
+
+fn move_directory(
+    from: &File,
+    old_name: &std::ffi::OsStr,
+    to: &File,
+    new_name: &str,
+    marker: &str,
+) -> Result<File, EngineError> {
+    let stat =
+        |dir, name: &std::ffi::OsStr| match fs::statat(dir, name, fs::AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(_) => Ok(true),
+            Err(rustix::io::Errno::NOENT) => Ok(false),
+            Err(error) => Err(local_error(error)),
+        };
+    let source_exists = stat(from, old_name)?;
+    let destination_exists = stat(to, new_name.as_ref())?;
+    if source_exists && destination_exists {
+        return Err(EngineError::DownloadConflict);
+    }
+    if source_exists {
+        let source = open_move_directory(from, Path::new(old_name))?;
+        let proof = match fs::openat(
+            &source,
+            marker,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        ) {
+            Ok(proof) => Some(File::from(proof)),
+            Err(rustix::io::Errno::EXIST) => None,
+            Err(error) => return Err(local_error(error)),
+        };
+        if let Some(proof) = proof {
+            proof.sync_all().map_err(|_| EngineError::DownloadLocal)?;
+        }
+        let opened = fs::fstat(&source).map_err(local_error)?;
+        let named =
+            fs::statat(from, old_name, fs::AtFlags::SYMLINK_NOFOLLOW).map_err(local_error)?;
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino) {
+            return Err(EngineError::DownloadConflict);
+        }
+        source.sync_all().map_err(|_| EngineError::DownloadLocal)?;
+        fs::renameat_with(from, old_name, to, new_name, RenameFlags::NOREPLACE)
+            .map_err(local_error)?;
+    }
+    let destination = open_move_directory(to, Path::new(new_name))?;
+    let proof = fs::statat(&destination, marker, fs::AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|_| EngineError::DownloadConflict)?;
+    if fs::FileType::from_raw_mode(proof.st_mode) != fs::FileType::RegularFile || proof.st_size != 0
+    {
+        return Err(EngineError::DownloadConflict);
+    }
+    from.sync_all()
+        .and_then(|()| to.sync_all())
+        .map_err(|_| EngineError::DownloadLocal)?;
+    Ok(destination)
+}
+
+fn is_remote_newer(
+    file: &File,
+    remote: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<bool, EngineError> {
+    let local = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .map_err(|_| EngineError::DownloadLocal)?;
+    Ok(remote.is_some_and(|remote| remote > chrono::DateTime::<chrono::Utc>::from(local)))
+}
+
+fn publish_rename(
+    original: &PendingFile<'_>,
+    pending: &PendingFile<'_>,
+    backup: &str,
+) -> Result<(), EngineError> {
+    if let Some(target) = pending.stat(&pending.entry.name)? {
+        let source = original
+            .stat(backup)?
+            .ok_or(EngineError::DownloadConflict)?;
+        if (target.st_dev, target.st_ino) != (source.st_dev, source.st_ino) {
+            return Err(EngineError::DownloadConflict);
+        }
+    } else {
+        fs::linkat(
+            original.directory,
+            backup,
+            pending.directory,
+            pending.entry.name.as_str(),
+            fs::AtFlags::empty(),
+        )
+        .map_err(local_error)?;
+    }
+    pending
+        .directory
+        .sync_all()
+        .map_err(|_| EngineError::DownloadLocal)
+}
+
+fn preserve_confirmed_file(
+    pending: &PendingFile<'_>,
+    source: &str,
+    backup: &str,
+    expected: &str,
+) -> Result<(), EngineError> {
+    verify_digest(pending, source, expected)?;
+    fs::renameat_with(
+        pending.directory,
+        source,
+        pending.directory,
+        backup,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(local_error)?;
+    pending
+        .directory
+        .sync_all()
+        .map_err(|_| EngineError::DownloadLocal)?;
+    if let Err(error) = verify_digest(pending, backup, expected) {
+        let _ = fs::renameat_with(
+            pending.directory,
+            backup,
+            pending.directory,
+            source,
+            RenameFlags::NOREPLACE,
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn verify_digest(pending: &PendingFile<'_>, name: &str, expected: &str) -> Result<(), EngineError> {
+    if hex_digest(checksum(pending.open(name)?)?) != expected {
+        return Err(EngineError::DownloadConflict);
+    }
+    Ok(())
+}
+
 fn local_error(error: rustix::io::Errno) -> EngineError {
     if error == rustix::io::Errno::EXIST {
         EngineError::DownloadConflict
     } else {
         EngineError::DownloadLocal
+    }
+}
+
+struct Transfer<'a> {
+    notify: &'a dyn Fn(&Path, DownloadProgress),
+    path: &'a Path,
+    active: Cell<bool>,
+}
+
+impl Transfer<'_> {
+    fn emit(&self, progress: DownloadProgress) {
+        self.active.set(true);
+        (self.notify)(self.path, progress);
+    }
+
+    fn complete(&self) {
+        if self.active.replace(false) {
+            (self.notify)(self.path, DownloadProgress::Completed);
+        }
+    }
+}
+
+impl Drop for Transfer<'_> {
+    fn drop(&mut self) {
+        if self.active.get() {
+            (self.notify)(self.path, DownloadProgress::Failed);
+        }
     }
 }
 
@@ -362,6 +1415,8 @@ struct PendingFile<'a> {
     directory: &'a File,
     staged: String,
     digest: String,
+    activity: Option<(&'a LocalScope, &'a Path)>,
+    remote_checksum: RefCell<Option<String>>,
 }
 
 impl<'a> PendingFile<'a> {
@@ -370,28 +1425,53 @@ impl<'a> PendingFile<'a> {
             Sha256::digest(format!("{}\0{}\0{}", entry.id, entry.version, entry.name).as_bytes());
         Self {
             entry,
+            activity: None,
+            remote_checksum: RefCell::new(entry.sha256_checksum.clone()),
             directory,
             staged: format!(".drivesync-download-{key:x}.ready"),
             digest: format!(".drivesync-download-{key:x}.digest"),
         }
     }
 
-    fn install(&self, token: &str) -> Result<(), EngineError> {
+    fn with_activity(mut self, scope: &'a LocalScope, path: &'a Path) -> Self {
+        self.activity = Some((scope, path));
+        self
+    }
+
+    fn integrity(&self, local: String) -> crate::DownloadIntegrity {
+        crate::DownloadIntegrity {
+            local,
+            remote: self.remote_checksum.borrow().clone(),
+        }
+    }
+
+    fn install(
+        &self,
+        token: &str,
+        notify: impl Fn(DownloadProgress),
+    ) -> Result<String, EngineError> {
         let target = self.stat(&self.entry.name)?;
         let staged = self.stat(&self.staged)?;
-        if let Some(target) = target {
+        let digest = if let Some(target) = target {
             let Some(staged) = staged else {
                 return Err(EngineError::DownloadConflict);
             };
             if (target.st_dev, target.st_ino) != (staged.st_dev, staged.st_ino) {
                 return Err(EngineError::DownloadConflict);
             }
-            self.verify()?;
+            self.verify()?
         } else {
             if staged.is_none() {
-                download_file(token, self)?;
+                download_file(token, self, notify)?;
             }
-            self.verify()?;
+            let digest = self.verify()?;
+            if self.entry.is_workspace_link() {
+                let staged = self.open(&self.staged)?;
+                staged
+                    .set_permissions(std::fs::Permissions::from_mode(0o444))
+                    .and_then(|()| staged.sync_all())
+                    .map_err(|_| EngineError::DownloadLocal)?;
+            }
             fs::linkat(
                 self.directory,
                 self.staged.as_str(),
@@ -400,10 +1480,12 @@ impl<'a> PendingFile<'a> {
                 fs::AtFlags::empty(),
             )
             .map_err(local_error)?;
-        }
+            digest
+        };
         self.directory
             .sync_all()
-            .map_err(|_| EngineError::DownloadLocal)
+            .map_err(|_| EngineError::DownloadLocal)?;
+        Ok(digest)
     }
 
     fn stat(&self, name: &str) -> Result<Option<fs::Stat>, EngineError> {
@@ -414,7 +1496,7 @@ impl<'a> PendingFile<'a> {
         }
     }
 
-    fn verify(&self) -> Result<(), EngineError> {
+    fn verify(&self) -> Result<String, EngineError> {
         let staged = self.open(&self.staged)?;
         let size = self
             .entry
@@ -435,10 +1517,11 @@ impl<'a> PendingFile<'a> {
             .take(33)
             .read_to_end(&mut expected)
             .map_err(|_| EngineError::DownloadLocal)?;
-        if checksum(staged.take(size.saturating_add(1)))?.as_slice() != expected {
+        let actual = checksum(staged.take(size.saturating_add(1)))?;
+        if actual.as_slice() != expected {
             return Err(EngineError::DownloadConflict);
         }
-        Ok(())
+        Ok(hex_digest(actual))
     }
 
     fn open(&self, name: &str) -> Result<File, EngineError> {
@@ -468,89 +1551,311 @@ impl<'a> PendingFile<'a> {
     }
 }
 
+fn hex_digest(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn checksum(mut input: impl Read) -> Result<[u8; 32], EngineError> {
     let mut digest = Sha256::new();
     io::copy(&mut input, &mut digest).map_err(|_| EngineError::DownloadLocal)?;
     Ok(digest.finalize().into())
 }
 
-fn download_file(token: &str, pending: &PendingFile<'_>) -> Result<(), EngineError> {
+fn copy_with_progress(
+    mut input: impl Read,
+    mut output: impl Write,
+    total: u64,
+    notify: impl Fn(DownloadProgress),
+) -> Result<u64, EngineError> {
+    let mut buffer = [0; 64 * 1024];
+    let mut received = 0;
+    let mut last_update = Instant::now();
+    loop {
+        remote::check_cancelled()?;
+        let count = match input.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result.map_err(|_| EngineError::Authentication(crate::AuthError::Network))?,
+        };
+        remote::check_cancelled()?;
+        if count == 0 {
+            return Ok(received);
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|_| EngineError::DownloadLocal)?;
+        received += count as u64;
+        if received <= total
+            && (received == total || last_update.elapsed() >= Duration::from_millis(100))
+        {
+            notify(DownloadProgress::Receiving { received, total });
+            last_update = Instant::now();
+        }
+    }
+}
+
+fn download_file(
+    token: &str,
+    pending: &PendingFile<'_>,
+    notify: impl Fn(DownloadProgress),
+) -> Result<(), EngineError> {
     let entry = pending.entry;
     let directory = pending.directory;
     let size = entry
         .size
         .as_deref()
-        .and_then(|s| s.parse::<u64>().ok())
-        .and_then(|size| size.checked_add(1))
+        .and_then(|size| size.parse::<u64>().ok())
         .ok_or(EngineError::DownloadIncomplete)?;
-    let response = remote::stream(
-        token,
-        &format!("{FILES}/{}", entry.id),
-        &[("alt", "media"), ("supportsAllDrives", "true")],
-        Duration::from_secs(600),
-    )?;
-    let status = response.status().as_u16();
-    if status != 200 {
-        remote::response_status(status, &[])?;
+    let mut partial = resume::PartialDownload::open(pending, size)?;
+    if let Some(html) = entry.workspace_html() {
+        partial.invalidate()?;
+        partial
+            .file
+            .write_all(html.as_bytes())
+            .map_err(|_| EngineError::DownloadLocal)?;
+    } else {
+        partial.receive(token, entry, &notify)?;
+    }
+    let current = metadata(token, &entry.id)?.local_representation()?;
+    if !entry.same_download_version(&current) {
+        partial.invalidate()?;
         return Err(EngineError::DownloadIncomplete);
     }
-    let suffix = oauth2::CsrfToken::new_random();
-    let temporary = format!(".drivesync-download-{}", suffix.secret());
-    let mut file = File::from(
+    let file = &mut partial.file;
+    if let Some(time) = entry
+        .modified_time
+        .as_deref()
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+    {
+        file.set_times(std::fs::FileTimes::new().set_modified(time.into()))
+            .map_err(|_| EngineError::DownloadLocal)?;
+    }
+    file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
+    file.rewind().map_err(|_| EngineError::DownloadLocal)?;
+    let digest = checksum(&*file)?;
+    let expected = entry
+        .sha256_checksum
+        .as_ref()
+        .or(current.sha256_checksum.as_ref());
+    pending.remote_checksum.replace(expected.cloned());
+    let actual = hex_digest(digest);
+    if expected.is_some_and(|expected| expected != &actual) {
+        partial.invalidate()?;
+        if let Some((scope, path)) = pending.activity {
+            crate::ActivityHistory::append_remote(
+                scope,
+                crate::LocalNotice {
+                    path: path.into(),
+                    object_type: LocalItemKind::File,
+                    activity: crate::LocalActivity::Written,
+                },
+                crate::RemoteActivity::IntegrityFailed,
+                Some(pending.integrity(actual)),
+            )
+            .map_err(EngineError::ActivityHistory)?;
+        }
+        return Err(EngineError::DownloadIncomplete);
+    }
+    // A proof without a ready file cannot authorize adopting a destination.
+    match fs::unlinkat(directory, pending.digest.as_str(), fs::AtFlags::empty()) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => {}
+        Err(error) => return Err(local_error(error)),
+    }
+    let mut proof = File::from(
         fs::openat(
             directory,
-            temporary.as_str(),
-            OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::CLOEXEC,
+            pending.digest.as_str(),
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
             Mode::RUSR | Mode::WUSR,
         )
         .map_err(local_error)?,
     );
-    let result = (|| {
-        let copied = io::copy(&mut response.take(size), &mut file)
-            .map_err(|_| EngineError::DownloadLocal)?;
-        if copied != size - 1 || metadata(token, &entry.id)? != *entry {
-            return Err(EngineError::DownloadIncomplete);
-        }
-        file.sync_all().map_err(|_| EngineError::DownloadLocal)?;
-        file.rewind().map_err(|_| EngineError::DownloadLocal)?;
-        let digest = checksum(&file)?;
-        // A proof without a ready file cannot authorize adopting a destination.
-        match fs::unlinkat(directory, pending.digest.as_str(), fs::AtFlags::empty()) {
-            Ok(()) | Err(rustix::io::Errno::NOENT) => {}
-            Err(error) => return Err(local_error(error)),
-        }
-        let mut proof = File::from(
-            fs::openat(
-                directory,
-                pending.digest.as_str(),
-                OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-                Mode::RUSR | Mode::WUSR,
-            )
-            .map_err(local_error)?,
-        );
-        proof
-            .write_all(&digest)
-            .and_then(|()| proof.sync_all())
-            .map_err(|_| EngineError::DownloadLocal)?;
-        fs::renameat_with(
-            directory,
-            temporary.as_str(),
-            directory,
-            pending.staged.as_str(),
-            RenameFlags::NOREPLACE,
-        )
-        .map_err(local_error)?;
-        directory.sync_all().map_err(|_| EngineError::DownloadLocal)
-    })();
-    if result.is_err() {
-        let _ = fs::unlinkat(directory, temporary.as_str(), fs::AtFlags::empty());
-    }
-    result
+    proof
+        .write_all(&digest)
+        .and_then(|()| proof.sync_all())
+        .map_err(|_| EngineError::DownloadLocal)?;
+    fs::renameat_with(
+        directory,
+        partial.path.as_str(),
+        directory,
+        pending.staged.as_str(),
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(local_error)?;
+    directory
+        .sync_all()
+        .map_err(|_| EngineError::DownloadLocal)?;
+    partial.clear_checkpoint()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_link_is_read_only_and_survives_a_rename() {
+        let metadata = serde_json::json!({
+            "id": "document-id",
+            "name": "Report",
+            "mimeType": "application/vnd.google-apps.document",
+            "version": "1"
+        });
+        let entry: Entry = serde_json::from_value(metadata.clone()).unwrap();
+        let mut renamed: Entry = serde_json::from_value(metadata).unwrap();
+        renamed.name = "Renamed".into();
+        let entry = entry.local_representation().unwrap();
+        let renamed = renamed.local_representation().unwrap();
+        assert_eq!(entry.name, "Report.html");
+        assert_eq!(renamed.name, "Renamed.html");
+        let html = entry.workspace_html().unwrap();
+        let url = "https://docs.google.com/document/d/document-id/edit";
+        assert!(html.contains(&format!(r#"http-equiv="refresh" content="0; url={url}""#)));
+        assert!(html.contains(&format!(r#"href="{url}""#)));
+        assert_eq!(renamed.workspace_html().as_deref(), Some(html.as_str()));
+
+        let suffix = oauth2::CsrfToken::new_random();
+        let root = std::env::temp_dir().join(format!("drivesync-workspace-{}", suffix.secret()));
+        std::fs::create_dir(&root).unwrap();
+        let directory = File::open(&root).unwrap();
+        let pending = PendingFile::new(&entry, &directory);
+        std::fs::write(root.join(&pending.staged), &html).unwrap();
+        std::fs::write(
+            root.join(&pending.digest),
+            checksum(html.as_bytes()).unwrap(),
+        )
+        .unwrap();
+        pending.install("", |_| {}).unwrap();
+        let target = root.join(&entry.name);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), html);
+        assert_eq!(
+            std::fs::metadata(target).unwrap().permissions().mode() & 0o777,
+            0o444
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_trash_preserves_tree_and_rejects_untracked_or_modified_content() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let root = std::env::temp_dir().join(format!("drivesync-trash-tree-{}", suffix.secret()));
+        std::fs::create_dir_all(root.join("folder/nested")).unwrap();
+        let original = root.join("folder/nested/file");
+        std::fs::write(&original, b"base").unwrap();
+        let parent = File::open(&root).unwrap();
+        let snapshot = |kind, content_version| ItemSnapshot {
+            parent: None,
+            name: Vec::new(),
+            kind,
+            content_version,
+            remote_version: None,
+        };
+        let expected = HashMap::from([
+            (
+                PathBuf::from("nested"),
+                snapshot(LocalItemKind::Directory, None),
+            ),
+            (
+                PathBuf::from("nested/file"),
+                snapshot(
+                    LocalItemKind::File,
+                    Some(hex_digest(checksum(&b"base"[..]).unwrap())),
+                ),
+            ),
+        ]);
+        let extra = root.join("folder/new");
+        std::fs::write(&extra, b"new").unwrap();
+        assert_eq!(
+            preserve_directory(&parent, "folder", "backup", &expected),
+            Err(EngineError::DownloadConflict)
+        );
+        std::fs::remove_file(extra).unwrap();
+        std::fs::write(&original, b"edit").unwrap();
+        assert_eq!(
+            preserve_directory(&parent, "folder", "backup", &expected),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(std::fs::read(&original).unwrap(), b"edit");
+        std::fs::write(&original, b"base").unwrap();
+        preserve_directory(&parent, "folder", "backup", &expected).unwrap();
+        preserve_directory(&parent, "folder", "backup", &expected).unwrap();
+        assert!(!root.join("folder").exists());
+        assert_eq!(
+            std::fs::read(root.join("backup/nested/file")).unwrap(),
+            b"base"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_move_preserves_descendants_refuses_collision_and_recovers() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let root = std::env::temp_dir().join(format!("drivesync-folder-move-{}", suffix.secret()));
+        std::fs::create_dir_all(root.join("old/nested")).unwrap();
+        std::fs::create_dir_all(root.join("parent/new")).unwrap();
+        std::fs::write(root.join("old/nested/report"), b"local bytes").unwrap();
+        let from = File::open(&root).unwrap();
+        let to = File::open(root.join("parent")).unwrap();
+        let old = std::ffi::OsStr::new("old");
+        assert!(matches!(
+            move_directory(&from, old, &to, "new", ".proof"),
+            Err(EngineError::DownloadConflict)
+        ));
+        assert!(root.join("old/nested/report").exists());
+        std::fs::remove_dir(root.join("parent/new")).unwrap();
+        move_directory(&from, old, &to, "new", ".proof").unwrap();
+        move_directory(&from, old, &to, "new", ".proof").unwrap();
+        assert_eq!(
+            std::fs::read(root.join("parent/new/nested/report")).unwrap(),
+            b"local bytes"
+        );
+        assert!(!root.join("old").exists());
+        assert!(matches!(
+            move_directory(&from, old, &to, "new", ".other-proof"),
+            Err(EngineError::DownloadConflict)
+        ));
+        move_directory(
+            &to,
+            std::ffi::OsStr::new("new"),
+            &to,
+            "renamed",
+            ".rename-proof",
+        )
+        .unwrap();
+        move_directory(
+            &to,
+            std::ffi::OsStr::new("new"),
+            &to,
+            "renamed",
+            ".rename-proof",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("parent/renamed/nested/report")).unwrap(),
+            b"local bytes"
+        );
+        assert!(!root.join("parent/new").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn download_progress_counts_written_bytes_without_marking_installation_complete() {
+        let input = b"download body";
+        let updates = std::cell::RefCell::new(Vec::new());
+        let mut destination = Vec::new();
+        let total = input.len() as u64;
+        let copied = copy_with_progress(&input[..], &mut destination, total, |progress| {
+            updates.borrow_mut().push(progress);
+        })
+        .unwrap();
+        assert_eq!(copied, total);
+        assert_eq!(destination, input);
+        assert_eq!(
+            updates.into_inner(),
+            [DownloadProgress::Receiving {
+                received: total,
+                total
+            }]
+        );
+    }
 
     #[test]
     fn remote_names_cannot_escape_or_collide_with_staging() {
@@ -581,7 +1886,10 @@ mod tests {
             mime_type: "application/octet-stream".into(),
             version: "1".into(),
             size: Some("4".into()),
+            sha256_checksum: None,
+            modified_time: None,
             trashed: false,
+            explicitly_trashed: false,
             parents: vec![],
         };
         let pending = PendingFile::new(&entry, &directory);
@@ -590,16 +1898,106 @@ mod tests {
 
         let target = path.join(&entry.name);
         std::fs::write(&target, b"data").unwrap();
-        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(
+            pending.install("", |_| {}),
+            Err(EngineError::DownloadConflict)
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"data");
         std::fs::remove_file(&target).unwrap();
 
-        pending.install("").unwrap();
+        pending.install("", |_| {}).unwrap();
         // Simulate restart before committing the identity.
-        PendingFile::new(&entry, &directory).install("").unwrap();
+        PendingFile::new(&entry, &directory)
+            .install("", |_| {})
+            .unwrap();
         std::fs::write(&target, b"edit").unwrap();
-        assert_eq!(pending.install(""), Err(EngineError::DownloadConflict));
+        assert_eq!(
+            pending.install("", |_| {}),
+            Err(EngineError::DownloadConflict)
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"edit");
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn remote_removal_preserves_the_confirmed_file_and_refuses_local_edits() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let path = std::env::temp_dir().join(format!("drivesync-remote-trash-{}", suffix.secret()));
+        std::fs::create_dir(&path).unwrap();
+        let directory = File::open(&path).unwrap();
+        let entry = Entry {
+            id: "drive-id".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            version: "2".into(),
+            size: Some("4".into()),
+            sha256_checksum: None,
+            modified_time: None,
+            trashed: true,
+            explicitly_trashed: true,
+            parents: vec![],
+        };
+        let pending = PendingFile::new(&entry, &directory);
+        let digest = hex_digest(checksum(&b"base"[..]).unwrap());
+        std::fs::write(path.join("file"), b"edit").unwrap();
+        assert_eq!(
+            preserve_confirmed_file(&pending, "file", "backup", &digest),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(std::fs::read(path.join("file")).unwrap(), b"edit");
+        std::fs::write(path.join("file"), b"base").unwrap();
+        preserve_confirmed_file(&pending, "file", "backup", &digest).unwrap();
+        assert!(!path.join("file").exists());
+        verify_digest(&pending, "backup", &digest).unwrap();
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn move_uses_the_original_bytes_across_directories_and_checks_edit_timestamps() {
+        let suffix = oauth2::CsrfToken::new_random();
+        let path = std::env::temp_dir().join(format!("drivesync-rename-{}", suffix.secret()));
+        std::fs::create_dir(&path).unwrap();
+        let directory = File::open(&path).unwrap();
+        let entry = Entry {
+            id: "drive-id".into(),
+            name: "new".into(),
+            mime_type: "application/octet-stream".into(),
+            version: "2".into(),
+            size: Some("4".into()),
+            sha256_checksum: None,
+            modified_time: None,
+            trashed: false,
+            explicitly_trashed: false,
+            parents: vec![],
+        };
+        let destination = path.join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        let destination_directory = File::open(&destination).unwrap();
+        let pending = PendingFile::new(&entry, &directory);
+        let target = PendingFile::new(&entry, &destination_directory);
+        std::fs::write(path.join("old"), b"base").unwrap();
+        let original = pending.open("old").unwrap();
+        let local =
+            chrono::DateTime::<chrono::Utc>::from(original.metadata().unwrap().modified().unwrap());
+        assert!(!is_remote_newer(&original, None).unwrap());
+        assert!(!is_remote_newer(&original, Some(local)).unwrap());
+        assert!(
+            is_remote_newer(&original, Some(local + chrono::TimeDelta::milliseconds(1))).unwrap()
+        );
+
+        let digest = hex_digest(checksum(&b"base"[..]).unwrap());
+        preserve_confirmed_file(&pending, "old", "backup", &digest).unwrap();
+        std::fs::write(destination.join("new"), b"edit").unwrap();
+        assert_eq!(
+            publish_rename(&pending, &target, "backup"),
+            Err(EngineError::DownloadConflict)
+        );
+        assert_eq!(std::fs::read(destination.join("new")).unwrap(), b"edit");
+        std::fs::remove_file(destination.join("new")).unwrap();
+        publish_rename(&pending, &target, "backup").unwrap();
+        publish_rename(&pending, &target, "backup").unwrap();
+        assert_eq!(std::fs::read(destination.join("new")).unwrap(), b"base");
+        assert!(!path.join("old").exists());
         std::fs::remove_dir_all(path).unwrap();
     }
 
@@ -614,11 +2012,16 @@ mod tests {
         let scope = LocalScope::new("client", "account", &destination).unwrap();
         let mut job = Job {
             token: "",
+            notify: &|_, _| {},
+            phase: &|_| {},
+            selected: None,
+            revisiting: false,
             scope: &scope,
             store: LocalStateStore::open(&state).unwrap(),
             root: File::open(&destination).unwrap(),
             seen: HashSet::new(),
             report: InitialDownload::default(),
+            first_conflict: None,
         };
         let entry = Entry {
             id: "remote-id".into(),
@@ -626,11 +2029,14 @@ mod tests {
             mime_type: FOLDER.into(),
             version: "1".into(),
             size: None,
+            sha256_checksum: None,
+            modified_time: None,
             trashed: false,
+            explicitly_trashed: false,
             parents: vec![],
         };
         let first = job
-            .register(&entry, None, LocalItemKind::Directory, || Ok(()))
+            .register(&entry, None, LocalItemKind::Directory, None, || Ok(None))
             .unwrap();
         assert!(!job.store.initial_download_complete(&scope).unwrap());
         job.store.finish_initial_download(&scope, &first).unwrap();
@@ -638,7 +2044,7 @@ mod tests {
         job.store = LocalStateStore::open(&state).unwrap();
         assert!(job.store.initial_download_complete(&scope).unwrap());
         let second = job
-            .register(&entry, None, LocalItemKind::Directory, || {
+            .register(&entry, None, LocalItemKind::Directory, None, || {
                 panic!("already registered")
             })
             .unwrap();
@@ -648,10 +2054,80 @@ mod tests {
             ..entry
         };
         assert_eq!(
-            job.register(&other, None, LocalItemKind::Directory, || panic!(
+            job.register(&other, None, LocalItemKind::Directory, None, || panic!(
                 "conflicting root"
             )),
             Err(EngineError::DownloadConflict)
+        );
+        let folder = Entry {
+            id: "restored-folder".into(),
+            name: "folder".into(),
+            parents: vec!["remote-id".into()],
+            ..other
+        };
+        let folder_id = job
+            .register(
+                &folder,
+                Some(&first),
+                LocalItemKind::Directory,
+                None,
+                || Ok(None),
+            )
+            .unwrap();
+        let file = Entry {
+            id: "restored-file".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            size: Some("4".into()),
+            parents: vec![folder.id.clone()],
+            ..folder
+        };
+        let file_id = job
+            .register(&file, Some(&folder_id), LocalItemKind::File, None, || {
+                Ok(Some("digest".into()))
+            })
+            .unwrap();
+        let checkpoint = job.store.load(&scope).unwrap().unwrap();
+        let prior: Vec<_> = checkpoint
+            .items
+            .into_iter()
+            .filter(|item| item.id == folder_id || item.id == file_id)
+            .map(|item| (item.id, item.observed))
+            .collect();
+        job.store.commit_remote_removal(&scope, &prior).unwrap();
+        let folder = Entry {
+            id: "restored-folder".into(),
+            name: "folder".into(),
+            mime_type: FOLDER.into(),
+            size: None,
+            parents: vec!["remote-id".into()],
+            ..file
+        };
+        assert_eq!(
+            job.register(
+                &folder,
+                Some(&first),
+                LocalItemKind::Directory,
+                None,
+                || Ok(None)
+            )
+            .unwrap(),
+            folder_id
+        );
+        let file = Entry {
+            id: "restored-file".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            size: Some("4".into()),
+            parents: vec![folder.id.clone()],
+            ..folder
+        };
+        assert_eq!(
+            job.register(&file, Some(&folder_id), LocalItemKind::File, None, || Ok(
+                Some("new-digest".into())
+            ))
+            .unwrap(),
+            file_id
         );
         drop(job);
         std::fs::remove_dir_all(directory).unwrap();

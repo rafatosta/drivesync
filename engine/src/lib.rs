@@ -2,6 +2,7 @@
 //!
 //! Initial download is explicit and separate from ongoing synchronization.
 mod accounts;
+mod activity_history;
 mod auth;
 mod configuration;
 mod download;
@@ -13,9 +14,12 @@ mod models;
 mod remote;
 mod remote_detector;
 
+pub use activity_history::{
+    ActivityHistory, ActivityPage, ActivityRecord, DownloadIntegrity, RemoteActivity,
+};
 pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
 pub use configuration::{DriveFolder, FolderConfiguration};
-pub use download::InitialDownload;
+pub use download::{DownloadProgress, InitialDownload};
 pub use error::EngineError;
 pub use facade::DriveSyncEngine;
 pub use local_detector::{
@@ -25,8 +29,9 @@ pub use local_detector::{
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;
 pub use remote_detector::{
-    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteDelivery,
-    RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata, RemoteMembership,
+    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteCheckProgress,
+    RemoteDelivery, RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata,
+    RemoteMembership,
 };
 
 pub use local_state::{

@@ -1,17 +1,17 @@
-//! Application-wide preferences: persistence and the native preferences window.
+//! Application-wide preferences: persistence and the embedded preferences page.
 //!
 //! Global preferences use a key file.
 //! Unknown global values fall back to defaults without deleting the file.
 //!
 //! - [`model`]: typed values and their key-file representation.
-//! - [`window`]: the adaptive preferences window and the `app.preferences` action.
+//! - [`window`]: the adaptive preferences page and the `app.preferences` action.
 mod accounts;
 mod model;
 mod window;
 
 pub(crate) use accounts::{AccountSettings, Accounts};
 pub(crate) use model::{ColorScheme, Preferences};
-pub(crate) use window::{install, present_with_accounts};
+pub(crate) use window::{build, install, open};
 
 /// Returns whether closing the window should post the "keeps running" notification.
 pub(crate) fn notify_on_close() -> bool {

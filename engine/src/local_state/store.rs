@@ -264,6 +264,52 @@ impl LocalStateStore {
         .map(|(_, generation)| generation)
     }
 
+    pub(crate) fn commit_remote_item(
+        &self,
+        scope: &LocalScope,
+        id: &ItemId,
+        before: &ItemState,
+        after: ItemState,
+    ) -> Result<(), LocalStateError> {
+        self.mutate(scope, None, |document| {
+            let item = document
+                .items
+                .iter_mut()
+                .find(|item| &item.id == id)
+                .ok_or(LocalStateError::Missing)?;
+            if &item.observed != before || item.confirmed.as_ref() != Some(before) {
+                return Err(LocalStateError::Stale);
+            }
+            item.observed = after.clone();
+            item.confirmed = Some(after);
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
+    pub(crate) fn commit_remote_removal(
+        &self,
+        scope: &LocalScope,
+        expected: &[(ItemId, ItemState)],
+    ) -> Result<(), LocalStateError> {
+        self.mutate(scope, None, |document| {
+            for (id, before) in expected {
+                let item = document
+                    .items
+                    .iter_mut()
+                    .find(|item| &item.id == id)
+                    .ok_or(LocalStateError::Missing)?;
+                if &item.observed != before || item.confirmed.as_ref() != Some(before) {
+                    return Err(LocalStateError::Stale);
+                }
+                item.observed = ItemState::Absent;
+                item.confirmed = Some(ItemState::Absent);
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     /// Marks current states confirmed only after the caller has verified external results.
     /// This method executes no transfer and does not acknowledge investigation work.
     pub fn confirm_observed(

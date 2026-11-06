@@ -16,14 +16,16 @@ pub fn row(title: &str, subtitle: &str, icon: &str) -> adw::ActionRow {
 }
 /// Wraps a widget in a horizontally constrained scrollable container.
 ///
-/// Horizontal scrolling is disabled; `maximum` controls the Adwaita clamp.
+/// The clamp controls the preferred width. Oversized content can scroll
+/// without imposing its minimum width on the surrounding split view.
 pub fn scroll(content: &impl IsA<gtk::Widget>, maximum: i32) -> gtk::ScrolledWindow {
     let clamp = adw::Clamp::builder()
         .maximum_size(maximum)
         .child(content)
         .build();
     gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .propagate_natural_width(false)
         .child(&clamp)
         .build()
 }

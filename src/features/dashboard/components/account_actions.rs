@@ -22,13 +22,9 @@ impl AccountActions {
                 group.add_action(&action);
             }
         }
-        let configure_account = std::rc::Rc::new(configure_account);
-        for name in ["configure", "preferences"] {
-            let action = gio::SimpleAction::new(name, None);
-            let open = configure_account.clone();
-            action.connect_activate(move |_, _| open());
-            group.add_action(&action);
-        }
+        let configure = gio::SimpleAction::new("configure", None);
+        configure.connect_activate(move |_, _| configure_account());
+        group.add_action(&configure);
         let logout = gio::SimpleAction::new("sign-out", None);
         let weak_sign_out = sign_out.downgrade();
         logout.connect_activate(move |_, _| {
@@ -53,10 +49,6 @@ impl AccountActions {
         settings.append(
             Some(&gettext("Configure account")),
             Some("account-controls.configure"),
-        );
-        settings.append(
-            Some(&gettext("Account preferences…")),
-            Some("account-controls.preferences"),
         );
         let session = gio::Menu::new();
         session.append(
