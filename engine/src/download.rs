@@ -172,7 +172,7 @@ impl Entry {
             None => format!("https://drive.google.com/file/d/{}/preview", self.id),
         };
         Some(format!(
-            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open read-only preview in Google Drive</a></p>\n"
+            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<meta http-equiv=\"refresh\" content=\"0; url={url}\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open read-only preview in Google Drive</a></p>\n"
         ))
     }
 
@@ -1628,7 +1628,11 @@ mod tests {
         assert_eq!(entry.name, "Report.html");
         assert_eq!(renamed.name, "Renamed.html");
         let html = entry.workspace_html().unwrap();
-        assert!(html.contains("https://docs.google.com/document/d/document-id/preview"));
+        let preview = "https://docs.google.com/document/d/document-id/preview";
+        assert!(html.contains(&format!(
+            r#"http-equiv="refresh" content="0; url={preview}""#
+        )));
+        assert!(html.contains(&format!(r#"href="{preview}""#)));
         assert_eq!(renamed.workspace_html().as_deref(), Some(html.as_str()));
 
         let suffix = oauth2::CsrfToken::new_random();
