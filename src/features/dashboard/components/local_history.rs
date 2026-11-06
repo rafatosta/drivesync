@@ -39,6 +39,7 @@ impl LocalHistory {
                 )
             },
             publish,
+            false,
         )
     }
     pub fn widget(&self) -> &gtk::Box {
@@ -51,18 +52,23 @@ impl LocalHistory {
 
     #[cfg(test)]
     fn build(start: impl Fn() -> Observation + 'static) -> Self {
-        Self::build_with(start, |_| {})
+        Self::build_with(start, |_| {}, true)
     }
 
     fn build_with(
         start: impl Fn() -> Observation + 'static,
         publish: impl Fn(&LocalBatch) + 'static,
+        show_list: bool,
     ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
         root.set_widget_name("local-activity-history");
         let group = adw::PreferencesGroup::builder()
             .title(gettext("Local changes"))
-            .description(gettext("Temporary history · Most recent 200 entries"))
+            .description(if show_list {
+                gettext("Temporary history · Most recent 200 entries")
+            } else {
+                String::new()
+            })
             .build();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
@@ -84,7 +90,9 @@ impl LocalHistory {
             .build();
         empty.set_widget_name("local-activity-empty");
         empty.add_css_class("dim-label");
-        body.append(&empty);
+        let entries = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        entries.set_visible(show_list);
+        entries.append(&empty);
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .css_classes(["boxed-list"])
@@ -96,7 +104,8 @@ impl LocalHistory {
             .propagate_natural_height(true)
             .child(&list)
             .build();
-        body.append(&scroll);
+        entries.append(&scroll);
+        body.append(&entries);
         group.add(&body);
         root.append(&group);
         let session = Rc::new(RefCell::new(None::<Observation>));

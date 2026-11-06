@@ -136,6 +136,14 @@ pub fn build_selected(
         transfers,
     };
     let feed = transfers::TransferFeed::load();
+    let account_choices = accounts
+        .iter()
+        .map(|saved| {
+            let id = saved.account.id.clone();
+            let label = saved.account.email.clone().unwrap_or_else(|| id.0.clone());
+            (id, label)
+        })
+        .collect::<Vec<_>>();
     let activities = Activities::new(engine.clone(), &accounts);
     let preferences = super::account_view::populate(
         engine,
@@ -148,11 +156,14 @@ pub fn build_selected(
     );
     details.add_named(&activities.root, Some(PAGE));
     details.add_named(
-        &crate::ui::scroll(&transfers::build(feed.clone()), 760),
+        &crate::ui::scroll(
+            &transfers::build(feed.clone(), account_choices.clone()),
+            760,
+        ),
         Some(transfers::PAGE),
     );
     details.add_named(
-        &transfers::build_conflicts(feed, ids.clone()),
+        &transfers::build_conflicts(feed, account_choices),
         Some("conflicts"),
     );
     let (weak_list, weak_details, weak_split) =

@@ -58,6 +58,7 @@ impl Activities {
             })
             .collect();
         let filter = account_filter(&accounts);
+        filter.set_widget_name("activities-account-filter");
         let group = adw::PreferencesGroup::new();
         group.add(&filter);
         body.append(&group);
@@ -138,18 +139,16 @@ impl Activities {
     }
 }
 
-fn account_filter(accounts: &[(AccountId, String)]) -> adw::ComboRow {
+pub(super) fn account_filter(accounts: &[(AccountId, String)]) -> adw::ComboRow {
     let choices = gtk::StringList::new(&[]);
     choices.append(&gettext("All accounts"));
     for (_, label) in accounts {
         choices.append(label);
     }
-    let filter = adw::ComboRow::builder()
+    adw::ComboRow::builder()
         .title(gettext("Account"))
         .model(&choices)
-        .build();
-    filter.set_widget_name("activities-account-filter");
-    filter
+        .build()
 }
 
 struct Timeline {

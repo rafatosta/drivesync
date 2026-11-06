@@ -184,9 +184,19 @@ pub(super) fn phase_label(phase: &RemoteCheckProgress) -> String {
     }
 }
 
-pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
+pub(in crate::features::dashboard) fn build(
+    feed: TransferFeed,
+    accounts: Vec<(AccountId, String)>,
+) -> gtk::Box {
     let root = crate::ui::content();
     root.set_widget_name("transfers-page");
+    let filter = super::activities::account_filter(&accounts);
+    filter.set_widget_name("transfers-account-filter");
+    let group = adw::PreferencesGroup::new();
+    group.add(&filter);
+    root.append(&group);
+    let weak_filter = filter.downgrade();
+    let mut previous_selection = None;
     let status = gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
@@ -211,14 +221,28 @@ pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
         let (Some(list), Some(empty)) = (weak_list.upgrade(), weak_empty.upgrade()) else {
             return gtk::glib::ControlFlow::Break;
         };
-        let Some((updates, phases)) = feed.0.lock().ok().and_then(|mut state| {
-            std::mem::take(&mut state.dirty).then(|| (state.updates.clone(), state.phases.clone()))
+        let Some(filter) = weak_filter.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        let selection = filter.selected();
+        let changed = previous_selection.replace(selection) != Some(selection);
+        let selected = selection
+            .checked_sub(1)
+            .and_then(|index| accounts.get(index as usize))
+            .map(|(id, _)| id);
+        let Some((mut updates, mut phases)) = feed.0.lock().ok().and_then(|mut state| {
+            (std::mem::take(&mut state.dirty) || changed)
+                .then(|| (state.updates.clone(), state.phases.clone()))
         }) else {
             for row in rows.values_mut() {
                 row.expire_rate();
             }
             return gtk::glib::ControlFlow::Continue;
         };
+        if let Some(id) = selected {
+            updates.retain(|update| &update.key.0 == id);
+            phases.retain(|account, _| account == id);
+        }
         if let Some(status) = weak_status.upgrade() {
             let mut lines: Vec<_> = phases
                 .values()
@@ -346,7 +370,7 @@ impl TransferRow {
 
 pub(in crate::features::dashboard) fn build_conflicts(
     feed: TransferFeed,
-    accounts: Vec<String>,
+    accounts: Vec<(AccountId, String)>,
 ) -> adw::BreakpointBin {
     let page = adw::BreakpointBin::new();
     page.set_width_request(320);
@@ -364,6 +388,12 @@ pub(in crate::features::dashboard) fn build_conflicts(
     page.set_child(Some(&split));
     page.add_breakpoint(breakpoint);
     let root = crate::ui::content();
+    let filter = super::activities::account_filter(&accounts);
+    filter.set_widget_name("conflicts-account-filter");
+    let group = adw::PreferencesGroup::new();
+    group.add(&filter);
+    root.append(&group);
+    let weak_filter = filter.downgrade();
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::None);
@@ -418,10 +448,21 @@ pub(in crate::features::dashboard) fn build_conflicts(
         let Ok(state) = feed.0.lock() else {
             return gtk::glib::ControlFlow::Continue;
         };
+        let Some(filter) = weak_filter.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        let selected = filter
+            .selected()
+            .checked_sub(1)
+            .and_then(|index| accounts.get(index as usize))
+            .map(|(id, _)| id);
         let mut rows: Vec<_> = state
             .conflicts
             .iter()
-            .filter(|((id, _), _)| accounts.contains(&id.0))
+            .filter(|((id, _), _)| {
+                selected.is_none_or(|selected| selected == id)
+                    && accounts.iter().any(|(account, _)| account == id)
+            })
             .map(|((_, path), (account, reason, folder))| {
                 (
                     account.clone(),
