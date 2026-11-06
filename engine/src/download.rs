@@ -364,10 +364,11 @@ struct Job<'a> {
 }
 
 impl Job<'_> {
-    fn defer_conflict(&mut self, path: &Path, reason: String) {
+    fn defer_conflict(&mut self, remote_folder: &str, path: &Path, reason: String) {
         (self.phase)(crate::RemoteCheckProgress::Conflict(
             path.to_owned(),
             reason.clone(),
+            remote_folder.to_owned(),
         ));
         self.first_conflict
             .get_or_insert_with(|| EngineError::DownloadListingConflict(path.to_owned(), reason));
@@ -431,6 +432,7 @@ impl Job<'_> {
             let child = path.join(&entry.name);
             if collisions.contains(&entry.name) {
                 self.defer_conflict(
+                    remote_id,
                     &child,
                     "Multiple Google Drive items map to this local name.".into(),
                 );
@@ -467,7 +469,7 @@ impl Job<'_> {
             }) {
                 Ok(item) => item,
                 Err(EngineError::DownloadConflict) => {
-                    self.defer_conflict(relative, "The local destination or its saved identity conflicts with this Google Drive item.".into());
+                    self.defer_conflict(remote_id, relative, "The local destination or its saved identity conflicts with this Google Drive item.".into());
                     continue;
                 }
                 Err(EngineError::DownloadIncomplete) => {
@@ -488,7 +490,11 @@ impl Job<'_> {
             ) {
                 Ok(local) => local,
                 Err(rustix::io::Errno::NOENT) => {
-                    self.defer_conflict(relative, "The registered item is missing locally.".into());
+                    self.defer_conflict(
+                        remote_id,
+                        relative,
+                        "The registered item is missing locally.".into(),
+                    );
                     continue;
                 }
                 Err(error) => return Err(local_error(error)),
@@ -507,6 +513,7 @@ impl Job<'_> {
                         != Some(local.st_size))
             {
                 self.defer_conflict(
+                    remote_id,
                     relative,
                     "The local item has an unexpected type or size.".into(),
                 );

@@ -21,7 +21,7 @@ pub(in crate::features::dashboard) struct TransferFeed(Arc<Mutex<FeedState>>);
 struct FeedState {
     updates: VecDeque<Update>,
     dirty: bool,
-    conflicts: HashMap<Key, (String, String)>,
+    conflicts: HashMap<Key, (String, String, String)>,
     phases: HashMap<AccountId, (String, RemoteCheckProgress)>,
 }
 
@@ -43,10 +43,10 @@ impl TransferFeed {
 
     pub fn phase(&self, id: &AccountId, account: &str, phase: Option<RemoteCheckProgress>) {
         if let Ok(mut state) = self.0.lock() {
-            if let Some(RemoteCheckProgress::Conflict(path, reason)) = phase {
+            if let Some(RemoteCheckProgress::Conflict(path, reason, folder)) = phase {
                 state
                     .conflicts
-                    .insert((id.clone(), path), (account.into(), reason));
+                    .insert((id.clone(), path), (account.into(), reason, folder));
             } else if let Some(phase) = phase {
                 state.phases.insert(id.clone(), (account.into(), phase));
             } else {
@@ -124,7 +124,7 @@ impl Update {
 
 pub(super) fn phase_label(phase: &RemoteCheckProgress) -> String {
     match phase {
-        RemoteCheckProgress::Conflict(_, _) => gettext("Conflict deferred for review."),
+        RemoteCheckProgress::Conflict(..) => gettext("Conflict deferred for review."),
         RemoteCheckProgress::ReadingChanges => gettext("Reading the Google Drive change log…"),
         RemoteCheckProgress::ListingFolder(name) | RemoteCheckProgress::CheckingItem(name) => {
             let name: String = name
@@ -302,7 +302,22 @@ impl TransferRow {
     }
 }
 
-pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk::Box {
+pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> adw::BreakpointBin {
+    let page = adw::BreakpointBin::new();
+    page.set_width_request(320);
+    page.set_height_request(320);
+    let split = adw::NavigationSplitView::builder()
+        .min_sidebar_width(280.0)
+        .sidebar_width_fraction(0.56)
+        .build();
+    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        700.0,
+        adw::LengthUnit::Sp,
+    ));
+    breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
+    page.set_child(Some(&split));
+    page.add_breakpoint(breakpoint);
     let root = crate::ui::content();
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
@@ -310,6 +325,45 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk
     let empty = gtk::Label::new(Some(&gettext("No conflicts found.")));
     root.append(&empty);
     root.append(&list);
+    let details = crate::ui::content();
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
+    back.set_tooltip_text(Some(&gettext("Back to conflicts")));
+    back.set_halign(gtk::Align::Start);
+    let weak_split = split.downgrade();
+    back.connect_clicked(move |_| {
+        if let Some(split) = weak_split.upgrade() {
+            split.set_show_content(false);
+        }
+    });
+    details.append(&back);
+    let description = gtk::Label::new(Some(&gettext("Select a conflict to review it.")));
+    description.set_wrap(true);
+    description.set_xalign(0.0);
+    description.set_selectable(true);
+    details.append(&description);
+    let open =
+        gtk::LinkButton::with_label("", &gettext("Open folder in Google Drive (recommended)"));
+    open.set_visible(false);
+    details.append(&open);
+    let keep = gtk::Button::with_label(&gettext("Keep both with distinct local names"));
+    keep.set_sensitive(false);
+    keep.set_visible(false);
+    keep.set_tooltip_text(Some(&gettext("This option is not available yet.")));
+    details.append(&keep);
+    split.set_sidebar(Some(&adw::NavigationPage::new(
+        &crate::ui::scroll(&root, 760),
+        &gettext("Conflicts"),
+    )));
+    split.set_content(Some(&adw::NavigationPage::new(
+        &crate::ui::scroll(&details, 520),
+        &gettext("Conflict details"),
+    )));
+    let weak_details = (
+        split.downgrade(),
+        description.downgrade(),
+        open.downgrade(),
+        keep.downgrade(),
+    );
     let (weak_list, weak_empty) = (list.downgrade(), empty.downgrade());
     let mut previous = Vec::new();
     gtk::glib::timeout_add_local(Duration::from_millis(300), move || {
@@ -322,7 +376,14 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk
         let mut rows: Vec<_> = state
             .conflicts
             .iter()
-            .map(|((_, path), (account, reason))| (account.clone(), path.clone(), reason.clone()))
+            .map(|((_, path), (account, reason, folder))| {
+                (
+                    account.clone(),
+                    path.clone(),
+                    reason.clone(),
+                    folder.clone(),
+                )
+            })
             .collect();
         drop(state);
         rows.sort();
@@ -330,13 +391,43 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
-            for (account, path, reason) in &rows {
+            if let (Some(split), Some(description), Some(open), Some(keep)) = (
+                weak_details.0.upgrade(),
+                weak_details.1.upgrade(),
+                weak_details.2.upgrade(),
+                weak_details.3.upgrade(),
+            ) {
+                split.set_show_content(false);
+                description.set_label(&gettext("Select a conflict to review it."));
+                open.set_visible(false);
+                keep.set_visible(false);
+            }
+            for (account, path, reason, folder) in &rows {
                 let row = adw::ActionRow::builder()
                     .use_markup(false)
                     .title(path.to_string_lossy())
                     .subtitle(format!("{account} · {reason}"))
+                    .activatable(true)
                     .build();
                 row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+                row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+                let weak_details = weak_details.clone();
+                let text = format!("{}\n{}\n{}", path.display(), account, reason);
+                let uri = format!("https://drive.google.com/drive/folders/{folder}");
+                row.connect_activated(move |_| {
+                    if let (Some(split), Some(description), Some(open), Some(keep)) = (
+                        weak_details.0.upgrade(),
+                        weak_details.1.upgrade(),
+                        weak_details.2.upgrade(),
+                        weak_details.3.upgrade(),
+                    ) {
+                        description.set_label(&text);
+                        open.set_uri(&uri);
+                        open.set_visible(true);
+                        keep.set_visible(true);
+                        split.set_show_content(true);
+                    }
+                });
                 list.append(&row);
             }
             empty.set_visible(rows.is_empty());
@@ -344,5 +435,5 @@ pub(in crate::features::dashboard) fn build_conflicts(feed: TransferFeed) -> gtk
         }
         gtk::glib::ControlFlow::Continue
     });
-    root
+    page
 }

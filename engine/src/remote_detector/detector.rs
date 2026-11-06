@@ -246,7 +246,7 @@ pub enum RemoteCheckProgress {
     ReadingChanges,
     ListingFolder(String),
     CheckingItem(String),
-    Conflict(std::path::PathBuf, String),
+    Conflict(std::path::PathBuf, String, String),
     ApplyingChanges,
 }
 

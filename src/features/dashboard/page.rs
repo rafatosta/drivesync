@@ -151,10 +151,7 @@ pub fn build_selected(
         &crate::ui::scroll(&transfers::build(feed.clone()), 760),
         Some(transfers::PAGE),
     );
-    details.add_named(
-        &crate::ui::scroll(&transfers::build_conflicts(feed), 760),
-        Some("conflicts"),
-    );
+    details.add_named(&transfers::build_conflicts(feed), Some("conflicts"));
     let (weak_list, weak_details, weak_split) =
         (list.downgrade(), details.downgrade(), split.downgrade());
     activity_nav.connect_row_activated(move |_, row| {
