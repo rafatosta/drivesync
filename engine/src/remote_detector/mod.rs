@@ -10,7 +10,7 @@ use detector::Limits;
 pub use detector::{
     Check as DetectionCheck, DeliveredEvent as RemoteDelivery, DetectionError,
     DetectionFailureKind, Event as RemoteEvent, EventKind as RemoteEventKind,
-    Membership as RemoteMembership,
+    Membership as RemoteMembership, RemoteCheckProgress,
 };
 pub(crate) use provider::GoogleDrive;
 pub use provider::{
@@ -82,6 +82,7 @@ pub(crate) fn check(
     root: &str,
     corpus: &DetectionCorpus,
     incremental: bool,
+    progress: &dyn Fn(RemoteCheckProgress),
 ) -> Result<DetectionCheck, DetectionError> {
     let scope = scope(client, account, root, corpus)?;
     detector::check(
@@ -91,6 +92,7 @@ pub(crate) fn check(
         corpus,
         Limits::default(),
         incremental,
+        progress,
     )
 }
 

@@ -88,30 +88,34 @@ pub(in crate::features::dashboard) fn build(
         let checked_at = checked_at.clone();
         let retry_factor = retry_factor.clone();
         let refresh_activities = refresh_activities.clone();
-        let applying = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let phase = Arc::new(std::sync::Mutex::new(None));
         if is_periodic {
-            let (applying, running, status, attempt) =
-                (applying.clone(), running.clone(), status.clone(), attempt.clone());
+            let (phase, running, status, attempt) =
+                (phase.clone(), running.clone(), status.clone(), attempt.clone());
             gtk::glib::timeout_add_local(Duration::from_millis(150), move || {
-                use std::sync::atomic::Ordering;
                 if !running.get() || attempt.get() != current {
                     return gtk::glib::ControlFlow::Break;
                 }
-                if applying.load(Ordering::Relaxed) {
+                if let Some(phase) = phase.lock().ok().and_then(|mut phase| phase.take()) {
                     if let Some(status) = status.upgrade() {
-                        status.set_label(&gettext("Applying changes to the local folder…"));
+                        status.set_label(&super::transfers::phase_label(&phase));
                     }
-                    return gtk::glib::ControlFlow::Break;
                 }
                 gtk::glib::ControlFlow::Continue
             });
         }
+        let completion_feed = transfers.clone();
+        let completion_account = account.clone();
         crate::core::worker::work(
             move || {
                 let report = |path: &std::path::Path, progress| transfers.report(&account, &label, path, progress);
                 if is_periodic {
-                    engine.poll_remote_downloads(&account, report, || {
-                        applying.store(true, std::sync::atomic::Ordering::Relaxed);
+                    transfers.phase(&account, &label, Some(drivesync_engine::RemoteCheckProgress::ReadingChanges));
+                    engine.poll_remote_downloads(&account, report, |progress| {
+                        transfers.phase(&account, &label, Some(progress.clone()));
+                        if let Ok(mut phase) = phase.lock() {
+                            *phase = Some(progress);
+                        }
                     })
                 } else {
                     engine.initial_download_with_progress(&account, report).map(|_| false)
@@ -119,6 +123,7 @@ pub(in crate::features::dashboard) fn build(
             },
             move |result| {
                 let _hold = hold;
+                completion_feed.phase(&completion_account, "", None);
                 refresh_activities();
                 running.set(false);
                 checked_at.set(Instant::now());

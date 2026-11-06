@@ -444,3 +444,9 @@ msgstr "Integridade do download"
 
 msgid "Created locally"
 msgstr "Criado localmente"
+
+msgid "Reading the Google Drive change log…"
+msgstr "Consultando o registro de alterações do Google Drive…"
+
+msgid "Checking folder: %s"
+msgstr "Conferindo a pasta %s"

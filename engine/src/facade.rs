@@ -306,7 +306,7 @@ impl DriveSyncEngine {
         &self,
         id: &AccountId,
         notify: impl Fn(&std::path::Path, crate::DownloadProgress),
-        applying: impl Fn(),
+        progress: impl Fn(crate::RemoteCheckProgress),
     ) -> Result<bool, EngineError> {
         use crate::{DetectionCheck, RemoteEventKind, RemoteMembership};
         let config = auth::OAuthConfig::load().map_err(EngineError::Authentication)?;
@@ -333,6 +333,7 @@ impl DriveSyncEngine {
                 &folder.remote.id,
                 &corpus,
                 true,
+                &progress,
             )
             .map_err(map_detection_error)?
             {
@@ -389,7 +390,7 @@ impl DriveSyncEngine {
                 }
             }
             if !targets.is_empty() || !existing.is_empty() {
-                applying();
+                progress(crate::RemoteCheckProgress::ApplyingChanges);
             }
             // Existing items may need a destination introduced by this same batch.
             let additions = if targets.is_empty() {
@@ -456,6 +457,7 @@ impl DriveSyncEngine {
                     &folder.remote.id,
                     corpus,
                     false,
+                    &|_| {},
                 ))
             })
             .map_err(DetectionError::Provider)?

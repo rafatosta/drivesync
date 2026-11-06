@@ -240,6 +240,14 @@ impl Budget {
 }
 
 /// Checks a scope with the verified-account provider and commits atomically.
+/// The current stage of an automatic remote check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteCheckProgress {
+    ReadingChanges,
+    ListingFolder(String),
+    ApplyingChanges,
+}
+
 pub(super) fn check(
     provider: &GoogleDrive<'_>,
     journal: &Journal,
@@ -247,8 +255,17 @@ pub(super) fn check(
     corpus: &Corpus,
     limits: Limits,
     incremental: bool,
+    progress: &dyn Fn(RemoteCheckProgress),
 ) -> Result<Check, DetectionError> {
-    verify(provider, journal, scope, corpus, limits, incremental)
+    verify_with_progress(
+        provider,
+        journal,
+        scope,
+        corpus,
+        limits,
+        incremental,
+        progress,
+    )
 }
 
 #[cfg(test)]
@@ -262,6 +279,7 @@ fn check_with(
     verify(provider, journal, scope, corpus, limits, false)
 }
 
+#[cfg(test)]
 fn verify(
     provider: &impl Provider,
     journal: &Journal,
@@ -269,6 +287,26 @@ fn verify(
     corpus: &Corpus,
     limits: Limits,
     incremental: bool,
+) -> Result<Check, DetectionError> {
+    verify_with_progress(
+        provider,
+        journal,
+        scope,
+        corpus,
+        limits,
+        incremental,
+        &|_| {},
+    )
+}
+
+fn verify_with_progress(
+    provider: &impl Provider,
+    journal: &Journal,
+    scope: &Scope,
+    corpus: &Corpus,
+    limits: Limits,
+    incremental: bool,
+    progress: &dyn Fn(RemoteCheckProgress),
 ) -> Result<Check, DetectionError> {
     if !valid_id(&scope.root)
         || scope.account.is_empty()
@@ -304,6 +342,7 @@ fn verify(
     let mut stable = None;
     if incremental {
         if let Some(checkpoint) = &old {
+            progress(RemoteCheckProgress::ReadingChanges);
             let (next, changes) = read_changes(provider, corpus, &cursor, &mut budget)?;
             cursor = next;
             if changes.is_empty() {
@@ -324,7 +363,8 @@ fn verify(
     }
     if stable.is_none() {
         for _ in 0..limits.rounds {
-            let inventory = scan(provider, corpus, &scope.root, &mut budget)?;
+            let inventory = scan(provider, corpus, &scope.root, &mut budget, progress)?;
+            progress(RemoteCheckProgress::ReadingChanges);
             let (next, changes) = read_changes(provider, corpus, &cursor, &mut budget)?;
             cursor = next;
             if changes.is_empty() {
@@ -569,6 +609,7 @@ fn scan(
     corpus: &Corpus,
     root: &str,
     budget: &mut Budget,
+    progress: &dyn Fn(RemoteCheckProgress),
 ) -> Result<Inventory, DetectionError> {
     budget.request()?;
     let root_file = provider.file(root)?;
@@ -589,6 +630,9 @@ fn scan(
     let mut inventory = BTreeMap::from([(root.to_owned(), root_file)]);
     let mut folders = VecDeque::from([root.to_owned()]);
     while let Some(parent) = folders.pop_front() {
+        if let Some(name) = inventory.get(&parent).and_then(|file| file.name.as_ref()) {
+            progress(RemoteCheckProgress::ListingFolder(name.clone()));
+        }
         let mut token: Option<String> = None;
         let mut visited = HashSet::new();
         loop {

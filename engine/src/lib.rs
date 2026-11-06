@@ -29,8 +29,9 @@ pub use local_detector::{
 pub use models::{AccountId, AccountSummary, RestoredAccount};
 pub use remote::FolderPage;
 pub use remote_detector::{
-    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteDelivery,
-    RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata, RemoteMembership,
+    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteCheckProgress,
+    RemoteDelivery, RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata,
+    RemoteMembership,
 };
 
 pub use local_state::{

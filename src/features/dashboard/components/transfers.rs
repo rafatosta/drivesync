@@ -1,6 +1,6 @@
 //! Session view of actual downloads reported by the engine.
 use adw::{gtk, prelude::*};
-use drivesync_engine::{AccountId, DownloadProgress};
+use drivesync_engine::{AccountId, DownloadProgress, RemoteCheckProgress};
 use gettextrs::gettext;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -21,6 +21,7 @@ pub(in crate::features::dashboard) struct TransferFeed(Arc<Mutex<FeedState>>);
 struct FeedState {
     updates: VecDeque<Update>,
     dirty: bool,
+    phases: HashMap<AccountId, (String, RemoteCheckProgress)>,
 }
 
 #[derive(Clone)]
@@ -33,6 +34,17 @@ struct Update {
 }
 
 impl TransferFeed {
+    pub fn phase(&self, id: &AccountId, account: &str, phase: Option<RemoteCheckProgress>) {
+        if let Ok(mut state) = self.0.lock() {
+            if let Some(phase) = phase {
+                state.phases.insert(id.clone(), (account.into(), phase));
+            } else {
+                state.phases.remove(id);
+            }
+            state.dirty = true;
+        }
+    }
+
     pub fn report(&self, id: &AccountId, account: &str, path: &Path, progress: DownloadProgress) {
         if let Ok(mut state) = self.0.lock() {
             let key = (id.clone(), path.to_path_buf());
@@ -99,9 +111,29 @@ impl Update {
     }
 }
 
+pub(super) fn phase_label(phase: &RemoteCheckProgress) -> String {
+    match phase {
+        RemoteCheckProgress::ReadingChanges => gettext("Reading the Google Drive change log…"),
+        RemoteCheckProgress::ListingFolder(name) => {
+            let name: String = name
+                .chars()
+                .filter(|character| !character.is_control())
+                .collect();
+            gettext("Checking folder: %s").replace("%s", &name)
+        }
+        RemoteCheckProgress::ApplyingChanges => gettext("Applying changes to the local folder…"),
+    }
+}
+
 pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
     let root = crate::ui::content();
     root.set_widget_name("transfers-page");
+    let status = gtk::Label::builder()
+        .wrap(true)
+        .xalign(0.0)
+        .visible(false)
+        .build();
+    root.append(&status);
     let empty = gtk::Label::new(Some(&gettext("No downloads in this session.")));
     empty.add_css_class("dim-label");
     empty.set_wrap(true);
@@ -115,20 +147,28 @@ pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
 
     let mut rows: HashMap<Key, TransferRow> = HashMap::new();
     let (weak_list, weak_empty) = (list.downgrade(), empty.downgrade());
+    let weak_status = status.downgrade();
     gtk::glib::timeout_add_local(Duration::from_millis(150), move || {
         let (Some(list), Some(empty)) = (weak_list.upgrade(), weak_empty.upgrade()) else {
             return gtk::glib::ControlFlow::Break;
         };
-        let Some(updates) =
-            feed.0.lock().ok().and_then(|mut state| {
-                std::mem::take(&mut state.dirty).then(|| state.updates.clone())
-            })
-        else {
+        let Some((updates, phases)) = feed.0.lock().ok().and_then(|mut state| {
+            std::mem::take(&mut state.dirty).then(|| (state.updates.clone(), state.phases.clone()))
+        }) else {
             for row in rows.values_mut() {
                 row.expire_rate();
             }
             return gtk::glib::ControlFlow::Continue;
         };
+        if let Some(status) = weak_status.upgrade() {
+            let mut lines: Vec<_> = phases
+                .values()
+                .map(|(account, phase)| format!("{account} · {}", phase_label(phase)))
+                .collect();
+            lines.sort();
+            status.set_label(&lines.join("\n"));
+            status.set_visible(!lines.is_empty());
+        }
         let keys: HashSet<_> = updates.iter().map(|update| &update.key).collect();
         rows.retain(|key, row| {
             let keep = keys.contains(key);
@@ -145,7 +185,7 @@ pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
             });
             row.update(update.progress, update.rate());
         }
-        empty.set_visible(rows.is_empty());
+        empty.set_visible(rows.is_empty() && phases.is_empty());
         gtk::glib::ControlFlow::Continue
     });
     root
