@@ -6,11 +6,12 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub(in crate::features::dashboard) const PAGE: &str = "transfers";
 const RECENT_LIMIT: usize = 200;
+const RATE_WINDOW: Duration = Duration::from_secs(3);
 type Key = (AccountId, PathBuf);
 
 #[derive(Clone, Default)]
@@ -28,19 +29,46 @@ struct Update {
     key: Key,
     account: String,
     progress: DownloadProgress,
+    samples: VecDeque<(Instant, u64)>,
 }
 
 impl TransferFeed {
     pub fn report(&self, id: &AccountId, account: &str, path: &Path, progress: DownloadProgress) {
         if let Ok(mut state) = self.0.lock() {
             let key = (id.clone(), path.to_path_buf());
-            if let Some(index) = state.updates.iter().position(|update| update.key == key) {
-                state.updates.remove(index);
+            let mut samples = state
+                .updates
+                .iter()
+                .position(|update| update.key == key)
+                .and_then(|index| state.updates.remove(index))
+                .map_or_else(VecDeque::new, |update| update.samples);
+            if let DownloadProgress::Receiving { received, total } = progress {
+                if received < total {
+                    let now = Instant::now();
+                    if samples
+                        .back()
+                        .is_some_and(|(_, previous)| received < *previous)
+                    {
+                        samples.clear();
+                    }
+                    while samples
+                        .front()
+                        .is_some_and(|(time, _)| now.duration_since(*time) > RATE_WINDOW)
+                    {
+                        samples.pop_front();
+                    }
+                    samples.push_back((now, received));
+                } else {
+                    samples.clear();
+                }
+            } else {
+                samples.clear();
             }
             state.updates.push_back(Update {
                 key,
                 account: account.into(),
                 progress,
+                samples,
             });
             if state
                 .updates
@@ -59,6 +87,15 @@ impl TransferFeed {
             }
             state.dirty = true;
         }
+    }
+}
+
+impl Update {
+    fn rate(&self) -> Option<(Instant, u64)> {
+        let &(start, first) = self.samples.front()?;
+        let &(end, last) = self.samples.back()?;
+        let elapsed = end.duration_since(start).as_secs_f64();
+        (elapsed > 0.0 && last > first).then(|| (end, ((last - first) as f64 / elapsed) as u64))
     }
 }
 
@@ -87,6 +124,9 @@ pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
                 std::mem::take(&mut state.dirty).then(|| state.updates.clone())
             })
         else {
+            for row in rows.values_mut() {
+                row.expire_rate();
+            }
             return gtk::glib::ControlFlow::Continue;
         };
         let keys: HashSet<_> = updates.iter().map(|update| &update.key).collect();
@@ -103,7 +143,7 @@ pub(in crate::features::dashboard) fn build(feed: TransferFeed) -> gtk::Box {
                 list.prepend(&row.widget);
                 row
             });
-            row.update(update.progress);
+            row.update(update.progress, update.rate());
         }
         empty.set_visible(rows.is_empty());
         gtk::glib::ControlFlow::Continue
@@ -122,6 +162,7 @@ struct TransferRow {
     widget: adw::ActionRow,
     bar: gtk::ProgressBar,
     account: String,
+    rate_at: Option<Instant>,
 }
 
 impl TransferRow {
@@ -154,10 +195,21 @@ impl TransferRow {
             widget,
             bar,
             account: account.into(),
+            rate_at: None,
         }
     }
 
-    fn update(&self, progress: DownloadProgress) {
+    fn expire_rate(&mut self) {
+        if self
+            .rate_at
+            .is_some_and(|time| time.elapsed() >= RATE_WINDOW)
+        {
+            self.bar.set_text(None);
+            self.rate_at = None;
+        }
+    }
+
+    fn update(&mut self, progress: DownloadProgress, rate: Option<(Instant, u64)>) {
         let status = match progress {
             DownloadProgress::Started { .. } => gettext("Starting download…"),
             DownloadProgress::Receiving { received, total } if received == total => {
@@ -176,8 +228,19 @@ impl TransferRow {
         };
         self.bar
             .set_visible(measured.is_some_and(|(_, total)| total > 0));
+        self.rate_at = None;
+        self.bar.set_text(None);
         if let Some((received, total)) = measured.filter(|(_, total)| *total > 0) {
-            self.bar.set_fraction(received as f64 / total as f64);
+            let fraction = received as f64 / total as f64;
+            self.bar.set_fraction(fraction);
+            if let Some((time, bytes)) = rate.filter(|(time, _)| time.elapsed() < RATE_WINDOW) {
+                self.rate_at = Some(time);
+                self.bar.set_text(Some(&format!(
+                    "{:.0}% · {}/s",
+                    fraction * 100.0,
+                    gtk::glib::format_size(bytes),
+                )));
+            }
         }
     }
 }
