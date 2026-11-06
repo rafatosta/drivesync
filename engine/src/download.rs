@@ -13,7 +13,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{self, Read, Seek, Write},
-    os::unix::ffi::OsStrExt,
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -128,6 +128,38 @@ fn children(token: &str, parent: &str) -> Result<Vec<Entry>, EngineError> {
 }
 
 impl Entry {
+    fn workspace_editor(&self) -> Option<&'static str> {
+        match self.mime_type.as_str() {
+            "application/vnd.google-apps.document" => Some("document"),
+            "application/vnd.google-apps.spreadsheet" => Some("spreadsheets"),
+            "application/vnd.google-apps.presentation" => Some("presentation"),
+            _ => None,
+        }
+    }
+
+    fn local_representation(mut self) -> Result<Self, EngineError> {
+        if self.workspace_editor().is_some() {
+            if !valid_name(&self.name) || self.name.len() > 250 || !valid_id(&self.id) {
+                return Err(EngineError::DownloadUnsupported);
+            }
+            self.name.push_str(".html");
+            self.size = self.workspace_html().map(|html| html.len().to_string());
+            self.sha256_checksum = None;
+        }
+        Ok(self)
+    }
+
+    fn workspace_html(&self) -> Option<String> {
+        let editor = self.workspace_editor()?;
+        if !valid_id(&self.id) {
+            return None;
+        }
+        let url = format!("https://docs.google.com/{editor}/d/{}/preview", self.id);
+        Some(format!(
+            "<!doctype html>\n<!-- DriveSync Workspace link -->\n<meta charset=\"utf-8\">\n<title>Google Drive document</title>\n<h1>Google Drive document</h1>\n<p><a href=\"{url}\">Open read-only preview in Google Drive</a></p>\n"
+        ))
+    }
+
     fn same_download_version(&self, current: &Self) -> bool {
         self.id == current.id
             && self.version == current.version
@@ -153,7 +185,9 @@ impl Entry {
     fn kind(&self) -> Result<LocalItemKind, EngineError> {
         if self.mime_type == FOLDER {
             Ok(LocalItemKind::Directory)
-        } else if self.mime_type.starts_with("application/vnd.google-apps.") || self.size.is_none()
+        } else if (self.mime_type.starts_with("application/vnd.google-apps.")
+            && self.workspace_editor().is_none())
+            || self.size.is_none()
         {
             Err(EngineError::DownloadUnsupported)
         } else {
@@ -319,8 +353,11 @@ impl Job<'_> {
             if self.seen.len() >= 10_000 || !self.seen.insert(entry.id.clone()) {
                 return Err(EngineError::DownloadIncomplete);
             }
-            let kind = match entry.kind() {
-                Ok(kind) => kind,
+            let (entry, kind) = match entry
+                .local_representation()
+                .and_then(|entry| entry.kind().map(|kind| (entry, kind)))
+            {
+                Ok(value) => value,
                 Err(EngineError::DownloadUnsupported) => {
                     self.report.unsupported += 1;
                     continue;
@@ -601,7 +638,11 @@ pub(crate) fn reconcile_item(
         return Ok(false);
     };
     let entry = match metadata(token, &remote.id) {
-        Ok(entry) => entry,
+        Ok(entry) => match entry.local_representation() {
+            Ok(entry) => entry,
+            Err(EngineError::DownloadUnsupported) => return Ok(false),
+            Err(error) => return Err(error),
+        },
         Err(EngineError::RemoteFolderUnavailable | EngineError::RemoteForbidden) => {
             return Ok(false)
         }
@@ -657,6 +698,8 @@ pub(crate) fn reconcile_item(
     let renamed = entry.name.as_bytes() != snapshot.name;
     let content_changed = if entry.trashed {
         false
+    } else if let Some(html) = entry.workspace_html() {
+        hex_digest(checksum(html.as_bytes())?) != *old_digest
     } else if let Some(digest) = &entry.sha256_checksum {
         digest != old_digest
     } else {
@@ -675,7 +718,8 @@ pub(crate) fn reconcile_item(
         .as_deref()
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|date| date.to_utc());
-    let require_newer = content_changed || renamed && !entry.trashed;
+    let require_newer =
+        entry.workspace_editor().is_none() && (content_changed || renamed && !entry.trashed);
     if require_newer && remote_time.is_none() {
         return Ok(false);
     }
@@ -760,7 +804,10 @@ pub(crate) fn reconcile_item(
         if content_changed && pending.stat(&pending.staged)?.is_none() {
             download_file(token, &pending, |progress| transfer.emit(progress))?;
         }
-        if (renamed || moved) && !content_changed && metadata(token, &entry.id)? != entry {
+        if (renamed || moved)
+            && !content_changed
+            && metadata(token, &entry.id)?.local_representation()? != entry
+        {
             return Ok(false);
         }
         if require_newer && !is_remote_newer(&source.open(old_name)?, remote_time)? {
@@ -1325,6 +1372,13 @@ impl<'a> PendingFile<'a> {
                 download_file(token, self, notify)?;
             }
             let digest = self.verify()?;
+            if self.entry.workspace_editor().is_some() {
+                let staged = self.open(&self.staged)?;
+                staged
+                    .set_permissions(std::fs::Permissions::from_mode(0o444))
+                    .and_then(|()| staged.sync_all())
+                    .map_err(|_| EngineError::DownloadLocal)?;
+            }
             fs::linkat(
                 self.directory,
                 self.staged.as_str(),
@@ -1457,8 +1511,16 @@ fn download_file(
         .and_then(|size| size.parse::<u64>().ok())
         .ok_or(EngineError::DownloadIncomplete)?;
     let mut partial = resume::PartialDownload::open(pending, size)?;
-    partial.receive(token, entry, &notify)?;
-    let current = metadata(token, &entry.id)?;
+    if let Some(html) = entry.workspace_html() {
+        partial.invalidate()?;
+        partial
+            .file
+            .write_all(html.as_bytes())
+            .map_err(|_| EngineError::DownloadLocal)?;
+    } else {
+        partial.receive(token, entry, &notify)?;
+    }
+    let current = metadata(token, &entry.id)?.local_representation()?;
     if !entry.same_download_version(&current) {
         partial.invalidate()?;
         return Err(EngineError::DownloadIncomplete);
@@ -1533,6 +1595,46 @@ fn download_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_link_is_read_only_and_survives_a_rename() {
+        let metadata = serde_json::json!({
+            "id": "document-id",
+            "name": "Report",
+            "mimeType": "application/vnd.google-apps.document",
+            "version": "1"
+        });
+        let entry: Entry = serde_json::from_value(metadata.clone()).unwrap();
+        let mut renamed: Entry = serde_json::from_value(metadata).unwrap();
+        renamed.name = "Renamed".into();
+        let entry = entry.local_representation().unwrap();
+        let renamed = renamed.local_representation().unwrap();
+        assert_eq!(entry.name, "Report.html");
+        assert_eq!(renamed.name, "Renamed.html");
+        let html = entry.workspace_html().unwrap();
+        assert!(html.contains("https://docs.google.com/document/d/document-id/preview"));
+        assert_eq!(renamed.workspace_html().as_deref(), Some(html.as_str()));
+
+        let suffix = oauth2::CsrfToken::new_random();
+        let root = std::env::temp_dir().join(format!("drivesync-workspace-{}", suffix.secret()));
+        std::fs::create_dir(&root).unwrap();
+        let directory = File::open(&root).unwrap();
+        let pending = PendingFile::new(&entry, &directory);
+        std::fs::write(root.join(&pending.staged), &html).unwrap();
+        std::fs::write(
+            root.join(&pending.digest),
+            checksum(html.as_bytes()).unwrap(),
+        )
+        .unwrap();
+        pending.install("", |_| {}).unwrap();
+        let target = root.join(&entry.name);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), html);
+        assert_eq!(
+            std::fs::metadata(target).unwrap().permissions().mode() & 0o777,
+            0o444
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn folder_trash_preserves_tree_and_rejects_untracked_or_modified_content() {
