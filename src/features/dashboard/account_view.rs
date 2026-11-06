@@ -49,7 +49,12 @@ pub(super) fn populate(
         );
         sign_out.set_visible(false);
         content.append(&sign_out);
-        content.append(heading.widget());
+        let needs_setup = saved.folder.is_none();
+        let dashboard = gtk::Box::new(gtk::Orientation::Vertical, 24);
+        dashboard.set_visible(!needs_setup);
+        dashboard.append(heading.widget());
+        content.append(&dashboard);
+        let preferences_editor = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
         let editor = gtk::Box::new(gtk::Orientation::Vertical, 24);
         editor.set_widget_name("account-settings-editor");
@@ -94,18 +99,43 @@ pub(super) fn populate(
             activities.refresh_callback(),
             &sync,
         );
+        editor.append(folders.widget());
+        if needs_setup {
+            content.append(&editor);
+        } else {
+            preferences_editor.append(&editor);
+        }
+        let (weak_content, weak_editor, weak_preferences, weak_dashboard, weak_entry) = (
+            content.downgrade(),
+            editor.downgrade(),
+            preferences_editor.downgrade(),
+            dashboard.downgrade(),
+            entry.downgrade(),
+        );
         folders.connect_saved(move || {
+            if let (Some(content), Some(editor), Some(preferences), Some(dashboard)) = (
+                weak_content.upgrade(),
+                weak_editor.upgrade(),
+                weak_preferences.upgrade(),
+                weak_dashboard.upgrade(),
+            ) {
+                if !dashboard.is_visible() {
+                    if let Some(entry) = weak_entry
+                        .upgrade()
+                        .filter(|entry| !entry.text().is_empty())
+                    {
+                        entry.emit_by_name::<()>("apply", &[]);
+                    }
+                    content.remove(&editor);
+                    preferences.append(&editor);
+                    dashboard.set_visible(true);
+                }
+            }
             restart();
             refresh_download();
         });
-        content.append(&download);
-        content.append(history.widget());
-        editor.append(folders.widget());
-        let configure = gtk::Button::with_label(&gettextrs::gettext("Configure account"));
-        configure.set_action_name(Some("account-controls.configure"));
-        configure.set_widget_name("initial-account-configuration");
-        configure.set_visible(saved.folder.is_none());
-        content.append(&configure);
+        dashboard.append(&download);
+        dashboard.append(history.widget());
         if saved.error.is_some() {
             let reconnect = gtk::Button::with_label("Check or Reconnect Account");
             let weak_nav = nav.downgrade();
@@ -126,7 +156,8 @@ pub(super) fn populate(
             saved.account.id.clone(),
         ));
         settings.push(crate::features::preferences::AccountSettings::new(
-            saved, editor,
+            saved,
+            preferences_editor,
         ));
     }
     let settings = crate::features::preferences::Accounts::new(settings);

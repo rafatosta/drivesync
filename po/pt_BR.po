@@ -462,3 +462,9 @@ msgstr "Sincronização inicial concluída"
 
 msgid "Initial synchronization incomplete"
 msgstr "Sincronização inicial incompleta"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "My Drive"
+msgstr "Meu Drive"
