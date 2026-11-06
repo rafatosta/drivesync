@@ -453,3 +453,12 @@ msgstr "Conferindo a pasta %s"
 
 msgid "Some items were skipped because their formats are not supported."
 msgstr "Alguns itens foram ignorados porque seus formatos ainda não são suportados."
+
+msgid "Initial synchronization in progress"
+msgstr "Sincronização inicial em andamento"
+
+msgid "Initial synchronization complete"
+msgstr "Sincronização inicial concluída"
+
+msgid "Initial synchronization incomplete"
+msgstr "Sincronização inicial incompleta"

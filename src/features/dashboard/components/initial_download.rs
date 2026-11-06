@@ -18,6 +18,12 @@ pub(in crate::features::dashboard) fn build(
 ) -> (gtk::Box, impl Fn() + 'static) {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
     group.set_visible(saved.folder.is_some());
+    let initial_state = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .css_classes(["heading"])
+        .build();
+    group.append(&initial_state);
     let status = gtk::Label::builder().wrap(true).xalign(0.0).build();
     group.append(&status);
     let unsupported = gtk::Label::builder()
@@ -45,6 +51,7 @@ pub(in crate::features::dashboard) fn build(
         .clone()
         .unwrap_or_else(|| account.0.clone());
     let weak_status = status.downgrade();
+    let weak_initial_state = initial_state.downgrade();
     let attempt = Rc::new(Cell::new(0_u64));
     let periodic = Rc::new(Cell::new(false));
     let enabled = Rc::new(Cell::new(saved.folder.is_some() && saved.error.is_none()));
@@ -65,7 +72,9 @@ pub(in crate::features::dashboard) fn build(
     let (running, changed) = (busy.clone(), configuration_changed.clone());
     let refresh_activities = Rc::new(refresh_activities);
     button.connect_clicked(move |button| {
-        let Some(status) = weak_status.upgrade() else {
+        let (Some(status), Some(initial_state)) =
+            (weak_status.upgrade(), weak_initial_state.upgrade())
+        else {
             return;
         };
         if running.replace(true) {
@@ -83,6 +92,10 @@ pub(in crate::features::dashboard) fn build(
         let attempt = attempt.clone();
         button.set_visible(false);
         status.remove_css_class("error");
+        if !is_periodic {
+            initial_state.set_label(&gettext("Initial synchronization in progress"));
+        }
+        let initial_state = initial_state.downgrade();
         status.set_label(&gettext(if is_periodic {
             "Checking for remote changes…"
         } else {
@@ -174,19 +187,27 @@ pub(in crate::features::dashboard) fn build(
                         }
                     }
                 }
-                if !is_periodic && result.is_ok() {
-                    check_remote.set(true);
+                if !is_periodic {
+                    if let Some(initial_state) = initial_state.upgrade() {
+                        initial_state.set_label(&gettext(if result.is_ok() {
+                            "Initial synchronization complete"
+                        } else {
+                            "Initial synchronization incomplete"
+                        }));
+                    }
+                    if result.is_ok() {
+                        check_remote.set(true);
+                    }
                 }
                 if let Some(sync) = sync_button.upgrade() {
                     sync.set_sensitive(true);
                 }
                 match result {
+                    Ok(_) if !is_periodic => status.set_label(""),
                     Ok((unresolved, _)) => status.set_label(&gettext(if unresolved {
                         "Remote changes are pending review."
-                    } else if is_periodic {
-                        "Remote check complete."
                     } else {
-                        "Initial download complete."
+                        "Remote check complete."
                     })),
                     Err(error) => {
                         status.add_css_class("error");
