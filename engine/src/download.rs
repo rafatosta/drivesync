@@ -214,6 +214,7 @@ pub(crate) fn run_selected(
         let known: HashSet<_> = checkpoint
             .iter()
             .flat_map(|state| &state.items)
+            .filter(|item| matches!(item.observed, ItemState::Present(_)))
             .filter_map(|item| item.remote_id.as_deref())
             .collect();
         let mut paths = HashSet::new();
@@ -443,6 +444,28 @@ impl Job<'_> {
             item.remote_id.as_deref() == Some(&entry.id)
                 || matches!(&item.observed, ItemState::Present(s) if s.parent == snapshot.parent && s.name == snapshot.name)
         }) {
+            if parent.is_some()
+                && existing.remote_id.as_deref() == Some(&entry.id)
+                && existing.observed == ItemState::Absent
+                && existing.confirmed == Some(ItemState::Absent)
+            {
+                if checkpoint.iter().flat_map(|state| &state.items).any(|item| {
+                    matches!(&item.observed, ItemState::Present(current)
+                        if current.parent == snapshot.parent && current.name == snapshot.name)
+                }) {
+                    return Err(EngineError::DownloadConflict);
+                }
+                snapshot.content_version = install()?;
+                self.store.commit_remote_item(
+                    self.scope, &existing.id, &ItemState::Absent, ItemState::Present(snapshot),
+                ).map_err(EngineError::DownloadState)?;
+                if kind == LocalItemKind::Directory {
+                    self.report.directories += 1;
+                } else {
+                    self.report.files += 1;
+                }
+                return Ok(existing.id.clone());
+            }
             if let ItemState::Present(current) = &existing.observed {
                 snapshot.content_version = current.content_version.clone();
                 if self.revisiting && kind == LocalItemKind::File {
@@ -1806,6 +1829,76 @@ mod tests {
                 "conflicting root"
             )),
             Err(EngineError::DownloadConflict)
+        );
+        let folder = Entry {
+            id: "restored-folder".into(),
+            name: "folder".into(),
+            parents: vec!["remote-id".into()],
+            ..other
+        };
+        let folder_id = job
+            .register(
+                &folder,
+                Some(&first),
+                LocalItemKind::Directory,
+                None,
+                || Ok(None),
+            )
+            .unwrap();
+        let file = Entry {
+            id: "restored-file".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            size: Some("4".into()),
+            parents: vec![folder.id.clone()],
+            ..folder
+        };
+        let file_id = job
+            .register(&file, Some(&folder_id), LocalItemKind::File, None, || {
+                Ok(Some("digest".into()))
+            })
+            .unwrap();
+        let checkpoint = job.store.load(&scope).unwrap().unwrap();
+        let prior: Vec<_> = checkpoint
+            .items
+            .into_iter()
+            .filter(|item| item.id == folder_id || item.id == file_id)
+            .map(|item| (item.id, item.observed))
+            .collect();
+        job.store.commit_remote_removal(&scope, &prior).unwrap();
+        let folder = Entry {
+            id: "restored-folder".into(),
+            name: "folder".into(),
+            mime_type: FOLDER.into(),
+            size: None,
+            parents: vec!["remote-id".into()],
+            ..file
+        };
+        assert_eq!(
+            job.register(
+                &folder,
+                Some(&first),
+                LocalItemKind::Directory,
+                None,
+                || Ok(None)
+            )
+            .unwrap(),
+            folder_id
+        );
+        let file = Entry {
+            id: "restored-file".into(),
+            name: "file".into(),
+            mime_type: "application/octet-stream".into(),
+            size: Some("4".into()),
+            parents: vec![folder.id.clone()],
+            ..folder
+        };
+        assert_eq!(
+            job.register(&file, Some(&folder_id), LocalItemKind::File, None, || Ok(
+                Some("new-digest".into())
+            ))
+            .unwrap(),
+            file_id
         );
         drop(job);
         std::fs::remove_dir_all(directory).unwrap();
