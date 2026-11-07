@@ -8,7 +8,7 @@ Testar `LocalDetector` real com **filesystem real em diretórios temporários**,
 
 ## 2. Ciclo TDD
 
-RED: escrever teste de compilação e de comportamento que falhem pela capacidade ausente. GREEN: implementar mínimo. REFACTOR: manter contratos e rodar regressão. Desenvolver incrementalmente em grupos: ciclo de vida, observação, integração com Inventário, avisos e recuperação após reinício. Cada grupo validado deve gerar commit local conforme [AGENTS.md](AGENTS.md).
+RED: escrever teste de compilação e de comportamento que falhem pela capacidade ausente. GREEN: implementar mínimo. REFACTOR: manter contratos e rodar regressão. Desenvolver incrementalmente em grupos: ciclo de vida, observação, emissão individual por sink fake, avisos e recuperação após reinício. Cada grupo validado deve gerar commit local conforme [AGENTS.md](AGENTS.md).
 
 ## 3. Fixtures
 
@@ -30,7 +30,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Com raiz temporária válida, identidade conhecida, Inventário isolado e sink fake, construir instância Stopped sem observar filesystem.
+**Sucesso:** Com raiz temporária válida, identidade conhecida, sink fake com aceite durável simulado, construir instância Stopped sem observar filesystem.
 
 **Negativos e opcionais:** Raiz interna `.drivesync/`, vínculo inválido ou raiz fora do escopo; validação deve falhar sem ações externas.
 
@@ -48,19 +48,19 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Retorno e invariantes:** Estado coerente Running/Starting/Degraded; não declarar ausência por falha de watcher.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
 
 ### LOC-03 — `LocalDetector::scan_once`
 
 **Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Varredura Full e Paths com arquivos e subpastas; observar criação/edição/renomeação/movimento via API do Inventário.
+**Sucesso:** Varredura Full e Paths com arquivos e subpastas; observar criação/edição/renomeação/movimento via sink interno do pai.
 
 **Negativos e opcionais:** Subárvore ilegível, arquivo alterado durante scan, symlink externo, bytes não UTF-8, cancelamento; request_id None/Some.
 
 **Retorno e invariantes:** Complete só com escopo validado; Partial preserva regiões desconhecidas; baseline e fila não mudam.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
 
 ### LOC-04 — `LocalDetector::stop`
 
@@ -72,7 +72,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Retorno e invariantes:** Não alegar sincronização concluída ou criar atividade de transferência.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
 
 ### LOC-05 — `LocalDetector::status`
 
@@ -84,7 +84,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Retorno e invariantes:** Não dispara varredura nem contato remoto; leitura não modifica estados.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
 
 ## 5. Sinais internos ao Detector pai e recuperação
 
@@ -124,7 +124,7 @@ Todo `LocalDetectorFailure` precisa ter tipo de erro, mensagem sanitizada e sina
 
 Dependências ainda abertas: contrato definitivo `LocalFile`, implementação da porta interna de sinais do Detector pai, concreteza dos handles, política de symlinks, valores/política de debounce e protocolo de start/stop. Testes que dependem dessas decisões devem ficar marcados **BLOCKED** até formalização, não aprovados por mocks permissivos.
 
-Concluir o **Detector Local** somente com **5/5 métodos públicos** implementados e testes aplicáveis aprovados, cenário de retomada após interrupção e casos de parcialidade comprovados, integração de Inventário validada, regressão sem falhas relevantes e execução Rust no ambiente Flatpak. Não exigir conclusão do Detector Remoto.
+Concluir o **Detector Local** somente com **5/5 métodos públicos** implementados e testes aplicáveis aprovados, cenário de retomada após interrupção e casos de parcialidade comprovados, sem dependência da implementação de Storage/Inventário, regressão sem falhas relevantes e execução Rust no ambiente Flatpak. Não exigir conclusão do Detector Remoto.
 
 ## 9. Relatório
 
