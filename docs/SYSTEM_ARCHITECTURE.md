@@ -10,8 +10,8 @@ A arquitetura distingue cinco responsabilidades principais:
 
 1. **Observar** alterações locais e remotas.
 2. **Armazenar e consultar** o estado unificado dos itens.
-3. **Analisar** diferenças entre estados.
-4. **Decidir e coordenar** o que deve ser feito.
+3. **Analisar e encaminhar** operações permitidas a partir das diferenças entre estados.
+4. **Coordenar e definir políticas** de processamento e situações que exijam decisão do usuário.
 5. **Executar** operações sobre o Google Drive ou a pasta local.
 
 Este documento define a organização **macro** dos componentes. Não especifica classes internas, arquivos Rust, assinaturas de métodos, protocolos de eventos nem algoritmos de sincronização.
@@ -44,32 +44,33 @@ A estrutura e a localização dos dados seguem o [DATA_MODEL.md](DATA_MODEL.md).
 
 ### 2.3 Analisador
 
-**Responsabilidade:** interpretar os estados disponíveis para identificar mudanças, divergências e possíveis conflitos.
+**Responsabilidade:** analisar os estados dos itens e encaminhar a execução de operações que estejam autorizadas pelas condições e políticas recebidas do Orquestrador.
 
-- Compara observações locais e remotas com o último estado confirmado.
-- Diferencia alterações de conteúdo, nome, localização e presença quando houver evidência suficiente.
-- Produz um diagnóstico que pode ser utilizado pelo Orquestrador.
-- Não modifica arquivos, não executa transferências e não decide qual lado deve prevalecer.
+- Consulta o Inventário e compara observações locais e remotas com o último estado confirmado.
+- Identifica mudanças de conteúdo, nome, localização e presença, bem como possíveis conflitos.
+- Recebe do Orquestrador as condições e políticas aplicáveis ao processamento.
+- Quando a alteração pode ser tratada com segurança dentro dessas condições, solicita diretamente ao operador de Upload ou Download a ação necessária.
+- Recebe os resultados dos operadores e registra, pelo Inventário, os estados efetivamente confirmados.
+- Quando faltam informações, autorização ou critérios para resolver a situação, devolve o diagnóstico ao Orquestrador e aguarda nova orientação.
 
-O Analisador utiliza a interface do Inventário para obter os dados necessários.
+O Analisador **não implementa transferências nem modifica arquivos diretamente**. Sua autonomia é limitada às políticas recebidas: ele pode determinar e encaminhar uma operação, mas não escolher por conta própria uma política de prevalência ou perda de dados.
 
 ### 2.4 Orquestrador
 
-**Responsabilidade:** receber informações, decidir o fluxo de trabalho e coordenar as ações da sincronização.
+**Responsabilidade:** coordenar o processamento da sincronização e estabelecer as condições e políticas que orientam o Analisador.
 
 - Recebe as notificações dos Detectores.
-- Consulta o Inventário e utiliza os diagnósticos do Analisador.
-- Decide se uma alteração exige uma operação imediata, uma operação pendente, nova avaliação, suspensão ou tratamento de conflito.
-- Coordena as operações de sincronização inicial e de acompanhamento.
-- Encaminha operações aos componentes de Upload ou Download.
-- Recebe os resultados das operações e coordena sua confirmação no Inventário.
-- Controla conceitualmente o trabalho pendente e sua retomada; o desenho interno de filas e armazenamento fica para especificação posterior.
+- Acessa as configurações e preferências de sincronização definidas pelo usuário.
+- Solicita ao Analisador o processamento de itens, informando as condições e políticas aplicáveis.
+- Recebe os resultados do Analisador e as situações que exigem decisão adicional, suspensão ou intervenção do usuário.
+- Coordena o fluxo geral da sincronização inicial e do acompanhamento das alterações.
+- Define quando o processamento pode prosseguir, ficar pendente ou ser retomado, sem determinar necessariamente a operação técnica para cada arquivo.
 
-O Orquestrador **decide o que fazer**, mas não implementa diretamente transferência de conteúdo ou manipulação física de arquivos.
+O Orquestrador **não aciona diretamente os operadores de Upload e Download** e não executa operações físicas. O Analisador identifica e encaminha as operações compatíveis com as políticas e retorna ao Orquestrador quando uma decisão não puder ser tomada dentro dessas condições. O mecanismo concreto de fila e retomada será definido posteriormente.
 
 ### 2.5 Operador de Upload
 
-**Responsabilidade:** aplicar no Google Drive alterações originadas localmente, quando solicitadas pelo Orquestrador.
+**Responsabilidade:** aplicar no Google Drive alterações originadas localmente, quando solicitadas pelo Analisador.
 
 Abrange operações sobre arquivos e diretórios, incluindo:
 - criação e envio de arquivos ou diretórios;
@@ -82,7 +83,7 @@ A execução deve utilizar as capacidades adequadas do Google Drive; renomear ou
 
 ### 2.6 Operador de Download
 
-**Responsabilidade:** aplicar na pasta local alterações originadas remotamente, quando solicitadas pelo Orquestrador.
+**Responsabilidade:** aplicar na pasta local alterações originadas remotamente, quando solicitadas pelo Analisador.
 
 Abrange operações sobre arquivos e diretórios, incluindo:
 - criação e materialização de arquivos ou diretórios;
@@ -108,7 +109,7 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 ## 3. Relacionamentos entre componentes
 
-```mermaid
+\`\`\`mermaid
 flowchart TD
     DL["Detector Local"]
     DR["Detector Remoto"]
@@ -119,24 +120,24 @@ flowchart TD
     D["Operador de Download"]
     G["Google API"]
 
-    DL -->|"Notificações"| O
-    DR -->|"Notificações"| O
+    DL -->|"Notifica alterações"| O
+    DR -->|"Notifica alterações"| O
 
-    O -->|"Solicita diagnóstico"| A
-    A <-->|"Consulta estados"| I
-    O <-->|"Consulta / confirmação"| I
+    O -->|"Solicita processamento e informa políticas"| A
+    A -->|"Resultado ou decisão necessária"| O
 
-    O -->|"Solicita operação"| U
-    O -->|"Solicita operação"| D
-    U -->|"Resultado"| O
-    D -->|"Resultado"| O
+    A <-->|"Consulta e confirma estados"| I
+    A -->|"Solicita operação"| U
+    A -->|"Solicita operação"| D
+    U -->|"Resultado verificado"| A
+    D -->|"Resultado verificado"| A
 
     DR -->|"Observa remoto"| G
     U -->|"Executa remoto"| G
     D -->|"Lê remoto"| G
-```
+\`\`\`
 
-O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. A origem das notificações é sempre o detector correspondente; a decisão sobre aplicar, adiar, enfileirar ou reavaliar pertence ao Orquestrador.
+O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. Os Detectores notificam o Orquestrador; este estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
 
 ## 4. Princípios de comunicação
 
@@ -144,9 +145,9 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 **Eventos não são comandos.** Uma notificação de alteração informa que um item ou escopo exige atenção. Não equivale a ordenar upload, download ou exclusão.
 
-**Separação entre observação, análise, decisão e execução.** Detectores observam; Inventário guarda e fornece estado; Analisador compara; Orquestrador decide; operadores executam.
+**Separação entre observação, políticas, análise e execução.** Detectores observam; Inventário guarda e fornece estado; Orquestrador fornece políticas e coordena; Analisador compara, determina e encaminha operações autorizadas; operadores executam. O que não estiver autorizado retorna ao Orquestrador.
 
-**Inventário como acesso único aos dados.** Resultados e observações relevantes são registrados mediante contratos do InventoryManager; os componentes não acessam SQL diretamente.
+**Inventário como acesso único aos dados.** Resultados e observações relevantes são registrados mediante contratos do InventoryManager; os componentes não acessam SQL diretamente. O Analisador coordena a confirmação dos resultados devolvidos pelos operadores.
 
 **Identidade persistente.** O mesmo `SyncItem` representa as duas faces de um objeto, independentemente de alteração de nome, pasta ou conteúdo.
 
@@ -166,8 +167,9 @@ A persistência dos itens, estados e histórico é definida por `DATA_MODEL.md`.
 
 A organização é considerada respeitada quando:
 - uma mudança local ou remota pode ser informada ao Orquestrador sem que o detector escolha a ação;
-- o Orquestrador consegue consultar o estado e solicitar análise sem conhecer a persistência;
-- uma operação é executada pelo operador correspondente, sem embutir a decisão de sincronização;
+- o Orquestrador fornece condições e políticas ao Analisador sem conhecer a persistência nem acionar diretamente operadores;
+- o Analisador encaminha diretamente ao operador correspondente uma operação autorizada, sem executar fisicamente a ação;
+- situações não resolvíveis pelas políticas recebidas retornam ao Orquestrador para decisão adicional;
 - os resultados podem ser confirmados sobre a mesma identidade lógica no Inventário;
 - a implementação interna de um componente pode ser alterada sem exigir conhecimento dos detalhes internos dos demais.
 
