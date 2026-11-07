@@ -4,7 +4,7 @@
 
 Plano TDD para **somente o Detector Local**. Fonte de verdade: [README.md](README.md) e [INTERFACES.md](INTERFACES.md). Não é necessário compilar, testar ou implementar o Detector Remoto para concluir esta etapa.
 
-Testar `LocalDetector` real com **filesystem real em diretórios temporários**, Inventário/SQLite real isolado acessado por **API pública**, sink fake do **Detector pai**, relógio/scheduler injetados para determinismo. Nunca utilizar arquivos pessoais, Google Drive real, credenciais ou GUI. A API Local **não** deve ser importável por consumidores externos da engine; verificar que apenas o módulo pai pode chamá-la. O watcher deve ser exercitado quando disponível; não substituí-lo inteiramente por mock da unidade sob teste.
+Testar `LocalDetector` real com **filesystem real em diretórios temporários**, sink individual fake e respostas de aceitação durável simuladas, sink fake do **Detector pai**, relógio/scheduler injetados para determinismo. Nunca utilizar arquivos pessoais, Google Drive real, credenciais ou GUI. A API Local **não** deve ser importável por consumidores externos da engine; verificar que apenas o módulo pai pode chamá-la. O watcher deve ser exercitado quando disponível; não substituí-lo inteiramente por mock da unidade sob teste.
 
 ## 2. Ciclo TDD
 
@@ -15,7 +15,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 | Fixture | Conteúdo | Resultado a avaliar |
 | --- | --- | --- |
 | `empty_root` | Raiz temporária + inventário do mesmo sync_id | Varredura inicial vazia |
-| `local_tree` | Arquivos, subpastas, nomes Unicode e bytes Unix inválidos para UTF-8 | Observações preservam nomes e atributos |
+| `local_tree` | Arquivos, subpastas, nomes Unicode e bytes Unix inválidos para UTF-8 | Sinais preservam identidade e informação necessária à reavaliação |
 | `closed_app_changes` | Criar/editar/mover arquivos com watcher desligado | Nova varredura detecta diferenças |
 | `partial_tree` | Falha controlada em subárvore | Partial/Unavailable, não exclusão |
 | `external_symlink` | Link apontando para fora da raiz | Não observar conteúdo externo |
@@ -36,7 +36,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Retorno e invariantes:** Nenhuma observação gravada, watcher não iniciado, sem acesso remoto.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink interno do Detector pai, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink interno do Detector pai, eventos capturados no sink individual; validar erros tipados e ausência de alterações físicas proibidas.
 
 ### LOC-02 — `LocalDetector::start`
 
@@ -106,13 +106,13 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 | LOC-S-03 | Evento perdido/overflow do watcher | Recuperação por varredura |
 | LOC-S-04 | Arquivo criado/renomeado durante scan | Cobertura não declarada completa incorretamente |
 | LOC-S-05 | Symlink externo | Nenhuma leitura fora da raiz |
-| LOC-S-06 | `.drivesync/` modificado | Nenhum SyncItem de metadados internos |
+| LOC-S-06 | `.drivesync/` modificado | Nenhum sinal de metadados internos |
 | LOC-S-07 | Nome Unix não UTF-8 | Bytes preservados sem conversão com perda |
 | LOC-S-08 | Duas sincronizações simultâneas | Notificações e observações isoladas |
 | LOC-S-09 | Campo local não observado | Não sobrescrever valor anterior com None/zero |
-| LOC-S-10 | Estado local diferente do baseline | Baseline preservado; detector não decide operação |
-| LOC-S-11 | Falha na persistência | Não informar fato como durável |
-| LOC-S-12 | Repetição da mesma varredura | Não duplicar vínculos ou gerar histórico artificial |
+| LOC-S-10 | Estado local diferente do baseline | Sem alteração de baseline; detector não decide operação |
+| LOC-S-11 | Falha na persistência | Não informar ao filho como durável; reemitir/reobservar |
+| LOC-S-12 | Repetição da mesma varredura | Não gerar evento artificial; reobservação segura quando necessário |
 
 ## 7. Tipos, opcionais e erros
 
@@ -128,4 +128,8 @@ Concluir o **Detector Local** somente com **5/5 métodos públicos** implementad
 
 ## 9. Relatório
 
-Informar IDs LOC-01…LOC-05, LOC-N e LOC-S executados, PASS/FAIL/BLOCKED, ambiente, comandos, evidência de persistência e varredura, commits locais e limitações. **Nenhum teste Local pode depender de Orquestrador real ou de importar sua API pública; a tradução para `DetectorEvent` pertence aos testes do pai.** Documento de testes não representa teste executado.
+Informar IDs LOC-01…LOC-05, LOC-N e LOC-S executados, PASS/FAIL/BLOCKED, ambiente, comandos, evidência de emissão individual e varredura, commits locais e limitações. **Nenhum teste Local pode depender de Orquestrador real ou de importar sua API pública; a tradução para `DetectorEvent` pertence aos testes do pai.** Documento de testes não representa teste executado.
+
+## Independência da persistência
+
+O Local **não** utiliza Storage, `detector.sqlite3` ou implementação real do pai. Para cada alteração observada, chama o sink fake com **um evento**; confirmar só quando o fake simula aceite durável e manter recuperação quando falhar. Testar Local isoladamente sem executar testes do Storage. A durabilidade real é comprovada pela suíte própria do Storage e pela integração posterior.
