@@ -180,7 +180,7 @@ impl Detector {
 
 **Assinatura:** `pause(DetectorPauseRequest) -> DetectorResult<DetectorPauseResult>`.
 
-**Finalidade:** Suspender novas observações automáticas mantendo os fatos já persistidos e a configuração da sincronização.
+**Finalidade:** Suspender a entrega normal de notificações de detecção ao Orquestrador, preservando fatos e necessidades de reavaliação. Fontes internas podem continuar observando conforme suas estratégias.
 
 **Parâmetros:** `reason`: justificativa de controle; `requested_at`: momento da solicitação.
 
@@ -192,7 +192,7 @@ impl Detector {
 
 **Assinatura:** `resume(DetectorResumeRequest) -> DetectorResult<DetectorResumeResult>`.
 
-**Finalidade:** Retomar acompanhamento e organizar recuperação do intervalo em que não houve observação.
+**Finalidade:** Retomar a entrega de notificações e solicitar recuperação de alterações que não tenham sido observadas ou entregues durante a pausa.
 
 **Parâmetros:** `requested_at`: instante de retomada; o plano concreto de recuperação pertence a cada fonte interna.
 
@@ -271,6 +271,17 @@ trait InternalObservationSource {
 A interface compartilhada padroniza **apenas a comunicação/controle mínimo**. O Local escolhe sua organização de watcher, varredura, symlinks e bytes Unix. O Remoto escolhe paginação, cursor, polling e gestão de respostas Google. Podem manter tipos e funções internas diferentes e adaptar-se ao contrato comum. **Não forçar as duas implementações a terem a mesma arquitetura interna.**
 
 As fontes produzem eventos internos, que o pai traduz em `DetectorEvent`. Não fornecem diretamente o `DetectorEventSink` do Orquestrador. O pai coordena validação, persistência quando necessária e emissão externa; detalhes de quem persiste cada observação devem ser definidos sem violar a API do Inventário.
+
+### Semântica pública de pausa, retomada e notificações pendentes
+
+- `pause` suspende **a entrega normal de `DetectorEvent` ao Orquestrador**, sem garantir que Local/Remoto deixem de observar. Não descarta eventos nem apaga fatos já persistidos. Avisos críticos de erro e controle podem ser expostos por `status` durante a pausa.
+- `resume` solicita a cada fonte a recuperação de alterações potencialmente perdidas e somente então libera a entrega de avisos pendentes/reconstruídos com a cobertura correta. `recovery_scheduled=true` **não significa** que a recuperação terminou.
+- `start` após `stop` requer revalidação e recuperação do período não monitorado, independente dos eventos voláteis.
+- `status.state=Paused` descreve o **estado de entrega do coordenador**, não a prova de que todos os watchers e pollers estão suspensos. `pending_checks` contabiliza trabalho de verificação ainda não concluído; **não** representa necessariamente número de eventos em buffer.
+- O contrato público não oferece `get_pending_events` nem expõe fila interna. As notificações são entregues pelo `DetectorEventSink`, e o Orquestrador continua recebendo apenas `DetectorEvent`.
+- Se a fachada não conseguir reter com segurança o detalhe de um evento, deve manter ou reconstruir um **aviso de reavaliação mais amplo**. Não depender de buffer de memória como garantia contra crash. Evento repetido pode ser agregado, jamais apagado sem confirmação/recuperação segura.
+- Uma origem pode usar polling periódico, outra watcher orientado a eventos. Isso não altera assinaturas públicas nem impõe mesmo algoritmo de controle aos filhos.
+- A política de retenção/coalescência precisa ser implementada com limites de memória e procedimento de recuperação; a seleção de armazenamento durável permanece no contrato do Inventário, não em banco paralelo do Detector.
 
 ## 8. Segurança, estados e limites
 
