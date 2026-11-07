@@ -114,7 +114,7 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 **Dois níveis de coordenação:** o Orquestrador administra o processamento da sincronização como um todo; o Analisador administra a análise e a execução autorizada por arquivo ou diretório. A identificação de conflitos pode ser organizada como submódulo do Analisador, sem se tornar um oitavo componente independente na arquitetura macro.
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     DL["Detector Local"]
     DR["Detector Remoto"]
@@ -140,7 +140,7 @@ flowchart TD
     DR -->|"Observa remoto"| G
     U -->|"Executa remoto"| G
     D -->|"Lê remoto"| G
-\`\`\`
+```
 
 O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. Os Detectores notificam o Orquestrador; este estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
 
