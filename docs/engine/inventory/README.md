@@ -2,77 +2,106 @@
 
 ## Objetivo
 
-**Manter a identidade, os metadados observados e o estado confirmado dos arquivos e diretórios de cada sincronização.**
+O **Inventário** é inicialmente o componente responsável pelo **acesso e pela persistência dos dados estruturados do DriveSync**, tanto os dados globais da aplicação quanto os dados de cada pasta sincronizada. Todos os demais módulos usam suas interfaces: **nenhum consumidor executa SQL diretamente**.
 
-O Inventário é a referência persistente da engine sobre o que foi observado localmente, o que foi observado no Google Drive e o que foi **efetivamente confirmado como sincronizado**. Não executa upload, download ou operações físicas, nem decide qual lado deve prevalecer em um conflito.
+O Inventário registra identidades, metadados observados, vínculos, último estado confirmado, operações pendentes, cursores e atividades. Ele **não** observa o filesystem ou o Google Drive por conta própria, nem executa upload/download ou escolhe qual versão deve prevalecer em um conflito.
 
-Cada sincronização possui seu próprio inventário. Todos os demais módulos consultam e atualizam os dados **através do `InventoryManager`**, sem acesso direto às tabelas SQLite.
+## Bancos de dados: quantos são e onde ficam?
 
-## Modelo conceitual
+O modelo prevê **três tipos de banco SQLite**: **um global da aplicação** e **dois por pasta sincronizada** (inventário e histórico).
 
-A entidade principal é **`SyncItem`**: o vínculo lógico entre o registro local, o registro remoto e o estado da sincronização. Os metadados são entidades independentes no banco.
+| Banco | Quantidade | Localização | Finalidade |
+| --- | --- | --- | --- |
+| **Aplicação — `app.sqlite3`** | **1 por instalação/perfil** | `$XDG_DATA_HOME/drivesync/app.sqlite3` | Contas cadastradas, pares de pastas e preferências |
+| **Inventário — `inventory.sqlite3`** | **1 por pasta sincronizada** | `<pasta-local>/.drivesync/inventory.sqlite3` | Arquivos, vínculos, baseline, fila de operações, eventos e cursor remoto |
+| **Histórico — `history.sqlite3`** | **1 por pasta sincronizada** | `<pasta-local>/.drivesync/history.sqlite3` | Atividades e resultados daquela sincronização |
 
-| Entidade Rust | Tabela SQLite | Responsabilidade |
+**Exemplo:** com três pastas sincronizadas, haverá um banco global e seis bancos nas pastas: **sete arquivos SQLite** ao todo.
+
+```text
+$XDG_DATA_HOME/drivesync/
+└── app.sqlite3                         # Aplicação inteira
+
+<Pasta A>/
+├── .drivesync/
+│   ├── inventory.sqlite3               # Arquivos e estado da Pasta A
+│   └── history.sqlite3                 # Histórico da Pasta A
+└── arquivos-do-usuario/
+
+<Pasta B>/
+└── .drivesync/
+    ├── inventory.sqlite3               # Independente da Pasta A
+    └── history.sqlite3
+```
+
+### Por que a pasta oculta `.drivesync/` existe?
+
+É o diretório de **controle daquela sincronização**: acompanha a própria pasta, registra a última situação conhecida e permite retomar o trabalho após reiniciar a aplicação. Não é um diretório do usuário para enviar ao Google.
+
+- **Nunca enviar** `.drivesync/` ao Google Drive; ignorá-lo no detector e nas operações.
+- O banco acompanha **somente aquela pasta**, não compartilha dados de outra sincronização ou conta.
+- A ausência/inacessibilidade da pasta local **suspende** a sincronização: não equivale a exclusão remota.
+- Se não existe inventário válido e a pasta contém arquivos de usuário, **bloquear a sincronização inicial automática**. Não mesclar, sobrescrever nem excluir sem processo específico de associação.
+- A pasta `.drivesync/` não conta como conteúdo do usuário ao verificar se uma pasta nova está vazia.
+
+**Credenciais OAuth não ficam em nenhum desses bancos.** Tokens e segredos pertencem ao Secret Service/keyring. Logs técnicos gerais também não são atividades do histórico de uma pasta.
+
+## 1. Banco da aplicação (`app.sqlite3`)
+
+O banco global existe independentemente das pastas estarem acessíveis. Guarda o **cadastro de contas**, os **pares de sincronização** e as **preferências**.
+
+| Tabela | Identidade | Dados principais |
 | --- | --- | --- |
-| `LocalFile` | `local_files` | Metadados observados de arquivo/diretório no filesystem local |
-| `GoogleFile` | `google_files` | Metadados observados de arquivo/diretório na API do Google Drive |
-| `SyncItem` | `sync_items` | Associa os dois registros, mantém identidade lógica, presença observada, baseline e estado de sincronização |
+| `accounts` | `account_id` (PK) | `provider`, `provider_user_id` (Google OIDC `sub`), `email`, `display_name`, datas |
+| `sync_connections` | `sync_id` (PK) | `account_id` (FK), `remote_root_id`, `local_root`, `enabled`, nome e data de criação |
+| `app_preferences` | `key` (PK) | Tipo e valor escalar de uma preferência global |
+| `sync_preferences` | `(sync_id, key)` (PK) | Tipo e valor escalar de uma preferência de uma pasta |
 
-`GoogleFile` é definido pela API pública de `google_api/`. `LocalFile` será definido pelo componente responsável pelos metadados locais; **seu conjunto completo de atributos ainda está em definição**. O Inventário trabalha com ambos como tipos externos e não passa a ser proprietário desses contratos.
+**Relações:** uma conta pode ter várias conexões; cada conexão associa exatamente uma conta a uma raiz remota e uma raiz local. Preferências específicas referenciam a conexão. Um e-mail **não** substitui a identidade estável `provider_user_id`.
 
-### Relacionamentos
+**Regras:** não guardar árvores de arquivos, filas, tokens ou eventos remotos no banco global. A identidade da pasta deve impedir conexões indevidamente sobrepostas. No Flatpak, o XDG é resolvido dentro do ambiente da aplicação.
+
+## 2. Banco da pasta sincronizada (`inventory.sqlite3`)
+
+Este banco representa os arquivos e o processamento **de um único par de pastas**.
+
+### Tabelas e relacionamentos
+
+| Tabela | Chave | Conteúdo |
+| --- | --- | --- |
+| `sync_info` | `singleton=1` | `sync_id`, conta, raiz remota, geração, conclusão da sincronização inicial |
+| `local_files` | `local_file_id` | Nome/caminho local, tipo, tamanho, horários, dispositivo, inode, checksum |
+| `google_files` | `google_file_id` | `remote_id` exclusivo, nome, MIME, versão, tamanho, datas, hashes, lixeira e drive |
+| `google_file_parents` | `(google_file_id, parent_remote_id)` | Uma linha por relacionamento pai do arquivo no Drive |
+| `sync_items` | `item_id` | Vínculo com `local_file_id` e `google_file_id`, presença, status, revisão e horários |
+| `sync_baselines` | `item_id` | Estado anterior **confirmado**: presença, nomes, pais, versões, hashes e instante |
+| `sync_operations` | `operation_id` | Fila persistente de ações, estado, tipo, direção, tentativas e falhas |
+| `remote_cursor` | `corpus` | Cursor de alterações remoto e geração correspondente |
+| `remote_events` | `event_id` | Eventos de alterações remotas recebidos, pendentes ou reconhecidos |
 
 ```mermaid
 erDiagram
-    LOCAL_FILES o|--o| SYNC_ITEMS : "local_file_id"
-    GOOGLE_FILES o|--o| SYNC_ITEMS : "google_file_id"
-
-    LOCAL_FILES {
-        TEXT id PK
-        BLOB name
-        INTEGER size
-        INTEGER modified_ns
-        INTEGER device
-        INTEGER inode
-    }
-    GOOGLE_FILES {
-        TEXT id PK
-        TEXT google_id UK
-        TEXT name
-        TEXT mime_type
-        TEXT version
-    }
-    SYNC_ITEMS {
-        TEXT id PK
-        TEXT local_file_id FK
-        TEXT google_file_id FK
-        TEXT local_presence
-        TEXT remote_presence
-        TEXT sync_status
-        INTEGER revision
-    }
+    LOCAL_FILES o|--o| SYNC_ITEMS : "referencia"
+    GOOGLE_FILES o|--o| SYNC_ITEMS : "referencia"
+    GOOGLE_FILES ||--o{ GOOGLE_FILE_PARENTS : "pais"
+    SYNC_ITEMS ||--o| SYNC_BASELINES : "estado confirmado"
+    SYNC_ITEMS ||--o{ SYNC_OPERATIONS : "operacoes"
+    REMOTE_CURSOR ||--o{ REMOTE_EVENTS : "eventos"
+    SYNC_ITEMS o|--o{ REMOTE_EVENTS : "reavaliacoes"
 ```
 
-As colunas do diagrama são **ilustrativas**, não o esquema SQL definitivo.
+As relações `sync_items.local_file_id` e `sync_items.google_file_id` são **FKs opcionais e únicas**. Assim, um item lógico pode existir só no local, só no Google, nos dois lados ou ficar temporariamente sem representação atual. A falta da referência **não prova exclusão**.
 
-| Regra | Comportamento |
-| --- | --- |
-| Um vínculo por objeto lógico | `SyncItem.id` é identidade interna estável e não depende de nome, caminho, inode ou ID do Google |
-| Referências opcionais | `local_file_id` e `google_file_id` podem estar ausentes durante criação, descoberta, exclusão ou sincronização parcial |
-| Vínculos exclusivos | Um registro local/remoto não deve pertencer a dois `SyncItem` da mesma sincronização |
-| ID remoto estável | `google_id` não muda após renomeação ou movimentação no Drive |
-| Identidade local | Caminho e inode são evidências de localização/identidade, mas nenhum deles é identidade lógica definitiva |
-| Retenção segura | Um `SyncItem` pode permanecer mesmo sem representação atual em um dos lados, para preservar baseline e evidências |
-| Integridade | Chaves estrangeiras, unicidade, validações e transações protegem associações; ausência de FK não é evidência de exclusão |
+### `LocalFile`, `GoogleFile` e `SyncItem`
 
-Os registros do banco são **representações observadas**, não cópias obrigatoriamente completas de todos os atributos públicos dos tipos Rust. A persistência seleciona colunas necessárias às consultas e à sincronização; campos adicionais podem ser incorporados por evolução do esquema. Listas e objetos não são serializados integralmente em BLOB/JSON para substituir relações.
-
-## Objeto entregue aos consumidores
-
-O `InventoryManager` monta um objeto unificado a partir das tabelas relacionadas, sem exigir que os consumidores realizem `JOIN` ou conheçam SQL.
+| Objeto Rust | Dono do contrato | Papel no Inventário |
+| --- | --- | --- |
+| `LocalFile` | Componente responsável pelos metadados locais (a definir integralmente) | Produz/representa uma observação local |
+| `GoogleFile` | `google_api/` | Produz/representa uma observação remota |
+| `SyncItem` | `inventory/` | Reúne as duas representações, baseline e situação de sincronização |
 
 ```rust
-// Modelo conceitual; assinaturas definitivas serão documentadas em INTERFACES.md.
+// Contrato conceitual, não assinatura definitiva.
 pub struct SyncItem {
     pub id: SyncItemId,
     pub local: Option<LocalFile>,
@@ -84,100 +113,78 @@ pub struct SyncItem {
 }
 ```
 
-`Option<LocalFile>` e `Option<GoogleFile>` indicam ausência de **representação associada na consulta**. Isso, por si só, não confirma que o objeto foi excluído no filesystem ou no Google Drive.
+O Inventário constrói o `SyncItem` a partir das tabelas relacionadas (por exemplo, com `LEFT JOIN`). A aplicação não precisa conhecer o esquema para consultar um arquivo.
 
-O vínculo e suas referências internas são persistidos em `sync_items`; a engine trabalha com o `SyncItem` montado, não com três registros isolados.
+Os atributos de `LocalFile` ainda poderão evoluir. Os de `GoogleFile` são orientados pelo contrato da Google API. **As tabelas guardam os atributos necessários à persistência**, não necessariamente uma cópia integral de todos os objetos externos. Campos opcionais não recebidos não se convertem automaticamente em zero, `false` ou exclusão.
 
-## Estado observado e baseline
+### Presença, estado e baseline
 
-São **três informações diferentes**:
-
-| Informação | Origem | O que representa |
+| Campo/estado | Valores | Significado |
 | --- | --- | --- |
-| Estado local atual | Observação do filesystem | Metadados locais mais recentes que foram observados |
-| Estado remoto atual | Observação via Google API | Metadados remotos mais recentes que foram observados |
-| `SyncBaseline` | Confirmação de operação/verificação | Estado anterior comprovadamente sincronizado, usado na comparação |
+| `local_presence`, `remote_presence` | `unknown`, `present`, `absent_confirmed` | Desconhecido, presença observada ou ausência efetivamente comprovada |
+| `sync_status` | `pending_reconciliation`, `pending_upload`, `pending_download`, `synced`, `conflict`, `error` | Condição registrada para o Analisador/Orquestrador |
+| `revision` | Inteiro positivo | Versão para evitar atualizações concorrentes obsoletas |
+| `SyncBaseline` | Registro opcional por item | Último estado **efetivamente confirmado** em ambos os lados |
 
-`SyncBaseline` é parte da responsabilidade do `SyncItem`. Contém as referências e os atributos mínimos necessários à comparação (por exemplo, presença, versão, checksum, nome e localização anteriormente confirmados). **O baseline não é substituído por uma nova observação.** Ele só muda após confirmação verificável.
+Uma observação atualiza metadados locais ou remotos **sem avançar o baseline**. Apenas a confirmação de uma operação concluída e verificada altera o baseline.
 
-### Presença
+O baseline deve reter ao menos presença, nome, pai/localização, versão/assinatura e instante de confirmação. Ele é separado das tabelas de estado observado para evitar sobrescrever o passado ao detectar mudanças atuais.
 
-| Estado | Significado |
-| --- | --- |
-| `unknown` | Não foi possível confirmar a situação atual |
-| `present` | Presença confirmada pela observação |
-| `absent_confirmed` | Ausência confirmada por observação válida |
+### Fila de operações, cursores e eventos
 
-A falta de rede, a perda de acesso, um campo omitido pelo Google, a indisponibilidade de uma pasta local ou a ausência de `LocalFile`/`GoogleFile` na consulta **não** autorizam inferir `absent_confirmed`.
-
-### Situação de sincronização
-
-| Estado | Significado |
-| --- | --- |
-| `pending_reconciliation` | Há alterações/observações ainda não analisadas |
-| `pending_upload` | Operação de origem local está pendente |
-| `pending_download` | Operação de origem remota está pendente |
-| `synced` | Correspondência confirmada |
-| `conflict` | Divergência que exige resolução ou política autorizada |
-| `error` | Falha registrada que não implica necessariamente conflito |
-
-O Inventário registra o estado, mas a escolha de ação e as políticas de conflito pertencem ao Analisador/Orquestrador.
-
-## Responsabilidades e interfaces oferecidas
-
-| Capacidade | Resultado esperado |
-| --- | --- |
-| Abrir/validar inventário | Verificar escopo de conta, pasta remota, pasta local e integridade |
-| Buscar por `SyncItemId` | Retornar `SyncItem` completo ou ausência de registro |
-| Buscar por ID remoto | Localizar o vínculo correspondente, sem depender do nome |
-| Buscar por identidade/localização local | Localizar o vínculo usando critérios locais disponíveis e validados |
-| Listar itens | Consultas paginadas/filtradas por estado, presença, localização ou hierarquia |
-| Registrar observação local | Inserir/atualizar `LocalFile` e sua associação sem alterar automaticamente o baseline |
-| Registrar observação remota | Inserir/atualizar `GoogleFile` e sua associação sem alterar automaticamente o baseline |
-| Associar/desassociar representações | Manter FKs e identidade lógica com controle de integridade |
-| Confirmar sincronização | Atualizar de forma atômica a confirmação e o baseline de um item |
-| Registrar estado/conflito/erro | Persistir condições relatadas pelos componentes autorizados |
-| Registrar/confirmar eventos remotos | Manter eventos pendentes e cursor de alterações duráveis |
-| Consultar diferenças | Expor dados/indicadores comparáveis sem aplicar políticas de resolução |
-
-Essas são **capacidades**, ainda não as assinaturas finais. Cada operação terá entradas, saídas, erros e testes próprios em `INTERFACES.md` e `TESTS.md`.
-
-## Persistência e bancos de dados
-
-O Inventário é inicialmente a **porta de acesso a todos os bancos de dados estruturados da aplicação e das sincronizações**. Isso não significa misturar dados globais com os arquivos individuais.
-
-| Escopo | Banco | Dados principais |
+| Estrutura | Campos/estados principais | Regra |
 | --- | --- | --- |
-| Aplicação | `$XDG_DATA_HOME/drivesync/app.sqlite3` | `accounts`, `sync_connections`, `app_preferences`, `sync_preferences` |
-| Pasta sincronizada | `<raiz-local>/.drivesync/inventory.sqlite3` | `sync_info`, `local_files`, `google_files`, `google_file_parents`, `sync_items`, `sync_baselines`, `sync_operations`, `remote_cursor`, `remote_events` |
-| Histórico da sincronização | `<raiz-local>/.drivesync/history.sqlite3` | `activity` |
-| Credenciais | Secret Service/keyring | Segredos OAuth fora de SQLite |
+| `sync_operations` | `item_id`, `direction` (upload/download), `operation_kind` (criar, conteúdo, renomear, mover, lixeira, excluir, restaurar), `state` (pendente, executando, retry, bloqueada, concluída, falha), `attempt_count`, `next_attempt_at`, precondição de versão | Registra trabalho durável, inclusive offline; não executa a ação |
+| `remote_cursor` | `corpus`, `cursor`, `generation` | Representa até onde as alterações remotas foram observadas |
+| `remote_events` | `corpus`, `remote_id`, `item_id?`, tipo, versão, `observed_at`, `processed_at?` | Evento só fica reconhecido após reavaliação explícita |
 
-A pasta `.drivesync/` é reservada ao aplicativo, ignorada pelo detector local e nunca enviada ao Google Drive.
+- Publicar o cursor de uma página e seus eventos deve ser **transacional** no inventário.
+- Avançar o cursor não significa que os eventos foram processados.
+- Depois de interrupção, recuperar a fila e os eventos pendentes e **reavaliar antes de repetir** escritas com resultado desconhecido.
+- O Inventário persiste as operações, mas a **decisão de executá-las** pertence aos módulos de coordenação e análise.
 
-O esquema relacional completo, as chaves estrangeiras, índices, regras de integridade, persistência da fila e recuperação estão documentados em **[DATA_MODEL.md](DATA_MODEL.md)**, que é a referência normativa do Inventário.
+## 3. Banco de histórico da pasta (`history.sqlite3`)
 
-**Regras:** nenhuma lista/mapa/objeto Rust é serializado inteiro em JSON/BLOB para substituir tabelas; BLOB só para valores binários individuais (ex.: nome local Unix). Cada observação, confirmação, cursor, evento e operação utiliza transações e precondições adequadas. O `history.sqlite3` não define o estado atual, apenas registra acontecimentos.
+O histórico é separado para não misturar a fila e o estado atual com acontecimentos passados.
 
-## Limites de responsabilidade
+| Tabela | Campos principais | Finalidade |
+| --- | --- | --- |
+| `activity` | `id`, `item_id?`, `operation_id?`, `operation`, `origin`, `result`, `occurred_at`, `description?` | Registro cronológico de operações e resultados |
 
-O `InventoryManager` **não**:
+O Analisador determina quando uma atividade deve ser registrada; o Inventário fornece o contrato de escrita/leitura. `item_id` e `operation_id` são **referências lógicas**, não FKs SQLite entre bancos diferentes. Um histórico deve continuar legível mesmo após um arquivo deixar o inventário.
 
-- observa alterações diretamente no Google Drive ou filesystem;
-- executa operações físicas de criação, edição, movimentação ou exclusão;
-- decide upload, download ou qual versão deve prevalecer;
-- considera arquivos excluídos apenas porque não foram encontrados em leitura incompleta;
-- expõe SQLite, tabelas ou SQL como API aos demais componentes.
+SQLite não oferece automaticamente uma única transação atômica para todas as gravações em arquivos separados; o contrato deverá prever confirmação, idempotência e recuperação de atividades quando necessário.
 
-A implementação deve poder ser testada isoladamente com SQLite real em diretório temporário e objetos `LocalFile`/`GoogleFile` sintéticos.
+## 4. Regras relacionais e segurança
 
-## Continuidade da documentação
-
-| Documento | Finalidade |
+| Regra | Exigência |
 | --- | --- |
-| `README.md` (este arquivo) | Objetivo, entidades, responsabilidades e capacidades do Inventário |
-| [`DATA_MODEL.md`](DATA_MODEL.md) | **Modelo persistente de referência:** banco global, banco por sincronização, histórico e esquema relacional |
-| `INTERFACES.md` | Futuras assinaturas Rust, tipos de entrada/saída e contratos de erro |
-| `TESTS.md` | Futuro plano TDD com SQLite real isolado, testes de concorrência, integridade e recuperação |
+| Persistência | Dados estruturados em linhas e colunas; **sem JSON/BLOB para serializar structs, listas, mapas ou filas** |
+| Exceção BLOB | Somente valor binário individual, como bytes de nome Unix não UTF-8 |
+| Integridade | FKs dentro do mesmo banco, índices, `UNIQUE`, `CHECK`, transações e `PRAGMA foreign_keys=ON` |
+| Isolamento | `sync_info` deve corresponder ao `sync_id`, à conta e à raiz remota cadastradas |
+| Versionamento | `PRAGMA user_version` valida a versão física; não implementar compatibilidade legada por padrão |
+| Segurança | Tokens, client secrets e links de sessão confidenciais não são persistidos nesses bancos |
+| Escalabilidade | Alterar um item não exige carregar ou regravar a árvore inteira |
+| Exclusões | `unknown` não pode ser convertido em `absent_confirmed` por falha de leitura, rede ou acesso |
+| Execução | Nenhum SQL exposto aos consumidores; nenhum upload/download/exclusão física pelo Inventário |
+| Consulta | Associações e itens paginados; nomes/caminhos não substituem a identidade lógica |
 
-O conjunto completo de atributos de `LocalFile` e o subconjunto persistido de `GoogleFile` continuam sujeitos à especificação dos respectivos contratos externos. O relacionamento entre as entidades já está definido.
+## 5. Capacidades oferecidas pelo Inventário
+
+| Interface conceitual | Resultado |
+| --- | --- |
+| Abrir/validar banco global | Contas, conexões e preferências disponíveis |
+| Cadastrar/consultar conta e conexão | Identidades estáveis e par de raízes |
+| Ler/gravar preferências globais e por sincronização | Valores escalares tipados |
+| Abrir/validar inventário de uma pasta | Escopo, esquema e integridade verificados |
+| Buscar `SyncItem` por ID, ID remoto ou identidade local | Objeto unificado ou ausência |
+| Listar itens por status, presença ou hierarquia | Resultados paginados |
+| Registrar `LocalFile` / `GoogleFile` | Atualização de um lado sem mudar o baseline |
+| Associar registros | Chaves e unicidade preservadas |
+| Confirmar baseline | Estado confirmado com transação e revisão |
+| Inserir/consultar/reconhecer operação pendente | Fila durável |
+| Atualizar cursor e registrar eventos | Escrita consistente |
+| Consultar/registrar atividades | Histórico por sincronização |
+
+A especificação de assinaturas Rust, parâmetros, retornos e erros pertence ao futuro `INTERFACES.md`; os cenários TDD pertencerão ao futuro `TESTS.md`. **O README é a única referência do modelo de bancos e das tabelas do Inventário.**
