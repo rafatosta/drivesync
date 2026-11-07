@@ -1,299 +1,190 @@
 # Detector — INTERFACES
 
-## 1. Princípio e visibilidade
+## 1. Contrato público e visibilidade
 
-**Somente o módulo `detectors/` disponibiliza API pública para a engine.** O Orquestrador utiliza `Detector` e recebe `DetectorEvent`; **não importa, constrói, invoca ou configura** `LocalDetector` nem `RemoteDetector`. Os dois são componentes internos com implementações, modelos de dados, ciclos de leitura, estratégias de recuperação e testes próprios.
+`Detector` é a **única API exposta ao Orquestrador**. Local e Remoto emitem eventos **individuais** por portas internas; Storage persiste e reserva. O Detector entrega **lotes mistos de eventos locais/remotos** pela mesma interface, sem obrigar o Orquestrador a conhecer os filhos.
 
-Esta especificação define a **fronteira funcional** a ser implementada em Rust, não código já compilado. A forma concreta de ownership, runtime e canais será definida durante a implementação preservando o significado dos tipos.
+O código Rust apresentado é **contrato conceitual** sujeito a ajuste de ownership/assincronicidade antes da implementação, não API já compilada. Tipos de identidade devem ser reutilizados de seus módulos proprietários.
 
-A fachada mantém uma API pequena: criar, iniciar, pausar, retomar, parar, solicitar observação e consultar status. **Sincronizar arquivos, selecionar versões, resolver conflitos ou executar operações físicas não são métodos do Detector.**
-
-## 2. Tipos públicos do Detector
+## 2. Tipos públicos
 
 ```rust
 pub type DetectorResult<T> = Result<T, DetectorFailure>;
 
-// Tipos de identidade são reutilizados do Inventário.
-// SyncId, SyncItemId e Timestamp não são redefinidos aqui.
-
-pub enum DetectorState {
-    Stopped, Starting, Running, Paused, Degraded, Stopping, Failed
-}
-pub enum DetectorStartMode { Initial, ResumeAfterRestart }
-pub enum DetectorPauseReason { UserRequest, Policy }
-pub enum DetectorStopReason { UserRequest, Shutdown }
-pub enum DetectorScanScope {
-    All,
-    Items(Vec<SyncItemId>),
-}
-pub enum DetectorScanReason {
-    Startup, Recovery, Notification, Manual, ConsistencyCheck,
-}
-pub enum DetectorEventKind {
-    ChangeObserved,
-    RecheckRequired,
-    ScopeUnavailable,
-    ObservationRecovered,
-}
-pub enum DetectorCoverage {
-    Complete, Partial, Unavailable,
-}
+pub enum DetectorState { Stopped, Starting, Running, Degraded, Stopping, Failed }
+pub enum DetectorStartMode { Initial, Restart }
+pub enum DetectorStopMode { DrainInFlight, StopNow }
+pub enum DetectorScanReason { Manual, Recovery, ConsistencyCheck }
+pub enum DetectorScanScope { All, Items(Vec<SyncItemId>) }
+pub enum DetectorEventKind { ChangeObserved, RecheckRequired, ScopeUnavailable }
+pub enum DetectorCoverage { Complete, Partial, Unavailable }
+pub enum EventDisposition { Processed, Discarded }
 pub enum DetectorError {
-    InvalidScope, InvalidState, Unavailable, PermissionDenied,
-    PartialObservation, DependencyUnavailable, Cancelled,
-    NotificationFailed, InvalidIdentity, Internal,
+    InvalidState, InvalidScope, InvalidIdentity, SourceUnavailable,
+    StoreUnavailable, Backpressure, InvalidBatch, LeaseExpired,
+    Cancelled, Internal,
 }
 pub struct DetectorFailure {
     pub kind: DetectorError,
-    pub message: String,  // sanitizada
     pub retryable: bool,
+    pub message: String, // sanitizada
 }
 pub struct DetectorEvent {
+    pub event_id: DetectionEventId,
     pub sync_id: SyncId,
+    pub item_id: Option<SyncItemId>,
     pub kind: DetectorEventKind,
-    pub affected_items: Vec<SyncItemId>,
-    pub coverage: DetectorCoverage,
     pub observed_at: Timestamp,
-    pub persisted: bool,
-    pub correlation_id: Option<String>,
+    pub coverage: DetectorCoverage,
+    pub scope_hint: Option<ScopeHint>,
+}
+pub struct EventBatch {
+    pub batch_id: Option<BatchId>, // None somente com events vazio
+    pub events: Vec<DetectorEvent>,
+    pub first_observed_at: Option<Timestamp>,
+    pub last_observed_at: Option<Timestamp>,
 }
 pub struct DetectorStatus {
     pub state: DetectorState,
+    pub pending_events: u64,
+    pub leased_events: u64,
+    pub degraded_sources: u32,
     pub last_observation_at: Option<Timestamp>,
     pub last_error: Option<DetectorError>,
-    pub pending_checks: u32,
-    pub degraded_sources: u32, // contagem; sem expor implementações
 }
 ```
 
-**Evento unificado:** `DetectorEvent` não contém estruturas do filesystem, recursos JSON do Google, handles, cursores, caminhos ou tipos internos. **O Orquestrador não precisa conhecer a origem local/remota para decidir que o item deve ser reavaliado**; ao receber `affected_items`, encaminha os IDs à análise. Sem ID seguro, uma lista vazia significa reavaliar escopo, não ausência de mudança.
+Eventos de fontes distintas conservam `event_id` e informação suficiente para reavaliação por item/escopo. O objeto público **não precisa expor qual mecanismo produziu** a alteração; se houver utilidade posterior em apresentar a origem, isso será uma decisão explícita e não exigirá duas APIs. `item_id=None` sinaliza reavaliação sem identidade estável.
 
-`persisted=true` significa **apenas** que os fatos necessários para aquela notificação foram confirmados pelo Inventário. `persisted=false` admite diagnóstico sem observação persistida; o Orquestrador não deve assumir estado atualizado. Nem um nem outro significa sincronização concluída. O detalhamento da situação deve ser consultado no Inventário.
-
-## 3. Portas de integração e requests/results
+## 3. Requests e resultados públicos
 
 ```rust
-pub trait DetectorEventSink: Send + Sync {
-    fn publish(&self, event: DetectorEvent) -> DetectorResult<()>;
-}
-
-// Os handles abaixo designam dependências tipadas; não são storage bruto.
-// Tipo Rust concreto de ownership/trait object será fechado na integração.
-pub struct DetectorInventoryHandle { /* API pública do Inventário */ }
-pub struct DetectorEventSinkHandle { /* DetectorEventSink */ }
-
 pub struct DetectorCreateRequest {
     pub sync_id: SyncId,
-    pub inventory: DetectorInventoryHandle,
-    pub event_sink: DetectorEventSinkHandle,
+    pub event_available_sink: Option<EventAvailableSinkHandle>,
+    // Fontes e Storage são construídos por composição privada.
 }
-pub struct DetectorCreateResult {
-    pub detector: Detector,
-    pub state: DetectorState,
-}
-pub struct DetectorStartRequest {
-    pub mode: DetectorStartMode,
-    pub requested_at: Timestamp,
-}
-pub struct DetectorStartResult {
-    pub state: DetectorState,
-    pub check_scheduled: bool,
-}
-pub struct DetectorPauseRequest {
-    pub reason: DetectorPauseReason,
-    pub requested_at: Timestamp,
-}
-pub struct DetectorPauseResult { pub state: DetectorState }
-pub struct DetectorResumeRequest { pub requested_at: Timestamp }
-pub struct DetectorResumeResult {
-    pub state: DetectorState,
-    pub recovery_scheduled: bool,
-}
-pub struct DetectorStopRequest {
-    pub reason: DetectorStopReason,
-    pub requested_at: Timestamp,
-}
-pub struct DetectorStopResult {
-    pub state: DetectorState,
-    pub in_flight: u32,
-}
+pub struct DetectorCreateResult { pub detector: Detector, pub state: DetectorState }
+pub struct DetectorStartRequest { pub mode: DetectorStartMode }
+pub struct DetectorStartResult { pub state: DetectorState }
+pub struct DetectorStopRequest { pub mode: DetectorStopMode }
+pub struct DetectorStopResult { pub state: DetectorState, pub in_flight: u32 }
 pub struct DetectorScanRequest {
     pub scope: DetectorScanScope,
     pub reason: DetectorScanReason,
     pub request_id: Option<String>,
 }
-pub struct DetectorScanResult {
-    pub accepted: bool,
-    pub correlation_id: Option<String>,
-}
+pub struct DetectorScanResult { pub accepted: bool, pub correlation_id: Option<String> }
 pub struct DetectorStatusRequest {}
 pub struct DetectorStatusResult { pub status: DetectorStatus }
+pub struct TakeEventsRequest { pub max_events: u32, pub lease_duration: Duration }
+pub struct TakeEventsResult { pub batch: EventBatch }
+pub struct AcknowledgeEventsRequest {
+    pub batch_id: BatchId,
+    pub disposition: EventDisposition,
+}
+pub struct AcknowledgeEventsResult { pub confirmed_count: u32 }
+pub struct ReleaseEventsRequest { pub batch_id: BatchId }
+pub struct ReleaseEventsResult { pub released_count: u32 }
+
+pub trait EventAvailableSink: Send + Sync {
+    fn notify_events_available(&self, sync_id: SyncId);
+}
+pub struct EventAvailableSinkHandle { /* porta tipada */ }
 ```
 
-**Encapsulamento:** o `Detector` compõe suas fontes **internamente** a partir da identidade/configuração disponível e das portas já injetadas. `DetectorCreateRequest` não expõe `LocalDetector`, `RemoteDetector`, `InternalObservationSource`, `DetectorInternalSources` ou seus handles. A forma concreta de obtenção de configurações/credenciais das fontes é dependência a resolver sem alterar essa regra de visibilidade.
+`event_available_sink=None`: Orquestrador pode consumir por consulta periódica sem receber avisos. Aviso de disponibilidade não confirma consumo. `max_events` e duração de lease devem ser positivos. `EventBatch.events=[]` implica `batch_id=None`, e instantes opcionais ausentes.
 
-## 4. Assinaturas públicas consolidadas
+## 4. Assinaturas públicas
 
 ```rust
 pub struct Detector { /* implementação privada */ }
-
 impl Detector {
     pub fn new(request: DetectorCreateRequest) -> DetectorResult<DetectorCreateResult>;
     pub fn start(&self, request: DetectorStartRequest) -> DetectorResult<DetectorStartResult>;
-    pub fn pause(&self, request: DetectorPauseRequest) -> DetectorResult<DetectorPauseResult>;
-    pub fn resume(&self, request: DetectorResumeRequest) -> DetectorResult<DetectorResumeResult>;
     pub fn stop(&self, request: DetectorStopRequest) -> DetectorResult<DetectorStopResult>;
     pub fn request_scan(&self, request: DetectorScanRequest) -> DetectorResult<DetectorScanResult>;
     pub fn status(&self, request: DetectorStatusRequest) -> DetectorResult<DetectorStatusResult>;
+    pub fn take_events(&self, request: TakeEventsRequest) -> DetectorResult<TakeEventsResult>;
+    pub fn acknowledge(&self, request: AcknowledgeEventsRequest) -> DetectorResult<AcknowledgeEventsResult>;
+    pub fn release_events(&self, request: ReleaseEventsRequest) -> DetectorResult<ReleaseEventsResult>;
 }
 ```
 
-**Sete métodos públicos**, além de `DetectorEventSink.publish` como porta de emissão assíncrona para o Orquestrador. Não criar versões públicas `local_start`, `remote_poll` ou `watch_path`.
-
-## 5. Contrato funcional de cada método público
+## 5. Contrato funcional individual
 
 ### DET-01 — `new`
 
-**Assinatura:** `new(DetectorCreateRequest) -> DetectorResult<DetectorCreateResult>`.
-
-**Finalidade:** Criar a fachada de detecção de uma sincronização, conectando-a ao Inventário, às implementações internas disponíveis e ao destino de eventos do Orquestrador.
-
-**Parâmetros:** `sync_id`: identidade da sincronização; `inventory`: porta pública do Inventário; `event_sink`: destino de mensagens; fontes internas são construídas pelo próprio `Detector`, sem argumentos públicos específicos de Local/Remoto.
-
-**Retorno:** Devolve `Detector` em estado `Stopped` e as capacidades disponíveis; criar não inicia inspeções.
-
-**Limites e erros:** Não expõe handles Local/Remoto. Falhar para identidade inválida, nenhuma origem disponível quando exigida ou dependências incompatíveis.
+**Finalidade:** construir fachada de uma sincronização sem expor filhos.
+**Parâmetros:** `sync_id` obrigatório; aviso de disponibilidade opcional.
+**Retorno:** Detector Stopped.
+**Limites e erros:** composição por fábrica privada; não exigir que consumidor crie Local/Remoto/Storage.
 
 ### DET-02 — `start`
 
-**Assinatura:** `start(DetectorStartRequest) -> DetectorResult<DetectorStartResult>`.
+**Finalidade:** iniciar os produtores com suas estratégias independentes.
+**Parâmetros:** início inicial ou após parada.
+**Retorno:** estado agregado; não significa leitura concluída.
+**Limites e erros:** falha de uma origem pode resultar Degraded; não descarta pendências.
 
-**Finalidade:** Iniciar o acompanhamento das fontes configuradas e coordenar a leitura de retomada necessária.
+### DET-03 — `stop`
 
-**Parâmetros:** `mode`: inicialização ou retomada; `requested_at`: instante da solicitação. O Orquestrador não determina mecanismo de watcher ou polling.
+**Finalidade:** interromper produtores.
+**Parâmetros:** `DrainInFlight` ou `StopNow`.
+**Retorno:** estado e trabalhos ainda em andamento.
+**Limites e erros:** nenhuma modalidade remove eventos já persistidos ou confirma consumo.
 
-**Retorno:** Estado agregado e informação de trabalho agendado; iniciar não equivale a completar leitura.
+### DET-04 — `request_scan`
 
-**Limites e erros:** O estado pode ser `Starting`/`Degraded`; falha de uma fonte não é exclusão dos arquivos daquela fonte.
+**Finalidade:** pedir observação adicional, sem ordenar como Local/Remoto a executam.
+**Parâmetros:** `All` ou `Items` com IDs válidos; motivo; ID de correlação opcional.
+**Retorno:** aceitação/agendamento.
+**Limites e erros:** sem upload/download; não analisar baseline ou conflito.
 
-### DET-03 — `pause`
+### DET-05 — `status`
 
-**Assinatura:** `pause(DetectorPauseRequest) -> DetectorResult<DetectorPauseResult>`.
+**Finalidade:** consultar saúde agregada e fila.
+**Parâmetros:** objeto vazio.
+**Retorno:** estado, quantidade pendente/reservada, erros opcionais.
+**Limites e erros:** não reserva eventos.
 
-**Finalidade:** Suspender a entrega normal de notificações de detecção ao Orquestrador, preservando fatos e necessidades de reavaliação. Fontes internas podem continuar observando conforme suas estratégias.
+### DET-06 — `take_events`
 
-**Parâmetros:** `reason`: justificativa de controle; `requested_at`: momento da solicitação.
+**Finalidade:** reservar **um lote unificado**, que pode conter eventos locais e remotos produzidos em paralelo.
+**Parâmetros:** `max_events > 0` e lease válido.
+**Retorno:** `EventBatch` com IDs estáveis, eventos individuais e intervalo do primeiro/último instante **observado**.
+**Limites e erros:** leitura não apaga, não agrupa eventos conflitantes no mesmo ID e não resolve divergência. Ordem da fila representa **ordem durável de enfileiramento**, não causalidade entre as fontes. O mesmo item pode aparecer várias vezes no mesmo lote.
 
-**Retorno:** Estado `Paused` ou transição/erro declarado; dados já persistidos continuam disponíveis.
+### DET-07 — `acknowledge`
 
-**Limites e erros:** Não limpa eventos, não apaga cursor nem baseline e não cancela operações do Analisador.
+**Finalidade:** confirmar lote como consumido ou explicitamente descartado pelo Orquestrador.
+**Parâmetros:** `batch_id` válido; `Processed` ou `Discarded`.
+**Retorno:** quantidade confirmada.
+**Limites e erros:** lote não confirmado permanece recuperável; confirmação não significa arquivo sincronizado.
 
-### DET-04 — `resume`
+### DET-08 — `release_events`
 
-**Assinatura:** `resume(DetectorResumeRequest) -> DetectorResult<DetectorResumeResult>`.
+**Finalidade:** devolver lote reservado para reentrega.
+**Parâmetros:** `batch_id` válido.
+**Retorno:** quantidade liberada.
+**Limites e erros:** nenhuma perda ou confirmação implícita.
 
-**Finalidade:** Retomar a entrega de notificações e solicitar recuperação de alterações que não tenham sido observadas ou entregues durante a pausa.
+## 6. APIs internas consumidas
 
-**Parâmetros:** `requested_at`: instante de retomada; o plano concreto de recuperação pertence a cada fonte interna.
-
-**Retorno:** Estado agregado e indicação de verificação de recuperação agendada.
-
-**Limites e erros:** Não supõe que eventos perdidos sejam recuperáveis apenas por watcher; não afirma sincronização concluída.
-
-### DET-05 — `stop`
-
-**Assinatura:** `stop(DetectorStopRequest) -> DetectorResult<DetectorStopResult>`.
-
-**Finalidade:** Encerrar os mecanismos internos de detecção e liberar recursos da instância.
-
-**Parâmetros:** `reason`: parada solicitada ou encerramento; `requested_at`: instante.
-
-**Retorno:** Estado `Stopped` ou erro e trabalho ainda pendente, quando houver.
-
-**Limites e erros:** Não descarta observações persistidas, histórico nem estruturas de sincronização do Inventário.
-
-### DET-06 — `request_scan`
-
-**Assinatura:** `request_scan(DetectorScanRequest) -> DetectorResult<DetectorScanResult>`.
-
-**Finalidade:** Solicitar reavaliação, independentemente do acompanhamento automático, sem dizer como cada origem irá observar.
-
-**Parâmetros:** `scope`: `All` ou conjunto de `SyncItemId` conhecidos; `reason`: justificativa; `request_id?`: correlação opcional.
-
-**Retorno:** Identificador de solicitação e aceitação/agendamento, sem prometer resultado de leitura síncrona.
-
-**Limites e erros:** Não executa upload/download; item desconhecido ou escopo inseguro gera erro tipado ou aviso de reavaliação por escopo, conforme contrato.
-
-### DET-07 — `status`
-
-**Assinatura:** `status(DetectorStatusRequest) -> DetectorResult<DetectorStatusResult>`.
-
-**Finalidade:** Consultar o estado agregado da detecção e diagnóstico de funcionamento.
-
-**Parâmetros:** Objeto de consulta vazio; a instância já identifica a sincronização.
-
-**Retorno:** `status`: estado agregado, última observação, último erro e verificações pendentes quando conhecidos.
-
-**Limites e erros:** Não revela implementação de watcher/polling, não exige conhecer Local/Remoto nem provoca observação.
-
-## 6. Obrigatoriedade e ausência
-
-| Campo | Obrigatoriedade | Significado de ausência ou valor |
+| Filho | Única dependência do Detector | O Detector não conhece |
 | --- | --- | --- |
-| `sync_id` | Obrigatório | Isola notificações e solicitações de uma sincronização |
-| `affected_items` | Lista obrigatória, possivelmente vazia | Vazia exige reavaliação geral do escopo, não significa zero mudanças |
-| `coverage` | Obrigatório | `Partial`/`Unavailable` não autorizam inferir exclusão |
-| `persisted` | Obrigatório | Distingue observação confirmada e aviso diagnóstico sem persistência |
-| `correlation_id`/`request_id` | Opcionais | Sem ID significa ausência de correlação explícita, não evento inválido |
-| `last_observation_at` | Opcional | Sem observação registrada ainda |
-| `last_error` | Opcional | Nenhum erro conhecido, **não** garantia de disponibilidade atual |
-| `pending_checks` | Obrigatório | Contagem de solicitações ainda não finalizadas |
-| `degraded_sources` | Obrigatório | Quantidade de fontes internas degradadas, sem expor implementação |
-| `DetectorScanScope::Items` | Requer IDs válidos | Lista vazia é inválida: usar `All` para escopo completo |
+| [Local](local/INTERFACES.md) | Controle e sink interno de **um evento por emissão** | Watcher, varredura e tipos de filesystem |
+| [Remoto](remote/INTERFACES.md) | Controle e sink interno de **um evento por emissão** | Polling, cursor e REST |
+| [Storage](storage/INTERFACES.md) | `open`, `enqueue`, `claim_batch`, `acknowledge`, `release_batch`, `status` | Caminho, schema, SQL e SQLite |
 
-## 7. Interface interna entre Detector e fontes
+Os adapters internos normalizam sinais para `DetectionEventRecord`. Sucesso de emissão só ocorre após `enqueue` durável. Os filhos **não precisam usar a mesma struct**, contanto que implementem seus contratos e a fachada converta sem perda de identidade/evidência.
 
-Esta interface é **privada ao módulo Detector**, não reexportada pela engine:
+## 7. Garantias e pendências
 
-```rust
-// Contrato conceitual PRIVADO, não API do Orquestrador:
-trait InternalObservationSource {
-    fn start(&self, context: InternalStartContext) -> InternalResult<()>;
-    fn pause(&self) -> InternalResult<()>;
-    fn resume(&self) -> InternalResult<()>;
-    fn stop(&self) -> InternalResult<()>;
-    fn request_observation(&self, request: InternalObservationRequest)
-        -> InternalResult<()>;
-    fn status(&self) -> InternalSourceStatus;
-}
-```
+**Produtor–consumidor:** eventos acumulam até serem reservados e confirmados; crash após claim permite redelivery por lease. O Orquestrador pode receber simultaneamente sinais locais/remotos num mesmo lote e encaminhá-los à reconciliação, mas **não há resolução automática de conflitos no Detector**.
 
-A interface compartilhada padroniza **apenas a comunicação/controle mínimo**. O Local escolhe sua organização de watcher, varredura, symlinks e bytes Unix. O Remoto escolhe paginação, cursor, polling e gestão de respostas Google. Podem manter tipos e funções internas diferentes e adaptar-se ao contrato comum. **Não forçar as duas implementações a terem a mesma arquitetura interna.**
+**Não há pausa pública**: `stop` interrompe produção, `start` retoma; descarte ocorre apenas em `acknowledge(Discarded)`. Fila sobrevive à parada. Nenhuma observação prova exclusão sem evidência completa.
 
-As fontes produzem eventos internos, que o pai traduz em `DetectorEvent`. Não fornecem diretamente o `DetectorEventSink` do Orquestrador. O pai coordena validação, persistência quando necessária e emissão externa; detalhes de quem persiste cada observação devem ser definidos sem violar a API do Inventário.
+**Decisões a fechar na implementação:** ownership Rust dos tipos comuns, fábrica interna das dependências, meios de sinalização, async e semântica de parada em trânsito, política de limites/backpressure e tipos temporais. Sem quebrar o isolamento dos submódulos.
 
-### Semântica pública de pausa, retomada e notificações pendentes
-
-- `pause` suspende **a entrega normal de `DetectorEvent` ao Orquestrador**, sem garantir que Local/Remoto deixem de observar. Não descarta eventos nem apaga fatos já persistidos. Avisos críticos de erro e controle podem ser expostos por `status` durante a pausa.
-- `resume` solicita a cada fonte a recuperação de alterações potencialmente perdidas e somente então libera a entrega de avisos pendentes/reconstruídos com a cobertura correta. `recovery_scheduled=true` **não significa** que a recuperação terminou.
-- `start` após `stop` requer revalidação e recuperação do período não monitorado, independente dos eventos voláteis.
-- `status.state=Paused` descreve o **estado de entrega do coordenador**, não a prova de que todos os watchers e pollers estão suspensos. `pending_checks` contabiliza trabalho de verificação ainda não concluído; **não** representa necessariamente número de eventos em buffer.
-- O contrato público não oferece `get_pending_events` nem expõe fila interna. As notificações são entregues pelo `DetectorEventSink`, e o Orquestrador continua recebendo apenas `DetectorEvent`.
-- Se a fachada não conseguir reter com segurança o detalhe de um evento, deve manter ou reconstruir um **aviso de reavaliação mais amplo**. Não depender de buffer de memória como garantia contra crash. Evento repetido pode ser agregado, jamais apagado sem confirmação/recuperação segura.
-- Uma origem pode usar polling periódico, outra watcher orientado a eventos. Isso não altera assinaturas públicas nem impõe mesmo algoritmo de controle aos filhos.
-- A política de retenção/coalescência precisa ser implementada com limites de memória e procedimento de recuperação; a seleção de armazenamento durável permanece no contrato do Inventário, não em banco paralelo do Detector.
-
-## 8. Segurança, estados e limites
-
-- `request_scan` solicita **observação**, não sincronização física.
-- O funcionamento de uma fonte não implica funcionamento da outra; o status agregado pode ser `Degraded`. Não esconder falhas por entregar uma notificação de sucesso.
-- Eventos internos podem ser duplicados, agrupados ou perdidos. Após reinício, o Detector exige recuperação pelos mecanismos apropriados de cada fonte e estado durável do Inventário.
-- Falha de persistência deve produzir diagnóstico sem `persisted=true`.
-- `Complete` exige evidência de cobertura dentro do escopo; erro de leitura não prova exclusão.
-- O Detector não acessa SQLite internamente por SQL, não modifica baseline nem fila e não decide conflitos.
-
-## 9. Pendências explícitas antes de implementar
-
-Definir ownership concretamente compilável de `DetectorCreateRequest`, `DetectorInternalSources` e do sink; coordenação async/worker/cancelamento; critérios de transição e estado agregado; fonte das solicitações de reavaliação por escopo; responsabilidades exatas de persistência entre pai e filhos. Nenhuma dessas decisões dá ao Orquestrador acesso aos tipos internos. Não inventar assinaturas públicas adicionais para contornar lacunas.
-
-[README.md](README.md) descreve o módulo; [TESTS.md](TESTS.md) define sua verificação; [AGENTS.md](AGENTS.md) regula a implementação. **Esta é uma proposta documental, ainda não compilada nem testada.**
+**Estado:** documentação contratual, não código compilado ou testes executados.
