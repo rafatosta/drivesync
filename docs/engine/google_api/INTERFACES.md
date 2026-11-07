@@ -1,12 +1,12 @@
 # Google API — INTERFACES
 
-**Contrato Rust v1 para TDD.** Todas as operações são públicas nesta versão. As assinaturas representam a API que será implementada, não código existente. A visibilidade será revisada posteriormente.
+**Contrato Rust v1 para TDD.** Todas as operações e os tipos declarados são públicos nesta versão. As assinaturas representam a API que será implementada, não código existente. Não há compromisso de reduzir a visibilidade dos métodos depois.
 
 **Escopo:** os **59 métodos oficiais dos 13 recursos REST da Drive API v3** documentados no [índice oficial](https://developers.google.com/workspace/drive/api/reference/rest/v3), mais OAuth 2.0, OpenID Connect, uploads e downloads. APIs de outros produtos Google, como Gmail, Calendar e Drive Labels API v2, são serviços separados.
 
 **Fontes:** [Drive REST v3](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery v3](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest), [OAuth desktop](https://developers.google.com/identity/protocols/oauth2/native-app), [OpenID Connect](https://developers.google.com/identity/openid-connect/reference).
 
-## 1. Tipos públicos comuns
+## 1. Tipos públicos fundamentais e erros
 
 ```rust
 pub type GoogleResult<T> = Result<T, GoogleApiError>;
@@ -71,33 +71,25 @@ pub enum GoogleApiError {
 | Resultados | Nenhuma resposta parcial se converte em sucesso final |
 | Erros | Categorias sanitizadas; sem credenciais, tokens e corpo HTTP privado |
 
-## 2. Recursos e dados retornados
+## 2. Tipos públicos e dados retornados
 
-| Tipo público | Campos essenciais expostos (campo JSON original quando diferente) |
+**Todos os tipos usados nas assinaturas pertencem ao contrato público nesta versão.** A relação completa, com declarações Rust de estruturas e campos, está na [seção 8](#8-declarações-dos-tipos-públicos). Os tipos comuns de identidade e erro ficam na seção 1; "comum" não significa que os demais são privados ou opcionais.
+
+| Conjunto | Tipos de saída e entrada públicos |
 | --- | --- |
-| `GoogleAbout` | `user`, `storage_quota`, `import_formats`, `export_formats`, `max_import_sizes`, `app_installed` |
-| `GoogleFile` | `id`, `name`, `mime_type` (`mimeType`), `parents`, `trashed`, `version`, `modified_time`, `size`, `md5_checksum`, `sha1_checksum`, `sha256_checksum`, `drive_id`, `web_view_link`, `web_content_link`, `capabilities`, `owners`, `permissions`, `shortcut_details`, `content_hints`, `description`, `properties`, `app_properties`, `labels`, `resource_key`, `head_revision_id`, `created_time`, `quota_bytes_used` |
-| `GoogleFileWrite` | `name?`, `mime_type?`, `parents?`, `description?`, `trashed?`, `properties?`, `app_properties?`, demais campos graváveis conforme API |
-| `GoogleFileList` | `files: Vec<GoogleFile>`, `next_page_token?`, `incomplete_search` |
-| `GoogleChange` | `file_id?`, `file?`, `removed`, `time?`, `change_type?`, `drive_id?`, `drive?` |
-| `GoogleChangeList` | `changes: Vec<GoogleChange>`, `next_page_token?`, `new_start_page_token?` |
-| `GoogleStartPageToken` | `start_page_token` |
-| `GoogleDrive` | `id`, `name`, `hidden`, `created_time`, `restrictions`, `capabilities` |
-| `GooglePermission` | `id`, `type`, `role`, `email_address?`, `domain?`, `allow_file_discovery?`, `expiration_time?`, `permission_details?` |
-| `GoogleRevision` | `id`, `mime_type?`, `modified_time?`, `keep_forever?`, `size?`, `md5_checksum?`, `published?` |
-| `GoogleComment` | `id`, `content`, `created_time`, `modified_time`, `author`, `resolved`, `replies` |
-| `GoogleReply` | `id`, `content`, `created_time`, `modified_time`, `author`, `action?` |
-| `GoogleChannel` | `id`, `resource_id`, `resource_uri`, `expiration?`, `token?` |
-| `GoogleApp` | `id`, `name`, `supports_create`, `supports_import`, `open_url_template?` |
-| `GoogleAccessProposal` | `file_id`, `proposal_id`, `requester_email_address`, `recipient_email_address?`, `roles_and_views`, `create_time` |
-| `GoogleApproval` | `approval_id`, `target_file_id`, `status`, `initiator`, `reviewer_responses`, `due_time?`, `file_content_change_behavior` |
-| `GoogleOperation` | `name`, `done?`, `metadata?`, `response?`, `error?` |
-| `GoogleCseToken` | Token de criptografia do lado do cliente; tratado como segredo |
-| `GoogleGeneratedIds` | `ids: Vec<FileId>`, `space` |
-| `GoogleLabelList` | `labels`, `next_page_token?` |
-| `GoogleModifyLabelsResponse` | `modified_labels` |
+| Files | `GoogleFile`, `GoogleFileWrite`, `GoogleFileList`, `GoogleFileCapabilities`, `GoogleShortcutDetails`, opções de Files |
+| Changes | `GoogleChange`, `GoogleChangeList`, `GoogleStartPageToken`, opções de Changes |
+| Drives | `GoogleDrive`, `GoogleDriveList`, `GoogleDriveRestrictions`, opções de Drives |
+| Permissions | `GooglePermission`, `GooglePermissionList`, opções e solicitações |
+| Comments e Replies | `GoogleComment`, `GoogleReply`, suas listas, opções e tipos de escrita |
+| Revisions | `GoogleRevision`, `GoogleRevisionList`, opções |
+| About e Apps | `GoogleAbout`, `GoogleApp`, `GoogleAppList`, opções |
+| Access proposals e Approvals | `GoogleAccessProposal`, `GoogleApproval`, listas, opções e solicitações |
+| Channels, Labels, CSE e Operations | `GoogleChannel`, `GoogleLabel`, `GoogleOperation`, `GoogleCseToken`, respostas e opções |
+| OAuth / OIDC | `GoogleOAuthConfig`, `GoogleTokenResponse`, `GoogleUserInfo`, `GoogleIdClaims`, `GoogleOidcDiscovery`, solicitações |
+| Transferências | `GoogleUploadSession`, `GoogleUploadChunk`, `GoogleUploadProgress`, `GoogleDownloadStream`, `GoogleByteRange` |
 
-**Representações complexas:** `GoogleUser`, `GoogleStorageQuota`, `GoogleFileCapabilities`, `GooglePermissionDetails`, `GoogleShortcutDetails`, `GoogleContentHints`, `GoogleDriveRestrictions`, `GoogleApprovalReviewerResponse`, `GoogleLabel`, `GoogleAppList`, `GooglePermissionList`, `GoogleRevisionList`, `GoogleCommentList`, `GoogleReplyList`, `GoogleDriveList`, `GoogleAccessProposalList` e `GoogleApprovalList` são **tipos públicos próprios**, não JSON genérico. As listas seguem a convenção de paginação do recurso e suas respectivas propriedades adicionais oficiais.
+**Regra de disponibilidade:** uma propriedade pode ser **não solicitada**, **não disponibilizada para aquele tipo de recurso**, **inacessível àquela conta** ou **efetivamente sem valor**. `None` em um campo Rust não distingue sozinho essas quatro situações. A seleção de `fields` é conhecida pelo chamador; quando a distinção afetar decisões, a API deverá carregar informação de completude/projeção da observação. O Inventário não interpreta campo omitido como exclusão ou valor apagado.
 
 ### Entradas dos métodos
 
@@ -519,6 +511,14 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 **Estratégia TDD:** primeiro implementar fakes do contrato para testar os consumidores; depois testar a implementação Google API contra servidor HTTP simulado com requisições e respostas oficiais; por fim validar integração real opcional. O contrato **não depende** do estado atual da engine.
 
-## 7. Revisão posterior
+## 7. Condições de validação TDD
 
-Esta versão fixa a **cobertura de métodos** e os tipos de entrada/saída conceituais. Antes de converter em código compilável serão validados: (a) todos os campos aninhados de cada recurso do Discovery, (b) as opções individuais permitidas por endpoint, (c) quais métodos/tipos podem tornar-se privados, (d) sincronismo versus async e (e) capacidades adicionais de outros serviços Google, caso sejam incorporados ao escopo do projeto.
+| Verificação | Critério |
+| --- | --- |
+| Assinaturas | Cada método da seção 3 tem entrada e saída tipadas, sem dependência de código existente |
+| Tipos | Os nomes utilizados pelas assinaturas possuem declaração pública no documento, inclusive tipos aninhados |
+| Disponibilidade | Campos opcionais e máscaras de seleção não se confundem com ausência confirmada |
+| Erros | Reações da engine são guiadas por categorias de erro e critérios de retry, nunca por mensagens textuais cruas |
+| Implementação | Contratos podem ser simulados antes de implementar HTTP e usados em testes TDD |
+
+**Limite de escopo:** a referência é Google Drive REST v3 e protocolos Google OAuth/OIDC. Demais APIs Google são contratos separados. As estruturas abaixo são **projeções Rust propostas** a partir dos recursos oficiais; a correspondência exata de campos e subtipos com o Discovery deve ser verificada antes de considerar o documento um espelho integral de todo o esquema JSON oficial.
