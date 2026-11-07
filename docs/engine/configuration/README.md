@@ -1,52 +1,45 @@
-# Configuração — responsabilidades e persistência global (provisório)
+# Configurações — preferências e políticas do DriveSync
 
 ## Objetivo
 
-O módulo `configuration/` é responsável por **definir, consultar e alterar as preferências da aplicação e as políticas de sincronização**, sem conhecer a implementação do inventário de arquivos. **Temporariamente**, este módulo também é o responsável técnico por avaliar e organizar a **persistência global da aplicação**, até que a arquitetura de dados e a responsabilidade dos demais módulos sejam detalhadas.
+O módulo `configuration/` define, valida, consulta e atualiza **preferências da aplicação** e **políticas por sincronização**. Apresenta essas operações por uma API pública: seus consumidores **não conhecem nem acessam** arquivos de configuração, schemas, bancos ou chaves internas de armazenamento.
 
-Essa atribuição **não significa** que `configuration/` seja dono dos conceitos de conta e conexão. O módulo `accounts/` continua responsável pelo cadastro e ciclo de vida das contas. A responsabilidade de criar/validar pares entre pasta local e remota deve ser definida com o componente correspondente; não atribuí-la a `configuration/` apenas porque um banco pode armazená-los.
+**Cada módulo é proprietário de seus dados e pode persistir o que precisar**, com SQLite, GSettings, arquivos ou outro mecanismo, desde que a persistência fique privada atrás de sua API. Não existe obrigação de reunir tudo em um único banco global.
 
-## Separação entre tipos de dados
+## Dados de configuração
 
-| Informação | Proprietário conceitual | Forma de persistência a avaliar |
+| Categoria | Exemplos | Proprietário |
 | --- | --- | --- |
-| Preferências globais: comportamento, notificações, limites e opções da UI | `configuration/` | **GSettings/GLib**, preferencialmente, mediante validação no projeto |
-| Preferências por sincronização: limites e políticas para um par de pastas | `configuration/` | GSettings (se o esquema couber) ou outra representação estruturada |
-| Identidade e cadastro de contas: `account_id`, `provider_user_id`, nome e e-mail | `accounts/` | Dados globais persistentes, possivelmente SQLite ou arquivo estruturado |
-| Conexões: conta + raiz remota + raiz local + estado de ativação | Componente responsável por conexões, ainda a formalizar | Dados globais persistentes, possivelmente SQLite ou arquivo estruturado |
-| Credenciais, tokens OAuth e outros segredos | `accounts/auth/` | **Secret Service/keyring**, não SQLite nem GSettings |
-| Arquivos, baseline, operações, cursor, eventos e histórico por item | `inventory/` | **SQLite local por pasta sincronizada**, em `.drivesync/inventory.sqlite3` |
-| Logs técnicos e estado transitório | Componente produtor / infraestrutura apropriada | `XDG_STATE_HOME`, cache ou logging, conforme a natureza |
+| Preferências globais | Notificações, comportamento da interface, políticas padrão e limites gerais | `configuration/` |
+| Preferências por sincronização | Limites de transferência, opções aplicáveis à conexão e políticas selecionadas | `configuration/`, usando `sync_id` fornecido pelo proprietário das conexões |
+| Dados de identidade da conta | `account_id`, `provider_user_id`, nome, e-mail | `accounts/` |
+| Cadastro de conexões | `sync_id`, `account_id`, raízes local/remota | Responsabilidade ainda a decidir; levantamento preservado em [`accounts/README.md`](../accounts/README.md) |
+| Autenticação e segredos | Tokens OAuth e outros materiais sensíveis | `accounts/auth/`, via Secret Service/keyring |
+| Estado de arquivos e histórico por item | `SyncItem`, baseline, eventos, fila, atividades | `inventory/`, em SQLite por pasta |
 
-**Regra:** proprietário do **dado** não precisa ser o mesmo proprietário da **tecnologia de persistência**. Se houver um armazenamento global compartilhado, `configuration/` poderá inicialmente oferecer a infraestrutura, enquanto `accounts/` e os demais módulos oferecem as operações e regras de domínio, sem expor SQL.
+Esta separação trata **quem é dono do dado**, não impõe que módulos tenham necessariamente arquivos físicos diferentes. Um eventual mecanismo compartilhado exige contrato explícito; não autoriza um módulo a acessar tabelas de outro.
 
-## GTK4, GNOME e Wayland: qual padrão usar?
+## Convenções GNOME/GTK4 para preferências
 
-- **GSettings** é a API de configurações de aplicações da GLib, normalmente com dconf no GNOME. É candidato para valores de preferências com chaves e tipos definidos em um esquema `.gschema.xml`: [GNOME GSettings](https://wiki.gnome.org/HowDoI/GSettings).
-- **`GtkSettings` não é um sistema de preferências da aplicação**. Refere-se às configurações compartilhadas de apresentação da plataforma/desktop: [GTK4 GtkSettings](https://docs.gtk.org/gtk4/class.Settings.html).
-- **Wayland não determina como os dados do aplicativo são persistidos**; afeta a interação com o sistema gráfico e portais. Não escolher SQLite ou JSON por causa do compositor.
-- **XDG Base Directory** separa dados persistentes (`XDG_DATA_HOME`), configurações (`XDG_CONFIG_HOME`), estado (`XDG_STATE_HOME`) e cache (`XDG_CACHE_HOME`). A GLib fornece acesso a esses caminhos.
-- JSON, TOML ou arquivos keyfile não são proibidos, mas requerem serialização, escrita atômica, validação e estratégia de evolução. Evitar introduzir um banco apenas para um pequeno conjunto de opções.
+- **GSettings (GLib)** é o candidato principal para preferências tipadas e com chaves pré-definidas, geralmente armazenadas pelo backend dconf no GNOME. Ver [documentação da GLib](https://docs.gtk.org/gio/class.Settings.html).
+- `GtkSettings` trata opções de apresentação do GTK, não o cadastro de configurações próprias do aplicativo.
+- **Wayland não define o mecanismo de persistência** de preferências ou de dados do aplicativo.
+- Os diretórios XDG separam configurações (`XDG_CONFIG_HOME`), dados persistentes (`XDG_DATA_HOME`), estado (`XDG_STATE_HOME`) e cache (`XDG_CACHE_HOME`).
+- Se as configurações forem dinâmicas, complexas ou relacionais, avaliar outro mecanismo próprio. Arquivos JSON/TOML/keyfile ou SQLite não são proibidos; a escolha depende dos dados, consultas, necessidade de transações e testes.
+- **Não criar `app.sqlite3` automaticamente** apenas porque a aplicação tem contas e preferências.
 
-## Situação do `app.sqlite3`
+## Persistência privativa e testabilidade
 
-**Ainda não há decisão definitiva de criar `app.sqlite3`.** O esquema proposto anteriormente com `accounts`, `sync_connections`, `app_preferences` e `sync_preferences` é apenas uma hipótese e não deve orientar a implementação automaticamente.
+1. Definir primeiro os contratos públicos de leitura, atualização, validação e notificação de mudanças.
+2. Escolher a persistência mais apropriada após classificar as opções e os seus tipos.
+3. Encapsular completamente a persistência; nenhum consumidor recebe conexão SQLite nem precisa saber onde fica o arquivo.
+4. Se houver dados por sincronização, a configuração utiliza `sync_id` e as APIs do módulo proprietário da conexão, sem consultar seu banco diretamente.
+5. Testar os contratos com armazenamento isolado/simulado e, quando aplicável, testar a persistência real do próprio módulo.
 
-Antes de escolher armazenamento, responder:
+**Situação atual:** `configuration/` não é o módulo central de todos os bancos; suas decisões de persistência são locais. O inventário tem SQLite por pasta definido. O armazenamento de contas e conexões será definido nos módulos responsáveis.
 
-1. Quais entidades globais precisam persistir independentemente das pastas e do processo?
-2. Quais são preferências escalares adequadas para GSettings e quais são dados relacionais?
-3. Qual módulo é proprietário do cadastro e das operações de conta?
-4. Qual módulo é proprietário das conexões entre conta, pasta remota e pasta local?
-5. Essas entidades precisam de consultas, índices, relações e transações que justifiquem SQLite?
-6. Como preservar os vínculos e reabrir inventários quando uma pasta está temporariamente indisponível?
+## Próximos passos
 
-**Decisão provisória:** somente o inventário por pasta tem SQLite confirmado; a persistência global será estudada sob `configuration/`, sem impor banco, formato ou tabelas globais nesta etapa.
-
-## Fronteiras e continuidade
-
-- `configuration/` não deve consultar diretamente tabelas de `inventory.sqlite3`; o Inventário expõe as consultas relevantes.
-- `inventory/` não armazena preferências nem abre bancos globais.
-- `accounts/` é responsável pelas regras de negócio das contas, independentemente de como seus dados sejam persistidos.
-- A separação entre configuração, cadastro, conexão e persistência técnica será revisada antes de criar `INTERFACES.md` e testes de persistência global.
-- Não criar esquema, adicionar dependências nem modificar código existente nesta etapa documental.
+- Enumerar as preferências globais e por sincronização.
+- Verificar quais chaves se adaptam a GSettings e quais requerem outro armazenamento.
+- Especificar APIs e cenários TDD sem expor detalhes da implementação.
