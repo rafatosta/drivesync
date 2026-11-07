@@ -40,7 +40,7 @@ Este documento define a organização **macro** dos componentes. Não especifica
 - Disponibiliza informações e comparações de estado através de sua interface.
 - Encapsula a persistência: nenhum outro componente consulta ou altera diretamente o SQLite do inventário.
 
-A estrutura e a localização dos dados seguem o [DATA_MODEL.md](DATA_MODEL.md). O Inventário **não executa** operações em arquivos e **não escolhe** políticas de sincronização.
+A estrutura e a localização dos dados seguem o [README do Inventário](engine/inventory/README.md). O Inventário **não executa** operações em arquivos e **não escolhe** políticas de sincronização.
 
 ### 2.3 Analisador
 
@@ -177,7 +177,7 @@ A engine funciona **independentemente da GUI**. A interface GTK/libadwaita, uma 
 
 O módulo `accounts/` expõe o gerenciamento das contas e encapsula `accounts/auth/` para autenticação OAuth e credenciais. O módulo `configuration/` continua como serviço de preferências e políticas. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
-A persistência dos itens, estados e histórico é definida por `DATA_MODEL.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
+A persistência dos itens, estados e histórico é definida pelo `docs/engine/inventory/README.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
 
 ## 6. Critério arquitetural
 
