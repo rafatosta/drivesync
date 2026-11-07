@@ -2,11 +2,11 @@
 
 ## 1. Contrato e limites
 
-Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O consumidor principal é o Orquestrador; o Detector Local usa somente a API pública do Inventário para persistir observações e publica notificações de reavaliação.
+Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O único consumidor do Detector Local é o módulo pai `Detector`; o Local utiliza a API pública do Inventário quando a observação exige persistência e entrega **sinais internos** de reavaliação à fachada. Não possui API pública para o Orquestrador nem para qualquer outro módulo da engine.
 
-Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o contrato conceitual para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Orquestrador antes da implementação; **não são código Rust compilado**.
+Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o **contrato interno**, com visibilidade restrita ao componente `detectors/`, para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Orquestrador antes da implementação; **não são código Rust compilado**.
 
-## 2. Tipos públicos
+## 2. Tipos internos ao componente Local
 
 ```rust
 pub type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
@@ -34,7 +34,7 @@ pub struct LocalDetectorNotice {
     pub observed_at: Timestamp,
     pub coverage: LocalScanCoverage,
 }
-pub trait LocalNotificationSink: Send + Sync {
+pub(super) trait LocalNotificationSink: Send + Sync {
     fn notify(&self, notice: LocalDetectorNotice) -> LocalDetectorResult<()>;
 }
 
@@ -56,14 +56,14 @@ pub struct LocalDetectorStatus {
 }
 ```
 
-### Objetos de requisição e resposta
+### Objetos de requisição e resposta internos
 
 ```rust
 // InventoryHandle e NotificationHandle são abstrações tipadas injetadas
 // das APIs existentes, não wrappers de SQL nem implementação do Orquestrador.
 // A forma concreta de ownership será fixada ao integrar os módulos.
 pub struct LocalInventoryHandle { /* API do InventoryManager */ }
-pub struct LocalNotificationHandle { /* LocalNotificationSink */ }
+pub struct LocalNotificationHandle { /* sink interno fornecido pelo Detector pai */ }
 
 pub struct LocalDetectorCreateRequest {
     pub scope: LocalDetectorScope,
@@ -122,26 +122,26 @@ pub struct LocalStatusResult {
 
 `LocalDetectorScope.local_root` **não é opcional** para o Local. `LocalScanScope::Paths` não pode escapar da raiz sincronizada. `LocalScanCoverage::Complete` é relativa ao escopo pedido, não necessariamente à raiz inteira. Campo ausente, evento isolado ou cobertura incompleta não prova `PresenceState::AbsentConfirmed`.
 
-## 4. Assinaturas públicas
+## 4. Assinaturas internas do Local
 
 ```rust
-pub struct LocalDetector { /* estado interno privado */ }
+pub(super) struct LocalDetector { /* estado interno privado */ }
 
 impl LocalDetector {
-    pub fn new(request: LocalDetectorCreateRequest)
+    pub(super) fn new(request: LocalDetectorCreateRequest)
         -> LocalDetectorResult<LocalDetectorCreateResult>;
-    pub fn start(&self, request: LocalStartRequest)
+    pub(super) fn start(&self, request: LocalStartRequest)
         -> LocalDetectorResult<LocalStartResult>;
-    pub fn scan_once(&self, request: LocalScanRequest)
+    pub(super) fn scan_once(&self, request: LocalScanRequest)
         -> LocalDetectorResult<LocalScanResult>;
-    pub fn stop(&self, request: LocalStopRequest)
+    pub(super) fn stop(&self, request: LocalStopRequest)
         -> LocalDetectorResult<LocalStopResult>;
-    pub fn status(&self, request: LocalStatusRequest)
+    pub(super) fn status(&self, request: LocalStatusRequest)
         -> LocalDetectorResult<LocalStatusResult>;
 }
 ```
 
-## 5. Contrato funcional de cada método
+## 5. Contrato funcional de cada método interno
 
 ### LOC-01 — `new`
 
@@ -205,7 +205,7 @@ impl LocalDetector {
 
 ## 6. Notificações e persistência
 
-O `LocalNotificationSink` representa a entrada do Orquestrador: `notify` é uma operação de entrega de aviso, não de sincronização ou confirmação de item. Avisos podem ser repetidos, agregados ou perdidos; uma nova varredura restaura a observação depois de falha/reinício.
+O `LocalNotificationSink` é uma **porta interna de entrega para o Detector pai**, não é a entrada do Orquestrador. O pai traduz essas observações em seu `DetectorEvent` público; `notify` é um sinal interno, não confirmação de item ou sincronização. Avisos podem ser repetidos, agregados ou perdidos; uma nova varredura restaura a observação depois de falha/reinício.
 
 Para persistir fatos, chamar **`InventoryManager.record_local`** e consultas públicas necessárias, respeitando precondições de identidade e revisão. Não escrever SQL, não modificar cursor remoto e não alterar baseline/atividade/fila. Uma falha de persistência impede afirmar que a observação foi salva; falha de notificação posterior precisa ser diagnosticável.
 
@@ -213,4 +213,4 @@ Para persistir fatos, chamar **`InventoryManager.record_local`** e consultas pú
 
 `RootUnavailable`, `PermissionDenied`, `WatcherUnavailable`, `PartialObservation` e `Cancelled` **não** são prova de exclusão. Erros precisam ser tipados e sanitizados. A escolha de biblioteca watcher, tratamento de eventos durante scanner, tipos definitivos de `LocalFile`, forma concreta dos handles, semântica sync/async do start e política de symlinks devem ser fechadas antes de implementar os casos dependentes, **sem depender do Detector Remoto**.
 
-**Estado:** proposta de contrato de projeto, ainda não compilada, nem validada em execução.
+**Visibilidade:** `pub` nos trechos de estruturas deve ser lido no **limite interno de `detectors/`**, não como reexportação pública pela crate. Na implementação, reduzir visibilidade a `pub(super)`/`pub(crate)` quando cabível e não expor tipos internos por interfaces externas. O pai coordena a emissão ao Orquestrador; o Local mantém liberdade de estruturar seus detalhes de filesystem. **Estado:** contrato interno proposto, ainda não compilado nem validado.
