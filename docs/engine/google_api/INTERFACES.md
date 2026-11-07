@@ -959,51 +959,57 @@ pub struct GoogleModifyLabelsResponse {
     pub modified_labels: Option<Vec<GoogleLabel>>,
 }
 
+pub enum GooglePatch<T> {
+    Unchanged,
+    Set(T),
+    Clear,
+}
+
 pub struct GoogleFileWrite {
-    pub name: Option<String>,
-    pub mime_type: Option<MimeType>,
-    pub description: Option<String>,
-    pub trashed: Option<bool>,
-    pub parents: Option<Vec<FileId>>,
-    pub starred: Option<bool>,
-    pub properties: Option<std::collections::BTreeMap<String,String>>,
-    pub app_properties: Option<std::collections::BTreeMap<String,String>>,
-    pub copy_requires_writer_permission: Option<bool>,
-    pub folder_color_rgb: Option<String>,
-    pub modified_time: Option<String>,
+    pub name: GooglePatch<String>,
+    pub mime_type: GooglePatch<MimeType>,
+    pub description: GooglePatch<String>,
+    pub trashed: GooglePatch<bool>,
+    pub parents: GooglePatch<Vec<FileId>>,
+    pub starred: GooglePatch<bool>,
+    pub properties: GooglePatch<std::collections::BTreeMap<String,String>>,
+    pub app_properties: GooglePatch<std::collections::BTreeMap<String,String>>,
+    pub copy_requires_writer_permission: GooglePatch<bool>,
+    pub folder_color_rgb: GooglePatch<String>,
+    pub modified_time: GooglePatch<String>,
 }
 
 pub struct GoogleDriveWrite {
-    pub name: Option<String>,
-    pub restrictions: Option<GoogleDriveRestrictions>,
-    pub color_rgb: Option<String>,
+    pub name: GooglePatch<String>,
+    pub restrictions: GooglePatch<GoogleDriveRestrictions>,
+    pub color_rgb: GooglePatch<String>,
 }
 
 pub struct GooglePermissionWrite {
-    pub type_: Option<String>,
-    pub role: Option<String>,
-    pub email_address: Option<String>,
-    pub domain: Option<String>,
-    pub allow_file_discovery: Option<bool>,
-    pub expiration_time: Option<String>,
-    pub view: Option<String>,
+    pub type_: GooglePatch<String>,
+    pub role: GooglePatch<String>,
+    pub email_address: GooglePatch<String>,
+    pub domain: GooglePatch<String>,
+    pub allow_file_discovery: GooglePatch<bool>,
+    pub expiration_time: GooglePatch<String>,
+    pub view: GooglePatch<String>,
 }
 
 pub struct GoogleCommentWrite {
-    pub content: Option<String>,
-    pub anchor: Option<String>,
+    pub content: GooglePatch<String>,
+    pub anchor: GooglePatch<String>,
 }
 
 pub struct GoogleReplyWrite {
-    pub content: Option<String>,
-    pub action: Option<String>,
+    pub content: GooglePatch<String>,
+    pub action: GooglePatch<String>,
 }
 
 pub struct GoogleRevisionWrite {
-    pub keep_forever: Option<bool>,
-    pub published: Option<bool>,
-    pub publish_auto: Option<bool>,
-    pub published_outside_domain: Option<bool>,
+    pub keep_forever: GooglePatch<bool>,
+    pub published: GooglePatch<bool>,
+    pub publish_auto: GooglePatch<bool>,
+    pub published_outside_domain: GooglePatch<bool>,
 }
 
 ``
@@ -1475,8 +1481,8 @@ pub enum GoogleUploadProgress {
 | Campo solicitado por `fields` | `FieldMask` configurada pelo consumidor | A interpretação precisa considerar a máscara de campos efetivamente requisitada |
 | Campo válido só para alguns recursos | Ex.: checksum para conteúdo binário, `shortcut_details` para atalhos | `None` é esperado para tipos que não suportam o campo |
 | Dados sem acesso por permissão ou escopo | Erro tipado ou atributo omitido, conforme endpoint | Não deduzir `false`, vazio ou exclusão |
-| PATCH com campo omitido | `None` em `*Write` | Não alterar o campo |
-| PATCH que exige limpar um campo | Representação explícita da operação de limpeza, conforme a API | Não confundir limpar com campo não informado |
+| PATCH com campo omitido | `GooglePatch::Unchanged` em `*Write` | Não alterar o campo |
+| PATCH que exige limpar um campo | `GooglePatch::Clear`, quando o campo admite remoção | Não confundir limpar com campo não informado |
 | Coleção retornada vazia | `Vec<T>` vazio com resposta válida | Não equivale necessariamente a árvore remota vazia; considerar paginação/incompletude |
 | Int64 em JSON | `String` no transporte, com parse validado | Não converter para `f64` nem descartar sinal/precisão |
 
