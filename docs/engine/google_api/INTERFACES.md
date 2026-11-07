@@ -85,7 +85,7 @@ pub struct GoogleApiFailure {
 
 ## 2. Tipos públicos e dados retornados
 
-**Todos os tipos usados nas assinaturas pertencem ao contrato público nesta versão.** A relação completa, com declarações Rust de estruturas e campos, está na [seção 8](#8-declarações-dos-tipos-públicos). Os tipos comuns de identidade e erro ficam na seção 1; "comum" não significa que os demais são privados ou opcionais.
+**Todos os tipos usados nas assinaturas pertencem ao contrato público nesta versão.** A relação completa, com declarações Rust de estruturas e campos, está na [seção 9](#9-declarações-dos-tipos-públicos). Os tipos comuns de identidade e erro ficam na seção 1; "comum" não significa que os demais são privados ou opcionais.
 
 | Conjunto | Tipos de saída e entrada públicos |
 | --- | --- |
@@ -1290,7 +1290,7 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 **Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
 
-## 6. Critérios de teste independentes
+## 7. Critérios de teste independentes
 
 | Grupo | Casos mínimos de contrato |
 | --- | --- |
@@ -1310,7 +1310,7 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 **Estratégia TDD:** primeiro implementar fakes do contrato para testar os consumidores; depois testar a implementação Google API contra servidor HTTP simulado com requisições e respostas oficiais; por fim validar integração real opcional. O contrato **não depende** do estado atual da engine.
 
-## 7. Condições de validação TDD
+## 8. Condições de validação TDD
 
 | Verificação | Critério |
 | --- | --- |
@@ -1322,7 +1322,7 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 **Limite de escopo:** a referência é Google Drive REST v3 e protocolos Google OAuth/OIDC. Demais APIs Google são contratos separados. As estruturas abaixo são **projeções Rust propostas** a partir dos recursos oficiais; a correspondência exata de campos e subtipos com o Discovery deve ser verificada antes de considerar o documento um espelho integral de todo o esquema JSON oficial.
 
-## 8. Declarações dos tipos públicos
+## 9. Declarações dos tipos públicos
 
 **Referência de modelagem:** [Google Drive API v3 — recursos](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest). Esta seção reúne os tipos **de resposta e de escrita** em declarações Rust. `Option<T>` indica que o campo pode não estar presente na resposta recebida; não representa, por si só, uma declaração de ausência do objeto no Drive.
 
@@ -1330,7 +1330,7 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 **Atributos sensíveis ou efêmeros:** links de download, `resourceKey`, JWT de CSE e URIs de sessão devem receber tratamento restrito, sem logs nem persistência inadvertida.
 
-### 8.1 Estruturas de saída e metadados
+### 9.1 Estruturas de saída e metadados
 
 ```rust
 pub struct GoogleAbout {
@@ -1804,7 +1804,7 @@ pub struct GoogleRevisionWrite {
 
 ``
 
-### 8.2 Respostas de listas, solicitações, opções e contratos OAuth
+### 9.2 Respostas de listas, solicitações, opções e contratos OAuth
 
 As estruturas `XxxOptions` são **objetos de entrada**. O objeto `Options` é argumento obrigatório da assinatura, mas seus campos `Option<T>` são opcionais. Campos necessários, como o cursor de `ChangeListOptions`, usam tipos não opcionais.
 
@@ -2261,7 +2261,7 @@ pub enum GoogleUploadProgress {
 }
 ```
 
-### 8.3 Obrigatoriedade e disponibilidade dos campos
+### 9.3 Obrigatoriedade e disponibilidade dos campos
 
 | Situação | Como representar | Consequência para o consumidor |
 | --- | --- | --- |
@@ -2277,7 +2277,7 @@ pub enum GoogleUploadProgress {
 | Int64 em JSON | `String` no transporte, com parse validado | Não converter para `f64` nem descartar sinal/precisão |
 
 **Os modelos acima são o contrato Rust proposto do DriveSync**, não uma reprodução literal de toda propriedade possível dos schemas JSON. No momento de implementar cada método, os campos devem ser comparados aos recursos oficiais e aos campos solicitados por `fields`. Esse controle protege a evolução do contrato sem vincular o Inventário diretamente ao formato JSON do Google.
-### 8.4 Erros públicos e critérios de recuperação
+### 9.4 Erros públicos e critérios de recuperação
 
 A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`kind`) do contexto sanitizado (`http_status`, `provider_reason`, `retry_after_seconds`, `retryable`). O HTTP e as razões específicas são interpretados **dentro de `google_api/`**. A camada consumidora não precisa analisar JSON ou mensagens do Google para decidir o que fazer.
 
