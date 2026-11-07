@@ -1,105 +1,70 @@
-# Detector — coordenação de observação local e remota
+# Detector — fachada pública e fila produtor–consumidor
 
-## Objetivo
+## Objetivo e separação
 
-O **Detector** é o **único módulo público de detecção para o restante da engine**, especialmente para o Orquestrador. Ele coordena os dois componentes internos independentes:
+O **Detector** é a única API pública de detecção conhecida pelo Orquestrador. Coordena três componentes **independentes entre si e testáveis isoladamente**:
 
-- [Detector Local](local/README.md): leitura do filesystem e monitoramento de mudanças locais.
-- [Detector Remoto](remote/README.md): leitura do Google Drive por `google_api/` e mudanças incrementais.
+- [Local](local/README.md): observa filesystem por eventos e varreduras; emite **um sinal por ocorrência identificada**.
+- [Remoto](remote/README.md): observa Google Drive por consultas periódicas e mudanças incrementais; emite **um sinal por ocorrência identificada**.
+- [Storage](storage/README.md): fornece API privada de persistência, reservas e confirmações; oculta SQLite, tabelas e localização dos dados.
 
-A separação é **de três unidades de implementação**: a fachada/coordenador `detectors/`, o componente `detectors/local/` e o componente `detectors/remote/`. Cada uma tem seus próprios contratos e testes, mas **Local e Remoto não expõem API para outros módulos**. O código Rust do componente pai pode utilizar `pub(super)`/`pub(crate)` conforme necessidade interna, sem reexportar os tipos dos detectores filhos no `mod.rs` público.
+O Detector **consome somente a API** de cada filho. Não precisa conhecer watcher, Google Changes, SQL ou detalhes de implementação. Os filhos não dependem das implementações dos irmãos nem do Detector concreto: testes usam sinks e portas fake. O Orquestrador não chama Local, Remoto ou Storage.
 
-## Comunicação e propriedade
+## Fluxo
 
 ```mermaid
 flowchart TD
-  FS[Filesystem] --> L[Local interno]
-  G[Google API] --> R[Remoto interno]
-  L -->|observações e diagnósticos internos| D[Detector público]
-  R -->|observações, eventos e cursor internos| D
-  D -->|API pública: eventos, status e comandos| O[Orquestrador]
-  D -->|API do Inventário| I[Inventário]
-  O --> A[Analisador]
-  A --> I
+    L["Local: eventos individuais"] --> D["Detector: coordena produção"]
+    R["Remoto: eventos individuais"] --> D
+    D -->|"enqueue por evento"| S["Storage: fila durável"]
+    S -->|"claim_batch"| D
+    D -->|"EventBatch misto"| O["Orquestrador: consumidor"]
+    O -->|"acknowledge Processed/Discarded"| D
+    D -->|"acknowledge por API"| S
+    O -->|"start, stop, request_scan, status"| D
 ```
 
-**A única fronteira de comunicação do Orquestrador é `Detector`.** Ele não recebe nem guarda `LocalDetector`/`RemoteDetector`, não conhece watcher, pagination Google ou callbacks de submódulos.
+O Detector recebe alterações locais e remotas **concorrentes** sem criar duas filas públicas. O Storage atribui IDs estáveis e ordem de enfileiramento, e o Detector entrega **um lote contendo eventos das duas origens**. O lote pode incluir várias alterações do mesmo arquivo observadas de lados diferentes.
 
-| Responsável | Faz | Não faz |
+**Agrupar a entrega não é resolver conflito.** Não descartar, sobrescrever ou consolidar eventos opostos silenciosamente. O Orquestrador encaminha os itens à análise; o Analisador consulta Inventário, baseline e versões atuais para decidir. Um lote comum reduz chamadas e permite avaliação conjunta, mas não comprova que os eventos ocorreram na mesma ordem causal.
+
+## Responsabilidades
+
+| Componente | Faz | Não faz |
 | --- | --- | --- |
-| Local interno | Inspeciona raiz, watcher, varreduras e observações locais | Não notifica diretamente o Orquestrador |
-| Remoto interno | Consulta API Google, inventaria/remonta cursores e observa changes | Não notifica diretamente o Orquestrador |
-| Detector público | Inicia/pausa/retoma/para os filhos, recebe eventos internos, valida escopo, consolida/normaliza notificações, coordena gravações no Inventário e expõe estado agregado | Não decide conflito, upload/download, nem gera baseline |
-| Inventário | Persiste observações, cursores/eventos e seu estado canônico observado | Não gerencia watchers ou consultas Google |
-| Orquestrador | Recebe notificações unificadas, define políticas e solicita processamento ao Analisador | Não interage com APIs dos filhos |
+| Local | Observa filesystem; emite sinal individual pelo sink injetado | Não conhece Storage concreto, Remoto nem Orquestrador |
+| Remoto | Observa Google; emite sinal individual pelo sink injetado | Não conhece Storage concreto, Local nem Orquestrador |
+| Detector | Controle, recepção, persistência via API Storage, consumo em lotes, status | Não conhece SQL; não resolve conflitos nem transfere arquivos |
+| Storage | Guarda, reserva, libera, confirma/descarta explicitamente, recupera eventos | Não conhece produtores nem Orquestrador |
 
-Os filhos podem usar dependências injetadas conforme seus contratos internos. **Coordenação da persistência e publicação externa é responsabilidade do pai** para permitir verificar ordem, idempotência e falhas de notificação. Não é obrigatório centralizar toda a lógica de inspeção: a leitura de filesystem/Google continua nos filhos.
+## Produtor–consumidor e durabilidade
 
-## API pública deliberadamente pequena
+1. Cada filho chama seu sink **uma vez por evento**; o Detector recebe e invoca `EventStore.enqueue`.
+2. **Só confirmar ao produtor depois do commit durável**. Falha exige backpressure/replay ou reobservação; não declarar sucesso.
+3. O Orquestrador chama `take_events` e recebe `EventBatch`, com `batch_id`, `events`, `first_observed_at` e `last_observed_at`.
+4. `take_events` apenas **reserva** eventos, não os elimina. `acknowledge(Processed | Discarded)` registra a decisão do Orquestrador. `release_events` devolve lote não confirmado.
+5. Se o Orquestrador estiver ocupado ou desligado, o Detector **acumula eventos persistidos**. Crash antes do ack permite reentrega pelo lease expirado (sem promessa de exatamente uma vez).
 
-A fachada oferece capacidades de **inicialização, iniciar/retomar detecção, solicitar reavaliação, pausar/parar, consultar status e receber notificações tipadas**. Nenhuma API pública por arquivo para ordenar “upload/download” nem métodos remotos/local separados.
+O período do lote cobre **instantes em que eventos foram detectados**, não períodos sem detector ativo. O mesmo item pode aparecer mais de uma vez ou nos dois lados; isso é dado para reconciliação, não erro de fila. A fila do Detector é distinta da fila de operações de sincronização do Inventário.
 
-No evento enviado ao Orquestrador, usar objeto comum contendo:
-- `sync_id` e **origem `Local` ou `Remote`**;
-- motivo (mudança, reavaliação, indisponibilidade, cursor expirado etc.);
-- IDs de itens afetados **quando conhecidos**, podendo estar vazios para reavaliação por escopo;
-- abrangência da observação (`Complete`, `Partial`, `Unavailable`);
-- instante e identificador de correlação quando disponíveis;
-- indicação de que fatos relevantes foram persistidos no Inventário, **sem interpretar o aviso como sincronização concluída**.
+## Stop e reinício
 
-**Notificação é sinal, não comando de transferência.** O Detector pode emitir avisos duplicados/agregados. A recuperação vem de nova varredura local e de eventos remotos duráveis no Inventário; não depender de notificação efêmera exatamente uma vez.
+`stop(DrainInFlight)` cessa produção nova e tenta finalizar emissões em andamento. `stop(StopNow)` encerra prontamente as não confirmadas, mas **nenhum modo apaga eventos duráveis nem força acknowledge**. A escolha de descartar pertence ao Orquestrador ao consumir lotes.
 
-## Ciclo de vida dos dois filhos
+`start` retoma a produção; varreduras e cursor próprios das fontes permitem encontrar diferenças não observadas enquanto estavam paradas. Reconciliação de versões e resolução de conflitos pertencem a outros módulos, não ao Detector.
 
-O Detector coordena o ciclo de vida agregado. Um lado pode estar saudável e o outro degradado; **o status público deve expor estado por origem**, sem ocultar problemas. Parar/pausar um lado não exige parar o outro. `start` não deve fingir que toda varredura já terminou; `request_scan` pede uma verificação, não uma sincronização física.
+## Persistência como abstração privada
 
-As **interfaces internas comuns** são descritas pelo contrato de integração do pai em [INTERFACES.md](INTERFACES.md): ciclo de vida e observação seguem a mesma semântica; Local e Remoto podem ter operações especializadas que não escapam ao exterior. O contrato interno compartilhado não obriga desenvolver ambos simultaneamente nem criar uma camada de compatibilidade.
+O Storage inicialmente pode utilizar `<raiz-local>/.drivesync/detector.sqlite3`, mas **o Detector não conhece esse caminho ou a tecnologia**. O InventoryManager persiste estado e operações, enquanto o Storage persiste eventos de detecção e estado de entrega. Não acessar o SQLite do outro módulo.
 
-## Estratégias internas, pausa e retomada
+## Invariantes e documentos
 
-O Detector conhece as **capacidades e os estados** de cada fonte, mas **não impõe um algoritmo comum** para observar alterações:
+- Um `EventBatch` pode misturar Local/Remoto e eventos repetidos; não perde identidade nem ordem de enfileiramento.
+- `acknowledge` depende de lote reservado e de decisão explícita; falha/cancelamento não apaga dados.
+- Falha de observação, permissão, watcher ou rede não comprova exclusão.
+- Apenas `Detector` é API pública externa; cada filho é implementável e testável separadamente.
+- Sem upload, download, resolução de conflito ou atualização de baseline por detecção.
 
-| Componente interno | Ritmo típico | Comportamento permitido durante `pause()` | Garantia ao retomar |
-| --- | --- | --- | --- |
-| Local | Watcher orientado a eventos, quase em tempo real, com varreduras de recuperação | Pode manter watcher ativo e registrar sinais; caso suspenda o watcher, deve registrar a necessidade de varredura posterior | Revarrer escopo necessário para recuperar eventos perdidos durante pausa/desligamento |
-| Remoto | Polling agendado por intervalo interno, com cursor incremental e eventual sinal de push | Pode continuar sondando e persistindo eventos/cursor **ou** suspender polling sem perder o checkpoint confirmado | Consultar a partir do cursor válido, ou executar recuperação segura se expirado |
-| Detector pai | Recebe sinais internos e controla entrega | Mantém notificações pendentes **duráveis ou recuperáveis** e não entrega trabalho comum ao Orquestrador enquanto pausado | Reconciliar pendências, emitir aviso(s) de reavaliação e liberar o processamento |
+[INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md) · [Local](local/README.md) · [Remoto](remote/README.md) · [Storage](storage/README.md).
 
-**`pause()` significa pausar a entrega de trabalho de detecção ao Orquestrador**, e não apagar alterações nem obrigatoriamente desligar observadores. Quando uma origem suspender observação por decisão própria, ela deverá conseguir detectar as alterações perdidas ao retomar. As escolhas específicas de watcher ativo, polling contínuo, frequência e economia de recursos são internas aos filhos; não precisam de opção pública separada.
-
-**`resume()` não garante reprodução literal de cada evento bruto.** O que precisa sobreviver é a **necessidade de reavaliar os itens/escopos efetivamente alterados**. Eventos repetidos podem ser agregados. Caso haja perda de informação de origem, um aviso mais amplo de reavaliação substitui um conjunto incompleto de eventos; não inventar a lista exata.
-
-**Durabilidade:** nenhuma lista de eventos mantida apenas em memória é garantia de recuperação após encerramento inesperado. O Inventário guarda observações/eventos/cursor já confirmados. Para sinais locais sem persistência suficiente, registrar a necessidade de nova varredura segura após a retomada/reinício. A fachada não deve criar silenciosamente uma segunda fila de uploads/downloads.
-
-**`stop()` é distinto de `pause()`:** stop encerra recursos de monitoramento; um próximo start precisa fazer recuperação segura. Pausar não deve ser interpretado como cancelar operações já executadas pelo Analisador ou transferências em andamento; isso pertence às políticas do Orquestrador.
-
-### Exemplo de fluxo durante pausa
-
-1. O Orquestrador chama `Detector.pause()`; a fachada passa a **reter ou adiar notificações de reavaliação**.
-2. O Local recebe três eventos do mesmo arquivo e sinaliza mudança; a fachada agrega a necessidade de reavaliar o item.
-3. O Remoto executa uma consulta periódica, encontra alterações, confirma os eventos/cursor no Inventário e sinaliza mudanças à fachada.
-4. O Orquestrador chama `Detector.resume()`; a fachada solicita recuperação específica a cada fonte antes de declarar cobertura suficiente.
-5. O Detector envia um ou mais `DetectorEvent` normalizados, com itens conhecidos ou reavaliação de escopo, e o Orquestrador decide o encaminhamento ao Analisador.
-
-**A fila de sinais de detecção é diferente de `sync_operations`.** A primeira registra/reconstrói **trabalho ainda a analisar**; a segunda contém **ações autorizadas** de sincronização. Nenhum detector decide criar operação física só por receber um evento.
-
-## Preservação de fatos e segurança
-
-1. Erros de acesso, watcher, paginação ou serviço remoto não provam exclusão.
-2. O Detector não atualiza baseline, fila nem histórico de transferências por observações.
-3. Fatos remotos e cursor são persistidos pelo Inventário de modo atômico onde exigido.
-4. A comunicação com Orquestrador ocorre **somente depois de persistir o necessário**, ou indica falha/estado degradado sem alegar que algo foi persistido.
-5. Alteração feita durante aplicativo fechado é recuperada por varredura e cursor.
-6. Identidade e escopo por sincronização são validados em todos os caminhos.
-7. O estado interno dos filhos não é exposto nem consumido por outros módulos.
-8. Os filhos podem ser desenvolvidos/testados em separado com um coordenador fake; a fachada pode ser testada com filhos falsos.
-
-## Documentos
-
-- [INTERFACES.md](INTERFACES.md) — contrato público do Detector e fronteira interna dos dois componentes.
-- [TESTS.md](TESTS.md) — TDD do coordenador com filhos simulados e Inventário isolado.
-- [AGENTS.md](AGENTS.md) — instruções para implementar apenas a fachada e integrá-la a componentes prontos.
-- [Local](local/README.md) — documentação e implementação independente.
-- [Remoto](remote/README.md) — documentação independente a desenvolver em etapa própria.
-
-**Estado:** especificação de arquitetura. Nenhum contrato é comprovadamente compilado nem testado nesta etapa.
+**Estado: documentação de contrato, sem implementação ou testes executados.**
