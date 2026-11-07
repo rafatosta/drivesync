@@ -4,7 +4,7 @@
 
 Plano TDD para **somente o Detector Local**. Fonte de verdade: [README.md](README.md) e [INTERFACES.md](INTERFACES.md). Não é necessário compilar, testar ou implementar o Detector Remoto para concluir esta etapa.
 
-Testar `LocalDetector` real com **filesystem real em diretórios temporários**, Inventário/SQLite real isolado acessado por **API pública**, sink fake de notificação, relógio/scheduler injetados para determinismo. Nunca utilizar arquivos pessoais, Google Drive real, credenciais ou GUI. O watcher deve ser exercitado quando disponível; não substituí-lo inteiramente por mock da unidade sob teste.
+Testar `LocalDetector` real com **filesystem real em diretórios temporários**, Inventário/SQLite real isolado acessado por **API pública**, sink fake do **Detector pai**, relógio/scheduler injetados para determinismo. Nunca utilizar arquivos pessoais, Google Drive real, credenciais ou GUI. A API Local **não** deve ser importável por consumidores externos da engine; verificar que apenas o módulo pai pode chamá-la. O watcher deve ser exercitado quando disponível; não substituí-lo inteiramente por mock da unidade sob teste.
 
 ## 2. Ciclo TDD
 
@@ -36,7 +36,7 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Retorno e invariantes:** Nenhuma observação gravada, watcher não iniciado, sem acesso remoto.
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
+**Verificação objetiva:** comparar resposta pública, chamadas ao sink interno do Detector pai, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
 
 ### LOC-02 — `LocalDetector::start`
 
@@ -86,12 +86,12 @@ RED: escrever teste de compilação e de comportamento que falhem pela capacidad
 
 **Verificação objetiva:** comparar resposta pública, chamadas ao sink, observações obtidas pela API do Inventário antes/depois; fechar e reabrir o banco quando houver persistência; validar erros tipados e ausência de alterações físicas proibidas.
 
-## 5. Notificações e recuperação
+## 5. Sinais internos ao Detector pai e recuperação
 
 | Caso | Situação | Verificação |
 | --- | --- | --- |
-| LOC-N-01 | Mudança de arquivo com item conhecido | Aviso inclui `sync_id`, motivo, ID e cobertura corretos |
-| LOC-N-02 | Alteração sem identidade segura | Aviso de reavaliação de escopo, mesmo com lista de IDs vazia |
+| LOC-N-01 | Mudança de arquivo com item conhecido | Sinal interno inclui `sync_id`, motivo, ID e cobertura corretos, sem acessar Orquestrador |
+| LOC-N-02 | Alteração sem identidade segura | Sinal interno de reavaliação de escopo, mesmo com lista de IDs vazia |
 | LOC-N-03 | Eventos repetidos em rápida sequência | Agregação não perde necessidade de reavaliação |
 | LOC-N-04 | Sink falha depois de observação persistida | Diagnosticar falha e permitir revarredura/reemissão |
 | LOC-N-05 | App desligado durante alterações | Reinício identifica mudanças sem histórico de watcher |
@@ -128,4 +128,4 @@ Concluir o **Detector Local** somente com **5/5 métodos públicos** implementad
 
 ## 9. Relatório
 
-Informar IDs LOC-01…LOC-05, LOC-N e LOC-S executados, PASS/FAIL/BLOCKED, ambiente, comandos, evidência de persistência e varredura, commits locais e limitações. **Documento de testes não representa teste executado.**
+Informar IDs LOC-01…LOC-05, LOC-N e LOC-S executados, PASS/FAIL/BLOCKED, ambiente, comandos, evidência de persistência e varredura, commits locais e limitações. **Nenhum teste Local pode depender de Orquestrador real ou de importar sua API pública; a tradução para `DetectorEvent` pertence aos testes do pai.** Documento de testes não representa teste executado.
