@@ -4,7 +4,7 @@
 
 O **Detector Local** observa o filesystem de uma pasta sincronizada e entrega observações locais ou necessidades de reavaliação ao módulo pai `Detector`. É **independente** do Detector Remoto: possui contratos internos, testes e implementação próprios, que podem ser desenvolvidos separadamente. **Somente o módulo pai `Detector` oferece API pública ao restante da engine.**
 
-O Detector Local pode registrar fatos observados **pela interface pública do Inventário**, sob coordenação da fachada. O sinal entregue ao pai contém estado suficiente para distinguir fato persistido de observação pendente; somente o pai publica ao Orquestrador. Não lê banco diretamente, não acessa Google Drive, não decide conflitos, não realiza upload/download e não atualiza baseline.
+O Detector Local **emite um evento individual por ocorrência para o sink interno injetado**. Não grava em Storage, não conhece o banco do Detector nem publica diretamente ao Orquestrador. O sink somente confirma recepção quando o Detector pai tiver persistido o evento. O Local não acessa Google Drive, não decide conflitos, não realiza upload/download nem atualiza baseline.
 
 ## Responsabilidades e exclusões
 
@@ -14,7 +14,7 @@ O Detector Local pode registrar fatos observados **pela interface pública do In
 | Executar varredura inicial e após reinício | Não depender exclusivamente de watcher |
 | Acompanhar mudanças por filesystem watcher | Evento é pista, não prova de remoção |
 | Observar criação, modificação, renomeação e movimentação | Não escolher versões vencedoras |
-| Registrar metadados locais via API do Inventário | Não acessar SQLite diretamente |
+| Entregar observações tipadas individuais ao Detector pai | Não acessar SQLite diretamente |
 | Notificar o coordenador `Detector` sobre reavaliações | Não inserir operações na fila nem registrar transferência concluída |
 
 ## Fluxo
@@ -22,18 +22,18 @@ O Detector Local pode registrar fatos observados **pela interface pública do In
 ```mermaid
 flowchart LR
   FS[Filesystem] --> DL[Detector Local]
-  DL -->|record_local pela API| INV[Inventário]
-  DL -->|sinais internos| DET[Detector público]
-  DET -->|eventos normalizados| ORQ[Orquestrador]
+  DL -->|um sinal interno por evento| DET[Detector público]
+  DET -->|enqueue pela API| STO[Storage]
+  DET -->|lotes sob demanda| ORQ[Orquestrador]
   ORQ --> AN[Analisador]
-  AN -->|consulta| INV
+  AN -->|consulta de estado| INV[Inventário]
 ```
 
 1. Validar a identidade da sincronização e a raiz da pasta.
 2. Registrar watcher e executar varredura reconciliando eventos ocorridos durante a leitura, para evitar lacunas entre monitoramento e inventário inicial.
 3. Após o aplicativo permanecer fechado, executar **nova varredura completa** para recuperar alterações feitas sem watcher ativo.
 4. Agregar eventos de mudanças como solicitações de reavaliação; não confiar em caminho ou inode isoladamente para concluir identidade.
-5. Registrar observações confiáveis via `InventoryManager.record_local`, preservando campos não observados e sem modificar baseline.
+5. Enviar eventos individuais ao sink interno do Detector; aguardar confirmação durável e, se não ocorrer, manter necessidade de reobservação. Persistência de notificações é responsabilidade do Storage consumido pelo pai.
 6. Notificar exclusivamente o **coordenador `Detector`** quando houver mudança ou necessidade de reavaliar um escopo. Caso não exista `SyncItemId` conhecido, notificar o escopo, sem fabricar vínculo.
 
 ## Cobertura e ausência
@@ -63,7 +63,7 @@ Um único evento de remoção, erro de permissão, pasta desmontada ou subpasta 
 
 ## Invariantes
 
-1. Nenhuma observação modifica baseline, fila ou histórico de transferências.
+1. Nenhuma observação modifica baseline, fila de operações ou histórico de transferências; a persistência de notificações é do Storage.
 2. O detector não consulta Google API, não executa SQL e não realiza sincronização física.
 3. Falhas de leitura jamais viram ausência confirmada automaticamente.
 4. Reinício detecta mudanças feitas com a aplicação fechada.
