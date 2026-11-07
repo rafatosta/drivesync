@@ -175,7 +175,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 A engine funciona **independentemente da GUI**. A interface GTK/libadwaita, uma CLI ou outro consumidor externo utiliza o contrato de `orchestrator/facade/` para enviar ações e receber estados, progresso, erros e notificações. A Facade não importa nem depende de GTK/libadwaita e não participa obrigatoriamente da comunicação entre componentes internos.
 
-O módulo `accounts/` expõe o gerenciamento das contas e encapsula `accounts/auth/` para autenticação OAuth e credenciais. O módulo `configuration/` continua como serviço de preferências e políticas e **provisoriamente coordena o estudo da persistência global**, cuja necessidade de SQLite ainda não foi decidida. O cadastro de contas pertence conceitualmente a `accounts/`, não ao Inventário nem automaticamente a `configuration/`. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
+O módulo `accounts/` é proprietário do cadastro das contas e encapsula `accounts/auth/` para autenticação e credenciais; o levantamento provisório de dados de conexões permanece documentado em `docs/engine/accounts/README.md` até que sua responsabilidade seja definida. O módulo `configuration/` é proprietário das preferências e políticas. **Cada módulo decide e encapsula sua própria persistência, se necessária**, expondo somente sua API; não existe um banco global obrigatório nem acesso direto ao armazenamento dos outros módulos. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
 A persistência dos itens, estados e histórico é definida pelo `docs/engine/inventory/README.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
 
