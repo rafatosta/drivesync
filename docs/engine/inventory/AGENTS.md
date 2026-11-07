@@ -79,6 +79,15 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 
 **Não implementar os 20 métodos em um lote único sem validação intermediária.** Seguir conjuntos coesos: abertura/identidade; consultas; observações; associações/baseline; fila; cursor/eventos; histórico. Uma implementação parcial não pode retornar sucesso fictício para métodos pendentes.
 
+## Autonomia e conclusão da implementação
+
+- **“Implemente o módulo Inventário”**, sem delimitação, exige concluir **os 20 métodos públicos e os casos aplicáveis** de [INTERFACES.md](INTERFACES.md) e [TESTS.md](TESTS.md). Não basta criar o esquema SQLite, os tipos ou apenas o primeiro grupo.
+- Implementar por unidades coesas, **RED → GREEN → REFACTOR**, com SQLite real e isolado, reabertura, rollback, regressão e **commits locais incrementais**. Avançar para o próximo grupo autonomamente após validar o anterior, sem solicitar aprovação por método.
+- Quando a solicitação definir somente abertura, observações, baseline, fila, eventos ou histórico, **limitar o trabalho àquela capacidade** e relatar os demais grupos pendentes.
+- **Aceite integral:** todas as interfaces públicas implementadas e verificadas; testes aplicáveis executados no Flatpak com banco SQLite real temporário; invariantes de integridade, concorrência, ausência comprovada e histórico mantidos; relatório de comandos, resultados, falhas e pendências.
+- Se definição essencial (por exemplo, `LocalFile` ou prova de ausência) estiver incompleta, documentar o impedimento antes de implementar esse comportamento; não inventar contrato, não reescrever teste apenas para passar e não afirmar que o módulo está concluído.
+- Respeitar os limites do `AGENTS.md` global: contratos não mudam por conveniência, commits podem ser locais, **`git push`/PR exige autorização específica**. Exemplo reutilizável em [IMPLEMENTATION_REQUEST.md](../IMPLEMENTATION_REQUEST.md).
+
 ## Regras concretas dos testes
 
 - **Banco SQLite real, isolado, um diretório temporário por teste.** Um mock do Inventário não demonstra FKs, índices, transações, consistência após fechamento nem durabilidade.
