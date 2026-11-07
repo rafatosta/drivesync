@@ -52,7 +52,10 @@ A estrutura e a localização dos dados seguem o [DATA_MODEL.md](DATA_MODEL.md).
 - Recebe do Orquestrador as condições e políticas aplicáveis ao processamento.
 - Quando a alteração pode ser tratada com segurança dentro dessas condições, solicita diretamente ao operador de Upload ou Download a ação necessária.
 - Recebe os resultados dos operadores e registra, pelo Inventário, os estados efetivamente confirmados.
+- Coordena o registro histórico das atividades no momento em que as operações e seus resultados ocorrem, sem depender de um módulo independente de histórico.
 - Quando faltam informações, autorização ou critérios para resolver a situação, devolve o diagnóstico ao Orquestrador e aguarda nova orientação.
+
+O histórico é uma consequência registrada do processamento e das operações, não um componente autônomo: o Analisador determina quando registrar eventos e resultados; a persistência continua encapsulada pelas interfaces de dados, sem acesso direto a SQLite.
 
 O Analisador **não implementa transferências nem modifica arquivos diretamente**. Sua autonomia é limitada às políticas recebidas: ele pode determinar e encaminhar uma operação, mas não escolher por conta própria uma política de prevalência ou perda de dados. A detecção de conflitos é parte da análise por item; decisões que extrapolem os critérios autorizados retornam ao Orquestrador. A decomposição interna do submódulo de conflitos fica para uma etapa posterior.
 
@@ -153,6 +156,8 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 **Separação por escopo de dados e decisão.** Detectores observam; Inventário guarda e fornece estado; Orquestrador coordena o nível global com eventos, configurações e políticas; Analisador coordena o nível dos itens com metadados, estados, baseline e identificação de conflitos, determinando e encaminhando operações autorizadas; operadores executam. O que não estiver autorizado retorna ao Orquestrador.
 
 **Inventário como acesso único aos dados.** Resultados e observações relevantes são registrados mediante contratos do InventoryManager; os componentes não acessam SQL diretamente. O Analisador coordena a confirmação dos resultados devolvidos pelos operadores.
+
+**Histórico integrado ao processamento.** O registro histórico ocorre quando uma atividade ou operação relevante é realizada ou concluída, sob coordenação do Analisador, sem um componente independente `activity_history`. O armazenamento do histórico permanece definido pelo modelo de dados.
 
 **Identidade persistente.** O mesmo `SyncItem` representa as duas faces de um objeto, independentemente de alteração de nome, pasta ou conteúdo.
 
