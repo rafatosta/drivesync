@@ -155,7 +155,28 @@ Testar todas as variantes de `DetectorState`, `DetectorCoverage`, `DetectorEvent
 
 Garantir que `request_scan` apenas agenda detecção, não realiza sincronização física. Simular fontes com estado independente, parada parcial, interrupção após commit e antes do aviso, e retomada após perda de eventos efêmeros.
 
-## 8. Erros, bloqueios e critérios de aceite
+## 8. Pausa, recuperação e entrega diferida — testes obrigatórios
+
+| Caso | Situação | Resultado exigido |
+| --- | --- | --- |
+| DET-P-01 | `pause` com fontes ativas | Nenhuma notificação de processamento normal é entregue enquanto pausado; `status` informa `Paused` |
+| DET-P-02 | Local entrega vários sinais do mesmo item durante pausa | Necessidade de reavaliação permanece e pode ser agregada, sem exigir reenvio literal dos eventos brutos |
+| DET-P-03 | Remoto continua polling durante pausa | Eventos/checkpoint confirmados no Inventário não são descartados; entrega pode ficar adiada |
+| DET-P-04 | Remoto suspende polling durante pausa | `resume` solicita consulta incremental desde cursor confirmado; não presume ausência de mudança |
+| DET-P-05 | Local perde watcher durante pausa | `resume` solicita varredura apropriada, sem inferir exclusões |
+| DET-P-06 | `resume` com pendências de ambos os filhos | Eventos de reavaliação chegam pela **mesma API pública**, sem tipos locais/remotos |
+| DET-P-07 | Falha de recuperação em uma fonte | Estado Degraded e cobertura Partial/Unavailable, preservando fatos válidos da outra |
+| DET-P-08 | Stop e novo Start após alterações | Recuperação solicitada mesmo sem eventos em memória |
+| DET-P-09 | Crash após observação persistida mas antes de aviso | Recuperação/revarredura emite necessidade de reavaliação, sem depender do buffer volátil |
+| DET-P-10 | Buffer de sinais cheio ou eventos duplicados | Agregação ou reavaliação por escopo sem perda silenciosa |
+| DET-P-11 | Pause enquanto o Analisador já processa transferência | O Detector não cancela operação externa; apenas controla sua própria entrega |
+| DET-P-12 | Recuperação apenas agendada | `recovery_scheduled=true` não é interpretado como conclusão da recuperação |
+
+**Independência das fontes:** simular Local orientado a eventos e Remoto com polling de tempo determinístico. Não impor o mesmo comportamento de pausa às duas fontes. O que o teste da fachada exige é **nenhuma perda permanente da necessidade de reavaliar**, respeitando durabilidade e escopo, não preservação de todos os eventos brutos.
+
+**Separação de filas:** comprovar que notificações pendentes de detecção não são inseridas como `sync_operations` antes de análise/autorização. Uma fila ou buffer interno não substitui a persistência de fatos no Inventário nem justifica banco adicional.
+
+## 9. Erros, bloqueios e critérios de aceite
 
 Cada erro tipado deve incluir `kind`, `retryable` e mensagem sanitizada. Falha em uma fonte não deve mascarar observações válidas da outra; indisponibilidade não é ausência confirmada.
 
@@ -163,6 +184,6 @@ Cada erro tipado deve incluir `kind`, `retryable` e mensagem sanitizada. Falha e
 
 **Pendências técnicas:** ownership/traits reais, criação interna das fontes, agendamento/async, entrega e persistência dos fatos. Decidir antes de implementar casos dependentes, sem ampliar API pública unilateralmente.
 
-## 9. Registro de testes
+## 10. Registro de testes
 
 Relatar IDs executados, PASS/FAIL/BLOCKED, comandos, ambiente, commits, limitações e diferenças entre simulação de fontes e integração real. **Este arquivo não prova execução dos testes.**
