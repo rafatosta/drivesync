@@ -146,7 +146,7 @@ impl LocalDetector {
 
 **Assinatura:** `new(LocalDetectorCreateRequest) -> LocalDetectorResult<LocalDetectorCreateResult>`.
 
-**Finalidade:** Construir detector para uma raiz local, Inventário e destinatário de avisos, sem iniciar watcher.
+**Finalidade:** Construir detector para uma raiz local e sink individual de observações, sem iniciar watcher.
 
 **Parâmetros:** `scope.sync_id`, `account_id`, `local_root` exigidos; `notifications` é sink injetado; `settings` contém política local.
 
