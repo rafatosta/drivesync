@@ -2,9 +2,9 @@
 
 ## Objetivo e autonomia
 
-O **Detector Local** observa o filesystem de uma pasta sincronizada e sinaliza alterações locais ou necessidade de reavaliação ao Orquestrador. É **independente** do Detector Remoto: possui contratos, testes e implementação próprios, que podem ser desenvolvidos separadamente.
+O **Detector Local** observa o filesystem de uma pasta sincronizada e entrega observações locais ou necessidades de reavaliação ao módulo pai `Detector`. É **independente** do Detector Remoto: possui contratos internos, testes e implementação próprios, que podem ser desenvolvidos separadamente. **Somente o módulo pai `Detector` oferece API pública ao restante da engine.**
 
-O Detector Local registra fatos observados **pela interface pública do Inventário**. Não lê banco diretamente, não acessa Google Drive, não decide conflitos, não realiza upload/download e não atualiza baseline.
+O Detector Local pode registrar fatos observados **pela interface pública do Inventário**, sob coordenação da fachada. O sinal entregue ao pai contém estado suficiente para distinguir fato persistido de observação pendente; somente o pai publica ao Orquestrador. Não lê banco diretamente, não acessa Google Drive, não decide conflitos, não realiza upload/download e não atualiza baseline.
 
 ## Responsabilidades e exclusões
 
@@ -15,7 +15,7 @@ O Detector Local registra fatos observados **pela interface pública do Inventá
 | Acompanhar mudanças por filesystem watcher | Evento é pista, não prova de remoção |
 | Observar criação, modificação, renomeação e movimentação | Não escolher versões vencedoras |
 | Registrar metadados locais via API do Inventário | Não acessar SQLite diretamente |
-| Notificar Orquestrador sobre reavaliações | Não inserir operações na fila nem registrar transferência concluída |
+| Notificar o coordenador `Detector` sobre reavaliações | Não inserir operações na fila nem registrar transferência concluída |
 
 ## Fluxo
 
@@ -23,7 +23,8 @@ O Detector Local registra fatos observados **pela interface pública do Inventá
 flowchart LR
   FS[Filesystem] --> DL[Detector Local]
   DL -->|record_local pela API| INV[Inventário]
-  DL -->|notificações| ORQ[Orquestrador]
+  DL -->|sinais internos| DET[Detector público]
+  DET -->|eventos normalizados| ORQ[Orquestrador]
   ORQ --> AN[Analisador]
   AN -->|consulta| INV
 ```
@@ -33,7 +34,7 @@ flowchart LR
 3. Após o aplicativo permanecer fechado, executar **nova varredura completa** para recuperar alterações feitas sem watcher ativo.
 4. Agregar eventos de mudanças como solicitações de reavaliação; não confiar em caminho ou inode isoladamente para concluir identidade.
 5. Registrar observações confiáveis via `InventoryManager.record_local`, preservando campos não observados e sem modificar baseline.
-6. Notificar o Orquestrador quando houver mudança ou necessidade de reavaliar um escopo. Caso não exista `SyncItemId` conhecido, notificar o escopo, sem fabricar vínculo.
+6. Notificar exclusivamente o **coordenador `Detector`** quando houver mudança ou necessidade de reavaliar um escopo. Caso não exista `SyncItemId` conhecido, notificar o escopo, sem fabricar vínculo.
 
 ## Cobertura e ausência
 
@@ -57,8 +58,8 @@ Um único evento de remoção, erro de permissão, pasta desmontada ou subpasta 
 
 - [Inventário](../../inventory/INTERFACES.md): contrato de observações `record_local`, identidade e presença; armazenamento exclusivo do Inventário.
 - **Metadados locais:** `LocalFile` pertence ao componente de metadados do filesystem, cujo contrato final ainda depende de definição.
-- **Orquestrador:** consome notificações tipadas; seu contrato de recebimento não autoriza operações físicas pelo detector.
-- **Detector Remoto:** independente, a documentar em `../remote/`; não é dependência de construção, teste ou execução do Local.
+- **Detector pai:** recebe sinais internos e publica eventos tipados ao Orquestrador; o Local não conhece o Orquestrador e sua API não é reexportada pela engine.
+- **Detector Remoto:** implementação interna independente, a documentar em `../remote/`; não é dependência de construção, teste ou execução do Local.
 
 ## Invariantes
 
