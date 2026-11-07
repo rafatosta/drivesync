@@ -18,23 +18,17 @@ Este documento define a organização **macro** dos componentes. Não especifica
 
 ## 2. Componentes da engine
 
-### 2.1 Detector (fachada pública e dois componentes internos)
+### 2.1 Detector — fachada, produtores e armazenamento independentes
 
-**Responsabilidade:** oferecer ao Orquestrador **uma única API pública de detecção**, coordenando observações locais e remotas e emitindo eventos normalizados que indicam o que precisa de reavaliação.
+O **Detector** é a única API pública de detecção da engine. Local e Remoto são **produtores independentes**, cada qual com estratégia própria (watcher/varredura local; polling/cursor remoto) e emissão **individual** de eventos para um sink interno. O **Storage** é o terceiro submódulo privado, dono do banco e da **fila de eventos de detecção**; Detector consome somente sua API. São quatro componentes com implementação e testes independentes.
 
-A implementação é composta por **três unidades independentes**:
+**Fluxo:** Local/Remoto → um evento por emissão → Detector → Storage.enqueue; Orquestrador → Detector.take_events → lote que pode conter **eventos locais e remotos simultaneamente**; Orquestrador → Detector.acknowledge(Processed/Discarded) → Storage. Somente o Orquestrador decide descartar, e `stop` não exclui eventos pendentes.
 
-- **Detector (`detectors/`):** fachada pública, controla o ciclo de vida e as solicitações de observação, consolida os sinais internos, fornece status agregado e comunica eventos ao Orquestrador.
-- **Detector Local (`detectors/local/`):** observa filesystem com estrutura, watcher, varreduras, estados e testes próprios.
-- **Detector Remoto (`detectors/remote/`):** observa Google Drive via Google API com estrutura, paginação, cursores e testes próprios.
+Receber alterações de ambos os lados **num único lote não resolve conflitos**; o Orquestrador encaminha itens/escopos à análise, que compara estados/baseline via Inventário. A ordem do lote é de enfileiramento, não necessariamente a sequência causal de mudanças. Storage é banco próprio, distinto do Inventário, e sua localização é **privada de Storage**.
 
-**Visibilidade:** Local e Remoto têm **interfaces internas** usadas pelo Detector, não APIs públicas para o Orquestrador. A interface interna compartilhada, se usada, padroniza apenas o controle mínimo necessário; **não impõe a mesma estrutura de implementação** aos dois filhos. Local e Remoto não precisam conhecer o Orquestrador nem um ao outro.
+O Detector fornece criação, início, parada, observação solicitada, status, reserva de eventos em lote, confirmação e liberação. Não expõe APIs de filhos, não executa operações físicas nem determina políticas de conflito. Cada um dos três filhos é testável com portas fake sem os outros implementados.
 
-**Direção da comunicação:** **Local/Remoto → Detector → Orquestrador**. O objeto público de evento informa sincronização, itens/escopo afetados, motivo e cobertura, sem exigir do Orquestrador interpretação de watcher ou Google Changes. O Orquestrador pode solicitar observação ou consultar status por **um único contrato**. Notificações são sinais para análise, não ordens de upload/download.
-
-Nenhum dos três componentes determina a versão vencedora, executa sincronização física, altera baseline ou conclui operação apenas por detectar mudança. Ausência de observação, erro ou leitura incompleta não comprova exclusão.
-
-Referência: [Detector — README](engine/detectors/README.md), [INTERFACES](engine/detectors/INTERFACES.md).
+Referência: [Detector](engine/detectors/README.md), [API pública](engine/detectors/INTERFACES.md), [Storage](engine/detectors/storage/README.md).
 
 ### 2.2 Inventário (InventoryManager)
 
@@ -131,7 +125,8 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 flowchart TD
     DL["Detector Local interno"]
     DR["Detector Remoto interno"]
-    DET["Detector — API pública"]
+    DET["Detector — única API pública"]
+    S["Storage — fila de eventos privada"]
     O["Orquestrador"]
     A["Analisador"]
     I["Inventário / InventoryManager"]
@@ -139,29 +134,23 @@ flowchart TD
     D["Operador de Download"]
     G["Google API"]
 
-    DL -->|"Sinais internos"| DET
-    DR -->|"Sinais internos"| DET
-    DET -->|"Eventos normalizados"| O
-    O -->|"Controle e solicitação de observação"| DET
-    DL -->|"Observações pela API"| I
-    DR -->|"Observações e eventos pela API"| I
-    DET -->|"Coordena persistência pela API"| I
-
-    O -->|"Solicita processamento e informa políticas"| A
-    A -->|"Resultado ou decisão necessária"| O
-
-    A <-->|"Consulta e confirma estados"| I
-    A -->|"Solicita operação"| U
-    A -->|"Solicita operação"| D
-    U -->|"Resultado verificado"| A
-    D -->|"Resultado verificado"| A
-
-    DR -->|"Observa remoto"| G
-    U -->|"Executa remoto"| G
-    D -->|"Lê remoto"| G
+    DL -->|"evento individual"| DET
+    DR -->|"evento individual"| DET
+    DET <-->|"enqueue, claim_batch, acknowledge"| S
+    O <-->|"take_events lote misto, ack, controle"| DET
+    O -->|"Políticas e processamento"| A
+    A -->|"Resultado e decisão necessária"| O
+    A <-->|"Consulta e confirmação"| I
+    A -->|"Operação autorizada"| U
+    A -->|"Operação autorizada"| D
+    U -->|"Resultado"| A
+    D -->|"Resultado"| A
+    DR -->|"Consulta remota"| G
+    U -->|"Escrita remota"| G
+    D -->|"Leitura remota"| G
 ```
 
-O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. O Detector é a única API pública para o Orquestrador; seus filhos Local e Remoto enviam sinais apenas à fachada. O Orquestrador estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
+O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. O Detector é a única API pública para o Orquestrador; Local e Remoto enviam eventos individuais à fachada, e Storage persiste a fila de notificações por contrato privado. O Orquestrador estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
 
 ## 4. Princípios de comunicação
 
