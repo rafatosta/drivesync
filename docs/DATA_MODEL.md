@@ -1,314 +1,369 @@
-# DATA MODEL — Modelo de dados desejado do DriveSync
+# Data Model — DriveSync
 
-> **Natureza:** especificação arquitetural proposta, ainda não implementada.
-> **Escopo:** organização, identidade, persistência e contratos dos dados. Não redefine os algoritmos de download, movimentação, renomeação ou exclusão.
-> **Referência do estado atual:** `docs/architecture/DATA_MODEL.md` na branch de levantamento `docs/current-architecture`, além do código-fonte. Em caso de divergência, verificar o código.
->
-> **Regra de interpretação:** as decisões firmadas estão indicadas como **Definido**; nomes, campos ou detalhes ainda sujeitos à auditoria aparecem como **A validar**. Este documento não é autorização para modificar a engine.
+## 1. Visão geral
 
-## 1. Objetivo
+O DriveSync utiliza o Google Drive como referência canônica para a identidade e a estrutura remota dos arquivos. Cada pasta local configurada é uma projeção gerenciada de uma pasta remota. Alterações locais e remotas são observadas e registradas sem perda de identidade.
 
-O Google Drive continua sendo a referência canônica da identidade e da árvore remota; a pasta local é uma projeção gerenciada, mas alterações locais legítimas precisam ser reconhecidas e preservadas. A proposta é substituir inventários de itens fragmentados por **um inventário lógico unificado por sincronização**, gerenciado por um futuro `InventoryManager`.
+O inventário é organizado por **sincronização** (um par entre conta, pasta remota e pasta local). Cada arquivo ou diretório é representado por **um único `SyncItem`**, que reúne identidade, metadados remotos, metadados locais, último estado confirmado e condição de sincronização.
 
-Cada arquivo ou diretório corresponde a **um `SyncItem`**. O mesmo registro representa:
-- identidade do objeto;
-- última observação remota;
-- última observação local;
-- último estado confirmado em cada lado (baseline);
-- condição atual de análise/sincronização, incluindo conflito quando pertinente.
+A aplicação mantém:
+- cadastro global de contas e configurações de pastas;
+- armazenamento protegido das credenciais;
+- inventário SQLite próprio de cada pasta sincronizada;
+- histórico de atividades próprio de cada sincronização;
+- preferências e diagnósticos gerais do aplicativo.
 
-O modelo deve permitir comparar **anterior × remoto atual × local atual** sem presumir que uma data mais recente implica prevalência de um dos lados. A comparação alimentará futuras decisões; **as políticas e a execução dessas decisões não pertencem ao armazenamento**.
+O `InventoryManager` encapsula as consultas, gravações, validações e comparações do inventário. Outros componentes utilizam sua API, sem acesso direto às tabelas.
 
-## 2. Estado atual × estado desejado
+## 2. Localização dos dados
 
-| Tema | Atual (conforme levantamento) | Desejado | Situação |
-| --- | --- | --- | --- |
-| Estado local | `local-state.sqlite3`, tabela `state_scopes` com `Document` serializado em `payload BLOB` | Uma linha relacional por `SyncItem`; sem documento serializado em BLOB ou JSON/TEXT | **Definido** |
-| Inventário remoto | `remote-detector.sqlite3`, `scopes.inventory BLOB` com mapa de metadados remotos | Metadados de itens reunidos no `SyncItem`, sem segundo inventário de itens concorrente ou mapa serializado | **Definido** |
-| Identidade | `TrackedItem.id`, `remote_id` e inventário remoto separados | Identidade lógica interna única, associação inequívoca ao ID do Drive quando existente | **Definido** |
-| Comparação | `confirmed` e `observed`, mais observações remotas em outro armazenamento | Estados remoto/local observados e baseline confirmado, distinguíveis | **Definido** |
-| Conflitos | Estado parcial na engine e `conflicts.json` de apresentação | Condição do próprio item; sem tabela de conflitos para o inventário | **Definido** |
-| Histórico | `history.sqlite3` global com filtros de conta e `notice BLOB` serializado | Histórico relacional consultável por evento, associado à sincronização e separado dos estados atuais | **Definido** |
-| Recuperação de download | Checkpoints auxiliares em `download/resume.rs` | Preservar garantias e comportamento; avaliar localização sem reescrever mecanismo | **Definido** |
-| Cursor e eventos remotos | Diário remoto com geração, cursor e eventos com `payload BLOB` | Preservar cursor e entrega/acknowledgment, mas representar dados estruturados de eventos por colunas/linhas, sem payload serializado; localização final a estudar | **A validar** |
-| Persistência de contas | `accounts.json` global | Permanece cadastro global de contas e pares de pastas | **Definido** |
-| Credenciais | Secret Service/keyring | Permanece fora do inventário e da pasta sincronizada | **Definido** |
-| Preferências gerais | `preferences.ini` global | Permanecem configuração global | **Definido** |
+```text
+<pasta-local-sincronizada>/
+├── .drivesync/
+│   ├── inventory.sqlite3      # Identidade, estados, cursor e eventos pendentes
+│   └── history.sqlite3        # Atividades desta sincronização
+├── ...
+└── arquivos-do-usuario
+```
 
-A unificação refere-se **aos registros de arquivos e diretórios**, não à eliminação indiscriminada de todos os mecanismos de persistência do projeto.
+`.drivesync/` é reservado ao DriveSync: não faz parte do conteúdo sincronizado, não é enviado ao Google Drive e é ignorado pelo observador local. O diretório e os bancos são protegidos com permissões restritas e operações de escrita transacionais.
 
-### 2.1 Regra obrigatória: dados estruturados não são BLOBs
+Dados globais seguem os mecanismos próprios da aplicação:
 
-**Definido:** SQLite será utilizado como **banco relacional**. É proibido armazenar inventários, coleções de itens, snapshots, históricos, eventos, filas ou outras **estruturas de dados completas serializadas em BLOB** (JSON, bincode ou equivalente).
+| Dados | Armazenamento |
+| --- | --- |
+| Contas, descrições e pares de pastas | `$XDG_DATA_HOME/drivesync/accounts.json` |
+| Tokens e credenciais OAuth | Secret Service/keyring |
+| Preferências gerais | `$XDG_CONFIG_HOME/drivesync/preferences.ini` |
+| Diagnósticos técnicos | Logs estruturados do aplicativo, com rotação e retenção limitada |
 
-- Cada `SyncItem` deve ocupar sua própria linha e ter seus atributos acessíveis em colunas tipadas.
-- Registros operacionais e históricos, quando persistidos em SQLite, também devem ser consultáveis e atualizáveis **individualmente**, com colunas próprias, chaves e índices pertinentes.
-- Consultar ou atualizar um único arquivo **não pode exigir ler, desserializar, modificar e regravar o inventário inteiro**.
-- Evitar encapsular uma estrutura completa em `TEXT` com JSON ou outro formato também: trocar BLOB por JSON em TEXT **não satisfaz** o requisito relacional.
-- Um `BLOB` é permitido apenas para um **valor binário individual**, com necessidade funcional demonstrável (por exemplo, bytes de um único nome de arquivo Unix não representável em UTF-8). **Não é uma exceção para serializar objetos ou listas.**
-- Dados que são naturalmente escalares devem utilizar `TEXT`, `INTEGER`, `REAL` ou outro tipo SQLite adequado. Relações devem utilizar chaves e índices, não documentos embutidos.
+Caminhos XDG são resolvidos no contexto da instalação, inclusive em Flatpak. O cadastro global identifica a conta e a pasta configuradas, enquanto cada banco local identifica e valida a sincronização à qual pertence. Credenciais nunca são gravadas na pasta sincronizada.
 
-Essa regra se aplica ao **modelo de persistência desejado** do inventário, histórico e diário de eventos. Não implica converter o cadastro global `accounts.json` ou as preferências `preferences.ini` em SQLite, nem alterar o formato interno dos **checkpoints de transferência** nesta fase: estes são mecanismos operacionais próprios e serão avaliados separadamente. A regra proíbe especificamente o uso de BLOB para guardar estruturas de dados completas em bancos relacionais.
+## 3. Entidade central: SyncItem
 
-## 3. Entidade central: `SyncItem`
-
-**Definido:** há uma entidade lógica por arquivo **ou** diretório, identificada por um ID interno estável. As representações local e remota podem estar ausentes ou ainda não confirmadas; a ausência de informação não prova exclusão.
-
-Modelo conceitual (não é uma assinatura Rust definitiva):
+`SyncItem` representa **arquivo** ou **diretório**, compartilhando o mesmo contrato e a mesma tabela. Possui uma identidade lógica interna imutável, independente de nome, caminho ou inode.
 
 ```rust
 struct SyncItem {
     id: SyncItemId,
-    kind: ItemKind,                  // File | Directory
-    remote: Option<RemoteSnapshot>, // observação remota conhecida
-    local: Option<LocalSnapshot>,   // observação local conhecida
-    baseline: Option<ConfirmedState>,
-    state: ItemSyncState,
+    kind: ItemKind,
+    remote: RemoteSnapshot,
+    local: LocalSnapshot,
+    baseline: ConfirmedState,
+    status: SyncStatus,
 }
 ```
 
-### 3.1 Identidade e escopo
+Os snapshots representam fatos observados, inclusive situações em que um lado ainda não foi observado. `RemoteSnapshot` e `LocalSnapshot` não são cadastros independentes: são partes do **mesmo item**.
 
-- `item_id`: chave interna imutável; existe inclusive antes do primeiro upload.
-- `kind`: arquivo ou diretório.
-- `remote_id`: ID do Google Drive, nullable até haver associação remota comprovada.
-- `account` e `sync_root`: associação do item à conta e ao **par de pastas** configurado; a identidade remota deve ser única **no escopo aplicável**, considerando a conta/provedor.
-- A identidade do filesystem (quando disponível) é **evidência auxiliar**, não substitui `item_id` nem `remote_id`; inode pode mudar numa edição.
-- Nome e caminho não são identidade. Dois nomes iguais não justificam associar automaticamente dois objetos.
-- Diretórios também são `SyncItem`; referências a pais identificam a hierarquia. Caminhos absolutos podem ser derivados, não precisam ser a identidade persistida.
+### 3.1 Identidade
 
-### 3.2 Metadados remotos observados
+| Campo | Tipo lógico | Descrição |
+| --- | --- | --- |
+| `item_id` | ID interno | Chave imutável do item na sincronização |
+| `kind` | `file / directory` | Tipo do objeto |
+| `remote_id` | ID do Google Drive, opcional | Identidade remota confirmada; ausente antes da associação/upload |
+| `remote_parent_id` | ID do Google Drive, opcional | Diretório pai remoto conhecido |
+| `local_parent_item_id` | `SyncItemId`, opcional | Diretório pai na árvore local |
 
-Campos candidatos a validar com os consumidores reais:
-`remote_id`, `remote_name`, `remote_parent_id`, `remote_mime_type`,
-`remote_version`, `remote_checksum` (quando disponível),
-`remote_size` (quando disponível), `remote_modified_at`,
-`remote_presence` (conhecido/presente, ausente comprovado, desconhecido),
-`remote_trashed` (quando confirmado).
+A unicidade de `remote_id` é garantida dentro do banco da sincronização. O ID interno não muda ao renomear, mover, baixar ou enviar conteúdo. O `remote_id` não é substituído por nome/caminho. O inode ou equivalente local é somente evidência auxiliar e pode mudar após o salvamento de um arquivo.
 
-Metadados não suportados para determinados tipos de arquivo ou respostas da API são opcionais. O modelo não pode exigir checksum ou data que o Drive não forneceu.
+A localização é derivada da raiz configurada e da cadeia de diretórios pais. As relações de pais local e remoto são mantidas separadamente porque podem divergir enquanto há mudanças pendentes.
 
-### 3.3 Metadados locais observados
+### 3.2 Estado remoto observado
 
-Campos candidatos:
-`local_parent_id`, `local_name` (capaz de preservar nomes Unix não UTF-8),
-`local_identity` (quando verificável), `local_size`, `local_checksum`,
-`local_modified_at`, `local_presence`.
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `remote_presence` | enum | `unknown`, `present` ou `absent_confirmed` |
+| `remote_name` | TEXT, opcional | Nome apresentado pelo Drive |
+| `remote_mime_type` | TEXT, opcional | Tipo MIME |
+| `remote_version` | TEXT, opcional | Versão informada pelo provedor |
+| `remote_checksum` | TEXT, opcional | Assinatura de conteúdo, quando disponibilizada |
+| `remote_size` | INTEGER, opcional | Tamanho em bytes, quando disponibilizado |
+| `remote_modified_at` | TEXT, opcional | Timestamp do Drive em formato normalizado |
+| `remote_trashed` | INTEGER, opcional | Situação da lixeira, quando conhecida |
 
-O caminho local completo decorre da raiz sincronizada e da hierarquia; qualquer caminho persistido deve ser tratado como localização, não identidade. Estado de download **parcial** não equivale a item local confirmado.
+O `remote_id` e `remote_parent_id` integram a identidade/hierarquia. Campos opcionais permanecem nulos quando o provedor não os informa. A falta de metadados não constitui prova de exclusão.
 
-### 3.4 Baseline (última sincronização confirmada)
+### 3.3 Estado local observado
 
-Manter evidência suficiente para identificar separadamente mudanças de:
-- **conteúdo** (versão, assinatura e/ou equivalentes validados);
-- **nome**;
-- **diretório pai / localização**;
-- **presença / exclusão confirmada**.
+| Campo | Tipo | Descrição |
+| --- | --- | --- |
+| `local_presence` | enum | `unknown`, `present` ou `absent_confirmed` |
+| `local_name` | BLOB, opcional | Bytes de **um único nome** de arquivo Unix |
+| `local_size` | INTEGER, opcional | Tamanho em bytes |
+| `local_checksum` | TEXT, opcional | Assinatura verificada do conteúdo |
+| `local_modified_ns` | INTEGER, opcional | Timestamp local em nanossegundos |
+| `local_device` | INTEGER, opcional | Dispositivo, como evidência auxiliar |
+| `local_inode` | INTEGER, opcional | Inode, como evidência auxiliar |
 
-O baseline pode precisar de valores anteriores **dos dois lados**, pois `remote_version` e `local_checksum` não são necessariamente comparáveis entre si.
+Um arquivo parcial de download não é marcado como presença local confirmada. O caminho completo não é identidade do objeto.
 
-**Não** sobrescrever o baseline a cada observação. Ele só avança após uma operação efetivamente concluída e verificada. Deve ser possível representar `baseline = desconhecido` para itens nunca sincronizados.
+### 3.4 Último estado confirmado (baseline)
 
-### 3.5 Estado do item e conflitos
+O baseline preserva a situação efetivamente sincronizada, separada das observações atuais. Os atributos de baseline cobrem:
+- presença anterior em cada lado;
+- nome e diretório pai anteriores em cada lado;
+- versão remota e assinatura local anteriores;
+- instante da última confirmação.
 
-Um campo `sync_status` pode expressar situações como `synced`, `pending_download`,
-`pending_upload`, `pending_reconciliation`, `conflict` ou `error`.
-**Nomes e transições exatas: a validar.**
+O baseline é atualizado **apenas após operação concluída e verificada**. Uma observação local ou remota não o modifica automaticamente. Um item ainda não sincronizado pode não possuir baseline.
 
-O conflito é um estado/resultado associado ao `SyncItem`, **não uma entidade separada obrigatória**. Uma razão ou categoria pode ser guardada no próprio item, se necessária. Falha de rede não é automaticamente conflito de conteúdo.
+A comparação entre baseline, estado remoto observado e estado local observado permite identificar alterações de conteúdo, nome, localização e presença. Datas são evidências auxiliares: a versão mais recente no relógio não prevalece automaticamente quando ambos os lados mudaram.
 
-É necessário distinguir, no modelo ou na API, ao menos:
-1. presença confirmada;
-2. ausência **comprovada**;
-3. desconhecimento/não observado.
+### 3.5 Estado de sincronização
 
-Duas mudanças em lados distintos não significam necessariamente conflito: renomeação remota e edição de conteúdo local podem ser compatíveis. O armazenamento registra fatos; a política de resolução fica para uma etapa posterior.
+`sync_status` descreve a condição registrada do item:
 
-## 4. Persistência relacional pretendida
+| Valor | Significado |
+| --- | --- |
+| `pending_reconciliation` | Há observações a analisar |
+| `pending_download` | Materialização/atualização local pendente |
+| `pending_upload` | Envio remoto pendente |
+| `synced` | Estados confirmados e equivalentes segundo a verificação |
+| `conflict` | Divergência que exige decisão ou política de resolução |
+| `error` | Falha operacional registrada |
 
-**Definido:** usar SQLite relacional, com **uma linha por `SyncItem`**, e não um `Document` inteiro, mapa de arquivos ou qualquer estrutura de dados serializada em BLOB (ou JSON em TEXT). **A consulta e a atualização são por item e por campo**, não por regravação de snapshots globais.
+Uma categoria opcional `conflict_reason` descreve o conflito no próprio `SyncItem`. **Não existe tabela de conflitos**. Erros de rede não são automaticamente conflitos.
 
-A opção inicial preferida é **uma tabela central `sync_items`**, com colunas agrupadas logicamente em identidade, remoto atual, local atual, baseline e estado. Não criar tabelas `remote_state`, `local_state`, `baseline` ou `conflicts` apenas para dividir esses grupos. Tabelas operacionais distintas são possíveis quando seus dados não representarem diretamente o estado atual de um item. **Simplicidade não significa transformar eventos, listas ou históricos em uma única coluna serializada:** quando necessário, esses registros têm linhas relacionais próprias.
+`unknown`, `present` e `absent_confirmed` distinguem falta de observação, presença e exclusão efetivamente comprovada. O modelo não deduz exclusão a partir de falha de leitura, perda de conexão ou ausência de uma pasta montada.
 
-### 4.1 Esquema conceitual — não executar como migração
+## 4. Bancos e modelo relacional
+
+### 4.1 Banco `inventory.sqlite3`
+
+Contém as tabelas `sync_info`, `sync_items`, `remote_cursor` e `remote_events`.
+
+- **`sync_info`**: identifica a sincronização e o estado de sua inicialização.
+- **`sync_items`**: um registro por arquivo ou diretório, com estado remoto, local, baseline e status.
+- **`remote_cursor`**: checkpoint da leitura de mudanças no Drive, incluindo geração e corpus.
+- **`remote_events`**: eventos remotos pendentes de processamento e confirmação individual.
+
+A existência de `remote_cursor` e `remote_events` não cria um segundo inventário de arquivos. Essas tabelas armazenam o protocolo de observação e entrega de eventos. Publicar cursor e eventos de uma mesma verificação é uma operação transacional; avançar o cursor não implica reconhecer eventos como processados.
+
+#### Esquema SQLite
 
 ```sql
--- Esboço para revisão de tipos, nulabilidade, unicidade e consumidores.
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE sync_info (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    oauth_client_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    remote_root_id TEXT NOT NULL,
+    initial_download_complete INTEGER NOT NULL DEFAULT 0
+        CHECK (initial_download_complete IN (0, 1)),
+    generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)
+);
+
 CREATE TABLE sync_items (
     item_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('file', 'directory')),
-    remote_id TEXT,
+    remote_id TEXT UNIQUE,
 
     remote_parent_id TEXT,
     remote_name TEXT,
+    remote_mime_type TEXT,
     remote_version TEXT,
     remote_checksum TEXT,
-    remote_modified_at INTEGER,
-    remote_presence TEXT NOT NULL,
+    remote_size INTEGER CHECK (remote_size IS NULL OR remote_size >= 0),
+    remote_modified_at TEXT,
+    remote_trashed INTEGER CHECK (remote_trashed IS NULL OR remote_trashed IN (0, 1)),
+    remote_presence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (remote_presence IN ('unknown', 'present', 'absent_confirmed')),
 
-    local_parent_item_id TEXT,
+    local_parent_item_id TEXT REFERENCES sync_items(item_id),
     local_name BLOB,
-    local_identity TEXT,
-    local_size INTEGER,
+    local_size INTEGER CHECK (local_size IS NULL OR local_size >= 0),
     local_checksum TEXT,
-    local_modified_at INTEGER,
-    local_presence TEXT NOT NULL,
+    local_modified_ns INTEGER,
+    local_device INTEGER,
+    local_inode INTEGER,
+    local_presence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (local_presence IN ('unknown', 'present', 'absent_confirmed')),
 
-    base_remote_version TEXT,
-    base_local_version TEXT,
+    baseline_known INTEGER NOT NULL DEFAULT 0 CHECK (baseline_known IN (0, 1)),
+    base_remote_presence TEXT CHECK (base_remote_presence IN ('unknown', 'present', 'absent_confirmed')),
+    base_local_presence TEXT CHECK (base_local_presence IN ('unknown', 'present', 'absent_confirmed')),
     base_remote_name TEXT,
     base_local_name BLOB,
     base_remote_parent_id TEXT,
-    base_local_parent_item_id TEXT,
-    base_remote_presence TEXT,
-    base_local_presence TEXT,
+    base_local_parent_item_id TEXT REFERENCES sync_items(item_id),
+    base_remote_version TEXT,
+    base_local_checksum TEXT,
 
-    sync_status TEXT NOT NULL,
+    sync_status TEXT NOT NULL DEFAULT 'pending_reconciliation'
+        CHECK (sync_status IN (
+            'pending_reconciliation', 'pending_download', 'pending_upload',
+            'synced', 'conflict', 'error'
+        )),
     conflict_reason TEXT,
-    last_checked_at INTEGER,
-    last_synced_at INTEGER,
-
-    FOREIGN KEY (local_parent_item_id) REFERENCES sync_items(item_id),
-    FOREIGN KEY (base_local_parent_item_id) REFERENCES sync_items(item_id)
+    last_checked_at TEXT,
+    last_synced_at TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0)
 );
-CREATE UNIQUE INDEX idx_sync_items_remote_id
-    ON sync_items(remote_id) WHERE remote_id IS NOT NULL;
+
+CREATE INDEX idx_items_remote_parent ON sync_items(remote_parent_id);
+CREATE INDEX idx_items_local_parent ON sync_items(local_parent_item_id);
+CREATE INDEX idx_items_status ON sync_items(sync_status);
+
+CREATE TABLE remote_cursor (
+    corpus TEXT PRIMARY KEY,
+    cursor TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0)
+);
+
+CREATE TABLE remote_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    corpus TEXT NOT NULL REFERENCES remote_cursor(corpus),
+    remote_id TEXT,
+    event_kind TEXT NOT NULL,
+    observed_version TEXT,
+    observed_at TEXT NOT NULL,
+    processed_at TEXT
+);
+
+CREATE INDEX idx_remote_events_pending
+    ON remote_events(corpus, event_id)
+    WHERE processed_at IS NULL;
 ```
 
-**A validar antes de implementar:** completar atributos necessários (inclusive tipo MIME/tamanho remoto, versões/assinaturas locais e presença no baseline), identificação da raiz, representação dos estados desconhecidos, associação entre pastas e IDs, invariantes de pais, índices e versão do esquema. A restrição acima presume **um banco isolado por sincronização**; se esse escopo mudar, a unicidade deverá incluir a identidade da conta/provedor.
+O modelo preserva os campos de estado como colunas individualmente consultáveis. Informações adicionais de evento necessárias à reavaliação são representadas em **colunas próprias**; um evento pode ser uma indicação para consultar novamente os metadados remotos pelo ID.
 
-**Exceção restrita:** `local_name BLOB` e `base_local_name BLOB` representam **somente os bytes de um nome de arquivo Unix individual**, quando a preservação exata do nome exigir armazenamento binário. Não carregam objetos, listas, mapas nem JSON. Qualquer outro BLOB proposto deverá ter justificativa igualmente específica; caso contrário, usar colunas escalares e relacionamentos.
+`sync_info` valida o vínculo do banco com o par de pastas/conta configurado. A versão física do esquema é controlada pelo `PRAGMA user_version` com validação na abertura. Atualizações por item utilizam `revision` como precondição otimista e transações SQLite.
 
-### 4.2 Diagrama lógico
+#### Diagrama entidade-relacionamento
 
 ```mermaid
 erDiagram
+    SYNC_INFO {
+        INTEGER singleton PK
+        TEXT account_id
+        TEXT remote_root_id
+        INTEGER generation
+    }
     SYNC_ITEMS {
         TEXT item_id PK
         TEXT kind
         TEXT remote_id UK
         TEXT remote_parent_id
-        TEXT remote_name
-        TEXT remote_version
-        TEXT remote_presence
         TEXT local_parent_item_id FK
         BLOB local_name
+        TEXT remote_presence
         TEXT local_presence
-        TEXT base_remote_version
-        TEXT base_local_version
+        INTEGER baseline_known
         TEXT sync_status
+        INTEGER revision
+    }
+    REMOTE_CURSOR {
+        TEXT corpus PK
+        TEXT cursor
+        INTEGER generation
+    }
+    REMOTE_EVENTS {
+        INTEGER event_id PK
+        TEXT corpus FK
+        TEXT remote_id
+        TEXT event_kind
+        TEXT processed_at
     }
     SYNC_ITEMS o|--o{ SYNC_ITEMS : "diretorio pai local"
+    REMOTE_CURSOR ||--o{ REMOTE_EVENTS : "entregas"
 ```
 
-O diagrama resume a tabela central; não implica que o conjunto de colunas já esteja fechado.
+### 4.2 Banco `history.sqlite3`
 
-### 4.3 Garantias do repositório
+O histórico é **da sincronização**, não uma timeline global compartilhada por todas as contas. Cada acontecimento relevante ocupa uma linha, com campos consultáveis. O histórico não armazena snapshots completos e não define o estado atual do inventário.
 
-- Unicidade de identidade interna e associação remota; não associar arquivos só por nome.
-- Escritas **atômicas** e rejeição de atualizações obsoletas/concorrentes; preservar ou substituir de modo comprovadamente equivalente as garantias atuais de geração/CAS.
-- Confirmação do baseline somente após verificar o resultado físico da operação.
-- Persistência de estado intermediário suficiente para recuperação segura.
-- Ausência ou falha de leitura do banco **não autoriza exclusões de arquivos**.
-- A consulta e alteração de `sync_items` devem ocorrer por uma API do `InventoryManager`; consumidores não consultam SQL diretamente.
-- Operações sobre um item não reserializam nem regravam os demais itens; alterações de estado, eventos e histórico são individualizáveis em SQL.
+```sql
+CREATE TABLE activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT,
+    operation TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('local', 'remote', 'system')),
+    result TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    description TEXT
+);
 
-## 5. Localização e ciclo de vida dos dados
-
-### 5.1 Por pasta sincronizada
-
-**Definido:** cada **par remoto/local configurado** possui seu próprio estado e histórico, sob diretório oculto e excluído de observação/sincronização:
-
-```text
-<pasta-local>/
-├── .drivesync/                 # Dados internos; não enviar ao Google Drive
-│   ├── inventory.sqlite3      # Inventário relacional (nome proposto)
-│   └── history.sqlite3        # Histórico desta sincronização (nome proposto)
-└── ...                        # Arquivos do usuário
+CREATE INDEX idx_activity_time ON activity(occurred_at, id);
+CREATE INDEX idx_activity_item ON activity(item_id, id);
 ```
 
-O diretório `.drivesync/` não pode produzir eventos de upload/download nem entrar no inventário de conteúdo do usuário. Os arquivos SQLite devem ter permissões adequadas, controle de concorrência e fechamento consistente. As localizações finais de cursor/eventos remotos e checkpoints devem ser decididas após auditar suas dependências; **não mover automaticamente** um diário ou checkpoint que funciona.
+A referência `item_id` é uma **identidade lógica**: `history.sqlite3` e `inventory.sqlite3` são arquivos separados, portanto não se declara uma chave estrangeira direta entre eles. Ao consultar detalhes, a aplicação pode procurar o item correspondente no inventário; atividades permanecem legíveis mesmo quando o item deixa de existir.
 
-O histórico existente já contém campos de conta e filtros. A mudança desejada é o **isolamento físico/lógico por sincronização**, não perder seus vínculos de conta. O histórico não precisa ser parte do `SyncItem`, mas pode referenciá-lo para diagnóstico e apresentação. Seus eventos devem ser **registros relacionais próprios**, não objetos `StoredNotice` inteiros serializados em BLOB. Os campos definitivos serão derivados das informações realmente utilizadas.
+Registros de diagnóstico técnico, com componente, operação, correlação e erro sanitizado, pertencem aos logs gerais e não à timeline de atividades. Nenhum armazenamento registra credenciais ou tokens.
 
-### 5.2 Dados globais do aplicativo
+## 5. Regras de representação relacional
 
-Continuam fora da pasta sincronizada:
-- cadastro de contas, descrições e pares de pastas (`accounts.json`);
-- credenciais OAuth (Secret Service/keyring, jamais no inventário);
-- preferências gerais (`preferences.ini`);
-- logs técnicos de diagnóstico do aplicativo, com limites de retenção e sem segredos.
+Os bancos SQLite armazenam cada item, evento ou atividade em **linha própria**, com atributos acessíveis por colunas.
 
-Histórico de atividade de uma conta/sincronização e **logs técnicos do aplicativo** são conceitos diferentes.
+- Consultar ou alterar um arquivo não requer carregar nem regravar todos os itens do inventário.
+- Listas, mapas, objetos Rust, snapshots, eventos e históricos são modelados por colunas e relacionamentos; não são serializados inteiros em BLOB, JSON/TEXT ou outro campo opaco.
+- `BLOB` atende somente a **valores binários individuais** que exigem preservação exata, como os bytes de um único nome de arquivo Unix. Não guarda estruturas de dados.
+- Relações, unicidade, estados permitidos e integridade são expressos por chaves, índices, `CHECK` e validações do `InventoryManager`.
+- Gravações de observações, confirmações e progressão de eventos respeitam transações e condições de versão.
+- O estado remoto e o estado local não são duplicados em cadastros de itens concorrentes.
 
-### 5.3 Inventário ausente ou pasta inexistente
+## 6. API de dados: InventoryManager
 
-- **Primeira configuração sem inventário + pasta local vazia:** iniciar o download inicial existente.
-- **Sem inventário + pasta local com arquivos de usuário:** **não iniciar upload, download, sobrescrita nem exclusão**; impedir a sincronização inicial e informar que é necessária uma pasta vazia.
-- **Inventário válido + pasta já sincronizada:** retomada normal com verificação dos estados.
-- **Pasta sincronizada ausente ou inacessível:** suspender operações; não interpretar a ausência da pasta como exclusão remota.
+`InventoryManager` é a interface interna única para leitura, atualização e análise do inventário. Ele conhece as tabelas e os contratos de persistência; consumidores da engine não executam SQL diretamente.
 
-A pré-análise e resolução interativa de diretórios locais não vazios (usar remoto, usar local, manter ambos, mesclar) é **evolução futura**, fora da primeira versão estável.
+Operações de domínio disponibilizadas pela interface:
 
-## 6. InventoryManager — responsabilidade de dados
+| Operação | Resultado |
+| --- | --- |
+| Buscar item por `item_id` | `SyncItem` |
+| Buscar item por `remote_id` | `SyncItem` ou ausência de registro |
+| Registrar observação remota | Inserção/atualização do mesmo item lógico |
+| Registrar observação local | Atualização dos campos locais |
+| Confirmar operação verificada | Atualização atômica dos campos confirmados e baseline |
+| Consultar divergências | Comparação entre baseline, remoto atual e local atual |
+| Consultar itens por estado | Coleção paginada/iterável de `SyncItem` |
+| Registrar e confirmar evento remoto | Entrega e acknowledgment duráveis |
 
-**Definido:** primeiro especificar/implementar e testar um módulo `inventory/` independente. Só depois adaptar gradualmente os consumidores atuais; reorganização de orquestrador, executores, upload e reconciliador é posterior.
+A API garante validação de identidade e associação de itens, controle de concorrência, segurança transacional e erros explícitos para estados obsoletos ou incompatíveis.
 
-O módulo:
-- é a **única interface de acesso ao inventário**, ocultando SQL e detalhes do esquema;
-- registra e consulta `SyncItem` por identidade e associação remota;
-- recebe observações remotas/locais e resultados **verificados** de operações;
-- atualiza snapshots e baseline de maneira consistente;
-- informa diferenças entre base, remoto e local, sem executar operações físicas;
-- pode informar divergência ou potencial conflito, sem escolher a resolução.
+O módulo não faz download, upload, renomeação, movimentação, exclusão física ou autenticação. A análise dos dados não escolhe automaticamente qual versão deve prevalecer: a coordenação e a política de resolução são responsabilidades dos componentes de execução.
 
-Exemplos **conceituais**, ainda não assinaturas definitivas:
+## 7. Ciclo de vida dos dados
 
-```text
-get(item_id) -> SyncItem
-find_by_remote_id(remote_id) -> SyncItem?
-register_remote(observation) -> SyncItem
-update_local(item_id, observation) -> SyncItem
-confirm_download(item_id, verified_result) -> SyncItem
-analyze(item_id) -> ItemAnalysis
-```
+### 7.1 Sincronização inicial
 
-O `InventoryManager` **não** transfere conteúdo, move arquivos, renomeia, apaga, decide políticas nem administra autenticação. Suas operações de escrita devem validar IDs, precondições e versões. Um download não deve ser considerado confirmado pelo simples fato de uma função ter retornado sem verificar as condições necessárias.
+Uma pasta local **vazia** pode iniciar a sincronização inicial:
 
-## 7. Preservação das funcionalidades existentes
+1. Validar conta, par de pastas e diretório local.
+2. Criar o banco da sincronização e registrar o escopo em `sync_info`.
+3. Registrar cada item remoto conhecido em `sync_items`, inicialmente sem materialização local confirmada.
+4. Executar o download por meio dos mecanismos de transferência.
+5. Após instalação e verificação, preencher a representação local e confirmar o baseline **no mesmo `SyncItem`**.
+6. Registrar atividades relevantes no histórico e marcar a conclusão inicial quando a árvore exigida estiver confirmada.
 
-A primeira refatoração pretende alterar **somente os mecanismos de armazenamento e acesso ao inventário**, sem reimplementar as operações físicas já existentes.
+A pasta de metadados gerada pelo próprio aplicativo não conta como conteúdo de usuário na verificação de pasta vazia.
 
-Precisam permanecer corretos, conforme os testes pertinentes:
-- download inicial e incremental;
-- interrupção e retomada de downloads, inclusive após perda de conexão/reinício;
-- verificação de integridade e publicação segura;
-- renomeação e movimentação de arquivos/diretórios;
-- exclusões remotas comprovadas, sem perdas acidentais;
-- atualização de hierarquia e associação estável ao ID remoto;
-- continuidade dos eventos pendentes e confirmações.
+### 7.2 Interrupções e reinício
 
-Mudanças necessárias nas chamadas à persistência são permitidas; mudanças não solicitadas no comportamento não são. Não presumir que a existência de teste automatizado equivalha à validação real com Drive/Flatpak. A base atual tem validação local/simulada documentada e lacunas de integração real.
+Transferências interrompidas preservam seus checkpoints operacionais e não são declaradas concluídas no inventário. O mecanismo existente de retomada de download mantém suas próprias garantias. O inventário confirma somente resultados verificados.
 
-## 8. Decisões ainda pendentes — não implementar por suposição
+Cursor remoto e eventos ainda não processados permanecem duráveis até seu reconhecimento. Uma falha de leitura, acesso ou conexão não é tratada como exclusão remota/local.
 
-1. Inventário exato de campos do `SyncItem`: origem, consumidores, nulabilidade, formato e retenção do baseline.
-2. Modelo final de presença/ausência/observação inconclusiva e tipos de `sync_status`.
-3. Identidade e relações de pais quando remoto e local divergirem, inclusive árvores movimentadas.
-4. Destino e relação entre `remote-detector.sqlite3` (cursor/eventos), o novo inventário e o banco portátil; definir colunas relacionais para eventos, sem serialização de estruturas.
-5. Local e ciclo de vida dos checkpoints de download; separação entre transferência parcial e item confirmado.
-6. Esquema definitivo, índices, concorrência, escopo/versão e política de abertura de banco ausente ou incompatível.
-7. Retenção e **campos relacionais** do histórico por sincronização, sem `notice BLOB` serializado; registros técnicos de diagnóstico em separado.
-8. Assinaturas públicas e erros do `InventoryManager` após mapear os consumidores existentes.
+### 7.3 Pasta com arquivos e inventário ausente
 
-## 9. Sequência documental e de desenvolvimento
+Sem inventário válido, uma pasta local contendo arquivos do usuário **não inicia automaticamente download, upload, sobrescrita nem exclusão**. O aplicativo solicita uma pasta vazia para a primeira sincronização.
 
-1. **Auditar** estruturas atuais, dados persistidos, pontos de leitura e gravação, consumidores e fluxos de confirmação; classificar dados essenciais, derivados, redundantes, operacionais e históricos.
-2. **Fechar este DATA MODEL desejado**, confrontando os campos com os fluxos reais e explicitando as invariantes.
-3. **Especificar os EXECUTION FLOWS desejados**, usando os contratos do inventário sem alterar o comportamento esperado dos operadores.
-4. **Planejar a transição**: lacunas entre estado atual/desejado, testes de regressão e etapas pequenas de adaptação.
-5. **Implementar e testar `InventoryManager` isoladamente** com SQLite real em diretório de teste; sem integração precoce.
-6. **Adaptar gradualmente** chamadas de persistência da engine; validar cada fluxo, incluindo testes funcionais com Flatpak e Drive real quando disponíveis.
-7. **Somente depois** avaliar a reorganização da orquestração, dos executores e das políticas de sincronização.
+A associação assistida de arquivos locais já existentes — baixar, enviar, manter ambos ou combinar árvores — pertence a uma evolução posterior. O inventário já representa presença apenas local, apenas remota e ambas, mas essa possibilidade de dados não ativa por si só o fluxo futuro.
 
-Nenhuma etapa deste documento exige camada de compatibilidade com formatos experimentais antigos. Isso **não autoriza eliminar arquivos do usuário ou recriar silenciosamente bancos incompatíveis**.
+Se a pasta configurada estiver ausente ou inacessível, as operações são suspensas e a ausência não é interpretada como exclusão de arquivos no Google Drive.
+
+## 8. Invariantes de integridade
+
+1. Um `SyncItem` representa um objeto lógico; a mesma identidade remota não pertence a dois itens na sincronização.
+2. Alterações de nome, diretório pai e conteúdo não substituem a identidade do item.
+3. Um resultado físico só avança o baseline após confirmação verificável.
+4. Observações novas não apagam a informação do baseline.
+5. Registros desconhecidos e falhas de acesso não autorizam exclusões.
+6. O inventário e o histórico são separados por sincronização; os metadados globais continuam sob a aplicação.
+7. A pasta `.drivesync/` nunca é tratada como arquivo sincronizável.
+8. Dados estruturados são persistidos em colunas relacionais; BLOB é reservado a valores binários individuais.
+9. Atualizações são atômicas e detectam concorrência por versões/revisões.
+10. Os componentes executores utilizam as APIs do inventário, preservando as garantias de download, retomada, integridade, movimentação, renomeação e exclusão.
