@@ -18,17 +18,23 @@ Este documento define a organização **macro** dos componentes. Não especifica
 
 ## 2. Componentes da engine
 
-### 2.1 Detectores
+### 2.1 Detector (fachada pública e dois componentes internos)
 
-**Responsabilidade:** observar alterações nos ambientes local e remoto e **notificar o Orquestrador** quando houver algo a avaliar.
+**Responsabilidade:** oferecer ao Orquestrador **uma única API pública de detecção**, coordenando observações locais e remotas e emitindo eventos normalizados que indicam o que precisa de reavaliação.
 
-- **Detector Local:** acompanha alterações no filesystem da pasta sincronizada.
-- **Detector Remoto:** acompanha alterações na pasta correspondente do Google Drive.
-- Produzem notificações de alterações ou necessidades de reavaliação.
-- Não decidem executar upload, download, renomeação, movimentação ou exclusão.
-- Não tratam a simples falta de observação como prova de exclusão.
+A implementação é composta por **três unidades independentes**:
 
-**Direção da comunicação:** **Detectores → Orquestrador**. O Orquestrador não precisa solicitar uma observação para que os detectores o informem; eles operam como produtores de notificações. O mecanismo concreto de entrega será definido nos fluxos de execução.
+- **Detector (`detectors/`):** fachada pública, controla o ciclo de vida e as solicitações de observação, consolida os sinais internos, fornece status agregado e comunica eventos ao Orquestrador.
+- **Detector Local (`detectors/local/`):** observa filesystem com estrutura, watcher, varreduras, estados e testes próprios.
+- **Detector Remoto (`detectors/remote/`):** observa Google Drive via Google API com estrutura, paginação, cursores e testes próprios.
+
+**Visibilidade:** Local e Remoto têm **interfaces internas** usadas pelo Detector, não APIs públicas para o Orquestrador. A interface interna compartilhada, se usada, padroniza apenas o controle mínimo necessário; **não impõe a mesma estrutura de implementação** aos dois filhos. Local e Remoto não precisam conhecer o Orquestrador nem um ao outro.
+
+**Direção da comunicação:** **Local/Remoto → Detector → Orquestrador**. O objeto público de evento informa sincronização, itens/escopo afetados, motivo e cobertura, sem exigir do Orquestrador interpretação de watcher ou Google Changes. O Orquestrador pode solicitar observação ou consultar status por **um único contrato**. Notificações são sinais para análise, não ordens de upload/download.
+
+Nenhum dos três componentes determina a versão vencedora, executa sincronização física, altera baseline ou conclui operação apenas por detectar mudança. Ausência de observação, erro ou leitura incompleta não comprova exclusão.
+
+Referência: [Detector — README](engine/detectors/README.md), [INTERFACES](engine/detectors/INTERFACES.md).
 
 ### 2.2 Inventário (InventoryManager)
 
@@ -123,8 +129,9 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 ```mermaid
 flowchart TD
-    DL["Detector Local"]
-    DR["Detector Remoto"]
+    DL["Detector Local interno"]
+    DR["Detector Remoto interno"]
+    DET["Detector — API pública"]
     O["Orquestrador"]
     A["Analisador"]
     I["Inventário / InventoryManager"]
@@ -132,8 +139,13 @@ flowchart TD
     D["Operador de Download"]
     G["Google API"]
 
-    DL -->|"Notifica alterações"| O
-    DR -->|"Notifica alterações"| O
+    DL -->|"Sinais internos"| DET
+    DR -->|"Sinais internos"| DET
+    DET -->|"Eventos normalizados"| O
+    O -->|"Controle e solicitação de observação"| DET
+    DL -->|"Observações pela API"| I
+    DR -->|"Observações e eventos pela API"| I
+    DET -->|"Coordena persistência pela API"| I
 
     O -->|"Solicita processamento e informa políticas"| A
     A -->|"Resultado ou decisão necessária"| O
@@ -149,7 +161,7 @@ flowchart TD
     D -->|"Lê remoto"| G
 ```
 
-O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. Os Detectores notificam o Orquestrador; este estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
+O diagrama mostra **relações e responsabilidades**, não uma sequência de execução obrigatória. O Detector é a única API pública para o Orquestrador; seus filhos Local e Remoto enviam sinais apenas à fachada. O Orquestrador estabelece políticas e solicita o processamento. O Analisador identifica e encaminha diretamente as operações permitidas aos operadores, retornando ao Orquestrador resultados ou decisões que excedam sua autorização. **Não há ligação direta entre Orquestrador e Upload/Download.**
 
 ## 4. Princípios de comunicação
 
