@@ -23,19 +23,32 @@ O modelo deve permitir comparar **anterior × remoto atual × local atual** sem 
 
 | Tema | Atual (conforme levantamento) | Desejado | Situação |
 | --- | --- | --- | --- |
-| Estado local | `local-state.sqlite3`, tabela `state_scopes` com `Document` serializado em `payload BLOB` | Registros relacionais individuais de `SyncItem` | **Definido** |
-| Inventário remoto | `remote-detector.sqlite3`, `scopes.inventory BLOB` com mapa de metadados remotos | Metadados de itens reunidos no `SyncItem`, sem segundo inventário de itens concorrente | **Definido** |
+| Estado local | `local-state.sqlite3`, tabela `state_scopes` com `Document` serializado em `payload BLOB` | Uma linha relacional por `SyncItem`; sem documento serializado em BLOB ou JSON/TEXT | **Definido** |
+| Inventário remoto | `remote-detector.sqlite3`, `scopes.inventory BLOB` com mapa de metadados remotos | Metadados de itens reunidos no `SyncItem`, sem segundo inventário de itens concorrente ou mapa serializado | **Definido** |
 | Identidade | `TrackedItem.id`, `remote_id` e inventário remoto separados | Identidade lógica interna única, associação inequívoca ao ID do Drive quando existente | **Definido** |
 | Comparação | `confirmed` e `observed`, mais observações remotas em outro armazenamento | Estados remoto/local observados e baseline confirmado, distinguíveis | **Definido** |
 | Conflitos | Estado parcial na engine e `conflicts.json` de apresentação | Condição do próprio item; sem tabela de conflitos para o inventário | **Definido** |
-| Histórico | `history.sqlite3` global com filtros de conta | Histórico contextualizado e armazenado por sincronização, separado dos estados atuais | **Definido** |
+| Histórico | `history.sqlite3` global com filtros de conta e `notice BLOB` serializado | Histórico relacional consultável por evento, associado à sincronização e separado dos estados atuais | **Definido** |
 | Recuperação de download | Checkpoints auxiliares em `download/resume.rs` | Preservar garantias e comportamento; avaliar localização sem reescrever mecanismo | **Definido** |
-| Cursor e eventos remotos | Diário remoto com geração, cursor e eventos até confirmação | Preservar checkpoint/cursor, entrega pendente e confirmação; localização/modelagem exatas a estudar | **A validar** |
+| Cursor e eventos remotos | Diário remoto com geração, cursor e eventos com `payload BLOB` | Preservar cursor e entrega/acknowledgment, mas representar dados estruturados de eventos por colunas/linhas, sem payload serializado; localização final a estudar | **A validar** |
 | Persistência de contas | `accounts.json` global | Permanece cadastro global de contas e pares de pastas | **Definido** |
 | Credenciais | Secret Service/keyring | Permanece fora do inventário e da pasta sincronizada | **Definido** |
 | Preferências gerais | `preferences.ini` global | Permanecem configuração global | **Definido** |
 
 A unificação refere-se **aos registros de arquivos e diretórios**, não à eliminação indiscriminada de todos os mecanismos de persistência do projeto.
+
+### 2.1 Regra obrigatória: dados estruturados não são BLOBs
+
+**Definido:** SQLite será utilizado como **banco relacional**. É proibido armazenar inventários, coleções de itens, snapshots, históricos, eventos, filas ou outras **estruturas de dados completas serializadas em BLOB** (JSON, bincode ou equivalente).
+
+- Cada `SyncItem` deve ocupar sua própria linha e ter seus atributos acessíveis em colunas tipadas.
+- Registros operacionais e históricos, quando persistidos em SQLite, também devem ser consultáveis e atualizáveis **individualmente**, com colunas próprias, chaves e índices pertinentes.
+- Consultar ou atualizar um único arquivo **não pode exigir ler, desserializar, modificar e regravar o inventário inteiro**.
+- Evitar encapsular uma estrutura completa em `TEXT` com JSON ou outro formato também: trocar BLOB por JSON em TEXT **não satisfaz** o requisito relacional.
+- Um `BLOB` é permitido apenas para um **valor binário individual**, com necessidade funcional demonstrável (por exemplo, bytes de um único nome de arquivo Unix não representável em UTF-8). **Não é uma exceção para serializar objetos ou listas.**
+- Dados que são naturalmente escalares devem utilizar `TEXT`, `INTEGER`, `REAL` ou outro tipo SQLite adequado. Relações devem utilizar chaves e índices, não documentos embutidos.
+
+Essa regra se aplica ao **modelo de persistência desejado** do inventário, histórico e diário de eventos. Não implica converter o cadastro global `accounts.json` ou as preferências `preferences.ini` em SQLite, nem alterar o formato interno dos **checkpoints de transferência** nesta fase: estes são mecanismos operacionais próprios e serão avaliados separadamente. A regra proíbe especificamente o uso de BLOB para guardar estruturas de dados completas em bancos relacionais.
 
 ## 3. Entidade central: `SyncItem`
 
@@ -113,9 +126,9 @@ Duas mudanças em lados distintos não significam necessariamente conflito: reno
 
 ## 4. Persistência relacional pretendida
 
-**Definido:** usar SQLite relacional, com **uma linha por `SyncItem`**, e não um `Document` inteiro ou mapa de arquivos serializado em BLOB.
+**Definido:** usar SQLite relacional, com **uma linha por `SyncItem`**, e não um `Document` inteiro, mapa de arquivos ou qualquer estrutura de dados serializada em BLOB (ou JSON em TEXT). **A consulta e a atualização são por item e por campo**, não por regravação de snapshots globais.
 
-A opção inicial preferida é **uma tabela central `sync_items`**, com colunas agrupadas logicamente em identidade, remoto atual, local atual, baseline e estado. Não criar tabelas `remote_state`, `local_state`, `baseline` ou `conflicts` apenas para dividir esses grupos. Tabelas operacionais distintas são possíveis quando seus dados não representarem diretamente o estado atual de um item.
+A opção inicial preferida é **uma tabela central `sync_items`**, com colunas agrupadas logicamente em identidade, remoto atual, local atual, baseline e estado. Não criar tabelas `remote_state`, `local_state`, `baseline` ou `conflicts` apenas para dividir esses grupos. Tabelas operacionais distintas são possíveis quando seus dados não representarem diretamente o estado atual de um item. **Simplicidade não significa transformar eventos, listas ou históricos em uma única coluna serializada:** quando necessário, esses registros têm linhas relacionais próprias.
 
 ### 4.1 Esquema conceitual — não executar como migração
 
@@ -164,7 +177,7 @@ CREATE UNIQUE INDEX idx_sync_items_remote_id
 
 **A validar antes de implementar:** completar atributos necessários (inclusive tipo MIME/tamanho remoto, versões/assinaturas locais e presença no baseline), identificação da raiz, representação dos estados desconhecidos, associação entre pastas e IDs, invariantes de pais, índices e versão do esquema. A restrição acima presume **um banco isolado por sincronização**; se esse escopo mudar, a unicidade deverá incluir a identidade da conta/provedor.
 
-Usar `BLOB` **para um nome individual em bytes Unix**, se necessário, não contradiz a decisão de evitar BLOBs contendo inventários inteiros.
+**Exceção restrita:** `local_name BLOB` e `base_local_name BLOB` representam **somente os bytes de um nome de arquivo Unix individual**, quando a preservação exata do nome exigir armazenamento binário. Não carregam objetos, listas, mapas nem JSON. Qualquer outro BLOB proposto deverá ter justificativa igualmente específica; caso contrário, usar colunas escalares e relacionamentos.
 
 ### 4.2 Diagrama lógico
 
@@ -198,6 +211,7 @@ O diagrama resume a tabela central; não implica que o conjunto de colunas já e
 - Persistência de estado intermediário suficiente para recuperação segura.
 - Ausência ou falha de leitura do banco **não autoriza exclusões de arquivos**.
 - A consulta e alteração de `sync_items` devem ocorrer por uma API do `InventoryManager`; consumidores não consultam SQL diretamente.
+- Operações sobre um item não reserializam nem regravam os demais itens; alterações de estado, eventos e histórico são individualizáveis em SQL.
 
 ## 5. Localização e ciclo de vida dos dados
 
@@ -215,7 +229,7 @@ O diagrama resume a tabela central; não implica que o conjunto de colunas já e
 
 O diretório `.drivesync/` não pode produzir eventos de upload/download nem entrar no inventário de conteúdo do usuário. Os arquivos SQLite devem ter permissões adequadas, controle de concorrência e fechamento consistente. As localizações finais de cursor/eventos remotos e checkpoints devem ser decididas após auditar suas dependências; **não mover automaticamente** um diário ou checkpoint que funciona.
 
-O histórico existente já contém campos de conta e filtros. A mudança desejada é o **isolamento físico/lógico por sincronização**, não perder seus vínculos de conta. O histórico não precisa ser parte do `SyncItem`, mas pode referenciá-lo para diagnóstico e apresentação.
+O histórico existente já contém campos de conta e filtros. A mudança desejada é o **isolamento físico/lógico por sincronização**, não perder seus vínculos de conta. O histórico não precisa ser parte do `SyncItem`, mas pode referenciá-lo para diagnóstico e apresentação. Seus eventos devem ser **registros relacionais próprios**, não objetos `StoredNotice` inteiros serializados em BLOB. Os campos definitivos serão derivados das informações realmente utilizadas.
 
 ### 5.2 Dados globais do aplicativo
 
@@ -281,10 +295,10 @@ Mudanças necessárias nas chamadas à persistência são permitidas; mudanças 
 1. Inventário exato de campos do `SyncItem`: origem, consumidores, nulabilidade, formato e retenção do baseline.
 2. Modelo final de presença/ausência/observação inconclusiva e tipos de `sync_status`.
 3. Identidade e relações de pais quando remoto e local divergirem, inclusive árvores movimentadas.
-4. Destino e relação entre `remote-detector.sqlite3` (cursor/eventos), o novo inventário e o banco portátil.
+4. Destino e relação entre `remote-detector.sqlite3` (cursor/eventos), o novo inventário e o banco portátil; definir colunas relacionais para eventos, sem serialização de estruturas.
 5. Local e ciclo de vida dos checkpoints de download; separação entre transferência parcial e item confirmado.
 6. Esquema definitivo, índices, concorrência, escopo/versão e política de abertura de banco ausente ou incompatível.
-7. Retenção e formato do histórico por sincronização; registros técnicos de diagnóstico em separado.
+7. Retenção e **campos relacionais** do histórico por sincronização, sem `notice BLOB` serializado; registros técnicos de diagnóstico em separado.
 8. Assinaturas públicas e erros do `InventoryManager` após mapear os consumidores existentes.
 
 ## 9. Sequência documental e de desenvolvimento
