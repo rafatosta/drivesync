@@ -44,20 +44,21 @@ A estrutura e a localização dos dados seguem o [DATA_MODEL.md](DATA_MODEL.md).
 
 ### 2.3 Analisador
 
-**Responsabilidade:** analisar os estados dos itens e encaminhar a execução de operações que estejam autorizadas pelas condições e políticas recebidas do Orquestrador.
+**Responsabilidade:** coordenar o processamento de arquivos e diretórios individuais: analisar seus estados e encaminhar operações autorizadas pelas condições e políticas recebidas do Orquestrador.
 
 - Consulta o Inventário e compara observações locais e remotas com o último estado confirmado.
-- Identifica mudanças de conteúdo, nome, localização e presença, bem como possíveis conflitos.
+- Identifica mudanças de conteúdo, nome, localização e presença.
+- Pode contar com um **submódulo interno de identificação de conflitos**, responsável por reconhecer divergências incompatíveis entre os estados observados e o baseline. O Analisador continua sendo a interface externa desse trabalho.
 - Recebe do Orquestrador as condições e políticas aplicáveis ao processamento.
 - Quando a alteração pode ser tratada com segurança dentro dessas condições, solicita diretamente ao operador de Upload ou Download a ação necessária.
 - Recebe os resultados dos operadores e registra, pelo Inventário, os estados efetivamente confirmados.
 - Quando faltam informações, autorização ou critérios para resolver a situação, devolve o diagnóstico ao Orquestrador e aguarda nova orientação.
 
-O Analisador **não implementa transferências nem modifica arquivos diretamente**. Sua autonomia é limitada às políticas recebidas: ele pode determinar e encaminhar uma operação, mas não escolher por conta própria uma política de prevalência ou perda de dados.
+O Analisador **não implementa transferências nem modifica arquivos diretamente**. Sua autonomia é limitada às políticas recebidas: ele pode determinar e encaminhar uma operação, mas não escolher por conta própria uma política de prevalência ou perda de dados. A detecção de conflitos é parte da análise por item; decisões que extrapolem os critérios autorizados retornam ao Orquestrador. A decomposição interna do submódulo de conflitos fica para uma etapa posterior.
 
 ### 2.4 Orquestrador
 
-**Responsabilidade:** coordenar o processamento da sincronização e estabelecer as condições e políticas que orientam o Analisador.
+**Responsabilidade:** coordenar a sincronização em nível global e estabelecer as condições e políticas que orientam o Analisador.
 
 - Recebe as notificações dos Detectores.
 - Acessa as configurações e preferências de sincronização definidas pelo usuário.
@@ -65,6 +66,8 @@ O Analisador **não implementa transferências nem modifica arquivos diretamente
 - Recebe os resultados do Analisador e as situações que exigem decisão adicional, suspensão ou intervenção do usuário.
 - Coordena o fluxo geral da sincronização inicial e do acompanhamento das alterações.
 - Define quando o processamento pode prosseguir, ficar pendente ou ser retomado, sem determinar necessariamente a operação técnica para cada arquivo.
+
+O Orquestrador trabalha com **informações globais da sincronização** (eventos recebidos, condições de operação, configurações e preferências do usuário); o Analisador trabalha com **informações dos itens** (identidades, metadados, estados e baseline). Ambos coordenam e tomam decisões em seus respectivos níveis, sem duplicar responsabilidades.
 
 O Orquestrador **não aciona diretamente os operadores de Upload e Download** e não executa operações físicas. O Analisador identifica e encaminha as operações compatíveis com as políticas e retorna ao Orquestrador quando uma decisão não puder ser tomada dentro dessas condições. O mecanismo concreto de fila e retomada será definido posteriormente.
 
@@ -109,6 +112,8 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 ## 3. Relacionamentos entre componentes
 
+**Dois níveis de coordenação:** o Orquestrador administra o processamento da sincronização como um todo; o Analisador administra a análise e a execução autorizada por arquivo ou diretório. A identificação de conflitos pode ser organizada como submódulo do Analisador, sem se tornar um oitavo componente independente na arquitetura macro.
+
 \`\`\`mermaid
 flowchart TD
     DL["Detector Local"]
@@ -145,7 +150,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 **Eventos não são comandos.** Uma notificação de alteração informa que um item ou escopo exige atenção. Não equivale a ordenar upload, download ou exclusão.
 
-**Separação entre observação, políticas, análise e execução.** Detectores observam; Inventário guarda e fornece estado; Orquestrador fornece políticas e coordena; Analisador compara, determina e encaminha operações autorizadas; operadores executam. O que não estiver autorizado retorna ao Orquestrador.
+**Separação por escopo de dados e decisão.** Detectores observam; Inventário guarda e fornece estado; Orquestrador coordena o nível global com eventos, configurações e políticas; Analisador coordena o nível dos itens com metadados, estados, baseline e identificação de conflitos, determinando e encaminhando operações autorizadas; operadores executam. O que não estiver autorizado retorna ao Orquestrador.
 
 **Inventário como acesso único aos dados.** Resultados e observações relevantes são registrados mediante contratos do InventoryManager; os componentes não acessam SQL diretamente. O Analisador coordena a confirmação dos resultados devolvidos pelos operadores.
 
