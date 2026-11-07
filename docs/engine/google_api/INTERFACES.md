@@ -500,6 +500,796 @@ pub trait GoogleTransferApi {
 
 Referências: [download e exportação](https://developers.google.com/workspace/drive/api/guides/manage-downloads), [upload](https://developers.google.com/workspace/drive/api/guides/manage-uploads).
 
+## 6. Contrato funcional de cada método público
+
+**Guia de leitura sem alterações contratuais.** Esta seção reapresenta os **59 métodos REST, 9 operações OAuth/OIDC e 10 métodos de transferência/conveniência** com finalidade, parâmetros, retorno e limites. Todos os blocos de assinatura Rust, nomes, tipos, campos e regras das seções anteriores e das declarações posteriores **permanecem inalterados**. A documentação detalhada de `XxxOptions`, `XxxRequest` e outros tipos é a fonte de verdade sobre os respectivos campos opcionais.
+
+### 6.1 Drive REST v3 — 59 métodos
+
+#### `about_get`
+
+**Finalidade:** Consulta a conta Google Drive por meio de `GET /about`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: AboutOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleAbout>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `access_proposals_get`
+
+**Finalidade:** Consulta as solicitações de acesso por meio de `GET /files/{fileId}/accessproposals/{proposalId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `proposal_id: &ProposalId``: identidade da proposta de acesso.
+
+**Retorno:** `GoogleResult<GoogleAccessProposal>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `access_proposals_list`
+
+**Finalidade:** Lista as solicitações de acesso por meio de `GET /files/{fileId}/accessproposals`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: PageOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleAccessProposalList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `access_proposals_resolve`
+
+**Finalidade:** Resolve as solicitações de acesso por meio de `POST /files/{fileId}/accessproposals/{proposalId}:resolve`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `proposal_id: &ProposalId`: identidade da proposta de acesso; `request: ResolveAccessProposalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_approve`
+
+**Finalidade:** Aprova as aprovações por meio de `POST /files/{fileId}/approvals/{approvalId}:approve`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId`: identidade da aprovação; `request: ApproveApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_cancel`
+
+**Finalidade:** Cancela as aprovações por meio de `POST /files/{fileId}/approvals/{approvalId}:cancel`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId`: identidade da aprovação; `request: CancelApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_comment`
+
+**Finalidade:** Comenta as aprovações por meio de `POST /files/{fileId}/approvals/{approvalId}:comment`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId`: identidade da aprovação; `request: CommentApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_decline`
+
+**Finalidade:** Recusa as aprovações por meio de `POST /files/{fileId}/approvals/{approvalId}:decline`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId`: identidade da aprovação; `request: DeclineApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_get`
+
+**Finalidade:** Consulta as aprovações por meio de `GET /files/{fileId}/approvals/{approvalId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId``: identidade da aprovação.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_list`
+
+**Finalidade:** Lista as aprovações por meio de `GET /files/{fileId}/approvals`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: PageOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleApprovalList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_reassign`
+
+**Finalidade:** Reatribui as aprovações por meio de `POST /files/{fileId}/approvals/{approvalId}:reassign`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `approval_id: &ApprovalId`: identidade da aprovação; `request: ReassignApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `approvals_start`
+
+**Finalidade:** Inicia as aprovações por meio de `POST /files/{fileId}/approvals:start`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: StartApprovalRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleApproval>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `apps_get`
+
+**Finalidade:** Consulta os aplicativos por meio de `GET /apps/{appId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``app_id: &AppId``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleApp>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `apps_list`
+
+**Finalidade:** Lista os aplicativos por meio de `GET /apps`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: AppListOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleAppList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `changes_get_start_page_token`
+
+**Finalidade:** Obtém cursor inicial de as alterações por meio de `GET /changes/startPageToken`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: ChangeScopeOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleStartPageToken>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `changes_list`
+
+**Finalidade:** Lista as alterações por meio de `GET /changes`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: ChangeListOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleChangeList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `changes_watch`
+
+**Finalidade:** Solicita notificações para as alterações por meio de `POST /changes/watch`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: ChangeWatchOptions`: valor obrigatório pelo contrato tipado; `channel: GoogleChannelRequest``: objeto de canal de notificação.
+
+**Retorno:** `GoogleResult<GoogleChannel>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não consome nem reconhece as notificações posteriores. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `channels_stop`
+
+**Finalidade:** Interrompe os canais de notificação por meio de `POST /channels/stop`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``channel: GoogleChannelStopRequest``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `comments_create`
+
+**Finalidade:** Cria os comentários por meio de `POST /files/{fileId}/comments`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: GoogleCommentWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: CommentOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleComment>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `comments_delete`
+
+**Finalidade:** Exclui os comentários por meio de `DELETE /files/{fileId}/comments/{commentId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId``: identidade do comentário.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `comments_get`
+
+**Finalidade:** Consulta os comentários por meio de `GET /files/{fileId}/comments/{commentId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `options: CommentOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleComment>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `comments_list`
+
+**Finalidade:** Lista os comentários por meio de `GET /files/{fileId}/comments`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: CommentListOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleCommentList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `comments_update`
+
+**Finalidade:** Atualiza os comentários por meio de `PATCH /files/{fileId}/comments/{commentId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `request: GoogleCommentWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: CommentOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleComment>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_create`
+
+**Finalidade:** Cria os drives compartilhados por meio de `POST /drives`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``request_id: &RequestId`: valor obrigatório pelo contrato tipado; `request: GoogleDriveWrite``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleDrive>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_delete`
+
+**Finalidade:** Exclui os drives compartilhados por meio de `DELETE /drives/{driveId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId`: valor obrigatório pelo contrato tipado; `options: DriveDeleteOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_get`
+
+**Finalidade:** Consulta os drives compartilhados por meio de `GET /drives/{driveId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId`: valor obrigatório pelo contrato tipado; `options: DriveGetOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleDrive>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_hide`
+
+**Finalidade:** Oculta os drives compartilhados por meio de `POST /drives/{driveId}/hide`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleDrive>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_list`
+
+**Finalidade:** Lista os drives compartilhados por meio de `GET /drives`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: DriveListOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleDriveList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_unhide`
+
+**Finalidade:** Exibe novamente os drives compartilhados por meio de `POST /drives/{driveId}/unhide`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleDrive>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `drives_update`
+
+**Finalidade:** Atualiza os drives compartilhados por meio de `PATCH /drives/{driveId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId`: valor obrigatório pelo contrato tipado; `request: GoogleDriveWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: DriveUpdateOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleDrive>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_copy`
+
+**Finalidade:** Copia os arquivos por meio de `POST /files/{fileId}/copy`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: GoogleFileWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: FileCopyOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_create`
+
+**Finalidade:** Cria os arquivos por meio de `POST /files`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``request: GoogleFileWrite`: valor obrigatório pelo contrato tipado; `options: FileCreateOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_delete`
+
+**Finalidade:** Exclui os arquivos por meio de `DELETE /files/{fileId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: FileDeleteOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_download`
+
+**Finalidade:** Solicita download de os arquivos por meio de `POST /files/{fileId}/download`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: FileDownloadOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleOperation>`. Operação possivelmente assíncrona; `done=false` não confirma conclusão.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_empty_trash`
+
+**Finalidade:** Esvazia a lixeira de os arquivos por meio de `DELETE /files/trash`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: EmptyTrashOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_export`
+
+**Finalidade:** Exporta os arquivos por meio de `GET /files/{fileId}/export`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `mime_type: &MimeType``: formato MIME solicitado.
+
+**Retorno:** `GoogleResult<GoogleByteStream>`. Fluxo de bytes, cuja leitura deve ser completada e verificada.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_generate_cse_token`
+
+**Finalidade:** Obtém token CSE para os arquivos por meio de `GET /files/generateCseToken`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: CseTokenOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleCseToken>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_generate_ids`
+
+**Finalidade:** Obtém identificadores para os arquivos por meio de `GET /files/generateIds`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: GenerateIdsOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleGeneratedIds>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_get`
+
+**Finalidade:** Consulta os arquivos por meio de `GET /files/{fileId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: FileGetOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_list`
+
+**Finalidade:** Lista os arquivos por meio de `GET /files`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: FileListOptions``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleFileList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_list_labels`
+
+**Finalidade:** Lista rótulos de os arquivos por meio de `GET /files/{fileId}/listLabels`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: LabelListOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleLabelList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_modify_labels`
+
+**Finalidade:** Altera rótulos de os arquivos por meio de `POST /files/{fileId}/modifyLabels`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: GoogleModifyLabelsRequest``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleModifyLabelsResponse>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_update`
+
+**Finalidade:** Atualiza os arquivos por meio de `PATCH /files/{fileId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: GoogleFileWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: FileUpdateOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `files_watch`
+
+**Finalidade:** Solicita notificações para os arquivos por meio de `POST /files/{fileId}/watch`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: FileWatchOptions`: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo; `channel: GoogleChannelRequest``: objeto de canal de notificação.
+
+**Retorno:** `GoogleResult<GoogleChannel>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não consome nem reconhece as notificações posteriores. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `operations_get`
+
+**Finalidade:** Consulta as operações assíncronas por meio de `GET /operations/{name}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``name: &OperationName``: valor obrigatório pelo contrato tipado.
+
+**Retorno:** `GoogleResult<GoogleOperation>`. Operação possivelmente assíncrona; `done=false` não confirma conclusão.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `permissions_create`
+
+**Finalidade:** Cria as permissões por meio de `POST /files/{fileId}/permissions`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `request: GooglePermissionWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: PermissionCreateOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GooglePermission>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `permissions_delete`
+
+**Finalidade:** Exclui as permissões por meio de `DELETE /files/{fileId}/permissions/{permissionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `permission_id: &PermissionId`: identidade da permissão; `options: PermissionDeleteOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `permissions_get`
+
+**Finalidade:** Consulta as permissões por meio de `GET /files/{fileId}/permissions/{permissionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `permission_id: &PermissionId`: identidade da permissão; `options: PermissionGetOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GooglePermission>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `permissions_list`
+
+**Finalidade:** Lista as permissões por meio de `GET /files/{fileId}/permissions`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: PermissionListOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GooglePermissionList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `permissions_update`
+
+**Finalidade:** Atualiza as permissões por meio de `PATCH /files/{fileId}/permissions/{permissionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `permission_id: &PermissionId`: identidade da permissão; `request: GooglePermissionWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: PermissionUpdateOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GooglePermission>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `replies_create`
+
+**Finalidade:** Cria as respostas aos comentários por meio de `POST /files/{fileId}/comments/{commentId}/replies`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `request: GoogleReplyWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: ReplyOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleReply>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `replies_delete`
+
+**Finalidade:** Exclui as respostas aos comentários por meio de `DELETE /files/{fileId}/comments/{commentId}/replies/{replyId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `reply_id: &ReplyId``: identidade da resposta.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `replies_get`
+
+**Finalidade:** Consulta as respostas aos comentários por meio de `GET /files/{fileId}/comments/{commentId}/replies/{replyId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `reply_id: &ReplyId`: identidade da resposta; `options: ReplyOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleReply>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `replies_list`
+
+**Finalidade:** Lista as respostas aos comentários por meio de `GET /files/{fileId}/comments/{commentId}/replies`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `options: ReplyListOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleReplyList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `replies_update`
+
+**Finalidade:** Atualiza as respostas aos comentários por meio de `PATCH /files/{fileId}/comments/{commentId}/replies/{replyId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `comment_id: &CommentId`: identidade do comentário; `reply_id: &ReplyId`: identidade da resposta; `request: GoogleReplyWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: ReplyOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleReply>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `revisions_delete`
+
+**Finalidade:** Exclui as revisões por meio de `DELETE /files/{fileId}/revisions/{revisionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `revision_id: &RevisionId``: identidade da revisão.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `revisions_get`
+
+**Finalidade:** Consulta as revisões por meio de `GET /files/{fileId}/revisions/{revisionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `revision_id: &RevisionId`: identidade da revisão; `options: RevisionGetOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleRevision>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `revisions_list`
+
+**Finalidade:** Lista as revisões por meio de `GET /files/{fileId}/revisions`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: RevisionListOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+
+**Retorno:** `GoogleResult<GoogleRevisionList>`. Coleção de recursos, possivelmente paginada; processar cursores.
+
+**Limites e erros:** Não percorre todas as páginas automaticamente. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+#### `revisions_update`
+
+**Finalidade:** Atualiza as revisões por meio de `PATCH /files/{fileId}/revisions/{revisionId}`.
+
+**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `revision_id: &RevisionId`: identidade da revisão; `request: GoogleRevisionWrite``: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleRevision>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+
+### 6.2 OAuth/OpenID Connect — 9 métodos
+
+#### `load_google_config`
+
+**Finalidade:** Carrega a configuração OAuth das fontes definidas.
+
+**Parâmetros:** `sources: GoogleConfigSources`: fontes e precedência de configuração.
+
+**Retorno:** `GoogleResult<GoogleOAuthConfig>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `authorization_request`
+
+**Finalidade:** Prepara URL de autorização com os parâmetros OAuth e PKCE.
+
+**Parâmetros:** `config: &GoogleOAuthConfig`: configuração OAuth; `request: GoogleAuthorizationRequest`: objeto de dados enviados/atualizados; ausência não significa limpeza.
+
+**Retorno:** `GoogleResult<GoogleAuthorizationUrl>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `exchange_authorization_code`
+
+**Finalidade:** Troca código de autorização por tokens com verificação PKCE.
+
+**Parâmetros:** `config: &GoogleOAuthConfig`: configuração OAuth; `code: &str`: código OAuth recebido; `redirect_uri: &str`: URI de redirecionamento OAuth; `pkce_verifier: &str`: verificador PKCE.
+
+**Retorno:** `GoogleResult<GoogleTokenResponse>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `refresh_access_token`
+
+**Finalidade:** Renova o acesso com refresh token.
+
+**Parâmetros:** `config: &GoogleOAuthConfig`: configuração OAuth; `refresh_token: &str`: credencial de renovação.
+
+**Retorno:** `GoogleResult<GoogleTokenResponse>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `revoke_token`
+
+**Finalidade:** Solicita a revogação do token informado.
+
+**Parâmetros:** `token: &str`: token submetido para revogação.
+
+**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+
+**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `get_userinfo`
+
+**Finalidade:** Consulta os dados OIDC da conta autenticada.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada.
+
+**Retorno:** `GoogleResult<GoogleUserInfo>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `validate_id_token`
+
+**Finalidade:** Verifica o ID token conforme os critérios de validação fornecidos.
+
+**Parâmetros:** `id_token: &str`: ID token a validar; `validation: GoogleIdTokenValidation`: critérios de validação.
+
+**Retorno:** `GoogleResult<GoogleIdClaims>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `get_oidc_discovery`
+
+**Finalidade:** Obtém o documento de descoberta OIDC.
+
+**Parâmetros:** Nenhum parâmetro adicional..
+
+**Retorno:** `GoogleResult<GoogleOidcDiscovery>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `get_oidc_keys`
+
+**Finalidade:** Obtém as chaves públicas de validação OIDC.
+
+**Parâmetros:** Nenhum parâmetro adicional..
+
+**Retorno:** `GoogleResult<GoogleJwkSet>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+### 6.3 Transferências e conveniências — 10 métodos
+
+#### `get_file_bytes`
+
+**Finalidade:** Lê os bytes de um arquivo regular.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `range: Option<GoogleByteRange>`: intervalo de bytes opcional; ausente significa solicitação integral.
+
+**Retorno:** `GoogleResult<GoogleDownloadStream>`. Fluxo de bytes, cuja leitura deve ser completada e verificada.
+
+**Limites e erros:** Não confundir etapa parcial de transferência com confirmação final. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `get_revision_bytes`
+
+**Finalidade:** Lê os bytes de uma revisão disponível.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `revision_id: &RevisionId`: identidade da revisão; `range: Option<GoogleByteRange>`: intervalo de bytes opcional; ausente significa solicitação integral.
+
+**Retorno:** `GoogleResult<GoogleDownloadStream>`. Fluxo de bytes, cuja leitura deve ser completada e verificada.
+
+**Limites e erros:** Não confundir etapa parcial de transferência com confirmação final. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `export_file_bytes`
+
+**Finalidade:** Exporta conteúdo Google Workspace no formato solicitado.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `mime_type: &MimeType`: formato MIME solicitado.
+
+**Retorno:** `GoogleResult<GoogleDownloadStream>`. Fluxo de bytes, cuja leitura deve ser completada e verificada.
+
+**Limites e erros:** Não confundir etapa parcial de transferência com confirmação final. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `start_resumable_create`
+
+**Finalidade:** Inicia sessão de upload retomável para criação.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `request: GoogleFileWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: FileCreateOptions`: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo; `total_bytes: Option<u64>`: tamanho total opcional.
+
+**Retorno:** `GoogleResult<GoogleUploadSession>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `start_resumable_update`
+
+**Finalidade:** Inicia sessão de upload retomável para atualização.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `request: GoogleFileWrite`: objeto de dados enviados/atualizados; ausência não significa limpeza; `options: FileUpdateOptions`: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo; `total_bytes: Option<u64>`: tamanho total opcional.
+
+**Retorno:** `GoogleResult<GoogleUploadSession>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `upload_chunk`
+
+**Finalidade:** Transmite um bloco de upload à sessão.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `upload: &GoogleUploadSession`: sessão de upload existente; `chunk: GoogleUploadChunk`: bloco, offset e estado do envio.
+
+**Retorno:** `GoogleResult<GoogleUploadProgress>`. Progresso parcial ou conclusão; HTTP 308 não representa sucesso final.
+
+**Limites e erros:** Não confundir etapa parcial de transferência com confirmação final. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `query_upload_progress`
+
+**Finalidade:** Consulta a posição confirmada da sessão de upload.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `upload: &GoogleUploadSession`: sessão de upload existente.
+
+**Retorno:** `GoogleResult<GoogleUploadProgress>`. Progresso parcial ou conclusão; HTTP 308 não representa sucesso final.
+
+**Limites e erros:** Não confundir etapa parcial de transferência com confirmação final. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `trash_file`
+
+**Finalidade:** Move arquivo para lixeira, sem exclusão permanente.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `rename_file`
+
+**Finalidade:** Renomeia arquivo sem modificar conteúdo.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `name: &str`: nome da operação remota.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
+#### `move_file`
+
+**Finalidade:** Move arquivo por alterações de pais sem reupload.
+
+**Parâmetros:** `session: &GoogleSession`: sessão autenticada e conta selecionada; `file_id: &FileId`: identidade do arquivo; `add_parent: &FileId`: novo diretório pai; `remove_parents: &[FileId]`: diretórios pais a remover.
+
+**Retorno:** `GoogleResult<GoogleFile>`. Objeto tipado retornado pelo serviço, respeitando campos disponibilizados.
+
+**Limites e erros:** Não executa etapas adicionais não descritas nem dispensa permissões e validações. Respeita exatamente os objetos, validações e categorias de erro já especificados; não redefine o contrato.
+
 ## 6. Critérios de teste independentes
 
 | Grupo | Casos mínimos de contrato |
