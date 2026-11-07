@@ -159,7 +159,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 **Separação por escopo de dados e decisão.** Detectores observam; Inventário guarda e fornece estado; Orquestrador coordena o nível global com eventos, configurações e políticas; Analisador coordena o nível dos itens com metadados, estados, baseline e identificação de conflitos, determinando e encaminhando operações autorizadas; operadores executam. O que não estiver autorizado retorna ao Orquestrador.
 
-**Inventário como acesso único aos dados.** Resultados e observações relevantes são registrados mediante contratos do InventoryManager; os componentes não acessam SQL diretamente. O Analisador coordena a confirmação dos resultados devolvidos pelos operadores.
+**Inventário como acesso único aos dados por sincronização.** Resultados, observações e histórico por arquivo são registrados mediante contratos do InventoryManager; os componentes não acessam diretamente o SQLite do inventário. Dados globais de contas, conexões e preferências têm contratos próprios. O Analisador coordena a confirmação dos resultados devolvidos pelos operadores.
 
 **Histórico integrado ao processamento.** O registro histórico ocorre quando uma atividade ou operação relevante é realizada ou concluída, sob coordenação do Analisador, sem um componente independente `activity_history`. O armazenamento do histórico permanece definido pelo modelo de dados.
 
@@ -175,7 +175,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 A engine funciona **independentemente da GUI**. A interface GTK/libadwaita, uma CLI ou outro consumidor externo utiliza o contrato de `orchestrator/facade/` para enviar ações e receber estados, progresso, erros e notificações. A Facade não importa nem depende de GTK/libadwaita e não participa obrigatoriamente da comunicação entre componentes internos.
 
-O módulo `accounts/` expõe o gerenciamento das contas e encapsula `accounts/auth/` para autenticação OAuth e credenciais. O módulo `configuration/` continua como serviço de preferências e políticas. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
+O módulo `accounts/` expõe o gerenciamento das contas e encapsula `accounts/auth/` para autenticação OAuth e credenciais. O módulo `configuration/` continua como serviço de preferências e políticas e **provisoriamente coordena o estudo da persistência global**, cuja necessidade de SQLite ainda não foi decidida. O cadastro de contas pertence conceitualmente a `accounts/`, não ao Inventário nem automaticamente a `configuration/`. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
 A persistência dos itens, estados e histórico é definida pelo `docs/engine/inventory/README.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
 
