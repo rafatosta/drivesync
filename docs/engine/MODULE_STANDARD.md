@@ -198,6 +198,18 @@ Métodos, cenários, comandos, resultados e limitações verificáveis.
 
 **Não duplicar** o `AGENTS.md` global: referenciá-lo. As regras da raiz continuam válidas (commits e comentários em inglês; `cargo`/Rust **exclusivamente no Flatpak** do projeto; commits atômicos, sem `git push`/PR sem autorização explícita). O `AGENTS.md` local serve para especializar, não substituir, essas regras.
 
+### Regra de execução integral ou parcial
+
+**Por padrão, a solicitação “implemente o módulo `X`” significa implementar integralmente o escopo documentado de `X`**, e não apenas preparar estrutura, criar testes ou implementar o primeiro grupo. O agente deve usar `README.md`, `INTERFACES.md`, `TESTS.md` e `AGENTS.md` como conjunto de referência e **percorrer todos os contratos e respectivos casos de teste**, dividindo o trabalho em unidades funcionais pequenas, com RED → GREEN → REFACTOR, regressão e commits locais coesos. Avançar autonomamente entre unidades **não** significa implementar tudo de uma vez ou adiar validações.
+
+**Implementação parcial:** quando a solicitação nomear uma capacidade, método, grupo ou etapa, executar **apenas esse escopo**, preservando contratos e registrando o restante como pendente, sem anunciar o módulo completo.
+
+**Critério de conclusão da implementação integral:** todos os contratos públicos do módulo e seus testes aplicáveis estão implementados, os testes foram efetivamente executados no ambiente exigido, a regressão está verificada e não restam pendências bloqueadoras dentro do escopo. Relatar lista de contratos concluídos, testes e comandos executados, falhas, cobertura apurada (quando disponível), commits locais e limitações. Não afirmar “concluído”, “testado” ou “integrado” quando houver método não implementado, suíte não executada ou verificação impossível. Em caso de impedimento técnico real, documentar bloqueio específico, evidência, impacto e trabalho restante; não preencher lacunas contratuais com comportamentos imaginados.
+
+**Autonomia e limites:** não pedir confirmação a cada método ou commit local; os limites do módulo, as decisões contratuais já validadas, o isolamento, a proteção contra perdas e a proibição de `git push`/PR sem autorização explícita **continuam válidos**. A solicitação de implementação completa **não autoriza** alteração unilateral de contrato público, testes relaxados para passar ou integração real com serviços sem permissão.
+
+**Modelo de solicitação:** consultar [IMPLEMENTATION_REQUEST.md](IMPLEMENTATION_REQUEST.md), com exemplos completos e parciais reutilizáveis.
+
 ## 6. Fluxo recomendado para criar um novo módulo
 
 1. Consultar [SYSTEM_ARCHITECTURE.md](../SYSTEM_ARCHITECTURE.md) para compreender responsabilidade e relações.
