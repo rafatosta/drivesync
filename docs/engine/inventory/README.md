@@ -142,35 +142,22 @@ O Inventário registra o estado, mas a escolha de ação e as políticas de conf
 
 Essas são **capacidades**, ainda não as assinaturas finais. Cada operação terá entradas, saídas, erros e testes próprios em `INTERFACES.md` e `TESTS.md`.
 
-## Persistência
+## Persistência e bancos de dados
 
-O inventário de cada sincronização permanece em:
+O Inventário é inicialmente a **porta de acesso a todos os bancos de dados estruturados da aplicação e das sincronizações**. Isso não significa misturar dados globais com os arquivos individuais.
 
-```text
-<pasta-local-sincronizada>/.drivesync/inventory.sqlite3
-```
+| Escopo | Banco | Dados principais |
+| --- | --- | --- |
+| Aplicação | `$XDG_DATA_HOME/drivesync/app.sqlite3` | `accounts`, `sync_connections`, `app_preferences`, `sync_preferences` |
+| Pasta sincronizada | `<raiz-local>/.drivesync/inventory.sqlite3` | `sync_info`, `local_files`, `google_files`, `google_file_parents`, `sync_items`, `sync_baselines`, `sync_operations`, `remote_cursor`, `remote_events` |
+| Histórico da sincronização | `<raiz-local>/.drivesync/history.sqlite3` | `activity` |
+| Credenciais | Secret Service/keyring | Segredos OAuth fora de SQLite |
 
 A pasta `.drivesync/` é reservada ao aplicativo, ignorada pelo detector local e nunca enviada ao Google Drive.
 
-| Conjunto relacional | Finalidade |
-| --- | --- |
-| `sync_info` | Identificar e validar conta, raiz remota e inicialização da sincronização |
-| `local_files` | Metadados locais observados |
-| `google_files` | Metadados remotos observados |
-| `sync_items` | Associação, identidade lógica, presença, baseline e status |
-| `remote_cursor` | Cursores de observação de alterações no Drive |
-| `remote_events` | Eventos remotos pendentes e reconhecimento individual |
+O esquema relacional completo, as chaves estrangeiras, índices, regras de integridade, persistência da fila e recuperação estão documentados em **[DATA_MODEL.md](DATA_MODEL.md)**, que é a referência normativa do Inventário.
 
-O histórico de atividades permanece separado em `history.sqlite3`. O Inventário não cria tabela de conflitos independente nem mantém dados de autenticação.
-
-**Regras de armazenamento:**
-
-- A consulta e atualização de um item **não exigem** carregar/regravar todos os arquivos.
-- Metadados relacionais são armazenados em colunas e tabelas próprias, não em objetos Rust serializados.
-- `BLOB` pode representar um **valor binário individual**, como nome local Unix não UTF-8, mas não uma estrutura inteira.
-- Transações e precondições de versão protegem gravações concorrentes e confirmações.
-- A evolução de `LocalFile` ou `GoogleFile` não exige fundir novamente suas tabelas com `sync_items`.
-- O esquema relacional definitivo, tipos SQL, índices e regras de remoção serão formalizados depois de revisar os atributos necessários.
+**Regras:** nenhuma lista/mapa/objeto Rust é serializado inteiro em JSON/BLOB para substituir tabelas; BLOB só para valores binários individuais (ex.: nome local Unix). Cada observação, confirmação, cursor, evento e operação utiliza transações e precondições adequadas. O `history.sqlite3` não define o estado atual, apenas registra acontecimentos.
 
 ## Limites de responsabilidade
 
@@ -186,9 +173,11 @@ A implementação deve poder ser testada isoladamente com SQLite real em diretó
 
 ## Continuidade da documentação
 
-1. **`README.md` (este arquivo):** objetivo, modelo relacional conceitual, responsabilidades e capacidades.
-2. **`INTERFACES.md`:** tipos próprios do Inventário, assinaturas Rust, entradas/saídas, contratos de erro e transações.
-3. **`TESTS.md`:** casos de teste TDD de integridade, associação, consulta, atualização, concorrência e recuperação.
-4. **`DATA_MODEL.md` global:** consolidar posteriormente o esquema SQL completo com as três tabelas e suas regras.
+| Documento | Finalidade |
+| --- | --- |
+| `README.md` (este arquivo) | Objetivo, entidades, responsabilidades e capacidades do Inventário |
+| [`DATA_MODEL.md`](DATA_MODEL.md) | **Modelo persistente de referência:** banco global, banco por sincronização, histórico e esquema relacional |
+| `INTERFACES.md` | Futuras assinaturas Rust, tipos de entrada/saída e contratos de erro |
+| `TESTS.md` | Futuro plano TDD com SQLite real isolado, testes de concorrência, integridade e recuperação |
 
-**Nota de consistência:** o [`docs/DATA_MODEL.md`](../../DATA_MODEL.md) atualmente descreve os metadados local e remoto na mesma tabela `sync_items`. **Esta documentação registra a decisão mais recente de separá-los** em `local_files`, `google_files` e `sync_items`; o esquema global precisará ser atualizado antes de orientar a implementação. Nenhuma migração ou compatibilidade com esquema antigo está sendo definida nesta etapa.
+O conjunto completo de atributos de `LocalFile` e o subconjunto persistido de `GoogleFile` continuam sujeitos à especificação dos respectivos contratos externos. O relacionamento entre as entidades já está definido.
