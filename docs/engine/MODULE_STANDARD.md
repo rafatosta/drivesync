@@ -17,6 +17,14 @@ Esta especificação orienta **novos módulos da engine** a partir dos padrões 
 
 Um módulo pode ter **nenhum banco, nenhuma dependência HTTP ou nenhuma operação assíncrona**. Essas características são específicas, não requisitos do padrão. **Também não são exigidos números mínimos de métodos, campos, tabelas, testes ou páginas.**
 
+### Submódulos com implementação independente
+
+Quando um componente possui submódulos que são **unidades reais de implementação independentes**, cada submódulo também deve possuir seus próprios `README.md`, `INTERFACES.md`, `TESTS.md` e `AGENTS.md`. O componente pai pode expor uma API externa única enquanto **consome somente contratos internos tipados** dos filhos, sem exigir a mesma implementação ou dependências concretas.
+
+**Isolamento de testes:** testar o pai com fakes das portas dos filhos; testar cada filho real isoladamente, usando fakes das próprias dependências e recursos reais temporários quando aplicável. “Implementar o pai” **não significa** implementar automaticamente todos os filhos, nem “implementar um filho” exige que seus irmãos estejam prontos. Integração conjunta é uma etapa separada.
+
+Exemplo: [Detector](detectors/README.md) com [Local](detectors/local/README.md), [Remoto](detectors/remote/README.md) e [Storage](detectors/storage/README.md). O Detector coordena uma **fila privada de eventos** pelo Storage; Local/Remoto produzem eventos individuais; o Orquestrador consome **lotes mistos** exclusivamente pela API pública do Detector. **Lote misto não resolve conflitos de sincronização.**
+
 ## 2. README.md — responsabilidades e modelo do módulo
 
 ### Seções mínimas
