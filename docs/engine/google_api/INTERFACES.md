@@ -99,26 +99,74 @@ pub enum GoogleApiError {
 
 **Representações complexas:** `GoogleUser`, `GoogleStorageQuota`, `GoogleFileCapabilities`, `GooglePermissionDetails`, `GoogleShortcutDetails`, `GoogleContentHints`, `GoogleDriveRestrictions`, `GoogleApprovalReviewerResponse`, `GoogleLabel`, `GoogleAppList`, `GooglePermissionList`, `GoogleRevisionList`, `GoogleCommentList`, `GoogleReplyList`, `GoogleDriveList`, `GoogleAccessProposalList` e `GoogleApprovalList` são **tipos públicos próprios**, não JSON genérico. As listas seguem a convenção de paginação do recurso e suas respectivas propriedades adicionais oficiais.
 
-### Parâmetros e corpos de entrada
+### Entradas dos métodos
 
-| Grupo | Tipos de entrada | Campos relevantes que devem ser disponibilizados |
+A **assinatura Rust é o contrato principal**. Os argumentos identificados nas assinaturas não são necessariamente opcionais: a coluna **“Entradas além de `session`”** da seção 3 omite apenas a sessão, presente em todas as operações.
+
+| Elemento na assinatura | Obrigatoriedade | Significado |
 | --- | --- | --- |
-| Geral | `PageOptions`, `FieldMask`, `AboutOptions` | `page_size`, `page_token`, `fields` |
-| Files leitura | `FileGetOptions`, `FileListOptions`, `FileDownloadOptions` | `fields`, `q`, `corpora`, `drive_id`, `include_items_from_all_drives`, `supports_all_drives`, `spaces`, `order_by`, `page_size`, `page_token`, `mime_type?`, `revision_id?` |
-| Files escrita | `FileCopyOptions`, `FileCreateOptions`, `FileUpdateOptions`, `FileDeleteOptions`, `EmptyTrashOptions` | `fields`, `supports_all_drives`, `add_parents`, `remove_parents`, `keep_revision_forever`, `ignore_default_visibility`, `enforce_single_parent` quando suportado |
-| Files extras | `LabelListOptions`, `GoogleModifyLabelsRequest`, `GenerateIdsOptions`, `CseTokenOptions` | `page_token`, `max_results`, `label_modifications`, `count`, `space`, `type` |
-| Changes | `ChangeScopeOptions`, `ChangeListOptions`, `ChangeWatchOptions` | `drive_id`, `page_token`, `page_size`, `spaces`, `include_removed`, `include_corpus_removals`, `supports_all_drives` |
-| Canais | `GoogleChannelRequest`, `GoogleChannelStopRequest`, `FileWatchOptions` | `id`, `type`, `address`, `token?`, `expiration?`, `params?`, `resource_id` para interromper |
-| Drives | `GoogleDriveWrite`, `DriveGetOptions`, `DriveListOptions`, `DriveDeleteOptions`, `DriveUpdateOptions` | `name`, `restrictions`, `fields`, `q`, `page_size`, `page_token`, `use_domain_admin_access`, `allow_item_deletion` |
-| Permissions | `GooglePermissionWrite`, `PermissionCreateOptions`, `PermissionDeleteOptions`, `PermissionGetOptions`, `PermissionListOptions`, `PermissionUpdateOptions` | `type`, `role`, `email_address?`, `domain?`, `send_notification_email`, `transfer_ownership`, `use_domain_admin_access`, `supports_all_drives` |
-| Comments | `GoogleCommentWrite`, `CommentOptions`, `CommentListOptions` | `content`, `anchor?`, `quoted_file_content?`, `fields`, `include_deleted`, `page_token`, `page_size` |
-| Replies | `GoogleReplyWrite`, `ReplyOptions`, `ReplyListOptions` | `content`, `action?`, `fields`, `include_deleted`, `page_token`, `page_size` |
-| Revisions | `GoogleRevisionWrite`, `RevisionGetOptions`, `RevisionListOptions` | `keep_forever`, `published`, `publish_auto`, `fields`, `page_token`, `page_size` |
-| Access proposals | `ResolveAccessProposalRequest` | `action`, `role`, `view`, `send_notification` conforme contrato oficial |
-| Approvals | `StartApprovalRequest`, `ApproveApprovalRequest`, `CancelApprovalRequest`, `CommentApprovalRequest`, `DeclineApprovalRequest`, `ReassignApprovalRequest` | revisores, mensagem, comentários, prazo e ações autorizadas conforme o método |
-| Apps | `AppListOptions` | `app_filter_extensions`, `app_filter_mime_types`, `language_code` |
+| `session: &GoogleSession` | Obrigatório nos métodos autenticados | Identifica a conta e fornece acesso autorizado |
+| `file_id: &FileId` e outros IDs explícitos | Obrigatórios quando aparecem na assinatura | Identificam recursos; não podem ser omitidos |
+| `options: XxxOptions` | Objeto obrigatório na assinatura; **campos internos podem ser opcionais** | Agrupa parâmetros de consulta ou opções da operação |
+| `request: XxxRequest` ou `request: XxxWrite` | Obrigatório quando aparece na assinatura | Representa o corpo enviado para criar, modificar ou executar uma ação |
+| `mime_type: &MimeType` e outros valores explícitos | Obrigatórios quando aparecem na assinatura | Representam parâmetros exigidos pela operação |
 
-Campos de parâmetros marcados como “quando suportado” precisam ser validados contra **cada endpoint**, não aplicados indiscriminadamente. Tipos `*Write` devem distinguir campo ausente de campo explicitamente limpo.
+**Exemplo — consulta de metadados:**
+
+```rust
+fn files_get(
+    &self,
+    session: &GoogleSession,
+    file_id: &FileId,
+    options: FileGetOptions,
+) -> GoogleResult<GoogleFile>;
+
+// Exemplo do tipo de entrada (contrato proposto)
+pub struct FileGetOptions {
+    pub fields: Option<FieldMask>,
+    pub supports_all_drives: Option<bool>,
+}
+```
+
+| Entrada | Obrigatória? | Enviada ao Google como | Finalidade |
+| --- | --- | --- | --- |
+| `session` | Sim | Autorização HTTP | Acessar a conta correta |
+| `file_id` | Sim | Parâmetro do caminho `{fileId}` | Identificar o arquivo |
+| `options.fields` | Não | Query `fields` | Selecionar campos de resposta |
+| `options.supports_all_drives` | Não | Query `supportsAllDrives` | Informar suporte a drives compartilhados |
+| **Retorno** | — | Resposta JSON `File` | `GoogleResult<GoogleFile>` |
+
+**Exemplo — atualização de metadados:**
+
+```rust
+fn files_update(
+    &self,
+    session: &GoogleSession,
+    file_id: &FileId,
+    request: GoogleFileWrite,
+    options: FileUpdateOptions,
+) -> GoogleResult<GoogleFile>;
+```
+
+| Entrada | Onde é utilizada | Finalidade |
+| --- | --- | --- |
+| `file_id` | Caminho `{fileId}` | Recurso a atualizar |
+| `request: GoogleFileWrite` | **Corpo JSON (body)** | Campos que devem ser modificados |
+| `options: FileUpdateOptions` | Query da operação | Parâmetros como `fields`, `addParents` ou `removeParents`, conforme aplicáveis |
+| **Retorno** | Resposta JSON `File` | `GoogleResult<GoogleFile>` |
+
+### Convenções para definir os tipos de entrada
+
+| Categoria | Exemplos | Regra |
+| --- | --- | --- |
+| Identificadores | `FileId`, `DriveId`, `RevisionId` | Tipos individuais usados como argumentos explícitos |
+| Consulta e paginação | `FileGetOptions`, `FileListOptions`, `ChangeListOptions`, `PageOptions` | Cada estrutura representa **somente os parâmetros aceitos pela operação correspondente** |
+| Configuração de operações | `FileCreateOptions`, `FileUpdateOptions`, `PermissionCreateOptions` | Opções de envio/resultado, não conteúdo do recurso |
+| Dados enviados | `GoogleFileWrite`, `GooglePermissionWrite`, `GoogleCommentWrite` | Corpo da requisição; distinguir **campo não informado** de **campo explicitamente limpo** |
+| Solicitações de ações | `ResolveAccessProposalRequest`, `StartApprovalRequest`, `GoogleModifyLabelsRequest` | Corpo específico da ação, com campos exigidos pelo endpoint |
+| Canais e notificações | `GoogleChannelRequest`, `GoogleChannelStopRequest` | Dados necessários para iniciar ou interromper notificações |
+
+Os tipos `XxxOptions` e `XxxRequest` citados nas assinaturas são **tipos públicos a detalhar individualmente**. Para cada um, a definição Rust deverá declarar campos, tipos, obrigatoriedade, validações e correspondência com parâmetros HTTP ou corpo JSON, conforme a documentação oficial do método. Uma lista genérica de parâmetros compartilhada entre vários endpoints **não constitui** a definição desses tipos.
 
 ## 3. Assinaturas públicas por recurso REST
 
