@@ -178,7 +178,7 @@ pub struct SyncActivity {
 }
 ```
 
-O tipo `ItemKind` representa a natureza lógica do item e foi preservado do modelo anterior; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência exata com `LocalFile.file_type` e `GoogleFile.mime_type` será validada no detector/analisador.
+O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência exata com `LocalFile.file_type` e `GoogleFile.mime_type` será validada no detector/analisador.
 \nO nome local deve preservar bytes Unix quando necessário; `BaselineSide.local_name_bytes` é reservado ao lado local. O objeto `SyncActivity` conserva os dados relevantes no momento do evento, sem depender do nome atual do arquivo. **Atividade sem `item_id` não é permitida**; eventos globais de aplicação pertencem a outro componente.
 
 `SyncItem.local` e `SyncItem.remote` não indicam sozinhos exclusão. A ausência comprovada é expressa por `PresenceState::AbsentConfirmed` com evidência apropriada.
