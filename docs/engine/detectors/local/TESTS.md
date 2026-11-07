@@ -122,7 +122,7 @@ Todo `LocalDetectorFailure` precisa ter tipo de erro, mensagem sanitizada e sina
 
 ## 8. Pendências e aceite
 
-Dependências ainda abertas: contrato definitivo `LocalFile`, implementação do sink do Orquestrador, concreteza dos handles, política de symlinks, valores/política de debounce e protocolo de start/stop. Testes que dependem dessas decisões devem ficar marcados **BLOCKED** até formalização, não aprovados por mocks permissivos.
+Dependências ainda abertas: contrato definitivo `LocalFile`, implementação da porta interna de sinais do Detector pai, concreteza dos handles, política de symlinks, valores/política de debounce e protocolo de start/stop. Testes que dependem dessas decisões devem ficar marcados **BLOCKED** até formalização, não aprovados por mocks permissivos.
 
 Concluir o **Detector Local** somente com **5/5 métodos públicos** implementados e testes aplicáveis aprovados, cenário de retomada após interrupção e casos de parcialidade comprovados, integração de Inventário validada, regressão sem falhas relevantes e execução Rust no ambiente Flatpak. Não exigir conclusão do Detector Remoto.
 
