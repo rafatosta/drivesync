@@ -10,8 +10,10 @@ Antes de modificar código, ler [INTERFACES.md](INTERFACES.md), [README.md](READ
 
 - Inspecionar arquivos, diretórios e eventos dentro de uma única raiz local por sincronização.
 - Registrar observações exclusivamente via API pública do Inventário; jamais executar SQL externo, modificar baseline, cursor remoto, fila ou histórico de operações.
-- Produzir avisos tipados para o Orquestrador via sink injetado. Aviso **não é** comando de sincronização.
+- Produzir **sinais internos** para o módulo pai `Detector` por uma porta injetada. O Local não conhece nem chama o Orquestrador, que recebe apenas `DetectorEvent` da fachada. Aviso **não é** comando de sincronização.
 - Nunca acessar Google Drive, APIs de OAuth, credenciais ou endpoints remotos.
+- Não reexportar `LocalDetector` ou seus tipos como API pública externa. Métodos internos são consumidos somente por `detectors/`, que decide como traduzir sinais em eventos públicos.
+- O Local pode ter estruturas, watcher, scheduler, tipos e algoritmos próprios; **não impor identidade de estrutura interna com o Remoto**.
 - Nunca realizar upload/download, renomear, mover ou excluir fisicamente arquivos por decisão própria.
 - Não alterar módulos vizinhos para simplificar testes sem uma solicitação explícita; contratos de `LocalFile` e do sink devem ter proprietário definido.
 
@@ -48,7 +50,7 @@ Não declarar conclusão quando houver testes exigidos não executados, contrato
 ## Ambiente e evidências
 
 - Executar Rust/Cargo, `fmt`, `clippy`, `test`, documentação e doctests **somente dentro do Flatpak** previsto no manifesto `flatpak/com.rtosta.DriveSync.Devel.yml`, conforme AGENTS global.
-- Usar filesystem **real e temporário**, SQLite real isolado acessado por APIs do Inventário, notificações simuladas e relógio/scheduler determinísticos. Não usar conta Google nem pasta pessoal.
+- Usar filesystem **real e temporário**, SQLite real isolado acessado por APIs do Inventário, sinais internos para o Detector pai simulados e relógio/scheduler determinísticos. Não usar conta Google nem pasta pessoal.
 - Verificar watchers e casos de filesystem no Linux/Flatpak; mock do próprio Detector Local **não** demonstra capacidade real.
 - Testar cancelamento, mudanças concorrentes e indisponibilidade, sem afirmar completude quando houve lacuna.
 - Comentários e mensagens de commit em inglês; commits pequenos por unidade. **Não executar push ou abrir PR sem autorização explícita**.
