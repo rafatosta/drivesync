@@ -999,3 +999,476 @@ pub struct GoogleRevisionWrite {
 
 ``
 
+### 8.2 Respostas de listas, solicitações, opções e contratos OAuth
+
+As estruturas `XxxOptions` são **objetos de entrada**. O objeto `Options` é argumento obrigatório da assinatura, mas seus campos `Option<T>` são opcionais. Campos necessários, como o cursor de `ChangeListOptions`, usam tipos não opcionais.
+
+As estruturas `Google*List` refletem a resposta paginada; as propriedades opcionais são independentes da existência de itens na lista.
+
+```rust
+pub struct GoogleAccessProposalList {
+    pub access_proposals: Vec<GoogleAccessProposal>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleAppList {
+    pub items: Vec<GoogleApp>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleApprovalList {
+    pub approvals: Vec<GoogleApproval>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleCommentList {
+    pub comments: Vec<GoogleComment>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleDriveList {
+    pub drives: Vec<GoogleDrive>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleLabelList {
+    pub labels: Vec<GoogleLabel>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GooglePermissionList {
+    pub permissions: Vec<GooglePermission>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleReplyList {
+    pub replies: Vec<GoogleReply>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct GoogleRevisionList {
+    pub revisions: Vec<GoogleRevision>,
+    pub next_page_token: Option<String>,
+}
+
+pub struct AboutOptions {
+    pub fields: Option<FieldMask>,
+}
+
+pub struct AppListOptions {
+    pub app_filter_extensions: Option<Vec<String>>,
+    pub app_filter_mime_types: Option<Vec<String>>,
+    pub language_code: Option<String>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct ChangeScopeOptions {
+    pub drive_id: Option<DriveId>,
+    pub supports_all_drives: Option<bool>,
+}
+
+pub struct ChangeListOptions {
+    pub page_token: String,
+    pub drive_id: Option<DriveId>,
+    pub page_size: Option<u32>,
+    pub spaces: Option<String>,
+    pub include_removed: Option<bool>,
+    pub include_corpus_removals: Option<bool>,
+    pub include_items_from_all_drives: Option<bool>,
+    pub supports_all_drives: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct ChangeWatchOptions {
+    pub page_token: String,
+    pub drive_id: Option<DriveId>,
+    pub page_size: Option<u32>,
+    pub spaces: Option<String>,
+    pub include_removed: Option<bool>,
+    pub include_items_from_all_drives: Option<bool>,
+    pub supports_all_drives: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct CommentOptions {
+    pub fields: Option<FieldMask>,
+    pub include_deleted: Option<bool>,
+}
+
+pub struct CommentListOptions {
+    pub fields: Option<FieldMask>,
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    pub include_deleted: Option<bool>,
+    pub start_modified_time: Option<String>,
+}
+
+pub struct CseTokenOptions {
+    pub file_id: Option<FileId>,
+    pub parent: Option<FileId>,
+}
+
+pub struct DriveDeleteOptions {
+    pub allow_item_deletion: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+}
+
+pub struct DriveGetOptions {
+    pub use_domain_admin_access: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct DriveListOptions {
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    pub q: Option<String>,
+    pub use_domain_admin_access: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct DriveUpdateOptions {
+    pub use_domain_admin_access: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct EmptyTrashOptions {
+    pub drive_id: Option<DriveId>,
+}
+
+pub struct FileCopyOptions {
+    pub supports_all_drives: Option<bool>,
+    pub ignore_default_visibility: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct FileCreateOptions {
+    pub supports_all_drives: Option<bool>,
+    pub ignore_default_visibility: Option<bool>,
+    pub use_content_as_indexable_text: Option<bool>,
+    pub keep_revision_forever: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct FileDeleteOptions {
+    pub supports_all_drives: Option<bool>,
+    pub enforce_single_parent: Option<bool>,
+}
+
+pub struct FileDownloadOptions {
+    pub mime_type: Option<MimeType>,
+    pub revision_id: Option<RevisionId>,
+}
+
+pub struct FileGetOptions {
+    pub fields: Option<FieldMask>,
+    pub supports_all_drives: Option<bool>,
+    pub acknowledge_abuse: Option<bool>,
+}
+
+pub struct FileListOptions {
+    pub q: Option<String>,
+    pub corpora: Option<String>,
+    pub drive_id: Option<DriveId>,
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    pub spaces: Option<String>,
+    pub order_by: Option<String>,
+    pub fields: Option<FieldMask>,
+    pub include_items_from_all_drives: Option<bool>,
+    pub supports_all_drives: Option<bool>,
+    pub include_permissions_for_view: Option<String>,
+}
+
+pub struct FileUpdateOptions {
+    pub add_parents: Option<Vec<FileId>>,
+    pub remove_parents: Option<Vec<FileId>>,
+    pub supports_all_drives: Option<bool>,
+    pub keep_revision_forever: Option<bool>,
+    pub use_content_as_indexable_text: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct FileWatchOptions {
+    pub acknowledge_abuse: Option<bool>,
+    pub supports_all_drives: Option<bool>,
+}
+
+pub struct GenerateIdsOptions {
+    pub count: Option<u32>,
+    pub space: Option<String>,
+    pub type_: Option<String>,
+}
+
+pub struct LabelListOptions {
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+}
+
+pub struct PermissionCreateOptions {
+    pub send_notification_email: Option<bool>,
+    pub email_message: Option<String>,
+    pub supports_all_drives: Option<bool>,
+    pub transfer_ownership: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct PermissionDeleteOptions {
+    pub supports_all_drives: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+}
+
+pub struct PermissionGetOptions {
+    pub supports_all_drives: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct PermissionListOptions {
+    pub supports_all_drives: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct PermissionUpdateOptions {
+    pub supports_all_drives: Option<bool>,
+    pub use_domain_admin_access: Option<bool>,
+    pub remove_expiration: Option<bool>,
+    pub transfer_ownership: Option<bool>,
+    pub fields: Option<FieldMask>,
+}
+
+pub struct ReplyOptions {
+    pub fields: Option<FieldMask>,
+    pub include_deleted: Option<bool>,
+}
+
+pub struct ReplyListOptions {
+    pub fields: Option<FieldMask>,
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+    pub include_deleted: Option<bool>,
+}
+
+pub struct RevisionGetOptions {
+    pub fields: Option<FieldMask>,
+    pub acknowledge_abuse: Option<bool>,
+}
+
+pub struct RevisionListOptions {
+    pub fields: Option<FieldMask>,
+    pub page_size: Option<u32>,
+    pub page_token: Option<String>,
+}
+
+pub struct GoogleChannelRequest {
+    pub id: String,
+    pub type_: String,
+    pub address: String,
+    pub token: Option<String>,
+    pub expiration: Option<String>,
+    pub params: Option<std::collections::BTreeMap<String,String>>,
+}
+
+pub struct GoogleChannelStopRequest {
+    pub id: ChannelId,
+    pub resource_id: String,
+}
+
+pub struct GoogleModifyLabelsRequest {
+    pub label_modifications: Vec<GoogleLabelModification>,
+}
+
+pub struct GoogleLabelModification {
+    pub label_id: String,
+    pub field_modifications: Vec<GoogleLabelFieldModification>,
+    pub remove_label: Option<bool>,
+}
+
+pub struct GoogleLabelFieldModification {
+    pub field_id: String,
+    pub set_text_values: Option<Vec<String>>,
+    pub set_integer_values: Option<Vec<String>>,
+    pub set_date_values: Option<Vec<String>>,
+    pub set_selection_values: Option<Vec<String>>,
+    pub unset_values: Option<bool>,
+}
+
+pub struct ApproveApprovalRequest {
+    pub comment: Option<String>,
+}
+
+pub struct CancelApprovalRequest {
+    pub comment: Option<String>,
+}
+
+pub struct CommentApprovalRequest {
+    pub comment: String,
+}
+
+pub struct DeclineApprovalRequest {
+    pub comment: Option<String>,
+}
+
+pub struct ReassignApprovalRequest {
+    pub reviewers: Vec<GoogleApprovalReviewer>,
+    pub comment: Option<String>,
+}
+
+pub struct StartApprovalRequest {
+    pub reviewers: Vec<GoogleApprovalReviewer>,
+    pub due_time: Option<String>,
+    pub file_content_change_behavior: Option<String>,
+}
+
+pub struct GoogleApprovalReviewer {
+    pub email_address: String,
+}
+
+pub struct ResolveAccessProposalRequest {
+    pub action: String,
+    pub role: Option<String>,
+    pub view: Option<String>,
+    pub send_notification: Option<bool>,
+}
+
+pub struct GoogleConfigSources {
+    pub client_id_env: Option<String>,
+    pub client_secret_env: Option<String>,
+    pub oauth_file_env: Option<String>,
+    pub bundled_config_path: Option<String>,
+}
+
+pub struct GoogleOAuthConfig {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub scopes: Vec<String>,
+}
+
+pub struct GoogleAuthorizationRequest {
+    pub redirect_uri: String,
+    pub state: String,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
+    pub scopes: Vec<String>,
+    pub access_type: Option<String>,
+    pub prompt: Option<String>,
+    pub login_hint: Option<String>,
+}
+
+pub struct GoogleAuthorizationUrl {
+    pub url: String,
+}
+
+pub struct GoogleTokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: u64,
+    pub refresh_token: Option<String>,
+    pub scope: Option<String>,
+    pub id_token: Option<String>,
+    pub refresh_token_expires_in: Option<u64>,
+}
+
+pub struct GoogleUserInfo {
+    pub sub: String,
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+    pub hd: Option<String>,
+}
+
+pub struct GoogleIdTokenValidation {
+    pub issuer: String,
+    pub audience: String,
+    pub nonce: Option<String>,
+    pub clock_skew_seconds: Option<u64>,
+}
+
+pub struct GoogleIdClaims {
+    pub iss: String,
+    pub aud: String,
+    pub sub: String,
+    pub exp: u64,
+    pub iat: u64,
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
+    pub nonce: Option<String>,
+}
+
+pub struct GoogleOidcDiscovery {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub userinfo_endpoint: String,
+    pub jwks_uri: String,
+    pub revocation_endpoint: Option<String>,
+    pub scopes_supported: Option<Vec<String>>,
+}
+
+pub struct GoogleJwkSet {
+    pub keys: Vec<GoogleJwk>,
+}
+
+pub struct GoogleJwk {
+    pub kid: Option<String>,
+    pub kty: String,
+    pub alg: Option<String>,
+    pub use_: Option<String>,
+    pub n: Option<String>,
+    pub e: Option<String>,
+    pub crv: Option<String>,
+    pub x: Option<String>,
+    pub y: Option<String>,
+}
+
+pub struct GoogleByteRange {
+    pub start: u64,
+    pub end_inclusive: Option<u64>,
+}
+
+pub struct GoogleDownloadStream {
+    pub body: GoogleByteStream,
+    pub content_length: Option<u64>,
+    pub content_range: Option<String>,
+    pub etag: Option<String>,
+    pub mime_type: Option<MimeType>,
+}
+
+pub struct GoogleUploadSession {
+    pub session_uri: String,
+    pub total_bytes: Option<u64>,
+}
+
+pub struct GoogleUploadChunk {
+    pub start: u64,
+    pub bytes: Vec<u8>,
+    pub total_bytes: Option<u64>,
+}
+
+pub enum GoogleUploadProgress {
+    Incomplete { received_range: Option<GoogleByteRange> },
+    Complete { file: GoogleFile },
+}
+```
+
+### 8.3 Obrigatoriedade e disponibilidade dos campos
+
+| Situação | Como representar | Consequência para o consumidor |
+| --- | --- | --- |
+| Argumento obrigatório na assinatura | `FileId`, `String`, outros tipos não opcionais | A chamada não pode ser construída sem o argumento |
+| Parâmetro HTTP opcional | Campo `Option<T>` em `*Options` | `None` significa **não enviar o parâmetro** |
+| Campo JSON possivelmente omitido na resposta | `Option<T>` em estrutura de resposta | `None` significa **não recebido**, não confirma ausência do atributo no Drive |
+| Campo solicitado por `fields` | `FieldMask` configurada pelo consumidor | A interpretação precisa considerar a máscara de campos efetivamente requisitada |
+| Campo válido só para alguns recursos | Ex.: checksum para conteúdo binário, `shortcut_details` para atalhos | `None` é esperado para tipos que não suportam o campo |
+| Dados sem acesso por permissão ou escopo | Erro tipado ou atributo omitido, conforme endpoint | Não deduzir `false`, vazio ou exclusão |
+| PATCH com campo omitido | `None` em `*Write` | Não alterar o campo |
+| PATCH que exige limpar um campo | Representação explícita da operação de limpeza, conforme a API | Não confundir limpar com campo não informado |
+| Coleção retornada vazia | `Vec<T>` vazio com resposta válida | Não equivale necessariamente a árvore remota vazia; considerar paginação/incompletude |
+| Int64 em JSON | `String` no transporte, com parse validado | Não converter para `f64` nem descartar sinal/precisão |
+
+**Os modelos acima são o contrato Rust proposto do DriveSync**, não uma reprodução literal de toda propriedade possível dos schemas JSON. No momento de implementar cada método, os campos devem ser comparados aos recursos oficiais e aos campos solicitados por `fields`. Esse controle protege a evolução do contrato sem vincular o Inventário diretamente ao formato JSON do Google.
