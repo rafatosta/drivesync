@@ -4,7 +4,7 @@
 
 Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O único consumidor do Detector Local é o módulo pai `Detector`; o Local utiliza a API pública do Inventário quando a observação exige persistência e entrega **sinais internos** de reavaliação à fachada. Não possui API pública para o Orquestrador nem para qualquer outro módulo da engine.
 
-Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o **contrato interno**, com visibilidade restrita ao componente `detectors/`, para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Orquestrador antes da implementação; **não são código Rust compilado**.
+Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o **contrato interno**, com visibilidade restrita ao componente `detectors/`, para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Detector pai antes da implementação; **não são código Rust compilado**.
 
 ## 2. Tipos internos ao componente Local
 
@@ -60,7 +60,7 @@ pub struct LocalDetectorStatus {
 
 ```rust
 // InventoryHandle e NotificationHandle são abstrações tipadas injetadas
-// das APIs existentes, não wrappers de SQL nem implementação do Orquestrador.
+// das APIs existentes, não wrappers de SQL nem implementação do Detector pai.
 // A forma concreta de ownership será fixada ao integrar os módulos.
 pub struct LocalInventoryHandle { /* API do InventoryManager */ }
 pub struct LocalNotificationHandle { /* sink interno fornecido pelo Detector pai */ }
