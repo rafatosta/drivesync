@@ -66,7 +66,7 @@ Para **cada método listado nas seções 5 e 6**, criar casos independentes que 
 
 ## 5. Inventário de métodos REST e testes por endpoint
 
-**Regra para cada linha:** executar a matriz **M01–M12 aplicável**, além dos cenários específicos do recurso na seção 7. Esta tabela é também o checklist de cobertura: nenhuma operação documentada pode ficar sem testes.
+**Regra para cada linha:** executar a matriz **M01–M12 aplicável**, além dos cenários específicos do recurso na seção 8. Esta tabela é também o checklist de cobertura: nenhuma operação documentada pode ficar sem testes.
 
 | Recurso | Método público | REST oficial a conferir | Retorno | Testes obrigatórios |
 | --- | --- | --- | --- | --- |
@@ -132,7 +132,7 @@ Para **cada método listado nas seções 5 e 6**, criar casos independentes que 
 
 ## 6. OAuth/OIDC, transferência e métodos auxiliares
 
-**Regra:** executar a mesma matriz de contrato, adaptando M02–M05 às operações locais (configuração, validação JWT) e às operações sem body. Validar o comportamento próprio descrito na seção 7.
+**Regra:** executar a mesma matriz de contrato, adaptando M02–M05 às operações locais (configuração, validação JWT) e às operações sem body. Validar o comportamento próprio descrito na seção 8.
 
 | Grupo | Método público | Alvo ou efeito esperado | Retorno |
 | --- | --- | --- | --- |
@@ -156,7 +156,903 @@ Para **cada método listado nas seções 5 e 6**, criar casos independentes que 
 | conveniência | `rename_file` | PATCH /files/{fileId} (name) | `GoogleFile` |
 | conveniência | `move_file` | PATCH /files/{fileId} (addParents/removeParents) | `GoogleFile` |
 
-## 7. Cenários específicos por recurso
+## 7. Casos de teste por método público
+
+Esta seção é a **descrição executável dos cenários** que complementa as tabelas das seções 5 e 6. Para cada operação há um caso positivo, variantes negativas, interpretação do retorno e asserções HTTP ou locais. A matriz **M01–M12** da seção 3 continua obrigatória quando aplicável. Os tipos, URLs, campos opcionais e regras são os de [INTERFACES.md](INTERFACES.md), sem modificar contratos.
+
+**Montagem do teste:** usar cliente real do módulo contra servidor HTTP simulado e fixtures independentes; para operações locais como construção de URL e validação de JWT, usar entradas determinísticas sem rede. Primeiro conferir a **assinatura pública** e depois o comportamento.
+
+### 7.1 Métodos REST oficiais (59)
+
+#### API-01 — `about_get`
+
+**Contrato testado:** `GET /about`, retorno `GoogleResult<GoogleAbout>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `about`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleAbout` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. simular resposta com `storageQuota`, `exportFormats`, `importFormats` e `user` quando incluídos em `fields`; repetir com cada campo omitido para confirmar que `None` não vira zero ou ausência comprovada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-02 — `access_proposals_get`
+
+**Contrato testado:** `GET /files/{fileId}/accessproposals/{proposalId}`, retorno `GoogleResult<GoogleAccessProposal>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `accessproposals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleAccessProposal` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. validar arquivo e proposta por ID; testar proposta não encontrada, listagem vazia/paginada e rejeição de ação de resolução inválida. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-03 — `access_proposals_list`
+
+**Contrato testado:** `GET /files/{fileId}/accessproposals`, retorno `GoogleResult<GoogleAccessProposalList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `accessproposals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. validar arquivo e proposta por ID; testar proposta não encontrada, listagem vazia/paginada e rejeição de ação de resolução inválida. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-04 — `access_proposals_resolve`
+
+**Contrato testado:** `POST /files/{fileId}/accessproposals/{proposalId}:resolve`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **resolução** do recurso `accessproposals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. validar arquivo e proposta por ID; testar proposta não encontrada, listagem vazia/paginada e rejeição de ação de resolução inválida. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-05 — `approvals_approve`
+
+**Contrato testado:** `POST /files/{fileId}/approvals/{approvalId}:approve`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **aprovação** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-06 — `approvals_cancel`
+
+**Contrato testado:** `POST /files/{fileId}/approvals/{approvalId}:cancel`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **cancelamento** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-07 — `approvals_comment`
+
+**Contrato testado:** `POST /files/{fileId}/approvals/{approvalId}:comment`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **comentário** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-08 — `approvals_decline`
+
+**Contrato testado:** `POST /files/{fileId}/approvals/{approvalId}:decline`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **recusa** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-09 — `approvals_get`
+
+**Contrato testado:** `GET /files/{fileId}/approvals/{approvalId}`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-10 — `approvals_list`
+
+**Contrato testado:** `GET /files/{fileId}/approvals`, retorno `GoogleResult<GoogleApprovalList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-11 — `approvals_reassign`
+
+**Contrato testado:** `POST /files/{fileId}/approvals/{approvalId}:reassign`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **reatribuição** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-12 — `approvals_start`
+
+**Contrato testado:** `POST /files/{fileId}/approvals:start`, retorno `GoogleResult<GoogleApproval>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **início** do recurso `approvals`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApproval` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. preparar fixture para cada ação de aprovação, com corpo específico, estado resultante e falta de permissão; não reutilizar payload incorreto de outra ação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-13 — `apps_get`
+
+**Contrato testado:** `GET /apps/{appId}`, retorno `GoogleResult<GoogleApp>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `apps`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleApp` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar app ausente, tipos suportados, extensões, MIME e capacidades quando disponíveis, preservando campos omitidos. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-14 — `apps_list`
+
+**Contrato testado:** `GET /apps`, retorno `GoogleResult<GoogleAppList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `apps`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. testar app ausente, tipos suportados, extensões, MIME e capacidades quando disponíveis, preservando campos omitidos. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-15 — `changes_get_start_page_token`
+
+**Contrato testado:** `GET /changes/startPageToken`, retorno `GoogleResult<GoogleStartPageToken>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **aquisição do cursor inicial** do recurso `changes`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleStartPageToken` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar `startPageToken`, `nextPageToken`, `newStartPageToken`, remoção e perda de acesso; paginar até o cursor final e simular cursor expirado. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-16 — `changes_list`
+
+**Contrato testado:** `GET /changes`, retorno `GoogleResult<GoogleChangeList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `changes`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. Confirmar especialmente que `removed=true` pode indicar perda de acesso e não apenas exclusão.
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. exercitar `startPageToken`, `nextPageToken`, `newStartPageToken`, remoção e perda de acesso; paginar até o cursor final e simular cursor expirado. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-17 — `changes_watch`
+
+**Contrato testado:** `POST /changes/watch`, retorno `GoogleResult<GoogleChannel>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **assinatura de notificações** do recurso `changes`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que abrir canal não significa detectar nem aplicar alterações.
+
+**Retorno e invariantes:** desserializar `GoogleChannel` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar `startPageToken`, `nextPageToken`, `newStartPageToken`, remoção e perda de acesso; paginar até o cursor final e simular cursor expirado. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-18 — `channels_stop`
+
+**Contrato testado:** `POST /channels/stop`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **cancelamento de canal** do recurso `channels`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. verificar `id` e `resourceId`, encerramento do canal e erros de identificação sem inventar notificação entregue. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-19 — `comments_create`
+
+**Contrato testado:** `POST /files/{fileId}/comments`, retorno `GoogleResult<GoogleComment>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **criação** do recurso `comments`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleComment` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. validar conteúdo, `fields`, comentários eliminados, resposta com campos parciais, lista paginada e permissão negada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-20 — `comments_delete`
+
+**Contrato testado:** `DELETE /files/{fileId}/comments/{commentId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `comments`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. validar conteúdo, `fields`, comentários eliminados, resposta com campos parciais, lista paginada e permissão negada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-21 — `comments_get`
+
+**Contrato testado:** `GET /files/{fileId}/comments/{commentId}`, retorno `GoogleResult<GoogleComment>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `comments`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleComment` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. validar conteúdo, `fields`, comentários eliminados, resposta com campos parciais, lista paginada e permissão negada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-22 — `comments_list`
+
+**Contrato testado:** `GET /files/{fileId}/comments`, retorno `GoogleResult<GoogleCommentList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `comments`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. validar conteúdo, `fields`, comentários eliminados, resposta com campos parciais, lista paginada e permissão negada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-23 — `comments_update`
+
+**Contrato testado:** `PATCH /files/{fileId}/comments/{commentId}`, retorno `GoogleResult<GoogleComment>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `comments`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleComment` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. validar conteúdo, `fields`, comentários eliminados, resposta com campos parciais, lista paginada e permissão negada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-24 — `drives_create`
+
+**Contrato testado:** `POST /drives`, retorno `GoogleResult<GoogleDrive>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **criação** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleDrive` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-25 — `drives_delete`
+
+**Contrato testado:** `DELETE /drives/{driveId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que exclusão de drive é diferente de ocultação.
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-26 — `drives_get`
+
+**Contrato testado:** `GET /drives/{driveId}`, retorno `GoogleResult<GoogleDrive>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleDrive` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-27 — `drives_hide`
+
+**Contrato testado:** `POST /drives/{driveId}/hide`, retorno `GoogleResult<GoogleDrive>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **ocultação** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleDrive` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-28 — `drives_list`
+
+**Contrato testado:** `GET /drives`, retorno `GoogleResult<GoogleDriveList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-29 — `drives_unhide`
+
+**Contrato testado:** `POST /drives/{driveId}/unhide`, retorno `GoogleResult<GoogleDrive>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **reexibição** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleDrive` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-30 — `drives_update`
+
+**Contrato testado:** `PATCH /drives/{driveId}`, retorno `GoogleResult<GoogleDrive>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleDrive` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-31 — `files_copy`
+
+**Contrato testado:** `POST /files/{fileId}/copy`, retorno `GoogleResult<GoogleFile>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **cópia** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-32 — `files_create`
+
+**Contrato testado:** `POST /files`, retorno `GoogleResult<GoogleFile>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **criação** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-33 — `files_delete`
+
+**Contrato testado:** `DELETE /files/{fileId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que exclusão permanente não é equivalente a `trashed=true`.
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-34 — `files_download`
+
+**Contrato testado:** `POST /files/{fileId}/download`, retorno `GoogleResult<GoogleOperation>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **download assíncrono** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que `GoogleOperation` não é um stream de bytes.
+
+**Retorno e invariantes:** validar estado de operação assíncrona e não interpretá-la como download concluído. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-35 — `files_empty_trash`
+
+**Contrato testado:** `DELETE /files/trash`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **esvaziamento da lixeira** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que esvaziar lixeira pode afetar vários recursos e exige cenário de autorização.
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-36 — `files_export`
+
+**Contrato testado:** `GET /files/{fileId}/export`, retorno `GoogleResult<GoogleByteStream>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exportação** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que conversão MIME não é download binário direto.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-37 — `files_generate_cse_token`
+
+**Contrato testado:** `GET /files/generateCseToken`, retorno `GoogleResult<GoogleCseToken>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **obtenção de token CSE** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleCseToken` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-38 — `files_generate_ids`
+
+**Contrato testado:** `GET /files/generateIds`, retorno `GoogleResult<GoogleGeneratedIds>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **geração de IDs** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleGeneratedIds` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-39 — `files_get`
+
+**Contrato testado:** `GET /files/{fileId}`, retorno `GoogleResult<GoogleFile>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-40 — `files_list`
+
+**Contrato testado:** `GET /files`, retorno `GoogleResult<GoogleFileList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-41 — `files_list_labels`
+
+**Contrato testado:** `GET /files/{fileId}/listLabels`, retorno `GoogleResult<GoogleLabelList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem de rótulos** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-42 — `files_modify_labels`
+
+**Contrato testado:** `POST /files/{fileId}/modifyLabels`, retorno `GoogleResult<GoogleModifyLabelsResponse>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **modificação de rótulos** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleModifyLabelsResponse` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-43 — `files_update`
+
+**Contrato testado:** `PATCH /files/{fileId}`, retorno `GoogleResult<GoogleFile>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-44 — `files_watch`
+
+**Contrato testado:** `POST /files/{fileId}/watch`, retorno `GoogleResult<GoogleChannel>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **assinatura de notificações** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleChannel` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-45 — `operations_get`
+
+**Contrato testado:** `GET /operations/{name}`, retorno `GoogleResult<GoogleOperation>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `operations`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** validar estado de operação assíncrona e não interpretá-la como download concluído. testar `done=false` (ainda pendente), `done=true` com `response` ou `error`, e nome de operação inválido. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-46 — `permissions_create`
+
+**Contrato testado:** `POST /files/{fileId}/permissions`, retorno `GoogleResult<GooglePermission>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **criação** do recurso `permissions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que notificação e papel concedido devem refletir as opções, sem superestimar permissões.
+
+**Retorno e invariantes:** desserializar `GooglePermission` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar tipos `user`, `group`, `domain`, `anyone`, papéis, avisos, propriedade, expiração e erros de permissão. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-47 — `permissions_delete`
+
+**Contrato testado:** `DELETE /files/{fileId}/permissions/{permissionId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `permissions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. testar tipos `user`, `group`, `domain`, `anyone`, papéis, avisos, propriedade, expiração e erros de permissão. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-48 — `permissions_get`
+
+**Contrato testado:** `GET /files/{fileId}/permissions/{permissionId}`, retorno `GoogleResult<GooglePermission>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `permissions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GooglePermission` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar tipos `user`, `group`, `domain`, `anyone`, papéis, avisos, propriedade, expiração e erros de permissão. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-49 — `permissions_list`
+
+**Contrato testado:** `GET /files/{fileId}/permissions`, retorno `GoogleResult<GooglePermissionList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `permissions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. testar tipos `user`, `group`, `domain`, `anyone`, papéis, avisos, propriedade, expiração e erros de permissão. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-50 — `permissions_update`
+
+**Contrato testado:** `PATCH /files/{fileId}/permissions/{permissionId}`, retorno `GoogleResult<GooglePermission>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `permissions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que mudança de papel ou titularidade exige verificar campos do request, não inferir a partir do ID.
+
+**Retorno e invariantes:** desserializar `GooglePermission` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar tipos `user`, `group`, `domain`, `anyone`, papéis, avisos, propriedade, expiração e erros de permissão. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-51 — `replies_create`
+
+**Contrato testado:** `POST /files/{fileId}/comments/{commentId}/replies`, retorno `GoogleResult<GoogleReply>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **criação** do recurso `replies`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleReply` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. verificar encadeamento arquivo→comentário→resposta, conteúdo da resposta, ações e listagem paginada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-52 — `replies_delete`
+
+**Contrato testado:** `DELETE /files/{fileId}/comments/{commentId}/replies/{replyId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `replies`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. verificar encadeamento arquivo→comentário→resposta, conteúdo da resposta, ações e listagem paginada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-53 — `replies_get`
+
+**Contrato testado:** `GET /files/{fileId}/comments/{commentId}/replies/{replyId}`, retorno `GoogleResult<GoogleReply>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `replies`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleReply` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. verificar encadeamento arquivo→comentário→resposta, conteúdo da resposta, ações e listagem paginada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-54 — `replies_list`
+
+**Contrato testado:** `GET /files/{fileId}/comments/{commentId}/replies`, retorno `GoogleResult<GoogleReplyList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `replies`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. verificar encadeamento arquivo→comentário→resposta, conteúdo da resposta, ações e listagem paginada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-55 — `replies_update`
+
+**Contrato testado:** `PATCH /files/{fileId}/comments/{commentId}/replies/{replyId}`, retorno `GoogleResult<GoogleReply>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `replies`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleReply` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. verificar encadeamento arquivo→comentário→resposta, conteúdo da resposta, ações e listagem paginada. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-56 — `revisions_delete`
+
+**Contrato testado:** `DELETE /files/{fileId}/revisions/{revisionId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `revisions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. testar revisão ausente, atualizável/não atualizável, export links e restrições conforme tipo de arquivo. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-57 — `revisions_get`
+
+**Contrato testado:** `GET /files/{fileId}/revisions/{revisionId}`, retorno `GoogleResult<GoogleRevision>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **consulta** do recurso `revisions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleRevision` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar revisão ausente, atualizável/não atualizável, export links e restrições conforme tipo de arquivo. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-58 — `revisions_list`
+
+**Contrato testado:** `GET /files/{fileId}/revisions`, retorno `GoogleResult<GoogleRevisionList>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **listagem** do recurso `revisions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para consultas sem body, verificar que não é enviado conteúdo indevido. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada. Para listas, incluir página vazia, primeira página com `nextPageToken` e continuação até o fim. 
+
+**Retorno e invariantes:** comparar itens, campos opcionais e token de continuação; lista vazia é sucesso válido. testar revisão ausente, atualizável/não atualizável, export links e restrições conforme tipo de arquivo. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+#### API-59 — `revisions_update`
+
+**Contrato testado:** `PATCH /files/{fileId}/revisions/{revisionId}`, retorno `GoogleResult<GoogleRevision>`, segundo a assinatura e as opções de `INTERFACES.md`.
+
+**Sucesso:** criar sessão fictícia autorizada e simular a **atualização** do recurso `revisions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+
+**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+
+**Retorno e invariantes:** desserializar `GoogleRevision` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. testar revisão ausente, atualizável/não atualizável, export links e restrições conforme tipo de arquivo. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+
+### 7.2 OAuth 2.0 e OpenID Connect (9)
+
+#### API-60 — `load_google_config`
+
+**Contrato testado:** `Configuração de fontes e precedência`; retorno `GoogleResult<GoogleOAuthConfig>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Montar fontes de configuração isoladas com precedência conhecida; confirmar escolha do `client_id`, redirects e escopos previstos.
+
+**Negativos e opcionais:** Fonte inválida, precedência conflitante e segredo ausente quando exigido devem resultar em erro ou escolha definida pelo contrato, sem vazar conteúdo. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleOAuthConfig` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-61 — `authorization_request`
+
+**Contrato testado:** `GET accounts.google.com/o/oauth2/v2/auth (URL de navegação)`; retorno `GoogleResult<GoogleAuthorizationUrl>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Gerar URL sem executar navegação; comparar host, path e parâmetros OAuth, especialmente `state`, PKCE S256 e redirect URI.
+
+**Negativos e opcionais:** PKCE inválido, `state` ausente quando exigido, redirect URI inadequado e consentimento negado no retorno do fluxo. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleAuthorizationUrl` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-62 — `exchange_authorization_code`
+
+**Contrato testado:** `POST oauth2.googleapis.com/token (authorization_code)`; retorno `GoogleResult<GoogleTokenResponse>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Responder no servidor simulado de tokens a uma troca de código e verificar o corpo, PKCE, redirect URI e retorno tipado.
+
+**Negativos e opcionais:** Código expirado/consumido, redirect URI divergente, verifier inválido e `invalid_grant` retornam falha tipada. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** verificar expiração, escopos e ausência legítima de `refresh_token`, com segredos ocultos. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-63 — `refresh_access_token`
+
+**Contrato testado:** `POST oauth2.googleapis.com/token (refresh_token)`; retorno `GoogleResult<GoogleTokenResponse>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Responder com novo token de acesso sem `refresh_token` novo; preservar o anterior no consumidor sem inventar campo.
+
+**Negativos e opcionais:** `invalid_grant`, timeout, token revogado e resposta sem access token válido não são sucesso. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** verificar expiração, escopos e ausência legítima de `refresh_token`, com segredos ocultos. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-64 — `revoke_token`
+
+**Contrato testado:** `POST oauth2.googleapis.com/revoke`; retorno `GoogleResult<()>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular revogação aceita e verificar verbo, destino, envio seguro e retorno `()`.
+
+**Negativos e opcionais:** Revogação recusada, rede indisponível e resposta inválida geram falha tipada; não divulgar token. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-65 — `get_userinfo`
+
+**Contrato testado:** `GET openidconnect.googleapis.com/v1/userinfo`; retorno `GoogleResult<GoogleUserInfo>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular a rota de UserInfo, desserializar usuário com identidade `sub` e dados opcionais.
+
+**Negativos e opcionais:** Sessão sem autorização e UserInfo incompleto/inesperado não produzem identidade fictícia. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleUserInfo` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-66 — `validate_id_token`
+
+**Contrato testado:** `Validação local de JWT e chaves oficiais`; retorno `GoogleResult<GoogleIdClaims>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Validar JWT com assinatura verificável localmente e claims válidos, conforme a configuração e chaves fornecidas.
+
+**Negativos e opcionais:** Assinatura incorreta, `alg` não permitido, emissor/audiência divergentes, expiração, `nonce` incorreto e JWT malformado falham. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleIdClaims` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-67 — `get_oidc_discovery`
+
+**Contrato testado:** `GET accounts.google.com/.well-known/openid-configuration`; retorno `GoogleResult<GoogleOidcDiscovery>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular o documento OIDC de discovery e verificar metadados/endpoints obrigatórios.
+
+**Negativos e opcionais:** Discovery com endpoints inválidos, JSON incompleto e falha de rede geram erro tipado. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleOidcDiscovery` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-68 — `get_oidc_keys`
+
+**Contrato testado:** `GET do jwks_uri informado no Discovery`; retorno `GoogleResult<GoogleJwkSet>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular JWKS com múltiplas chaves e selecionar informações por `kid` para validação posterior.
+
+**Negativos e opcionais:** JWKS malformado, chave inesperada, `kid` inexistente e falha de acesso são rejeitados. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleJwkSet` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-69 — `get_file_bytes`
+
+**Contrato testado:** `GET /files/{fileId}?alt=media`; retorno `GoogleResult<GoogleDownloadStream>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular resposta binária `alt=media` com conteúdo completo e com faixa de bytes, comparando payload e headers.
+
+**Negativos e opcionais:** Range inválido, resposta `200` quando era necessária faixa `206`, tamanho divergente, truncamento e MIME não baixável. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-70 — `get_revision_bytes`
+
+**Contrato testado:** `GET /files/{fileId}/revisions/{revisionId}?alt=media`; retorno `GoogleResult<GoogleDownloadStream>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular download binário de revisão pelo ID do arquivo e da revisão, com e sem Range.
+
+**Negativos e opcionais:** Revisão indisponível, Range insatisfatório e fluxo interrompido. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-71 — `export_file_bytes`
+
+**Contrato testado:** `GET /files/{fileId}/export?mimeType=…`; retorno `GoogleResult<GoogleDownloadStream>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Simular exportação de documento Google no MIME solicitado, garantindo bytes exatos.
+
+**Negativos e opcionais:** Tipo MIME de exportação não suportado, recurso não exportável e bytes incompletos. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-72 — `start_resumable_create`
+
+**Contrato testado:** `POST /upload/drive/v3/files?uploadType=resumable`; retorno `GoogleResult<GoogleUploadSession>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Iniciar sessão de upload de criação e verificar URI `Location` opaca, MIME, metadados e tamanho opcional.
+
+**Negativos e opcionais:** `Location` ausente/inválida, tamanho incoerente, falha de quota e resposta parcial. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleUploadSession` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-73 — `start_resumable_update`
+
+**Contrato testado:** `PATCH /upload/drive/v3/files/{fileId}?uploadType=resumable`; retorno `GoogleResult<GoogleUploadSession>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Iniciar sessão de upload para ID existente, verificando PATCH da iniciação e opções.
+
+**Negativos e opcionais:** Arquivo ausente, pré-condição remota falha, `Location` inválida e token exposto em erro. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleUploadSession` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-74 — `upload_chunk`
+
+**Contrato testado:** `PUT URI de sessão + Content-Range`; retorno `GoogleResult<GoogleUploadProgress>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Enviar bloco com offset e `Content-Range`; simular `308` parcial e conclusão final.
+
+**Negativos e opcionais:** Offset fora do esperado, range incoerente, sessão expirada, timeout após envio com resultado desconhecido e `308` sem conclusão. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleUploadProgress` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-75 — `query_upload_progress`
+
+**Contrato testado:** `PUT URI de sessão + Content-Range bytes */total`; retorno `GoogleResult<GoogleUploadProgress>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Consultar status via URI da sessão e `Content-Range` de sondagem, sem reenviar bytes inexistentes.
+
+**Negativos e opcionais:** Sessão expirada, posição confirmada incompatível, resposta inválida ou timeout. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleUploadProgress` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-76 — `trash_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (trashed=true)`; retorno `GoogleResult<GoogleFile>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Traduzir ação para atualização `trashed=true` do arquivo; não utilizar exclusão permanente.
+
+**Negativos e opcionais:** Arquivo sem permissão, inexistente ou resposta sem estado compatível; não chamar DELETE. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-77 — `rename_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (name)`; retorno `GoogleResult<GoogleFile>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Enviar PATCH de `name` somente e confirmar que não há upload de conteúdo.
+
+**Negativos e opcionais:** Nome inválido, acesso negado e falha de PATCH; não reenviar bytes. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+#### API-78 — `move_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (addParents/removeParents)`; retorno `GoogleResult<GoogleFile>`. Os parâmetros e tipos permanecem exatamente os de `INTERFACES.md`.
+
+**Sucesso:** Transmitir `addParents` e `removeParents` por metadados e confirmar que não há upload.
+
+**Negativos e opcionais:** Pais inconsistentes, falta de permissão e falha de atualização; não alterar conteúdo. Respostas com campos opcionais ausentes devem preservar a distinção entre não informado e inválido.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Confirmar resultado, erro tipado, isolamento por sessão/fluxo e que credenciais jamais aparecem em logs ou mensagens. Onde houver endpoint, capturar a requisição no servidor simulado; quando não houver rede, validar a função local sem inventar chamada HTTP.
+
+### 7.3 Transferências e conveniências (10)
+
+#### API-69 — `get_file_bytes`
+
+**Contrato testado:** `GET /files/{fileId}?alt=media`; retorno `GoogleResult<GoogleDownloadStream>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Simular resposta binária `alt=media` com conteúdo completo e com faixa de bytes, comparando payload e headers.
+
+**Negativos e opcionais:** Range inválido, resposta `200` quando era necessária faixa `206`, tamanho divergente, truncamento e MIME não baixável. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-70 — `get_revision_bytes`
+
+**Contrato testado:** `GET /files/{fileId}/revisions/{revisionId}?alt=media`; retorno `GoogleResult<GoogleDownloadStream>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Simular download binário de revisão pelo ID do arquivo e da revisão, com e sem Range.
+
+**Negativos e opcionais:** Revisão indisponível, Range insatisfatório e fluxo interrompido. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-71 — `export_file_bytes`
+
+**Contrato testado:** `GET /files/{fileId}/export?mimeType=…`; retorno `GoogleResult<GoogleDownloadStream>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Simular exportação de documento Google no MIME solicitado, garantindo bytes exatos.
+
+**Negativos e opcionais:** Tipo MIME de exportação não suportado, recurso não exportável e bytes incompletos. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** verificar bytes e informações de transferência sem tratar leitura parcial como conclusão. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-72 — `start_resumable_create`
+
+**Contrato testado:** `POST /upload/drive/v3/files?uploadType=resumable`; retorno `GoogleResult<GoogleUploadSession>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Iniciar sessão de upload de criação e verificar URI `Location` opaca, MIME, metadados e tamanho opcional.
+
+**Negativos e opcionais:** `Location` ausente/inválida, tamanho incoerente, falha de quota e resposta parcial. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleUploadSession` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-73 — `start_resumable_update`
+
+**Contrato testado:** `PATCH /upload/drive/v3/files/{fileId}?uploadType=resumable`; retorno `GoogleResult<GoogleUploadSession>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Iniciar sessão de upload para ID existente, verificando PATCH da iniciação e opções.
+
+**Negativos e opcionais:** Arquivo ausente, pré-condição remota falha, `Location` inválida e token exposto em erro. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleUploadSession` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-74 — `upload_chunk`
+
+**Contrato testado:** `PUT URI de sessão + Content-Range`; retorno `GoogleResult<GoogleUploadProgress>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Enviar bloco com offset e `Content-Range`; simular `308` parcial e conclusão final.
+
+**Negativos e opcionais:** Offset fora do esperado, range incoerente, sessão expirada, timeout após envio com resultado desconhecido e `308` sem conclusão. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleUploadProgress` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-75 — `query_upload_progress`
+
+**Contrato testado:** `PUT URI de sessão + Content-Range bytes */total`; retorno `GoogleResult<GoogleUploadProgress>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Consultar status via URI da sessão e `Content-Range` de sondagem, sem reenviar bytes inexistentes.
+
+**Negativos e opcionais:** Sessão expirada, posição confirmada incompatível, resposta inválida ou timeout. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleUploadProgress` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-76 — `trash_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (trashed=true)`; retorno `GoogleResult<GoogleFile>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Traduzir ação para atualização `trashed=true` do arquivo; não utilizar exclusão permanente.
+
+**Negativos e opcionais:** Arquivo sem permissão, inexistente ou resposta sem estado compatível; não chamar DELETE. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-77 — `rename_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (name)`; retorno `GoogleResult<GoogleFile>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Enviar PATCH de `name` somente e confirmar que não há upload de conteúdo.
+
+**Negativos e opcionais:** Nome inválido, acesso negado e falha de PATCH; não reenviar bytes. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+#### API-78 — `move_file`
+
+**Contrato testado:** `PATCH /files/{fileId} (addParents/removeParents)`; retorno `GoogleResult<GoogleFile>`. Usar assinatura pública e opções já definidas.
+
+**Sucesso:** Transmitir `addParents` e `removeParents` por metadados e confirmar que não há upload.
+
+**Negativos e opcionais:** Pais inconsistentes, falta de permissão e falha de atualização; não alterar conteúdo. Testar ausência/presença de opções facultativas e resposta parcial com os dados efetivamente fornecidos.
+
+**Retorno e invariantes:** desserializar `GoogleFile` com campos mínimos e completos, preservando campos opcionais sem fabricar valores. Verificar requisição e bytes exatos quando aplicável, falhas tipadas, proteção da URI de upload, ausência de vazamento de credenciais e que conclusão de etapa não é anunciada como operação global concluída.
+
+### Critérios de execução para todos os 78 métodos
+
+Para cada caso **API-01 a API-78**, o teste deve registrar: nome do método, fixture independente, parâmetros usados, requisição capturada ou comportamento local, resposta simulada, estrutura pública resultante, campo opcional ausente/presente, erro negativo e resultado **PASS/FAIL** após execução. Um teste de compilação que apenas chama o trait não substitui o teste de contrato HTTP. Um teste com servidor fake não comprova disponibilidade real do serviço Google.
+
+## 8. Cenários específicos por recurso
 
 | Recurso | Cenários adicionais obrigatórios |
 | --- | --- |
@@ -179,7 +1075,7 @@ Para **cada método listado nas seções 5 e 6**, criar casos independentes que 
 | upload resumível | `Location` de sessão, envio parcial, `Content-Range`, bytes e offsets; `308` incompleto, confirmação final, sessão expirada, retry sem duplicar conteúdo, tamanho inconsistente |
 | conveniências | `trash_file`, `rename_file`, `move_file` traduzidas a `files.update`, sem tráfego de bytes do conteúdo |
 
-## 8. Cobertura de todos os tipos públicos
+## 9. Cobertura de todos os tipos públicos
 
 **Critério obrigatório:** cada `pub struct`, `pub enum` e `pub type` do `INTERFACES.md` deve ter testes, mesmo quando ainda não é utilizado por um consumidor externo. A cobertura é de **campos, conversões e contratos**, não apenas de linhas executadas.
 
@@ -222,7 +1118,7 @@ Para cada campo de cada tipo, gerar cenários **presente / omitido / inválido /
 - `GooglePatch::Unchanged`, `Set`, `Clear`: verificar ausência do campo no body, valor presente e limpeza **apenas onde suportada**.
 - `GoogleApiFailure` deve preservar o código de motivo seguro para diagnóstico sem vazar token, sessão ou body privado.
 
-## 9. Tratamento de erros e respostas HTTP
+## 10. Tratamento de erros e respostas HTTP
 
 | Caso injetado no servidor simulado | Expectativa |
 | --- | --- |
@@ -244,7 +1140,7 @@ Para cada campo de cada tipo, gerar cenários **presente / omitido / inválido /
 
 Testar `reason` desconhecido e respostas de erro sem `reason`: deve existir erro público estável e seguro, sem `panic`. Mensagem humana do Google não deve ser utilizada para classificação.
 
-## 10. Metas de cobertura e critérios de aceite
+## 11. Metas de cobertura e critérios de aceite
 
 | Métrica | Critério mínimo |
 | --- | --- |
@@ -259,7 +1155,7 @@ Testar `reason` desconhecido e respostas de erro sem `reason`: deve existir erro
 
 Cobertura por porcentagem **não substitui assertivas de contrato**. Se uma operação não tiver comportamento simulado validado, registrar como pendente; não marcar como coberta por um teste de mock que somente devolve resposta fixa.
 
-## 11. Execução e relatórios
+## 12. Execução e relatórios
 
 - Seguir [AGENTS.md](AGENTS.md) e o `AGENTS.md` da raiz. Executar `cargo test`, `cargo fmt`, `cargo clippy` e demais comandos Rust **somente dentro do Flatpak** do projeto.
 - A suíte deve executar sem credenciais, sem rede externa e sem dados do usuário.
@@ -268,6 +1164,6 @@ Cobertura por porcentagem **não substitui assertivas de contrato**. Se uma oper
 - Fazer commits por grupo lógico completo na **branch já escolhida pelo usuário**, sem criar branch por iniciativa do agente; respeitar as regras de publicação/commits do `AGENTS.md` da raiz.
 - **Não afirmar** que endpoints estão funcionando no serviço Google real: testes simulados demonstram somente conformidade com a especificação e com os cenários de teste.
 
-## 12. Critério de encerramento desta etapa documental
+## 13. Critério de encerramento desta etapa documental
 
 Este documento é o **plano dos testes**, não a execução deles. A etapa de implementação por TDD só começa quando o agente selecionar um grupo, escrever e executar testes inicialmente falhando, verificar as expectativas na documentação oficial e implementar o mínimo para fazê-los passar.
