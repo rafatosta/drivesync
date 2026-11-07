@@ -2,7 +2,7 @@
 
 ## 1. Contrato e limites
 
-Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O único consumidor do Detector Local é o módulo pai `Detector`; o Local utiliza a API pública do Inventário quando a observação exige persistência e entrega **sinais internos** de reavaliação à fachada. Não possui API pública para o Orquestrador nem para qualquer outro módulo da engine.
+Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O único consumidor do Detector Local é o módulo pai `Detector`; o Local entrega **um sinal individual por chamada** ao sink interno; o pai persiste a notificação via Storage. O Local não usa a API do Storage e não grava eventos em SQLite. Não possui API pública para o Orquestrador nem para qualquer outro módulo da engine.
 
 Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o **contrato interno**, com visibilidade restrita ao componente `detectors/`, para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Detector pai antes da implementação; **não são código Rust compilado**.
 
@@ -35,6 +35,7 @@ pub struct LocalDetectorNotice {
     pub coverage: LocalScanCoverage,
 }
 pub(super) trait LocalNotificationSink: Send + Sync {
+    // Sucesso implica recepção durável pela fachada, após enqueue do Storage.
     fn notify(&self, notice: LocalDetectorNotice) -> LocalDetectorResult<()>;
 }
 
@@ -62,12 +63,10 @@ pub struct LocalDetectorStatus {
 // InventoryHandle e NotificationHandle são abstrações tipadas injetadas
 // das APIs existentes, não wrappers de SQL nem implementação do Detector pai.
 // A forma concreta de ownership será fixada ao integrar os módulos.
-pub struct LocalInventoryHandle { /* API do InventoryManager */ }
 pub struct LocalNotificationHandle { /* sink interno fornecido pelo Detector pai */ }
 
 pub struct LocalDetectorCreateRequest {
     pub scope: LocalDetectorScope,
-    pub inventory: LocalInventoryHandle,
     pub notifications: LocalNotificationHandle,
     pub settings: LocalDetectorSettings,
 }
@@ -149,7 +148,7 @@ impl LocalDetector {
 
 **Finalidade:** Construir detector para uma raiz local, Inventário e destinatário de avisos, sem iniciar watcher.
 
-**Parâmetros:** `scope.sync_id`, `account_id`, `local_root` exigidos; `inventory` é uma referência tipada ao Inventário; `notifications` é sink injetado; `settings` contém política local.
+**Parâmetros:** `scope.sync_id`, `account_id`, `local_root` exigidos; `notifications` é sink injetado; `settings` contém política local.
 
 **Retorno:** Retorna instância em `Stopped` e o escopo validado.
 
@@ -207,7 +206,7 @@ impl LocalDetector {
 
 O `LocalNotificationSink` é uma **porta interna de entrega para o Detector pai**, não é a entrada do Orquestrador. O pai traduz essas observações em seu `DetectorEvent` público; `notify` é um sinal interno, não confirmação de item ou sincronização. Avisos podem ser repetidos, agregados ou perdidos; uma nova varredura restaura a observação depois de falha/reinício.
 
-Para persistir fatos, chamar **`InventoryManager.record_local`** e consultas públicas necessárias, respeitando precondições de identidade e revisão. Não escrever SQL, não modificar cursor remoto e não alterar baseline/atividade/fila. Uma falha de persistência impede afirmar que a observação foi salva; falha de notificação posterior precisa ser diagnosticável.
+**Não persistir eventos no Local.** Cada chamada `LocalNotificationSink.notify` carrega exatamente um aviso. O sink interno, fornecido pelo Detector pai, somente retorna sucesso depois de `EventStore.enqueue` durável; falha exige replay/reobservação, sem declarar sucesso. O Local não usa SQL, não altera cursor remoto, baseline, atividades nem fila de operações.
 
 ## 7. Erros e dependências em aberto
 
