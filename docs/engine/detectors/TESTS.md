@@ -1,189 +1,163 @@
 # Detector — TESTS
 
-## 1. Objetivo e escopo
+## 1. Objetivo e independência
 
-Contrato TDD do **módulo público `Detector`**, **não** dos detectores internos. São **sete operações públicas** descritas em [INTERFACES.md](INTERFACES.md), além da porta de eventos `DetectorEventSink.publish`. [README.md](README.md) define responsabilidades e limites.
+TDD do **coordenador real**, com **Local fake, Remoto fake e Storage fake** que implementam apenas os contratos internos. O Detector deve ser compilável e testável mesmo quando os três filhos concretos não existem. Testar cada filho real **em sua própria suíte**: Local (filesystem temporário), Remoto (Google API fake), Storage (SQLite real isolado). O Orquestrador é um consumidor simulado que utiliza somente métodos públicos.
 
-Testar o **coordenador real** com **duas fontes internas simuladas e independentes**, sink fake do Orquestrador e Inventário real isolado quando precisar verificar persistência. Não executar filesystem watcher nem cliente Google real nos testes do coordenador; essas responsabilidades pertencem às suítes dos filhos. O Orquestrador simulado não deve receber/importar seus tipos.
+Escrever testes RED antes da implementação, completar GREEN por unidade funcional, REFACTOR e regressão; commits locais coesos.
 
-## 2. Estratégia TDD e fixtures
+## 2. Fixtures
 
-RED → GREEN → REFACTOR por grupo funcional: composição; ciclo de vida; solicitação de observação; tradução e emissão de eventos; status/erros; recuperação e concorrência. Escrever casos antes da implementação, executar regressão incremental, registrar commits locais validados.
+| Fixture | Conteúdo |
+| --- | --- |
+| `two_producers` | Local e Remoto fake produzindo eventos individuais de maneira intercalada |
+| `same_item_both_sides` | Duas fontes emitem eventos diferentes para o mesmo SyncItem |
+| `slow_consumer` | Produtores continuam enfileirando enquanto Orquestrador não chama take_events |
+| `store_fake` | Implementa enqueue, claim, ack, release, status e leases sem SQLite |
+| `store_failure` | Enqueue retorna erro/backpressure; produtor não recebe confirmação durável |
+| `failed_availability_notification` | Sink opcional de aviso falha após enqueue concluído |
+| `stopped_producers` | Fontes Stopped; Store ainda possui pendências |
+| `two_syncs` | Instâncias isoladas por sync_id |
+| `expired_lease` | Consumo interrompido, lease vence e o lote é reentregue |
 
-| Fixture | Conteúdo | Verificação |
-| --- | --- | --- |
-| `healthy_sources` | Duas fontes internas fake com eventos diferentes | Coordenação sem distinção pública de origem |
-| `local_degraded` | Uma fonte funcional, outra indisponível | Estado agregado e eventos preservados |
-| `remote_degraded` | Ordem inversa de falha | Mesmo contrato externo, sem privilégios de uma origem |
-| `duplicate_events` | Eventos repetidos/reordenados | Agregação não perde reavaliação |
-| `unknown_identity` | Evento interno sem SyncItemId | Aviso público válido de reavaliação de escopo |
-| `inventory_rollback` | Falha ao persistir fatos relacionados | Nenhum evento marca `persisted=true` sem commit |
-| `failed_sink` | Sink retorna erro depois de fatos persistidos | Diagnóstico e recuperação sem perda do fato |
-| `closed_app` | Pausa/stop, alterações simuladas e resume | Necessidade de recuperação repassada às fontes |
-
-## 3. Índice dos sete métodos
-
-| Caso | Método | Evidência principal |
-| --- | --- | --- |
-| DET-01 | `Detector::new` | Composição e encapsulamento |
-| DET-02 | `Detector::start` | Início e estado parcial |
-| DET-03 | `Detector::pause` | Suspensão |
-| DET-04 | `Detector::resume` | Recuperação após pausa |
-| DET-05 | `Detector::stop` | Parada segura |
-| DET-06 | `Detector::request_scan` | Pedido de reavaliação |
-| DET-07 | `Detector::status` | Estado agregado |
-
-## 4. Casos descritivos por método
+## 3. Índice e casos por método
 
 ### DET-01 — `Detector::new`
 
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Criar instância para `sync_id` válido, dependências fictícias e duas fontes internas simuladas; expor só `Detector`.
+**Sucesso:** Criar fachada com três portas fake independentes, sem construir filhos no Orquestrador.
 
-**Negativos e opcionais:** Identidade inválida, Inventário indisponível, sink inválido; construção nunca obriga Orquestrador a criar Local/Remoto.
+**Negativos e opcionais:** Identidade inválida, store indisponível, notificação de disponibilidade omitida.
 
-**Retorno e invariantes:** Nenhuma detecção iniciada; tipos internos não aparecem em superfície pública.
+**Retorno e invariantes:** Retorna Stopped; não expõe tipos concretos dos filhos.
 
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
 ### DET-02 — `Detector::start`
 
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Solicitar início e verificar que o coordenador inicia fontes disponíveis e informa agendamento de recuperação.
+**Sucesso:** Iniciar Local e Remoto via APIs internas, com estratégias distintas.
 
-**Negativos e opcionais:** Uma fonte inicia, outra falha; start repetido, dependência indisponível, estado degradado.
+**Negativos e opcionais:** Start repetido ou uma origem falha.
 
-**Retorno e invariantes:** Status agregado conserva falha; não gera exclusões nem confirma leitura inexistente.
+**Retorno e invariantes:** Estado Degraded quando necessário; eventos já armazenados permanecem.
 
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
-
-
-### DET-03 — `Detector::pause`
-
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
-
-**Sucesso:** Pausar detecção e verificar encaminhamento interno do controle.
-
-**Negativos e opcionais:** Pausa já ativa, fonte indisponível ou encerramento concorrente.
-
-**Retorno e invariantes:** Dados persistidos não são apagados; pausa não paralisa operações de sincronização fora do Detector.
-
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-04 — `Detector::resume`
+### DET-03 — `Detector::stop`
 
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Retomar depois de intervalo offline e verificar que ambas as fontes recebem pedido de recuperação segundo suas estratégias.
+**Sucesso:** Parar as duas fontes em DrainInFlight ou StopNow.
 
-**Negativos e opcionais:** Falha de retomada em uma fonte, eventos perdidos, estado anterior inválido.
+**Negativos e opcionais:** Fonte em falha, emissão concorrente, stop repetido.
 
-**Retorno e invariantes:** Retomada não presume que nenhuma alteração ocorreu durante pausa; status identifica degradação.
+**Retorno e invariantes:** Eventos já gravados continuam disponíveis; não executa acknowledge.
 
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
-
-
-### DET-05 — `Detector::stop`
-
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
-
-**Sucesso:** Encerrar fontes e liberar recursos; consultar estado Stopped.
-
-**Negativos e opcionais:** Parada repetida, fontes interrompidas, observações em andamento.
-
-**Retorno e invariantes:** Não modifica baseline, fila, cursor válido ou histórico do Inventário.
-
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-06 — `Detector::request_scan`
+### DET-04 — `Detector::request_scan`
 
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Solicitar observação `All` e `Items` pelo mesmo contrato, sem selecionar mecanismo de watcher/polling.
+**Sucesso:** Solicitar All ou Items ao coordenador, que repassa aos produtores conforme capacidades.
 
-**Negativos e opcionais:** Lista `Items` vazia, item de outra sincronização, request_id opcional, fonte indisponível.
+**Negativos e opcionais:** Items vazio, ID de outro sync, request_id ausente.
 
-**Retorno e invariantes:** Retorno de aceitação não é verificação concluída; nenhum upload/download é iniciado.
+**Retorno e invariantes:** Apenas observação, sem ações de sincronização.
 
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
-
-
-### DET-07 — `Detector::status`
-
-**Contrato:** método, request e result públicos definidos em `INTERFACES.md`.
-
-**Sucesso:** Obter estado agregado do módulo após eventos/leituras com fontes saudáveis.
-
-**Negativos e opcionais:** Status antes do start, uma fonte degradada, última observação/erro ausentes.
-
-**Retorno e invariantes:** Nenhum campo de status público exige conhecimento de Local/Remoto, e leitura não dispara observação.
-
-**Verificação:** conferir apenas o contrato público, chamadas às fontes fake e estado do Inventário pela API; usar estados simulados de origem diferentes sem mudar o objeto externo. Inspecionar erros sanitizados, ausência de efeitos proibidos e transições.
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-## 5. Notificações unificadas
+### DET-05 — `Detector::status`
 
-| Caso | Estímulo interno | Esperado na API pública |
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
+
+**Sucesso:** Consultar status agregado e números de pending/leased fornecidos pelo Store.
+
+**Negativos e opcionais:** Nenhum produtor ativo, storage indisponível, uma fonte degradada.
+
+**Retorno e invariantes:** Sem consumo nem SQL ou I/O interno do filho.
+
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
+
+
+### DET-06 — `Detector::take_events`
+
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
+
+**Sucesso:** Reservar lote de até N eventos locais e remotos intercalados em ordem de enfileiramento.
+
+**Negativos e opcionais:** N=0, lease inválido, fila vazia, Store falha.
+
+**Retorno e invariantes:** Lote pode conter mesmo item de ambas as origens; nenhuma eliminação por colisão; nenhum conflito decidido.
+
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
+
+
+### DET-07 — `Detector::acknowledge`
+
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
+
+**Sucesso:** Confirmar Processed ou Discarded pelo batch_id.
+
+**Negativos e opcionais:** Lease inválido, expirado, ack duplicado com disposição diferente.
+
+**Retorno e invariantes:** Somente decisão explícita retira pendência; não confirma baseline.
+
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
+
+
+### DET-08 — `Detector::release_events`
+
+**Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
+
+**Sucesso:** Liberar lote reservado para reentrega.
+
+**Negativos e opcionais:** Batch errado, release repetido, crash antes da confirmação.
+
+**Retorno e invariantes:** Eventos ficam novamente elegíveis, sem perda.
+
+**Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
+
+
+## 4. Eventos mistos e produtor–consumidor
+
+| Caso | Cenário | Resultado obrigatório |
 | --- | --- | --- |
-| DET-N-01 | Mudança local com item identificado | `DetectorEvent` válido, sem tipo de filesystem exposto |
-| DET-N-02 | Mudança remota com item identificado | **Mesmo tipo** de `DetectorEvent`, sem GoogleChange/JSON/cursor |
-| DET-N-03 | Evento sem identidade confiável | `affected_items=[]` significa reavaliar escopo |
-| DET-N-04 | Campo `persisted=true` | Inventário confirma previamente os fatos necessários |
-| DET-N-05 | Falha de persistência | Aviso diagnóstico com `persisted=false`, sem alegar observação confirmada |
-| DET-N-06 | Sink falha | Registrar erro e permitir recuperação; não executar operações físicas |
-| DET-N-07 | Eventos duplicados, agregados ou perdidos | Não presumir exatamente-uma-vez; fontes recebem recuperação na retomada |
-| DET-N-08 | Evento de fonte degradada | Cobertura `Partial`/`Unavailable` e status compatível |
-| DET-N-09 | Tipo interno novo em uma fonte | A API pública continua a mesma e exige apenas tradução sem perda de diagnóstico essencial |
+| DET-B-01 | Evento Local isolado | Uma emissão gera um registro e lote válido |
+| DET-B-02 | Evento Remoto isolado | Mesmo contrato de lote, sem campo obrigatório de origem interna |
+| DET-B-03 | Local e Remoto emitem simultaneamente | Ambos entram na fila e podem sair **no mesmo EventBatch** |
+| DET-B-04 | Mesmo item muda em ambas as origens | **Dois eventos preservados**; nenhuma prevalência ou conflito decidido pelo Detector |
+| DET-B-05 | Eventos intercalados | Ordem da fila é de commit/enfileiramento, **não ordem causal das alterações** |
+| DET-B-06 | Lote de 1 ou N eventos | Mesma API de consumo e confirmação; max_events respeitado |
+| DET-B-07 | Consumidor lento | Pendências se acumulam sem perder eventos persistidos |
+| DET-B-08 | Dois consumidores tentam reservar | Sem mesmo evento simultaneamente sob dois leases válidos |
+| DET-B-09 | Lote reservado e falha antes do ack | Redelivery após release ou expiração |
+| DET-B-10 | Orquestrador confirma Discarded | Apenas lote explicitamente confirmado é descartado |
+| DET-B-11 | StopNow após enqueues | Eventos persistidos continuam disponíveis mesmo com produtores parados |
+| DET-B-12 | Sink de disponibilidade falha | Enqueue durável não desaparece; polling de take_events continua possível |
+| DET-B-13 | Storage falha no enqueue | Produtor recebe falha, não sucesso fictício |
+| DET-B-14 | Evento sem item conhecido | Mantém necessidade de reavaliação por escopo |
+| DET-B-15 | Repetição do mesmo evento após resultado incerto | Idempotência por ID quando comprovada; não suprimir alteração distinta |
 
-## 6. Visibilidade e independência — testes de compilação
+## 5. Isolamento de interfaces
 
-- Um consumidor externo consegue importar `Detector`, `DetectorEvent`, tipos públicos de request/result e `DetectorEventSink`.
-- Um consumidor externo **não** consegue importar, construir ou chamar `LocalDetector`, `RemoteDetector`, `InternalObservationSource`, `LocalNotificationSink`, watchers, cursors ou tipos concretos dos filhos pela fachada pública.
-- `DetectorCreateRequest` não exige que o consumidor instancie os filhos.
-- O teste do coordenador funciona sem implementar as duas fontes reais, usando fakes internos.
-- O teste do Local pode ser executado sem implementar o Remoto, e vice-versa.
-- O contrato público não discrimina execução local e remota em assinaturas diferentes.
+- Orquestrador de teste só importa `Detector`, requests/results, `DetectorEvent`, `EventBatch` e tipos públicos.
+- Não pode importar `LocalDetector`, `RemoteDetector`, `EventStore` ou tipos SQLite através da fachada.
+- O coordenador só usa portas de cada filho, sem SQL, watcher, HTTP ou algoritmos da Google API.
+- Local real é testável sem Remoto/Storage concretos; Remoto real sem Local/Storage concretos; Storage real sem ambos nem coordenador real.
+- A substituição de qualquer filho por fake não obriga reescrever os demais contratos.
 
-## 7. Matriz de estados, opcionais e recuperação
+## 6. Erros, opcionalidade e aceite
 
-Testar todas as variantes de `DetectorState`, `DetectorCoverage`, `DetectorEventKind`, `DetectorScanScope`, `DetectorScanReason`, `DetectorError`. Cobrir `correlation_id=None/Some`, `request_id=None/Some`, `last_observation_at=None/Some`, `last_error=None/Some`; lista vazia de itens (reavaliação ampla em evento, mas requisição `Items([])` inválida). `pending_checks` e `degraded_sources` são agregados tipados, sem detalhes internos.
+Testar `batch_id=None` somente para lote vazio, intervalos opcionais vazios em lote vazio, `event_available_sink=None`, identidade de sincronização, tipos de status, lease expirado/errado, requests inválidos, backpressure e falha de fonte.
 
-Garantir que `request_scan` apenas agenda detecção, não realiza sincronização física. Simular fontes com estado independente, parada parcial, interrupção após commit e antes do aviso, e retomada após perda de eventos efêmeros.
+**Aceite integral do coordenador:** 8/8 métodos e casos DET-B aplicáveis executados no Flatpak, sem precisar executar filhos concretos. Integração real dos quatro requer fase separada. Cobertura declarada precisa de comandos/resultados efetivamente executados.
 
-## 8. Pausa, recuperação e entrega diferida — testes obrigatórios
-
-| Caso | Situação | Resultado exigido |
-| --- | --- | --- |
-| DET-P-01 | `pause` com fontes ativas | Nenhuma notificação de processamento normal é entregue enquanto pausado; `status` informa `Paused` |
-| DET-P-02 | Local entrega vários sinais do mesmo item durante pausa | Necessidade de reavaliação permanece e pode ser agregada, sem exigir reenvio literal dos eventos brutos |
-| DET-P-03 | Remoto continua polling durante pausa | Eventos/checkpoint confirmados no Inventário não são descartados; entrega pode ficar adiada |
-| DET-P-04 | Remoto suspende polling durante pausa | `resume` solicita consulta incremental desde cursor confirmado; não presume ausência de mudança |
-| DET-P-05 | Local perde watcher durante pausa | `resume` solicita varredura apropriada, sem inferir exclusões |
-| DET-P-06 | `resume` com pendências de ambos os filhos | Eventos de reavaliação chegam pela **mesma API pública**, sem tipos locais/remotos |
-| DET-P-07 | Falha de recuperação em uma fonte | Estado Degraded e cobertura Partial/Unavailable, preservando fatos válidos da outra |
-| DET-P-08 | Stop e novo Start após alterações | Recuperação solicitada mesmo sem eventos em memória |
-| DET-P-09 | Crash após observação persistida mas antes de aviso | Recuperação/revarredura emite necessidade de reavaliação, sem depender do buffer volátil |
-| DET-P-10 | Buffer de sinais cheio ou eventos duplicados | Agregação ou reavaliação por escopo sem perda silenciosa |
-| DET-P-11 | Pause enquanto o Analisador já processa transferência | O Detector não cancela operação externa; apenas controla sua própria entrega |
-| DET-P-12 | Recuperação apenas agendada | `recovery_scheduled=true` não é interpretado como conclusão da recuperação |
-
-**Independência das fontes:** simular Local orientado a eventos e Remoto com polling de tempo determinístico. Não impor o mesmo comportamento de pausa às duas fontes. O que o teste da fachada exige é **nenhuma perda permanente da necessidade de reavaliar**, respeitando durabilidade e escopo, não preservação de todos os eventos brutos.
-
-**Separação de filas:** comprovar que notificações pendentes de detecção não são inseridas como `sync_operations` antes de análise/autorização. Uma fila ou buffer interno não substitui a persistência de fatos no Inventário nem justifica banco adicional.
-
-## 9. Erros, bloqueios e critérios de aceite
-
-Cada erro tipado deve incluir `kind`, `retryable` e mensagem sanitizada. Falha em uma fonte não deve mascarar observações válidas da outra; indisponibilidade não é ausência confirmada.
-
-**Aceite integral:** sete métodos e emissão de eventos implementados, testes DET-01…DET-07 e DET-N aplicáveis efetivamente executados, visibilidade de tipos comprovada, falha parcial e recuperação demonstradas, regressão sem falhas, comandos Rust somente no Flatpak. **Não exigir implementação real de Local e Remoto para validar a fachada isoladamente.** Integração completa exige outra etapa.
-
-**Pendências técnicas:** ownership/traits reais, criação interna das fontes, agendamento/async, entrega e persistência dos fatos. Decidir antes de implementar casos dependentes, sem ampliar API pública unilateralmente.
-
-## 10. Registro de testes
-
-Relatar IDs executados, PASS/FAIL/BLOCKED, comandos, ambiente, commits, limitações e diferenças entre simulação de fontes e integração real. **Este arquivo não prova execução dos testes.**
+**Esta é uma especificação documental; nenhum teste foi executado.**
