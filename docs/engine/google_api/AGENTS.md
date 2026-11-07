@@ -29,6 +29,15 @@ Implementar e testar **exclusivamente** o módulo independente `google_api/` da 
 
 **Não implementar todos os métodos em um único lote.** Organizar entregas por capacidade coesa (ex.: tipos/erros; OAuth/OIDC; metadados; alterações; conteúdo; uploads; demais recursos REST), preservando todas as interfaces previstas para desenvolvimento posterior.
 
+## Autonomia e conclusão da implementação
+
+- **“Implemente o módulo Google API”**, sem restrição adicional, significa executar **todo o escopo do módulo**: os 59 métodos REST, 9 métodos OAuth/OIDC e 10 de transferências/conveniência previstos em [INTERFACES.md](INTERFACES.md), com seus testes aplicáveis em [TESTS.md](TESTS.md). Não encerrar após criar estruturas ou finalizar somente a primeira capacidade.
+- O agente deve avançar autonomamente por grupos coesos, com **testes antes do código, implementação mínima, regressão e commit local** por unidade validada. Não necessita pedir confirmação para cada método ou commit local.
+- Quando o pedido limitar o trabalho a OAuth, arquivos, alterações, transferências ou outro grupo, executar **somente o escopo solicitado** e registrar os demais como pendentes; não anunciar o módulo como integralmente concluído.
+- **Aceite da implementação integral:** contratos públicos implementados, casos TDD aplicáveis executados com servidor HTTP local simulado ou testes locais adequados, regressão sem falhas conhecidas e relatório dos resultados/limitações. Teste simulado não comprova integração real com Google.
+- Se contrato, dependência, ambiente Flatpak ou verificação necessária estiver bloqueado, registrar exatamente a pendência e o impacto; **não declarar sucesso fictício nem alterar contrato validado unilateralmente**. As orientações para avaliar divergências oficiais permanecem válidas.
+- Não executar `git push`, publicar PR, nem realizar integração com conta real sem autorização específica. Exemplo reutilizável em [IMPLEMENTATION_REQUEST.md](../IMPLEMENTATION_REQUEST.md).
+
 ## Regras de arquitetura e fronteiras
 
 | Regra | Exigência |
