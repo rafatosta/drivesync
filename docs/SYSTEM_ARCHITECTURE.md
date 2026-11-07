@@ -11,7 +11,7 @@ A arquitetura distingue cinco responsabilidades principais:
 1. **Observar** alterações locais e remotas.
 2. **Armazenar e consultar** o estado unificado dos itens.
 3. **Analisar e encaminhar** operações permitidas a partir das diferenças entre estados.
-4. **Coordenar e definir políticas** de processamento e situações que exijam decisão do usuário.
+4. **Coordenar e definir políticas** de processamento e situações que exijam decisão do usuário, expondo uma interface independente para consumidores externos.
 5. **Executar** operações sobre o Google Drive ou a pasta local.
 
 Este documento define a organização **macro** dos componentes. Não especifica classes internas, arquivos Rust, assinaturas de métodos, protocolos de eventos nem algoritmos de sincronização.
@@ -72,6 +72,8 @@ O Analisador **não implementa transferências nem modifica arquivos diretamente
 
 O Orquestrador trabalha com **informações globais da sincronização** (eventos recebidos, condições de operação, configurações e preferências do usuário); o Analisador trabalha com **informações dos itens** (identidades, metadados, estados e baseline). Ambos coordenam e tomam decisões em seus respectivos níveis, sem duplicar responsabilidades.
 
+O Orquestrador é também a **porta de entrada e saída da engine** para consumidores externos, por meio de seu submódulo `facade/`. Essa interface recebe solicitações e disponibiliza estados, progresso, erros e notificações, sem depender de GTK, libadwaita ou qualquer interface gráfica específica.
+
 O Orquestrador **não aciona diretamente os operadores de Upload e Download** e não executa operações físicas. O Analisador identifica e encaminha as operações compatíveis com as políticas e retorna ao Orquestrador quando uma decisão não puder ser tomada dentro dessas condições. O mecanismo concreto de fila e retomada será definido posteriormente.
 
 ### 2.5 Operador de Upload
@@ -114,6 +116,8 @@ O operador preserva as garantias de transferência, integridade, interrupção e
 O componente oferece acesso ao provedor, não uma segunda fonte de verdade local.
 
 ## 3. Relacionamentos entre componentes
+
+**Organização de suporte:** `accounts/` gerencia contas e contém internamente `auth/`, responsável pelos mecanismos de autenticação e credenciais. A autenticação é acessada por contratos de `accounts/`; não constitui módulo de primeiro nível da arquitetura. `orchestrator/facade/` expõe o contrato externo da engine, sem centralizar a comunicação interna entre seus módulos.
 
 **Dois níveis de coordenação:** o Orquestrador administra o processamento da sincronização como um todo; o Analisador administra a análise e a execução autorizada por arquivo ou diretório. A identificação de conflitos pode ser organizada como submódulo do Analisador, sem se tornar um oitavo componente independente na arquitetura macro.
 
@@ -169,7 +173,9 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 ## 5. Limites da arquitetura
 
-A interface GTK/libadwaita consome capacidades públicas da engine. Ela não conhece tabelas do Inventário nem implementa regras de sincronização. Os serviços globais de contas, preferências, credenciais e diagnóstico dão suporte à aplicação e não alteram a divisão de responsabilidades da sincronização.
+A engine funciona **independentemente da GUI**. A interface GTK/libadwaita, uma CLI ou outro consumidor externo utiliza o contrato de `orchestrator/facade/` para enviar ações e receber estados, progresso, erros e notificações. A Facade não importa nem depende de GTK/libadwaita e não participa obrigatoriamente da comunicação entre componentes internos.
+
+O módulo `accounts/` expõe o gerenciamento das contas e encapsula `accounts/auth/` para autenticação OAuth e credenciais. O módulo `configuration/` continua como serviço de preferências e políticas. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
 A persistência dos itens, estados e histórico é definida por `DATA_MODEL.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
 
@@ -181,6 +187,7 @@ A organização é considerada respeitada quando:
 - o Analisador encaminha diretamente ao operador correspondente uma operação autorizada, sem executar fisicamente a ação;
 - situações não resolvíveis pelas políticas recebidas retornam ao Orquestrador para decisão adicional;
 - os resultados podem ser confirmados sobre a mesma identidade lógica no Inventário;
-- a implementação interna de um componente pode ser alterada sem exigir conhecimento dos detalhes internos dos demais.
+- a implementação interna de um componente pode ser alterada sem exigir conhecimento dos detalhes internos dos demais;
+- a aplicação gráfica pode ser substituída por outro consumidor sem mudanças nos componentes internos, utilizando a Facade do Orquestrador.
 
 Os **fluxos de execução**, a **organização interna dos módulos** e o **plano de desenvolvimento** serão especificados separadamente.
