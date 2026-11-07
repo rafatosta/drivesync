@@ -568,11 +568,13 @@ pub struct InventoryFailure {
 
 Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública expõe SQL, caminhos sensíveis, credenciais ou conteúdo privado.
 
-## 11. Revisão de opcionalidade em relação ao modelo anterior
+## 11. Decisões de projeto: obrigatoriedade, opcionalidade e ausência de dados
 
-O modelo anterior do projeto previa `kind`, `remote_id?`, `remote_parent_id?`, `local_parent_item_id?`, atributos locais/Google opcionais, presença conhecida/desconhecida e baseline ainda ausente. Esta versão **preserva esses conceitos**, mas distribui metadados entre `LocalFile`, `GoogleFile`, `SyncItem` e `SyncBaseline`. Não duplicar `remote_id`/nomes/parentes em `SyncItem` apenas por terem existido na tabela antiga: obtê-los dos objetos vinculados, preservando dados de baseline à parte.
+**Esta seção define o contrato atual do Inventário**, não uma comparação histórica. A distribuição de responsabilidades é intencional: `LocalFile` e `GoogleFile` representam metadados observados; `SyncItem` representa identidade e relacionamento; `SyncBaseline` preserva apenas fatos anteriormente confirmados. Campos opcionais existem **porque o dado pode ser desconhecido, não aplicável, ainda não criado ou condicionado por uma operação**. Esses casos não devem ser confundidos.
 
-### O que é obrigatório e o que pode não existir
+**Decisão:** `SyncItem` não duplica nome, ID remoto ou pais dos objetos associados; consulta essas informações nas representações local/remota. Se o vínculo atual for removido, o baseline e eventuais tombstones preservam a evidência necessária à recuperação. A API não transforma `None` em valor fictício.
+
+### Obrigatoriedade dos dados retornados
 
 | Tipo/objeto | Sempre presente | Opcional / pode estar ausente | Regra de validação |
 | --- | --- | --- | --- |
@@ -588,7 +590,7 @@ O modelo anterior do projeto previa `kind`, `remote_id?`, `remote_parent_id?`, `
 | `Page<T>` | `entries` | `next_cursor` | `None` significa fim da paginação, não erro |
 | `Pagination` | `limit` | `after` | Limite positivo e com máximo documentado; `after=None` inicia consulta |
 
-### Requisições e filtros: análise campo a campo
+### Requisições e filtros: decisão de obrigatoriedade
 
 | Requisição/estrutura | Campos opcionais | Campos obrigatórios / observações |
 | --- | --- | --- |
@@ -631,7 +633,260 @@ O modelo anterior do projeto previa `kind`, `remote_id?`, `remote_parent_id?`, `
 
 `fn get_item(&self, request: GetItemRequest) -> InventoryResult<GetItemResult>` permanece com a mesma assinatura quando uma opção é adicionada à requisição. **Porém, acrescentar campo a um `pub struct` quebra código que constrói o struct com literal completo**. Para tornar a evolução realmente menos custosa, documentar construtores/builder/`Default` nos tipos de request; isso permite inicializar o mínimo necessário e acrescentar opções por métodos, sem exigir que todos os chamadores sejam reescritos. Resultados públicos podem continuar exigindo adaptação em código que realiza desestruturação exaustiva.
 
-## 12. Garantias de evolução e testes
+## 12. Contrato funcional de cada método público
+
+As assinaturas completas estão na seção 9. Esta seção explica **cada método e os campos de seus objetos de entrada e saída**, como interpretá-los e o que não é responsabilidade da chamada. Campos de entrada não listados como `Option` devem ser informados; campos condicionais podem ser representados por enum ou por `FieldUpdate`. Todos os métodos retornam `InventoryResult<ObjetoDeResultado>`, que traduz falhas para `InventoryFailure`.
+
+### 1. `open`
+
+**Assinatura:** `fn open(..., request: OpenInventoryRequest) -> InventoryResult<OpenInventoryResult>`.
+
+**Finalidade:** Abre ou cria o banco privado de uma sincronização, valida identidade e esquema, sem inicializar uma pasta de usuário já ocupada inadvertidamente.
+
+**Parâmetros:** `local_root`: raiz real do diretório; `expected`: `sync_id`/conta/raiz remota esperados; `create_if_missing`: permissão explícita para criar (não é pedido para substituir um banco inválido).
+
+**Retorno:** `inventory`: gerenciador pronto; `info`: identidade e estado persistidos; `created`: diferencia criação de reabertura.
+
+**Limites e erros:** Não reconcilia arquivos, não apaga banco antigo e não recupera credenciais. Falha com `InvalidIdentity`, `CorruptDatabase`, `UnsupportedSchema` ou erro de armazenamento.
+
+### 2. `get_sync_info`
+
+**Assinatura:** `fn get_sync_info(..., request: GetSyncInfoRequest) -> InventoryResult<GetSyncInfoResult>`.
+
+**Finalidade:** Consulta a identidade e o progresso estrutural da sincronização.
+
+**Parâmetros:** Request vazio: o escopo é o banco já aberto, sem passar IDs redundantes.
+
+**Retorno:** `info`: inclui `sync_id`, `account_id`, `remote_root_id`, geração e `initial_download_complete`.
+
+**Limites e erros:** Somente leitura; não verifica rede, não determina se arquivos estão sincronizados.
+
+### 3. `mark_initial_download_complete`
+
+**Assinatura:** `fn mark_initial_download_complete(..., request: MarkInitialDownloadCompleteRequest) -> InventoryResult<MarkInitialDownloadCompleteResult>`.
+
+**Finalidade:** Altera a marca persistente de conclusão da materialização inicial, sob condição de geração e estado anterior.
+
+**Parâmetros:** `expected_generation`: protege geração do inventário; `expected_complete`: estado atual que o chamador espera antes de alterar. A intenção é transição para concluído, não chave arbitrária.
+
+**Retorno:** `info`: novo estado persistido após a transição.
+
+**Limites e erros:** Não transfere arquivos; rejeita transição sem confirmação dos pré-requisitos ou versão incompatível.
+
+### 4. `get_item`
+
+**Assinatura:** `fn get_item(..., request: GetItemRequest) -> InventoryResult<GetItemResult>`.
+
+**Finalidade:** Obtém um vínculo lógico por uma única identidade.
+
+**Parâmetros:** `selector`: `Id`, `RemoteId`, `LocalId` ou `LocalRelativePath`; variante selecionada determina os dados obrigatórios.
+
+**Retorno:** `item: Some`: vínculo e objetos disponíveis; `None`: nenhum registro para o seletor.
+
+**Limites e erros:** Não prova que o arquivo não existe no filesystem ou Drive; não cria vínculos nem faz leitura de rede.
+
+### 5. `list_items`
+
+**Assinatura:** `fn list_items(..., request: ListItemsRequest) -> InventoryResult<ListItemsResult>`.
+
+**Finalidade:** Lista itens com filtragem e paginação estável.
+
+**Parâmetros:** `filter.statuses` vazio: todos os status; `local_presence`/`remote_presence` `None`: qualquer; `remote_parent_id`/`local_parent_item_id` `None`: qualquer pai; `pagination.limit`: máximo de itens; `after`: cursor ou primeira página.
+
+**Retorno:** `page.entries`: itens reconstruídos; `next_cursor: None`: fim da consulta.
+
+**Limites e erros:** Não varre o disco/Drive; cursor não pode ser reutilizado com filtro incompatível.
+
+### 6. `record_local`
+
+**Assinatura:** `fn record_local(..., request: RecordLocalObservation) -> InventoryResult<RecordObservationResult>`.
+
+**Finalidade:** Insere ou atualiza a observação local e seu vínculo lógico sem modificar o baseline.
+
+**Parâmetros:** `selector`: vínculo existente, chave local ou `NewItem`; `observation.file`: metadados quando presente; `presence`: situação comprovada; `proof`: origem, instante e escopo; `relative_path`: localização se observada; `expected_revision`: necessária para atualização de item existente, `None` apenas para criação.
+
+**Retorno:** `item`: estado atualizado com revisão; `created`: informa se o vínculo foi criado.
+
+**Limites e erros:** Não executa upload; `Unknown` preserva evidências anteriores e `AbsentConfirmed` exige prova suficiente.
+
+### 7. `record_remote`
+
+**Assinatura:** `fn record_remote(..., request: RecordRemoteObservation) -> InventoryResult<RecordObservationResult>`.
+
+**Finalidade:** Insere ou atualiza observação recebida da Google API sem editar o Drive nem confirmar sincronização.
+
+**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.file`: `GoogleFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
+
+**Retorno:** `item`: representação remota e estado; `created`: indica novo vínculo.
+
+**Limites e erros:** Não apaga campos omitidos em resposta parcial; não transforma falha de API em exclusão.
+
+### 8. `link_item`
+
+**Assinatura:** `fn link_item(..., request: LinkItemRequest) -> InventoryResult<LinkItemResult>`.
+
+**Finalidade:** Associa ou desassocia representações local e remota ao mesmo `SyncItem`.
+
+**Parâmetros:** `item_id`: vínculo-alvo; `changes.local_file_id` e `changes.google_file_id`: `Keep` preserva, `Set` vincula e `Clear` remove a referência; `expected_revision`: controle otimista.
+
+**Retorno:** `item`: vínculo com associações atualizadas.
+
+**Limites e erros:** Não transfere ou remove arquivos; rejeita IDs de outro vínculo e limpa somente associações explicitamente solicitadas.
+
+### 9. `update_item_status`
+
+**Assinatura:** `fn update_item_status(..., request: UpdateItemStatusRequest) -> InventoryResult<UpdateItemStatusResult>`.
+
+**Finalidade:** Registra a condição de processamento diagnosticada pelo consumidor autorizado.
+
+**Parâmetros:** `item_id`: alvo; `change.status`: novo status obrigatório; `change.conflict_reason`: `Keep`, `Set` ou `Clear` para motivo; `expected_revision`: precondição.
+
+**Retorno:** `item`: condição após alteração.
+
+**Limites e erros:** Não resolve conflito, não decide política e não conclui fisicamente operação.
+
+### 10. `confirm_sync`
+
+**Assinatura:** `fn confirm_sync(..., request: ConfirmSyncRequest) -> InventoryResult<ConfirmSyncResult>`.
+
+**Finalidade:** Confirma em transação uma operação verificada e atualiza baseline, estado operacional e histórico quando pertinente.
+
+**Parâmetros:** `item_id`/`expected_item_revision`: alvo e precondição; `confirmed.baseline`: fatos comprovados; `status`: resultado; `verified_at`: momento da verificação; `completed_operation: None`: confirmação sem operação de fila; `activity: None`: somente quando nenhum evento histórico for devido.
+
+**Retorno:** `item`: estado confirmado; `completed_operation`: operação concluída, quando informada; `activity`: registro criado, quando necessário.
+
+**Limites e erros:** Não aceita operação parcial ou sem prova; não transfere conteúdo; rejeita ausência de atividade para ação historicamente relevante.
+
+### 11. `enqueue_operation`
+
+**Assinatura:** `fn enqueue_operation(..., request: EnqueueOperationRequest) -> InventoryResult<EnqueueOperationResult>`.
+
+**Finalidade:** Adiciona trabalho persistente à fila, incluindo períodos offline.
+
+**Parâmetros:** `item_id`: alvo; `spec.direction`/`kind`: ação; `expected_remote_version: None`: não há versão disponível, não significa ignorar segurança; `created_at`: instante; `deduplication_key: None`: sem chave explícita; `expected_item_revision`: precondição.
+
+**Retorno:** `operation`: operação registrada, inicialmente pendente ou deduplicada conforme contrato.
+
+**Limites e erros:** Não executa a operação; rejeita ação incompatível ou referência sem vínculo.
+
+### 12. `list_operations`
+
+**Assinatura:** `fn list_operations(..., request: ListOperationsRequest) -> InventoryResult<ListOperationsResult>`.
+
+**Finalidade:** Consulta fila e tentativas por estado, direção e elegibilidade.
+
+**Parâmetros:** `filter.item_id`, `direction`, `eligible_before`: `None` elimina respectiva restrição; `states` vazio: todos; `pagination`: limite e cursor.
+
+**Retorno:** `page`: operações e cursor de continuação.
+
+**Limites e erros:** Não toma posse de operação nem dispara execução.
+
+### 13. `claim_operation`
+
+**Assinatura:** `fn claim_operation(..., request: ClaimOperationRequest) -> InventoryResult<ClaimOperationResult>`.
+
+**Finalidade:** Reivindica atomicamente uma operação para execução por um worker.
+
+**Parâmetros:** `operation_id`: alvo; `expected_state`: estado exigido (normalmente pendente/retomável); `claimed_at`: instante da reivindicação.
+
+**Retorno:** `operation`: operação com estado atualizado para execução.
+
+**Limites e erros:** Não executa upload/download; reivindicações concorrentes incompatíveis falham, sem dupla execução autorizada.
+
+### 14. `update_operation`
+
+**Assinatura:** `fn update_operation(..., request: UpdateOperationRequest) -> InventoryResult<UpdateOperationResult>`.
+
+**Finalidade:** Registra transições de retry, bloqueio, falha ou retorno à fila.
+
+**Parâmetros:** `operation_id`/`expected_state`: alvo/precondição; `transition`: enum com os campos exigidos pela variante (`next_attempt_at`, `error_kind`, `failed_at` ou `reason`).
+
+**Retorno:** `operation`: novo estado, tentativas e diagnósticos pertinentes.
+
+**Limites e erros:** Não possui variante `Complete`; conclusão verificada só acontece em `confirm_sync`.
+
+### 15. `publish_remote_changes`
+
+**Assinatura:** `fn publish_remote_changes(..., request: PublishRemoteChangesRequest) -> InventoryResult<PublishRemoteChangesResult>`.
+
+**Finalidade:** Publica eventos remotos e avanço de cursor na mesma transação SQLite.
+
+**Parâmetros:** `checkpoint.corpus` identifica fluxo; `expected_cursor: None` exige que ainda não exista cursor; `new_cursor` e `expected_generation` validam continuidade; `events` pode ser vazio para página sem mudanças; cada evento tem tipo/data obrigatórios, IDs/versão/deduplicação opcionais.
+
+**Retorno:** `cursor`: checkpoint gravado; `inserted` e `duplicate`: contagens verificáveis.
+
+**Limites e erros:** Não marca eventos como processados nem determina exclusão de arquivo a partir do evento.
+
+### 16. `get_remote_cursor`
+
+**Assinatura:** `fn get_remote_cursor(..., request: GetRemoteCursorRequest) -> InventoryResult<GetRemoteCursorResult>`.
+
+**Finalidade:** Consulta a última posição durável do detector remoto.
+
+**Parâmetros:** `corpus`: fluxo remoto solicitado.
+
+**Retorno:** `cursor: Some` indica checkpoint conhecido; `None` indica ainda não registrado.
+
+**Limites e erros:** Não cria cursor e não realiza chamada remota.
+
+### 17. `list_remote_events`
+
+**Assinatura:** `fn list_remote_events(..., request: ListRemoteEventsRequest) -> InventoryResult<ListRemoteEventsResult>`.
+
+**Finalidade:** Lista eventos observados, priorizando os pendentes quando solicitado.
+
+**Parâmetros:** `filter.corpus`/`item_id`: `None` não restringe; `pending_only=true`: sem `processed_at`; `false`: inclui todos; `pagination` limita.
+
+**Retorno:** `page`: eventos persistidos e cursor de listagem.
+
+**Limites e erros:** Não reconhece processamento automaticamente.
+
+### 18. `acknowledge_remote_event`
+
+**Assinatura:** `fn acknowledge_remote_event(..., request: AcknowledgeRemoteEventRequest) -> InventoryResult<AcknowledgeRemoteEventResult>`.
+
+**Finalidade:** Registra que um evento remoto foi efetivamente tratado.
+
+**Parâmetros:** `event_id`: identificador do sinal; `processed_at`: instante de conclusão reconhecida.
+
+**Retorno:** `event`: mesmo evento com confirmação de processamento.
+
+**Limites e erros:** Não prova sincronização de conteúdo por si só; consumidor precisa ter reavaliado antes.
+
+### 19. `record_activity`
+
+**Assinatura:** `fn record_activity(..., request: RecordActivityRequest) -> InventoryResult<RecordActivityResult>`.
+
+**Finalidade:** Grava evento histórico de um arquivo fora do caminho de confirmação atômica, como conflito detectado ou falha.
+
+**Parâmetros:** `activity.item_id`: obrigatório; `operation_id`: opcional; `event_type`, `origin`, `outcome`, `occurred_at`: obrigatórios; descrição/erro/nome/caminho/ID remoto opcionais preservam contexto quando disponível.
+
+**Retorno:** `activity`: registro persistido com ID próprio.
+
+**Limites e erros:** Não registra eventos globais sem arquivo; não substitui `confirm_sync` ao concluir operação.
+
+### 20. `list_activities`
+
+**Assinatura:** `fn list_activities(..., request: ListActivitiesRequest) -> InventoryResult<ListActivitiesResult>`.
+
+**Finalidade:** Consulta o histórico de arquivos da sincronização, com paginação temporal.
+
+**Parâmetros:** `filter.item_id`/`operation_id`: `None` não restringe; `event_types`/`outcomes` vazios: todos; `from`/`until`: opcionais com intervalo validado; `pagination`: tamanho e cursor.
+
+**Retorno:** `page`: atividades históricas com identidade do arquivo e contexto disponível.
+
+**Limites e erros:** Não altera eventos, não mistura registros técnicos globais ou de outras sincronizações.
+
+### Regras de retorno e contratos condicionais
+
+- Uma busca sem resultado válido retorna `GetItemResult { item: None }`, não necessariamente `NotFound`. `NotFound` aplica-se quando uma operação de escrita requer um item existente.
+- Uma consulta paginada vazia retorna `Page { entries: vec![], next_cursor: None }` quando não há continuidade; não significa banco corrompido.
+- `RecordObservationResult.created` significa **novo registro no inventário**, não um arquivo fisicamente criado.
+- `ConfirmSyncResult.completed_operation` e `.activity` são opcionais porque nem toda confirmação envolve uma operação da fila ou um evento histórico; quando a ação é relevante e concluída, a atividade torna-se exigência condicional.
+- `PublishRemoteChangesResult.duplicate` só é significativo quando existe política de deduplicação confiável para o evento; não inventar equivalência apenas por coincidência de data.
+- `InventoryFailure.retryable` indica possibilidade de uma **nova tentativa controlada**, não permissão para repetir uma escrita sem verificar identidade, revisão, idempotência ou resultado anterior.
+
+## 13. Garantias de evolução e testes
 
 1. **Assinatura estável:** novos atributos entram em `RecordLocalObservation`, `ItemFilter`, `NewSyncOperation` etc.; não acrescentar parâmetros posicionais.
 2. **Objetos coesos:** estruturas de entrada descrevem uma operação; dados de observação são agrupados em `LocalObservation`/`RemoteObservation`; não usar `HashMap<String, Value>` como API genérica.
@@ -650,4 +905,4 @@ O modelo anterior do projeto previa `kind`, `remote_id?`, `remote_parent_id?`, `
 - Tipo concreto de tempo e de bytes locais no projeto.
 - Definição de operações simultâneas sobre um mesmo item e estratégias de lock. Estes detalhes devem ser fechados antes de implementar os respectivos métodos, **sem mudar a orientação a objetos da API**.
 
-**Importante:** este documento define as interfaces propostas e seus invariantes, não comprova compilação Rust nem implementação. O próximo passo é descrever `TESTS.md` e criar testes que falhem antes de implementar o módulo.
+**Importante:** este documento é o contrato de projeto para implementação e seus invariantes, não comprova compilação Rust nem implementação. O próximo passo é descrever `TESTS.md` e criar testes que falhem antes de implementar o módulo.
