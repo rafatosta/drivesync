@@ -522,3 +522,480 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 | Implementação | Contratos podem ser simulados antes de implementar HTTP e usados em testes TDD |
 
 **Limite de escopo:** a referência é Google Drive REST v3 e protocolos Google OAuth/OIDC. Demais APIs Google são contratos separados. As estruturas abaixo são **projeções Rust propostas** a partir dos recursos oficiais; a correspondência exata de campos e subtipos com o Discovery deve ser verificada antes de considerar o documento um espelho integral de todo o esquema JSON oficial.
+
+## 8. Declarações dos tipos públicos
+
+**Referência de modelagem:** [Google Drive API v3 — recursos](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest). Esta seção reúne os tipos **de resposta e de escrita** em declarações Rust. `Option<T>` indica que o campo pode não estar presente na resposta recebida; não representa, por si só, uma declaração de ausência do objeto no Drive.
+
+**Tipos numéricos recebidos como strings:** o Drive representa vários `int64` JSON como string (por exemplo `size`, `version`, `quotaBytesUsed`). Mantêm-se como `String` nos tipos de transporte para evitar perda de precisão, com conversão tipada e validada quando necessária. Datas são strings RFC 3339 no transporte.
+
+**Atributos sensíveis ou efêmeros:** links de download, `resourceKey`, JWT de CSE e URIs de sessão devem receber tratamento restrito, sem logs nem persistência inadvertida.
+
+### 8.1 Estruturas de saída e metadados
+
+```rust
+pub struct GoogleAbout {
+    pub user: Option<GoogleUser>,
+    pub storage_quota: Option<GoogleStorageQuota>,
+    pub import_formats: Option<std::collections::BTreeMap<String,Vec<String>>>,
+    pub export_formats: Option<std::collections::BTreeMap<String,Vec<String>>>,
+    pub max_import_sizes: Option<std::collections::BTreeMap<String,String>>,
+    pub app_installed: Option<bool>,
+    pub folder_color_palette: Option<Vec<String>>,
+}
+
+pub struct GoogleUser {
+    pub display_name: Option<String>,
+    pub email_address: Option<String>,
+    pub photo_link: Option<String>,
+    pub permission_id: Option<String>,
+    pub me: Option<bool>,
+}
+
+pub struct GoogleStorageQuota {
+    pub limit: Option<String>,
+    pub usage: Option<String>,
+    pub usage_in_drive: Option<String>,
+    pub usage_in_drive_trash: Option<String>,
+}
+
+pub struct GoogleFile {
+    pub id: Option<FileId>,
+    pub name: Option<String>,
+    pub mime_type: Option<MimeType>,
+    pub parents: Option<Vec<FileId>>,
+    pub description: Option<String>,
+    pub trashed: Option<bool>,
+    pub explicitly_trashed: Option<bool>,
+    pub trashed_time: Option<String>,
+    pub version: Option<String>,
+    pub created_time: Option<String>,
+    pub modified_time: Option<String>,
+    pub modified_by_me_time: Option<String>,
+    pub viewed_by_me_time: Option<String>,
+    pub size: Option<String>,
+    pub quota_bytes_used: Option<String>,
+    pub md5_checksum: Option<String>,
+    pub sha1_checksum: Option<String>,
+    pub sha256_checksum: Option<String>,
+    pub head_revision_id: Option<RevisionId>,
+    pub drive_id: Option<DriveId>,
+    pub resource_key: Option<String>,
+    pub web_view_link: Option<String>,
+    pub web_content_link: Option<String>,
+    pub thumbnail_link: Option<String>,
+    pub icon_link: Option<String>,
+    pub file_extension: Option<String>,
+    pub full_file_extension: Option<String>,
+    pub original_filename: Option<String>,
+    pub shortcut_details: Option<GoogleShortcutDetails>,
+    pub capabilities: Option<GoogleFileCapabilities>,
+    pub permissions: Option<Vec<GooglePermission>>,
+    pub owners: Option<Vec<GoogleUser>>,
+    pub last_modifying_user: Option<GoogleUser>,
+    pub sharing_user: Option<GoogleUser>,
+    pub shared: Option<bool>,
+    pub owned_by_me: Option<bool>,
+    pub modified_by_me: Option<bool>,
+    pub starred: Option<bool>,
+    pub folder_color_rgb: Option<String>,
+    pub properties: Option<std::collections::BTreeMap<String,String>>,
+    pub app_properties: Option<std::collections::BTreeMap<String,String>>,
+    pub content_hints: Option<GoogleContentHints>,
+    pub image_media_metadata: Option<GoogleImageMediaMetadata>,
+    pub video_media_metadata: Option<GoogleVideoMediaMetadata>,
+    pub label_info: Option<GoogleLabelInfo>,
+    pub content_restrictions: Option<Vec<GoogleContentRestriction>>,
+    pub download_restrictions: Option<GoogleDownloadRestrictions>,
+    pub client_encryption_details: Option<GoogleClientEncryptionDetails>,
+    pub copy_requires_writer_permission: Option<bool>,
+    pub writers_can_share: Option<bool>,
+    pub has_thumbnail: Option<bool>,
+    pub spaces: Option<Vec<String>>,
+    pub permission_ids: Option<Vec<PermissionId>>,
+    pub team_drive_id: Option<String>,
+    pub inherited_permissions_disabled: Option<bool>,
+}
+
+pub struct GoogleShortcutDetails {
+    pub target_id: Option<FileId>,
+    pub target_mime_type: Option<MimeType>,
+    pub target_resource_key: Option<String>,
+}
+
+pub struct GoogleFileCapabilities {
+    pub can_edit: Option<bool>,
+    pub can_copy: Option<bool>,
+    pub can_download: Option<bool>,
+    pub can_delete: Option<bool>,
+    pub can_rename: Option<bool>,
+    pub can_move_item_within_drive: Option<bool>,
+    pub can_move_item_out_of_drive: Option<bool>,
+    pub can_add_children: Option<bool>,
+    pub can_list_children: Option<bool>,
+    pub can_share: Option<bool>,
+    pub can_comment: Option<bool>,
+    pub can_read_revisions: Option<bool>,
+    pub can_change_copy_requires_writer_permission: Option<bool>,
+}
+
+pub struct GoogleContentHints {
+    pub indexable_text: Option<String>,
+    pub thumbnail: Option<GoogleThumbnail>,
+}
+
+pub struct GoogleThumbnail {
+    pub image: Option<String>,
+    pub mime_type: Option<String>,
+}
+
+pub struct GoogleImageMediaMetadata {
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub rotation: Option<i32>,
+    pub time: Option<String>,
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+    pub exposure_time: Option<f64>,
+    pub aperture: Option<f64>,
+    pub iso_speed: Option<i32>,
+    pub location: Option<GoogleGeoLocation>,
+}
+
+pub struct GoogleGeoLocation {
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub altitude: Option<f64>,
+}
+
+pub struct GoogleVideoMediaMetadata {
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub duration_millis: Option<String>,
+}
+
+pub struct GoogleContentRestriction {
+    pub read_only: Option<bool>,
+    pub reason: Option<String>,
+    pub restricting_user: Option<GoogleUser>,
+    pub restriction_time: Option<String>,
+    pub owner_restricted: Option<bool>,
+    pub system_restricted: Option<bool>,
+}
+
+pub struct GoogleDownloadRestrictions {
+    pub item_download_restriction: Option<GoogleDownloadRestriction>,
+    pub effective_download_restriction: Option<GoogleDownloadRestriction>,
+}
+
+pub struct GoogleDownloadRestriction {
+    pub restricted_for_readers: Option<bool>,
+    pub restricted_for_writers: Option<bool>,
+}
+
+pub struct GoogleClientEncryptionDetails {
+    pub encryption_state: Option<String>,
+    pub decryption_metadata: Option<GoogleDecryptionMetadata>,
+}
+
+pub struct GoogleDecryptionMetadata {
+    pub wrapped_key: Option<String>,
+    pub kacls_id: Option<String>,
+}
+
+pub struct GoogleLabelInfo {
+    pub labels: Option<Vec<GoogleLabel>>,
+}
+
+pub struct GoogleLabel {
+    pub id: Option<String>,
+    pub revision_id: Option<String>,
+    pub fields: Option<std::collections::BTreeMap<String,GoogleLabelField>>,
+    pub name: Option<String>,
+}
+
+pub struct GoogleLabelField {
+    pub value_type: Option<String>,
+    pub text: Option<Vec<String>>,
+    pub integer: Option<Vec<String>>,
+    pub date_string: Option<Vec<String>>,
+    pub selection: Option<Vec<String>>,
+    pub user: Option<Vec<GoogleUser>>,
+}
+
+pub struct GoogleFileList {
+    pub files: Vec<GoogleFile>,
+    pub next_page_token: Option<String>,
+    pub incomplete_search: Option<bool>,
+}
+
+pub struct GoogleChange {
+    pub file_id: Option<FileId>,
+    pub file: Option<GoogleFile>,
+    pub removed: Option<bool>,
+    pub time: Option<String>,
+    pub change_type: Option<String>,
+    pub drive_id: Option<DriveId>,
+    pub drive: Option<GoogleDrive>,
+    pub change_id: Option<String>,
+}
+
+pub struct GoogleChangeList {
+    pub changes: Vec<GoogleChange>,
+    pub next_page_token: Option<String>,
+    pub new_start_page_token: Option<String>,
+}
+
+pub struct GoogleStartPageToken {
+    pub start_page_token: String,
+}
+
+pub struct GoogleDrive {
+    pub id: Option<DriveId>,
+    pub name: Option<String>,
+    pub hidden: Option<bool>,
+    pub created_time: Option<String>,
+    pub restrictions: Option<GoogleDriveRestrictions>,
+    pub capabilities: Option<GoogleDriveCapabilities>,
+    pub color_rgb: Option<String>,
+    pub background_image_link: Option<String>,
+    pub org_unit_id: Option<String>,
+}
+
+pub struct GoogleDriveRestrictions {
+    pub copy_requires_writer_permission: Option<bool>,
+    pub domain_users_only: Option<bool>,
+    pub drive_members_only: Option<bool>,
+    pub admin_managed_restrictions: Option<bool>,
+    pub sharing_folders_requires_organizer_permission: Option<bool>,
+}
+
+pub struct GoogleDriveCapabilities {
+    pub can_add_children: Option<bool>,
+    pub can_comment: Option<bool>,
+    pub can_copy: Option<bool>,
+    pub can_delete_drive: Option<bool>,
+    pub can_download: Option<bool>,
+    pub can_edit: Option<bool>,
+    pub can_list_children: Option<bool>,
+    pub can_manage_members: Option<bool>,
+    pub can_read_revisions: Option<bool>,
+    pub can_rename: Option<bool>,
+    pub can_share: Option<bool>,
+}
+
+pub struct GooglePermission {
+    pub id: Option<PermissionId>,
+    pub type_: Option<String>,
+    pub role: Option<String>,
+    pub email_address: Option<String>,
+    pub domain: Option<String>,
+    pub allow_file_discovery: Option<bool>,
+    pub expiration_time: Option<String>,
+    pub display_name: Option<String>,
+    pub photo_link: Option<String>,
+    pub deleted: Option<bool>,
+    pub pending_owner: Option<bool>,
+    pub permission_details: Option<Vec<GooglePermissionDetails>>,
+    pub view: Option<String>,
+}
+
+pub struct GooglePermissionDetails {
+    pub permission_type: Option<String>,
+    pub role: Option<String>,
+    pub inherited: Option<bool>,
+    pub inherited_from: Option<FileId>,
+}
+
+pub struct GoogleRevision {
+    pub id: Option<RevisionId>,
+    pub mime_type: Option<MimeType>,
+    pub modified_time: Option<String>,
+    pub keep_forever: Option<bool>,
+    pub size: Option<String>,
+    pub md5_checksum: Option<String>,
+    pub published: Option<bool>,
+    pub publish_auto: Option<bool>,
+    pub published_outside_domain: Option<bool>,
+    pub original_filename: Option<String>,
+    pub last_modifying_user: Option<GoogleUser>,
+    pub export_links: Option<std::collections::BTreeMap<String,String>>,
+}
+
+pub struct GoogleComment {
+    pub id: Option<CommentId>,
+    pub content: Option<String>,
+    pub created_time: Option<String>,
+    pub modified_time: Option<String>,
+    pub author: Option<GoogleUser>,
+    pub resolved: Option<bool>,
+    pub deleted: Option<bool>,
+    pub replies: Option<Vec<GoogleReply>>,
+    pub anchor: Option<String>,
+    pub quoted_file_content: Option<GoogleQuotedContent>,
+}
+
+pub struct GoogleQuotedContent {
+    pub mime_type: Option<String>,
+    pub value: Option<String>,
+}
+
+pub struct GoogleReply {
+    pub id: Option<ReplyId>,
+    pub content: Option<String>,
+    pub created_time: Option<String>,
+    pub modified_time: Option<String>,
+    pub author: Option<GoogleUser>,
+    pub action: Option<String>,
+    pub deleted: Option<bool>,
+}
+
+pub struct GoogleChannel {
+    pub id: Option<ChannelId>,
+    pub resource_id: Option<String>,
+    pub resource_uri: Option<String>,
+    pub expiration: Option<String>,
+    pub token: Option<String>,
+    pub type_: Option<String>,
+    pub address: Option<String>,
+    pub params: Option<std::collections::BTreeMap<String,String>>,
+}
+
+pub struct GoogleApp {
+    pub id: Option<AppId>,
+    pub name: Option<String>,
+    pub object_type: Option<String>,
+    pub product_url: Option<String>,
+    pub create_url: Option<String>,
+    pub open_url_template: Option<String>,
+    pub supports_create: Option<bool>,
+    pub supports_import: Option<bool>,
+    pub installed: Option<bool>,
+    pub authorized: Option<bool>,
+    pub use_by_default: Option<bool>,
+    pub primary_mime_types: Option<Vec<String>>,
+    pub secondary_mime_types: Option<Vec<String>>,
+}
+
+pub struct GoogleAccessProposal {
+    pub file_id: Option<FileId>,
+    pub proposal_id: Option<ProposalId>,
+    pub requester_email_address: Option<String>,
+    pub recipient_email_address: Option<String>,
+    pub roles_and_views: Option<Vec<GoogleRoleAndView>>,
+    pub request_message: Option<String>,
+    pub create_time: Option<String>,
+}
+
+pub struct GoogleRoleAndView {
+    pub role: Option<String>,
+    pub view: Option<String>,
+}
+
+pub struct GoogleApproval {
+    pub approval_id: Option<ApprovalId>,
+    pub target_file_id: Option<FileId>,
+    pub create_time: Option<String>,
+    pub modify_time: Option<String>,
+    pub complete_time: Option<String>,
+    pub due_time: Option<String>,
+    pub status: Option<String>,
+    pub initiator: Option<GoogleUser>,
+    pub reviewer_responses: Option<Vec<GoogleApprovalReviewerResponse>>,
+    pub file_content_change_behavior: Option<String>,
+}
+
+pub struct GoogleApprovalReviewerResponse {
+    pub reviewer: Option<GoogleUser>,
+    pub response: Option<String>,
+}
+
+pub struct GoogleOperation {
+    pub name: Option<OperationName>,
+    pub done: Option<bool>,
+    pub metadata: Option<GoogleOperationMetadata>,
+    pub response: Option<GoogleDownloadFileResponse>,
+    pub error: Option<GoogleRpcStatus>,
+}
+
+pub struct GoogleOperationMetadata {
+    pub state: Option<String>,
+    pub progress_percent: Option<i32>,
+}
+
+pub struct GoogleRpcStatus {
+    pub code: Option<i32>,
+    pub message: Option<String>,
+    pub details: Option<Vec<String>>,
+}
+
+pub struct GoogleDownloadFileResponse {
+    pub download_uri: Option<String>,
+    pub partial_download_allowed: Option<bool>,
+}
+
+pub struct GoogleCseToken {
+    pub file_id: Option<FileId>,
+    pub current_kacls_id: Option<String>,
+    pub current_kacls_name: Option<String>,
+    pub jwt: Option<String>,
+}
+
+pub struct GoogleGeneratedIds {
+    pub ids: Option<Vec<FileId>>,
+    pub space: Option<String>,
+}
+
+pub struct GoogleModifyLabelsResponse {
+    pub modified_labels: Option<Vec<GoogleLabel>>,
+}
+
+pub struct GoogleFileWrite {
+    pub name: Option<String>,
+    pub mime_type: Option<MimeType>,
+    pub description: Option<String>,
+    pub trashed: Option<bool>,
+    pub parents: Option<Vec<FileId>>,
+    pub starred: Option<bool>,
+    pub properties: Option<std::collections::BTreeMap<String,String>>,
+    pub app_properties: Option<std::collections::BTreeMap<String,String>>,
+    pub copy_requires_writer_permission: Option<bool>,
+    pub folder_color_rgb: Option<String>,
+    pub modified_time: Option<String>,
+}
+
+pub struct GoogleDriveWrite {
+    pub name: Option<String>,
+    pub restrictions: Option<GoogleDriveRestrictions>,
+    pub color_rgb: Option<String>,
+}
+
+pub struct GooglePermissionWrite {
+    pub type_: Option<String>,
+    pub role: Option<String>,
+    pub email_address: Option<String>,
+    pub domain: Option<String>,
+    pub allow_file_discovery: Option<bool>,
+    pub expiration_time: Option<String>,
+    pub view: Option<String>,
+}
+
+pub struct GoogleCommentWrite {
+    pub content: Option<String>,
+    pub anchor: Option<String>,
+}
+
+pub struct GoogleReplyWrite {
+    pub content: Option<String>,
+    pub action: Option<String>,
+}
+
+pub struct GoogleRevisionWrite {
+    pub keep_forever: Option<bool>,
+    pub published: Option<bool>,
+    pub publish_auto: Option<bool>,
+    pub published_outside_domain: Option<bool>,
+}
+
+``
+
