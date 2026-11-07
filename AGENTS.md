@@ -11,32 +11,22 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 ## Escopo e segurança
 
 - Trabalhar em tarefas pequenas, com mudanças justificadas e verificáveis.
-- Ler `docs/old/invariants.md`, `docs/old/development-methodology.md` e os contratos relevantes antes de alterar comportamento.
 - Preservar isolamento por conta, credenciais, dados locais e garantias contra operações destrutivas.
 - Não desenvolver funcionalidades adicionais, criar dependências ou refatorar módulos alheios sem necessidade demonstrável.
-- Não interpretar compilar/testar como prova de validação real com Google Drive ou Flatpak.
 
 ## Fonte de verdade e documentação
 
-- **Git é o histórico de alterações.** Não criar nem ampliar documentos com diários cronológicos, listas de arquivos modificados, relatos de cada commit, totais de testes de etapas anteriores ou narrativas do processo de implementação.
-- Manter documentação voltada a contratos, requisitos, uso, invariantes, decisões duradouras e critérios de aceite; evidências de execução pontuais pertencem ao commit ou PR correspondente.
-- **Especificação vigente:** detalhar requisitos e critérios de aceite em `docs/SOFTWARE_SPECIFICATION.md`, distinguindo intenção, implementação e validação. Consultar `docs/README.md` para a organização documental. O plano `docs/old/MVP.md` é referência histórica, não um plano ativo a manter. Reaproveitar o acervo somente após conferir sua vigência no código e nas decisões atuais; não reescrever preventivamente toda a documentação a cada alteração.
-- Uma mudança crítica que torne uma orientação operacional ou de segurança perigosa/inválida deve ser corrigida imediatamente; não manter instruções enganosas em nome do congelamento documental.
-- Não apagar contratos e decisões de projeto apenas porque a implementação ainda não chegou àquela etapa.
-- Evitar informações duplicadas; manter requisitos na especificação e detalhamentos nos contratos relevantes, com referências explícitas. O arquivamento em `docs/old/` não revoga as invariantes de segurança nem as convenções de desenvolvimento citadas nestas instruções.
 
 ## Convenção de organização dos módulos Rust
 
-Aplicar as diretrizes de `docs/old/development-methodology.md` sobre coesão,
-visibilidade e modularização. Preferir `mod.rs` como ponto de organização e
+Preferir `mod.rs` como ponto de organização e
 reexportação, agrupar modelos relacionados em um `models.rs` quando apropriado
 e separar implementações por responsabilidade real. Não impor arquivo por
 estrutura, classe equivalente ou método, nem criar abstrações artificiais.
 
 ## Documentação do código Rust (rustdoc)
 
-Em novas implementações e refatorações, seguir o padrão em
-`docs/old/development-methodology.md` (seção **Documentação do código com rustdoc**):
+Em novas implementações e refatorações, seguir o padrão rustdoc:
 
 - Documentar módulos com `//!` e contratos relevantes de tipos, traits e
   métodos com `///`, no próprio código. Documentar também itens internos
@@ -121,59 +111,8 @@ Criar cada commit ao concluir sua unidade lógica, quando o ambiente e as permis
   ambiente não permitir commits locais, informar isso e fornecer as mensagens
   sugeridas em vez de simular a criação dos commits.
 
-## Refatoração incremental da interface e prevenção de regressões
+## Desenvolvimento de UX/UI
 
-As melhorias de UX/UI devem ser incrementais, preservando o comportamento existente
-enquanto widgets e regiões do dashboard são substituídos por componentes reutilizáveis.
-
-- **Refatoração não destrutiva:** não remover, ocultar permanentemente, desabilitar
-  ou alterar ações, fluxos, estados e mensagens existentes fora do escopo autorizado.
-  Funcionalidades não mencionadas devem permanecer acessíveis e operacionais.
-- **Preservação funcional:** ao mover uma ação para outro componente ou menu,
-  conservar sua integração com a implementação real; um controle visual não
-  pode passar a ser apenas decorativo ou deixar de funcionar.
-- **Contratos explícitos:** cada componente deve ter responsabilidade delimitada
-  e API pequena e documentada (modelos de entrada, propriedades, métodos, sinais
-  ou callbacks necessários). Evitar expor widgets internos ao dashboard.
-- **Componentes coesos e reutilizáveis:** o dashboard compõe os componentes e
-  seleciona a conta ativa; cada componente gerencia seu próprio layout e estado
-  visual sem controlar diretamente outros componentes.
-- **Separação entre interface e negócio:** regras de sincronização, persistência,
-  credenciais, conflitos e operações destrutivas pertencem à engine. Adaptar seus
-  eventos e snapshots para modelos de apresentação tipados, sem introduzir
-  dependência da engine em GTK/libadwaita.
-- **Isolamento por conta:** atualizações de progresso, histórico e comandos devem
-  corresponder à conta correta. Trocar a conta selecionada não pode interromper
-  operações das demais contas nem exibir eventos antigos como atuais.
-- **Substituição gradual:** migrar uma região funcional por vez; manter o
-  comportamento anterior disponível até a integração do novo componente estar
-  validada. Remover a implementação substituída somente após verificar a
-  equivalência funcional, sem manter compatibilidade artificial.
-- **Sem redesenho implícito:** extrair um componente não autoriza reorganizar
-  outras partes do dashboard, alterar a navegação ou mudar a UX de funcionalidades
-  não abrangidas pela tarefa.
-- **Estados coerentes:** representar explicitamente espera, progresso,
-  conclusão, pausa, desconexão e falha quando aplicáveis. Não exibir mensagens
-  contraditórias, como "tudo sincronizado" enquanto há transferências pendentes.
-- **Testes por responsabilidade:** validar separadamente contratos e estados
-  visuais com dados simulados, integração de eventos com provedor remoto simulado
-  e filesystem/SQLite reais isolados quando cabível, e fluxos reais quando
-  necessários e autorizados. Não confundir testes de UI com confirmação de
-  upload/download real.
-- **Critério de aceite:** revisar o diff contra o escopo, confirmar que as
-  funcionalidades anteriores continuam acessíveis e operacionais, verificar
-  seleção/troca de contas, ações e estados relevantes, e registrar testes
-  executados, lacunas e riscos. Não declarar equivalência sem validação.
-
-Separar correções funcionais da engine e refatorações visuais em unidades lógicas
-e commits distintos sempre que possível. Quando uma mudança conjunta for
-inevitável, justificar a dependência e testar explicitamente ambos os lados.
-
-## Formatos internos antes da primeira versão estável
-
-- Manter somente o formato atual de persistência, sem migradores ou compatibilidade retroativa entre versões internas de desenvolvimento.
-- Rejeitar dados incompatíveis sem apagá-los automaticamente.
-- Preservar escrita atômica, integridade, permissões e isolamento de credenciais e pastas.
 
 ## Ambiente obrigatório para ferramentas Rust
 
