@@ -80,13 +80,11 @@ pub trait DetectorEventSink: Send + Sync {
 // Os handles abaixo designam dependências tipadas; não são storage bruto.
 // Tipo Rust concreto de ownership/trait object será fechado na integração.
 pub struct DetectorInventoryHandle { /* API pública do Inventário */ }
-pub struct DetectorInternalSources { /* implementações internas não reexportadas */ }
 pub struct DetectorEventSinkHandle { /* DetectorEventSink */ }
 
 pub struct DetectorCreateRequest {
     pub sync_id: SyncId,
     pub inventory: DetectorInventoryHandle,
-    pub sources: DetectorInternalSources,
     pub event_sink: DetectorEventSinkHandle,
 }
 pub struct DetectorCreateResult {
@@ -132,7 +130,7 @@ pub struct DetectorStatusRequest {}
 pub struct DetectorStatusResult { pub status: DetectorStatus }
 ```
 
-**Encapsulamento:** a solicitação de criação conceitualmente reúne os módulos internos, mas `DetectorInternalSources` não é um parâmetro que obrigue consumidores a construir `LocalDetector` ou `RemoteDetector`. A composição é feita **dentro de `detectors/`**, por fábrica interna; `DetectorCreateRequest` deverá ocultar esse detalhe do uso externo quando a configuração definitiva for concluída. A assinatura concreta não deve exportar tipos internos nem suas dependências específicas.
+**Encapsulamento:** o `Detector` compõe suas fontes **internamente** a partir da identidade/configuração disponível e das portas já injetadas. `DetectorCreateRequest` não expõe `LocalDetector`, `RemoteDetector`, `InternalObservationSource`, `DetectorInternalSources` ou seus handles. A forma concreta de obtenção de configurações/credenciais das fontes é dependência a resolver sem alterar essa regra de visibilidade.
 
 ## 4. Assinaturas públicas consolidadas
 
@@ -160,7 +158,7 @@ impl Detector {
 
 **Finalidade:** Criar a fachada de detecção de uma sincronização, conectando-a ao Inventário, às implementações internas disponíveis e ao destino de eventos do Orquestrador.
 
-**Parâmetros:** `sync_id`: identidade da sincronização; `inventory`: porta pública do Inventário; `event_sink`: destino de mensagens; `capabilities`: origens internas configuradas; `policy`: opções de operação do coordenador.
+**Parâmetros:** `sync_id`: identidade da sincronização; `inventory`: porta pública do Inventário; `event_sink`: destino de mensagens; fontes internas são construídas pelo próprio `Detector`, sem argumentos públicos específicos de Local/Remoto.
 
 **Retorno:** Devolve `Detector` em estado `Stopped` e as capacidades disponíveis; criar não inicia inspeções.
 
