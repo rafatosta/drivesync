@@ -17,6 +17,16 @@ Implementar o módulo **`detectors/` como coordenador/fachada pública**, indepe
 7. **Controle público mínimo:** apenas os **sete métodos** do contrato. Não criar APIs públicas especiais como `local_start`, `remote_poll` ou `on_inotify`.
 8. **Isolamento por sincronização:** eventos, status e efeitos de uma pasta/conta não vazam para outra.
 
+## Política de pausa e autonomia de cada fonte
+
+- A fachada controla **entrega de notificações** durante `pause`. Não tratar essa chamada como obrigação de desabilitar todos os mecanismos de observação.
+- O Local pode continuar reagindo a eventos e o Remoto pode continuar consultando a Google API periodicamente; ambos também podem suspender trabalho segundo políticas **internas**, desde que a retomada recupere alterações potencialmente perdidas.
+- Ao retomar, agregar sinais pendentes por item/escopo ou efetuar nova verificação segura. **Não garantir a reprodução literal de eventos brutos**, mas sim a reavaliação necessária.
+- Buffer exclusivamente em memória não é mecanismo de durabilidade. Usar fatos/eventos/cursor do Inventário e exigir revarredura quando faltar evidência após crash, sem criar nova fila persistente de operações físicas.
+- `pause` da detecção não cancela transferências já encaminhadas pelo Analisador. `stop` encerra recursos e exige recuperação em nova inicialização.
+- Testar com **Local baseado em eventos** e **Remoto baseado em polling** (ambos simulados no teste da fachada) para comprovar que não há exigência de mesma implementação.
+- Aplicar os casos **DET-P** de [TESTS.md](TESTS.md), além dos contratos por método. Não declarar conclusão integral sem validar pausa, retomada, degradação e recuperação após falhas.
+
 ## Contract-First + TDD
 
 - RED: primeiro testes de assinatura, visibilidade e comportamentos descritos em `TESTS.md`.
