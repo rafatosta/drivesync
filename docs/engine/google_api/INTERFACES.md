@@ -9,7 +9,7 @@
 ## 1. Tipos públicos fundamentais e erros
 
 ```rust
-pub type GoogleResult<T> = Result<T, GoogleApiError>;
+pub type GoogleResult<T> = Result<T, GoogleApiFailure>;
 pub type GoogleByteStream = Box<dyn std::io::Read + Send>;
 
 pub struct FileId(pub String);
@@ -38,6 +38,10 @@ pub struct GooglePage<T> {
     pub next_page_token: Option<String>,
 }
 pub enum GoogleApiError {
+    InvalidGrant,
+    InsufficientScope,
+    StorageQuotaExceeded,
+    FileNotDownloadable,
     InvalidArgument,
     AuthenticationRequired,
     ReauthorizationRequired,
@@ -56,6 +60,14 @@ pub enum GoogleApiError {
     ExpiredCursor,
     ExpiredUploadSession,
     IncompleteTransfer,
+}
+
+pub struct GoogleApiFailure {
+    pub kind: GoogleApiError,
+    pub http_status: Option<u16>,
+    pub provider_reason: Option<String>,
+    pub retry_after_seconds: Option<u64>,
+    pub retryable: bool,
 }
 ```
 
@@ -114,10 +126,7 @@ fn files_get(
 ) -> GoogleResult<GoogleFile>;
 
 // Exemplo do tipo de entrada (contrato proposto)
-pub struct FileGetOptions {
-    pub fields: Option<FieldMask>,
-    pub supports_all_drives: Option<bool>,
-}
+// FileGetOptions está definido uma única vez na seção 8.2.
 ```
 
 | Entrada | Obrigatória? | Enviada ao Google como | Finalidade |
@@ -180,13 +189,13 @@ pub trait GoogleAboutApi {
 | --- | --- | --- | --- |
 | `access_proposals_get` | `file_id: &FileId, proposal_id: &ProposalId` | `GoogleResult<GoogleAccessProposal>` | `GET /files/{fileId}/accessproposals/{proposalId}` |
 | `access_proposals_list` | `file_id: &FileId, options: PageOptions` | `GoogleResult<GoogleAccessProposalList>` | `GET /files/{fileId}/accessproposals` |
-| `access_proposals_resolve` | `file_id: &FileId, proposal_id: &ProposalId, request: ResolveAccessProposalRequest` | `GoogleResult<GoogleAccessProposal>` | `POST /files/{fileId}/accessproposals/{proposalId}:resolve` |
+| `access_proposals_resolve` | `file_id: &FileId, proposal_id: &ProposalId, request: ResolveAccessProposalRequest` | `GoogleResult<()>` | `POST /files/{fileId}/accessproposals/{proposalId}:resolve` |
 
 ```rust
 pub trait GoogleAccessproposalsApi {
     fn access_proposals_get(&self, session: &GoogleSession, file_id: &FileId, proposal_id: &ProposalId) -> GoogleResult<GoogleAccessProposal>;
     fn access_proposals_list(&self, session: &GoogleSession, file_id: &FileId, options: PageOptions) -> GoogleResult<GoogleAccessProposalList>;
-    fn access_proposals_resolve(&self, session: &GoogleSession, file_id: &FileId, proposal_id: &ProposalId, request: ResolveAccessProposalRequest) -> GoogleResult<GoogleAccessProposal>;
+    fn access_proposals_resolve(&self, session: &GoogleSession, file_id: &FileId, proposal_id: &ProposalId, request: ResolveAccessProposalRequest) -> GoogleResult<()>;
 }
 ```
 
@@ -1297,7 +1306,7 @@ pub struct GoogleLabelFieldModification {
 }
 
 pub struct ApproveApprovalRequest {
-    pub comment: Option<String>,
+    pub message: Option<String>,
 }
 
 pub struct CancelApprovalRequest {
@@ -1329,7 +1338,7 @@ pub struct GoogleApprovalReviewer {
 
 pub struct ResolveAccessProposalRequest {
     pub action: String,
-    pub role: Option<String>,
+    pub role: Option<Vec<String>>,
     pub view: Option<String>,
     pub send_notification: Option<bool>,
 }
@@ -1472,3 +1481,32 @@ pub enum GoogleUploadProgress {
 | Int64 em JSON | `String` no transporte, com parse validado | Não converter para `f64` nem descartar sinal/precisão |
 
 **Os modelos acima são o contrato Rust proposto do DriveSync**, não uma reprodução literal de toda propriedade possível dos schemas JSON. No momento de implementar cada método, os campos devem ser comparados aos recursos oficiais e aos campos solicitados por `fields`. Esse controle protege a evolução do contrato sem vincular o Inventário diretamente ao formato JSON do Google.
+### 8.4 Erros públicos e critérios de recuperação
+
+A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`kind`) do contexto sanitizado (`http_status`, `provider_reason`, `retry_after_seconds`, `retryable`). O HTTP e as razões específicas são interpretados **dentro de `google_api/`**. A camada consumidora não precisa analisar JSON ou mensagens do Google para decidir o que fazer.
+
+| Resposta ou motivo do Google | Categoria pública esperada | Recuperação |
+| --- | --- | --- |
+| `400 badRequest`, parâmetro malformado | `InvalidArgument` | Corrigir entrada; não repetir sem mudança |
+| OAuth `invalid_grant` | `InvalidGrant` ou `ReauthorizationRequired` | Exigir novo fluxo de autorização quando necessário |
+| `401` e token expirado/rejeitado | `AuthenticationRequired` | Renovação ou autenticação; sem excluir conta automaticamente |
+| `403 insufficientPermissions` ou escopo insuficiente | `InsufficientScope` / `PermissionDenied` | Solicitar autorização compatível ou intervenção |
+| `403 userRateLimitExceeded`, `rateLimitExceeded`, `429` | `RateLimited` | Retry com backoff e respeito a `Retry-After` |
+| `403 storageQuotaExceeded` | `StorageQuotaExceeded` | Intervenção/liberação de quota; não reexecutar indiscriminadamente |
+| `403 fileNotDownloadable` | `FileNotDownloadable` | Verificar tipo MIME; exportar quando suportado |
+| `403` por permissão, política administrativa ou compartilhamento | `PermissionDenied` | Não presumir falha transitória |
+| `404` | `NotFoundOrInaccessible` | Não considerar exclusão remota comprovada |
+| `409`/`412` por condição/precondição | `PreconditionFailed` | Reavaliar metadados antes de repetir |
+| `410` em cursores de changes | `ExpiredCursor` | Invalidar cursor e reiniciar detecção segura |
+| `500`–`504` | `ProviderUnavailable` | Retry limitado, com backoff |
+| Timeout, conexão ou resolução DNS | `Timeout` / `Network` | Retry condicionado a idempotência/resultado conhecido |
+| Conteúdo JSON inválido ou excessivo | `InvalidResponse` | Falha explícita, sem declarar sucesso |
+| Operação cancelada | `Cancelled` | Não confirmar resultado não verificado |
+| Sessão de upload recusada/expirada | `ExpiredUploadSession` | Retomar ou reiniciar conforme garantias do upload |
+| `308 Resume Incomplete` | **`GoogleUploadProgress::Incomplete`** | **Não é erro** e **não é conclusão** |
+| `Operation.done=false` | **`GoogleOperation` pendente** | **Não é erro** e **não é conclusão** |
+
+**Regras:** (1) `retryable` expressa uma recomendação técnica, mas reexecução de escrita exige considerar idempotência e efeito possivelmente já aplicado; (2) `provider_reason` contém só o código seguro da razão, nunca o corpo da resposta; (3) `http_status=None` é válido para falhas de rede/validação local; (4) erros de autorização de uma conta não invalidam as demais.
+
+Fontes: [erros do Drive](https://developers.google.com/workspace/drive/api/guides/handle-errors), [parâmetro fields](https://developers.google.com/workspace/drive/api/guides/fields-parameter), [OAuth 2.0](https://developers.google.com/identity/protocols/oauth2/native-app).
+
