@@ -4,7 +4,7 @@
 
 Implementar **exclusivamente o Detector Local**. É independente do Detector Remoto; uma solicitação para implementar Local **não autoriza** implementar ou alterar Remoto.
 
-Antes de modificar código, ler [INTERFACES.md](INTERFACES.md), [README.md](README.md), [TESTS.md](TESTS.md), [AGENTS.md global](../../../../AGENTS.md), [MODULE_STANDARD.md](../../MODULE_STANDARD.md) e o contrato público do [Inventário](../../inventory/INTERFACES.md). Os contratos são referência, não a implementação anterior.
+Antes de modificar código, ler [INTERFACES.md](INTERFACES.md), [README.md](README.md), [TESTS.md](TESTS.md), [AGENTS.md global](../../../../AGENTS.md), [MODULE_STANDARD.md](../../MODULE_STANDARD.md) e o contrato público do [Inventário](../../inventory/INTERFACES.md) apenas para tipos de identidade, quando necessário. Os contratos são referência, não a implementação anterior.
 
 ## Responsabilidades e limites
 
@@ -33,7 +33,7 @@ Antes de modificar código, ler [INTERFACES.md](INTERFACES.md), [README.md](READ
 | Fase | Obrigação |
 | --- | --- |
 | Contrato | Identificar método e atributos em INTERFACES; resolver ambiguidade relevante |
-| RED | Testar assinatura e comportamento contra filesystem temporário/Inventário real |
+| RED | Testar assinatura e comportamento contra filesystem temporário e sink fake |
 | GREEN | Implementar mínimo para fazer os testes passarem |
 | REFACTOR | Melhorar código preservando interface e comportamento |
 | Regressão | Rodar casos anteriores, segurança, reinício e falhas |
