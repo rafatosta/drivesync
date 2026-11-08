@@ -18,7 +18,7 @@ Essa convenção é aplicada **inclusive a buscas**, filtros, cursores, eventos,
 
 ### Dependências externas e limites
 
-- `GoogleFile` é importado do contrato público de `google_api/`; o Inventário não o redefine.
+- `GoogleFile` é importado do contrato público de `providers/google/api/`; o Inventário não o redefine.
 - `LocalFile` será importado do componente responsável pelos metadados locais. Seu contrato completo permanece **em aberto**; esta especificação depende apenas dele como **tipo** e de uma identidade local informada separadamente.
 - As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `GoogleFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
