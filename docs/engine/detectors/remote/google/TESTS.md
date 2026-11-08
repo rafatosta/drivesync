@@ -2,7 +2,7 @@
 
 ## 1. Testabilidade independente
 
-Implementar TDD do **especialista Google real** com interface fake de `providers/google/`, sink individual fake, checkpoints isolados e scheduler/relógio controláveis. Não usar conta Google real, Storage real, Local, Orquestrador nem o Detector pai real.
+Implementar TDD do **especialista Google real** com interface fake de `providers/google/`, sink individual fake, checkpoints isolados e scheduler/relógio controláveis. Os cenários usam dados sintéticos e dependências simuladas, sem conta Google real.
 
 ## 2. Casos por método da interface remota
 
