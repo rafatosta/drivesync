@@ -30,6 +30,61 @@ O diretório oculto `.drivesync/` guarda o estado durável **daquela sincroniza�
 
 O Inventário **não abre nem gerencia um `app.sqlite3`**. A existência e o esquema desse banco global continuam como proposta pendente de revisão nos módulos responsáveis.
 
+## Organização interna — contratos por responsabilidade
+
+Os seis submódulos abaixo são **contratos internos propostos** em documentação, **não diretórios de código Rust implementados**. A única interface pública continua sendo [`InventoryManager` com 16 métodos](INTERFACES.md#9-interface-pública-consolidada). Todos os repositórios compartilham o contexto de transação privado de `storage/` e não expõem SQL.
+
+| Submódulo | Responsabilidade exclusiva | Contrato |
+| --- | --- | --- |
+| `items/` | Identidade `SyncItemId`, associação local/remota, presença, status e revisão | [Items](items/INTERFACES.md) |
+| `metadata/` | Persistência dos campos aprovados de `LocalFile` e `RemoteFile`, preservação de estados de coleta | [Metadata](metadata/INTERFACES.md) |
+| `baseline/` | Último estado sincronizado confirmado em `SyncBaseline` | [Baseline](baseline/INTERFACES.md) |
+| `operations/` | Fila durável de `SyncOperation`, reivindicação, retry e estados | [Operations](operations/INTERFACES.md) |
+| `activity/` | `SyncActivity` e histórico cronológico associado ao item | [Activity](activity/INTERFACES.md) |
+| `storage/` | SQLite, identidade do banco, transações atômicas e erros sanitizados | [Storage](storage/INTERFACES.md) |
+
+```mermaid
+flowchart TB
+    F["InventoryManager — fachada pública"]
+    subgraph DOMAIN["Repositórios internos independentes"]
+        direction LR
+        I["items/"]
+        M["metadata/"]
+        B["baseline/"]
+        O["operations/"]
+        A["activity/"]
+    end
+    S["storage/ — transação SQLite privada"]
+    F --> I
+    F --> M
+    F --> B
+    F --> O
+    F --> A
+    I --> S
+    M --> S
+    B --> S
+    O --> S
+    A --> S
+```
+
+O grafo indica **dependências de armazenamento**, não a sequência de chamadas. `InventoryManager` coordena as operações públicas; por exemplo, `confirm_sync` valida item e revisão, confirma baseline, conclui operação e registra atividade **na mesma transação**, sem exigir que os submódulos se importem mutuamente. `metadata/` não coleta metadados: Detector e especialistas adaptam `File` a partir de Models, e o Analisador solicita sua persistência.
+
+### Relação com os 16 métodos públicos
+
+| API pública | Coordenação interna |
+| --- | --- |
+| `open`, `get_sync_info`, `mark_initial_download_complete` | Fachada + `storage/` (estado `sync_info`) |
+| `get_item`, `list_items` | `items/` + `metadata/` + `baseline/` |
+| `record_local`, `record_remote` | Validação de `File` na fachada + `items/` + `metadata/` |
+| `link_item`, `update_item_status` | `items/` |
+| `confirm_sync` | `items/` + `baseline/` + `operations/` + `activity/` + transação `storage/` |
+| `enqueue_operation`, `list_operations`, `claim_operation`, `update_operation` | `operations/` com validação de item/revisão pela fachada |
+| `record_activity`, `list_activities` | `activity/` com verificação do item e operação referidos |
+
+**Exclusões explícitas:** nenhuma API interna de Inventário controla `EventStore`, `FileBatch`, checkpoints, `remote_events` ou `remote_cursor`; são responsabilidades dos Detectores. Nenhum submódulo executa upload/download, calcula conflito ou lê diretamente a Google API.
+
+**Pendências reais:** tipagem de `BaselineSide.parent_identity`, política de ausência confirmada, lista de campos de metadados a persistir, codecs, DDL, limites de paginação e idempotência exata de ações. Documentá-las não significa implementá-las.
+
 ## 1. Modelo lógico do inventário e seus relacionamentos
 
 O Inventário é o **proprietário de `SyncItem`**, identificador lógico persistente de um arquivo/diretório associado à sincronização. **Não redefine `LocalFile`, `RemoteFile`, `File` nem seus IDs**, que pertencem a [Models](../models/INTERFACES.md). `File.id` identifica uma **ocorrência** observada, enquanto `SyncItem.id` identifica o **item lógico** ao longo de múltiplas observações e operações.
