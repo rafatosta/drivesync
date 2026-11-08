@@ -1,10 +1,10 @@
 # Instruções para agentes — Google API (DriveSync)
 
-> **Fronteira revisada:** esta pasta implementa a API **técnica Google** e seus contratos atuais. O diretório [Google Provider](../INTERFACES.md) faz a composição/entrega da API via [Providers](../../INTERFACES.md). Especialistas Google podem importar tipos e chamar métodos específicos da API recebida, mas não criar clientes HTTP paralelos. Preservar as interfaces técnicas existentes e seus testes.
+> **Fronteira técnica:** esta pasta concentra os contratos e a implementação da API específica Google. O catálogo [Providers](../../INTERFACES.md) fornece acesso a ela por meio do [módulo Google](../INTERFACES.md). Preservar métodos, tipos e testes técnicos existentes, sem criar cópias no catálogo.
 
 ## Escopo
 
-Implementar e testar **exclusivamente** o módulo independente `providers/google/api/` da engine Rust, que abstrai a integração com **Google Drive REST API v3, Google OAuth 2.0 e OpenID Connect**. Os consumidores devem enxergar apenas tipos, operações e erros do contrato; não devem construir URLs, interpretar JSON do Google, conhecer endpoints nem repetir constantes específicas do provedor.
+Implementar e testar **exclusivamente** o módulo independente `providers/google/api/` da engine Rust, que abstrai a integração com **Google Drive REST API v3, Google OAuth 2.0 e OpenID Connect**. Os tipos, as operações e os erros públicos devem encapsular URLs, respostas JSON, endpoints e constantes específicas do protocolo Google.
 
 **Referências obrigatórias, nesta ordem:**
 
@@ -48,7 +48,7 @@ Implementar e testar **exclusivamente** o módulo independente `providers/google
 | API pública | **Manter todos os métodos inicialmente públicos** conforme `INTERFACES.md`; não reduzir visibilidade sem decisão explícita |
 | Implementação interna | Livre para criar submódulos e auxiliares privados; não alterar contratos públicos silenciosamente |
 | Google centralizado | URLs, endpoints, scopes, parâmetros, modelos JSON, MIME types, limites e mapeamento de erros ficam somente aqui |
-| Contas e credenciais | `accounts/auth/` coordena contas, login, callback e armazenamento seguro; `providers/google/api/` abstrai protocolos e requisições Google |
+| Autenticação técnica | Mapear protocolos, requisições e respostas Google OAuth/OIDC, sem definir armazenamento de contas ou credenciais |
 | Transportes | Interfaces injetáveis/fakes ou servidor HTTP local simulado; evitar dependência de rede real nos testes automáticos |
 | Tipos | Dados retornados são tipados; não expor JSON opaco como substituto de tipos públicos definidos |
 | Estado | Não criar um segundo inventário, não persistir `SyncItem` e não implementar decisão de sincronização |
@@ -88,7 +88,7 @@ Se uma operação da referência oficial ainda não for implementada, mantê-la 
 - **Executar Cargo/Rust exclusivamente no ambiente Flatpak** definido pelo manifesto `flatpak/com.rtosta.DriveSync.Devel.yml`, conforme `AGENTS.md` da raiz.
 - Testes automáticos devem usar servidor HTTP simulado ou provider fake, arquivos temporários isolados e dados sintéticos. Não exigir conta Google, OAuth real, rede externa nem dados pessoais para concluir os testes.
 - Validar com `cargo fmt`, `clippy`, `test`, `doc` e doctests quando disponíveis **dentro do Flatpak**; registrar o que foi efetivamente executado.
-- Não alterar GUI, módulos consumidores ou a arquitetura de sincronização por conveniência. Integração com a engine existente pertence a outra etapa.
+- Não adicionar responsabilidades funcionais da aplicação nem interfaces universais por conveniência. Esta pasta trata exclusivamente das APIs e protocolos Google.
 - Comentários e mensagens de commit **em inglês**, conforme regras globais.
 - Não realizar `git push` ou publicar PR sem autorização explícita; commits locais seguem `AGENTS.md` da raiz.
 
