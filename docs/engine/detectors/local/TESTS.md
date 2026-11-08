@@ -2,7 +2,7 @@
 
 ## 1. Escopo
 
-Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watcher real quando aplicável, clock/scheduler controlados e **sink individual fake**. O Local importa os tipos de [Models](../../models/INTERFACES.md), mas não precisa de implementação real do Detector pai, Remoto, Storage, Inventário, Analisador ou Google API.
+Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watcher real quando aplicável, clock/scheduler controlados e **sink individual fake**. Os testes utilizam tipos de evento previstos no contrato e dependências de observação isoladas.
 
 **Não** testar a persistência SQLite no Local: a garantia real de durabilidade pertence ao Storage. Aqui o sink simula aceitar ou rejeitar a gravação, e o Local deve reagir corretamente.
 
