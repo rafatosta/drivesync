@@ -4,7 +4,7 @@
 
 ## Responsabilidade
 
-Registra **fatos históricos relevantes por `SyncItem`**, com `item_id` obrigatório, `operation_id` opcional, tipo, origem, resultado, instante, descrição e snapshot mínimo de nome/ID remoto/caminho no momento da atividade. Deve permitir consulta paginada e filtros; não possui banco próprio nem registra toda notificação do Detector.
+Registra **fatos históricos relevantes por `SyncItem`**, com `item_id` obrigatório, `operation_id` opcional, tipo, origem, resultado, instante, descrição e snapshot mínimo de nome/ID remoto/caminho no momento da atividade. Permite consulta paginada e filtros, com persistência no banco do inventário.
 
 ## Porta interna proposta
 
