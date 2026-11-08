@@ -103,7 +103,7 @@ pub struct GoogleApiFailure {
 | OAuth / OIDC | `GoogleOAuthConfig`, `GoogleTokenResponse`, `GoogleUserInfo`, `GoogleIdClaims`, `GoogleOidcDiscovery`, solicitações |
 | Transferências | `GoogleUploadSession`, `GoogleUploadChunk`, `GoogleUploadProgress`, `GoogleDownloadStream`, `GoogleByteRange` |
 
-**Regra de disponibilidade:** uma propriedade pode ser **não solicitada**, **não disponibilizada para aquele tipo de recurso**, **inacessível àquela conta** ou **efetivamente sem valor**. `None` em um campo Rust não distingue sozinho essas quatro situações. A seleção de `fields` é conhecida pelo chamador; quando a distinção afetar decisões, a API deverá carregar informação de completude/projeção da observação. O Inventário não interpreta campo omitido como exclusão ou valor apagado.
+**Regra de disponibilidade:** uma propriedade pode ser **não solicitada**, **não disponibilizada para aquele tipo de recurso**, **inacessível àquela conta** ou **efetivamente sem valor**. `None` em um campo Rust não distingue sozinho essas quatro situações. A seleção de `fields` é conhecida pelo chamador; quando a distinção afetar o significado dos dados retornados, a API deverá carregar informação de completude/projeção da resposta. Campo omitido não constitui, por si só, prova de remoção ou de valor apagado no serviço.
 
 ### Entradas dos métodos
 
@@ -2280,7 +2280,7 @@ pub enum GoogleUploadProgress {
 | Coleção retornada vazia | `Vec<T>` vazio com resposta válida | Não equivale necessariamente a árvore remota vazia; considerar paginação/incompletude |
 | Int64 em JSON | `String` no transporte, com parse validado | Não converter para `f64` nem descartar sinal/precisão |
 
-**Os modelos acima são o contrato Rust proposto do DriveSync**, não uma reprodução literal de toda propriedade possível dos schemas JSON. No momento de implementar cada método, os campos devem ser comparados aos recursos oficiais e aos campos solicitados por `fields`. Esse controle protege a evolução do contrato sem vincular o Inventário diretamente ao formato JSON do Google.
+**Os modelos acima são o contrato Rust proposto do DriveSync**, não uma reprodução literal de toda propriedade possível dos schemas JSON. No momento de implementar cada método, os campos devem ser comparados aos recursos oficiais e aos campos solicitados por `fields`. Esse controle protege a evolução e a fidelidade do contrato técnico sem expor o formato JSON ou regras de transporte fora da interface da API.
 ### 9.4 Erros públicos e critérios de recuperação
 
 A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`kind`) do contexto sanitizado (`http_status`, `provider_reason`, `retry_after_seconds`, `retryable`). O HTTP e as razões específicas são interpretados **dentro de `providers/google/api/`**. A camada consumidora não precisa analisar JSON ou mensagens do Google para decidir o que fazer.
