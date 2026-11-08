@@ -64,7 +64,7 @@ sequenceDiagram
     participant A as Google API
     participant M as Adaptador de metadados
     participant S as RemoteEventSink
-    participant D as Detector pai / Storage
+    participant D as Detector pai e Storage
     G->>C: read(sync_id)
     C-->>G: checkpoint opcional
     G->>A: consulta inicial ou incremental
