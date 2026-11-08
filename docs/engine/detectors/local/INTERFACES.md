@@ -4,7 +4,7 @@
 
 Contrato **interno de `detectors/local/`** consumido somente pelo Detector pai. O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
 
-As assinaturas abaixo são **esboços contratuais de Rust**, não código compilado. O Local pode funcionar com sink fake, sem Detector pai real, Storage, Google API, Inventário ou `SyncItem`. A fachada não reexporta a implementação Local.
+As assinaturas abaixo são **esboços contratuais de Rust**, não código compilado. O Local pode ser testado com sink simulado e dependências isoladas.
 
 ## 2. Tipos internos e modelo compartilhado
 
@@ -167,7 +167,7 @@ impl LocalDetector {
 **Finalidade:** configurar observador local isolado para `sync_id`, conta e raiz, com sink de saída.
 **Parâmetros:** `scope` e `notifications` obrigatórios; `debounce_ms=None` usa política segura interna.
 **Retorno:** instância `Stopped`, sem watcher ativo.
-**Erros/limites:** rejeitar raiz inválida ou reservada; não consultar Inventário nem criar `LocalFile` fictício.
+**Erros/limites:** rejeitar raiz inválida ou reservada e evitar `LocalFile` fictício.
 
 ### LOC-02 — `start`
 
@@ -203,7 +203,7 @@ impl LocalDetector {
 - `LocalFile.local_id=None` significa identidade local desconhecida; não usar inode como ID estável sem comprovação.
 - `LocalFile.kind=MetadataValue::Known(LocalEntryKind::Unknown)` ou `NotCollected`/`Unavailable` não autoriza inferir tipo ou tamanho; hash derivado não é atributo nativo obrigatório.
 - Nomes Unix inválidos em UTF-8 devem ser preservados segundo a representação definida em Models.
-- `LocalScanCoverage::Complete` avalia **cobertura da leitura**, não `PresenceState::AbsentConfirmed` do Inventário.
+- `LocalScanCoverage::Complete` indica **cobertura da leitura**; não equivale a exclusão confirmada.
 - `debounce_ms`, `request_id`, últimos timestamps e erros opcionais não implicam comportamento não documentado quando ausentes.
 
 ## 7. Fronteiras e pendências
