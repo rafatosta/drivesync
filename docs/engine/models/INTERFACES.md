@@ -322,17 +322,74 @@ pub enum FileData {
 
 **Exclusividade:** exatamente uma variante por `FileData`; não existem `Both`, `Unknown`, `Google` nem `OneDrive`. `FileData` não contém tipo de evento, status de entrega, histórico ou decisão de sincronização.
 
-## 5. File — envelope unitário e autocontido de observação
+## 5. File — observação autocontida e atributos do evento
+
+`File` é o **envelope unitário** que chega ao Orquestrador, sem obrigá-lo a conhecer se a origem é local ou remota. O Analisador recebe o mesmo `File`, identifica `FileData` e avalia a mudança em conjunto com o estado persistido. **O evento é uma classificação da observação, não uma operação de sincronização autorizada.**
+
+### 5.1 Tipos de evento
 
 ```rust
-pub enum FileEvent {
-    ObservedChange,  // mudança ou metadados observados; categoria ainda genérica
-    RecheckRequired,  // observação insuficiente: reavaliar o escopo
-    ScopeUnavailable, // raiz ou subescopo inacessível
+pub enum FileEventKind {
+    Created,
+    Modified,
+    Deleted,
+    Renamed,
+    Moved,
+    MetadataChanged,
+    RecheckRequired,
+    ScopeUnavailable,
+}
+```
+
+| Variante | Sinal observado | Evidência/contexto necessário |
+| --- | --- | --- |
+| `Created` | Item novo observado | Localização atual e `FileData`, quando confirmáveis |
+| `Modified` | Conteúdo ou versão modificada | Referência do item e metadados atuais; comparação final cabe ao Analisador |
+| `Deleted` | Indício de remoção | Última localização/identidade conhecida; pode não haver dados atuais |
+| `Renamed` | Nome mudou | Localização/nome anterior e atual **quando a correlação for segura** |
+| `Moved` | Diretório/pai/caminho mudou | Origem e destino, com identidade correlacionada |
+| `MetadataChanged` | Metadados mudaram sem comprovar alteração do conteúdo | Metadados observados e identidade conhecida |
+| `RecheckRequired` | Sinal ambíguo, dados insuficientes ou reobservação necessária | Melhor escopo possível; não inventar mudança específica |
+| `ScopeUnavailable` | Escopo não acessível | Qual escopo falhou; não equivale a exclusão |
+
+Renomear e mover podem ocorrer juntos; **a classificação de um único evento não significa que apenas um aspecto mudou**. Quando não for possível correlacionar com segurança antes/depois, usar `RecheckRequired` em vez de forçar `Renamed` ou `Moved`. O contrato não tenta ser um histórico completo de todas as operações intermediárias.
+
+### 5.2 Localizações e contexto anterior/atual
+
+```rust
+pub enum FileLocation {
+    Local(LocalRelativePath),
+    Remote {
+        reference: RemoteFileRef,      // identidade do arquivo, não localização por si só
+        parent_id: Option<RemoteFileId>,
+        name: Option<String>,
+    },
+}
+
+pub struct FileEvent {
+    pub kind: FileEventKind,
+    pub previous: Option<FileLocation>,
+    pub current: Option<FileLocation>,
 }
 
 pub enum ObservationCoverage { Complete, Partial, Unavailable }
 
+pub enum FileScope {
+    Local(LocalRelativePath),
+    Remote(RemoteFileRef),
+    WholeSync,
+}
+```
+
+- `previous` contém a última **localização anterior conhecida pelo produtor**, não uma cópia completa dos metadados do Inventário. `None` significa que não houve referência anterior confiável; **não** prova criação.
+- `current` contém a localização observada **após** a ocorrência, quando conhecida. `None` não é prova automática de exclusão.
+- Em `FileLocation::Remote`, somente o ID remoto não identifica mudança de nome/pasta: `parent_id` e `name` descrevem a localização **quando disponíveis**. `None` nesses campos significa desconhecido, não ausência comprovada.
+- `FileScope` identifica o recurso/escopo que pode precisar de reavaliação. `FileLocation` guarda a informação **antes/depois** de um evento. São conceitos relacionados, mas não duplicações: `scope` permanece útil mesmo sem localizações completas.
+- `FileEvent` não contém `LocalFile` nem `RemoteFile`; o objeto `File.data` contém os metadados observados.
+
+### 5.3 File
+
+```rust
 pub struct File {
     pub id: FileId,
     pub sync_id: SyncId,
@@ -342,33 +399,32 @@ pub struct File {
     pub scope: FileScope,
     pub data: Option<FileData>,
 }
-
-pub enum FileScope {
-    Local(LocalRelativePath),   // escopo local conhecido, [] = raiz
-    Remote(RemoteFileRef),      // recurso remoto identificado
-    WholeSync,                  // escopo completo ou localização inconclusiva
-}
 ```
 
-| Atributo | Tipo | Obrigatório? | Origem e semântica |
+| Campo | Tipo | Obrigatório? | Origem e interpretação |
 | --- | --- | --- | --- |
-| `id` | `FileId` | Sim | Identidade estável **da ocorrência**, preservada em retry/reentrega |
-| `sync_id` | `SyncId` | Sim | Sincronização à qual a observação pertence |
-| `event` | `FileEvent` | Sim | Motivo que exige análise; não é uma ordem de operação |
-| `observed_at` | `Timestamp` | Sim | Quando o Detector construiu a observação; não é mtime do arquivo |
-| `coverage` | `ObservationCoverage` | Sim | Qualidade/completude da observação do escopo especificado |
-| `scope` | `FileScope` | Sim | Localização/identidade a reavaliar, mesmo sem dados de arquivo |
-| `data` | `Option<FileData>` | Campo sim; valor não | `Some` inclui dados realmente observados; `None` exige reavaliação, **não** significa exclusão |
+| `id` | `FileId` | Sim | Identifica **a ocorrência**, não o arquivo; permanece idêntico em retries |
+| `sync_id` | `SyncId` | Sim | Escopo da sincronização |
+| `event` | `FileEvent` | Sim | Classificação da ocorrência + localizações observadas |
+| `observed_at` | `Timestamp` | Sim | Instante da observação; distinto de `modified_at` |
+| `coverage` | `ObservationCoverage` | Sim | Completude da observação sobre o escopo, não prova de exclusão |
+| `scope` | `FileScope` | Sim | Recurso/escopo a reavaliar, inclusive sem arquivo observável |
+| `data` | `Option<FileData>` | Campo sim; valor não | Metadados locais ou remotos quando observados; `None` não comprova ausência |
 
-**Regras de consistência:**
+### 5.4 Invariantes e combinações admitidas
 
-1. `data=Some(Local(x))` exige `scope=Local(x.relative_path)`; `data=Some(Remote(x))` exige `scope=Remote(x.reference)`. `WholeSync` só é permitido sem `data`.
-2. `data=None` é permitido somente com `RecheckRequired` ou `ScopeUnavailable`. Não fabricar `LocalFile`/ `RemoteFile` quando não houve leitura confiável.
-3. `event=ScopeUnavailable` exige `coverage=Unavailable` e `data=None`.
-4. `event=ObservedChange` exige `data=Some(...)`, mas **não** implica confirmação da alteração frente ao baseline.
-5. `coverage=Complete` descreve o escopo observado e nunca comprova, sozinho, ausência/deleção do arquivo.
-6. `File` não contém `SyncItem`, decisão do Analisador, payload de transferência, lease, estado de fila ou confirmação.
-7. `File` encapsula todas as informações **efetivamente observadas**, não garante que o filesystem/Drive permaneça idêntico na hora da análise.
+1. `data=Some(Local(x))` exige `scope=Local(x.relative_path)`; `data=Some(Remote(x))` exige `scope=Remote(x.reference)`. `WholeSync` só é válido sem `data`.
+2. `Created`, `Modified`, `Renamed`, `Moved` e `MetadataChanged` exigem `data=Some(...)` e `current=Some(...)`, com origem e identidade compatíveis com `data`. Para `Renamed` e `Moved`, `previous=Some(...)` também é obrigatório; não classificar quando a correlação não foi observada.
+3. `Deleted` admite `data=None`, `previous=Some(...)` e `current=None`. **A classificação é uma pista de remoção, nunca confirmação para apagar na outra ponta.** Quando só existe um sinal de watcher sem identidade anterior confiável, usar `RecheckRequired`.
+4. `RecheckRequired` admite `data=None` e localizações parciais ou desconhecidas; `scope` identifica a reavaliação necessária. Pode também acompanhar dados parciais conhecidos.
+5. `ScopeUnavailable` exige `coverage=Unavailable`, `data=None` e não inventa `current` observável. Nenhum erro de permissão ou desmontagem vira `Deleted`.
+6. `previous` e `current` precisam pertencer à mesma origem local/remota para `Renamed`/`Moved`; o vínculo de identidade deve ter evidência, não mera semelhança de nomes.
+7. `coverage=Complete` descreve a inspeção do **escopo declarado**; por si só não valida ausência ou exclusão. `data=None` também não.
+8. `File` **não** contém `SyncItem`, baseline, comando de upload/download, decisão de conflito, lease ou estado de fila.
+9. Não executar decisões destrutivas diretamente com base no `FileEventKind`. O Analisador compara observações e estados confiáveis antes de decidir.
+10. `File` preserva todos os metadados **efetivamente coletados** sem garantir que o estado físico permaneça igual na hora do processamento.
+
+**Estado:** especificação conceitual para revisão, não implementação Rust. A atribuição exata dos eventos pelos detectores e a integração com Storage/Orquestrador serão detalhadas nos respectivos contratos, sem ampliar o papel de `models/`.
 
 ## 6. FileBatch — fronteira externa, propriedade do Detector
 
