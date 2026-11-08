@@ -1,55 +1,125 @@
 # Detector Local — INTERFACES
 
-## 1. Contrato e limites
+## 1. Escopo e visibilidade
 
-Esta API é **exclusiva do Detector Local**. Não há obrigação de construir ou iniciar o Detector Remoto para utilizá-la. O único consumidor do Detector Local é o módulo pai `Detector`; o Local entrega **um sinal individual por chamada** ao sink interno; o pai persiste a notificação via Storage. O Local não usa a API do Storage e não grava eventos em SQLite. Não possui API pública para o Orquestrador nem para qualquer outro módulo da engine.
+Contrato **interno de `detectors/local/`** consumido somente pelo Detector pai. O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
 
-Métodos recebem um objeto de entrada e devolvem `LocalDetectorResult<ObjetoDeResultado>`. Os tipos abaixo são o **contrato interno**, com visibilidade restrita ao componente `detectors/`, para TDD e precisam ser reconciliados com os tipos definitivos do Inventário e do Detector pai antes da implementação; **não são código Rust compilado**.
+As assinaturas abaixo são **esboços contratuais de Rust**, não código compilado. O Local pode funcionar com sink fake, sem Detector pai real, Storage, Google API, Inventário ou `SyncItem`. A fachada não reexporta a implementação Local.
 
-## 2. Tipos internos ao componente Local
+## 2. Tipos internos e modelo compartilhado
 
 ```rust
-pub type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
+// Importar de models: NÃO redefinir estes tipos em detectors/local/.
+use crate::models::{
+    AccountId, SyncId, LocalFile, LocalRelativePath, Timestamp,
+};
 
-pub enum LocalDetectorState { Stopped, Starting, Running, Degraded, Stopping, Failed }
-pub enum LocalScanCoverage { Complete, Partial, Unavailable }
-pub enum LocalStartMode { Initial, Resume }
-pub enum LocalScanCause { Startup, WatchEvent, Recovery, Manual }
-pub enum LocalScanScope { Full, Paths(Vec<std::path::PathBuf>) }
-pub enum LocalStopReason { UserRequest, Shutdown, Unavailable }
-pub enum LocalNoticeReason { ObservedChange, RecheckRequired, ScopeUnavailable, MonitoringInterrupted }
+pub(super) type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
 
-pub struct LocalDetectorScope {
-    pub sync_id: SyncId,          // contrato do Inventário
-    pub account_id: AccountId,    // contrato do Inventário
-    pub local_root: std::path::PathBuf,
+pub(super) enum LocalDetectorState {
+    Stopped, Starting, Running, Degraded, Stopping, Failed,
 }
-pub struct LocalDetectorSettings {
-    pub debounce_ms: Option<u64>,
+pub(super) enum LocalScanCoverage { Complete, Partial, Unavailable }
+pub(super) enum LocalStartMode { Initial, Resume }
+pub(super) enum LocalScanCause { Startup, WatchEvent, Recovery, Manual }
+pub(super) enum LocalScanScope {
+    Full,
+    Paths(Vec<LocalRelativePath>),
 }
-pub struct LocalDetectorNotice {
-    pub sync_id: SyncId,
-    pub reason: LocalNoticeReason,
-    pub affected_item_ids: Vec<SyncItemId>,
-    pub observed_at: Timestamp,
-    pub coverage: LocalScanCoverage,
+pub(super) enum LocalStopReason { UserRequest, Shutdown, Unavailable }
+pub(super) enum LocalNoticeReason {
+    ObservedChange, RecheckRequired, ScopeUnavailable, MonitoringInterrupted,
 }
-pub(super) trait LocalNotificationSink: Send + Sync {
-    // Sucesso implica recepção durável pela fachada, após enqueue do Storage.
-    fn notify(&self, notice: LocalDetectorNotice) -> LocalDetectorResult<()>;
-}
-
-pub enum LocalDetectorError {
+pub(super) enum LocalDetectorError {
     InvalidScope, InvalidState, RootUnavailable, PermissionDenied,
-    PartialObservation, WatcherUnavailable, InventoryUnavailable,
+    PartialObservation, WatcherUnavailable, ModelInvalid,
     PreconditionFailed, Cancelled, NotificationFailed, Internal,
 }
-pub struct LocalDetectorFailure {
+pub(super) struct LocalDetectorFailure {
     pub kind: LocalDetectorError,
     pub message: String, // sanitizada
     pub retryable: bool,
 }
-pub struct LocalDetectorStatus {
+```
+
+`AccountId`, `SyncId` e `Timestamp` serão importados de seus **proprietários efetivos**, eventualmente reexportados por Models. Sua localização em `crate::models` é ilustrativa até unificação dos tipos existentes. **Não criar definições novas para fazer o exemplo compilar.**
+
+### Aviso individual
+
+```rust
+pub(super) struct LocalNotice {
+    pub sync_id: SyncId,
+    pub reason: LocalNoticeReason,
+    pub observed_at: Timestamp,
+    pub coverage: LocalScanCoverage,
+    pub scope_hint: Option<LocalRelativePath>,
+    pub local_file: Option<LocalFile>,
+}
+
+pub(super) trait LocalNotificationSink: Send + Sync {
+    // Um aviso por chamada. Ok(()) = persistido de forma durável pelo pai.
+    fn notify(&self, notice: LocalNotice) -> LocalDetectorResult<()>;
+}
+```
+
+**Regras:**
+- `local_file=Some(LocalFile)` transporta **atributos comprovadamente observados**; `relative_path` é relativo à raiz sincronizada e os opcionais desconhecidos permanecem `None`.
+- `local_file=None` é válido para remoção suspeita, falha de cobertura ou reavaliação por escopo; **não** comprova inexistência nem desassociação de um item.
+- `scope_hint=None` indica escopo completo ou impossibilidade de delimitação segura, não autoriza descartar o evento. Quando `local_file=None` e `scope_hint=None`, o consumidor deve reavaliar o escopo da sincronização.
+- A observação não carrega `SyncItemId`, `SyncItem`, `GoogleFile` ou estruturas do Inventário. A associação ao item é responsabilidade posterior.
+- Um evento watcher pode motivar observação, mas não é sinônimo de arquivo confirmado. Um aviso de reavaliação pode existir sem `LocalFile`.
+
+## 3. Objetos internos de requisição e resultado
+
+```rust
+pub(super) struct LocalDetectorScope {
+    pub sync_id: SyncId,
+    pub account_id: AccountId,
+    pub local_root: std::path::PathBuf, // configuração operacional, não LocalFile
+}
+pub(super) struct LocalDetectorSettings {
+    pub debounce_ms: Option<u64>,
+}
+pub(super) struct LocalNotificationHandle {
+    /* porta tipada LocalNotificationSink, injetada pelo pai */
+}
+pub(super) struct LocalDetectorCreateRequest {
+    pub scope: LocalDetectorScope,
+    pub notifications: LocalNotificationHandle,
+    pub settings: LocalDetectorSettings,
+}
+pub(super) struct LocalDetectorCreateResult {
+    pub detector: LocalDetector,
+    pub state: LocalDetectorState,
+}
+pub(super) struct LocalStartRequest {
+    pub mode: LocalStartMode,
+    pub requested_at: Timestamp,
+}
+pub(super) struct LocalStartResult {
+    pub state: LocalDetectorState,
+    pub scheduled_scan: bool,
+}
+pub(super) struct LocalScanRequest {
+    pub scope: LocalScanScope,
+    pub cause: LocalScanCause,
+    pub request_id: Option<String>,
+}
+pub(super) struct LocalScanResult {
+    pub coverage: LocalScanCoverage,
+    pub observed_count: u64,
+    pub emitted_count: u64,
+}
+pub(super) struct LocalStopRequest {
+    pub reason: LocalStopReason,
+    pub requested_at: Timestamp,
+}
+pub(super) struct LocalStopResult {
+    pub state: LocalDetectorState,
+    pub in_flight: u32,
+}
+pub(super) struct LocalStatusRequest {}
+pub(super) struct LocalStatusResult {
     pub state: LocalDetectorState,
     pub last_observation_at: Option<Timestamp>,
     pub last_coverage: Option<LocalScanCoverage>,
@@ -57,75 +127,12 @@ pub struct LocalDetectorStatus {
 }
 ```
 
-### Objetos de requisição e resposta internos
+**Decisão:** `LocalScanResult` retorna **contagens e cobertura**, não uma segunda coleção de avisos, para evitar duas rotas concorrentes de entrega. Todos os avisos seguem **exclusivamente o sink**; o pai é responsável pela fila. `LocalFile` não é persistido pelo Local.
 
-```rust
-// InventoryHandle e NotificationHandle são abstrações tipadas injetadas
-// das APIs existentes, não wrappers de SQL nem implementação do Detector pai.
-// A forma concreta de ownership será fixada ao integrar os módulos.
-pub struct LocalNotificationHandle { /* sink interno fornecido pelo Detector pai */ }
-
-pub struct LocalDetectorCreateRequest {
-    pub scope: LocalDetectorScope,
-    pub notifications: LocalNotificationHandle,
-    pub settings: LocalDetectorSettings,
-}
-pub struct LocalDetectorCreateResult {
-    pub detector: LocalDetector,
-    pub state: LocalDetectorState,
-}
-pub struct LocalStartRequest {
-    pub mode: LocalStartMode,
-    pub requested_at: Timestamp,
-}
-pub struct LocalStartResult {
-    pub state: LocalDetectorState,
-    pub scheduled_scan: bool,
-}
-pub struct LocalScanRequest {
-    pub scope: LocalScanScope,
-    pub cause: LocalScanCause,
-    pub request_id: Option<String>,
-}
-pub struct LocalScanResult {
-    pub coverage: LocalScanCoverage,
-    pub observed_count: u64,
-    pub affected_items: Vec<SyncItemId>,
-    pub notification: Option<LocalDetectorNotice>,
-}
-pub struct LocalStopRequest {
-    pub reason: LocalStopReason,
-    pub requested_at: Timestamp,
-}
-pub struct LocalStopResult {
-    pub state: LocalDetectorState,
-    pub in_flight: u32,
-}
-pub struct LocalStatusRequest {}
-pub struct LocalStatusResult {
-    pub status: LocalDetectorStatus,
-}
-```
-
-## 3. Atributos opcionais: decisão de projeto
-
-| Atributo | Por que é opcional | Semântica se ausente |
-| --- | --- | --- |
-| `debounce_ms` | Agrupamento de eventos é política de implementação | Usar valor interno seguro, não valor arbitrário de contrato |
-| `request_id` | Nem toda varredura precisa de correlação externa | Não omitir observações nem prometer deduplicação só por essa ausência |
-| `LocalScanResult.notification` | Uma leitura pode não produzir aviso novo | Não significa que não existam divergências anteriores |
-| `LocalDetectorStatus.last_observation_at` | Detector pode ainda não ter observado | `None` não significa “agora” |
-| `LocalDetectorStatus.last_coverage` | Nenhuma leitura concluída | `None` não deve ser interpretado como Complete |
-| `LocalDetectorStatus.last_error` | Pode não haver falha conhecida | `None` não comprova disponibilidade atual |
-| `affected_item_ids` vazio | Escopo mudou mas identidades ainda não são conhecidas | Reavaliar escopo, nunca descartar automaticamente |
-
-`LocalDetectorScope.local_root` **não é opcional** para o Local. `LocalScanScope::Paths` não pode escapar da raiz sincronizada. `LocalScanCoverage::Complete` é relativa ao escopo pedido, não necessariamente à raiz inteira. Campo ausente, evento isolado ou cobertura incompleta não prova `PresenceState::AbsentConfirmed`.
-
-## 4. Assinaturas internas do Local
+## 4. Assinaturas internas
 
 ```rust
 pub(super) struct LocalDetector { /* estado interno privado */ }
-
 impl LocalDetector {
     pub(super) fn new(request: LocalDetectorCreateRequest)
         -> LocalDetectorResult<LocalDetectorCreateResult>;
@@ -140,76 +147,56 @@ impl LocalDetector {
 }
 ```
 
-## 5. Contrato funcional de cada método interno
+## 5. Contratos por método
 
 ### LOC-01 — `new`
 
-**Assinatura:** `new(LocalDetectorCreateRequest) -> LocalDetectorResult<LocalDetectorCreateResult>`.
-
-**Finalidade:** Construir detector para uma raiz local e sink individual de observações, sem iniciar watcher.
-
-**Parâmetros:** `scope.sync_id`, `account_id`, `local_root` exigidos; `notifications` é sink injetado; `settings` contém política local.
-
-**Retorno:** Retorna instância em `Stopped` e o escopo validado.
-
-**Limites e erros:** Não cria inventário global nem examina arquivos. Raiz reservada, associação inválida e dependências ausentes são erros.
+**Finalidade:** configurar observador local isolado para `sync_id`, conta e raiz, com sink de saída.
+**Parâmetros:** `scope` e `notifications` obrigatórios; `debounce_ms=None` usa política segura interna.
+**Retorno:** instância `Stopped`, sem watcher ativo.
+**Erros/limites:** rejeitar raiz inválida ou reservada; não consultar Inventário nem criar `LocalFile` fictício.
 
 ### LOC-02 — `start`
 
-**Assinatura:** `start(LocalStartRequest) -> LocalDetectorResult<LocalStartResult>`.
-
-**Finalidade:** Iniciar observação contínua, preparando watcher e reconciliação por varredura.
-
-**Parâmetros:** `mode` distingue início normal de retomada; `requested_at` registra a solicitação. Estado e raiz já pertencem à instância.
-
-**Retorno:** Estado `Starting` ou `Running`, com indicação de varredura necessária.
-
-**Limites e erros:** Não garante ausência de perda de evento; falha de watcher deve sinalizar estado degradado ou falha, não sucesso falso.
+**Finalidade:** ativar watcher e varredura de recuperação conforme modo.
+**Parâmetros:** `mode`, `requested_at` obrigatórios.
+**Retorno:** estado e indicação de scan programado; não comprova varredura concluída.
+**Erros/limites:** falha de watcher ou cobertura nunca significa exclusão; início repetido deve ter semântica estável e tipada.
 
 ### LOC-03 — `scan_once`
 
-**Assinatura:** `scan_once(LocalScanRequest) -> LocalDetectorResult<LocalScanResult>`.
-
-**Finalidade:** Observar escopo completo ou caminhos afetados, registrar fatos locais e sinalizar reavaliações.
-
-**Parâmetros:** `scope` define `Full` ou `Paths`; `cause` explica origem; `request_id` é opcional para correlação, não autoriza ignorar mudanças.
-
-**Retorno:** Cobertura `Complete`, `Partial` ou `Unavailable`, contagem e IDs conhecidos; aviso opcional.
-
-**Limites e erros:** Não transfere arquivos nem avança baseline. `Partial` não prova ausência em partes não lidas.
+**Finalidade:** inspecionar `Full` ou `Paths` e emitir avisos de observação/reavaliação contendo `LocalFile` quando possível.
+**Parâmetros:** caminhos relativos tipados, causa e correlação opcional.
+**Retorno:** cobertura, quantidade observada e quantidade de avisos aceitos pelo sink.
+**Erros/limites:** `Complete` exige inspeção integral do escopo; falha do sink não incrementa `emitted_count` como entregue e exige replay/recuperação; não atualiza baseline nem executa operações.
 
 ### LOC-04 — `stop`
 
-**Assinatura:** `stop(LocalStopRequest) -> LocalDetectorResult<LocalStopResult>`.
-
-**Finalidade:** Encerrar watcher e varreduras de forma coordenada.
-
-**Parâmetros:** `reason` informa causa; `requested_at` situa a ordem.
-
-**Retorno:** Estado após parada e número de observações ainda pendentes, se aplicável.
-
-**Limites e erros:** Não apaga Inventário, não exclui arquivos e não afirma que a sincronização terminou.
+**Finalidade:** interromper watcher, agendamento e leitura em andamento.
+**Parâmetros:** motivo e instante.
+**Retorno:** estado e trabalho em trânsito.
+**Erros/limites:** parar não confirma eventos, não apaga filas e não altera modelo de arquivo.
 
 ### LOC-05 — `status`
 
-**Assinatura:** `status(LocalStatusRequest) -> LocalDetectorResult<LocalStatusResult>`.
+**Finalidade:** obter diagnóstico interno do observador.
+**Parâmetros:** request vazio.
+**Retorno:** estado, última observação, cobertura e erro opcionais.
+**Erros/limites:** consulta sem scan, I/O remoto ou acesso a banco.
 
-**Finalidade:** Consultar estado atual e último diagnóstico do detector.
+## 6. Semântica de tipos e ausência
 
-**Parâmetros:** Request vazio: a instância já determina o escopo.
+- `LocalScanScope::Paths` usa `LocalRelativePath`; nenhum caminho pode escapar da raiz. Lista vazia deve resultar em erro tipado ou sem trabalho **conforme decisão explícita antes do código**, nunca virar scan global acidental.
+- `LocalFile.id=None` significa identidade local desconhecida; não usar inode como ID estável sem comprovação.
+- `LocalFile.kind=Unknown` ou metadados opcionais ausentes não autorizam inferir tipo, hash ou tamanho.
+- Nomes Unix inválidos em UTF-8 devem ser preservados segundo a representação definida em Models.
+- `LocalScanCoverage::Complete` avalia **cobertura da leitura**, não `PresenceState::AbsentConfirmed` do Inventário.
+- `debounce_ms`, `request_id`, últimos timestamps e erros opcionais não implicam comportamento não documentado quando ausentes.
 
-**Retorno:** Estado, última observação/cobertura e último erro, todos opcionais quando não ocorreram.
+## 7. Fronteiras e pendências
 
-**Limites e erros:** Não dispara varredura e não faz I/O remoto.
+O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. Somente o Detector pai decide como normalizar `LocalNotice` para `DetectorEvent` e persistir.
 
-## 6. Notificações e persistência
+Pendências antes de implementar: ownership efetivo das identidades já existentes, representação concreta de `LocalRelativePath`, política de symlinks, semântica de cancelamento/concorrência, watcher/debounce e como transportar metadata observada no evento persistente sem perda de evidência. Mudanças para ampliar `DetectorEvent` ou `DetectionEventRecord` são **revisões contratuais separadas**, não alterações implícitas nesta documentação.
 
-O `LocalNotificationSink` é uma **porta interna de entrega para o Detector pai**, não é a entrada do Orquestrador. O pai traduz essas observações em seu `DetectorEvent` público; `notify` é um sinal interno, não confirmação de item ou sincronização. Avisos podem ser repetidos, agregados ou perdidos; uma nova varredura restaura a observação depois de falha/reinício.
-
-**Não persistir eventos no Local.** Cada chamada `LocalNotificationSink.notify` carrega exatamente um aviso. O sink interno, fornecido pelo Detector pai, somente retorna sucesso depois de `EventStore.enqueue` durável; falha exige replay/reobservação, sem declarar sucesso. O Local não usa SQL, não altera cursor remoto, baseline, atividades nem fila de operações.
-
-## 7. Erros e dependências em aberto
-
-`RootUnavailable`, `PermissionDenied`, `WatcherUnavailable`, `PartialObservation` e `Cancelled` **não** são prova de exclusão. Erros precisam ser tipados e sanitizados. A escolha de biblioteca watcher, tratamento de eventos durante scanner, tipos definitivos de `LocalFile`, forma concreta dos handles, semântica sync/async do start e política de symlinks devem ser fechadas antes de implementar os casos dependentes, **sem depender do Detector Remoto**.
-
-**Visibilidade:** `pub` nos trechos de estruturas deve ser lido no **limite interno de `detectors/`**, não como reexportação pública pela crate. Na implementação, reduzir visibilidade a `pub(super)`/`pub(crate)` quando cabível e não expor tipos internos por interfaces externas. O pai coordena a emissão ao Orquestrador; o Local mantém liberdade de estruturar seus detalhes de filesystem. **Estado:** contrato interno proposto, ainda não compilado nem validado.
+**Estado:** contrato de projeto não compilado, sem testes executados.
