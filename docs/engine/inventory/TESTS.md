@@ -148,7 +148,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 
 **Contrato:** `get_item(GetItemRequest) -> InventoryResult<GetItemResult>`.
 
-**Sucesso:** Buscar mesmo item por `Id`, `RemoteId`, `LocalId`, `LocalRelativePath`; reconstruir `LocalFile?`, `GoogleFile?`, baseline e presenças.
+**Sucesso:** Buscar mesmo item por `Id`, `RemoteRef`, `LocalId`, `LocalRelativePath`; reconstruir `LocalFile?`, `RemoteFile?`, baseline e presenças.
 
 **Negativos e opcionais:** Seletor sem correspondência retorna `item=None`; seletor malformado erro; ambiguidades locais não retornam item arbitrário.
 
@@ -422,7 +422,7 @@ A inspeção do esquema é permitida **nos testes internos do módulo**, para co
 
 | ID | Experimento | Evidência exigida |
 | --- | --- | --- |
-| INV-TX-01 | Falha entre persistir observação e atualizar vínculo | Rollback integral, sem `local_files`/`google_files` órfãos que causem ambiguidade |
+| INV-TX-01 | Falha entre persistir observação e atualizar vínculo | Rollback integral, sem `local_files`/`remote_files` órfãos que causem ambiguidade |
 | INV-TX-02 | Falha entre confirmar baseline e finalizar operação | Nenhuma conclusão parcial após reabertura |
 | INV-TX-03 | Falha entre completar operação e gravar `activity` | Operação não aparece concluída sem atividade relevante |
 | INV-TX-04 | Falha entre inserir eventos e atualizar cursor | Nenhuma alteração parcial de página |
@@ -523,7 +523,7 @@ A porcentagem acima é **meta futura**, não resultado de execução. Não decla
 - [ ] Os 20 métodos compilam com os tipos documentados.
 - [ ] SQLite é criado somente no inventário de uma pasta, sem banco de histórico separado.
 - [ ] Testes funcionais usam banco real isolado; falhas não deixam transações parciais.
-- [ ] `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
+- [ ] Os campos selecionados de `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
 - [ ] A ausência de dados opcionais não vira exclusão automática.
 - [ ] Baseline só avança mediante confirmação válida; dados observados não o substituem.
 - [ ] Operações, cursor/eventos e histórico persistem após reinício.
