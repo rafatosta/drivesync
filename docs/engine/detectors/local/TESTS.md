@@ -1,135 +1,93 @@
 # Detector Local — TESTS
 
-## 1. Objetivo e isolamento
+## 1. Escopo
 
-Plano TDD para **somente o Detector Local**. Fonte de verdade: [README.md](README.md) e [INTERFACES.md](INTERFACES.md). Não é necessário compilar, testar ou implementar o Detector Remoto para concluir esta etapa.
+Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watcher real quando aplicável, clock/scheduler controlados e **sink individual fake**. O Local importa os tipos de [Models](../../models/INTERFACES.md), mas não precisa de implementação real do Detector pai, Remoto, Storage, Inventário, Analisador ou Google API.
 
-Testar `LocalDetector` real com **filesystem real em diretórios temporários**, sink individual fake e respostas de aceitação durável simuladas, sink fake do **Detector pai**, relógio/scheduler injetados para determinismo. Nunca utilizar arquivos pessoais, Google Drive real, credenciais ou GUI. A API Local **não** deve ser importável por consumidores externos da engine; verificar que apenas o módulo pai pode chamá-la. O watcher deve ser exercitado quando disponível; não substituí-lo inteiramente por mock da unidade sob teste.
+**Não** testar a persistência SQLite no Local: a garantia real de durabilidade pertence ao Storage. Aqui o sink simula aceitar ou rejeitar a gravação, e o Local deve reagir corretamente.
 
-## 2. Ciclo TDD
+## 2. Fixtures
 
-RED: escrever teste de compilação e de comportamento que falhem pela capacidade ausente. GREEN: implementar mínimo. REFACTOR: manter contratos e rodar regressão. Desenvolver incrementalmente em grupos: ciclo de vida, observação, emissão individual por sink fake, avisos e recuperação após reinício. Cada grupo validado deve gerar commit local conforme [AGENTS.md](AGENTS.md).
-
-## 3. Fixtures
-
-| Fixture | Conteúdo | Resultado a avaliar |
+| Fixture | Conteúdo | Evidência |
 | --- | --- | --- |
-| `empty_root` | Raiz temporária + inventário do mesmo sync_id | Varredura inicial vazia |
-| `local_tree` | Arquivos, subpastas, nomes Unicode e bytes Unix inválidos para UTF-8 | Sinais preservam identidade e informação necessária à reavaliação |
-| `closed_app_changes` | Criar/editar/mover arquivos com watcher desligado | Nova varredura detecta diferenças |
-| `partial_tree` | Falha controlada em subárvore | Partial/Unavailable, não exclusão |
-| `external_symlink` | Link apontando para fora da raiz | Não observar conteúdo externo |
-| `reserved_directory` | Metadados em `.drivesync/` | Ignorar como arquivo de usuário |
-| `concurrent_edits` | Mutação durante scanner e registro de watcher | Sem lacuna declarada como Complete |
-| `notification_sink` | Coleta e falha injetável de avisos | Avisos corretos e recuperação |
-| `separate_roots` | Duas raízes e inventários isolados | Nenhum vazamento cruzado |
+| `empty_root` | Raiz temporária válida, vazia | Leitura completa sem eventos de exclusão inventados |
+| `local_tree` | Arquivos/subpastas com nomes UTF-8 e não UTF-8 Unix | `LocalFile.relative_path` preservado |
+| `unknown_identity` | Arquivo sem identidade local estável comprovada | `LocalFile.id=None`; sem `SyncItemId` inventado |
+| `unknown_metadata` | Permissões ou atributos indisponíveis | Campos opcionais `None`; cobertura compatível |
+| `closed_app_changes` | Criar/editar/mover durante stop | Recuperação por nova varredura |
+| `partial_tree` | Subárvore inacessível | Aviso de reavaliação sem `LocalFile` e cobertura Partial |
+| `removed_candidate` | Arquivo desaparece ou evento de remoção chega | `LocalNotice.local_file=None`, sem exclusão confirmada |
+| `symlink_external` | Link para fora da raiz | Nenhuma leitura externa |
+| `reserved_directory` | `.drivesync/` alterado | Ignorar dados internos |
+| `concurrent_edits` | Mudança entre watcher e scan | Não declarar leitura completa sem evidência |
+| `rejecting_sink` | Sink retorna falha após observação | Sem falso aceite, replay/revarredura |
+| `separate_roots` | Dois escopos isolados | `sync_id`, caminhos e eventos não se cruzam |
 
-## 4. Casos por método
+## 3. Contratos dos cinco métodos
 
-### LOC-01 — `LocalDetector::new`
+### LOC-01 — `new`
 
-**Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
+**Sucesso:** criar instância `Stopped` com raiz, conta, identidade e sink fake.
+**Negativos/opcionais:** raiz reservada ou inválida; settings com debounce ausente; conta de sincronização incorreta.
+**Retorno/invariantes:** sem `LocalFile` fabricado, sem evento, sem I/O remoto; nenhum tipo novo de identidade.
+**Verificação:** `LocalDetectorCreateResult`, ausência de chamadas do sink e watcher.
 
-**Sucesso:** Com raiz temporária válida, identidade conhecida, sink fake com aceite durável simulado, construir instância Stopped sem observar filesystem.
+### LOC-02 — `start`
 
-**Negativos e opcionais:** Raiz interna `.drivesync/`, vínculo inválido ou raiz fora do escopo; validação deve falhar sem ações externas.
+**Sucesso:** iniciar watcher e programar inspeção inicial/reinício; mudanças anteriores ao início serão reobservadas.
+**Negativos/opcionais:** start repetido; falha do watcher; raiz desmontada.
+**Retorno/invariantes:** estado consistente e cobertura não inventada.
+**Verificação:** scheduler, watcher e avisos individuais produzidos depois da observação.
 
-**Retorno e invariantes:** Nenhuma observação gravada, watcher não iniciado, sem acesso remoto.
+### LOC-03 — `scan_once`
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink interno do Detector pai, eventos capturados no sink individual; validar erros tipados e ausência de alterações físicas proibidas.
+**Sucesso:** produzir `LocalNotice` com `local_file=Some(LocalFile)` para metadados verificados; preservar tipos, caminhos e opcionais de Models.
+**Negativos/opcionais:** Full/Paths; Paths vazio ou fora da raiz; leitura parcial; symlink; request_id None/Some; sink rejeita.
+**Retorno/invariantes:** contagem observada distinta de avisos **aceitos**; sem lista paralela de eventos; sem baseline.
+**Verificação:** capturas do sink com valores de `LocalFile` concretos e cobertura apropriada.
 
-### LOC-02 — `LocalDetector::start`
+### LOC-04 — `stop`
 
-**Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
+**Sucesso:** parar observação e tarefas.
+**Negativos/opcionais:** stop repetido; interrupção durante varredura.
+**Retorno/invariantes:** não emitir sucesso de entrega para sinais pendentes; não limpar fila ou estado externo.
+**Verificação:** ausência de novas observações depois de stop efetivo, retorno tipado.
 
-**Sucesso:** Registrar watcher e varredura inicial/retomada; detectar mudanças ocorridas antes da inicialização.
+### LOC-05 — `status`
 
-**Negativos e opcionais:** Iniciar duas vezes, perder watcher, raiz removida durante inicialização e falha de agendamento.
+**Sucesso:** consulta de estado, última cobertura e erro.
+**Negativos/opcionais:** antes de observar = campos opcionais None; falhas sanitizadas.
+**Retorno/invariantes:** leitura não inspeciona disco, não chama sink nem banco.
+**Verificação:** status antes/depois das operações.
 
-**Retorno e invariantes:** Estado coerente Running/Starting/Degraded; não declarar ausência por falha de watcher.
+## 4. Integração com Models — casos obrigatórios
 
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
-
-### LOC-03 — `LocalDetector::scan_once`
-
-**Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
-
-**Sucesso:** Varredura Full e Paths com arquivos e subpastas; observar criação/edição/renomeação/movimento via sink interno do pai.
-
-**Negativos e opcionais:** Subárvore ilegível, arquivo alterado durante scan, symlink externo, bytes não UTF-8, cancelamento; request_id None/Some.
-
-**Retorno e invariantes:** Complete só com escopo validado; Partial preserva regiões desconhecidas; baseline e fila não mudam.
-
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
-
-### LOC-04 — `LocalDetector::stop`
-
-**Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
-
-**Sucesso:** Parar watcher e varreduras sem apagar inventário; liberar recursos.
-
-**Negativos e opcionais:** Parada repetida; stop enquanto varredura ainda está em andamento; falha de encerramento.
-
-**Retorno e invariantes:** Não alegar sincronização concluída ou criar atividade de transferência.
-
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
-
-### LOC-05 — `LocalDetector::status`
-
-**Contrato:** método e objetos tipados de [INTERFACES.md](INTERFACES.md).
-
-**Sucesso:** Ler estado, cobertura e erro sem alterar dados.
-
-**Negativos e opcionais:** Antes de qualquer scan, campos last_* None; após falha, erro sanitizado.
-
-**Retorno e invariantes:** Não dispara varredura nem contato remoto; leitura não modifica estados.
-
-**Verificação objetiva:** comparar resposta pública, chamadas ao sink, eventos individuais capturados no sink fake e erros de aceite; sem exigir banco real; validar erros tipados e ausência de alterações físicas proibidas.
-
-## 5. Sinais internos ao Detector pai e recuperação
-
-| Caso | Situação | Verificação |
+| Caso | Situação | Comportamento obrigatório |
 | --- | --- | --- |
-| LOC-N-01 | Mudança de arquivo com item conhecido | Sinal interno inclui `sync_id`, motivo, ID e cobertura corretos, sem acessar Orquestrador |
-| LOC-N-02 | Alteração sem identidade segura | Sinal interno de reavaliação de escopo, mesmo com lista de IDs vazia |
-| LOC-N-03 | Eventos repetidos em rápida sequência | Agregação não perde necessidade de reavaliação |
-| LOC-N-04 | Sink falha depois de observação persistida | Diagnosticar falha e permitir revarredura/reemissão |
-| LOC-N-05 | App desligado durante alterações | Reinício identifica mudanças sem histórico de watcher |
-| LOC-N-06 | Operador local alterou arquivo | Detector registra fato, não inicia upload por conta própria |
+| LOC-M-01 | Arquivo regular | Aviso contém `Some(LocalFile { kind: File, ... })` |
+| LOC-M-02 | Diretório | Aviso contém `LocalFileKind::Directory`; sem conteúdo fabricado |
+| LOC-M-03 | Symlink | Modelo `Symlink`, sem seguir alvo externo |
+| LOC-M-04 | Nome Unix não UTF-8 | Caminho preserva componentes sem conversão com perda |
+| LOC-M-05 | Identidade local não comprovada | `id=None`; sem gerar `SyncItemId` |
+| LOC-M-06 | Hash/tamanho não observados | `checksum=None`, `size=None` conforme observação; sem preencher por suposição |
+| LOC-M-07 | Evento de remoção | Aviso com `local_file=None` + escopo quando possível |
+| LOC-M-08 | Watcher overflow | Recheck com cobertura degradada e sem `LocalFile` obrigatório |
+| LOC-M-09 | Sink aceita | Um aviso individual por chamada, contado como entregue |
+| LOC-M-10 | Sink rejeita | Falha propagada; não contar como evento persistido |
+| LOC-M-11 | Mesmo arquivo em duas alterações | Não consolidar destrutivamente observações diferentes |
+| LOC-M-12 | Duas raízes com mesmo caminho relativo | Escopos distintos preservam `sync_id` |
+| LOC-M-13 | `.drivesync/` | Não gerar `LocalFile` sincronizável |
+| LOC-M-14 | Leitura parcial | Não converter `None` em deleção nem `Complete` |
+| LOC-M-15 | Componentes irmãos ausentes | Local roda com Models e sink fake; não exige Remoto/Storage reais |
 
-## 6. Testes transversais de segurança
+## 5. Segurança, cobertura e recuperação
 
-| Caso | Experimento | Evidência |
-| --- | --- | --- |
-| LOC-S-01 | Raiz desmontada/ausente | Unavailable sem exclusão em massa |
-| LOC-S-02 | Subpasta inacessível | Partial, ausência não comprovada |
-| LOC-S-03 | Evento perdido/overflow do watcher | Recuperação por varredura |
-| LOC-S-04 | Arquivo criado/renomeado durante scan | Cobertura não declarada completa incorretamente |
-| LOC-S-05 | Symlink externo | Nenhuma leitura fora da raiz |
-| LOC-S-06 | `.drivesync/` modificado | Nenhum sinal de metadados internos |
-| LOC-S-07 | Nome Unix não UTF-8 | Bytes preservados sem conversão com perda |
-| LOC-S-08 | Duas sincronizações simultâneas | Notificações e observações isoladas |
-| LOC-S-09 | Campo local não observado | Não sobrescrever valor anterior com None/zero |
-| LOC-S-10 | Estado local diferente do baseline | Sem alteração de baseline; detector não decide operação |
-| LOC-S-11 | Falha na persistência | Não informar ao filho como durável; reemitir/reobservar |
-| LOC-S-12 | Repetição da mesma varredura | Não gerar evento artificial; reobservação segura quando necessário |
+Testar raiz removida/desmontada, permissões, overflow do watcher, mudanças durante scan, symlink externo e paralelismo de sessões. Evento isolado não é confirmação de exclusão; após app fechado, nova varredura deve apontar necessidade de reavaliação sem alegar reconstrução do histórico.
 
-## 7. Tipos, opcionais e erros
+Cenário de falha entre observação e aceite durável deve preservar possibilidade de repetição. Não basta comparar structs de Models: exercitar o **observador real** com diretório temporário.
 
-Cobrir todas as variantes de `LocalDetectorState`, `LocalScanCoverage`, `LocalScanScope`, `LocalScanCause`, `LocalStopReason`, `LocalNoticeReason` e `LocalDetectorError`. Testar `debounce_ms=None/Some`, `request_id=None/Some`, `notification=None/Some` e `last_observation_at/last_coverage/last_error=None/Some`. `Paths` deve validar escopo e tratar lista vazia conforme decisão documentada, sem escolher comportamento arbitrário.
+## 6. Critério de aceite
 
-Todo `LocalDetectorFailure` precisa ter tipo de erro, mensagem sanitizada e sinalização de possibilidade de retry. Falha de permissão, filesystem ou watcher **não** corresponde a ausência confirmada.
+**5/5 métodos internos** e cenários de Models aplicáveis passam independentemente, com resultados PASS/FAIL/BLOCKED e evidências de comandos executados no Flatpak. **Não** exigir testes Google/Inventory/Storage para concluir o Local.
 
-## 8. Pendências e aceite
-
-Dependências ainda abertas: contrato definitivo `LocalFile`, implementação da porta interna de sinais do Detector pai, concreteza dos handles, política de symlinks, valores/política de debounce e protocolo de start/stop. Testes que dependem dessas decisões devem ficar marcados **BLOCKED** até formalização, não aprovados por mocks permissivos.
-
-Concluir o **Detector Local** somente com **5/5 métodos públicos** implementados e testes aplicáveis aprovados, cenário de retomada após interrupção e casos de parcialidade comprovados, sem dependência da implementação de Storage/Inventário, regressão sem falhas relevantes e execução Rust no ambiente Flatpak. Não exigir conclusão do Detector Remoto.
-
-## 9. Relatório
-
-Informar IDs LOC-01…LOC-05, LOC-N e LOC-S executados, PASS/FAIL/BLOCKED, ambiente, comandos, evidência de emissão individual e varredura, commits locais e limitações. **Nenhum teste Local pode depender de Orquestrador real ou de importar sua API pública; a tradução para `DetectorEvent` pertence aos testes do pai.** Documento de testes não representa teste executado.
-
-## Independência da persistência
-
-O Local **não** utiliza Storage, `detector.sqlite3` ou implementação real do pai. Para cada alteração observada, chama o sink fake com **um evento**; confirmar só quando o fake simula aceite durável e manter recuperação quando falhar. Testar Local isoladamente sem executar testes do Storage. A durabilidade real é comprovada pela suíte própria do Storage e pela integração posterior.
+Pendências ainda bloqueadoras de casos particulares: implementação de `LocalRelativePath`, ownership único de IDs/Timestamp, watcher concreto e regras de cobertura que determinem identidade. Nenhum teste foi executado nesta atualização documental.
