@@ -43,6 +43,30 @@ pub(super) trait RemoteCheckpoint: Send + Sync {
 
 A localização do checkpoint pertence a seu backend, não ao Detector Remoto. A garantia **não avançar após emissão não persistida** exige testar os limites por página e replays idempotentes. O sink do pai transforma a observação em evento persistido sem exigir que o Remoto conheça `EventStore`.
 
+### Porta estável para metadados remotos
+
+O Detector Remoto recebe um **`RemoteFile` já produzido pelo especialista/adaptador do provedor**, sem conhecer os atributos internos ou a estrutura `GoogleFile`. O contrato de adaptação é **interno ao especialista** e deve permanecer estável quando `RemoteFile` ganhar ou perder campos.
+
+```rust
+// Contrato conceitual; RemoteFile pertence a models.
+// O objeto bruto específico do provedor é conhecido apenas no especialista.
+pub(super) trait RemoteMetadataAdapter: Send + Sync {
+    fn observe(&self, request: RemoteMetadataRequest)
+        -> RemoteResult<RemoteMetadataResult>;
+}
+pub(super) struct RemoteMetadataRequest {
+    pub reference: RemoteFileRef, // conta + ID remoto verificado
+}
+pub(super) struct RemoteMetadataResult {
+    pub file: Option<RemoteFile>,
+    pub coverage: RemoteCoverage,
+}
+```
+
+Esse contrato descreve a porta de aquisição/adaptação **sem exigir que a fachada genérica importe GoogleFile**. A implementação especializada pode consultar APIs e delegar metadados mais caros a auxiliares; `models/` continua sem I/O. Caso uma resposta de mudanças não traga ID suficiente, emitir uma reavaliação de escopo, **sem criar RemoteFile fictício**. Um `removed` também pode significar perda de acesso, não exclusão.
+
+**Critério de isolamento:** alterar os campos `RemoteFile` pode alterar adaptador, testes e consumidores interessados, **não** polling, cursor, notificações e fila do Detector Remoto. A interface pública anterior ainda será revisada para carregar `File` autocontido ao Orquestrador, sem transformar esta proposta em código já implementado.
+
 ## 2. Requests/results
 
 ```rust
