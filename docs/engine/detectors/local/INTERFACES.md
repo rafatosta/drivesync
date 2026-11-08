@@ -11,7 +11,8 @@ As assinaturas abaixo são **esboços contratuais de Rust**, não código compil
 ```rust
 // Importar de models: NÃO redefinir estes tipos em detectors/local/.
 use crate::models::{
-    AccountId, SyncId, LocalFile, LocalRelativePath, Timestamp,
+    AccountId, SyncId, File, FileData, FileEvent, FileEventKind, FileLocation,
+    FileScope, ObservationCoverage, LocalFile, LocalRelativePath, Timestamp,
 };
 
 pub(super) type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
@@ -27,9 +28,6 @@ pub(super) enum LocalScanScope {
     Paths(Vec<LocalRelativePath>),
 }
 pub(super) enum LocalStopReason { UserRequest, Shutdown, Unavailable }
-pub(super) enum LocalNoticeReason {
-    ObservedChange, RecheckRequired, ScopeUnavailable, MonitoringInterrupted,
-}
 pub(super) enum LocalDetectorError {
     InvalidScope, InvalidState, RootUnavailable, PermissionDenied,
     PartialObservation, WatcherUnavailable, ModelInvalid,
@@ -47,27 +45,17 @@ pub(super) struct LocalDetectorFailure {
 ### Aviso individual
 
 ```rust
-pub(super) struct LocalNotice {
-    pub sync_id: SyncId,
-    pub reason: LocalNoticeReason,
-    pub observed_at: Timestamp,
-    pub coverage: LocalScanCoverage,
-    pub scope_hint: Option<LocalRelativePath>,
-    pub local_file: Option<LocalFile>,
-}
-
+// A unidade interna é o File COMPLETO de Models, não um wrapper File.
+// O Detector Local compõe o contexto; o coletor constrói LocalFile.
 pub(super) trait LocalNotificationSink: Send + Sync {
     // Um aviso por chamada. Ok(()) = persistido de forma durável pelo pai.
-    fn notify(&self, notice: LocalNotice) -> LocalDetectorResult<()>;
+    fn notify(&self, file: File) -> LocalDetectorResult<()>;
 }
 ```
 
-**Regras:**
-- `local_file=Some(LocalFile)` transporta **atributos comprovadamente observados**; `relative_path` é relativo à raiz sincronizada e os opcionais desconhecidos permanecem `None`.
-- `local_file=None` é válido para remoção suspeita, falha de cobertura ou reavaliação por escopo; **não** comprova inexistência nem desassociação de um item.
-- `scope_hint=None` indica escopo completo ou impossibilidade de delimitação segura, não autoriza descartar o evento. Quando `local_file=None` e `scope_hint=None`, o consumidor deve reavaliar o escopo da sincronização.
-- A observação não carrega `SyncItemId`, `SyncItem`, `GoogleFile` ou estruturas do Inventário. A associação ao item é responsabilidade posterior.
-- Um evento watcher pode motivar observação, mas não é sinônimo de arquivo confirmado. Um aviso de reavaliação pode existir sem `LocalFile`.
+**Regras de encapsulamento:** o produtor emite **um File por chamada**. `File.data=Some(FileData::Local(local_file))` preserva integralmente o objeto entregue pelo coletor; `File.data=None` é válido para `Deleted` suspeito, `RecheckRequired` e `ScopeUnavailable` segundo os invariantes de Models. O Local constrói somente contexto do evento (`FileEventKind`, localizações anterior/atual, `FileScope`, horário e cobertura), sem inspecionar campos internos de `LocalFile`. Não fabrica identidade ou ação.
+
+`Created/Modified/Renamed/Moved/MetadataChanged` requerem evidências confiáveis e metadados presentes. Para movimento/renomeação, preservar `previous/current` quando correlacionados com segurança; caso contrário, usar `RecheckRequired`. Watcher remove pode ser exclusão suspeita, nunca comando de apagar. Falhas em escopo são indisponibilidade, não exclusão.
 
 ### Porta estável de obtenção de LocalFile
 
@@ -220,8 +208,8 @@ impl LocalDetector {
 
 ## 7. Fronteiras e pendências
 
-O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. Somente o Detector pai decide como normalizar `LocalNotice` para `DetectorEvent` e persistir.
+O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. Somente o Detector pai decide como persistir `File` completo e persistir.
 
-Pendências antes de implementar: ownership efetivo das identidades já existentes, representação concreta de `LocalRelativePath`, política de symlinks, semântica de cancelamento/concorrência, watcher/debounce e como transportar metadata observada no evento persistente sem perda de evidência. Mudanças para ampliar `DetectorEvent` ou `DetectionEventRecord` são **revisões contratuais separadas**, não alterações implícitas nesta documentação.
+Pendências antes de implementar: ownership efetivo das identidades já existentes, representação concreta de `LocalRelativePath`, política de symlinks, semântica de cancelamento/concorrência, watcher/debounce e como transportar metadata observada no evento persistente sem perda de evidência. Os contratos de Detector pai e Storage devem aceitar e reentregar `File` integral.
 
 **Estado:** contrato de projeto não compilado, sem testes executados.
