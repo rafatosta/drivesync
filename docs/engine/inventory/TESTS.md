@@ -83,6 +83,28 @@ Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalF
 
 Os testes de cursor, paginação remota, publicação de eventos, `FileBatch`, claim/lease e reconhecimento de eventos **pertencem aos testes do Detector Remoto e Detector Storage**, não ao Inventário. Os antigos cenários INV-15 a INV-18 dessa natureza foram retirados. Os novos INV-15 e INV-16 testam respectivamente `record_activity` e `list_activities`. Não criar mocks de APIs removidas ou adaptar interfaces legadas.
 
+## Testes dos contratos internos por submódulo
+
+Estas são **propostas de casos de teste**, ainda não executadas. Cada módulo interno só precisa de SQLite isolado e fakes das demais dependências; os testes de integração cruzada devem passar pela fachada `InventoryManager`, sem expor SQL publicamente.
+
+| Identificador | Submódulo | Verificação |
+| --- | --- | --- |
+| INV-INT-ITEM-01 | [items](items/INTERFACES.md) | Resolver pelas quatro variantes de `ItemSelector`, preservar `SyncItemId`, unicidade de vínculo remoto por conta |
+| INV-INT-ITEM-02 | items | `FieldUpdate::Keep/Set/Clear`, revisão otimista, `AbsentConfirmed` somente com prova, tombstone |
+| INV-INT-META-01 | [metadata](metadata/INTERFACES.md) | `LocalFile` e `RemoteFile` nos campos aprovados: round-trip SQLite e preservação dos bytes locais |
+| INV-INT-META-02 | metadata | `MetadataValue::NotCollected` não sobrescreve `Known`; `Known(0/false/[])` é persistido corretamente |
+| INV-INT-META-03 | metadata | `RemoteFileRef` qualificado, pais múltiplos e `ProviderFileData` filtrado conforme decisão de codec |
+| INV-INT-BASE-01 | [baseline](baseline/INTERFACES.md) | Observações não avançam baseline; `confirm_sync` verificado cria/substitui baseline |
+| INV-INT-BASE-02 | baseline | Rollback completo se status, conclusão de operação ou atividade falhar na mesma transação |
+| INV-INT-OPS-01 | [operations](operations/INTERFACES.md) | Claim concorrente, retry/backoff, estado após reinício, precondições remotas e deduplicação |
+| INV-INT-OPS-02 | operations | `Completed` somente via `confirm_sync`; operação pendente não implica transferência realizada |
+| INV-INT-ACT-01 | [activity](activity/INTERFACES.md) | `item_id` obrigatório, `operation_id` opcional, histórico imutável e tombstone preservado |
+| INV-INT-ACT-02 | activity | Replay de confirmação não duplica atividade, com chave de idempotência a definir |
+| INV-INT-STO-01 | [storage](storage/INTERFACES.md) | Identidade por sincronização, erro em banco corrompido, FK/UNIQUE e isolamento de conexões |
+| INV-INT-STO-02 | storage | Transação multi-repositório, rollback e recuperação após reabertura, sem `EventStore` |
+
+**Não inventar evidência de testes:** a existência destes casos não implica compilação, execução ou aprovação. Casos dependentes de DDL, codec, política de idempotência e revisão de metadados ficam pendentes até que seus contratos sejam aprovados.
+
 ## 3. Cobertura obrigatória: todos os métodos
 
 | Caso | Método público | Objeto de entrada | Objeto de saída |
