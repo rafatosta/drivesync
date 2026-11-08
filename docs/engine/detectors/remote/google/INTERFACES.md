@@ -11,7 +11,7 @@ A implementação `GoogleRemoteDetector` deve satisfazer **exatamente a interfac
 - `RemoteEventSink` e `RemoteCheckpoint` definidos no módulo pai.
 - Relógio, scheduler e estratégia de retry injetáveis quando necessários ao teste.
 
-A tradução entre respostas `GoogleFile` e o evento remoto é **responsabilidade deste especialista**, não da fachada genérica. A representação de `RemoteFile` será definida separadamente; não se exige formato novo para construir esta documentação.
+A tradução entre respostas `GoogleFile` e o evento remoto é **responsabilidade deste especialista**, não da fachada genérica. A representação de `RemoteFile` está em [Models](../../../models/INTERFACES.md); o especialista preserva os metadados normalizados e específicos sem novas APIs públicas.
 
 ## 3. Mapeamento de operações
 
@@ -44,3 +44,9 @@ Rotinas auxiliares do especialista podem consultar detalhes adicionais (permiss�
 - A estratégia Google pode ser diferente das demais, desde que o contrato de saída seja preservado.
 
 **Não redefinir** os cinco métodos ou os modelos base de `RemoteDetector`. Mudanças no contrato pai exigem revisão separada.
+
+## 5. Unidade entregue ao Detector pai
+
+`RemoteEventSink.emit(file: File)` recebe **uma observação completa**. Quando `GoogleFile.id` existe, o adaptador fornece `File.data=Some(FileData::Remote(remote_file))` e contexto `FileEvent`/`FileScope` de Models. Sem identidade confiável ou diante de `GoogleChange.removed` sem objeto, emitir `RecheckRequired` ou `ScopeUnavailable` com `data=None`; não gerar `RemoteFile` falso.
+
+As propriedades detalhadas do provedor permanecem no `ProviderFileData` quando autorizadas, inclusive estados de coleta parciais. Para `Renamed/Moved`, `previous/current` só são preenchidos com localização correlacionada; nunca por comparação superficial de nomes. A emissão não modifica checkpoint até aceite durável do `File` integral. Evolução do modelo remoto não altera polling/scan, apenas o adaptador especializado e seus testes.
