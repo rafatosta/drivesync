@@ -4,7 +4,7 @@
 
 - [`api/`](api/README.md): comunicação com o serviço, modelos e protocolos próprios.
 - [`detectors/remote/example/`](../../detectors/remote/example/README.md): lógica de detecção remota do provedor.
-- [`upload/example/`](../../upload/example/README.md): estratégia de envio para o provedor.
-- [`download/example/`](../../download/example/README.md): estratégia de recebimento do provedor.
+- [`operations/upload/example/`](../../operations/upload/example/README.md): estratégia de envio para o provedor.
+- [`operations/download/example/`](../../operations/download/example/README.md): estratégia de recebimento do provedor.
 
 Cada módulo funcional mantém sua própria responsabilidade e consome a API do serviço por contrato. Nenhum destes diretórios contém código ou testes executáveis.
