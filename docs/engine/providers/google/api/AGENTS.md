@@ -22,7 +22,7 @@ Implementar e testar **exclusivamente** o módulo independente `providers/google
 
 | Etapa | Ação obrigatória | Critério de conclusão |
 | --- | --- | --- |
-| 1. Contrato | Selecionar uma operação pública de `INTERFACES.md`; identificar tipos, parâmetros obrigatórios/opcionais, retorno e erro | A operação é especificável sem olhar outros módulos |
+| 1. Contrato | Selecionar uma operação pública de `INTERFACES.md`; identificar tipos, parâmetros obrigatórios/opcionais, retorno e erro | A operação é autossuficiente em sua própria especificação |
 | 2. Checagem oficial | Confirmar no método oficial: verbo, endpoint, query, body, campos retornados, paginação, limites e erros | Divergências e ambiguidades identificadas e corrigidas **na documentação antes do código** |
 | 3. Testes primeiro | Escrever testes de contrato e de tradução HTTP usando respostas sintéticas do Google | Os testes inicialmente falham por ausência de comportamento, não por um teste incorreto |
 | 4. Implementação mínima | Implementar só o necessário para satisfazer o contrato e os testes | Testes do grupo passam dentro do Flatpak |
@@ -44,7 +44,7 @@ Implementar e testar **exclusivamente** o módulo independente `providers/google
 
 | Regra | Exigência |
 | --- | --- |
-| Isolamento | O módulo compila e tem testes independentes, sem exigir Orquestrador, Analisador, Inventário ou GUI |
+| Isolamento | A API pode ser construída e testada de maneira independente, apenas com suas dependências técnicas declaradas |
 | API pública | **Manter todos os métodos inicialmente públicos** conforme `INTERFACES.md`; não reduzir visibilidade sem decisão explícita |
 | Implementação interna | Livre para criar submódulos e auxiliares privados; não alterar contratos públicos silenciosamente |
 | Google centralizado | URLs, endpoints, scopes, parâmetros, modelos JSON, MIME types, limites e mapeamento de erros ficam somente aqui |
