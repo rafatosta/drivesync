@@ -116,7 +116,7 @@ pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 
 ## 4. Erros, estados e ausência
 
-`File.data=None` não prova exclusão; escopo e evento permanecem no objeto completo. `lease_id=None` só é válido quando nenhum evento foi reservado. `ClaimBatchResult.events=[]` é fila vazia, não prova de que nenhuma mudança ocorreu durante a aplicação parada.
+`File.data=None` não prova exclusão; escopo e evento permanecem no objeto completo. `lease_id=None` só é válido quando nenhum evento foi reservado. `ClaimBatchResult.files=[]` é fila vazia, não prova de que nenhuma mudança ocorreu durante a aplicação parada.
 
 **Regra de contrato:** a confirmação é feita por lote sob `LeaseId` e todos os estados são transacionais. Lease expirado deve tornar evento elegível novamente, sem perder sua ordem original. Recuperação física (SQLite, journal, WAL, índice, FKs) é privada.
 
