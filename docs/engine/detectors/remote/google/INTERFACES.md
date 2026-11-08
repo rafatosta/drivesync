@@ -6,7 +6,7 @@ A implementação `GoogleRemoteDetector` deve satisfazer **exatamente a interfac
 
 ## 2. Dependências injetadas
 
-- Cliente de operações Google Drive **obtido por [`providers/`](../../../providers/INTERFACES.md)**, cuja interface específica está em [Google API](../../../providers/google/api/INTERFACES.md).
+- Interface de operações Google Drive **disponibilizada por [`providers/`](../../../providers/INTERFACES.md)**, cuja interface específica está em [Google API](../../../providers/google/INTERFACES.md).
 - Contexto de conta e sessão **tipados**, sem manipular o armazenamento de credenciais.
 - `RemoteEventSink` e `RemoteCheckpoint` definidos no módulo pai.
 - Relógio, scheduler e estratégia de retry injetáveis quando necessários ao teste.
