@@ -6,7 +6,7 @@ Implementar **somente** o especialista `detectors/remote/google/`, obedecendo o 
 
 ## Fronteiras
 
-- Não implementar nem refatorar Local, Storage, Detector pai, Upload/Download ou Inventário para facilitar o especialista Google.
+- Não implementar nem refatorar Local, Storage, Detector pai, Operations Upload/Download ou Inventário para facilitar o especialista Google.
 - Fazer chamadas à Google API **por sua interface**, não montar URLs/HTTP/OAuth por conta própria.
 - Usar sink injetado, emitindo um evento por chamada; não guardar a fila e não declarar sucesso sem aceite durável.
 - Gerir polling/cursor específicos do Google, sem impor estratégia aos outros provedores.
