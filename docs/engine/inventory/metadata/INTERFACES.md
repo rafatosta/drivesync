@@ -38,7 +38,7 @@ Essas portas são **internas propostas**, não `InventoryManager.record_local/re
 | `Unsupported` | Registra incapacidade se essa informação for aprovada; não apaga valor anterior sem política explícita |
 | `PermissionDenied` | Preserva a última evidência, registra indisponibilidade de acesso conforme política |
 | `Unavailable` | Preserva evidência histórica e registra a limitação de observação |
-| `File.data=None` | **Nenhum `apply` de metadados**; encaminhar reavaliação a fachada/Analisador |
+| `File.data=None` | **Nenhuma atualização dos metadados**; preservar o último valor conhecido |
 
 **Ponto em aberto:** a representação persistida de um campo agora inacessível pode exigir separar o último valor conhecido do **estado de coleta mais recente**. Nenhum codec ou DDL é aprovado até essa revisão. Não afirmar round-trip completo de campos deliberadamente descartados. O retorno de `load` não pode fabricar um `Known` não persistido.
 
