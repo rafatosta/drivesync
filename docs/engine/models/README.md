@@ -68,17 +68,75 @@ pub enum FileData {
 
 O Orquestrador não precisa examinar a variante. O Analisador é responsável por interpretá-la.
 
-### File
+### File — evento contextualizado
 
 `id`, `sync_id`, `event`, `observed_at`, `coverage`, `scope`, `data?`.
 
-**`id` identifica a ocorrência**, não o recurso remoto/local. O mesmo arquivo pode gerar várias ocorrências, e a mesma ocorrência mantém seu ID durante retry.
+`File.event` agora é um **`FileEvent`**, composto por `kind` (`FileEventKind`), `previous` e `current` (localizações opcionais). `FileEventKind` contempla **`Created`, `Modified`, `Deleted`, `Renamed`, `Moved`, `MetadataChanged`, `RecheckRequired` e `ScopeUnavailable`**.
 
-O `File` não significa obrigatoriamente que o arquivo foi encontrado: em indisponibilidade ou necessidade de reavaliação, `data=None` preserva motivo e escopo sem inventar dados.
+`FileLocation` preserva caminhos locais ou referência remota com pasta pai e nome, quando conhecidos. Para renomeações/movimentos correlacionados, os valores anterior/atual acompanham a observação. `Deleted` não autoriza exclusão remota; pode ter `data=None`, mantendo escopo e localização conhecida para reavaliação.
+
+**`id` identifica a ocorrência**, não o recurso remoto/local. O mesmo arquivo pode gerar várias ocorrências, e a mesma ocorrência mantém seu ID durante retry. O Analisador, e não o Orquestrador, interpreta a categoria e confronta os estados antes de agir.
 
 ### FileBatch
 
 `FileBatch` **não é model da engine**: é um objeto de entrega de `detectors/` contendo uma coleção de `File`. IDs de lote, leases, política de ack e estado de fila são do Detector/Storage.
+
+## Representação visual do encapsulamento
+
+```mermaid
+flowchart TD
+    Batch["FileBatch · detectors/"]
+    File["File · models/"]
+    Event["FileEvent"]
+    Kind["FileEventKind: Created / Modified / Deleted / Renamed / Moved / MetadataChanged / RecheckRequired / ScopeUnavailable"]
+    Prev["previous: Option<FileLocation>"]
+    Curr["current: Option<FileLocation>"]
+    Scope["scope: FileScope"]
+    Obs["observed_at + coverage + id + sync_id"]
+    Data["data: Option<FileData>"]
+    Local["Local(LocalFile)"]
+    Remote["Remote(RemoteFile)"]
+    Provider["provider_data: Option<ProviderFileData>"]
+
+    Batch -->|"files: Vec<File>"| File
+    File --> Event
+    Event --> Kind
+    Event --> Prev
+    Event --> Curr
+    File --> Scope
+    File --> Obs
+    File --> Data
+    Data --> Local
+    Data --> Remote
+    Remote --> Provider
+```
+
+A estrutura textual equivalente mostra como **um objeto é encapsulado no seguinte**, independentemente da origem:
+
+```text
+FileBatch                           [detectors/]
+└── files: Vec<File>                [um ou vários arquivos observados]
+    └── File                        [models/]
+        ├── id: FileId              [ID da ocorrência]
+        ├── sync_id: SyncId
+        ├── observed_at: Timestamp
+        ├── coverage: ObservationCoverage
+        ├── scope: FileScope
+        ├── event: FileEvent
+        │   ├── kind: FileEventKind
+        │   │   ├── Created / Modified / Deleted / Renamed
+        │   │   ├── Moved / MetadataChanged
+        │   │   └── RecheckRequired / ScopeUnavailable
+        │   ├── previous: Option<FileLocation>
+        │   └── current: Option<FileLocation>
+        └── data: Option<FileData>
+            ├── Local(LocalFile)      [metadados reais locais]
+            └── Remote(RemoteFile)    [metadados remotos]
+                └── provider_data    [dados específicos opcionais]
+```
+
+**O Orquestrador recebe o lote e encaminha os objetos sem discriminar `Local`/`Remote`.** O Analisador identifica a variante e verifica o evento. Um aviso de remoção pode não conter `FileData`; isso não comprova exclusão. `previous` e `current` são *localizações*, não duas cópias completas do arquivo.
 
 ## Regra de evolução: alterações em LocalFile não modificam o Detector Local
 
