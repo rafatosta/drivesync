@@ -6,6 +6,8 @@ Implementar **somente o coordenador público `detectors/`**, sem implementar aut
 
 ## Regras obrigatórias
 
+O acesso às APIs de serviços externos é disponibilizado exclusivamente por [`providers/`](../providers/README.md). O Detector e seus filhos não criam clientes HTTP nem implementam protocolos de serviços externos.
+
 1. **Uma única API externa:** apenas Detector, eventos, lotes, requests/results e status; nenhum tipo dos filhos reexportado.
 2. **Três dependências isoladas:** Local e Remoto produzem eventos individuais; Storage possui API de fila durável. O pai conhece **somente as interfaces**, não as implementações, tecnologias ou layouts.
 3. **Lotes mistos:** `take_events` pode retornar Local e Remoto juntos, inclusive eventos diferentes do mesmo recurso, preservando IDs individuais e ordenação de enfileiramento.
