@@ -1,5 +1,7 @@
 # Google API — INTERFACES
 
+**Fronteira de consumo:** o contrato Google é **específico deste provedor** e é disponibilizado aos especialistas pela [fábrica Providers](../../INTERFACES.md), conforme [composição Google](../INTERFACES.md). Seus métodos públicos são públicos **na API especializada**, não implicam interface comum Google/OneDrive nem autorização para criar clientes HTTP fora de Providers. Nenhuma assinatura técnica foi alterada por essa organização.
+
 **Contrato Rust v1 para TDD.** Todas as operações e os tipos declarados são públicos nesta versão. As assinaturas representam a API que será implementada, não código existente. Não há compromisso de reduzir a visibilidade dos métodos depois.
 
 **Escopo:** os **59 métodos oficiais dos 13 recursos REST da Drive API v3** documentados no [índice oficial](https://developers.google.com/workspace/drive/api/reference/rest/v3), mais OAuth 2.0, OpenID Connect, uploads e downloads. APIs de outros produtos Google, como Gmail, Calendar e Drive Labels API v2, são serviços separados.
