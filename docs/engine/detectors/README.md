@@ -325,3 +325,21 @@ O contrato de `RemoteCreateRequest` **contém** `sync_id`, `remote_root_id`, `se
 Foi definida a **direção conceitual** de escolher a implementação a partir da **conta/provedor da sincronização**; detalhes estão no [README do Detector Remoto](remote/README.md#seleção-da-implementação-por-provedor--decisão-de-composição). Entretanto, as interfaces atuais **não apresentam** um tipo de fábrica/registry, uma assinatura de seleção de `ProviderId` ou a implementação da ligação `SyncId → AccountId → ProviderId`. Por isso, **nenhuma seta dos diagramas deve ser interpretada como prova de que essa fábrica já existe**. É uma responsabilidade de composição a especificar depois, sem alterar os contratos atuais neste documento.
 
 **Preservação do escopo:** nenhum método, tipo, assinatura, requisito de persistência ou comportamento foi adicionado aos arquivos `INTERFACES.md` durante esta visualização. Os diagramas reproduzem os contratos conceituais existentes; não demonstram código Rust nem testes executados.
+
+## Propriedade exclusiva de entrega e checkpoint
+
+A propriedade dos mecanismos de eventos e cursores foi definida: `detectors/storage/` guarda **`File` completos e seus leases/ack/reentrega**, enquanto `detectors/remote/` mantém o checkpoint de observação por `RemoteCheckpoint.read/commit`. O `InventoryManager` não tem fila de eventos de detecção, não possui `remote_cursor` e não reconhece `FileBatch` diretamente.
+
+```mermaid
+flowchart LR
+    API["Provedor remoto"] --> R["Detector Remoto"]
+    R -->|"emit File"| ES["Detector Storage: evento durável"]
+    ES -->|"aceite"| R
+    R -->|"somente após aceite da página"| CP["RemoteCheckpoint: commit"]
+    ES -->|"FileBatch / lease"| D["Detector pai"]
+    D --> O["Orquestrador"]
+    O --> A["Analisador"]
+    A -->|"estado derivado"| I["Inventário: SyncItem e baseline"]
+```
+
+**Checkpoints de leitura, reconhecimento da entrega e confirmação de sincronização são operações distintas.** Se o checkpoint falhar depois de gravar eventos, uma página pode ser lida novamente e os eventos precisam tolerar replay; nenhuma falha autoriza avançar cursor sem aceite durável. A localização física e o protocolo de deduplicação do checkpoint continuam para a implementação e testes do Detector Remoto, **não** para adição de APIs ao Inventário.
