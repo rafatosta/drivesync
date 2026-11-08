@@ -8,15 +8,7 @@ API **interna ao pacote Detector**, consumível pelo pai e substituível por fak
 pub(super) type StoreResult<T> = Result<T, StoreFailure>;
 
 pub(super) struct StoreIdentity { pub sync_id: SyncId }
-pub(super) struct DetectionEventRecord {
-    pub event_id: DetectionEventId,
-    pub sync_id: SyncId,
-    pub item_id: Option<SyncItemId>,
-    pub kind: DetectionKind,
-    pub observed_at: Timestamp,
-    pub scope_hint: Option<ScopeHint>,
-}
-pub(super) enum DetectionKind { ChangeObserved, RecheckRequired, ScopeUnavailable }
+// File é o objeto completo de models/. Não existe File paralelo.
 pub(super) enum DeliveryDisposition { Processed, Discarded }
 pub(super) enum StoreError {
     IdentityMismatch, Unavailable, Corrupt, SchemaUnsupported,
@@ -34,7 +26,7 @@ pub(super) struct StoreStats {
 }
 ```
 
-Os tipos `SyncId` e `SyncItemId` vêm dos contratos proprietários da engine. `ScopeHint` é tipado e limitado à localização de reavaliação; não é URL secreta nem nome de arquivo obrigatório.
+`File`, `FileId` e `SyncId` vêm de Models ou proprietário único reexportado. O Storage persiste `File` integral, sem `SyncItemId` ou `ScopeHint` paralelo.
 
 ## 2. Requests e resultados
 
@@ -44,15 +36,15 @@ pub(super) struct StoreOpenRequest {
     pub location: StoreLocation, // fornecida pela fábrica privada, não pelo Detector público
 }
 pub(super) struct StoreOpenResult { pub store: EventStoreHandle }
-pub(super) struct EnqueueEventRequest { pub event: DetectionEventRecord }
-pub(super) struct EnqueueEventResult { pub event_id: DetectionEventId, pub inserted: bool }
+pub(super) struct EnqueueEventRequest { pub file: File }
+pub(super) struct EnqueueEventResult { pub file_id: FileId, pub inserted: bool }
 pub(super) struct ClaimBatchRequest {
     pub max_events: u32,        // > 0
     pub lease_duration: Duration,
 }
 pub(super) struct ClaimBatchResult {
     pub lease_id: Option<LeaseId>, // None se não há eventos
-    pub events: Vec<DetectionEventRecord>,
+    pub files: Vec<File>,
     pub first_observed_at: Option<Timestamp>,
     pub last_observed_at: Option<Timestamp>,
 }
@@ -90,7 +82,7 @@ pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 ### STO-02 — `enqueue`
 
 **Finalidade:** gravar evento único e durável.
-**Parâmetros:** `event_id`, `sync_id`, tipo e tempo obrigatórios; item e escopo são opcionais conforme conhecimento do produtor.
+**Parâmetros:** `File` completo obrigatório, com ID, sincronização, evento e localizações, cobertura, escopo e metadados disponíveis.
 **Retorno:** ID e `inserted` (false somente para repetição comprovadamente idêntica pelo mesmo ID).
 **Limites e erros:** IDs repetidos com conteúdo divergente falham; não coalescer alterações diferentes nem gerar operação de sincronização.
 
@@ -124,10 +116,19 @@ pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 
 ## 4. Erros, estados e ausência
 
-`item_id=None` significa identidade ainda desconhecida; não significa exclusão. `scope_hint=None` significa evento suficiente por outros atributos ou escopo global a reavaliar. `lease_id=None` só é válido quando nenhum evento foi reservado. `ClaimBatchResult.events=[]` é fila vazia, não prova de que nenhuma mudança ocorreu durante a aplicação parada.
+`File.data=None` não prova exclusão; escopo e evento permanecem no objeto completo. `lease_id=None` só é válido quando nenhum evento foi reservado. `ClaimBatchResult.events=[]` é fila vazia, não prova de que nenhuma mudança ocorreu durante a aplicação parada.
 
 **Regra de contrato:** a confirmação é feita por lote sob `LeaseId` e todos os estados são transacionais. Lease expirado deve tornar evento elegível novamente, sem perder sua ordem original. Recuperação física (SQLite, journal, WAL, índice, FKs) é privada.
 
 ## 5. Pendências concretas
 
-Definir serialização mínima tipada do payload, ownership/traits concretos, política de retenção e lease expirado, mecanismo de tempo para testes, instalação da base quando pasta sincronizada não estiver acessível e proteção contra processos simultâneos. Resolver antes de implementar casos dependentes; não adicionar métodos públicos ao Orquestrador para contornar detalhes internos.
+Definir serialização fiel e versionada do File completo, ownership/traits concretos, política de retenção e lease expirado, mecanismo de tempo para testes, instalação da base quando pasta sincronizada não estiver acessível e proteção contra processos simultâneos. Resolver antes de implementar casos dependentes; não adicionar métodos públicos ao Orquestrador para contornar detalhes internos.
+
+## 6. Fidelidade e integridade do File
+
+- `enqueue` persiste o objeto `models::File` integral, incluindo `File.event.previous/current`, `File.data: Option<FileData>`, metadados de `LocalFile`/`RemoteFile` e envelope `ProviderFileData` quando presentes. Não reduzir a IDs ou reconstruir por nome/caminho.
+- `File.id` é chave da ocorrência; reentrega deve preservar ID e payload. Duplicata idêntica é idempotente; mesmo ID com conteúdo divergente falha sem substituir.
+- `claim_batch` devolve os mesmos `File` em `files: Vec<File>`; Detector monta `FileBatch` com o identificador/lease de entrega. Leitura não confirma.
+- Evolução de campos nos modelos pode exigir revisão do codec, mas não da lógica de fila, lease ou confirmação. Storage trata File como valor opaco.
+- Dados sensíveis (ACL, xattrs, usuários, labels, detalhes de segurança) exigem política aprovada de retenção, sanitização e limite. Se não puder persistir com fidelidade, recusar o enqueue com falha tipada; nunca truncar silenciosamente após aceite.
+- `SyncItem`, baseline e fila de operações pertencem ao Inventário; não são armazenados como estado neste módulo.
