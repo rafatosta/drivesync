@@ -1,86 +1,85 @@
-# Models — TESTS (contratos de atributos)
+# Models — TESTS: matriz baseada nos atributos propostos
 
-## Estado e escopo
+## Estado
 
-A matriz a seguir corresponde aos atributos especificados em [INTERFACES.md](INTERFACES.md), para **validação quando houver implementação**. Não há testes executados nesta revisão.
+O escopo é **conceitual** e a especificação de atributos em [INTERFACES.md](INTERFACES.md) **aguarda aprovação**. Os cenários abaixo são a tradução verificável **dos campos efetivamente documentados**, não testes implementados nem executados. Não criar métodos extras, regras adicionais ou formatos definitivos fora do contrato.
 
-Os testes de Models devem ser **puros**, sem filesystem, SQLite, Google API, Detector ou Orquestrador. Testes de entrega, leases, retries e integração de `FileBatch` pertencem a `detectors/`.
+Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, serviços Google, InventoryManager, Orquestrador ou operação de sincronização.
 
-## 1. Identidades e valores auxiliares
+## 1. Identidades e tipos auxiliares
 
-| ID | Alvo | Teste positivo | Teste negativo/limite |
+| Caso | Atributos/objeto | Sucesso esperado | Rejeição/invariante |
 | --- | --- | --- | --- |
-| MOD-ID-01 | `RemoteFileRef` | Mesma conta + mesmo arquivo = mesma identidade | Duas contas com mesmo ID bruto ≠ mesmo recurso |
-| MOD-ID-02 | `FileId` | Evento reentregue preserva identidade | Duas ocorrências distintas não compartilham ID por serem do mesmo arquivo |
-| MOD-ID-03 | `LocalFileId` | Identidade verificada é preservada | Não deduzir ID de inode ou pathname |
-| MOD-ID-04 | `AccountId`, `SyncId` | Reutilizar proprietário efetivo | Não criar novas definições incompatíveis |
-| MOD-ID-05 | `Timestamp` | UTC unix_millis preservado | Não confundir observação com mtime |
-| MOD-ID-06 | `FileHash` | Algoritmo e digest correspondem | Hash de algoritmo distinto não é considerado equivalente |
-| MOD-ID-07 | `LocalRelativePath` | Preserva nomes Unix não UTF-8 | NUL, caminho absoluto, `.`, `..` são rejeitados |
-| MOD-ID-08 | `FieldValue<T>` | `Unknown` e `Known([])` são distintos | `Unknown` não apaga estado conhecido |
+| MOD-ID-01 | `RemoteFileRef { account_id, file_id }` | Dois arquivos com mesmo ID bruto em contas diferentes são distintos | ID remoto sozinho não identifica recurso global |
+| MOD-ID-02 | `File.id: FileId` | Mesmo evento reentregue mantém seu ID; nova ocorrência recebe novo ID | Retry não gera nova identidade |
+| MOD-ID-03 | `AccountId`, `SyncId`, `LocalFileId` | Um único tipo proprietário, reutilizado/reexportado | Nenhum tipo homônimo incompatível |
+| MOD-ID-04 | `Timestamp.unix_millis` | Preserva valor em UTC e precisão expressa em ms | Não converter `None` de mtime em relógio atual |
+| MOD-ID-05 | `FileHash` | Retém algoritmo + digest hexadecimal válido | Não declarar equivalência entre algoritmos distintos |
+| MOD-ID-06 | `LocalRelativePath` | Raiz `[]`; nomes Unix não UTF-8 preservados byte a byte | Rejeitar NUL, caminho absoluto, `.` e `..` |
+| MOD-ID-07 | `FieldValue<T>` | `Unknown`, `Known([])` e `Known([id])` mantêm significados distintos | Não transformar `Unknown` em `Known([])` |
+| MOD-ID-08 | `FileKind` | Cada variante mantém significado, incluindo `Unknown` | Não adivinhar `Regular` pelo nome/extensão |
 
-## 2. LocalFile — atributos
+## 2. LocalFile
 
-| ID | Campo(s) | Casos previstos |
+| Caso | Atributo | Verificação |
 | --- | --- | --- |
-| MOD-L-01 | `local_id` | `Some` apenas se identidade verificada; `None` permitido |
-| MOD-L-02 | `relative_path` | Arquivo, subpasta, raiz vazia e bytes não UTF-8 |
-| MOD-L-03 | `kind` | Regular, Directory, Symlink, ProviderNative, Other, Unknown; classificação adequada à origem |
-| MOD-L-04 | `size_bytes` | `None` não se torna 0; `Some(0)` representa zero realmente observado |
-| MOD-L-05 | `modified_at` | `None` não usa horário atual |
-| MOD-L-06 | `hash` | `None` sem leitura de conteúdo; quando presente, algoritmo explícito |
-| MOD-L-07 | isolamento | Construir/clonar/comparar dados não acessa filesystem |
+| MOD-LOC-01 | `local_id` | `None` é permitido e não implica criar `SyncItemId`; `Some` somente quando identidade é comprovada |
+| MOD-LOC-02 | `relative_path` | Caminho relativo preserva bytes e não escapa da raiz |
+| MOD-LOC-03 | `kind` | `Regular`, `Directory`, `Symlink`, `Other`, `Unknown` não causam I/O |
+| MOD-LOC-04 | `size_bytes` | `Some(0)` é diferente de `None`; `None` não preenche com zero |
+| MOD-LOC-05 | `modified_at` | `Some(Timestamp)` preserva instante; `None` não vira data atual |
+| MOD-LOC-06 | `hash` | `Some(FileHash)` guarda algoritmo e digest; `None` não solicita leitura integral |
+| MOD-LOC-07 | `LocalFile` completo | Construir/clonar/validar valores não examina nem altera filesystem |
 
-## 3. RemoteFile — atributos
+## 3. RemoteFile e ProviderFileData
 
-| ID | Campo(s) | Casos previstos |
+| Caso | Atributo | Verificação |
 | --- | --- | --- |
-| MOD-R-01 | `reference` + `provider` | Identidade de conta qualificada, provedor consistente com conta |
-| MOD-R-02 | `name` | Nome Unicode preservado sem conversão destrutiva |
-| MOD-R-03 | `kind` | Arquivo normal, diretório, nativo do provedor, Unknown |
-| MOD-R-04 | `mime_type` | `None` permitido; não inferir MIME |
-| MOD-R-05 | `size_bytes` | `None` para tipo sem tamanho disponível; 0 só se comprovado |
-| MOD-R-06 | `modified_at` | `None` permitido sem inventar instante |
-| MOD-R-07 | `version` | String opaca preservada sem ordenação numérica |
-| MOD-R-08 | `hash` | Não inventar hash para documento nativo ou resposta parcial |
-| MOD-R-09 | `parent_ids` | `Unknown` distinto de `Known(vec![])`; preservação de IDs |
-| MOD-R-10 | `provider_data` | `None` permitido; `Some` preserva envelope opaco |
-| MOD-R-11 | `ProviderFileData` | Provedor interno corresponde ao remoto; formato não vazio, versão positiva |
-| MOD-R-12 | `ProviderFileData` | Bytes preservados, sem interpretação por Models; rejeitar inconsistências |
-| MOD-R-13 | isolamento | Construir/clonar/comparar não contata API externa |
+| MOD-REM-01 | `reference` | Identidade é qualificada por conta; não confundir ID do recurso com `FileId` |
+| MOD-REM-02 | `provider` | Mantém o serviço da conta e corresponde ao envelope especializado quando presente |
+| MOD-REM-03 | `name` | Preserva texto retornado sem normalização destrutiva |
+| MOD-REM-04 | `kind` | Inclui `ProviderNative` e `Unknown` sem classificação inventada |
+| MOD-REM-05 | `mime_type` | Ausência não produz tipo MIME padrão fictício |
+| MOD-REM-06 | `size_bytes` | `None` permitido para nativos/ausentes; zero verdadeiro permanece `Some(0)` |
+| MOD-REM-07 | `modified_at` | Preserve timestamp conhecido; não invente data para valor ausente |
+| MOD-REM-08 | `version` | String é opaca, não se ordena numericamente entre provedores |
+| MOD-REM-09 | `hash` | Nenhum hash inventado quando provedor não o fornece |
+| MOD-REM-10 | `parent_ids` | `Unknown` não equivale a `Known([])` |
+| MOD-REM-11 | `provider_data` | `None` válido; `Some` preserva metadados opacos com identidade coerente |
+| MOD-PRO-01 | `ProviderFileData.provider` | Deve coincidir com `RemoteFile.provider` |
+| MOD-PRO-02 | `format`, `format_version` | Formato não vazio e versão positiva |
+| MOD-PRO-03 | `payload` | Preservar bytes de metadados sem interpretação em Models; jamais credencial ou conteúdo real do arquivo |
+| MOD-PRO-04 | formato e limite | Teste somente após tamanho máximo e codificação **serem aprovados**; enquanto isso `BLOCKED` |
 
 ## 4. FileData e File
 
-| ID | Alvo | Casos previstos |
+| Caso | Atributo/relacionamento | Verificação |
 | --- | --- | --- |
-| MOD-F-01 | `FileData` | Somente `Local(LocalFile)` ou `Remote(RemoteFile)`; nunca duas variantes |
-| MOD-F-02 | `File.id` | Mesmo objeto mantém ID de ocorrência após cópia/serialização |
-| MOD-F-03 | `File.sync_id` | Não mistura observações de duas sincronizações |
-| MOD-F-04 | `event` | `ObservedChange`, `RecheckRequired`, `ScopeUnavailable` representados corretamente |
-| MOD-F-05 | `observed_at` | Marca a observação, independentemente do mtime do recurso |
-| MOD-F-06 | `coverage` | Complete, Partial, Unavailable distintos |
-| MOD-F-07 | `scope` | Local, Remote ou WholeSync conforme evidência |
-| MOD-F-08 | `data=Some(Local)` | `scope=Local(relative_path)`; qualquer contradição é inválida |
-| MOD-F-09 | `data=Some(Remote)` | `scope=Remote(reference)`; qualquer contradição é inválida |
-| MOD-F-10 | `data=None` | Permitido com `RecheckRequired`/`ScopeUnavailable`, nunca traduzido em exclusão |
-| MOD-F-11 | `ScopeUnavailable` | Exige `coverage=Unavailable` e `data=None` |
-| MOD-F-12 | `ObservedChange` | Exige `data=Some(...)` |
-| MOD-F-13 | `FileScope::WholeSync` | Só sem dados de arquivo |
-| MOD-F-14 | serialização futura | Round-trip conserva identidade, valores desconhecidos e dados opacos |
-| MOD-F-15 | fronteira | Sem `SyncItem`, operação, credenciais ou estado de fila em `File` |
+| MOD-DAT-01 | `FileData::Local` | Encapsula apenas um `LocalFile`, com seus dados |
+| MOD-DAT-02 | `FileData::Remote` | Encapsula apenas um `RemoteFile`, com seus dados |
+| MOD-DAT-03 | variantes | Não existe estado `Both` ou enum de provedor dentro de `FileData` |
+| MOD-FIL-01 | `File.id` | ID da ocorrência estável entre tentativas, distinto da identidade física |
+| MOD-FIL-02 | `File.sync_id` | Um evento pertence a exatamente uma sincronização |
+| MOD-FIL-03 | `File.event` | `ObservedChange`, `RecheckRequired`, `ScopeUnavailable` são eventos, não comandos de exclusão |
+| MOD-FIL-04 | `File.observed_at` | Tempo de observação não substitui `LocalFile.modified_at`/`RemoteFile.modified_at` |
+| MOD-FIL-05 | `File.coverage` | `Complete`, `Partial`, `Unavailable` mantêm semântica de cobertura |
+| MOD-FIL-06 | `File.scope` | `Local(path)`, `Remote(ref)`, `WholeSync` mantêm suas identidades |
+| MOD-FIL-07 | `File.data` | `Some(Local)` exige escopo Local correspondente; `Some(Remote)` exige escopo Remote correspondente |
+| MOD-FIL-08 | `File.data=None` | Só admite `RecheckRequired` ou `ScopeUnavailable`, sem fingir exclusão |
+| MOD-FIL-09 | `FileEvent::ObservedChange` | Exige `data=Some` |
+| MOD-FIL-10 | `FileEvent::ScopeUnavailable` | Exige `coverage=Unavailable` e `data=None` |
+| MOD-FIL-11 | `FileScope::WholeSync` | Somente permitido sem `data` |
+| MOD-FIL-12 | `File` autocontido | Preserva dados observados sem precisar consultar novamente o Detector; não garante estado atual |
 
-## 5. Integração posterior (fora da suíte Models)
+## 5. Integração externa e critérios de aceite
 
-- `detectors/local/`: criar `LocalFile` e encaminhar ocorrência completa.
-- `detectors/remote/<provedor>/`: criar `RemoteFile` com os metadados e envelope opaco válidos.
-- `detectors/`: compor/entregar `FileBatch`, normalmente com um `File`, mas admitindo vários.
-- `detectors/storage/`: persistir **todo `File`**, sem reconstruí-lo após falha.
-- `orchestrator/`: encaminhar `FileBatch` sem inspecionar variante.
-- `analyzer/`: interpretar variante de `FileData`; revalidar estado antes de decidir operações.
-- `inventory/`: revisão futura do `SyncItem` e contrato de persistência.
+| Caso | Proprietário | Contrato a testar em sua suíte |
+| --- | --- | --- |
+| MOD-EXT-01 | Detector | `FileBatch.files` transporta `Vec<File>` completos mesmo quando há um único elemento |
+| MOD-EXT-02 | Detector Storage | A notificação persistida conserva `File.id` e todo seu conteúdo em retry |
+| MOD-EXT-03 | Orquestrador/Analisador | Orquestrador não interpreta `FileData`; Analisador pode distinguir variantes |
+| MOD-EXT-04 | Inventário | Revisão futura do contrato `SyncItem`, sem modificar Models antecipadamente |
 
-## 6. Critério de aceite futuro
+**Esses quatro casos são pontos de integração, não testes unitários do módulo Models.**
 
-A implementação precisará satisfazer **todos os campos, invariantes e testes aplicáveis**, sem atributos extras por conveniência. Casos não definidos (ex.: formato binário concreto e limite máximo de `ProviderFileData.payload`) devem ser registrados como **bloqueados antes do código**, não resolvidos por suposição.
-
-Executar Rust/Cargo apenas em ambiente Flatpak conforme as regras do projeto. **Nenhum teste foi executado agora.**
+A implementação futura exige: aprovação dos atributos; resolução das pendências declaradas em INTERFACES; testes de entrada/saída, opcionais e invariantes; relatório PASS/FAIL/BLOCKED e execução no ambiente Flatpak. **Nenhum teste foi executado nesta alteração documental.**
