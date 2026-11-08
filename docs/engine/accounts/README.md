@@ -4,7 +4,7 @@
 
 O módulo `accounts/` é responsável pelo **cadastro, identificação e ciclo de vida das contas conectadas** no DriveSync. Disponibiliza uma API pública para cadastrar, consultar, listar, atualizar e remover contas, sem expor seu meio de armazenamento aos consumidores.
 
-O submódulo `accounts/auth/` é responsável pelo fluxo de autenticação e credenciais; `google_api/` implementa os contratos técnicos OAuth/OIDC e Drive API. O módulo de contas **não** implementa operações de sincronização e não consulta diretamente o banco do Inventário.
+O submódulo `accounts/auth/` coordena o fluxo de autenticação e o ciclo de vida de credenciais. Ele **obtém pelo catálogo [`providers/`](../providers/INTERFACES.md) a API específica do provedor selecionado** (por exemplo, a API Google com OAuth/OIDC); não há uma API universal de autenticação imposta a todos os provedores. O módulo de contas não implementa operações de sincronização nem consulta diretamente o banco do Inventário.
 
 ## Dados conhecidos de contas
 
@@ -71,7 +71,7 @@ Uma conexão relaciona uma conta, uma pasta remota e uma pasta local. O levantam
 - A implementação **pode escolher** SQLite, arquivo estruturado ou outro mecanismo adequado se houver necessidade; nenhum formato ou caminho é obrigatório neste estágio.
 - Apenas o módulo que possuir os dados consulta/grava sua persistência. Consumidores não recebem conexão SQLite, caminho do arquivo, transações SQL ou tabelas como API.
 - Caso outro módulo seja proprietário das conexões, a referência `account_id` será resolvida e validada por contrato entre módulos, não por acesso direto ao armazenamento da conta.
-- As credenciais são administradas por `accounts/auth/` em armazenamento seguro (Secret Service/keyring), acessado por sua própria API.
+- As credenciais são administradas por `accounts/auth/` em armazenamento seguro (Secret Service/keyring), acessado por sua própria API. A comunicação OAuth/OIDC externa é executada pela API do serviço obtida por `providers/`, sem cliente HTTP paralelo.
 - Cada módulo deve testar tanto sua **API pública** quanto o armazenamento escolhido, sem exigir que consumidores conheçam sua implementação.
 - Operações que removam uma conta devem considerar vínculos de sincronização existentes e nunca provocar exclusões remotas ou locais por efeito colateral implícito.
 
