@@ -304,7 +304,7 @@ pub struct UpdateItemStatusResult { pub item: SyncItem }
 - `RecordLocalObservation` e `RecordRemoteObservation` **nunca** avançam o baseline. Ambos recebem o envelope `models::File` **completo**, cuja variante local/remota é validada no Inventário. A revisão `SyncItem.revision` não é `File.id` nem `RemoteFile.content.version`.
 - `PresenceState::AbsentConfirmed` exige `ObservationProof` confiável e escopo observado de forma suficiente, sem apagar o último registro nem quebrar os vínculos.
 - `presence=Unknown` e `observed.data=None` preservam o último snapshot confiável; `Present` requer `File.data=Some` da variante correta. Um evento `Deleted` ou `ScopeUnavailable` **não** produz `AbsentConfirmed` sem prova adicional.
-- Não importar nem persistir `RemoteFile` diretamente: o adaptador do provedor produz `RemoteFile` e `ProviderFileData` filtrado. Mapear os campos comuns selecionados para persistência e preservar estados `MetadataValue<T>`; não limpar propriedades não coletadas. Detalhes sensíveis e codec especializado dependem da revisão antes da implementação.
+- Não importar nem persistir `GoogleFile` diretamente: o adaptador do provedor produz `RemoteFile` e `ProviderFileData` filtrado. Mapear os campos comuns selecionados para persistência e preservar estados `MetadataValue<T>`; não limpar propriedades não coletadas. Detalhes sensíveis e codec especializado dependem da revisão antes da implementação.
 - Associar arquivos já pertencentes a outro `SyncItem` retorna erro de unicidade; nunca reatribuir silenciosamente.
 
 ### Confirmação atômica
@@ -630,7 +630,7 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 - **Não observado:** `Option::None` ou atributo de metadados não retornado significa desconhecido/não fornecido, jamais `AbsentConfirmed` automaticamente.
 - **Ausência comprovada:** `PresenceState::AbsentConfirmed` só após uma observação válida do escopo e das condições necessárias; manter a última representação para reconciliação.
 - **Ainda não criado:** `baseline=None`, `GetRemoteCursorResult.cursor=None` e `GetItemResult.item=None` são ausências estruturais legítimas, mas diferentes de falha de armazenamento.
-- **Não aplicável:** tamanho/checksum/versão de documentos provedor Workspace, diretórios e links podem ser indisponíveis legitimamente; não preencher valores artificiais.
+- **Não aplicável:** tamanho/checksum/versão de documentos nativos do provedor, diretórios e links podem ser indisponíveis legitimamente; não preencher valores artificiais.
 - **Atualização:** `FieldUpdate::Keep` preserva, `Set` grava e `Clear` limpa explicitamente; validar quais campos admitem limpeza.
 - **Estado de operação:** `started_at`, `completed_at`, `next_attempt_at` variam conforme etapa e não devem ser exigidos fora dela.
 - **Vetor vazio:** filtros de lista com `Vec::new()` significam ausência de restrição; diferenciar de `None` de filtro escalar.
