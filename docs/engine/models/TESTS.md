@@ -45,25 +45,38 @@ Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, servi�
 
 A suíte **Models** valida os tipos e invariantes, sem executar syscalls. A suíte **Detector Local** deve validar a coleta física com `statx`, APIs de xattr/ACL e `readlink` em filesystem temporário, respeitando as permissões da execução Flatpak. Casos de recursos não suportados devem ser tratados como resultados explícitos, não falhas do teste.
 
-## 3. RemoteFile e ProviderFileData
+## 3. RemoteFile — identidade, metadados e vínculo com provedor
 
-| Caso | Atributo | Verificação |
+| Caso | Atributo/contrato | Teste conceitual |
 | --- | --- | --- |
-| MOD-REM-01 | `reference` | Identidade é qualificada por conta; não confundir ID do recurso com `FileId` |
-| MOD-REM-02 | `provider` | Mantém o serviço da conta e corresponde ao envelope especializado quando presente |
-| MOD-REM-03 | `name` | Preserva texto retornado sem normalização destrutiva |
-| MOD-REM-04 | `kind` | Inclui `ProviderNative` e `Unknown` sem classificação inventada |
-| MOD-REM-05 | `mime_type` | Ausência não produz tipo MIME padrão fictício |
-| MOD-REM-06 | `size_bytes` | `None` permitido para nativos/ausentes; zero verdadeiro permanece `Some(0)` |
-| MOD-REM-07 | `modified_at` | Preserve timestamp conhecido; não invente data para valor ausente |
-| MOD-REM-08 | `version` | String é opaca, não se ordena numericamente entre provedores |
-| MOD-REM-09 | `hash` | Nenhum hash inventado quando provedor não o fornece |
-| MOD-REM-10 | `parent_ids` | `Unknown` não equivale a `Known([])` |
-| MOD-REM-11 | `provider_data` | `None` válido; `Some` preserva metadados opacos com identidade coerente |
-| MOD-PRO-01 | `ProviderFileData.provider` | Deve coincidir com `RemoteFile.provider` |
-| MOD-PRO-02 | `format`, `format_version` | Formato não vazio e versão positiva |
-| MOD-PRO-03 | `payload` | Preservar bytes de metadados sem interpretação em Models; jamais credencial ou conteúdo real do arquivo |
-| MOD-PRO-04 | formato e limite | Teste somente após tamanho máximo e codificação **serem aprovados**; enquanto isso `BLOCKED` |
+| MOD-REM-01 | `reference` | ID é associado à conta; mesmo ID bruto em contas distintas não colide |
+| MOD-REM-02 | `provider` | Serviço coincide com provedor da conta e do envelope |
+| MOD-REM-03 | `identity` | Nome, descrição e nome original conhecidos ou individualmente não coletados |
+| MOD-REM-04 | `classification` | Tipos regulares, pasta, nativo e atalhos não são confundidos |
+| MOD-REM-05 | `location.parent_ids` | `Known([])` é diferente de `NotCollected`; IDs pais não viram caminhos inventados |
+| MOD-REM-06 | `location.container_id` | Suporte a drive compartilhado sem presumir que todo provedor usa driveId |
+| MOD-REM-07 | `times` | Datas remotas preservadas sem substituição por instante atual |
+| MOD-REM-08 | `content` | Tamanho, quota, versão opaca, revisão e hashes não inventados |
+| MOD-REM-09 | `state` | Trashed/explicitlyTrashed/Shared etc. não são presumidos falsos por ausência |
+| MOD-REM-10 | `access` | Capacidades só são Known se equivalência e evidência forem válidas; canMove não simplifica capacidades distintas de modo falso |
+| MOD-REM-11 | `presentation` | Links preservados quando disponibilizados; ausência não produz URL falsa |
+| MOD-REM-12 | `provider_data` | `NotCollected` distingue payload não obtido de payload conhecido; envelope mantém ID do provedor |
+| MOD-PRO-01 | `ProviderFileData.provider` | Coerente com RemoteFile e provedor da conta |
+| MOD-PRO-02 | `format` e `format_version` | Formato conhecido/versionado; versão desconhecida não é decodificada silenciosamente |
+| MOD-PRO-03 | `payload` | Preserva metadados escolhidos do recurso original, sem conteúdo do arquivo nem credenciais |
+| MOD-PRO-04 | `GoogleFile` parcial | Mantém distinção entre valor recebido, false, zero, lista vazia e campo não solicitado |
+| MOD-PRO-05 | `GoogleFile.id` ausente | Não criar RemoteFileRef fictício; sinalizar reavaliação sem dados do arquivo |
+| MOD-PRO-06 | `GoogleChange.removed` | Remoção ou perda de acesso não vira deleção confirmada |
+| MOD-PRO-07 | renomeação/movimento | Identidade por conta + ID é preservada, embora nome/pais mudem |
+| MOD-PRO-08 | atalhos/itens nativos | Preservar target/formatos específicos sem converter a arquivo comum por hipótese |
+| MOD-PRO-09 | recursos sensíveis | Não incluir tokens, wrapped keys, usuários e geo em logs/filas por padrão sem revisão |
+| MOD-PRO-10 | formato, tamanho e política | BLOCKED até serem formalizadas codificação, limites e retenção do envelope |
+| MOD-REM-13 | evolução de esquema | Detector Remoto permanece inalterado quando adaptador ganha/perde atributo |
+| MOD-REM-14 | independência | Models não importa GoogleFile, cliente API, detector ou inventário |
+
+**Responsabilidade dos testes:** Models valida dados puros e invariantes; o **adaptador Google** testa mapeamento fiel de `GoogleFile`, campos opcionais, filtros, codificação e sanitização; o Detector Remoto testa polling/cursor/entrega usando adaptador fake; o Storage testa a persistência integral da observação.
+
+**Pré-requisito de implementação:** aprovar matriz por campo **manter / sob demanda / descartar** e regras de segurança. Estes são testes especificados para o futuro, não executados.
 
 ## 4. FileData, FileEvent e File
 
