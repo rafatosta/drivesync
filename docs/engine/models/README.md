@@ -80,6 +80,14 @@ O `File` não significa obrigatoriamente que o arquivo foi encontrado: em indisp
 
 `FileBatch` **não é model da engine**: é um objeto de entrega de `detectors/` contendo uma coleção de `File`. IDs de lote, leases, política de ack e estado de fila são do Detector/Storage.
 
+## Regra de evolução: alterações em LocalFile não modificam o Detector Local
+
+**Obrigatório:** incluir, remover ou reorganizar atributos de `LocalFile` **não pode exigir mudanças no código de observação, watcher, varredura ou notificações do Detector Local**. O Detector chama uma **interface estável de coleta**, recebendo um `LocalFile` pronto; não constrói o objeto campo a campo e não acessa seus atributos para decidir sua entrega.
+
+A lógica de montagem dos campos fica em um **componente de coleta/adaptação de metadados locais**, com funções auxiliares para campos que exigem novas consultas (`statx`, ACL, xattrs, symlink etc.). Este componente pode evoluir junto com Models sem modificar o Detector. A interface estável é documentada na [integração do Detector Local](../detectors/local/INTERFACES.md); os modelos permanecem **puros, sem I/O**.
+
+A regra é de isolamento do Detector: mudanças de esquema podem exigir ajustes no **coletor, nos testes e em consumidores que realmente usam o atributo**. Não pressupõe ausência absoluta de impacto em toda a engine. A seleção final dos metadados ainda exige a revisão obrigatória anterior à implementação.
+
 ## Fluxo de responsabilidades
 
 ```mermaid
