@@ -2,7 +2,7 @@
 
 ## 1. Isolamento e TDD
 
-Testar **apenas o Detector Remoto real** com um adapter fake da Google API (ou servidor HTTP simulado) e um sink individual **fake durável**, com falhas configuráveis. Usar checkpoint backend fake ou temporário apropriado. **Não** exigir Detector Local, `EventStore`, SQLite do Detector, Orquestrador ou Google real. TDD: RED, GREEN, REFACTOR, regressão por unidade coesa.
+Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface definida pelo módulo (testes HTTP/Google ficam em `remote/google/`) e um sink individual **fake durável**, com falhas configuráveis. Usar checkpoint backend fake ou temporário apropriado. **Não** exigir Detector Local, `EventStore`, SQLite do Detector, Orquestrador ou serviço remoto real. TDD: RED, GREEN, REFACTOR, regressão por unidade coesa.
 
 ## 2. Fixtures
 
@@ -36,8 +36,8 @@ Testar **apenas o Detector Remoto real** com um adapter fake da Google API (ou s
 
 ### REM-03 — `poll_once`
 
-**Sucesso:** consultar páginas pelo Google API fake, emitir **um evento por `emit`**, confirmar cursor só depois de sinais aceitos.
-**Negativos e opcionais:** page_budget finito, erro em página, token de página ausente, removed por permissão, campos projetados incompletos, sink falhando, cursor expirado.
+**Sucesso:** consultar páginas pelo API remota fake, emitir **um evento por `emit`**, confirmar cursor só depois de sinais aceitos.
+**Negativos e opcionais:** page_budget finito, erro em página, token de página ausente, sinal de remoção por perda de acesso, campos projetados incompletos, sink falhando, cursor expirado.
 **Retorno e invariantes:** sem avanço de checkpoint após falha de emissão; leitura parcial não prova exclusão.
 **Verificação:** ordem de chamadas emit/commit, IDs, contagem, has_more, checkpoints e replays.
 
