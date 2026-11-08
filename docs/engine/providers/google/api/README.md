@@ -1,5 +1,7 @@
 # Google API
 
+> **Posição arquitetural:** esta é a API **técnica específica Google**. A fábrica [Providers](../../INTERFACES.md) disponibiliza a implementação por meio de [Google Provider](../INTERFACES.md); os especialistas dos módulos consumidores podem usar todos os métodos/tipos Google necessários, preservando o contrato de saída do módulo pai. Esta organização **não substitui nem altera** as operações listadas abaixo.
+
 ## Objetivo
 
 **Centralizar e abstrair toda integração específica com o Google** — Google Drive API, OAuth/OpenID Connect, URLs, endpoints, escopos, parâmetros, configurações do provedor, formatos de arquivos, limites, respostas e erros. Os outros módulos consomem **operações e tipos públicos**, sem conhecer detalhes HTTP ou constantes do Google.
