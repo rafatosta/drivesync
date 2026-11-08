@@ -2,7 +2,7 @@
 
 ## 1. Fronteira interna e tipos
 
-API **interna ao pacote Detector**, consumível pelo pai e substituível por fake nos testes. Não reexportar `EventStore`, estruturas, SQLite ou detalhes de lease ao restante da engine. Os nomes abaixo representam contratos de projeto, ainda não compilados.
+API interna de persistência de eventos, substituível por implementação simulada nos testes. O contrato encapsula as operações de fila e reserva de eventos. Os nomes abaixo representam contratos de projeto, ainda não compilados.
 
 ```rust
 pub(super) type StoreResult<T> = Result<T, StoreFailure>;
@@ -68,7 +68,7 @@ pub(super) trait EventStore: Send + Sync {
 pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 ```
 
-`StoreLocation`, `EventStoreHandle`, IDs e relógio de leases serão definidos com ownership concreto na implementação. **Não alterar a API externa do Detector por conveniência de armazenamento.**
+`StoreLocation`, `EventStoreHandle`, IDs e relógio de leases serão definidos com ownership concreto na implementação. Os detalhes de armazenamento permanecem encapsulados na interface definida aqui.
 
 ## 3. Contrato funcional de cada método
 
@@ -77,7 +77,7 @@ pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 **Finalidade:** abrir armazenamento da sincronização, validando identidade e integridade.
 **Parâmetros:** `identity.sync_id` obrigatório; localização interna não vazia e segura.
 **Retorno:** handle encapsulado para a fila dessa sincronização.
-**Limites e erros:** formato inválido/corrupção/identidade divergente falham; não substituir banco existente nem acessar Inventário.
+**Limites e erros:** formato inválido/corrupção/identidade divergente falham; não substituir a base de dados existente.
 
 ### STO-02 — `enqueue`
 
@@ -122,7 +122,7 @@ pub(super) fn open(request: StoreOpenRequest) -> StoreResult<StoreOpenResult>;
 
 ## 5. Pendências concretas
 
-Definir serialização fiel e versionada do File completo, ownership/traits concretos, política de retenção e lease expirado, mecanismo de tempo para testes, instalação da base quando pasta sincronizada não estiver acessível e proteção contra processos simultâneos. Resolver antes de implementar casos dependentes; não adicionar métodos públicos ao Orquestrador para contornar detalhes internos.
+Definir serialização fiel e versionada do File completo, ownership/traits concretos, política de retenção e lease expirado, mecanismo de tempo para testes, instalação da base quando pasta sincronizada não estiver acessível e proteção contra processos simultâneos. Resolver antes de implementar casos dependentes; manter os detalhes internos encapsulados nas operações documentadas.
 
 ## 6. Fidelidade e integridade do File
 
@@ -131,4 +131,4 @@ Definir serialização fiel e versionada do File completo, ownership/traits conc
 - `claim_batch` devolve os mesmos `File` em `files: Vec<File>`; Detector monta `FileBatch` com o identificador/lease de entrega. Leitura não confirma.
 - Evolução de campos nos modelos pode exigir revisão do codec, mas não da lógica de fila, lease ou confirmação. Storage trata File como valor opaco.
 - Dados sensíveis (ACL, xattrs, usuários, labels, detalhes de segurança) exigem política aprovada de retenção, sanitização e limite. Se não puder persistir com fidelidade, recusar o enqueue com falha tipada; nunca truncar silenciosamente após aceite.
-- `SyncItem`, baseline e fila de operações pertencem ao Inventário; não são armazenados como estado neste módulo.
+- Os registros persistidos representam ocorrências detectadas e seu estado de entrega.
