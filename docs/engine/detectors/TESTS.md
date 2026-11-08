@@ -148,7 +148,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 
 ## 5. Isolamento de interfaces
 
-- Orquestrador de teste só importa `Detector`, requests/results, `DetectorEvent`, `EventBatch` e tipos públicos.
+- Orquestrador de teste só importa `Detector`, requests/results, `File`, `FileBatch` e tipos públicos.
 - Não pode importar `LocalDetector`, `RemoteDetector`, `EventStore` ou tipos SQLite através da fachada.
 - O coordenador só usa portas de cada filho, sem SQL, watcher, HTTP ou algoritmos da Google API.
 - Local real é testável sem Remoto/Storage concretos; Remoto real sem Local/Storage concretos; Storage real sem ambos nem coordenador real.
@@ -161,3 +161,18 @@ Testar `batch_id=None` somente para lote vazio, intervalos opcionais vazios em l
 **Aceite integral do coordenador:** 8/8 métodos e casos DET-B aplicáveis executados no Flatpak, sem precisar executar filhos concretos. Integração real dos quatro requer fase separada. Cobertura declarada precisa de comandos/resultados efetivamente executados.
 
 **Esta é uma especificação documental; nenhum teste foi executado.**
+
+## 7. Conformidade de ponta a ponta com Models
+
+| Caso | Fluxo | Resultado obrigatório |
+| --- | --- | --- |
+| DET-M-01 | Local fake emite `File` com `FileData::Local` | Storage fake recebe o mesmo File integral; batch devolve File idêntico |
+| DET-M-02 | Remote fake emite `File` com `FileData::Remote` e provider_data | Metadados especializados não são descartados ou projetados |
+| DET-M-03 | File com `Deleted` e `data=None` | Evento entregue e reavaliado, sem fabricar LocalFile/RemoteFile nem descartar automaticamente |
+| DET-M-04 | Rename/Move com `previous/current` | Localizações preservadas após enqueue, claim, release e retry |
+| DET-M-05 | Duas fontes alteram mesmo recurso | Dois Files de IDs próprios, sem mesclagem/conflicto decidido |
+| DET-M-06 | FileBatch com N=1 ou vários | Mesma API, origem analisada apenas pelo Analisador |
+| DET-M-07 | Nova versão dos atributos de LocalFile/RemoteFile | Fachada não modifica código nem lê campos individuais; payload intacto |
+| DET-M-08 | Falha após commit antes de ack | Mesmo `File.id`, evento e payload ao reentregar |
+
+O coordenador usa apenas Model `File`/`FileBatch` e portas internas dos filhos. Nenhum teste pressupõe `SyncItemId` para notificar alterações.
