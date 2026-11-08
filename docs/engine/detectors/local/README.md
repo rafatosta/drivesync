@@ -2,7 +2,7 @@
 
 ## Objetivo e autonomia
 
-O **Detector Local** é o produtor de observações do filesystem. Ele constrói **`LocalFile` do domínio compartilhado** quando consegue observar com segurança os atributos de um arquivo/diretório, e emite **um aviso individual por chamada** ao sink interno fornecido pelo módulo pai [Detector](../README.md).
+O **Detector Local** é o produtor de observações do filesystem. Ele solicita a um coletor especializado a construção de **`LocalFile` do domínio compartilhado** quando há atributos observáveis de um arquivo/diretório, e emite **um aviso individual por chamada** ao sink interno fornecido pelo módulo pai [Detector](../README.md).
 
 Sua implementação, seu watcher, suas varreduras e seus testes são **independentes** do Detector Remoto, de Storage, do Inventário e dos operadores. O Detector pai é o único módulo público de detecção para o Orquestrador. O Local depende do **contrato de dados** de [Models](../../models/INTERFACES.md), não de um serviço `ModelsManager` (inexistente).
 
@@ -11,7 +11,7 @@ Sua implementação, seu watcher, suas varreduras e seus testes são **independe
 | Componente | Faz | Não faz |
 | --- | --- | --- |
 | `models/` | Define `LocalFile`, `LocalFileKind`, `LocalRelativePath` e identidades compartilhadas | Não lê disco, não observa mudanças |
-| `detectors/local/` | Lê filesystem, converte observações para `LocalFile`, emite sinais tipados e avalia cobertura | Não modifica baseline, não conhece SQL nem implementações dos demais filhos |
+| `detectors/local/` | Coordena observação, solicita coleta por porta estável, emite sinais tipados e avalia cobertura | Não modifica baseline, não conhece SQL nem implementações dos demais filhos |
 | `detectors/` | Recebe cada sinal local/remoto, adapta para evento público e chama Storage | Não executa observação física local |
 | `detectors/storage/` | Persiste fila de notificações, leases e confirmações | Não observa filesystem |
 | `inventory/` | Persiste estado e associa observações a `SyncItem` segundo seu contrato | Não é dependência de gravação do Detector Local |
@@ -44,7 +44,7 @@ flowchart LR
 
 1. Validar `sync_id` e raiz local fornecida pela composição do Detector.
 2. Iniciar watcher e varredura, preservando evidência de observação durante a instalação do watcher.
-3. Converter **somente atributos realmente observados** para `LocalFile` do módulo Models.
+3. Solicitar ao coletor o `LocalFile` com **somente atributos realmente observados**; o Detector não monta seus campos.
 4. Para cada ocorrência, emitir um `LocalNotice` contendo o `LocalFile` **quando disponível** e um escopo relativo para reavaliação quando não houver arquivo conhecido.
 5. O sink do Detector pai confirma sucesso apenas após persistência durável em Storage; se falhar, o Local não declara observação entregue e mantém necessidade de replay/revarredura.
 6. Após reinício, reobservar o escopo local: o watcher não reconstrói o histórico de alterações feitas enquanto a aplicação esteve parada.
@@ -56,7 +56,7 @@ flowchart LR
 - **Complete:** escopo solicitado foi integralmente inspecionado com evidência suficiente; não significa que o Local confirmou exclusão de um `SyncItem`.
 - **Partial:** apenas parte foi observada; não limpar atributos nem inferir remoção no restante.
 - **Unavailable:** raiz/escopo inacessível; nunca equivale a exclusão.
-- **Unknown:** `LocalFileKind::Unknown`, campos `None` ou identidade local opcional não devem ser substituídos por palpites.
+- **Unknown:** `MetadataValue::NotCollected`/`Unavailable`, tipo de entrada desconhecido ou identidade local opcional não devem ser substituídos por palpites.
 
 O Local observa eventos de criação, mudança, renomeação e movimento, mas essas pistas podem ser ambíguas. Não converter automaticamente um evento de remoção em exclusão confirmada. Caminho e inode isolados não comprovam identidade estável.
 
