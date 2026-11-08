@@ -19,17 +19,31 @@ Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, servi�
 | MOD-ID-07 | `FieldValue<T>` | `Unknown`, `Known([])` e `Known([id])` mantêm significados distintos | Não transformar `Unknown` em `Known([])` |
 | MOD-ID-08 | `FileKind` | Cada variante mantém significado, incluindo `Unknown` | Não adivinhar `Regular` pelo nome/extensão |
 
-## 2. LocalFile
+## 2. LocalFile — cenários para metadados reais Linux
 
-| Caso | Atributo | Verificação |
+| Caso | Campo/grupo | Critério verificável |
 | --- | --- | --- |
-| MOD-LOC-01 | `local_id` | `None` é permitido e não implica criar `SyncItemId`; `Some` somente quando identidade é comprovada |
-| MOD-LOC-02 | `relative_path` | Caminho relativo preserva bytes e não escapa da raiz |
-| MOD-LOC-03 | `kind` | `Regular`, `Directory`, `Symlink`, `Other`, `Unknown` não causam I/O |
-| MOD-LOC-04 | `size_bytes` | `Some(0)` é diferente de `None`; `None` não preenche com zero |
-| MOD-LOC-05 | `modified_at` | `Some(Timestamp)` preserva instante; `None` não vira data atual |
-| MOD-LOC-06 | `hash` | `Some(FileHash)` guarda algoritmo e digest; `None` não solicita leitura integral |
-| MOD-LOC-07 | `LocalFile` completo | Construir/clonar/validar valores não examina nem altera filesystem |
+| MOD-LOC-01 | `local_id`, `relative_path` | Caminho byte-exato, sem escapes; ID opcional não vira inode |
+| MOD-LOC-02 | `kind` | Regular, diretório, symlink, FIFO, socket, devices, outro, desconhecido |
+| MOD-LOC-03 | `mode` | Bits brutos, rwx, setuid, setgid e sticky preservados |
+| MOD-LOC-04 | `owner` | UID e GID reais, inclusive zero, sem resolver nomes |
+| MOD-LOC-05 | `times` | atime, mtime, ctime, btime; nanossegundos e ausência diferenciados; ctime não é criação |
+| MOD-LOC-06 | `storage` | Tamanho lógico, blocos 512 B, bloco preferido, nlink, inode, dev e rdev independentes |
+| MOD-LOC-07 | `mount_id`, `subvolume_id` | Ausência ou suporte explícito, sem valor fabricado |
+| MOD-LOC-08 | `flags` | Preservar statx_attributes, máscara e flags filesystem sem misturá-las |
+| MOD-LOC-09 | `direct_io`, `atomic_write` | Todos os limites/alinhamentos preservados ou identificados como não suportados |
+| MOD-LOC-10 | `xattrs.entries` | Nomes e bytes de valores preservados; Known([]) somente após enumeração vazia |
+| MOD-LOC-11 | `LocalXattr.value` | Falha de leitura de um xattr preserva nome e motivo |
+| MOD-LOC-12 | `acl` | ACL acesso/padrão com tags e máscara, conforme suporte e aplicabilidade |
+| MOD-LOC-13 | `symlink.target` | Bytes do link preservados, sem seguir alvo |
+| MOD-LOC-14 | `extra_metadata` | Nome, namespace/driver e bytes mantidos sem reinterpretar |
+| MOD-LOC-15 | `MetadataValue<T>` | Distingue Known(0), Known([]), NotCollected, Unsupported, PermissionDenied, Unavailable |
+| MOD-LOC-16 | modelo puro | Nenhum acesso ao filesystem, SQLite, API ou conteúdo para construir/validar objeto |
+| MOD-LOC-17 | consistência | Coletas parciais e concorrentes não são declaradas fotografias atômicas completas |
+| MOD-LOC-18 | confidencialidade | Xattrs/ACL/labels sensíveis não são automaticamente enviados a logs ou nuvem |
+| MOD-LOC-19 | metadados derivados | Não incluir hash de conteúdo nem MIME inferido como dado nativo de statx |
+
+A suíte **Models** valida os tipos e invariantes, sem executar syscalls. A suíte **Detector Local** deve validar a coleta física com `statx`, APIs de xattr/ACL e `readlink` em filesystem temporário, respeitando as permissões da execução Flatpak. Casos de recursos não suportados devem ser tratados como resultados explícitos, não falhas do teste.
 
 ## 3. RemoteFile e ProviderFileData
 
