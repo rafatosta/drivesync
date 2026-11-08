@@ -11,7 +11,7 @@ Implementar **somente `detectors/remote/`**, independentemente do Detector pai, 
 - Estratégia própria por especialista: polling, consulta paginada e checkpoint quando disponíveis, sem impor comportamento ao Local.
 - Checkpoint não pode avançar antes de aceitação durável dos eventos correspondentes; replay é necessário quando houver resultado incerto.
 - Erro de rede, acesso, cursor ou leitura parcial não confirma exclusão. Não realizar sincronização física.
-- O contrato Remoto é independente de provedor; cada especialista usa seu cliente em `providers/<provedor>/api/`, sem reimplementar HTTP ou OAuth fora do módulo proprietário.
+- O contrato Remoto é independente de provedor; cada especialista usa a interface exposta em `providers/<provedor>/`, sem implementar HTTP, OAuth ou chamadas diretas à API externa.
 - Remoto não administra `inventory.sqlite3` nem `detector.sqlite3`; qualquer backend de checkpoint será injetado por contrato tipado.
 - A API é interna a `detectors/`; não criar reexportação externa de `RemoteDetector`.
 
