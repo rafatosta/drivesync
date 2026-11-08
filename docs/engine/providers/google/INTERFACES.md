@@ -1,88 +1,51 @@
-# Google Provider — INTERFACES: composição da API Google
+# Google — INTERFACES
 
-> **Contrato interno de composição, proposto e não compilado.** Esta especificação **não substitui** nem redefine [`api/INTERFACES.md`](api/INTERFACES.md), proprietário de todos os métodos e modelos técnicos Google.
+> Contrato **de disponibilização** da API Google, não uma segunda definição da API. Estado proposto, ainda não compilado.
 
 ## 1. Escopo
 
-A fachada [Providers](../INTERFACES.md) escolhe o serviço. `providers/google/` fornece dois acessos: **API Google sem conta** para operações permitidas de preparação/autenticação, e **API Google com sessão de conta** para recursos autenticados. Ambos apontam para a interface Google já definida em `api/`.
-
-```mermaid
-flowchart LR
-    F["Providers.get/open"]
-    G["Google Provider"]
-    T["Google API tipada existente"]
-    S["GoogleSession da conta"]
-    C["Especialista do módulo"]
-    F --> G
-    G --> T
-    G --> S
-    T --> C
-    S --> C
-```
-
-## 2. Portas internas de composição — não uma nova API Google
+Quando o catálogo seleciona `ProviderId("google")`, este submódulo entrega uma interface concreta para as funções documentadas em [`api/INTERFACES.md`](api/INTERFACES.md).
 
 ```rust
-// Esboço de responsabilidades para orientar composição Rust.
-// Não são novos métodos REST e não estão implementados.
+// Representação ilustrativa; tipos concretos e ownership a revisar.
 pub(crate) trait GoogleProviderFactory {
-    fn api(&self) -> GoogleApiHandle;
-    fn open_account(&self, context: AuthorizedGoogleAccount)
-        -> Result<GoogleAccountApiHandle, GoogleProviderError>;
+    fn create_api(&self) -> Result<GoogleApiHandle, GoogleProviderError>;
 }
 
-// Representações opacas com referência à API técnica de api/.
-// API e sessão são componentes distintos, mesmo se agrupados num handle.
-pub(crate) struct GoogleApiHandle {
-    // Acesso seguro à interface específica Google (contrato api/INTERFACES.md).
+pub struct GoogleApiHandle {
+    // Cliente tipado correspondente ao contrato existente em api/.
 }
-pub(crate) struct AuthorizedGoogleAccount {
-    // Identidade AccountId e autorização resolvida por accounts/auth.
-}
-pub(crate) struct GoogleAccountApiHandle {
-    // API Google + GoogleSession vinculada à conta autorizada.
+
+pub enum GoogleProviderError {
+    InvalidConfiguration,
+    InitializationFailed,
 }
 ```
 
-**Observação:** `GoogleApiHandle` e `GoogleAccountApiHandle` já aparecem como **nomes conceituais** em [Providers — INTERFACES](../INTERFACES.md). Esta seção apenas organiza sua responsabilidade no módulo Google; a implementação deve definir cada tipo **uma única vez**, sem duplicar declarações em arquivos Rust diferentes. `AuthorizedGoogleAccount` é uma posição de contrato a ser definida na composição com Accounts, **não** um mecanismo aprovado de transporte de tokens.
+O `GoogleApiHandle` mencionado na [fábrica Providers](../INTERFACES.md) é **o mesmo conceito**, não um tipo a ser duplicado. O nome e o mecanismo Rust final dependem da implementação.
 
-## 3. Regras da API exposta
+## 2. Interface técnica exposta
 
-| Operação de catálogo | Retorno Google | Uso permitido |
-| --- | --- | --- |
-| `get(ProviderId("google"))` | `ProviderHandle::Google(GoogleApiHandle)` | Configuração e operações da API que não exigem `GoogleSession` |
-| `open(AccountId)` | `ProviderSession::Google(GoogleAccountApiHandle)` | Recursos autenticados da API Google **para aquela conta** |
+O módulo **não adiciona nem substitui** métodos técnicos. A interface disponibilizada corresponde às funções e estruturas já especificadas em [`api/INTERFACES.md`](api/INTERFACES.md):
 
-A interface técnica Google permanece como especificada em [`api/INTERFACES.md`](api/INTERFACES.md): 59 operações dos 13 recursos REST Drive v3, 9 operações de OAuth/OIDC e 10 operações de transferência/conveniência. Tipos como `GoogleSession`, `GoogleFile`, `GoogleChange`, `GoogleFileWrite` e `GoogleApiFailure` continuam a pertencer exclusivamente ao contrato `api/`.
+| Área | Contrato existente |
+| --- | --- |
+| Drive REST v3 | 59 métodos em 13 recursos |
+| OAuth 2.0 / OIDC | 9 métodos |
+| Transferências e conveniências | 10 métodos |
+| Tipos | `GoogleSession`, `GoogleFile`, `GoogleChange`, opções, requisições, respostas e erros Google |
 
-**Não introduzir** em `providers/google/` funções que reproduzam os 78 métodos. O especialista deve usar diretamente a API tipada obtida (método específico como `changes_list`) em vez de uma falsa API `RemoteApi` universal.
+A API específica recebe os parâmetros exigidos por cada método, inclusive contexto autenticado quando necessário. Não há necessidade de um método universal de sessão em `providers/` ou `providers/google/`.
 
-## 4. Exemplo de consumo pelo especialista de Detector
+## 3. Garantias
 
-```rust
-// Pseudocódigo: tipo de handle e lifetime ainda não definidos.
-let google = match providers.open(account_id)? {
-    ProviderSession::Google(handle) => handle,
-};
-let page = google.api().changes_list(google.session(), options)?;
-let observation = specialist.interpret_google_change(page);
-// specialist emite models::File pelo contrato RemoteDetector.
-```
+- A API fornecida pertence ao provedor Google e utiliza sua configuração técnica correta.
+- A inicialização falha explicitamente quando inválida; não devolver handle sem funcionalidade.
+- A implementação utiliza uma única definição técnica do cliente Google.
+- Nenhum segundo conjunto de wrappers replica OAuth, Files, Changes ou transferências nesta pasta.
+- O submódulo não armazena contas, credenciais nem estados funcionais.
+- A interface não impõe métodos, tipos ou comportamentos às APIs de outros serviços.
 
-O exemplo mostra **o sentido da dependência**; `api()`, `session()` e `interpret_google_change` não constituem assinaturas Rust aprovadas. `GoogleChange` pode existir no especialista; o Detector pai recebe apenas o contrato comum (`File`, `RemotePollResult`, `RemoteEventSink`).
+## 4. Pendências
 
-## 5. Autenticação e proteção dos dados
-
-- `accounts/auth/` coordena consentimento, callback, credenciais em Secret Service/keyring, renovação e sessão.
-- `providers/google/api/` fornece a implementação do protocolo OAuth/OIDC, cujos métodos técnicos já estão no contrato existente.
-- `providers/google/` liga API e contexto autenticado sem cadastrar contas, manipular `inventory.sqlite3` ou escolher arquivos para sincronização.
-- Nunca exportar access/refresh token por `ProviderHandle` ou por APIs de módulo pai; a representação concreta do segredo deve ser revisada antes do Rust.
-- Reautorização/revogação precisa invalidar handles com autorização obsoleta, sem fallback silencioso para outra conta.
-
-## 6. Fora do escopo
-
-`providers/google/` não decide polling, não confirma checkpoint, não guarda `FileBatch`, não interpreta baseline, não determina uploads, não define fila de operações e não implementa o registro do Inventário. Tudo isso é responsabilidade dos módulos consumidores.
-
-## 7. Pendências
-
-A representação de `GoogleApiHandle` e `GoogleAccountApiHandle`, `&self`, `async`, compartilhamento de cliente HTTP, gestão de sessão e autorização injetada exigem revisão antes da implementação. Não inventar uma migração ou uma segunda interface técnica para contornar essa definição.
+Representação concreta do handle, instalação/configuração técnica, ownership, concorrência e assincronicidade. Essas decisões não alteram a assinatura dos métodos já especificados em `api/`.
