@@ -65,25 +65,36 @@ A suíte **Models** valida os tipos e invariantes, sem executar syscalls. A suí
 | MOD-PRO-03 | `payload` | Preservar bytes de metadados sem interpretação em Models; jamais credencial ou conteúdo real do arquivo |
 | MOD-PRO-04 | formato e limite | Teste somente após tamanho máximo e codificação **serem aprovados**; enquanto isso `BLOCKED` |
 
-## 4. FileData e File
+## 4. FileData, FileEvent e File
 
-| Caso | Atributo/relacionamento | Verificação |
+| Caso | Objeto/campo | Verificação |
 | --- | --- | --- |
-| MOD-DAT-01 | `FileData::Local` | Encapsula apenas um `LocalFile`, com seus dados |
-| MOD-DAT-02 | `FileData::Remote` | Encapsula apenas um `RemoteFile`, com seus dados |
-| MOD-DAT-03 | variantes | Não existe estado `Both` ou enum de provedor dentro de `FileData` |
-| MOD-FIL-01 | `File.id` | ID da ocorrência estável entre tentativas, distinto da identidade física |
-| MOD-FIL-02 | `File.sync_id` | Um evento pertence a exatamente uma sincronização |
-| MOD-FIL-03 | `File.event` | `ObservedChange`, `RecheckRequired`, `ScopeUnavailable` são eventos, não comandos de exclusão |
-| MOD-FIL-04 | `File.observed_at` | Tempo de observação não substitui `LocalFile.modified_at`/`RemoteFile.modified_at` |
-| MOD-FIL-05 | `File.coverage` | `Complete`, `Partial`, `Unavailable` mantêm semântica de cobertura |
-| MOD-FIL-06 | `File.scope` | `Local(path)`, `Remote(ref)`, `WholeSync` mantêm suas identidades |
-| MOD-FIL-07 | `File.data` | `Some(Local)` exige escopo Local correspondente; `Some(Remote)` exige escopo Remote correspondente |
-| MOD-FIL-08 | `File.data=None` | Só admite `RecheckRequired` ou `ScopeUnavailable`, sem fingir exclusão |
-| MOD-FIL-09 | `FileEvent::ObservedChange` | Exige `data=Some` |
-| MOD-FIL-10 | `FileEvent::ScopeUnavailable` | Exige `coverage=Unavailable` e `data=None` |
-| MOD-FIL-11 | `FileScope::WholeSync` | Somente permitido sem `data` |
-| MOD-FIL-12 | `File` autocontido | Preserva dados observados sem precisar consultar novamente o Detector; não garante estado atual |
+| MOD-DAT-01 | `FileData::Local` | Encapsula exatamente um `LocalFile` sem perda de metadados |
+| MOD-DAT-02 | `FileData::Remote` | Encapsula exatamente um `RemoteFile` sem perda de metadados |
+| MOD-DAT-03 | `FileData` | Somente variantes `Local` e `Remote`; Orquestrador não interpreta variante |
+| MOD-FIL-01 | `File.id` | ID da ocorrência estável entre retries, distinto do ID de arquivo |
+| MOD-FIL-02 | `File.sync_id` | Cada ocorrência pertence à sincronização correta |
+| MOD-FIL-03 | `File.event.kind` | Oito variantes: Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired, ScopeUnavailable |
+| MOD-FIL-04 | `File.observed_at` | Instante de observação, não mtime |
+| MOD-FIL-05 | `File.coverage` | Complete, Partial e Unavailable mantêm a semântica de escopo |
+| MOD-FIL-06 | `File.scope` | Local(path), Remote(ref) ou WholeSync sem inferir exclusão |
+| MOD-FIL-07 | `File.data` | `Some(Local)` e `Some(Remote)` exigem escopo compatível |
+| MOD-EVT-01 | `Created` | Tem `current` + `data`; `previous=None` não é prova isolada de criação |
+| MOD-EVT-02 | `Modified` | Tem `current` + `data`; não determina sozinho comparação de conteúdo |
+| MOD-EVT-03 | `Deleted` | Pode conter `data=None` e `previous=Some` com `current=None`; não autoriza exclusão automática |
+| MOD-EVT-04 | `Renamed` | Exige `previous`, `current`, `data` e correlação de identidade comprovada |
+| MOD-EVT-05 | `Moved` | Exige origem/destino, `data` e correlação de identidade comprovada |
+| MOD-EVT-06 | `MetadataChanged` | Tem metadados atuais; não presume conteúdo alterado |
+| MOD-EVT-07 | `RecheckRequired` | Aceita `data=None`, escopo conhecido, informações parciais |
+| MOD-EVT-08 | `ScopeUnavailable` | Exige `coverage=Unavailable`, `data=None`, sem `current` inventado |
+| MOD-EVT-09 | `FileLocation::Local` | Preserva bytes de caminho anterior e atual |
+| MOD-EVT-10 | `FileLocation::Remote` | Qualifica ID por conta; parent e name opcionais distinguem desconhecido de observado |
+| MOD-EVT-11 | transição | Não misturar localização local/remota entre `previous` e `current` para Move/Rename |
+| MOD-EVT-12 | mudança simultânea | Renomear + mover não gera falsa afirmação de exclusividade; inconclusivo usa RecheckRequired |
+| MOD-EVT-13 | `WholeSync` | Permitido apenas com `data=None` |
+| MOD-EVT-14 | integridade do evento | Reentrega preserva objeto completo; `FileEvent` não executa operação nem decide conflito |
+
+**Regra dos testes:** verificar a estrutura e consistência dos dados em Models; teste de classificação de eventos por watcher/API pertence aos Detectores; teste de confirmação e retry pertence ao Detector/Storage; tomada de decisão pertence ao Analisador.
 
 ## 5. Integração externa e critérios de aceite
 
