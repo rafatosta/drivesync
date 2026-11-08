@@ -76,6 +76,21 @@ Somente depois de a seleção ser explicitamente aprovada, consolidar os atribut
 - O desenho completo de `FileBatch` e do protocolo de ack é propriedade do Detector. Não migrar `SyncItem`.
 - Não implementar até a aprovação da especificação e da revisão de metadados anteriores ao código.
 
+## Metadados completos e associação de RemoteFile ao provedor
+
+**Não implementar imediatamente o catálogo completo de `RemoteFile`.** A seção 3 de [INTERFACES.md](INTERFACES.md#3-remotefile--metadados-remotos-e-associação-ao-provedor) documenta primeiro todos os campos comuns e especializados disponíveis e a associação ao objeto de origem.
+
+- `RemoteFile.reference` qualifica o ID real com `AccountId`; `RemoteFile.provider` e `ProviderFileData.provider` precisam corresponder à conta. Nunca associar por nome/caminho ou inventar IDs ausentes.
+- O **adaptador específico** conhece `GoogleFile` e transforma esse objeto em `RemoteFile`; `models/` jamais importa `GoogleFile`, HTTP ou sessão.
+- Metadados comuns são normalizados **somente com semântica equivalente**; dados específicos/complexos ficam em `ProviderFileData` formatado/versionado, sem perder informações observadas que forem aprovadas para retenção.
+- `MetadataValue<T>` distingue campo efetivamente observado de não solicitado, não suportado ou negado. Uma resposta parcial da API não autoriza preencher campos com zero/false/vazio.
+- **Alterações nos atributos de `RemoteFile` não podem exigir alterações no Detector Remoto** (polling, cursor, scanner, sinalização e fila). O Detector recebe objeto completo do adaptador por uma porta estável.
+- Rotinas auxiliares do especialista podem buscar outros campos/métodos quando necessário; `RemoteFile` continua sem I/O.
+- `GoogleChange.removed` pode indicar perda de acesso. Nenhum registro remoto sem metadados confiáveis ou ID válido autoriza exclusão.
+- Evitar payload bruto e material de segurança/criptografia, chaves, tokens e dados pessoais sem política autorizada de sanitização.
+- **Antes de implementar**, classificar campos em `manter / sob demanda / descartar`, considerando utilidade, custo de API, escopos, privacidade, tamanho, persistência e formato do snapshot.
+- Não implementar `SyncItem` nem fazer migração do Inventário nesta etapa.
+
 ## Execução futura
 
 Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GREEN → REFACTOR conforme [TESTS](TESTS.md), executar Cargo/Rust apenas no Flatpak do projeto e relatar PASS/FAIL/BLOCKED. Integração e testes de lote/ack pertencem ao Detector, não aos testes de Models.
