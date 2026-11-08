@@ -61,7 +61,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 1. `sync_operations` é fila **persistente**, inclusive offline. Inserir ou reivindicar uma operação **não a executa**. Uma operação `Running` após reinício exige reavaliação antes de repetir efeito remoto com resultado desconhecido.
 2. `claim_operation` deve impedir dois workers de obterem a mesma operação. Revisões e transições de estado têm precondições e erros explícitos.
 3. A conclusão de operação comprovada usa `confirm_sync`, não atualização direta de `Completed`. Atualizar baseline, status, operação e atividade relevante **na mesma transação SQLite**, com rollback completo em falha.
-4. **Pendente:** a publicação conjunta de cursores/eventos pertence ao contrato anterior do Inventário, mas conflita com a responsabilidade já descrita em Detector Remoto/Storage. Não implementar a duplicação antes da decisão de propriedade.
+4. O Inventário **não** publica cursores nem eventos do Detector. Checkpoint é responsabilidade do Detector Remoto; o Detector Storage recebe e entrega `File`. O Inventário registra apenas o estado derivado após análise.
 5. Cada `SyncActivity` tem `item_id` **obrigatório**, referenciando um `SyncItem` do mesmo banco. `operation_id` é opcional. Eventos globais não entram na tabela `activity`.
 6. Preservar atividades após renomeação, movimentação ou remoção do arquivo. Manter tombstones quando há histórico referenciando item; não usar cascata que o apague.
 7. Retry, redelivery de evento e resposta perdida devem respeitar idempotência, deduplicação e verificação de estado. Não duplicar operações/atividades nem avançar baseline por repetição.
@@ -74,7 +74,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 - `File.data=None`, `FileEventKind::Deleted`, `ScopeUnavailable` e falha de API **não comprovam ausência**. `AbsentConfirmed` exige evidência independente suficiente, após análise. Eventos globais sem vínculo seguro não criam `SyncItem` automático.
 - `MetadataValue::NotCollected`, `Unsupported`, `Unavailable` e `PermissionDenied` **não** devem zerar campos conhecidos. `Known(false)`, `Known([])` e `Known(0)` são dados observados, não ausências.
 - Uma observação **nunca** avança `SyncBaseline`; confirmação verificada de uma operação atualiza baseline, fila, estado e atividade na mesma transação.
-- A fila de operações do Inventário é distinta da fila de notificações de `File` do Detector. `remote_cursor`/`remote_events` e quatro APIs relacionadas **têm propriedade em aberto** frente a `RemoteCheckpoint` e `EventStore`. **Não duplicar** a fila/checkpoint; registrar BLOCKED até decidir uma única responsabilidade.
+- A fila de operações do Inventário é distinta da fila de notificações de `File` do Detector. **Propriedade resolvida:** `EventStore` mantém eventos/leases/ack; `RemoteCheckpoint` pertence ao Detector Remoto. Não recriar `remote_cursor`/`remote_events` em `inventory.sqlite3`.
 - Persistência dos grupos de metadados e `ProviderFileData` exige **revisão pré-implementação**: catalogar tudo, escolher `manter/sob demanda/descartar`, definir codec e privacidade. Não prometer round-trip de atributo descartado nem serializar o objeto inteiro como blob opaco inadvertidamente.
 - Proposta documental, não alterar código Rust, Detector ou Models apenas para adaptar o Inventário nesta etapa.
 
@@ -89,15 +89,15 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 | 5. REFACTOR | Reduzir duplicação sem alterar contratos | Regressão dos grupos anteriores continua passando |
 | 6. Registrar entrega | Commit atômico por unidade lógica validada | Reportar testes efetivamente executados e pendências |
 
-**Não implementar os 20 métodos documentados em um lote único sem validação intermediária; quatro métodos de cursor/eventos estão BLOCKED até a definição de propriedade.** Seguir conjuntos coesos: abertura/identidade; consultas; observações; associações/baseline; fila; cursor/eventos; histórico. Uma implementação parcial não pode retornar sucesso fictício para métodos pendentes.
+**Não implementar os 16 métodos documentados em um lote único sem validação intermediária.** Seguir conjuntos coesos: abertura/identidade; consultas; observações; associações/baseline; fila de operações; histórico. Métodos de eventos ou checkpoint remoto não pertencem ao Inventário. Uma implementação parcial não pode retornar sucesso fictício para métodos pendentes.
 
 ## Autonomia e conclusão da implementação
 
-- **“Implemente o módulo Inventário”**, sem delimitação, exige concluir **os 20 métodos públicos e os casos aplicáveis** de [INTERFACES.md](INTERFACES.md) e [TESTS.md](TESTS.md). Não basta criar o esquema SQLite, os tipos ou apenas o primeiro grupo.
+- **“Implemente o módulo Inventário”**, sem delimitação, exige concluir **os 16 métodos públicos e os casos aplicáveis** de [INTERFACES.md](INTERFACES.md) e [TESTS.md](TESTS.md). Não basta criar o esquema SQLite, os tipos ou apenas o primeiro grupo.
 - Implementar por unidades coesas, **RED → GREEN → REFACTOR**, com SQLite real e isolado, reabertura, rollback, regressão e **commits locais incrementais**. Avançar para o próximo grupo autonomamente após validar o anterior, sem solicitar aprovação por método.
 - Quando a solicitação definir somente abertura, observações, baseline, fila, eventos ou histórico, **limitar o trabalho àquela capacidade** e relatar os demais grupos pendentes.
 - **Aceite integral:** todas as interfaces públicas implementadas e verificadas; testes aplicáveis executados no Flatpak com banco SQLite real temporário; invariantes de integridade, concorrência, ausência comprovada e histórico mantidos; relatório de comandos, resultados, falhas e pendências.
-- Se definição essencial (por exemplo, `LocalFile` ou prova de ausência) estiver incompleta, documentar o impedimento antes de implementar esse comportamento; não inventar contrato, não reescrever teste apenas para passar e não afirmar que o módulo está concluído.
+- Se definição essencial (por exemplo, seleção de atributos de `LocalFile` ou prova de ausência) estiver incompleta, documentar o impedimento antes de implementar esse comportamento; não inventar contrato, não reescrever teste apenas para passar e não afirmar que o módulo está concluído.
 - Respeitar os limites do `AGENTS.md` global: contratos não mudam por conveniência, commits podem ser locais, **`git push`/PR exige autorização específica**. Exemplo reutilizável em [IMPLEMENTATION_REQUEST.md](../IMPLEMENTATION_REQUEST.md).
 
 ## Regras concretas dos testes
@@ -114,7 +114,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 
 ## Pontos ainda abertos — não improvisar contratos
 
-Antes de implementar cenários dependentes, resolver e documentar no `INTERFACES.md` as definições pendentes de `LocalFile`, reconstrução fiel de `RemoteFile`, critérios de `ObservationProof`, política de paginação e cursores, regras de deduplicação, transições da marca de sincronização inicial e retenção de tombstones.
+Antes de implementar cenários dependentes, resolver no `INTERFACES.md` a seleção de campos a persistir de `LocalFile`/`RemoteFile`, os critérios de `ObservationProof`, a paginação **de consultas de itens**, idempotência de registros, transições da inicialização e retenção de tombstones. O checkpoint de detecção não pertence a este módulo.
 
 **Regras de segurança já são obrigatórias mesmo antes desses detalhes:** não presumir exclusão; não duplicar operações por erro de replay; não declarar uma transferência concluída sem comprovação; não apagar histórico por limpeza de inventário.
 
