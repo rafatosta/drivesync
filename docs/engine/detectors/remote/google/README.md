@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Este submódulo **especializado** implementará o contrato interno definido em [Detector Remoto](../INTERFACES.md), **obtendo a API Google por [`providers/`](../../../providers/INTERFACES.md)**. A interface técnica recebida é a [Google API](../../../providers/google/api/INTERFACES.md); não existe obrigação de usar uma API genérica compartilhada com outros serviços.
+Este submódulo **especializado** implementará o contrato interno definido em [Detector Remoto](../INTERFACES.md), **acessando o serviço Google exclusivamente pela interface de [`providers/google/`](../../../providers/google/INTERFACES.md)**. A interface técnica recebida é a [Google API](../../../providers/google/INTERFACES.md); não existe obrigação de usar uma API genérica compartilhada com outros serviços.
 
 Ele decide **como observar o Google Drive** (consulta incremental, paginação, cursor, recuperação de mudanças e intervalos). O pai `detectors/remote/` define **o que a implementação precisa oferecer** e o tipo de evento individual que deve emitir. A fachada `detectors/` agrega esses eventos em fila própria e fornece lotes ao Orquestrador.
 
@@ -16,7 +16,7 @@ Ele decide **como observar o Google Drive** (consulta incremental, paginação, 
 
 ## Independência
 
-Testar e implementar com Google API simulada, sink de eventos fake e checkpoint fake/temporário. Nenhum Detector pai real, Local real ou Storage real é exigido. Não criar versões futuras do OneDrive como pré-requisito.
+Testar e implementar com a interface `providers/google/` simulada, sink de eventos fake e checkpoint fake/temporário. Nenhum Detector pai real, Local real ou Storage real é exigido. Não criar versões futuras do OneDrive como pré-requisito.
 
 [INTERFACES](INTERFACES.md) · [TESTS](TESTS.md) · [AGENTS](AGENTS.md). **Esta é uma especificação de implementação, não código existente.**
 
@@ -37,7 +37,7 @@ A implementação especializada é descrita em [INTERFACES.md](INTERFACES.md), u
 flowchart TD
     R["RemoteDetector: contrato comum"]
     G["GoogleRemoteDetector: especialista"]
-    API["providers/google/api/: GoogleFile / GoogleChange"]
+    API["providers/google/: GoogleFile / GoogleChange"]
     A["Adaptador Google: GoogleFile para RemoteFile"]
     M["models/: FileData::Remote(RemoteFile)"]
     CP["RemoteCheckpoint: read / commit"]
