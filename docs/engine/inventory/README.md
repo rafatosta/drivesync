@@ -193,7 +193,7 @@ O [Detector Remoto](../detectors/remote/INTERFACES.md) declara `RemoteCheckpoint
 | --- | --- | --- |
 | `sync_items` e `sync_baselines` | Como está o arquivo agora? Qual foi seu último estado sincronizado? | `relatorio.pdf` está pendente de upload |
 | `sync_operations` | O que precisa ser executado, está em execução ou deve ser retomado? | Atualizar conteúdo remoto após reconexão |
-| `remote_events` (sobreposição pendente) | Quais sinais de mudança remota ainda exigem reavaliação? | Google sinalizou alteração no arquivo X |
+| Detector Storage | Quais eventos detectados ainda exigem entrega/reavaliação? | Mudança remota aguardando análise; **fora do Inventário** |
 | `activity` | O que foi feito ou tentado, quando, por quem/qual origem e com qual resultado? | Upload concluído às 15:32; tentativa anterior falhou |
 
 ### Quando registrar uma atividade
@@ -241,7 +241,7 @@ A camada de análise/orquestração determina **quando o evento merece registro*
 
 ### Exemplo de fluxo
 
-1. O detector identifica alteração de `notas.txt`. O Inventário atualiza `local_files`; o baseline **não** muda.
+1. O Detector emite `File` referente a `notas.txt`; o Analisador solicita atualização do Inventário, que atualiza `local_files`; o baseline **não** muda.
 2. O Analisador autoriza upload; `sync_operations` recebe uma ação pendente.
 3. O operador executa a ação e devolve resultado verificável.
 4. Em transação, o Inventário atualiza os metadados confirmados, avança `sync_baselines`, marca a operação como concluída e insere em `activity`: **upload, origem local, concluído, horário**.
@@ -269,11 +269,11 @@ A camada de análise/orquestração determina **quando o evento merece registro*
 | Abrir/validar inventário de uma pasta | Escopo, esquema e integridade verificados |
 | Buscar `SyncItem` por ID, ID remoto ou identidade local | Objeto unificado ou ausência |
 | Listar itens por status, presença ou hierarquia | Resultados paginados |
-| Registrar `LocalFile` / `GoogleFile` | Atualização de um lado sem mudar o baseline |
+| Registrar `File` contendo `LocalFile` ou `RemoteFile` | Atualização de um lado sem mudar o baseline |
 | Associar registros | Chaves e unicidade preservadas |
 | Confirmar baseline | Estado confirmado com transação e revisão |
 | Inserir/consultar/reconhecer operação pendente | Fila durável |
-| Atualizar cursor e registrar eventos | Escrita consistente |
+| Cursores e eventos remotos | **Pendência de propriedade** com Detector Remoto/Storage; não duplicar |
 | Consultar/registrar atividades | Tabela `activity` do mesmo inventário, com filtros e paginação |
 
 A especificação de assinaturas Rust, parâmetros, retornos e erros pertence ao futuro `INTERFACES.md`; os cenários TDD pertencerão ao futuro `TESTS.md`. **O README é a única referência do modelo de bancos e das tabelas do Inventário.**
