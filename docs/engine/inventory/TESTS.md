@@ -17,7 +17,7 @@ Não executar Google Drive real, OAuth, interface GTK, transferência física, n
 | Integração isolada | **SQLite real** em diretórios temporários individuais | Reabertura, transações, constraints, índices, exclusões e recuperação |
 | Concorrência | Dois handles/threads sobre mesmo SQLite temporário | Lock, revisão otimista e reivindicação única de operação |
 | Falhas | Erros injetados em pontos de persistência definidos pela implementação | Rollback, idempotência e ausência de falso sucesso |
-| Segurança de integração | Fake `LocalFile`/`GoogleFile`, sem rede nem pastas pessoais | Isolamento, sanitização e nenhuma modificação física |
+| Segurança de integração | Fixtures `File` de Models com `FileData::Local/Remote`, sem rede nem pastas pessoais | Isolamento, sanitização e nenhuma modificação física |
 
 **Princípio:** um `mock InventoryManager` que apenas retorne objetos pré-programados **não** verifica persistência, chaves estrangeiras ou atomicidade. Os testes principais devem atravessar a API pública e operar em SQLite verdadeiro.
 
@@ -37,8 +37,8 @@ Não executar Google Drive real, OAuth, interface GTK, transferência física, n
 | --- | --- | --- |
 | `fresh_root` | Diretório temporário vazio, sem `.drivesync/` | Primeira criação |
 | `initialized_root` | Pasta com banco inicializado sob `SyncIdentity` conhecida | Reabertura e validação |
-| `remote_only_file` | `GoogleFile` sintético, `LocalFile=None`, presença remota `Present` | Download inicial |
-| `local_only_file` | `LocalFile` sintético, `GoogleFile=None`, presença local `Present` | Upload inicial |
+| `remote_only_file` | `RemoteFile` sintético, `LocalFile=None`, presença remota `Present` | Download inicial |
+| `local_only_file` | `LocalFile` sintético, `RemoteFile=None`, presença local `Present` | Upload inicial |
 | `linked_file` | Representações local/remota associadas, sem conflitos | Consulta e comparação |
 | `linked_directory` | Diretório com identidades de pais coerentes | Hierarquia |
 | `workspace_native` | Documento Google nativo sem checksum/tamanho de conteúdo comum | Campos não aplicáveis |
@@ -50,7 +50,34 @@ Não executar Google Drive real, OAuth, interface GTK, transferência física, n
 
 **Isolamento obrigatório:** criar diretório temporário distinto por teste, conta/sync IDs fictícios e zero dados pessoais. Fechar todos os handles SQLite antes do descarte. Se os testes rodarem sob Flatpak, usar ambiente de build/teste apropriado; não depender do sistema do usuário. Os relógios, geradores de IDs e pontos de falha devem ser determinísticos por injeção interna de dependência, **sem expô-los como API de produção**.
 
-A fonte dos objetos `LocalFile` e `GoogleFile` são os contratos dos módulos que os definem. Enquanto `LocalFile` estiver aberto, uma fixture mínima tipada pode ser usada **apenas para testar o Inventário**, sem inventar atributos definitivos. Testes de campos definitivos deverão ser completados antes da implementação da persistência desses campos.
+A fonte dos objetos `LocalFile` e `RemoteFile` pertencem a Models e entram em observações encapsuladas em `File`. Enquanto `LocalFile` estiver aberto, uma fixture mínima tipada pode ser usada **apenas para testar o Inventário**, sem inventar atributos definitivos. Testes de campos definitivos deverão ser completados antes da implementação da persistência desses campos.
+
+## Matriz de integração ao novo contrato Models
+
+Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalFile` e `RemoteFile` vêm de [Models](../models/INTERFACES.md); `File` é o envelope de observação que o Analisador encaminha ao Inventário. O Inventário possui `SyncItem`, `SyncBaseline` e estados de persistência.
+
+| ID | Cenário | Resultado obrigatório |
+| --- | --- | --- |
+| INV-MDL-01 | `record_local` recebe `File.data=Some(FileData::Local(...))` | Último snapshot local do `SyncItem` atualizado sem avançar baseline |
+| INV-MDL-02 | `record_remote` recebe `File.data=Some(FileData::Remote(...))` | Último snapshot remoto genérico, com `RemoteFileRef` qualificado por conta, atualizado sem depender de `GoogleFile` |
+| INV-MDL-03 | Método local recebe `FileData::Remote` ou vice-versa | Erro de variante/origem, rollback completo |
+| INV-MDL-04 | `File.data=None`, sinal de reavaliação | Não remover último snapshot, não inventar `AbsentConfirmed` ou `SyncItem` |
+| INV-MDL-05 | `FileEventKind::Deleted` e cobertura parcial | Nenhuma exclusão ou presença `AbsentConfirmed` automática |
+| INV-MDL-06 | Ausência efetivamente comprovada com prova do escopo | Atualizar `PresenceState`, manter tombstone, não avançar baseline |
+| INV-MDL-07 | `MetadataValue::NotCollected` / `Unsupported` / `Unavailable` | Preservar valores antigos e estado de coleta, sem preencher `0/false/[]` |
+| INV-MDL-08 | `MetadataValue::Known(false)` / `Known(0)` / `Known([])` | Persistir os valores conhecidos sem confundi-los com campos omitidos |
+| INV-MDL-09 | Duas contas com mesmo ID remoto bruto | `RemoteFileRef` evita colisão; isolamento por `AccountId` |
+| INV-MDL-10 | Mesmo arquivo renomeado/movido com identidade correlacionada | `SyncItemId` estável; atualizar localização, baseline anterior preservado |
+| INV-MDL-11 | Retry de mesma ocorrência `File.id` | Não criar item ou atividade duplicados; não confundir `FileId` com `SyncItemId` |
+| INV-MDL-12 | Observação remota com `ProviderFileData` filtrado | Persistência apenas dos campos aprovados, codec versionado, nenhum token/conteúdo |
+| INV-MDL-13 | Resposta nativa de provedor sem tamanho/hash | Não fabricar metadados |
+| INV-MDL-14 | Mesmo `SyncItem` local/remoto, versões divergem do baseline | Inventário preserva estados; **Analisador** decide conflito/operação |
+| INV-MDL-15 | Observação com `FileScope::WholeSync` sem identidade | Não criar item por nome/caminho; manter necessidade de reavaliação fora da tabela de itens |
+| INV-MDL-16 | Confirmação verificada após operação | Baseline, status, operação e histórico atômicos; não relacionada a ack do Detector |
+| INV-MDL-17 | Evolução dos campos `LocalFile`/`RemoteFile` | API `InventoryManager` mantém assinaturas; revisar só mapeamento de persistência autorizado |
+| INV-MDL-18 | Eventos remotos duplicados por `EventStore`/Inventário | **BLOCKED** até decisão de propriedade única para cursor/fila, sem banco duplicado |
+
+**Bloqueios de implementação:** mapear campos selecionados de `LocalFile` e `RemoteFile` para persistência mantendo estados de coleta; definir codec de `ProviderFileData`; decidir proprietário único de cursor/eventos remotos. Não registrar PASS para os testes acima sem executar SQLite real com fixtures de Models.
 
 ## 3. Cobertura obrigatória: todos os métodos
 
@@ -363,9 +390,9 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 
 - Teste de compilação acessa **todos os tipos declarados nas seções 2–10 de `INTERFACES.md`**, incluindo enums, IDs, estruturas `*Request`, `*Result`, filtros e tipos parametrizados.
 - Teste de compilação usa os **20 métodos com seus objetos nomeados**, sem converter para argumentos posicionais.
-- Testar `FieldUpdate<T>` nos três casos, identidade `ItemSelector` em suas quatro variantes, `ObservationTarget` em suas quatro variantes, os estados de `SyncStatus`, `OperationState`, `ActivityType` e `InventoryError`.
+- Testar `FieldUpdate<T>` nos três casos, identidade `ItemSelector` em suas quatro variantes (`RemoteRef` com conta), `ObservationTarget` em suas quatro variantes, os estados de `SyncStatus`, `OperationState`, `ActivityType` e `InventoryError`.
 - Todos os campos opcionais devem ter teste de **ausência legítima**, **presença válida** e **não alteração involuntária**; campos obrigatórios devem ter cobertura para valor válido e, quando representável, valor inválido.
-- `GoogleFile` com campos de mídia inexistentes (documento nativo), `LocalFile` sem inode confiável e nomes locais não UTF-8 **não** devem ser convertidos para valores artificiais.
+- `RemoteFile` com campos de mídia inexistentes (documento nativo), `LocalFile` sem inode confiável e nomes locais não UTF-8 **não** devem ser convertidos para valores artificiais.
 - Implementar construtores/`Default`/builders quando necessários para evolução de requests sem quebrar chamadores por literais de struct. A estabilidade da assinatura não prova, por si só, compatibilidade do construtor.
 
 ## 6. Integridade relacional e segurança do SQLite
@@ -377,7 +404,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 | INV-DB-03 — foreign keys | FKs ativadas em **toda conexão**; não persistir referência inexistente |
 | INV-DB-04 — exclusividade remota | Mesma identidade Google não pertence a dois `SyncItem` na mesma sincronização |
 | INV-DB-05 — exclusividade local | Mesma `local_file_id` não pertence a dois itens; identidade não depende só de inode/caminho |
-| INV-DB-06 — Google parents | Relação pai múltipla armazenada como linhas relacionais, não array JSON nem BLOB de struct |
+| INV-DB-06 — pais remotos | Relação pai múltipla armazenada como linhas relacionais, não array JSON nem BLOB de struct |
 | INV-DB-07 — baseline | Um baseline por `SyncItem`; não existe antes de confirmação |
 | INV-DB-08 — atividade | `activity.item_id NOT NULL` e FK válida; não apagar histórico por cascata após excluir vínculo |
 | INV-DB-09 — operações | Fila com ID e item corretos; retorno de reinício não duplica operação já concluída |
@@ -464,7 +491,7 @@ A especificação de testes é deliberadamente estrita sobre comportamento segur
 | Tema | Por que falta definição | Teste que depende dela |
 | --- | --- | --- |
 | `LocalFile` | Tipos/campos e como reconstruí-los a partir do banco ainda em aberto | Round-trip completo de metadados locais |
-| `GoogleFile` | Quais campos não retornados podem ser preservados/reconstruídos | Round-trip de projeções completas e parciais |
+| `RemoteFile` | Quais campos não retornados podem ser preservados/reconstruídos | Round-trip de projeções completas e parciais |
 | `ObservationProof.complete_scope` | Comprovação de ausência requer evidência sobre geração/escopo | Testes positivos de exclusão confirmada |
 | Geração da flag inicial | `MarkInitialDownloadCompleteRequest` possui `expected_complete` mas não valor-alvo explícito | Teste de transição idempotente e reversão |
 | Paginação | Limite máximo, cursor opaco e ordenação sob mudanças concorrentes não fixados | Teste de fronteira numérica e snapshots |
@@ -496,7 +523,7 @@ A porcentagem acima é **meta futura**, não resultado de execução. Não decla
 - [ ] Os 20 métodos compilam com os tipos documentados.
 - [ ] SQLite é criado somente no inventário de uma pasta, sem banco de histórico separado.
 - [ ] Testes funcionais usam banco real isolado; falhas não deixam transações parciais.
-- [ ] `LocalFile` e `GoogleFile` suportam round-trip dos campos cujo mapeamento está definido.
+- [ ] `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
 - [ ] A ausência de dados opcionais não vira exclusão automática.
 - [ ] Baseline só avança mediante confirmação válida; dados observados não o substituem.
 - [ ] Operações, cursor/eventos e histórico persistem após reinício.
