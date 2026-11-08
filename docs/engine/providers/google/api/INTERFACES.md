@@ -1806,6 +1806,8 @@ pub struct GoogleRevisionWrite {
 
 ``
 
+```
+
 ### 9.2 Respostas de listas, solicitações, opções e contratos OAuth
 
 As estruturas `XxxOptions` são **objetos de entrada**. O objeto `Options` é argumento obrigatório da assinatura, mas seus campos `Option<T>` são opcionais. Campos necessários, como o cursor de `ChangeListOptions`, usam tipos não opcionais.
