@@ -12,7 +12,7 @@ Implementar **somente o coordenador público `detectors/`**, sem implementar aut
 4. **Não resolver conflitos:** juntar eventos no lote não autoriza deduplicação destrutiva, sincronização, comparação de baseline ou decisão de prevalência.
 5. **Confirmação explícita:** leitura reserva; somente `acknowledge` com decisão do Orquestrador confirma ou descarta. `stop` não limpa fila; `release_events` permite reentrega.
 6. **Durabilidade:** sink interno só confirma ao produtor após `Storage.enqueue` bem-sucedido. Falha implica erro/backpressure e recuperação.
-7. **Estratégia livre dos filhos:** não impor polling ao Local nem watcher ao Remoto; cada um organiza suas estruturas e testes, podendo funcionar sem irmãos concretos.
+7. **Estratégia livre dos filhos:** não impor polling ao Local nem watcher ao Remoto; o especialista Google é independente e vive em `detectors/remote/google/`; cada um organiza suas estruturas e testes, podendo funcionar sem irmãos concretos.
 8. **Sem acesso a bancos:** Detector não usa SQL, conhece caminho de DB ou altera `inventory.sqlite3`.
 
 ## Contract-First + TDD
