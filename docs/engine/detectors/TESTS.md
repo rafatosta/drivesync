@@ -132,7 +132,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 | --- | --- | --- |
 | DET-B-01 | Evento Local isolado | Uma emissão gera um registro e lote válido |
 | DET-B-02 | Evento Remoto isolado | Mesmo contrato de lote, sem campo obrigatório de origem interna |
-| DET-B-03 | Local e Remoto emitem simultaneamente | Ambos entram na fila e podem sair **no mesmo EventBatch** |
+| DET-B-03 | Local e Remoto emitem simultaneamente | Ambos entram na fila e podem sair **no mesmo FileBatch** |
 | DET-B-04 | Mesmo item muda em ambas as origens | **Dois eventos preservados**; nenhuma prevalência ou conflito decidido pelo Detector |
 | DET-B-05 | Eventos intercalados | Ordem da fila é de commit/enfileiramento, **não ordem causal das alterações** |
 | DET-B-06 | Lote de 1 ou N eventos | Mesma API de consumo e confirmação; max_events respeitado |
