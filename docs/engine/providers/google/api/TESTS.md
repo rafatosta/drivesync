@@ -9,7 +9,7 @@ Este documento especifica **os testes a escrever antes de implementar** o módul
 - **Fonte de verdade:** [INTERFACES.md](INTERFACES.md), [README.md](README.md) e referência oficial [Drive API v3](https://developers.google.com/workspace/drive/api/reference/rest/v3) / [Discovery](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest), [OAuth](https://developers.google.com/identity/protocols/oauth2/native-app) e [OIDC](https://developers.google.com/identity/openid-connect/reference).
 - **Cobertura obrigatória:** todos os **59 métodos REST**, os **19 métodos complementares de OAuth/OIDC/transferências/conveniências** e todos os tipos públicos declarados em `INTERFACES.md`.
 - **Não executar chamadas reais**, cadastrar conta, acessar arquivos pessoais, modificar dados remotos ou exigir credenciais. Não escrever testes E2E nesta etapa.
-- **Não produzir código funcional ou editar outros módulos** apenas para habilitar testes; o objetivo é a implementação independente da Google API.
+- **Não alterar contratos externos ao escopo desta API** apenas para habilitar testes; verificar isoladamente a implementação de cada operação Google.
 - **Cuidado com a validade:** uma simulação só confirma que a implementação respeita o **contrato configurado**, não prova que o Google real responderá assim. Fixtures, URLs e tipos devem ser derivados da especificação oficial, **não** do código que está sendo testado.
 
 ### Natureza dos testes
