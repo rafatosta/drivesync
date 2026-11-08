@@ -6,12 +6,12 @@ A implementação `GoogleRemoteDetector` deve satisfazer **exatamente a interfac
 
 ## 2. Dependências injetadas
 
-- Cliente de operações Google Drive conforme [Google API](../../../providers/google/api/INTERFACES.md).
+- Cliente de operações Google Drive **obtido por [`providers/`](../../../providers/INTERFACES.md)**, cuja interface específica está em [Google API](../../../providers/google/api/INTERFACES.md).
 - Contexto de conta e sessão **tipados**, sem manipular o armazenamento de credenciais.
 - `RemoteEventSink` e `RemoteCheckpoint` definidos no módulo pai.
 - Relógio, scheduler e estratégia de retry injetáveis quando necessários ao teste.
 
-A tradução entre respostas `GoogleFile` e o evento remoto é **responsabilidade deste especialista**, não da fachada genérica. A representação de `RemoteFile` está em [Models](../../../models/INTERFACES.md); o especialista preserva os metadados normalizados e específicos sem novas APIs públicas.
+A tradução entre respostas `GoogleFile` e o evento remoto é **responsabilidade deste especialista**, não de Providers. O especialista pode usar os tipos e as chamadas específicas Google; a interface padronizada é o contrato interno do Detector Remoto. A representação de `RemoteFile` está em [Models](../../../models/INTERFACES.md); o especialista preserva os metadados normalizados e específicos sem novas APIs públicas.
 
 ## 3. Mapeamento de operações
 
