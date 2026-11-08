@@ -1,79 +1,82 @@
-# Detector Local — README
+# Detector Local — observação baseada em Models
 
 ## Objetivo e autonomia
 
-O **Detector Local** observa o filesystem de uma pasta sincronizada e entrega observações locais ou necessidades de reavaliação ao módulo pai `Detector`. É **independente** do Detector Remoto: possui contratos internos, testes e implementação próprios, que podem ser desenvolvidos separadamente. **Somente o módulo pai `Detector` oferece API pública ao restante da engine.**
+O **Detector Local** é o produtor de observações do filesystem. Ele constrói **`LocalFile` do domínio compartilhado** quando consegue observar com segurança os atributos de um arquivo/diretório, e emite **um aviso individual por chamada** ao sink interno fornecido pelo módulo pai [Detector](../README.md).
 
-O Detector Local **emite um evento individual por ocorrência para o sink interno injetado**. Não grava em Storage, não conhece o banco do Detector nem publica diretamente ao Orquestrador. O sink somente confirma recepção quando o Detector pai tiver persistido o evento. O Local não acessa Google Drive, não decide conflitos, não realiza upload/download nem atualiza baseline.
+Sua implementação, seu watcher, suas varreduras e seus testes são **independentes** do Detector Remoto, de Storage, do Inventário e dos operadores. O Detector pai é o único módulo público de detecção para o Orquestrador. O Local depende do **contrato de dados** de [Models](../../models/INTERFACES.md), não de um serviço `ModelsManager` (inexistente).
 
-## Responsabilidades e exclusões
+## Responsabilidade de cada componente
 
-| Responsabilidade | Limite |
-| --- | --- |
-| Inspecionar uma raiz local por sincronização | Não administrar contas nem conexões globais |
-| Executar varredura inicial e após reinício | Não depender exclusivamente de watcher |
-| Acompanhar mudanças por filesystem watcher | Evento é pista, não prova de remoção |
-| Observar criação, modificação, renomeação e movimentação | Não escolher versões vencedoras |
-| Entregar observações tipadas individuais ao Detector pai | Não acessar SQLite diretamente |
-| Notificar o coordenador `Detector` sobre reavaliações | Não inserir operações na fila nem registrar transferência concluída |
+| Componente | Faz | Não faz |
+| --- | --- | --- |
+| `models/` | Define `LocalFile`, `LocalFileKind`, `LocalRelativePath` e identidades compartilhadas | Não lê disco, não observa mudanças |
+| `detectors/local/` | Lê filesystem, converte observações para `LocalFile`, emite sinais tipados e avalia cobertura | Não modifica baseline, não conhece SQL nem implementações dos demais filhos |
+| `detectors/` | Recebe cada sinal local/remoto, adapta para evento público e chama Storage | Não executa observação física local |
+| `detectors/storage/` | Persiste fila de notificações, leases e confirmações | Não observa filesystem |
+| `inventory/` | Persiste estado e associa observações a `SyncItem` segundo seu contrato | Não é dependência de gravação do Detector Local |
+| `analyzer/` | Analisa divergências e conflitos | Não é chamado diretamente pelo Local |
+
+**`SyncItem` não faz parte desta revisão.** Sua eventual transferência para Models ocorrerá somente ao revisar o planejamento do Inventário. O Local **não cria nem exige `SyncItem`**, nem inventa `SyncItemId`.
 
 ## Fluxo
 
 ```mermaid
 flowchart LR
-  FS[Filesystem] --> DL[Detector Local]
-  DL -->|um sinal interno por evento| DET[Detector público]
-  DET -->|enqueue pela API| STO[Storage]
-  DET -->|lotes sob demanda| ORQ[Orquestrador]
-  ORQ --> AN[Analisador]
-  AN -->|consulta de estado| INV[Inventário]
+    FS[Filesystem] --> LOC[Detector Local]
+    MOD[Models: LocalFile] -.-> LOC
+    LOC -->|"LocalNotice individual + LocalFile opcional"| DET[Detector pai]
+    DET -->|"enqueue"| STO[Storage do Detector]
+    DET -->|"EventBatch"| ORQ[Orquestrador]
+    ORQ --> AN[Analisador]
+    AN --> INV[Inventário]
 ```
 
-1. Validar a identidade da sincronização e a raiz da pasta.
-2. Registrar watcher e executar varredura reconciliando eventos ocorridos durante a leitura, para evitar lacunas entre monitoramento e inventário inicial.
-3. Após o aplicativo permanecer fechado, executar **nova varredura completa** para recuperar alterações feitas sem watcher ativo.
-4. Agregar eventos de mudanças como solicitações de reavaliação; não confiar em caminho ou inode isoladamente para concluir identidade.
-5. Enviar eventos individuais ao sink interno do Detector; aguardar confirmação durável e, se não ocorrer, manter necessidade de reobservação. Persistência de notificações é responsabilidade do Storage consumido pelo pai.
-6. Notificar exclusivamente o **coordenador `Detector`** quando houver mudança ou necessidade de reavaliar um escopo. Caso não exista `SyncItemId` conhecido, notificar o escopo, sem fabricar vínculo.
+1. Validar `sync_id` e raiz local fornecida pela composição do Detector.
+2. Iniciar watcher e varredura, preservando evidência de observação durante a instalação do watcher.
+3. Converter **somente atributos realmente observados** para `LocalFile` do módulo Models.
+4. Para cada ocorrência, emitir um `LocalNotice` contendo o `LocalFile` **quando disponível** e um escopo relativo para reavaliação quando não houver arquivo conhecido.
+5. O sink do Detector pai confirma sucesso apenas após persistência durável em Storage; se falhar, o Local não declara observação entregue e mantém necessidade de replay/revarredura.
+6. Após reinício, reobservar o escopo local: o watcher não reconstrói o histórico de alterações feitas enquanto a aplicação esteve parada.
 
-## Cobertura e ausência
+**O arquivo não é obrigatório em todo aviso.** Remoção, overflow, raiz indisponível e leitura incompleta podem produzir um aviso de reavaliação **sem `LocalFile`**. Isso não equivale a um `LocalFile` ausente comprovadamente.
 
-- **Complete:** escopo solicitado integralmente inspecionado sem erro e com evidência suficiente. Somente então a ausência de um item *dentro desse escopo* pode ser considerada, observadas as precondições do Inventário.
-- **Partial:** parte do escopo foi inspecionada; os caminhos não observados mantêm situação desconhecida/anterior.
-- **Unavailable:** raiz ou escopo não acessível. **Não** equivale a exclusão.
+## Cobertura e semântica
 
-Um único evento de remoção, erro de permissão, pasta desmontada ou subpasta ilegível **não constitui prova de exclusão**. `AbsentConfirmed` requer comprovação explícita de cobertura e identidade.
+- **Complete:** escopo solicitado foi integralmente inspecionado com evidência suficiente; não significa que o Local confirmou exclusão de um `SyncItem`.
+- **Partial:** apenas parte foi observada; não limpar atributos nem inferir remoção no restante.
+- **Unavailable:** raiz/escopo inacessível; nunca equivale a exclusão.
+- **Unknown:** `LocalFileKind::Unknown`, campos `None` ou identidade local opcional não devem ser substituídos por palpites.
 
-## Dados locais e segurança
+O Local observa eventos de criação, mudança, renomeação e movimento, mas essas pistas podem ser ambíguas. Não converter automaticamente um evento de remoção em exclusão confirmada. Caminho e inode isolados não comprovam identidade estável.
 
-- `.drivesync/` é diretório interno: não enviar como conteúdo nem tratá-lo como item sincronizável.
-- Nomes Unix não UTF-8 devem preservar seus bytes; não converter com perda.
-- Symlinks não devem ser seguidos para fora da raiz; a política de sincronização de links precisa de definição própria.
-- Arquivos em escrita podem gerar eventos intermediários; observar não é autorizar envio imediato de conteúdo incompleto.
-- Eventos de mudanças produzidas pelo próprio DriveSync também podem ser vistos: o detector não deve disparar operações para compensá-los.
-- Não presumir que watcher nunca perde eventos. Overflow/interrupção requer nova varredura.
-- Dois diretórios sincronizados devem ter estados e notificações completamente isolados.
+## Segurança do filesystem
 
-## Dependências e fronteiras
+- `.drivesync/` e seus descendentes não são conteúdo de usuário sincronizável.
+- Nomes Unix não UTF-8 devem ser preservados sem conversão com perda, conforme `LocalRelativePath` de Models.
+- O `PathBuf` da **raiz operacional** pertence à configuração interna do detector; o `LocalFile.relative_path` é **relativo à raiz** e não carrega caminho absoluto externo.
+- Symlinks não são seguidos para fora da raiz; tipo `Symlink` não implica permissão de sincronização.
+- Arquivo ainda em escrita não deve ser interpretado como conteúdo final pronto para upload.
+- Overflow, erros de permissão, desmontagem e mudanças concorrentes exigem cobertura parcial/indisponível e nova observação.
+- Não varrer pastas fora da raiz, nem ler conteúdo para calcular hash indiscriminadamente.
+- Dois escopos de sincronização não misturam identidades nem avisos.
 
-- [Inventário](../../inventory/INTERFACES.md): contrato de observações `record_local`, identidade e presença; armazenamento exclusivo do Inventário.
-- **Metadados locais:** `LocalFile` pertence ao componente de metadados do filesystem, cujo contrato final ainda depende de definição.
-- **Detector pai:** recebe sinais internos e publica eventos tipados ao Orquestrador; o Local não conhece o Orquestrador e sua API não é reexportada pela engine.
-- **Detector Remoto:** implementação interna independente, a documentar em `../remote/`; não é dependência de construção, teste ou execução do Local.
+## Dependências permitidas
+
+**Permitida:** [Models](../../models/INTERFACES.md), filesystem e biblioteca watcher internos, clock/scheduler e sink de aviso tipado injetados. Tipos de identidade devem ser **reutilizados** de seus proprietários, sem novas definições incompatíveis.
+
+**Proibida:** `GoogleFile`, Google API, Detector Remoto concreto, Storage concreto, Inventário/SQLite, Analisador, Orquestrador e Upload/Download. A porta de aviso pertence ao próprio contrato interno Local, e pode ser implementada por fake em testes.
 
 ## Invariantes
 
-1. Nenhuma observação modifica baseline, fila de operações ou histórico de transferências; a persistência de notificações é do Storage.
-2. O detector não consulta Google API, não executa SQL e não realiza sincronização física.
-3. Falhas de leitura jamais viram ausência confirmada automaticamente.
-4. Reinício detecta mudanças feitas com a aplicação fechada.
-5. `.drivesync/` e caminhos externos via symlink não são varridos como conteúdo de usuário.
-6. Identidades não devem se basear exclusivamente em nome, caminho ou inode.
-7. Notificação perdida ou repetida não pode causar perda do fato persistido ou operação duplicada.
-8. Erros e mensagens não expõem conteúdo ou caminhos privados desnecessários.
+1. Toda observação de metadados disponível usa `models::LocalFile`, e não uma struct paralela própria de arquivo.
+2. Cada `LocalNotificationSink.notify` recebe **um** `LocalNotice`; não há dois canais públicos para alterações locais.
+3. `LocalNotice.local_file=None` significa que o aviso não carrega metadados seguros; **não** significa exclusão.
+4. Sem acesso ou modificação de baseline, fila de operações, histórico, banco ou serviço remoto.
+5. A falha de entrega não deve ser tratada como sucesso; eventos podem ser reemitidos.
+6. `stop` encerra observação; `start` recupera mudanças por nova inspeção conforme cobertura.
+7. Contratos próprios e testes reais do Local não exigem implementações reais dos irmãos.
 
-## Documentos
+[INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md) · [Models](../../models/README.md).
 
-[INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md) · [MODULE_STANDARD.md](../../MODULE_STANDARD.md).
-
-**Estado:** especificação de projeto, sem implementação ou testes executados.
+**Estado:** arquitetura-alvo documentada. Não representa código implementado nem testes executados.
