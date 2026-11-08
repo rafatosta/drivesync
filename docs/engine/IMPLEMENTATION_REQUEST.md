@@ -10,12 +10,12 @@ Este arquivo apresenta **exemplos de solicitações para agentes de programaçã
 
 Copiar e utilizar como instrução para o agente:
 
-> Implemente completamente o módulo `google_api/` do DriveSync, seguindo os documentos:
+> Implemente completamente o módulo `providers/google/api/` do DriveSync, seguindo os documentos:
 >
-> - `docs/engine/google_api/README.md`
-> - `docs/engine/google_api/INTERFACES.md`
-> - `docs/engine/google_api/TESTS.md`
-> - `docs/engine/google_api/AGENTS.md`
+> - `docs/engine/providers/google/api/README.md`
+> - `docs/engine/providers/google/api/INTERFACES.md`
+> - `docs/engine/providers/google/api/TESTS.md`
+> - `docs/engine/providers/google/api/AGENTS.md`
 > - `AGENTS.md` da raiz.
 >
 > Execute o processo **Contract-First + TDD**, dividindo a implementação em unidades funcionais pequenas e coesas. Inclua **todos os 59 métodos REST, os 9 de OAuth/OIDC e os 10 de transferências/conveniência**, com tipos, erros e casos de teste previstos.
