@@ -9,7 +9,7 @@ O agrupamento `providers/google/` reúne a documentação do **cliente e protoco
 | API Google Drive, OAuth/OIDC, tipos e respostas Google | [`providers/google/api/`](api/README.md) | Comunicação de baixo nível e conversões de protocolo |
 | Consulta de alterações por Google Changes | [`detectors/remote/google/`](../../detectors/remote/google/README.md) | Estratégia de detecção e checkpoint seguro |
 | Gerenciamento de contas | `accounts/` | Associação de conta, serviço e sessão |
-| Upload e download na engine | `upload/google/`, `download/google/` quando documentados | Estratégia funcional e execução sob decisão da engine |
+| Upload e download na engine | `operations/upload/google/`, `operations/download/google/` quando documentados | Estratégia funcional e execução sob decisão da engine |
 
 ## Fronteira
 
