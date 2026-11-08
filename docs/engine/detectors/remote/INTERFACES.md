@@ -2,7 +2,7 @@
 
 ## 1. Visibilidade e tipos
 
-Contrato **interno** consumido pelo `Detector`, não reexportado ao Orquestrador. O RemoteDetector é o contrato funcional que especialistas por provedor implementam; eles podem ter estruturas/algoritmos diferentes entre si e em relação ao Local. Não depende de uma implementação real do pai nem de `storage/`; recebe portas tipadas injetadas.
+Contrato interno de observação remota. `RemoteDetector` define o ciclo de vida e a emissão individual de ocorrências, permitindo especialistas com estratégias de leitura específicas. As dependências técnicas são recebidas por portas tipadas.
 
 ```rust
 pub(super) type RemoteResult<T> = Result<T, RemoteFailure>;
@@ -54,7 +54,7 @@ pub(super) struct RemoteMetadataResult {
 
 Esse contrato descreve a porta de aquisição/adaptação **sem exigir que a fachada genérica importe GoogleFile**. A implementação especializada pode consultar APIs e delegar metadados mais caros a auxiliares; `models/` continua sem I/O. Caso uma resposta de mudanças não traga ID suficiente, emitir uma reavaliação de escopo, **sem criar RemoteFile fictício**. Um `removed` também pode significar perda de acesso, não exclusão.
 
-**Critério de isolamento:** alterar os campos `RemoteFile` pode alterar adaptador, testes e consumidores interessados, **não** polling, cursor, notificações e fila do Detector Remoto. A interface do Detector pai transporta o mesmo `File` ao Orquestrador por `FileBatch`, sem transformar esta proposta em código já implementado.
+**Critério de isolamento:** alterar os campos `RemoteFile` pode alterar adaptador, testes e consumidores interessados, **não** polling, cursor, notificações e fila do Detector Remoto. A observação preserva o objeto `File` integral. Estas assinaturas são conceituais, não código Rust compilado.
 
 ## 2. Requests/results
 
@@ -95,7 +95,7 @@ pub(super) struct RemoteEventSinkPort { /* RemoteEventSink */ }
 pub(super) struct RemoteCheckpointPort { /* RemoteCheckpoint */ }
 ```
 
-As declarações de portas acima são **esboços tipados**, não API compilada; ao implementar, escolher ownership/async apropriados sem expor concretudes ao pai. o especialista deve utilizar a sessão do provedor conforme o contrato de `accounts/` e sua API.
+As declarações de portas acima são **esboços tipados**, não API compilada; ao implementar, escolher ownership/async apropriados sem expor concretudes ao pai. O especialista utiliza os dados necessários às chamadas pela interface do provedor.
 
 ## 3. Métodos internos
 
@@ -167,10 +167,10 @@ impl RemoteDetector {
 
 ## 7. Propriedade exclusiva do checkpoint remoto
 
-**Decisão aprovada:** o Detector Remoto é o proprietário lógico do checkpoint de observação (`RemoteCheckpoint.read/commit`). A porta `RemoteCheckpointPort` já declarada continua inalterada; o backend concreto e sua localização física ainda precisam de validação. O Inventário **não** mantém `remote_cursor`, não avança o checkpoint, não lê o cursor de detecção e não expõe métodos equivalentes.
+**Decisão aprovada:** o Detector Remoto é o proprietário lógico do checkpoint de observação (`RemoteCheckpoint.read/commit`). A porta `RemoteCheckpointPort` já declarada continua inalterada; o backend concreto e sua localização física ainda precisam de validação. O checkpoint pertence à observação remota e mantém o progresso de leitura confirmado.
 
 O especialista somente confirma a posição da página **depois de todos os `File` daquela página terem recebido aceite de persistência durável** pelo sink do Detector, que grava por `EventStore.enqueue`. Em falha parcial ou dúvida sobre persistência, não confirmar checkpoint: recuperar/reler página; replay precisa ser idempotente e preservar a integridade das ocorrências, com o protocolo de deduplicação a definir no Detector. O avanço do cursor significa *observação entregue duravelmente*, **não** análise concluída, baseline confirmado ou sincronização finalizada.
 
-**Fronteira de falhas:** sem transação atômica compartilhada entre storage de eventos e backend de checkpoint, a ordenação `enqueue durável → commit do checkpoint` impede avançar antes de persistir, mas admite replay da mesma página após falha de checkpoint. Não prometer entrega exatamente uma vez nem exclusão de duplicatas sem protocolo testado. Não criar acesso direto do Detector ao SQLite do Inventário.
+**Fronteira de falhas:** sem transação atômica compartilhada entre storage de eventos e backend de checkpoint, a ordenação `enqueue durável → commit do checkpoint` impede avançar antes de persistir, mas admite replay da mesma página após falha de checkpoint. Não prometer entrega exatamente uma vez nem exclusão de duplicatas sem protocolo testado. A implementação preserva o encapsulamento do checkpoint e das operações de persistência.
 
-A confirmação de `FileBatch` pelo Orquestrador acontece pela fachada do Detector, separadamente do checkpoint de leitura remota. O `InventoryManager` mantém somente estados de `SyncItem`, baseline, fila de operações e atividade, após o Analisador interpretar `File`.
+A confirmação do checkpoint de leitura remota é independente da confirmação de entrega do lote de ocorrências.
