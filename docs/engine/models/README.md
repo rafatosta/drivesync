@@ -51,11 +51,29 @@ Cada metadado consultável distingue `Known(valor)`, `NotCollected`, `Unsupporte
 
 `statx` não devolve sozinho ACLs, xattrs e todos os dados específicos do filesystem. Consultas adicionais são responsabilidade do Detector Local. **Hash de conteúdo e MIME inferido são dados derivados, não metadados intrínsecos do filesystem; o campo antigo `LocalFile.hash` foi removido.**
 
-### RemoteFile
+### RemoteFile — metadados reais e associação ao provedor
 
-`reference`, `provider`, `name`, `kind`, `mime_type?`, `size_bytes?`, `modified_at?`, `version?`, `hash?`, `parent_ids`, `provider_data?`.
+`RemoteFile` representa os **metadados remotos normalizados** e preserva **a associação ao recurso original do provedor**. O catálogo, as fontes e o exemplo `GoogleFile → RemoteFile` estão em [INTERFACES.md, seção 3](INTERFACES.md#3-remotefile--metadados-remotos-e-associação-ao-provedor).
 
-A referência combina conta + ID remoto. `parent_ids` distingue `Unknown` de `Known([])`. Metadados especializados permanecem opacos; a Google API conserva seus tipos `GoogleFile` em [providers/google/api/](../providers/google/api/README.md).
+| Grupo/atributo | Finalidade |
+| --- | --- |
+| `reference` | Identidade remota qualificada por conta (`AccountId + RemoteFileId`) |
+| `provider` | Serviço de origem (Google etc.) |
+| `identity` | Nome, descrição e nome original |
+| `classification` | Tipo, MIME e extensões |
+| `location` | IDs de pastas pais e container/drive |
+| `times` | Criação, modificação, lixeira e visualização |
+| `content` | Tamanho, quota, versões, revisões e hashes |
+| `state` | Indicadores de lixeira, compartilhamento e propriedade |
+| `access` | Capacidades genéricas quando efetivamente reportadas |
+| `presentation` | Links web e imagens de apresentação |
+| `provider_data` | Snapshot especializado, com provedor, formato, versão e payload opaco |
+
+O **adaptador do provedor** transforma `GoogleFile` (ou outro tipo nativo) em `RemoteFile`, preenche dados comuns e conserva metadados especializados em `ProviderFileData`. A referência de conta e ID mantém o vínculo mesmo após renomear/mover. `models/` não importa `GoogleFile`, não lê API nem guarda credenciais.
+
+A inclusão/remoção de campos do modelo deve exigir mudanças **somente no adaptador de metadados e nos consumidores interessados**, nunca na lógica de detecção remota, cursor ou fila.
+
+**Antes da implementação**, revisar campos de todos os provedores: levantar tudo, depois classificar **manter / sob demanda / descartar** segundo utilidade, custo, dados sensíveis e suporte. Resposta parcial não equivale a atributo vazio ou exclusão.
 
 ### FileData
 
@@ -97,7 +115,7 @@ flowchart TD
     Data["data: Option<FileData>"]
     Local["Local(LocalFile)"]
     Remote["Remote(RemoteFile)"]
-    Provider["provider_data: Option<ProviderFileData>"]
+    Provider["provider_data: MetadataValue<ProviderFileData>"]
 
     Batch -->|"files: Vec<File>"| File
     File --> Event
@@ -133,7 +151,13 @@ FileBatch                           [detectors/]
         └── data: Option<FileData>
             ├── Local(LocalFile)      [metadados reais locais]
             └── Remote(RemoteFile)    [metadados remotos]
-                └── provider_data    [dados específicos opcionais]
+                ├── reference        [conta + ID remoto]
+                ├── provider         [provedor de origem]
+                ├── identity / classification / location / times
+                ├── content / state / access / presentation
+                └── provider_data    [metadados específicos opcionais]
+                    ├── provider / format / format_version
+                    └── payload filtrado do objeto original
 ```
 
 **O Orquestrador recebe o lote e encaminha os objetos sem discriminar `Local`/`Remote`.** O Analisador identifica a variante e verifica o evento. Um aviso de remoção pode não conter `FileData`; isso não comprova exclusão. `previous` e `current` são *localizações*, não duas cópias completas do arquivo.
