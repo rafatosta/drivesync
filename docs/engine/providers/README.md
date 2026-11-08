@@ -64,6 +64,8 @@ flowchart LR
 
 A seleção é feita por `ProviderId`, a conta por `AccountId`; duas contas Google não compartilham sessões por acidente. A API pode ser reutilizada por especialistas de capacidades distintas, sob o contexto da conta correto.
 
+O diretório [Google Provider](google/README.md) possui os quatro documentos padrão para **composição e exposição** da API específica, e [Google API](google/api/INTERFACES.md) permanece a fonte de verdade técnica de seus métodos e tipos.
+
 ## Organização documental
 
 ```text
