@@ -1,45 +1,39 @@
-# Agentes — Models: implementação futura fiel ao contrato
+# Agentes — Models (contratos de dados propostos)
 
-## Estado
+## Situação e fonte de verdade
 
-**Apenas documentação nesta etapa. Não implementar código Rust.** A referência de atributos, tipos, presença e invariantes é [INTERFACES.md](INTERFACES.md); [README.md](README.md) apresenta responsabilidades e [TESTS.md](TESTS.md) define os testes correspondentes.
+**Documentação conceitual; NÃO implementar código Rust nesta etapa.**
 
-Os contratos foram escritos para revisão conceitual. Uma futura implementação deve reproduzir a versão **explicitamente aprovada**, não completar requisitos faltantes nem recuperar atributos de documentos anteriores.
+As definições de atributos, tipos, variantes, ausência e invariantes estão em [INTERFACES.md](INTERFACES.md). O [README.md](README.md) apresenta responsabilidades e uma tabela resumida; [TESTS.md](TESTS.md) traduz essas regras em casos verificáveis. A implementação futura deverá ser **reflexo literal da especificação após aprovação do responsável**, sem acrescentar ou alterar campos por preferência do agente.
 
-## Tipos e propriedade
+**Atributos documentados agora são PROPOSTOS, não aprovados para implementação automaticamente.**
 
-- `models/` define: `LocalFile`, `RemoteFile`, `FileData`, `File` e tipos auxiliares pertencentes a esse domínio.
-- `FileData` contém **exatamente uma** variante `Local(LocalFile)` ou `Remote(RemoteFile)`.
-- `File` contém contexto da ocorrência e `Option<FileData>`, com invariantes explícitos de escopo/evento/cobertura.
-- `FileId` é **identidade de ocorrência**; IDs de recurso permanecem nos modelos específicos.
-- `FileBatch` pertence **exclusivamente a `detectors/`** e não pode ser redefinido em Models.
-- `SyncItem` não entra agora. Só será avaliado durante a revisão futura do planejamento do Inventário.
-- `GoogleFile` continua em `providers/google/api/`. Models não importa nenhum tipo de serviço concreto.
+## Proprietários
 
-## Restrições
+- `models/`: `LocalFile`, `RemoteFile`, `FileData`, `File` e auxiliares explicitamente definidos.
+- `detectors/`: `FileBatch`, identificação de lote, lease, fila e confirmação. Models apenas explica a relação, não redefine o lote.
+- `providers/google/api/`: `GoogleFile` e protocolo Google; não importar `GoogleFile` em Models.
+- `inventory/`: propriedade atual de `SyncItem` até revisão específica. **Não introduzir nem migrar `SyncItem` nesta fase.**
 
-1. Não criar trait operacional como `ModelManager`, repositório de dados ou métodos com I/O.
-2. Não alterar nomes, tipos, obrigatoriedade ou variantes descritos em `INTERFACES.md` sem revisão explícita.
-3. Reutilizar os tipos de identidade existentes ou planejar migração de proprietário, **nunca criar duplicatas incompatíveis**.
-4. Não preencher `None` com zero, string vazia, tempo atual ou hash presumido.
-5. `FieldValue::Unknown` e `Known([])` são distintos; não converter desconhecido em vazio.
-6. `LocalRelativePath` preserva bytes Unix; rejeitar caminho absoluto, NUL e segmentos de travessia.
-7. `ProviderFileData` guarda somente metadados e nunca credenciais, respostas não sanitizadas ou conteúdo de arquivos.
-8. Não interpretar `File.data=None` como exclusão.
-9. Não mudar implicitamente Detector Local, Detector pai, Storage, Inventário ou Analisador ao desenvolver Models.
-10. Não inventar `SyncItem`, estado de baseline, fila ou decisões de conflito em `File`.
+## Restrições literais
 
-## Pontos que exigem resolução antes da implementação
+1. `FileData` tem somente `Local(LocalFile)` e `Remote(RemoteFile)`. Não inventar `Both`, `Google`, `Unknown` ou lógica operacional.
+2. `File` encapsula os **sete campos propostos**: `id`, `sync_id`, `event`, `observed_at`, `coverage`, `scope`, `data`; não misturar com `SyncItem`.
+3. `File.id` identifica **a ocorrência**, não o arquivo físico; replay da mesma ocorrência preserva ID e payload.
+4. `LocalFile` e `RemoteFile` só armazenam os valores efetivamente observados. `None` não significa zero, ausência física ou comando de exclusão.
+5. `FieldValue::Unknown` e `FieldValue::Known([])` são semanticamente diferentes; não simplificar ambos para lista vazia.
+6. `ProviderFileData` contém somente metadados opacos, nunca tokens, credenciais, respostas completas não filtradas ou conteúdo do arquivo.
+7. Não construir I/O de arquivo, rede, SQLite, fila, autenticação, operações, detector ou analisador dentro de Models.
+8. Não criar `ModelManager`, `Repository` ou trait operacional para justificar abstrações desnecessárias.
+9. Não duplicar tipos já existentes (`AccountId`, `SyncId`, `LocalFileId` etc.). Propor migração/reexportação sob revisão explícita.
+10. Não definir limite/codificação de `ProviderFileData.payload` enquanto estiver pendente; bloquear implementação afetada, em vez de adivinhar.
+11. A construção de `File` deve respeitar as relações entre `event`, `scope`, `data` e `coverage` definidas no contrato; não fabricar dados para contornar validação.
+12. Não alterar `detectors/`, `detectors/storage/`, `inventory/` ou `operations/` para fazer compilar um exemplo conceitual de Models.
 
-- Ownership real de `AccountId`, `SyncId` e `LocalFileId` diante dos tipos existentes no Rust.
-- Limite máximo, codificação concreta e política de retenção dos dados de `ProviderFileData.payload`.
-- Estratégia de validação de `RemoteFile.provider` contra a conta configurada sem fazer Models depender de Accounts.
-- Ajuste coordenado do Detector pai/Storage para transporte durável do objeto `File` e `FileBatch`.
+## Execução futura
 
-Esses pontos **não autorizam** criar novos módulos ou esquemas por iniciativa do agente. Quando bloquearem implementação, relatar lacuna e solicitar revisão contratual.
+Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GREEN → REFACTOR conforme [TESTS](TESTS.md), executar Cargo/Rust apenas no Flatpak do projeto e relatar PASS/FAIL/BLOCKED. Integração e testes de lote/ack pertencem ao Detector, não aos testes de Models.
 
-## TDD futuro
+Para regras não especificadas, registrar como pendência e **solicitar revisão do contrato antes de codificar**. Não converter comentários de exemplos anteriores em requisitos não aprovados.
 
-Escrever testes puros para cada atributo e invariante enumerado em [TESTS.md](TESTS.md); depois implementar apenas os tipos aprovados. Testes de FileBatch, leases, retry e ack pertencem ao Detector/Storage, não a Models.
-
-Execução Cargo/Rust somente em Flatpak, conforme [MODULE_STANDARD.md](../MODULE_STANDARD.md) e [AGENTS raiz](../../../AGENTS.md). A entrega atual é documental: sem compilação, commit de código, push de alterações Rust ou PR.
+[MODULE_STANDARD](../MODULE_STANDARD.md) · [AGENTS raiz](../../../AGENTS.md).
