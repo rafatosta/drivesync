@@ -2,7 +2,7 @@
 
 ## 1. Objetivo e independência
 
-TDD do **coordenador real**, com **Local fake, Remoto fake e Storage fake** que implementam apenas os contratos internos. O Detector deve ser compilável e testável mesmo quando os três filhos concretos não existem. Testar cada filho real **em sua própria suíte**: Local (filesystem temporário), Remoto (Google API fake), Storage (SQLite real isolado). O Orquestrador é um consumidor simulado que utiliza somente métodos públicos.
+TDD do **coordenador real**, com **Local fake, Remoto fake e Storage fake** que implementam apenas os contratos internos. O Detector deve ser compilável e testável mesmo quando os três filhos concretos não existem. Testar cada filho real **em sua própria suíte**: Local (filesystem temporário), Remoto (Google API fake), Storage (SQLite real isolado). Um consumidor de teste utiliza somente os métodos públicos do Detector.
 
 Escrever testes RED antes da implementação, completar GREEN por unidade funcional, REFACTOR e regressão; commits locais coesos.
 
@@ -12,7 +12,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 | --- | --- |
 | `two_producers` | Local e Remoto fake produzindo eventos individuais de maneira intercalada |
 | `same_item_both_sides` | Duas fontes emitem eventos diferentes para o mesmo SyncItem |
-| `slow_consumer` | Produtores continuam enfileirando enquanto Orquestrador não chama take_events |
+| `slow_consumer` | Produtores continuam enfileirando enquanto o consumidor não chama `take_events` |
 | `store_fake` | Implementa enqueue, claim, ack, release, status e leases sem SQLite |
 | `store_failure` | Enqueue retorna erro/backpressure; produtor não recebe confirmação durável |
 | `failed_availability_notification` | Sink opcional de aviso falha após enqueue concluído |
@@ -26,7 +26,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Criar fachada com três portas fake independentes, sem construir filhos no Orquestrador.
+**Sucesso:** Criar fachada com três portas fake independentes, sem construir dependências fora do detector.
 
 **Negativos e opcionais:** Identidade inválida, store indisponível, notificação de disponibilidade omitida.
 
@@ -139,7 +139,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 | DET-B-07 | Consumidor lento | Pendências se acumulam sem perder eventos persistidos |
 | DET-B-08 | Dois consumidores tentam reservar | Sem mesmo evento simultaneamente sob dois leases válidos |
 | DET-B-09 | Lote reservado e falha antes do ack | Redelivery após release ou expiração |
-| DET-B-10 | Orquestrador confirma Discarded | Apenas lote explicitamente confirmado é descartado |
+| DET-B-10 | Confirmação de Discarded | Apenas lote explicitamente confirmado é descartado |
 | DET-B-11 | StopNow após enqueues | Eventos persistidos continuam disponíveis mesmo com produtores parados |
 | DET-B-12 | Sink de disponibilidade falha | Enqueue durável não desaparece; polling de take_events continua possível |
 | DET-B-13 | Storage falha no enqueue | Produtor recebe falha, não sucesso fictício |
@@ -148,7 +148,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 
 ## 5. Isolamento de interfaces
 
-- Orquestrador de teste só importa `Detector`, requests/results, `File`, `FileBatch` e tipos públicos.
+- Consumidor de teste só importa `Detector`, requests/results, `File`, `FileBatch` e tipos públicos.
 - Não pode importar `LocalDetector`, `RemoteDetector`, `EventStore` ou tipos SQLite através da fachada.
 - O coordenador só usa portas de cada filho, sem SQL, watcher, HTTP ou algoritmos da Google API.
 - Local real é testável sem Remoto/Storage concretos; Remoto real sem Local/Storage concretos; Storage real sem ambos nem coordenador real.
@@ -171,7 +171,7 @@ Testar `batch_id=None` somente para lote vazio, intervalos opcionais vazios em l
 | DET-M-03 | File com `Deleted` e `data=None` | Evento entregue e reavaliado, sem fabricar LocalFile/RemoteFile nem descartar automaticamente |
 | DET-M-04 | Rename/Move com `previous/current` | Localizações preservadas após enqueue, claim, release e retry |
 | DET-M-05 | Duas fontes alteram mesmo recurso | Dois Files de IDs próprios, sem mesclagem/conflicto decidido |
-| DET-M-06 | FileBatch com N=1 ou vários | Mesma API, origem analisada apenas pelo Analisador |
+| DET-M-06 | FileBatch com N=1 ou vários | Mesma API, origem preservada sem interpretação no lote |
 | DET-M-07 | Nova versão dos atributos de LocalFile/RemoteFile | Fachada não modifica código nem lê campos individuais; payload intacto |
 | DET-M-08 | Falha após commit antes de ack | Mesmo `File.id`, evento e payload ao reentregar |
 
