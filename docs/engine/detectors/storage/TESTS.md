@@ -30,7 +30,7 @@ RED → GREEN → REFACTOR por unidades coesas; validar o conjunto após cada et
 
 ### STO-02 — `enqueue`
 
-**Sucesso:** persistir evento e lê-lo após reabertura, inclusive `item_id=None` e `scope_hint=None`.
+**Sucesso:** persistir evento e lê-lo após reabertura, inclusive `File.data=None` e `FileScope` explícito.
 **Negativos e opcionais:** repetição com mesmo ID+conteúdo é idempotente; mesmo ID com conteúdo diferente falha; capacidade esgotada e escrita interrompida.
 **Retorno e invariantes:** confirmação só depois do commit; não coalescer eventos distintos automaticamente.
 **Verificação:** dados, ordem, quantidade e rollback em SQLite real.
@@ -83,3 +83,18 @@ RED → GREEN → REFACTOR por unidades coesas; validar o conjunto após cada et
 ## 5. Critérios de aceite
 
 **6/6 operações** implementadas; testes de rollback, durabilidade, leases, concorrência e isolamento aprovados; execução Rust/Cargo dentro do Flatpak. Testes do Storage **não dependem** dos demais submódulos. Relatório com IDs PASS/FAIL/BLOCKED, comandos e evidências. Sem testes executados nesta etapa documental.
+
+## 6. Testes de fidelidade Models
+
+| ID | Caso | Evidência |
+| --- | --- | --- |
+| STO-F-01 | Enqueue de File Local com grupos de metadados | Round-trip SQLite preserva metadados reais e `MetadataValue` |
+| STO-F-02 | Enqueue de File Remoto com provider_data | Round-trip preserva identidade de conta/provedor, grupos e payload especializado autorizado |
+| STO-F-03 | File `Deleted` com `data=None` | `event.previous`, scope e ausência de dados preservados, sem fabricar exclusão |
+| STO-F-04 | Renamed/Moved | `event.previous/current` preservados após release/reopen/retry |
+| STO-F-05 | Mesmo `File.id` + mesmo payload | Enqueue idempotente, sem duplicar ocorrência |
+| STO-F-06 | Mesmo `File.id` + payload diferente | Falha de integridade, não overwrite silencioso |
+| STO-F-07 | Evolução de campos | Codec versionado migra/recusa explicitamente; lógica de leases e fila independe do esquema |
+| STO-F-08 | Payload impossível de armazenar com fidelidade | Falha/backpressure e nenhuma confirmação de enqueue; não truncar |
+
+**Não realizar testes de sync reais** neste módulo. SQLite real isolado, dentro do Flatpak, com `File` e fixtures de Models.
