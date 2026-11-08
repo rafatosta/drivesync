@@ -200,13 +200,41 @@ pub struct DeleteResult {
 - **Progresso:** atualizações informam bytes transferidos e fases significativas quando disponíveis; ausência de progresso não implica ausência de execução.
 - **Contexto remoto:** chamadas de serviços externos são realizadas pelas interfaces de `providers/`, com seleção do provedor correspondente.
 
-## 7. Biblioteca privada de operações locais
+## 7. Contrato de implementação especializada
+
+Cada provedor possui um executor que implementa **todos os métodos** definidos pela interface `OperationExecutor`. A fachada pública identifica o provedor e a conta da sessão e encaminha a operação para a implementação correspondente.
+
+```rust
+// Assinaturas conceituais; a estratégia de async e despacho será definida em Rust.
+pub(crate) trait OperationExecutor: Send + Sync {
+    async fn create_file(&self, request: CreateFileRequest) -> OperatorResult<ItemResult>;
+    async fn create_directory(&self, request: CreateDirectoryRequest) -> OperatorResult<ItemResult>;
+    async fn upload(&self, request: UploadRequest) -> OperatorResult<TransferResult>;
+    async fn download(&self, request: DownloadRequest) -> OperatorResult<TransferResult>;
+    async fn update_content(&self, request: UpdateContentRequest) -> OperatorResult<TransferResult>;
+    async fn rename(&self, request: RenameRequest) -> OperatorResult<ItemResult>;
+    async fn move_item(&self, request: MoveRequest) -> OperatorResult<ItemResult>;
+    async fn delete(&self, request: DeleteRequest) -> OperatorResult<DeleteResult>;
+    async fn trash(&self, request: TrashRequest) -> OperatorResult<ItemResult>;
+    async fn restore(&self, request: RestoreRequest) -> OperatorResult<ItemResult>;
+}
+```
+
+**Conformidade:** todas as operações fazem parte do contrato. Se o serviço não permitir uma delas, o método correspondente retorna um erro tipado de operação não suportada, preservando os dados. Não simular sucesso nem inventar uma implementação alternativa de efeito destrutivo.
+
+**Sessão e identidade:** cada execução é vinculada ao provedor e à conta da requisição; a implementação valida o recurso remoto pelo ID correspondente. Upload e download representam criação por transferência, enquanto `update_content` altera um recurso existente e preserva sua identidade.
+
+**Execução:** operações remotas utilizam exclusivamente as funções do respectivo [Provider](../providers/README.md). Os executores podem reutilizar a biblioteca privada de filesystem documentada abaixo.
+
+**Validação:** a mesma [suíte de conformidade](TESTS.md#conformidade-dos-executores-especializados) se aplica a todos os executores concretos.
+
+## 8. Biblioteca privada de operações locais
 
 O próprio `Operator` disponibiliza funções internas reutilizáveis para manipular arquivos e diretórios no sistema de arquivos. Essas funções compõem uma **API privada de apoio à execução**: as implementações especializadas podem utilizá-las diretamente, sem precisar de um submódulo arquitetural adicional.
 
 A biblioteca oferece operações locais elementares, com resultados tipados e garantias de segurança. A organização física dessas funções em arquivos Rust é um detalhe de implementação.
 
-### 7.1. Contratos internos propostos
+### 8.1. Contratos internos propostos
 
 ```rust
 // Sketches of crate-private contracts; concrete ownership is defined in Rust.
@@ -274,7 +302,7 @@ pub(crate) fn verify_local_integrity(
 
 As assinaturas são **conceituais**. `LocalScope`, `LocalResourceHandle`, `LocalDirectoryHandle`, `TemporaryLocalFile`, `LocalReader`, `LocalMetadata`, `LocalPreconditions`, `LocalIoOptions`, `LocalWriteResult`, `LocalDeleteResult` e `IntegrityEvidence` representam contratos internos a definir na implementação; estes nomes não afirmam a existência dos tipos no código atual.
 
-### 7.2. Parâmetros e resultados
+### 8.2. Parâmetros e resultados
 
 | Função | Entradas | Resultado |
 | --- | --- | --- |
@@ -293,7 +321,7 @@ As assinaturas são **conceituais**. `LocalScope`, `LocalResourceHandle`, `Local
 
 `LocalScope` delimita a raiz autorizada; as referências locais validadas mantêm o vínculo com esse escopo. Nomes locais usam `OsStr` para representar corretamente nomes de arquivos Linux, inclusive quando não são UTF-8. `LocalIoOptions` pode transportar cancelamento e notificações de progresso, conforme o contrato geral de execução.
 
-### 7.3. Garantias da biblioteca
+### 8.3. Garantias da biblioteca
 
 - **Escopo e caminhos:** resolver recursos dentro da raiz autorizada, tratando caminhos relativos, componentes `..`, links simbólicos e mudanças concorrentes sem escapar do escopo. Preferir operações relativas a descritores de diretório e verificações resistentes a TOCTOU quando aplicável.
 - **Identidade:** validar recurso e destino antes de alterações; nomes semelhantes não constituem prova de identidade.
@@ -308,7 +336,7 @@ As assinaturas são **conceituais**. `LocalScope`, `LocalResourceHandle`, `Local
 
 A biblioteca pode oferecer funções auxiliares menores conforme a implementação exigir, mantendo essas garantias e o acesso privado ao módulo `operations/`.
 
-### 7.4. Comportamento verificável de cada função
+### 8.4. Comportamento verificável de cada função
 
 Os contratos abaixo detalham o efeito esperado de cada função da biblioteca privada. Todas as funções retornam `OperatorResult<T>`: a implementação deve distinguir entrada inválida, recurso inexistente, acesso negado, colisão, precondição divergente e erro de I/O conforme aplicável.
 
@@ -364,6 +392,6 @@ Obtém a evidência aplicável sobre o conteúdo local (por exemplo, tamanho ou 
 
 As referências retornadas são vinculadas ao recurso efetivamente validado, não apenas a uma string de caminho. A implementação deve determinar como garantir essa propriedade no Linux com handles, descritores relativos e verificações de identidade; qualquer impossibilidade técnica precisa resultar em erro seguro e não em sucesso presumido.
 
-## 8. Definições para implementação
+## 9. Definições para implementação
 
 As estruturas ilustram a forma do contrato. Antes da implementação Rust, definir os tipos concretos de IDs e metadados, a representação de referências locais seguras, a forma de injetar a sessão remota, o tratamento de progresso/cancelamento e a compatibilidade entre capacidades de cada ambiente. Essas decisões preservam os objetivos e os métodos públicos acima.

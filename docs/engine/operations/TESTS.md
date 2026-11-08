@@ -62,7 +62,7 @@ Os testes seguem [INTERFACES.md](INTERFACES.md) e [README.md](README.md). Cada m
 
 ## Testes unitários da biblioteca privada
 
-A biblioteca privada possui uma matriz própria, vinculada à seção [7.4 de INTERFACES.md](INTERFACES.md#74-comportamento-verificável-de-cada-função). Exercitar as funções com arquivos e diretórios temporários **reais** em um escopo isolado, incluindo casos de erro. Não utilizar arquivos pessoais. As asserções devem inspecionar o filesystem após cada operação, independentemente dos valores retornados.
+A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de INTERFACES.md](INTERFACES.md#84-comportamento-verificável-de-cada-função). Exercitar as funções com arquivos e diretórios temporários **reais** em um escopo isolado, incluindo casos de erro. Não utilizar arquivos pessoais. As asserções devem inspecionar o filesystem após cada operação, independentemente dos valores retornados.
 
 ### Casos por função
 
@@ -113,3 +113,24 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [7.4 de IN
 6. Resultados executados são relatados como PASS/FAIL/BLOCKED, identificando cenários não validados.
 
 **Estado:** plano de testes documental; nenhum teste foi executado pela criação deste arquivo.
+
+## Conformidade dos executores especializados
+
+Executar esta suíte com cada implementação real do contrato `OperationExecutor`, usando um provedor simulado e filesystem temporário. Validar a saída e os efeitos reais capturados pelo ambiente de teste.
+
+| Caso | Validação |
+| --- | --- |
+| OPR-E-01 | Implementa os dez métodos da interface; compilação confirma assinatura completa |
+| OPR-E-02 | Seleção do executor usa serviço e conta da sessão, com isolamento entre contas |
+| OPR-E-03 | `create_file` e `create_directory` retornam identidades reais dos recursos criados |
+| OPR-E-04 | `upload` cria o recurso remoto e transfere o conteúdo exato |
+| OPR-E-05 | `download` publica arquivo local íntegro |
+| OPR-E-06 | `update_content` preserva a identidade do recurso existente |
+| OPR-E-07 | `rename` e `move_item` alteram metadados preservando a identidade |
+| OPR-E-08 | `delete`, `trash` e `restore` aplicam somente o efeito requisitado |
+| OPR-E-09 | Capacidade ausente retorna erro tipado, sem falso sucesso |
+| OPR-E-10 | Conflitos, permissão negada, falha parcial e resultado indeterminado são tratados |
+| OPR-E-11 | Operações sobre arquivos locais respeitam as garantias da biblioteca privada |
+| OPR-E-12 | Interrupções de transferência preservam os dados e informam o progresso verificado |
+
+O executor concreto deve ser exercitado; um mock que só reproduz a resposta esperada não comprova conformidade.

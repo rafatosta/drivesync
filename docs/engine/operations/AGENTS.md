@@ -34,3 +34,7 @@ Executar comandos Rust apenas no ambiente Flatpak configurado pelo repositório.
 ## Definições para a implementação
 
 Revisar os tipos de referência e conteúdo, ownership e assincronicidade, a passagem segura de sessão remota e o contrato de progresso/cancelamento antes de converter as assinaturas conceituais em API compilada.
+
+## Contrato das implementações especializadas
+
+Cada implementação em `operations/<provedor>/` deve satisfazer os dez métodos do contrato `OperationExecutor` descritos em [INTERFACES.md](INTERFACES.md#7-contrato-de-implementação-especializada) e a suíte compartilhada de [TESTS.md](TESTS.md#conformidade-dos-executores-especializados). Manter `google/` como documentação especializada e `example/` como referência ilustrativa. Reutilizar as funções privadas do Operador quando necessário e acessar serviços externos somente por `providers/`.

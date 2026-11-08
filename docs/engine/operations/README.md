@@ -31,6 +31,13 @@ As manipulações de nome e localização preservam a identidade do recurso semp
 
 Cada método recebe uma requisição tipada e retorna um resultado tipado. As assinaturas, precondições, estados de execução e regras de verificação são detalhados em [INTERFACES.md](INTERFACES.md).
 
+## Implementações especializadas
+
+- [Google](google/README.md) — executor de operações sobre arquivos e diretórios do Google Drive.
+- [Example](example/README.md) — referência ilustrativa para uma implementação futura.
+
+Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementação-especializada). A biblioteca privada de funções locais permanece no próprio Operador.
+
 ## Documentação
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
