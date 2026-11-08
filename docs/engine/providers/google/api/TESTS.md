@@ -1,5 +1,7 @@
 # Google API — TESTS.md
 
+> **Separação dos testes:** este documento cobre métodos e tipos técnicos da API Google. A seleção pelo catálogo e o vínculo de sessão pertencem a [Google Provider — TESTS](../TESTS.md). Não duplicar a implementação ou os testes de 78 métodos no diretório pai.
+
 ## 1. Objetivo e limites
 
 Este documento especifica **os testes a escrever antes de implementar** o módulo `providers/google/api/` (Contract-First + TDD). O objetivo é demonstrar, **sem acessar Google real**, que cada interface envia a requisição correta e interpreta corretamente respostas, tipos, erros e estados parciais.
