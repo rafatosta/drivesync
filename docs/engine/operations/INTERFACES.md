@@ -200,6 +200,114 @@ pub struct DeleteResult {
 - **Progresso:** atualizações informam bytes transferidos e fases significativas quando disponíveis; ausência de progresso não implica ausência de execução.
 - **Contexto remoto:** chamadas de serviços externos são realizadas pelas interfaces de `providers/`, com seleção do provedor correspondente.
 
-## 7. Definições para implementação
+## 7. Biblioteca privada de operações locais
+
+O próprio `Operator` disponibiliza funções internas reutilizáveis para manipular arquivos e diretórios no sistema de arquivos. Essas funções compõem uma **API privada de apoio à execução**: as implementações especializadas podem utilizá-las diretamente, sem precisar de um submódulo arquitetural adicional.
+
+A biblioteca oferece operações locais elementares, com resultados tipados e garantias de segurança. A organização física dessas funções em arquivos Rust é um detalhe de implementação.
+
+### 7.1. Contratos internos propostos
+
+```rust
+// Sketches of crate-private contracts; concrete ownership is defined in Rust.
+pub(crate) fn open_local_resource(
+    scope: &LocalScope,
+    path: &Path,
+) -> OperatorResult<LocalResourceHandle>;
+
+pub(crate) fn local_metadata(
+    resource: &LocalResourceHandle,
+) -> OperatorResult<LocalMetadata>;
+
+pub(crate) fn read_local(
+    resource: &LocalResourceHandle,
+) -> OperatorResult<LocalReader>;
+
+pub(crate) fn create_local_directory(
+    parent: &LocalDirectoryHandle,
+    name: &OsStr,
+) -> OperatorResult<LocalDirectoryHandle>;
+
+pub(crate) fn create_local_file(
+    parent: &LocalDirectoryHandle,
+    name: &OsStr,
+) -> OperatorResult<LocalResourceHandle>;
+
+pub(crate) fn create_temp_file(
+    parent: &LocalDirectoryHandle,
+) -> OperatorResult<TemporaryLocalFile>;
+
+pub(crate) fn write_local(
+    target: &mut TemporaryLocalFile,
+    source: &mut dyn Read,
+    options: &LocalIoOptions,
+) -> OperatorResult<LocalWriteResult>;
+
+pub(crate) fn atomic_replace(
+    temporary: TemporaryLocalFile,
+    destination: &LocalResourceHandle,
+    preconditions: &LocalPreconditions,
+) -> OperatorResult<LocalResourceHandle>;
+
+pub(crate) fn rename_local(
+    resource: &LocalResourceHandle,
+    new_name: &OsStr,
+    preconditions: &LocalPreconditions,
+) -> OperatorResult<LocalResourceHandle>;
+
+pub(crate) fn move_local(
+    resource: &LocalResourceHandle,
+    destination: &LocalDirectoryHandle,
+    preconditions: &LocalPreconditions,
+) -> OperatorResult<LocalResourceHandle>;
+
+pub(crate) fn delete_local(
+    resource: &LocalResourceHandle,
+    preconditions: &LocalPreconditions,
+) -> OperatorResult<LocalDeleteResult>;
+
+pub(crate) fn verify_local_integrity(
+    resource: &LocalResourceHandle,
+    expected: &IntegrityEvidence,
+) -> OperatorResult<IntegrityStatus>;
+```
+
+As assinaturas são **conceituais**. `LocalScope`, `LocalResourceHandle`, `LocalDirectoryHandle`, `TemporaryLocalFile`, `LocalReader`, `LocalMetadata`, `LocalPreconditions`, `LocalIoOptions`, `LocalWriteResult`, `LocalDeleteResult` e `IntegrityEvidence` representam contratos internos a definir na implementação; estes nomes não afirmam a existência dos tipos no código atual.
+
+### 7.2. Parâmetros e resultados
+
+| Função | Entradas | Resultado |
+| --- | --- | --- |
+| `open_local_resource` | Escopo autorizado e caminho do recurso | Referência local validada |
+| `local_metadata` | Referência local | Metadados efetivamente obtidos |
+| `read_local` | Referência local | Leitor de conteúdo em fluxo |
+| `create_local_directory` | Diretório pai e nome | Referência do diretório criado |
+| `create_local_file` | Diretório pai e nome | Referência do arquivo criado |
+| `create_temp_file` | Diretório pai | Arquivo temporário associado ao destino |
+| `write_local` | Arquivo temporário, fonte de bytes e opções de I/O | Quantidade de bytes escritos e estado da escrita |
+| `atomic_replace` | Arquivo temporário, destino existente e precondições | Referência do arquivo publicado |
+| `rename_local` | Recurso, novo nome e precondições | Referência atualizada do recurso |
+| `move_local` | Recurso, diretório de destino e precondições | Referência atualizada do recurso |
+| `delete_local` | Recurso e precondições | Resultado da exclusão |
+| `verify_local_integrity` | Recurso e evidência esperada | Resultado da verificação de integridade |
+
+`LocalScope` delimita a raiz autorizada; as referências locais validadas mantêm o vínculo com esse escopo. Nomes locais usam `OsStr` para representar corretamente nomes de arquivos Linux, inclusive quando não são UTF-8. `LocalIoOptions` pode transportar cancelamento e notificações de progresso, conforme o contrato geral de execução.
+
+### 7.3. Garantias da biblioteca
+
+- **Escopo e caminhos:** resolver recursos dentro da raiz autorizada, tratando caminhos relativos, componentes `..`, links simbólicos e mudanças concorrentes sem escapar do escopo. Preferir operações relativas a descritores de diretório e verificações resistentes a TOCTOU quando aplicável.
+- **Identidade:** validar recurso e destino antes de alterações; nomes semelhantes não constituem prova de identidade.
+- **Criação:** criar entradas com a política de colisão expressa pelo comando, evitando substituição acidental.
+- **Leitura e escrita:** processar conteúdo em fluxo, incluindo arquivos grandes, com tratamento de leituras/escritas parciais e interrupções.
+- **Arquivos temporários:** criar temporários com nomes seguros, permissões adequadas e limpeza controlada. Um temporário não é um arquivo final publicado.
+- **Substituição segura:** concluir e verificar a escrita antes da publicação; aplicar precondições sobre o destino e utilizar substituição atômica quando a plataforma e o sistema de arquivos oferecerem essa garantia. Diferenciar atomicidade de visibilidade de durabilidade após queda de energia.
+- **Renomeação e movimentação:** preservar a identidade sempre que a operação subjacente permitir; movimentações entre sistemas de arquivos podem exigir tratamento explícito de incompatibilidade.
+- **Exclusão:** atuar sobre o recurso identificado e retornar evidência do efeito observado, distinguindo exclusão definitiva de operações de lixeira.
+- **Integridade:** verificar tamanho ou hash quando houver evidência confiável; distinguir `Verified` de `NotAvailable` sem inventar validação.
+- **Erros:** converter falhas locais para `OperatorError` preservando a causa técnica necessária ao diagnóstico, sem declarar sucesso parcial como conclusão.
+
+A biblioteca pode oferecer funções auxiliares menores conforme a implementação exigir, mantendo essas garantias e o acesso privado ao módulo `operations/`.
+
+## 8. Definições para implementação
 
 As estruturas ilustram a forma do contrato. Antes da implementação Rust, definir os tipos concretos de IDs e metadados, a representação de referências locais seguras, a forma de injetar a sessão remota, o tratamento de progresso/cancelamento e a compatibilidade entre capacidades de cada ambiente. Essas decisões preservam os objetivos e os métodos públicos acima.
