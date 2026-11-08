@@ -2,7 +2,7 @@
 
 ## Propriedade
 
-O agrupamento `providers/google/` reúne a documentação do **cliente e protocolos Google**, não todas as rotinas do DriveSync relacionadas ao Google. A interface HTTP/REST e a autenticação protocolar permanecem no módulo [Google API](api/README.md).
+O agrupamento `providers/google/` reúne a documentação do **cliente e protocolos Google**, não todas as rotinas do DriveSync relacionadas ao Google. A interface HTTP/REST e a autenticação protocolar permanecem no módulo [Google API](api/README.md). **A API é disponibilizada aos especialistas pela fábrica [`providers/`](../INTERFACES.md)**; eles podem utilizar seus métodos e tipos específicos, mas devem respeitar a interface de saída de seus respectivos módulos.
 
 | Capacidade | Onde pertence | Responsabilidade |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ O agrupamento `providers/google/` reúne a documentação do **cliente e protoco
 
 ## Fronteira
 
-O especialista de detecção **usa** Google API, mas Google API não conhece Detector. Upload/Download também podem usar Google API, mas não devem importar o Detector Remoto. Os componentes de detecção/transferência são implementáveis e testáveis separadamente por seus contratos; cliente HTTP fake é adequado para testes de integração da Google API.
+O especialista de detecção **obtém e usa** Google API via Providers, mas Google API não conhece Detector. Upload/Download também podem usar Google API, mas não devem importar o Detector Remoto. Os componentes de detecção/transferência são implementáveis e testáveis separadamente por seus contratos; cliente HTTP fake é adequado para testes de integração da Google API.
 
 O módulo Google mantém os modelos específicos do serviço. O modelo de domínio `RemoteFile`, quando definido, pertence a modelos compartilhados da engine, sem exigir que a documentação atual da Google API seja reescrita agora.
 
