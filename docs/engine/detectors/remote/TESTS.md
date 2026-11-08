@@ -75,3 +75,16 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 ## 5. Critério de conclusão
 
 **5/5 contratos** e todos os cenários aplicáveis executados no Flatpak com dependências simuladas, sem exigir módulos concretos irmãos. Reportar PASS/FAIL/BLOCKED, comandos, commits e limitações; não afirmar integração real ao Google por sucesso com fake. Nenhum teste foi executado nesta etapa documental.
+
+## 6. Cenários de Models e provedor
+
+| ID | Cenário | Expectativa |
+| --- | --- | --- |
+| REM-F-01 | GoogleFile com ID e campos conhecidos | `File.data=Some(FileData::Remote(RemoteFile))`, metadados e envelope do provedor preservados |
+| REM-F-02 | Resposta parcial/sem ID | Recheck com `data=None` quando sem referência segura; não fabricar RemoteFile |
+| REM-F-03 | Criar/editar | `Created`/`Modified` somente com evidência, contexto e dados atuais |
+| REM-F-04 | Renomear/mover | `Renamed`/`Moved` só com `previous/current` correlacionados |
+| REM-F-05 | Removed/perda de acesso | Não executar nem concluir exclusão; `RecheckRequired` ou `ScopeUnavailable` |
+| REM-F-06 | Replay/checkpoint | Mesmo File integral persiste; checkpoint não avança após falha de sink |
+| REM-F-07 | Evolução RemoteFile | Alterar adaptador e seus testes sem tocar polling, cursor ou emissão do Detector |
+| REM-F-08 | Provedor diferente | Mesmo contrato `File`/`RemoteFile`, sem dependência da fachada ao GoogleFile |
