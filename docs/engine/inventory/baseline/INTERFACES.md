@@ -9,7 +9,7 @@
 - A confirmação de baseline pode ocorrer junto de conclusão de `SyncOperation`, atualização de status de item e inserção de `SyncActivity`: **tudo ou nada**.
 - Nunca avançar baseline por `record_local`, `record_remote`, `FileEventKind::Modified`, `acknowledge` de `FileBatch`, retorno HTTP de upload/download ainda não verificado ou mera alteração de status.
 - Conservar presença por lado (`Unknown/Present/AbsentConfirmed`), nome local em bytes, identidade de pai, versões, checksums e timestamps **se comprovados**. O histórico confirmado não deve ser substituído por campos parciais atuais.
-- Não decidir conflitos nem fazer comparação entre anterior/local/remoto: essa política pertence ao Analisador.
+- Armazenar o estado confirmado para consultas e atualizações posteriores.
 
 ## Porta interna proposta
 
