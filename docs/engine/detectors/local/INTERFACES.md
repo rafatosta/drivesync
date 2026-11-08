@@ -208,7 +208,7 @@ impl LocalDetector {
 
 ## 7. Fronteiras e pendências
 
-O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. Somente o Detector pai decide como persistir `File` completo e persistir.
+O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. O Detector pai persiste o `File` completo sem remontar metadados.
 
 Pendências antes de implementar: ownership efetivo das identidades já existentes, representação concreta de `LocalRelativePath`, política de symlinks, semântica de cancelamento/concorrência, watcher/debounce e como transportar metadata observada no evento persistente sem perda de evidência. Os contratos de Detector pai e Storage devem aceitar e reentregar `File` integral.
 
