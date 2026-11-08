@@ -93,28 +93,79 @@ As figuras seguintes representam **somente as relações e tipos declarados** em
 ```mermaid
 flowchart TB
     ORQ["Orquestrador"]
-    D["detectors/ — Detector (fachada pública)"]
-    L["detectors/local/ — LocalDetector"]
-    R["detectors/remote/ — RemoteDetector (contrato comum)"]
-    S["detectors/storage/ — EventStore"]
-    G["detectors/remote/google/ — especialista"]
-    P["providers/google/api/ — GoogleFile"]
-    M["models/ — File, FileData, LocalFile, RemoteFile"]
+    MOD["models/: File e FileData"]
+    FS["Filesystem"]
+    GAPI["providers/google/api/"]
+    CFG["Conta e sessão da sincronização"]
 
-    ORQ -->|"8 métodos públicos: new/start/stop/request_scan/status/take_events/acknowledge/release_events"| D
-    D -->|"controle e LocalNotificationSink"| L
-    D -->|"controle e RemoteEventSink"| R
-    D -->|"open/enqueue/claim_batch/acknowledge/release_batch/status"| S
-    R -->|"especialista selecionado por portas injetadas"| G
-    G -->|"cliente Google API"| P
-    L -.->|"tipos compartilhados"| M
-    G -.->|"RemoteFile e File"| M
-    R -.->|"tipos compartilhados"| M
-    D -.->|"FileBatch contém File"| M
-    S -.->|"persiste File integral"| M
+    subgraph DET["detectors/ — API pública"]
+        D["Detector: 8 operações"]
+        subgraph LOCAL["local/ — produtor local"]
+            L["LocalDetector: 5 operações"]
+            C["LocalMetadataCollector"]
+        end
+        subgraph REM["remote/ — coordenador remoto"]
+            R["RemoteDetector: 5 operações"]
+            subgraph GOOGLE["remote/google/"]
+                G["Especialista Google"]
+                A["RemoteMetadataAdapter"]
+            end
+            EX["remote/example/: placeholder"]
+        end
+        subgraph STORE["storage/ — fila privada"]
+            S["EventStore: 6 operações"]
+        end
+    end
+
+    ORQ -->|"única API pública"| D
+    D -->|"controle / sink"| L
+    D -->|"controle / sink"| R
+    D -->|"fila durável"| S
+    FS --> L
+    L -->|"collect"| C
+    C -->|"lê metadados"| FS
+    R -->|"especialista Google documentado"| G
+    G -->|"API contratada"| GAPI
+    G -->|"adapta metadados"| A
+    R -.->|"placeholder, não implementado"| EX
+    CFG -.->|"composição por conta e provedor ainda não tipada"| R
+    L -->|"FileData::Local"| MOD
+    A -->|"FileData::Remote"| MOD
+    MOD -.->|"File completo por sink"| D
+    S -.->|"FileBatch composto pelo Detector"| D
 ```
 
-**Exatamente conforme interfaces:** o Orquestrador chama somente `Detector`; o pai conhece as **portas internas** de Local, Remoto e Storage, não suas implementações concretas. O especialista Google depende do contrato Google API. `models/` fornece dados, não um serviço.
+**Leitura do diagrama:** agrupamento representa **propriedade de módulo**; setas contínuas representam relações previstas nos contratos e portas; setas tracejadas sinalizam dependência de tipo ou **composição ainda não especificada**. `example/` é apenas um marcador documental, não um backend funcional. O Detector pai consome interfaces internas dos filhos, **não precisa conhecer suas implementações**. O especialista Google depende do contrato da API Google, e `models/` oferece tipos, nunca um serviço com I/O.
+
+#### Organização documental navegável
+
+```text
+detectors/
+├── README.md                    [visão geral / facade]
+├── INTERFACES.md                [Detector: 8 métodos / FileBatch]
+├── local/
+│   ├── README.md                [watcher, scan, coleta, emissão]
+│   └── INTERFACES.md            [LocalDetector, LocalMetadataCollector, LocalNotificationSink]
+├── remote/
+│   ├── README.md                [intermediário remoto / seleção conceitual]
+│   ├── INTERFACES.md            [RemoteDetector, RemoteMetadataAdapter, sinks, checkpoint]
+│   ├── google/
+│   │   ├── README.md            [especialista Google / GoogleFile → RemoteFile]
+│   │   └── INTERFACES.md        [adaptação e contrato especialista]
+│   └── example/
+│       └── README.md            [placeholder sem implementação]
+└── storage/
+    ├── README.md                [persistência, claims e leases]
+    └── INTERFACES.md            [EventStore: open + cinco métodos]
+```
+
+| Serviço | Diagramas detalhados | Fonte contratual |
+| --- | --- | --- |
+| [Local](local/README.md#visão-visual-detalhada-do-serviço-local) | Componentes, sequência e encapsulamento local | [Local INTERFACES](local/INTERFACES.md) |
+| [Remoto](remote/README.md#visão-visual-dos-contratos-internos-do-serviço-remoto) | Composição da conta/provedor, polling, checkpoint e `RemoteFile` | [Remote INTERFACES](remote/INTERFACES.md) |
+| [Google](remote/google/README.md#arquitetura-visual-do-especialista-google) | Dependência de API, conversão do `GoogleFile` e sequência da observação | [Google INTERFACES](remote/google/INTERFACES.md) |
+| [Example](remote/example/README.md#representação-visual-do-ponto-de-extensão) | Exclusivamente ponto de extensão **não implementado** | [Remote INTERFACES](remote/INTERFACES.md) |
+| [Storage](storage/README.md#arquitetura-visual-do-storage-do-detector) | Componentes, sequência, estados de lease e encapsulamento | [Storage INTERFACES](storage/INTERFACES.md) |
 
 ### 2. Fluxos de observação, durabilidade e consumo
 
