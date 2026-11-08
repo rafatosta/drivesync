@@ -30,7 +30,7 @@ A documentação da Google API existente foi movida **sem redesenhar o contrato*
 
 - `providers/google/api/`: protocolos Google Drive/OAuth/OIDC, recursos REST, modelos Google, erros de serviço e mecanismos de transferência de baixo nível.
 - `detectors/remote/google/`: **estratégia de detectar alterações** usando operações da API Google.
-- `upload/google/` e `download/google/`, quando formalizados: estratégias funcionais de transferência; seus detalhes são diferentes do protocolo HTTP da API.
+- `operations/upload/google/` e `operations/download/google/`, quando formalizados: estratégias funcionais de transferência; seus detalhes são diferentes do protocolo HTTP da API.
 - `accounts/auth/`: ciclo de vida da conta, credenciais e sessão; os clientes do provedor recebem contexto autenticado por contratos adequados.
 - `models/`: modelos comuns da engine, sem importar tipos específicos da API Google.
 
@@ -38,4 +38,4 @@ A documentação da Google API existente foi movida **sem redesenhar o contrato*
 
 ## Exemplo de expansão futura
 
-O provedor fictício [`example`](example/README.md) ilustra a separação das implementações: [API](example/api/README.md), [Detector Remoto](../detectors/remote/example/README.md), [Upload](../upload/example/README.md) e [Download](../download/example/README.md). Esses diretórios não representam funcionalidades existentes.
+O provedor fictício [`example`](example/README.md) ilustra a separação das implementações: [API](example/api/README.md), [Detector Remoto](../detectors/remote/example/README.md), [Upload](../operations/upload/example/README.md) e [Download](../operations/download/example/README.md). Esses diretórios não representam funcionalidades existentes.
