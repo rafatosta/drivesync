@@ -2,7 +2,7 @@
 
 ## Escopo e referências
 
-Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust, que encapsula o inventário de **uma pasta sincronizada por instância**. Seu armazenamento privado contém observações locais/remotas, vínculos `SyncItem`, baseline confirmado, fila durável de operações, cursores/eventos remotos e histórico por arquivo.
+Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust, que encapsula o inventário de **uma pasta sincronizada por instância**. Seu armazenamento privado contém observações locais/remotas, vínculos `SyncItem`, baseline confirmado, fila durável de operações e histórico por arquivo. Cursores/eventos remotos estão em revisão de propriedade frente ao Detector.
 
 **Ler nesta ordem, antes de modificar código:**
 
@@ -61,7 +61,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 1. `sync_operations` é fila **persistente**, inclusive offline. Inserir ou reivindicar uma operação **não a executa**. Uma operação `Running` após reinício exige reavaliação antes de repetir efeito remoto com resultado desconhecido.
 2. `claim_operation` deve impedir dois workers de obterem a mesma operação. Revisões e transições de estado têm precondições e erros explícitos.
 3. A conclusão de operação comprovada usa `confirm_sync`, não atualização direta de `Completed`. Atualizar baseline, status, operação e atividade relevante **na mesma transação SQLite**, com rollback completo em falha.
-4. Publicar uma página de eventos remotos e seu cursor é **atômico**. Avanço do cursor **não** significa que os eventos foram processados; só reconhecer evento após reavaliação explícita.
+4. **Pendente:** a publicação conjunta de cursores/eventos pertence ao contrato anterior do Inventário, mas conflita com a responsabilidade já descrita em Detector Remoto/Storage. Não implementar a duplicação antes da decisão de propriedade.
 5. Cada `SyncActivity` tem `item_id` **obrigatório**, referenciando um `SyncItem` do mesmo banco. `operation_id` é opcional. Eventos globais não entram na tabela `activity`.
 6. Preservar atividades após renomeação, movimentação ou remoção do arquivo. Manter tombstones quando há histórico referenciando item; não usar cascata que o apague.
 7. Retry, redelivery de evento e resposta perdida devem respeitar idempotência, deduplicação e verificação de estado. Não duplicar operações/atividades nem avançar baseline por repetição.
@@ -89,7 +89,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 | 5. REFACTOR | Reduzir duplicação sem alterar contratos | Regressão dos grupos anteriores continua passando |
 | 6. Registrar entrega | Commit atômico por unidade lógica validada | Reportar testes efetivamente executados e pendências |
 
-**Não implementar os 20 métodos em um lote único sem validação intermediária.** Seguir conjuntos coesos: abertura/identidade; consultas; observações; associações/baseline; fila; cursor/eventos; histórico. Uma implementação parcial não pode retornar sucesso fictício para métodos pendentes.
+**Não implementar os 20 métodos documentados em um lote único sem validação intermediária; quatro métodos de cursor/eventos estão BLOCKED até a definição de propriedade.** Seguir conjuntos coesos: abertura/identidade; consultas; observações; associações/baseline; fila; cursor/eventos; histórico. Uma implementação parcial não pode retornar sucesso fictício para métodos pendentes.
 
 ## Autonomia e conclusão da implementação
 
