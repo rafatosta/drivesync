@@ -199,6 +199,14 @@ pub struct LocalFile {
 }
 ```
 
+### Regra estrutural de evolução — independência do Detector
+
+**Um novo campo em `LocalFile` não autoriza alterar o Detector Local.** O Detector utiliza apenas um contrato de coleta estável: entrega referência/escopo do arquivo e recebe `LocalFile` preenchido conforme os metadados disponíveis. Não deve usar inicialização literal de structs, copiar atributos individualmente, depender de sua lista de campos ou chamar diretamente rotinas de `statx`, ACL ou xattr.
+
+O componente **coletor de metadados locais**, externo ao núcleo puro Models e isolado da lógica do Detector, será o responsável por criar/preencher `LocalFile`. Suas **funções auxiliares** poderão coletar categorias adicionais em etapas, sob demanda e com estado explícito (`Known`, `NotCollected`, etc.). Adicionar ou remover campos afeta esse coletor e os contratos de dados correspondentes, **não** o mecanismo de detecção, acompanhamento e emissão de notificações.
+
+A assinatura interna de coleta ficará definida em [Detector Local — INTERFACES](../detectors/local/INTERFACES.md). Essa separação não dispensa a **revisão de utilidade dos metadados antes de implementar**.
+
 ### 2.3. Relação entre atributos e fontes
 
 | Grupo | Dados reais | Fonte e observação |
