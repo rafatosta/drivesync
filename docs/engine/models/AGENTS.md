@@ -53,6 +53,17 @@ O contrato atual é um catálogo deliberadamente abrangente: **levantar todos os
 
 Somente depois de a seleção ser explicitamente aprovada, consolidar os atributos implementáveis em `INTERFACES.md`, ajustar `TESTS.md` e implementar **literalmente o contrato final aprovado**. Essa etapa de revisão é um **pré-requisito**, não uma sugestão facultativa.
 
+## Isolamento obrigatório do Detector frente ao esquema
+
+**Aceite arquitetural:** adicionar, remover ou renomear campos de `LocalFile` não pode exigir edição da lógica do Detector Local. O Detector consome uma **interface de coleta estável**, não a representação campo a campo do modelo.
+
+- Não construir `LocalFile` com struct literal no Detector nem usar os campos como condição para entregar uma notificação.
+- O coletor/adaptador específico de metadados locais faz a construção e pode usar funções auxiliares independentes para `statx`, ACL, xattrs e outras fontes.
+- O coletor executa I/O; `models/` **não** executa I/O. O coletor pode mudar quando campos mudam, mas o Detector deve permanecer intacto.
+- O contrato de retorno deve preservar `LocalFile` integralmente, sem reduzir o modelo a um subconjunto manual.
+- Acrescentar testes de regressão que verifiquem evolução do esquema com o Detector não modificado.
+- Não confundir **interface de coleta** (interna ao detector local) com interface operacional pública de `models/`; Models continua apenas dados.
+
 ## Execução futura
 
 Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GREEN → REFACTOR conforme [TESTS](TESTS.md), executar Cargo/Rust apenas no Flatpak do projeto e relatar PASS/FAIL/BLOCKED. Integração e testes de lote/ack pertencem ao Detector, não aos testes de Models.
