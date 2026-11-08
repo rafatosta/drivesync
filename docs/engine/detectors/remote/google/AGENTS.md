@@ -1,26 +1,19 @@
-# Agentes — Detector Remoto Google
+# Orientações para agentes — Detector Remoto Google
 
-## Escopo
+## Objetivo
 
-Implementar **somente** o especialista `detectors/remote/google/`, obedecendo o contrato do [Detector Remoto](../INTERFACES.md), seus [testes comuns](../TESTS.md) e os testes específicos em [TESTS.md](TESTS.md). Consultar [Google API](../../../providers/google/INTERFACES.md), [AGENTS raiz](../../../../../AGENTS.md) e [padrão](../../../MODULE_STANDARD.md).
+Implementar a observação de alterações do Google Drive por meio das operações disponibilizadas em [Providers Google](../../../providers/google/INTERFACES.md).
 
-## Fronteiras
+## Regras de implementação
 
-- Não implementar nem refatorar Local, Storage, Detector pai, Operations Upload/Download ou Inventário para facilitar o especialista Google.
-- Acessar Google Drive e autenticação técnica **exclusivamente por `providers/google/`**. Não construir URLs, requisições HTTP, clientes REST ou fluxos OAuth no detector.
-- Usar sink injetado, emitindo um evento por chamada; não guardar a fila e não declarar sucesso sem aceite durável.
-- Gerir polling/cursor específicos do Google, sem impor estratégia aos outros provedores.
-- Sem tipos `GoogleFile` obrigatórios na API pública do Detector; tradução é interna.
-- Checkpoint deve respeitar a durabilidade dos eventos já aceitos e suportar replay seguro.
+- Seguir as operações de observação e os tipos descritos em [INTERFACES.md](INTERFACES.md).
+- Obter todas as informações externas exclusivamente pela interface `providers/google/`.
+- Interpretar resultados, cursores, metadados e alterações do Google Drive.
+- Converter respostas em eventos `File`, mantendo `RemoteFile` e identidade qualificada quando disponíveis.
+- Preservar campos efetivamente recebidos; não fabricar valores ausentes ou concluir exclusão por perda de acesso.
+- Emitir eventos individualmente e confirmar checkpoints somente após entrega durável.
+- Preservar a separação entre mapeamento da API e interpretação das observações.
 
-## TDD
+## Validação
 
-Testar especialista real com interface de `providers/google/` fake e dependências simuladas, sem Google real. RED → GREEN → REFACTOR, regressão incremental e commits locais por unidade. Executar Cargo/Rust somente no Flatpak do manifesto; comentários e commits em inglês; sem push ou PR sem autorização explícita.
-
-“Implemente Detector Remoto Google” não significa implementar qualquer outro módulo nem um provedor futuro. Reportar testes executados, cobertura dos cinco contratos, bloqueios e integrações pendentes.
-
-**Este documento é instrução de implementação, não execução de código.**
-
-## Contrato de Models
-
-O especialista é responsável pela tradução de `GoogleFile` para `RemoteFile` e pela construção de um `File` autocontido (`FileData::Remote` quando disponível; evento tipado e localizações comprovadas). Emitir o objeto integral por `RemoteEventSink.emit`. Não criar `RemoteObservation` de campos mínimos nem deixar a fachada reconstruir metadados. Proteção de payload especializado e tratamento de `removed`/perda de acesso são obrigatórios. Mudanças em RemoteFile afetam o adaptador, não polling/cursor.
+Executar os cenários de [TESTS.md](TESTS.md) com interface de provedor simulada, sem rede externa ou credenciais reais. Seguir as instruções gerais do [AGENTS.md da raiz](../../../../../AGENTS.md).
