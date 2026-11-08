@@ -96,3 +96,80 @@ O Local observa eventos de criação, mudança, renomeação e movimento, mas es
 Cada emissão contém **um único `models::File`**, não `LocalNotice` ou struct paralela. O contexto é `FileEvent {kind, previous, current}`, `FileScope::Local`, `observed_at`, `coverage`, `sync_id` e `File.id`. O payload é `Some(FileData::Local(LocalFile))` quando há observação segura; `None` pode representar remoção suspeita ou reavaliação.
 
 O Detector Local só solicita `LocalFile` ao coletor especializado e o incorpora integralmente, sem acessar suas propriedades. Classificação `Created/Modified/Deleted/Renamed/Moved/MetadataChanged` requer evidência; renomeação/movimento correlacionados carregam localizações anterior/atual. Falhas e ambiguidade geram `RecheckRequired` ou `ScopeUnavailable`, **nunca exclusão confirmada**.
+
+
+## Visão visual detalhada do serviço Local
+
+Os diagramas reproduzem [Local — INTERFACES](INTERFACES.md) e o envelope de [Models](../../models/INTERFACES.md). O **watcher** e a **varredura** são mecanismos internos mencionados no contrato, não novas APIs. O coletor é a porta explicitamente declarada `LocalMetadataCollector`.
+
+### Componentes e limites
+
+```mermaid
+flowchart TD
+    FS["Filesystem dentro da raiz sincronizada"]
+    W["Watcher: sinais de mudança"]
+    SC["Varredura: inicial, manual ou recuperação"]
+    D["LocalDetector: new, start, scan_once, stop, status"]
+    C["LocalMetadataCollector.collect(LocalMetadataRequest)"]
+    LF["LocalMetadataResult: Option LocalFile + coverage"]
+    EV["File: FileEvent + FileScope + FileData::Local opcional"]
+    SK["LocalNotificationSink.notify(File)"]
+    P["Detector pai: enqueue durável"]
+    FS --> W
+    FS --> SC
+    W --> D
+    SC --> D
+    D -->|"solicita metadados"| C
+    C -->|"leitura local"| FS
+    C --> LF
+    LF -->|"valor opaco"| D
+    D -->|"observação ou reavaliação"| EV
+    EV --> SK
+    SK --> P
+```
+
+O Detector Local **não** monta atributos de `LocalFile`: apenas solicita `collect`, preserva o resultado integral e acrescenta contexto de observação ao `File`. Coleta especializada (por exemplo, ACLs, xattrs e `statx`) pode ser feita internamente pelo coletor sem alterar watcher, scanner ou sink.
+
+### Sequência de observação, emissão e falha
+
+```mermaid
+sequenceDiagram
+    participant F as Filesystem
+    participant L as LocalDetector
+    participant C as LocalMetadataCollector
+    participant S as LocalNotificationSink
+    participant D as Detector pai / Storage
+    F-->>L: sinal de watcher ou varredura
+    L->>C: collect(LocalMetadataRequest)
+    C-->>L: LocalMetadataResult { file, coverage }
+    alt metadados observáveis
+        L->>S: notify(File com FileData::Local)
+    else ausência de leitura confiável
+        L->>S: notify(File de reavaliação, data=None)
+    end
+    S->>D: persistir File integralmente
+    alt persistência confirmada
+        D-->>S: aceite durável
+        S-->>L: Ok
+    else falha ou backpressure
+        D-->>S: erro
+        S-->>L: erro; requer replay/revarredura
+    end
+```
+
+### Encapsulamento do aviso local
+
+```text
+LocalNotificationSink.notify(File)
+└── File                          models/
+    ├── id / sync_id / observed_at / coverage / scope
+    ├── event: FileEvent
+    │   ├── kind: FileEventKind
+    │   ├── previous: Option<FileLocation>
+    │   └── current: Option<FileLocation>
+    └── data: Option<FileData>
+        ├── Some(Local(LocalFile)) [quando observado]
+        └── None                   [quando sem dados confiáveis]
+```
+
+`RecheckRequired` e `ScopeUnavailable` não comprovam exclusão. Identidade local, relações anterior/atual e cobertura precisam de evidência, conforme Models. Estes desenhos **não** descrevem código compilado.
