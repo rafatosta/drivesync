@@ -78,6 +78,20 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 - Persistência dos grupos de metadados e `ProviderFileData` exige **revisão pré-implementação**: catalogar tudo, escolher `manter/sob demanda/descartar`, definir codec e privacidade. Não prometer round-trip de atributo descartado nem serializar o objeto inteiro como blob opaco inadvertidamente.
 - Proposta documental, não alterar código Rust, Detector ou Models apenas para adaptar o Inventário nesta etapa.
 
+## Submódulos internos — contratos de referência
+
+A fachada `InventoryManager` continua com **16 métodos públicos**. Implementar internamente por responsabilidade, usando os contratos documentais propostos de [items](items/INTERFACES.md), [metadata](metadata/INTERFACES.md), [baseline](baseline/INTERFACES.md), [operations](operations/INTERFACES.md), [activity](activity/INTERFACES.md) e [storage](storage/INTERFACES.md). Estes diretórios são **documentação de contratos**, não código Rust já implementado. As assinaturas internas são esboços para revisão, não autorização para mudar a API pública.
+
+- `items/`: identidade, vínculos, presenças, status, revisão, tombstones; não coleta metadados nem resolve conflitos.
+- `metadata/`: persistência dos campos aprovados de Models; sem `GoogleFile`, acesso ao filesystem ou rede.
+- `baseline/`: exclusivamente último estado verificado; substituição apenas via confirmação transacional.
+- `operations/`: fila de trabalho, retry e claim; sem execução de transferências.
+- `activity/`: histórico imutável vinculado ao item; sem eventos técnicos do Detector.
+- `storage/`: SQLite, abertura segura, transação, integridade e tradução de erros; nenhuma conexão por repositório.
+- `InventoryManager` coordena `confirm_sync` em uma transação de `storage/` abrangendo item, baseline, operação e histórico. Nenhum submódulo executa commit independente.
+- Nenhuma importação cíclica entre repositórios; compartilhar apenas tipos de contrato e contexto interno de armazenamento. Não criar `remote_cursor` nem `remote_events` por compatibilidade.
+- Antes do código, revisar os detalhes **ainda pendentes** de campos persistidos, codec do payload específico do provedor, DDL, idempotência, ownership/lifetimes e prova de ausência.
+
 ## Método de trabalho: Contract-First + TDD
 
 | Etapa | Ação | Condição para avançar |
