@@ -1,5 +1,19 @@
 # Inventário — INTERFACES
 
+## Integração revisada com Models — contrato-alvo
+
+**Proprietário dos dados:** [Models](../models/INTERFACES.md) define `LocalFile`, `RemoteFile`, `RemoteFileRef`, `File`, `FileData`, `FileEvent`, `MetadataValue<T>` e IDs compartilhados. O Inventário define **somente** `SyncItem`, `SyncBaseline`, presença, status, fila de operações, atividades e acesso ao próprio banco. Nem `GoogleFile` de API, nem `FileBatch`/lease do Detector devem aparecer no contrato público do Inventário.
+
+**Correspondência de identidades:** `SyncItemId` é item lógico persistente; `File.id` é ocorrência; `LocalFile.local_id` pode estar ausente; `RemoteFile.reference` é `RemoteFileRef(AccountId,RemoteFileId)` qualificado pela conta. Não usar caminho, nome, inode ou ID remoto não qualificado como identidade global. `SyncItem.revision` é controle otimista de escrita, não versão remota nem ID de evento.
+
+**Forma das entradas:** `RecordLocalObservation.observation.observed` e `RecordRemoteObservation.observation.observed` recebem **`File` integral** com a variante correspondente de `FileData`; o Analisador fornece `PresenceState` e a prova do escopo. O Inventário não interpreta `FileEventKind` para gerar operações nem converter uma remoção suspeita em ausência confirmada. `data=None` mantém reavaliação e último snapshot conhecido. `Present` exige `Some(FileData)` da origem correta, e `AbsentConfirmed` exige prova independente suficiente.
+
+**Preservação de metadados:** `MetadataValue::NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable` não equivalem a valores conhecidos nem apagam silenciosamente os últimos campos válidos. A seleção definitiva dos campos a persistir depende da revisão de utilidade; preservar `ProviderFileData` somente quando aprovado, filtrado e com codec seguro. `models/` permanece sem I/O.
+
+**Separação de responsabilidades:** o [Detector Storage](../detectors/storage/INTERFACES.md) detém a fila de `File`/leases, e o [Detector Remoto](../detectors/remote/INTERFACES.md) detém a porta de checkpoint. A antiga seção de `PublishRemoteChanges`, `RemoteCursor` e `RemoteEvent` neste arquivo é uma **sobreposição de responsabilidades identificada**, ainda não eliminada do contrato. **Não implementar dois registros de entrega dos mesmos eventos**; decidir sua remoção/realocação antes de codificar, sem criar adaptadores legados.
+
+**Estado:** revisão conceitual documentada. As estruturas e assinaturas ainda não representam Rust implementado; não foram executados testes.
+
 ## 1. Objetivo e princípio das interfaces
 
 **Contrato Rust inicial para implementação orientada a testes (TDD).** O Inventário é proprietário do `SyncItem` e de seu banco por pasta sincronizada, descrito em [README.md](README.md). Todos os consumidores acessam os dados por **métodos públicos com objetos de entrada e objetos de resultado**; nenhum consumidor recebe `Connection`, `Transaction`, `Row`, SQL, nome de tabela ou estrutura de armazenamento.
@@ -19,14 +33,14 @@ Essa convenção é aplicada **inclusive a buscas**, filtros, cursores, eventos,
 ### Dependências externas e limites
 
 - `RemoteFile` é importado do contrato público de `providers/google/api/`; o Inventário não o redefine.
-- `LocalFile` será importado do componente responsável pelos metadados locais. Seu contrato completo permanece **em aberto**; esta especificação depende apenas dele como **tipo** e de uma identidade local informada separadamente.
+- `LocalFile` será importado do componente responsável pelos metadados locais. O contrato conceitual de Models já define os grupos de metadados; a seleção final dos campos para persistência é pendente de revisão pré-implementação.
 - As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `RemoteFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
 - Esta API trata **um inventário por instância**, validado por `sync_id`. Não administra contas, conexões globais, GSettings ou bancos de outros módulos.
 
 ## 2. Tipos fundamentais
 
-Os tipos abaixo são **propostas públicas Rust**. Os snippets expressam a forma e semântica do contrato; os imports definitivos dos tipos externos e detalhes de ownership serão fixados ao integrar os módulos.
+Os tipos abaixo são **propostas públicas Rust**; os identificadores compartilhados e modelos de arquivos são importados de Models. Os snippets expressam a forma e semântica do contrato; os imports definitivos dos tipos externos e detalhes de ownership serão fixados ao integrar os módulos.
 
 ```rust
 pub type InventoryResult<T> = Result<T, InventoryFailure>;
@@ -174,7 +188,7 @@ pub struct SyncActivity {
 ```
 
 O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência de `LocalFile.kind` e `RemoteFile.classification.kind` com `ItemKind` compete ao **Analisador**; Inventário não interpreta tipos de arquivos nem dados específicos do provedor.
-\nO nome local deve preservar bytes Unix quando necessário; `BaselineSide.local_name_bytes` é reservado ao lado local. O objeto `SyncActivity` conserva os dados relevantes no momento do evento, sem depender do nome atual do arquivo. **Atividade sem `item_id` não é permitida**; eventos globais de aplicação pertencem a outro componente.
+O nome local deve preservar bytes Unix quando necessário; `BaselineSide.local_name_bytes` é reservado ao lado local. O objeto `SyncActivity` conserva os dados relevantes no momento do evento, sem depender do nome atual do arquivo. **Atividade sem `item_id` não é permitida**; eventos globais de aplicação pertencem a outro componente.
 
 `SyncItem.local` e `SyncItem.remote` não indicam sozinhos exclusão. A ausência comprovada é expressa por `PresenceState::AbsentConfirmed` com evidência apropriada.
 
@@ -592,11 +606,11 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 | `MarkInitialDownloadCompleteRequest` | Nenhum | `expected_generation`, `expected_complete` são precondições |
 | `GetItemRequest` | Nenhum | `selector` é enum; escolhe uma identificação por vez |
 | `ListItemsRequest` | Filtros internos | `filter`, `pagination` são objetos; filtro vazio lista itens |
-| `ItemFilter` | `local_presence`, `remote_presence`, `remote_parent_id`, `local_parent_item_id` | `statuses` pode ser `Vec::new()` (sem filtro) |
+| `ItemFilter` | `local_presence`, `remote_presence`, `remote_parent`, `local_parent_item_id` | `statuses` pode ser `Vec::new()` (sem filtro) |
 | `RecordLocalObservation` | `expected_revision` | `selector`, `observation`; `None` em revisão permitido somente para objeto novo |
-| `LocalObservation` | `file`, `relative_path` | `presence`, `proof`; `Present` exige `file=Some` |
+| `LocalObservation` | nenhum | `observed: File`, `presence`, `proof`; `Present` exige `FileData::Local` |
 | `RecordRemoteObservation` | `expected_revision` | `selector`, `observation`; não substituir campos omitidos |
-| `RemoteObservation` | `file` | `presence`, `proof`; `Present` exige `file=Some` e identidade verificável |
+| `RemoteObservation` | nenhum | `observed: File`, `presence`, `proof`; `Present` exige `FileData::Remote` e `RemoteFileRef` válido |
 | `LinkItemRequest` | Atualizações via `FieldUpdate`, não `Option` | `item_id`, `changes`, `expected_revision`; `Keep` é válido |
 | `UpdateItemStatusRequest` | `conflict_reason` via `FieldUpdate` | `item_id`, `change`, `expected_revision` |
 | `ConfirmSyncRequest` | `completed_operation`, `activity` | `item_id`, `expected_item_revision`, `confirmed`; atividade obrigatória quando conclui operação com efeito relevante |
@@ -673,7 +687,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Obtém um vínculo lógico por uma única identidade.
 
-**Parâmetros:** `selector`: `Id`, `RemoteId`, `LocalId` ou `LocalRelativePath`; variante selecionada determina os dados obrigatórios.
+**Parâmetros:** `selector`: `Id`, `RemoteRef`, `LocalId` ou `LocalRelativePath`; variante selecionada determina os dados obrigatórios.
 
 **Retorno:** `item: Some`: vínculo e objetos disponíveis; `None`: nenhum registro para o seletor.
 
@@ -685,7 +699,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Lista itens com filtragem e paginação estável.
 
-**Parâmetros:** `filter.statuses` vazio: todos os status; `local_presence`/`remote_presence` `None`: qualquer; `remote_parent_id`/`local_parent_item_id` `None`: qualquer pai; `pagination.limit`: máximo de itens; `after`: cursor ou primeira página.
+**Parâmetros:** `filter.statuses` vazio: todos os status; `local_presence`/`remote_presence` `None`: qualquer; `remote_parent`/`local_parent_item_id` `None`: qualquer pai; `pagination.limit`: máximo de itens; `after`: cursor ou primeira página.
 
 **Retorno:** `page.entries`: itens reconstruídos; `next_cursor: None`: fim da consulta.
 
@@ -697,7 +711,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Insere ou atualiza a observação local e seu vínculo lógico sem modificar o baseline.
 
-**Parâmetros:** `selector`: vínculo existente, chave local ou `NewItem`; `observation.file`: metadados quando presente; `presence`: situação comprovada; `proof`: origem, instante e escopo; `relative_path`: localização se observada; `expected_revision`: necessária para atualização de item existente, `None` apenas para criação.
+**Parâmetros:** `selector`: vínculo existente, chave local ou `NewItem`; `observation.observed`: metadados quando presente; `presence`: situação comprovada; `proof`: origem, instante e escopo; caminho local é obtido de `LocalFile.relative_path`/`File.scope`; `expected_revision`: necessária para atualização de item existente, `None` apenas para criação.
 
 **Retorno:** `item`: estado atualizado com revisão; `created`: informa se o vínculo foi criado.
 
@@ -709,7 +723,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Insere ou atualiza observação recebida da provedor API sem editar o Drive nem confirmar sincronização.
 
-**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.file`: `RemoteFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
+**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.observed`: `RemoteFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
 
 **Retorno:** `item`: representação remota e estado; `created`: indica novo vínculo.
 
