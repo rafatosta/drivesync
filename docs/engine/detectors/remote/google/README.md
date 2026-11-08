@@ -19,3 +19,9 @@ Ele decide **como observar o Google Drive** (consulta incremental, paginação, 
 Testar e implementar com Google API simulada, sink de eventos fake e checkpoint fake/temporário. Nenhum Detector pai real, Local real ou Storage real é exigido. Não criar versões futuras do OneDrive como pré-requisito.
 
 [INTERFACES](INTERFACES.md) · [TESTS](TESTS.md) · [AGENTS](AGENTS.md). **Esta é uma especificação de implementação, não código existente.**
+
+## Encapsulamento com Models
+
+O especialista Google usa `GoogleFile` apenas no adaptador: ele cria `RemoteFile` com `RemoteFileRef(account_id, file_id)`, metadados comuns e `ProviderFileData` opaco/filtrado. Cada emissão ao `RemoteEventSink` é um `models::File` completo com `FileData::Remote` quando possível, ou `data=None` e reavaliação quando faltar ID/arquivo. Renomeação/movimentação usam `FileEvent.previous/current` com evidência. `removed` da Changes API pode ser perda de acesso.
+
+O Detector pai/Storage não precisa compreender `GoogleFile`, e alterações nos atributos de `RemoteFile` só afetam o adaptador. Antes de implementar, revisar necessidade e privacidade dos campos, sem transmitir credenciais ou conteúdo binário.
