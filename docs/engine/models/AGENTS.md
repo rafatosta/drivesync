@@ -45,6 +45,14 @@ As definições de atributos, tipos, variantes, ausência e invariantes estão e
 - Não inventar formatos, valores substitutos, limites de leitura, permissões ou política de coleta ainda pendentes.
 - **O contrato é conceitual e depende de aprovação antes da implementação Rust.**
 
+## Bloqueio obrigatório antes de implementar LocalFile
+
+**Não iniciar a implementação da estrutura completa descrita atualmente.** Primeiro executar uma **revisão de necessidade de todos os metadados** com o responsável pelo projeto.
+
+O contrato atual é um catálogo deliberadamente abrangente: **levantar todos os dados disponíveis primeiro; identificar e descartar os desnecessários depois**. Criar uma matriz por campo/grupo contendo finalidade, consumidor, disponibilidade/fonte, custo, exposição de dados sensíveis e decisão fundamentada (`manter`, `sob demanda` ou `descartar`). Não eliminar atributos antecipadamente por conveniência do agente e tampouco implementá-los todos só porque foram enumerados.
+
+Somente depois de a seleção ser explicitamente aprovada, consolidar os atributos implementáveis em `INTERFACES.md`, ajustar `TESTS.md` e implementar **literalmente o contrato final aprovado**. Essa etapa de revisão é um **pré-requisito**, não uma sugestão facultativa.
+
 ## Execução futura
 
 Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GREEN → REFACTOR conforme [TESTS](TESTS.md), executar Cargo/Rust apenas no Flatpak do projeto e relatar PASS/FAIL/BLOCKED. Integração e testes de lote/ack pertencem ao Detector, não aos testes de Models.
