@@ -4,7 +4,7 @@
 
 ## Propriedade
 
-Administra **identidade lógica, vínculos, presença, diagnóstico e revisão** de `SyncItem`. Recebe decisões já interpretadas pelo Analisador; não interpreta `FileEventKind`, não lê filesystem/Drive, não persiste metadados detalhados, baseline, fila ou histórico por conta própria.
+Administra **identidade lógica, vínculos, presença, diagnóstico e revisão** de `SyncItem`. Registra os atributos estruturais dos itens conforme os dados e as evidências recebidos pela interface.
 
 ### Tipos compartilhados
 
@@ -58,6 +58,6 @@ pub(crate) trait ItemRepository {
 - Mesmo ID remoto em contas distintas; duplicidade no mesmo escopo; conflito de revisão; `FieldUpdate` nos três casos.
 - Busca por cada variante de `ItemSelector`, paginação, tombstones e relações de pai válidas.
 - Presença desconhecida e ausência não comprovada **não** causam exclusão; falha de escrita faz rollback.
-- Nenhum teste depende de Google API, Detector concreto ou SQLite de outro módulo.
+- Testar o contrato com dados isolados e SQLite temporário.
 
 **Pendente:** política exata para deduplicação por caminho quando `local_id=None`, critérios de prova de ausência, regras para atualização de `kind`, e plano de paginação consistente.
