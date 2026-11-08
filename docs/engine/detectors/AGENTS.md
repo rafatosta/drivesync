@@ -8,7 +8,7 @@ Implementar **somente o coordenador público `detectors/`**, sem implementar aut
 
 1. **Uma única API externa:** apenas Detector, eventos, lotes, requests/results e status; nenhum tipo dos filhos reexportado.
 2. **Três dependências isoladas:** Local e Remoto produzem eventos individuais; Storage possui API de fila durável. O pai conhece **somente as interfaces**, não as implementações, tecnologias ou layouts.
-3. **Lotes mistos:** `take_events` pode retornar Local e Remoto juntos, inclusive eventos diferentes do mesmo `SyncItem`, preservando IDs individuais e ordenação de enfileiramento.
+3. **Lotes mistos:** `take_events` pode retornar Local e Remoto juntos, inclusive eventos diferentes do mesmo recurso, preservando IDs individuais e ordenação de enfileiramento.
 4. **Não resolver conflitos:** juntar eventos no lote não autoriza deduplicação destrutiva, sincronização, comparação de baseline ou decisão de prevalência.
 5. **Confirmação explícita:** leitura reserva; somente `acknowledge` com decisão do Orquestrador confirma ou descarta. `stop` não limpa fila; `release_events` permite reentrega.
 6. **Durabilidade:** sink interno só confirma ao produtor após `Storage.enqueue` bem-sucedido. Falha implica erro/backpressure e recuperação.
@@ -22,3 +22,9 @@ Testar coordenador real com **Local fake, Remoto fake e Storage fake**: os fakes
 **“Implemente o Detector”** significa concluir **oito métodos públicos** do coordenador, sem exigir implementação dos filhos reais. Para integração dos quatro módulos, solicitar explicitamente etapa posterior. Não declarar integrado se apenas fakes passaram.
 
 Executar ferramentas Rust/Cargo **somente no Flatpak** do projeto; comentários e commits em inglês; não fazer push/PR sem autorização. Relatar contratos, testes e comandos realmente executados, commits e limites.
+
+## Alinhamento obrigatório com Models
+
+`File` é o contrato único de observação: nenhum `DetectorEvent`, `DetectionEventRecord` ou wrapper mínimo de notificação com perda de dados. `FileBatch` (propriedade do Detector) entrega `files: Vec<File>`; Local/Remoto enviam uma observação por chamada ao sink e Storage persiste o objeto completo.
+
+O coordenador não acessa campos internos de `LocalFile` ou `RemoteFile`, não interpreta `FileData` nem classifica eventos novamente. Repassa evento, `previous/current`, escopo, cobertura e payload opaco intactos. Não usa `SyncItem`/`SyncItemId` para transporte. `acknowledge` só depois de o consumidor aceitar responsabilidade de modo durável ou concluir processamento, nunca apenas por ter chamado `take_events`. Mudanças nos esquemas dos arquivos não devem alterar a fachada.
