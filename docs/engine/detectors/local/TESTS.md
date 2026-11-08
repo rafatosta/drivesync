@@ -12,7 +12,7 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 | --- | --- | --- |
 | `empty_root` | Raiz temporária válida, vazia | Leitura completa sem eventos de exclusão inventados |
 | `local_tree` | Arquivos/subpastas com nomes UTF-8 e não UTF-8 Unix | `LocalFile.relative_path` preservado |
-| `unknown_identity` | Arquivo sem identidade local estável comprovada | `LocalFile.id=None`; sem `SyncItemId` inventado |
+| `unknown_identity` | Arquivo sem identidade local estável comprovada | `LocalFile.local_id=None`; sem `SyncItemId` inventado |
 | `unknown_metadata` | Permissões ou atributos indisponíveis | Campos opcionais `None`; cobertura compatível |
 | `closed_app_changes` | Criar/editar/mover durante stop | Recuperação por nova varredura |
 | `partial_tree` | Subárvore inacessível | Aviso de reavaliação sem `LocalFile` e cobertura Partial |
@@ -64,12 +64,12 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 
 | Caso | Situação | Comportamento obrigatório |
 | --- | --- | --- |
-| LOC-M-01 | Arquivo regular | Aviso contém `Some(LocalFile { kind: File, ... })` |
-| LOC-M-02 | Diretório | Aviso contém `LocalFileKind::Directory`; sem conteúdo fabricado |
+| LOC-M-01 | Arquivo regular | Aviso contém `Some(LocalFile)` com `kind=Known(LocalEntryKind::Regular)` |
+| LOC-M-02 | Diretório | Aviso contém `Known(LocalEntryKind::Directory)`; sem conteúdo fabricado |
 | LOC-M-03 | Symlink | Modelo `Symlink`, sem seguir alvo externo |
 | LOC-M-04 | Nome Unix não UTF-8 | Caminho preserva componentes sem conversão com perda |
 | LOC-M-05 | Identidade local não comprovada | `id=None`; sem gerar `SyncItemId` |
-| LOC-M-06 | Hash/tamanho não observados | `checksum=None`, `size=None` conforme observação; sem preencher por suposição |
+| LOC-M-06 | Hash/tamanho não observados | metadados `NotCollected` ou `Unavailable`, conforme a coleta conforme observação; sem preencher por suposição |
 | LOC-M-07 | Evento de remoção | Aviso com `local_file=None` + escopo quando possível |
 | LOC-M-08 | Watcher overflow | Recheck com cobertura degradada e sem `LocalFile` obrigatório |
 | LOC-M-09 | Sink aceita | Um aviso individual por chamada, contado como entregue |
@@ -91,3 +91,16 @@ Cenário de falha entre observação e aceite durável deve preservar possibilid
 **5/5 métodos internos** e cenários de Models aplicáveis passam independentemente, com resultados PASS/FAIL/BLOCKED e evidências de comandos executados no Flatpak. **Não** exigir testes Google/Inventory/Storage para concluir o Local.
 
 Pendências ainda bloqueadoras de casos particulares: implementação de `LocalRelativePath`, ownership único de IDs/Timestamp, watcher concreto e regras de cobertura que determinem identidade. Nenhum teste foi executado nesta atualização documental.
+
+## 7. Regressão obrigatória — independência do esquema de LocalFile
+
+| Caso | Cenário | Resultado esperado |
+| --- | --- | --- |
+| LOC-COL-01 | Coletor fake devolve LocalFile, independentemente de seus campos | Detector encaminha o objeto integral ao sink sem inspeção/projeção de atributos |
+| LOC-COL-02 | Acrescentar campo a LocalFile e atualizar somente coletor/fixture | Código de watcher, scanner e notificação do Detector permanece **inalterado** |
+| LOC-COL-03 | Remover campo de LocalFile e adaptar o coletor | Detector continua compilável/funcional, sem acesso ao campo removido |
+| LOC-COL-04 | Coleta auxiliar de ACL/xattr falha | Coletor indica indisponibilidade sem impedir evento de reavaliação; Detector não interpreta o atributo |
+| LOC-COL-05 | Coleta parcial por custo/limite | Coletor preserva estados de coleta; Detector repassa o LocalFile sem atribuir valores padrões |
+| LOC-COL-06 | Coletor devolve file=None | Detector emite reavaliação segundo cobertura, sem inventar exclusão |
+
+Testes do coletor exercitam syscalls e funções auxiliares em filesystem temporário. **Teste de arquitetura:** alterações no layout de `LocalFile` devem ser demonstradas sem alterações nos arquivos-fonte do Detector (exceto no componente coletor/adaptador e seus testes). Este é um critério de aceite, não somente uma recomendação.
