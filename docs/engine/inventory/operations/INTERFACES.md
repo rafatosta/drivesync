@@ -1,6 +1,6 @@
 # Operations — contrato interno
 
-**Estado:** porta de persistência proposta. `inventory/operations/` é proprietário da **fila de operações de sincronização** (`SyncOperation`), que é **diferente** da fila de `File` e leases em `detectors/storage/`.
+**Estado:** porta de persistência proposta. `inventory/operations/` é proprietário da **fila de operações de sincronização** (`SyncOperation`), com estados, reservas, tentativas e confirmação persistentes.
 
 ## Responsabilidades
 
@@ -51,7 +51,7 @@ O diagrama **não** amplia `OperationTransition`: as transições exatas entre e
 - `Running` recuperado após crash é **resultado desconhecido**: verificar efeito antes de repetir a operação, não assumir falha nem sucesso.
 - `deduplication_key` só agrupa operações conforme política aprovada, nunca mistura contas, sincronizações ou itens.
 - `RetryWait` exige elegibilidade temporal; erros tipados sanitizados não contêm tokens nem conteúdo do arquivo.
-- Não eliminar operações pendentes em `stop` do Detector, mudança de conexão ou falha da GUI.
+- Preservar operações pendentes em interrupções e falhas até uma transição válida de estado.
 
 ## Testes
 
