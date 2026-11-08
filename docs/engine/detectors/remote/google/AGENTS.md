@@ -20,3 +20,7 @@ Testar especialista real com Google API fake e dependências simuladas, sem Goog
 “Implemente Detector Remoto Google” não significa implementar qualquer outro módulo nem um provedor futuro. Reportar testes executados, cobertura dos cinco contratos, bloqueios e integrações pendentes.
 
 **Este documento é instrução de implementação, não execução de código.**
+
+## Contrato de Models
+
+O especialista é responsável pela tradução de `GoogleFile` para `RemoteFile` e pela construção de um `File` autocontido (`FileData::Remote` quando disponível; evento tipado e localizações comprovadas). Emitir o objeto integral por `RemoteEventSink.emit`. Não criar `RemoteObservation` de campos mínimos nem deixar a fachada reconstruir metadados. Proteção de payload especializado e tratamento de `removed`/perda de acesso são obrigatórios. Mudanças em RemoteFile afetam o adaptador, não polling/cursor.
