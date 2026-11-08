@@ -212,8 +212,8 @@ impl LocalDetector {
 ## 6. Semântica de tipos e ausência
 
 - `LocalScanScope::Paths` usa `LocalRelativePath`; nenhum caminho pode escapar da raiz. Lista vazia deve resultar em erro tipado ou sem trabalho **conforme decisão explícita antes do código**, nunca virar scan global acidental.
-- `LocalFile.id=None` significa identidade local desconhecida; não usar inode como ID estável sem comprovação.
-- `LocalFile.kind=Unknown` ou metadados opcionais ausentes não autorizam inferir tipo, hash ou tamanho.
+- `LocalFile.local_id=None` significa identidade local desconhecida; não usar inode como ID estável sem comprovação.
+- `LocalFile.kind=MetadataValue::Known(LocalEntryKind::Unknown)` ou `NotCollected`/`Unavailable` não autoriza inferir tipo ou tamanho; hash derivado não é atributo nativo obrigatório.
 - Nomes Unix inválidos em UTF-8 devem ser preservados segundo a representação definida em Models.
 - `LocalScanCoverage::Complete` avalia **cobertura da leitura**, não `PresenceState::AbsentConfirmed` do Inventário.
 - `debounce_ms`, `request_id`, últimos timestamps e erros opcionais não implicam comportamento não documentado quando ausentes.
