@@ -10,7 +10,7 @@
 
 **Preservação de metadados:** `MetadataValue::NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable` não equivalem a valores conhecidos nem apagam silenciosamente os últimos campos válidos. A seleção definitiva dos campos a persistir depende da revisão de utilidade; preservar `ProviderFileData` somente quando aprovado, filtrado e com codec seguro. `models/` permanece sem I/O.
 
-**Separação de responsabilidades:** o [Detector Storage](../detectors/storage/INTERFACES.md) detém a fila de `File`/leases, e o [Detector Remoto](../detectors/remote/INTERFACES.md) detém a porta de checkpoint. A antiga seção de `PublishRemoteChanges`, `RemoteCursor` e `RemoteEvent` neste arquivo é uma **sobreposição de responsabilidades identificada**, ainda não eliminada do contrato. **Não implementar dois registros de entrega dos mesmos eventos**; decidir sua remoção/realocação antes de codificar, sem criar adaptadores legados.
+**Separação de responsabilidades aprovada:** [Detector Storage](../detectors/storage/INTERFACES.md) detém a fila `File`/leases/ack, [Detector Remoto](../detectors/remote/INTERFACES.md) detém a porta de checkpoint e o Inventário detém `SyncItem`, baseline, fila de operações e histórico. Os quatro métodos duplicados de cursor/eventos foram **removidos deste contrato**, sem adaptadores legados.
 
 **Estado:** revisão conceitual documentada. As estruturas e assinaturas ainda não representam Rust implementado; não foram executados testes.
 
@@ -28,7 +28,7 @@ fn record_local(&self, item_id: SyncItemId, observed: File, revision: u64);
 fn record_local(&self, request: RecordLocalObservation) -> InventoryResult<RecordObservationResult>;
 ```
 
-Essa convenção é aplicada **inclusive a buscas**, filtros, cursores, eventos, fila e histórico. Métodos só recebem `&self` (ou `self` em métodos de construção) e **um objeto de requisição**. Consultas sem parâmetros usam um objeto vazio nomeado, como `GetSyncInfoRequest`. Respostas utilizam **objetos nomeados**, exceto erros retornados por `InventoryResult<T>`. Não retornar `bool` ou tuplas com significados ambíguos.
+Essa convenção é aplicada **inclusive a buscas, filtros, fila de operações e histórico**. Métodos só recebem `&self` (ou `self` em métodos de construção) e **um objeto de requisição**. Consultas sem parâmetros usam um objeto vazio nomeado, como `GetSyncInfoRequest`. Respostas utilizam **objetos nomeados**, exceto erros retornados por `InventoryResult<T>`. Não retornar `bool` ou tuplas com significados ambíguos.
 
 ### Dependências externas e limites
 
@@ -53,11 +53,7 @@ pub struct SyncItemId(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OperationId(pub i64);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct RemoteEventId(pub i64);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ActivityId(pub i64);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CorpusId(pub String);
 
 pub struct Pagination {
     pub limit: u32,
@@ -148,22 +144,6 @@ pub struct SyncOperation {
     pub started_at: Option<Timestamp>,
     pub completed_at: Option<Timestamp>,
 }
-pub struct RemoteCursor {
-    pub corpus: CorpusId,
-    pub cursor: String,
-    pub generation: u64,
-}
-pub struct RemoteEvent {
-    pub id: RemoteEventId,
-    pub corpus: CorpusId,
-    pub item_id: Option<SyncItemId>,
-    pub remote_id: Option<String>,
-    pub event_kind: String,
-    pub observed_version: Option<String>,
-    pub observed_at: Timestamp,
-    pub processed_at: Option<Timestamp>,
-}
-
 pub enum ActivityType {
     Upload, Download, Rename, Move, Create, Trash, Delete,
     Restore, ConflictDetected, ConflictResolved,
@@ -383,55 +363,11 @@ pub struct UpdateOperationResult { pub operation: SyncOperation }
 
 As operações são **solicitações persistidas**, não autorização automática para executar. `ClaimOperation` deve ser atômico e impedir dois workers de reivindicarem a mesma operação. Não oferecer `Complete` em `UpdateOperation`: a conclusão verificável passa por `ConfirmSyncRequest` para manter fila, baseline e histórico consistentes. Ao reiniciar, estados `Running` com resultado desconhecido são reavaliados antes de reexecutar.
 
-## 7. Cursores e eventos remotos
+## 7. Fronteira de propriedade: detecção e checkpoints
 
-```rust
-pub struct PublishRemoteChangesRequest {
-    pub checkpoint: RemoteCheckpoint,
-    pub events: Vec<NewRemoteEvent>,
-}
-pub struct RemoteCheckpoint {
-    pub corpus: CorpusId,
-    pub expected_cursor: Option<String>, // None = cursor ainda não cadastrado, não ignorar concorrência
-    pub new_cursor: String,
-    pub expected_generation: u64,
-}
-pub struct NewRemoteEvent {
-    pub remote_id: Option<String>,
-    pub item_id: Option<SyncItemId>,
-    pub event_kind: String,
-    pub observed_version: Option<String>,
-    pub observed_at: Timestamp,
-    pub deduplication_key: Option<String>,
-}
-pub struct PublishRemoteChangesResult {
-    pub cursor: RemoteCursor,
-    pub inserted: u32,
-    pub duplicate: u32,
-}
+O **Detector** é o único proprietário da fila de observações `File`, reservas, reconhecimento e reentrega por `EventStore`. O **Detector Remoto** é o proprietário lógico dos checkpoints/cursos de observação por `RemoteCheckpoint.read/commit`, via backend de persistência especializado. O Inventário **não** expõe, replica nem confirma checkpoints ou eventos de detecção.
 
-pub struct GetRemoteCursorRequest { pub corpus: CorpusId }
-pub struct GetRemoteCursorResult { pub cursor: Option<RemoteCursor> }
-pub struct ListRemoteEventsRequest {
-    pub filter: RemoteEventFilter,
-    pub pagination: Pagination,
-}
-pub struct RemoteEventFilter {
-    pub corpus: Option<CorpusId>,
-    pub item_id: Option<SyncItemId>,
-    pub pending_only: bool, // false inclui pendentes e já processados
-}
-pub struct ListRemoteEventsResult { pub page: Page<RemoteEvent> }
-pub struct AcknowledgeRemoteEventRequest {
-    pub event_id: RemoteEventId,
-    pub processed_at: Timestamp,
-}
-pub struct AcknowledgeRemoteEventResult { pub event: RemoteEvent }
-```
-
-`PublishRemoteChangesRequest` registra **cursor e eventos na mesma transação**. `expected_cursor` e `expected_generation` são precondições de concorrência. Avançar o cursor não reconhece eventos automaticamente. Eventos repetidos pela API devem ser idempotentes segundo a chave de deduplicação definida; um evento sem identificador de item pode gerar reavaliação posterior, sem inventar que o arquivo foi excluído.
-
-`AcknowledgeRemoteEventRequest` só é emitida após tratamento explicitamente confirmado pelo consumidor; a API do Inventário não presume processamento ao entregar o evento.
+**Ordem de segurança:** persistir todos os `File` de uma página no `EventStore` com aceite durável *antes* de confirmar o novo checkpoint. Se a confirmação do checkpoint falhar, reobservar a página e deduplicar/reconciliar as ocorrências; uma página parcialmente persistida não autoriza avanço. A associação e o estado dos itens só são gravados pelo Inventário após interpretação do Analisador. A localização física, transações e protocolo de replay do backend de checkpoint ficam para implementação e testes do Detector Remoto, sem gravação cruzada direta em `inventory.sqlite3`.
 
 ## 8. Atividades — histórico vinculado a arquivo
 
@@ -511,15 +447,6 @@ impl InventoryManager {
     pub fn update_operation(&self, request: UpdateOperationRequest)
         -> InventoryResult<UpdateOperationResult>;
 
-    pub fn publish_remote_changes(&self, request: PublishRemoteChangesRequest)
-        -> InventoryResult<PublishRemoteChangesResult>;
-    pub fn get_remote_cursor(&self, request: GetRemoteCursorRequest)
-        -> InventoryResult<GetRemoteCursorResult>;
-    pub fn list_remote_events(&self, request: ListRemoteEventsRequest)
-        -> InventoryResult<ListRemoteEventsResult>;
-    pub fn acknowledge_remote_event(&self, request: AcknowledgeRemoteEventRequest)
-        -> InventoryResult<AcknowledgeRemoteEventResult>;
-
     pub fn record_activity(&self, request: RecordActivityRequest)
         -> InventoryResult<RecordActivityResult>;
     pub fn list_activities(&self, request: ListActivitiesRequest)
@@ -527,7 +454,7 @@ impl InventoryManager {
 }
 ```
 
-**20 operações públicas iniciais**: 2 de escopo, 2 de consulta, 5 de associação/estado/confirmação, 4 de fila, 4 de mudanças remotas, 2 de histórico, mais `open`. Novas operações poderão ser adicionadas sem modificar as atuais.
+**16 métodos públicos**: `open`, consultas e escopo, observações e associações, baseline/estado, fila de operações e histórico. **Nenhum método de evento ou cursor remoto permanece nesta API.**
 
 ## 10. Erros públicos e comportamento
 
@@ -590,8 +517,6 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 | `BaselineSide` | `presence` | `name`, `local_name_bytes`, `parent_identity`, `version`, `checksum`, `size`, `modified_at` | Nome local em bytes; remoto em texto; `None` em arquivos nativos provedor não é erro |
 | `SyncInfo` e `SyncIdentity` | `sync_id`, `account_id`, `remote_root_id`; geração e inicialização em `SyncInfo` | Nenhum desses campos é opcional | Abrir com identidade divergente deve falhar |
 | `SyncOperation` | IDs, direção, tipo, estado, revisão base, tentativas, criação | `expected_remote_version`, `next_attempt_at`, `last_error_kind`, `started_at`, `completed_at` | Não fabricar versão remota; timestamps dependem do estado |
-| `RemoteCursor` | corpus, cursor, geração | Nenhum após cursor cadastrado | Ausência do cursor completo é `GetRemoteCursorResult.cursor=None` |
-| `RemoteEvent` | ID do evento, corpus, tipo e data observada | `item_id`, `remote_id`, `observed_version`, `processed_at` | Nem todo evento possui item já associado; evento não reconhecido mantém `processed_at=None` |
 | `SyncActivity` | ID, **`item_id`**, tipo, origem, resultado, data | `operation_id`, descrição, erro, nome histórico, ID remoto, caminho histórico | Atividade sem arquivo associado é inválida; operação pode não existir para conflito |
 | `InventoryFailure` | `kind`, `message`, `retryable` | Nenhum no contrato atual | Nunca inserir token ou conteúdo privado em mensagem |
 | `Page<T>` | `entries` | `next_cursor` | `None` significa fim da paginação, não erro |
@@ -617,11 +542,6 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 | `ListOperationsRequest` | `filter.item_id`, `filter.direction`, `filter.eligible_before` | `filter.states` vazio não filtra |
 | `ClaimOperationRequest` | Nenhum | `operation_id`, `expected_state`, `claimed_at` |
 | `UpdateOperationRequest` | Nenhum | `transition` contém dados específicos obrigatórios da variante |
-| `PublishRemoteChangesRequest` | `checkpoint.expected_cursor`, campos opcionais dos eventos | `checkpoint` e `events`; vetor vazio pode ser válido para avançar cursor sem eventos |
-| `NewRemoteEvent` | `remote_id`, `item_id`, `observed_version`, `deduplication_key` | `event_kind`, `observed_at`; deve haver identidade/sinal suficiente para reavaliação |
-| `GetRemoteCursorRequest` | Nenhum | `corpus` |
-| `ListRemoteEventsRequest` | `filter.corpus`, `filter.item_id` | `pending_only=false` inclui todos |
-| `AcknowledgeRemoteEventRequest` | Nenhum | `event_id`, `processed_at` |
 | `RecordActivityRequest` | Campos opcionais de `NewActivity` | `activity.item_id` obrigatório |
 | `ListActivitiesRequest` | `filter.item_id`, `operation_id`, `from`, `until` | Vetores `event_types`/`outcomes` vazios não filtram; validar intervalo |
 
@@ -629,7 +549,7 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 
 - **Não observado:** `Option::None` ou atributo de metadados não retornado significa desconhecido/não fornecido, jamais `AbsentConfirmed` automaticamente.
 - **Ausência comprovada:** `PresenceState::AbsentConfirmed` só após uma observação válida do escopo e das condições necessárias; manter a última representação para reconciliação.
-- **Ainda não criado:** `baseline=None`, `GetRemoteCursorResult.cursor=None` e `GetItemResult.item=None` são ausências estruturais legítimas, mas diferentes de falha de armazenamento.
+- **Ainda não criado:** `baseline=None` e `GetItemResult.item=None` são ausências estruturais legítimas, mas diferentes de falha de armazenamento.
 - **Não aplicável:** tamanho/checksum/versão de documentos nativos do provedor, diretórios e links podem ser indisponíveis legitimamente; não preencher valores artificiais.
 - **Atualização:** `FieldUpdate::Keep` preserva, `Set` grava e `Clear` limpa explicitamente; validar quais campos admitem limpeza.
 - **Estado de operação:** `started_at`, `completed_at`, `next_attempt_at` variam conforme etapa e não devem ser exigidos fora dela.
@@ -812,55 +732,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Limites e erros:** Não possui variante `Complete`; conclusão verificada só acontece em `confirm_sync`.
 
-### 15. `publish_remote_changes`
-
-**Assinatura:** `fn publish_remote_changes(..., request: PublishRemoteChangesRequest) -> InventoryResult<PublishRemoteChangesResult>`.
-
-**Finalidade:** Publica eventos remotos e avanço de cursor na mesma transação SQLite.
-
-**Parâmetros:** `checkpoint.corpus` identifica fluxo; `expected_cursor: None` exige que ainda não exista cursor; `new_cursor` e `expected_generation` validam continuidade; `events` pode ser vazio para página sem mudanças; cada evento tem tipo/data obrigatórios, IDs/versão/deduplicação opcionais.
-
-**Retorno:** `cursor`: checkpoint gravado; `inserted` e `duplicate`: contagens verificáveis.
-
-**Limites e erros:** Não marca eventos como processados nem determina exclusão de arquivo a partir do evento.
-
-### 16. `get_remote_cursor`
-
-**Assinatura:** `fn get_remote_cursor(..., request: GetRemoteCursorRequest) -> InventoryResult<GetRemoteCursorResult>`.
-
-**Finalidade:** Consulta a última posição durável do detector remoto.
-
-**Parâmetros:** `corpus`: fluxo remoto solicitado.
-
-**Retorno:** `cursor: Some` indica checkpoint conhecido; `None` indica ainda não registrado.
-
-**Limites e erros:** Não cria cursor e não realiza chamada remota.
-
-### 17. `list_remote_events`
-
-**Assinatura:** `fn list_remote_events(..., request: ListRemoteEventsRequest) -> InventoryResult<ListRemoteEventsResult>`.
-
-**Finalidade:** Lista eventos observados, priorizando os pendentes quando solicitado.
-
-**Parâmetros:** `filter.corpus`/`item_id`: `None` não restringe; `pending_only=true`: sem `processed_at`; `false`: inclui todos; `pagination` limita.
-
-**Retorno:** `page`: eventos persistidos e cursor de listagem.
-
-**Limites e erros:** Não reconhece processamento automaticamente.
-
-### 18. `acknowledge_remote_event`
-
-**Assinatura:** `fn acknowledge_remote_event(..., request: AcknowledgeRemoteEventRequest) -> InventoryResult<AcknowledgeRemoteEventResult>`.
-
-**Finalidade:** Registra que um evento remoto foi efetivamente tratado.
-
-**Parâmetros:** `event_id`: identificador do sinal; `processed_at`: instante de conclusão reconhecida.
-
-**Retorno:** `event`: mesmo evento com confirmação de processamento.
-
-**Limites e erros:** Não prova sincronização de conteúdo por si só; consumidor precisa ter reavaliado antes.
-
-### 19. `record_activity`
+### 15. `record_activity`
 
 **Assinatura:** `fn record_activity(..., request: RecordActivityRequest) -> InventoryResult<RecordActivityResult>`.
 
@@ -872,7 +744,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Limites e erros:** Não registra eventos globais sem arquivo; não substitui `confirm_sync` ao concluir operação.
 
-### 20. `list_activities`
+### 16. `list_activities`
 
 **Assinatura:** `fn list_activities(..., request: ListActivitiesRequest) -> InventoryResult<ListActivitiesResult>`.
 
@@ -899,7 +771,7 @@ O método `record_local` aceita apenas `File` cujo `scope` corresponde ao lado l
 
 A identidade do `File` (ocorrência) não deve ser persistida como chave do `SyncItem`. A implementação futura deverá decidir a retenção de referência de última observação e a idempotência, sem duplicar a fila de entrega do Detector. O Inventário não decide a ação a partir de `FileEventKind`, embora preserve dados do evento para fins de prova/diagnóstico quando isso for aprovado.
 
-**Bloqueio conhecido:** esta especificação ainda apresenta `RemoteCursor` e `RemoteEvent` e quatro métodos relacionados, herdados do contrato do Inventário antes do Detector unificado. Eles colidem parcialmente com `RemoteCheckpoint` e `EventStore`. **Não implementar as APIs em duplicidade** até decidir a propriedade única do checkpoint/evento, sem adaptação legada.
+**Responsabilidade resolvida:** esta API não contém `RemoteCursor`, `RemoteEvent` ou métodos de publicação/reconhecimento de eventos. O Detector controla entrega e checkpoint; InventoryManager só persiste o estado derivado após análise. Detalhes de persistência física e recuperação do checkpoint pertencem ao Detector Remoto.
 
 ## 13. Garantias de evolução e testes
 
