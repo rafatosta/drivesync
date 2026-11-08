@@ -1,6 +1,6 @@
 # Storage — contrato interno
 
-**Estado:** infraestrutura e portas propostas para `inventory/storage/`. É o **único submódulo do Inventário que administra conexões, transações, esquema e erros SQLite**. Não é o `detectors/storage/` e não conhece `EventStore`.
+**Estado:** infraestrutura e portas propostas para `inventory/storage/`. É o **único submódulo do Inventário que administra conexões, transações, esquema e erros SQLite**. Disponibiliza operações de armazenamento aos repositórios internos do inventário.
 
 ## Propriedade e fronteira
 
@@ -66,11 +66,11 @@ O diagrama é **lógico**; a propriedade de commit/rollback permanece com `stora
 2. FK habilitadas, unicidade por conta para `RemoteFileRef`, revisão otimista e restrições de tombstone/histórico verificadas em SQLite real.
 3. Não usar JSON/BLOB opaco para serializar `SyncItem` inteiro ou esconder tabelas relacionais; BLOB permitido para bytes locais específicos. `ProviderFileData` só após aprovação de codec e retenção.
 4. Operação transacional é atômica e nenhum repositório faz `commit` unilateral.
-5. Não compartilhar conexão, SQL, tabelas nem transação com `detector.sqlite3` ou outros bancos; retorno não inclui `Connection` ou `Transaction`.
+5. Manter conexões e transações restritas ao banco de cada sincronização, expondo somente resultados tipados.
 6. Sem migrações de formatos legados nesta proposta. Esquema e provisionamento **futuros** precisam de validação antes do primeiro banco real.
 
 ## Testes
 
-Criação/abertura e identidade; FK/UNIQUE/CHECK; duas sincronizações isoladas; concorrência de escrita, rollback, reabertura após commit, disco cheio/bloqueado/corrompido; ausência de exposição de SQL, credenciais e caminhos privados; nenhuma transação compartilhada com Detector.
+Criação/abertura e identidade; FK/UNIQUE/CHECK; duas sincronizações isoladas; concorrência de escrita, rollback, reabertura após commit, disco cheio/bloqueado/corrompido; ausência de exposição de SQL, credenciais e caminhos privados.
 
 **Pendentes:** DDL exato, índice/consulta, política WAL, busy timeout, provisionamento quando raiz indisponível, codec dos metadados escolhidos e opção para testes de crash em subprocesso.
