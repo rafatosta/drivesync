@@ -7,7 +7,7 @@ Implementar **somente `detectors/local/`** conforme [README](README.md), [INTERF
 ## Regras de implementação
 
 1. **`LocalFile` pertence a Models.** Importar o tipo compartilhado; não criar outro `LocalFile`, `LocalItem`, `LocalFileKind` ou caminho genérico incompatível só para o Detector.
-2. O Local é o **produtor**: observa filesystem e constrói `LocalFile` com dados realmente verificados. Não é o proprietário do modelo nem de sua persistência.
+2. O Local é o **produtor de observações**: solicita `LocalFile` a um coletor especializado, sem construir seus campos, e o entrega com os dados realmente verificados. Não é o proprietário do modelo nem de sua persistência.
 3. Emitir um `LocalNotice` por chamada ao `LocalNotificationSink`. Quando não houver arquivo observável, `local_file=None` com motivo e escopo; nunca interpretar isso como remoção confirmada.
 4. Nenhum método do Local recebe, constrói ou depende de **`SyncItem` ou `SyncItemId`**. A introdução de `SyncItem` no núcleo será tratada somente durante revisão do Inventário.
 5. `AccountId`, `SyncId`, `Timestamp` e identidades locais têm um **único proprietário efetivo**. Reutilizar/reexportar, não duplicar ou inventar aliases incompatíveis.
@@ -31,7 +31,7 @@ A revisão de utilidade dos metadados permanece obrigatória antes de implementa
 
 ## Desenvolvimento Contract-First + TDD
 
-Desenvolver em unidades RED → GREEN → REFACTOR: criação, ciclo de vida, observação/transformação para `LocalFile`, entrega de `LocalNotice`, falhas e recuperação. Testar filesystem real temporário e sink fake; os testes de dados puros ficam em `models/TESTS.md`.
+Desenvolver em unidades RED → GREEN → REFACTOR: criação, ciclo de vida, observação/solicitação de coleta de `LocalFile`, entrega de `LocalNotice`, falhas e recuperação. Testar filesystem real temporário e sink fake; os testes de dados puros ficam em `models/TESTS.md`.
 
 Se o contrato de `LocalFile`, caminhos ou IDs ainda estiver indefinido para algum cenário, relatar **BLOCKED** e registrar dependência, não criar modelo paralelo nem modificar o Inventário implicitamente.
 
