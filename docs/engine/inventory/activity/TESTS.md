@@ -4,7 +4,7 @@
 
 ## Escopo e estratégia
 
-Histórico persistente por arquivo/diretório via `SyncActivity`, distinto dos eventos técnicos do Detector. Exercitar o submódulo por interfaces internas com `inventory.sqlite3` **real e isolado**, fixtures determinísticas, contas/raízes fictícias e injeção controlada de falhas. Não usar Google Drive real, credenciais ou arquivos pessoais.
+Histórico persistente por arquivo/diretório via `SyncActivity`, Exercitar o submódulo por interfaces internas com `inventory.sqlite3` **real e isolado**, fixtures determinísticas, contas/raízes fictícias e injeção controlada de falhas. Utilizar somente dados sintéticos e armazenamento de teste isolado.
 
 ## Matriz de cenários
 
@@ -27,7 +27,7 @@ Histórico persistente por arquivo/diretório via `SyncActivity`, distinto dos e
 2. Fechar e reabrir SQLite após persistência para verificar durabilidade, IDs, vínculos e estados.
 3. Isolar duas sincronizações com `SyncId` e `AccountId` distintos; não misturar itens.
 4. Validar `InventoryFailure` sanitizado, sem tokens, SQL ou caminhos pessoais nos erros.
-5. Cobrir concorrência, idempotência e rollback quando aplicável; fakes do Detector/Analisador não substituem banco real.
+5. Cobrir concorrência, idempotência e rollback quando aplicável; usar SQLite real para comprovar persistência.
 6. Não declarar `PASS` para um caso sem executá-lo. Distinguir testes `BLOCKED` pelos pontos ainda não especificados.
 
 ## Pontos bloqueadores e aceite
