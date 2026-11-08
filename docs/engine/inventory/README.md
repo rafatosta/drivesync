@@ -4,7 +4,7 @@
 
 O **Inventário** é responsável exclusivamente pelo **acesso e pela persistência dos dados de cada pasta sincronizada**. Os demais módulos consomem suas interfaces e não executam SQL diretamente nesse banco. Dados globais da aplicação, contas e preferências **não** são responsabilidade do Inventário.
 
-O Inventário registra identidades dos itens, metadados observados, vínculos, último estado confirmado, operações pendentes e atividades. A propriedade dos cursores/eventos remotos está pendente de revisão com Detector. Ele **não** observa o filesystem ou o Google Drive por conta própria, nem executa upload/download ou escolhe qual versão deve prevalecer em um conflito.
+O Inventário registra identidades dos itens, metadados observados, vínculos, último estado confirmado, operações pendentes e atividades. **Eventos e checkpoints remotos pertencem ao Detector**, não ao Inventário. Ele **não** observa o filesystem ou o Google Drive por conta própria, nem executa upload/download ou escolhe qual versão deve prevalecer em um conflito.
 
 ## Banco de dados por pasta sincronizada
 
@@ -13,7 +13,7 @@ Cada pasta sincronizada possui **seu próprio banco SQLite**, localizado em:
 ```text
 <pasta-local-sincronizada>/
 ├── .drivesync/
-│   └── inventory.sqlite3      # Arquivos, baseline, operações, eventos e histórico
+│   └── inventory.sqlite3      # Arquivos, baseline, operações e histórico
 └── arquivos-do-usuario/
 ```
 
@@ -97,7 +97,6 @@ SyncItem [inventory/]                    item lógico e persistente
 | `sync_baselines` | `SyncItemId` | Último estado **confirmado**, separado de observações |
 | `sync_operations` | `OperationId` | Fila de ações, retry e precondições; distinta da fila de eventos do Detector |
 | `activity` | `ActivityId` | Histórico com relação obrigatória a `SyncItem` |
-| `remote_cursor` / `remote_events` (sobreposição pendente) | **PENDENTE de decisão de propriedade** | Contrato anterior do Inventário se sobrepõe a checkpoint do Detector Remoto e eventos do Detector Storage; **não implementar duplicação** |
 
 `ProviderFileData` é um envelope de metadados específicos, **não conteúdo de arquivo**. Seu codec, campos selecionados e necessidade de retenção serão definidos antes de implementar. O Inventário não importa `GoogleFile` nem usa cliente de Google API. O princípio de **não serializar estruturas inteiras em JSON/BLOB indiscriminadamente** permanece; atributos complexos exigirão mapeamento revisado. Não truncar metadados recebidos silenciosamente depois de aceitar o registro.
 
@@ -181,9 +180,9 @@ erDiagram
 
 **Associação:** `SyncItem` pode existir só no lado local, só no remoto, nos dois lados ou sem snapshot atual (tombstone), conservando vínculo e baseline até decisão segura. Movimentar ou renomear preserva `SyncItemId` quando a identidade foi correlacionada; o Analisador decide a correspondência, não o Inventário por nome semelhante.
 
-### Fronteira com Detector / cursores
+### Fronteira com Detector — responsabilidade exclusiva dos eventos e checkpoints
 
-O [Detector Remoto](../detectors/remote/INTERFACES.md) declara `RemoteCheckpoint.read/commit`; o [Detector Storage](../detectors/storage/INTERFACES.md) persiste o `File` inteiro e reserva `FileBatch`. **O Inventário não deve implementar outra fila de entrega dos mesmos eventos ou avançar o cursor do Detector independentemente**. As quatro APIs antigas de cursores/eventos ainda aparecem na interface existente do Inventário e exigem decisão explícita de eliminação ou realocação **antes de implementar**. Não inventar compatibilidade, migração ou duplicação entre bancos; a revisão atual apenas aponta a sobreposição e mantém inalteradas as assinaturas não relacionadas.
+A responsabilidade está definida: o [Detector Remoto](../detectors/remote/INTERFACES.md) controla checkpoint via `RemoteCheckpoint.read/commit`, e o [Detector Storage](../detectors/storage/INTERFACES.md) persiste `File` e gerencia `FileBatch`/leases/ack. **Os quatro métodos anteriores de cursor/eventos foram removidos do contrato público do Inventário**, sem camadas de compatibilidade. O Inventário armazena somente o estado derivado pelo Analisador e as ações de sincronização. O backend físico do checkpoint será decidido dentro do Detector Remoto.
 
 ## 2. Histórico como parte de `inventory.sqlite3`
 
@@ -193,7 +192,7 @@ O [Detector Remoto](../detectors/remote/INTERFACES.md) declara `RemoteCheckpoint
 | --- | --- | --- |
 | `sync_items` e `sync_baselines` | Como está o arquivo agora? Qual foi seu último estado sincronizado? | `relatorio.pdf` está pendente de upload |
 | `sync_operations` | O que precisa ser executado, está em execução ou deve ser retomado? | Atualizar conteúdo remoto após reconexão |
-| Detector Storage | Quais eventos detectados ainda exigem entrega/reavaliação? | Mudança remota aguardando análise; **fora do Inventário** |
+| Detector Storage (fora deste banco) | Quais eventos detectados ainda exigem entrega/reavaliação? | Mudança remota aguardando análise |
 | `activity` | O que foi feito ou tentado, quando, por quem/qual origem e com qual resultado? | Upload concluído às 15:32; tentativa anterior falhou |
 
 ### Quando registrar uma atividade
@@ -205,7 +204,7 @@ O [Detector Remoto](../detectors/remote/INTERFACES.md) declara `RemoteCheckpoint
 | Operação que falhou ou foi interrompida | Sim, para falhas relevantes | Explicar a tentativa e permitir diagnóstico posterior |
 | Conflito identificado ou resolvido para um arquivo | Sim | Registrar a ocorrência/resolução, sem criar tabela de conflitos |
 | Suspensão/retomada geral da sincronização | **Não nesta tabela** | Não pertence necessariamente a um `SyncItem`; registrar em diagnósticos/estado global |
-| Evento remoto recebido ainda não processado | **Não automaticamente** | É sinal técnico na tabela `remote_events`, não ação concluída |
+| Evento remoto recebido ainda não processado | **Não automaticamente** | É sinal técnico persistido no **Detector Storage**, não atividade concluída |
 | Releitura repetitiva sem alteração | Não | Evitar ruído e crescimento do histórico |
 | Progresso de cada bloco transferido | Não | Progresso é estado de transferência, não acontecimento histórico |
 
