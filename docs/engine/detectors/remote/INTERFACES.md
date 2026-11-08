@@ -19,21 +19,10 @@ pub(super) struct RemoteFailure {
     pub retryable: bool,
     pub message: String,
 }
-pub(super) struct RemoteObservation {
-    pub sync_id: SyncId,
-    pub remote_id: Option<String>,
-    pub kind: RemoteObservationKind,
-    pub observed_at: Timestamp,
-    pub coverage: RemoteCoverage,
-    pub scope_hint: Option<RemoteScopeHint>,
-}
-pub(super) enum RemoteObservationKind {
-    Changed, RecheckRequired, Unavailable, CursorInvalid,
-}
+// File/FileData/RemoteFile/RemoteFileRef/FileEvent/FileScope pertencem a Models.
 pub(super) trait RemoteEventSink: Send + Sync {
-    // Sucesso significa evento aceito de forma DURÁVEL pelo pai,
-    // não que já foi consumido pelo Orquestrador.
-    fn emit(&self, event: RemoteObservation) -> RemoteResult<()>;
+    // Recebe um File completo por emissão; Ok = enqueue durável no Detector pai.
+    fn emit(&self, file: File) -> RemoteResult<()>;
 }
 pub(super) trait RemoteCheckpoint: Send + Sync {
     fn read(&self, sync_id: SyncId) -> RemoteResult<Option<String>>;
@@ -41,7 +30,7 @@ pub(super) trait RemoteCheckpoint: Send + Sync {
 }
 ```
 
-A localização do checkpoint pertence a seu backend, não ao Detector Remoto. A garantia **não avançar após emissão não persistida** exige testar os limites por página e replays idempotentes. O sink do pai transforma a observação em evento persistido sem exigir que o Remoto conheça `EventStore`.
+A localização do checkpoint pertence a seu backend, não ao Detector Remoto. A garantia **não avançar após emissão não persistida** exige testar os limites por página e replays idempotentes. O sink do pai persiste o objeto `File` integralmente sem reinterpretar atributos nem reconstruir evento reduzido. O Remoto não conhece `EventStore`.
 
 ### Porta estável para metadados remotos
 
@@ -65,7 +54,7 @@ pub(super) struct RemoteMetadataResult {
 
 Esse contrato descreve a porta de aquisição/adaptação **sem exigir que a fachada genérica importe GoogleFile**. A implementação especializada pode consultar APIs e delegar metadados mais caros a auxiliares; `models/` continua sem I/O. Caso uma resposta de mudanças não traga ID suficiente, emitir uma reavaliação de escopo, **sem criar RemoteFile fictício**. Um `removed` também pode significar perda de acesso, não exclusão.
 
-**Critério de isolamento:** alterar os campos `RemoteFile` pode alterar adaptador, testes e consumidores interessados, **não** polling, cursor, notificações e fila do Detector Remoto. A interface pública anterior ainda será revisada para carregar `File` autocontido ao Orquestrador, sem transformar esta proposta em código já implementado.
+**Critério de isolamento:** alterar os campos `RemoteFile` pode alterar adaptador, testes e consumidores interessados, **não** polling, cursor, notificações e fila do Detector Remoto. A interface do Detector pai transporta o mesmo `File` ao Orquestrador por `FileBatch`, sem transformar esta proposta em código já implementado.
 
 ## 2. Requests/results
 
@@ -159,10 +148,19 @@ impl RemoteDetector {
 
 ## 5. Semântica dos opcionais e pendências
 
-- `remote_id=None`: escopo ou mudança não atribuída com segurança; evento continua válido.
+- Sem ID remoto confiável, emitir `File` de reavaliação com `data=None` e escopo confiável, sem criar `RemoteFileRef` fictício. Não significa exclusão.
 - `page_budget=None`: política interna; `Some(n)` limita esforço sem declarar completude antes da última página.
 - `polling_interval=None`: intervalo padrão escolhido pelo Remoto, não imposto ao Local.
 - `checkpoint_confirmed=None`: nenhum avanço confirmado.
 - `last_observed_at=None`: ainda não houve leitura válida.
 
 **Pendências:** ownership e assincronicidade reais; localização da persistência do checkpoint; cobertura de árvores, papéis de `changes` vs `files.list` e deduplicação de replay. Resolver dentro do módulo sem alterar interface pública do Detector nem obrigar implementar Local/Storage.
+
+## 6. Eventos tipados e encapsulamento em Models
+
+- Um sinal por `RemoteEventSink.emit(File)`; quando há metadados seguros, `File.data=Some(FileData::Remote(remote_file))` preserva o objeto integral.
+- `File.event.kind` utiliza `FileEventKind` de Models: Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired ou ScopeUnavailable. Não inventar uma categoria sem evidência.
+- Para renomeação/movimento preservar `File.event.previous/current` quando correlacionados com segurança; `FileLocation::Remote` identifica conta/ID, pai e nome quando conhecidos.
+- `GoogleChange.removed=true`, perda de acesso, HTTP 403/404, cursor inválido ou paginação incompleta não comprovam exclusão; solicitar reavaliação ou registrar escopo indisponível.
+- O adaptador especializado sabe converter `GoogleFile` em `RemoteFile`; o Detector não acessa seus atributos internos nem muda com sua evolução.
+- O checkpoint só avança depois da persistência durável do `File` completo; replay preserva identidade da ocorrência. Não realizar operações de sincronização nem exigir `SyncItem`.
