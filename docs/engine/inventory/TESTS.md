@@ -6,7 +6,7 @@ Este documento especifica **os testes a escrever antes de implementar** o módul
 
 **Escopo:** os **16 métodos públicos** de `InventoryManager`, todos os tipos/atributos utilizados por esses métodos e os invariantes do banco `<raiz>/.drivesync/inventory.sqlite3`. O teste deve verificar **comportamento observável pela API**, persistência real e integridade, sem transformar o layout interno das tabelas em contrato público.
 
-Não executar Google Drive real, OAuth, interface GTK, transferência física, nem alterar arquivos de usuário. Não criar nem modificar o banco global da aplicação, que pertence a outros módulos. Não criar compatibilidade com versões antigas da engine.
+Executar os testes com dados sintéticos, SQLite temporário isolado e injeção controlada de falhas.
 
 ### Camadas de teste
 
@@ -54,7 +54,7 @@ A fonte dos objetos `LocalFile` e `RemoteFile` pertencem a Models e entram em ob
 
 ## Matriz de integração ao novo contrato Models
 
-Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalFile` e `RemoteFile` vêm de [Models](../models/INTERFACES.md); `File` é o envelope de observação que o Analisador encaminha ao Inventário. O Inventário possui `SyncItem`, `SyncBaseline` e estados de persistência.
+Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalFile` e `RemoteFile` vêm de [Models](../models/INTERFACES.md); `File` representa a observação recebida nas requisições do inventário. O Inventário possui `SyncItem`, `SyncBaseline` e estados de persistência.
 
 | ID | Cenário | Resultado obrigatório |
 | --- | --- | --- |
@@ -71,17 +71,13 @@ Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalF
 | INV-MDL-11 | Retry de mesma ocorrência `File.id` | Não criar item ou atividade duplicados; não confundir `FileId` com `SyncItemId` |
 | INV-MDL-12 | Observação remota com `ProviderFileData` filtrado | Persistência apenas dos campos aprovados, codec versionado, nenhum token/conteúdo |
 | INV-MDL-13 | Resposta nativa de provedor sem tamanho/hash | Não fabricar metadados |
-| INV-MDL-14 | Mesmo `SyncItem` local/remoto, versões divergem do baseline | Inventário preserva estados; **Analisador** decide conflito/operação |
+| INV-MDL-14 | Mesmo `SyncItem` local/remoto, versões divergem do baseline | Inventário preserva os estados observados e o baseline correspondente |
 | INV-MDL-15 | Observação com `FileScope::WholeSync` sem identidade | Não criar item por nome/caminho; manter necessidade de reavaliação fora da tabela de itens |
-| INV-MDL-16 | Confirmação verificada após operação | Baseline, status, operação e histórico atômicos; não relacionada a ack do Detector |
+| INV-MDL-16 | Confirmação verificada após operação | Baseline, status, operação e histórico atômicos |
 | INV-MDL-17 | Evolução dos campos `LocalFile`/`RemoteFile` | API `InventoryManager` mantém assinaturas; revisar só mapeamento de persistência autorizado |
-| INV-MDL-18 | Detector reentrega evento cujo `SyncItem` já foi atualizado | Inventário trata registro idempotente sem criar fila/cursor remoto adicional |
+| INV-MDL-18 | Observação repetida de um `SyncItem` já atualizado | Inventário trata registro idempotente sem criar fila/cursor remoto adicional |
 
-**Bloqueios de implementação:** mapear campos selecionados de `LocalFile` e `RemoteFile` para persistência mantendo estados de coleta; definir codec de `ProviderFileData`; checkpoint/eventos são de propriedade do Detector, sem API duplicada no Inventário. Não registrar PASS para os testes acima sem executar SQLite real com fixtures de Models.
-
-## Responsabilidades excluídas dos testes do Inventário
-
-Os testes de cursor, paginação remota, publicação de eventos, `FileBatch`, claim/lease e reconhecimento de eventos **pertencem aos testes do Detector Remoto e Detector Storage**, não ao Inventário. Os antigos cenários INV-15 a INV-18 dessa natureza foram retirados. Os novos INV-15 e INV-16 testam respectivamente `record_activity` e `list_activities`. Não criar mocks de APIs removidas ou adaptar interfaces legadas.
+**Bloqueios de implementação:** mapear campos selecionados de `LocalFile` e `RemoteFile` para persistência mantendo estados de coleta; definir codec de `ProviderFileData`. Não registrar PASS para os testes acima sem executar SQLite real com fixtures de Models.
 
 ## Testes dos contratos internos por submódulo
 
@@ -383,7 +379,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 | INV-DB-12 — caminho reservado | `.drivesync/` não é emitido como conteúdo sincronizável e não é enviado ao Drive |
 | INV-DB-13 — correção de erro | Violação UNIQUE, FK ou CHECK traduzida em `InventoryFailure`, sem SQL exposto |
 | INV-DB-14 — múltiplas raízes | Dois bancos de sincronizações distintas não compartilham identidades locais, remotas ou estados; objeto de uma raiz não pode ser escrito em outra |
-| INV-DB-15 — acesso privado | Nenhum método público expõe conexão, transação ou SQL; outros módulos acessam via requests/responses |
+| INV-DB-15 — acesso privado | Nenhum método público expõe conexão, transação ou SQL; o acesso ocorre pelas requisições e respostas públicas |
 | INV-DB-16 — versionamento | `PRAGMA user_version` compatível; esquema inesperado/corrompido falha **sem recriação automática** |
 
 A inspeção do esquema é permitida **nos testes internos do módulo**, para confirmar FKs, índices e a ausência de campos opacos. Isso não altera a API pública e não autoriza consumidores a usarem SQL.
@@ -416,7 +412,7 @@ A inspeção do esquema é permitida **nos testes internos do módulo**, para co
 | INV-SC-02 | Local conhecido, remoto ainda não associado | Alteração local durante offline | Observação + operação upload persistidas; sem contato com Drive |
 | INV-SC-03 | Baseline confirmado | Local muda com app fechado | Após nova observação, local difere do baseline; Inventário **não decide** operação |
 | INV-SC-04 | Baseline confirmado | Remoto muda enquanto app estava fechado | Novo estado remoto difere do baseline; nenhuma sobrescrita automática |
-| INV-SC-05 | Baseline confirmado | Ambos mudam | Preservar fatos distintos para Analisador resolver conflito |
+| INV-SC-05 | Baseline confirmado | Ambos mudam | Preservar os estados distintos e o baseline |
 | INV-SC-06 | Arquivo não mudou | Nova varredura sem diferença | Não produzir atividades artificiais |
 | INV-SC-07 | Pasta local inacessível | Varredura falha | Presença `Unknown` ou observação anterior preservada, nunca exclusão confirmada |
 | INV-SC-08 | Drive inacessível | Erro remoto | Não limpar metadados nem concluir exclusão |
@@ -493,7 +489,7 @@ A porcentagem acima é **meta futura**, não resultado de execução. Não decla
 - [ ] Os campos selecionados de `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
 - [ ] A ausência de dados opcionais não vira exclusão automática.
 - [ ] Baseline só avança mediante confirmação válida; dados observados não o substituem.
-- [ ] Operações e histórico persistem após reinício; checkpoints e eventos do Detector são testados no módulo Detector.
+- [ ] Operações e histórico persistem após reinício.
 - [ ] Duas conexões concorrentes não quebram exclusividade/controle de revisão.
 - [ ] Cada atividade tem FK `item_id` válida; tombstone preserva histórico.
 - [ ] Nenhuma operação física é executada pelo Inventário.
