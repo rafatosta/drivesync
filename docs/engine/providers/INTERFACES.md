@@ -1,25 +1,21 @@
-# Providers — INTERFACES: catálogo e fornecimento de APIs específicas
+# Providers — INTERFACES
 
-> **Contrato conceitual, não compilado.** O módulo `providers/` **não define interface universal de arquivos, OAuth, transferência ou mudanças**. Fornece seleção e acesso à API própria de cada serviço. A interface funcional padronizada é definida em cada consumidor e implementada por seus especialistas.
+> Contrato **conceitual** do catálogo e da obtenção de APIs específicas, ainda não compilado em Rust. Os métodos técnicos de cada serviço são definidos **somente no contrato de sua API**.
 
-## 1. Fronteira única de acesso a serviços
+## 1. Responsabilidade da interface
 
-- Apenas clientes/API fornecidos por `providers/` atravessam a fronteira HTTP/OAuth de serviços remotos.
-- `accounts/auth`, Detector e Operações escolhem o provedor **por identidade de conta ou configuração** e obtêm uma API; não criam cliente HTTP avulso.
-- Um especialista **pode importar/usar tipos do serviço**, como `GoogleFile`, `GoogleChange` e `GoogleSession`, quando necessário ao seu trabalho. Ele não pode expor esses tipos na interface comum do módulo pai.
-- `ProviderId` e `AccountId` pertencem aos modelos compartilhados; não redefini-los.
-- `example/` não entra no catálogo enquanto não houver implementação.
+O catálogo deve permitir:
 
-## 2. Interface pública mínima
+1. Listar implementações de serviços externos **realmente disponíveis**.
+2. Selecionar um serviço por `ProviderId`.
+3. Obter a interface tipada específica desse serviço.
 
 ```rust
-// Proposta de superfície, nomes ilustrativos; retorno tipado concreto a revisar.
+// Pseudocódigo contratual; representação concreta de Rust a decidir.
 pub trait Providers {
     fn list(&self) -> Vec<ProviderInfo>;
     fn get(&self, provider: ProviderId)
-        -> ProviderResult<ProviderHandle>;
-    fn open(&self, account: AccountId)
-        -> ProviderResult<ProviderSession>;
+        -> ProviderResult<ProviderApi>;
 }
 
 pub struct ProviderInfo {
@@ -27,90 +23,63 @@ pub struct ProviderInfo {
     pub display_name: String,
 }
 
-pub enum ProviderHandle {
+pub enum ProviderApi {
     Google(GoogleApiHandle),
-    // Variantes futuras somente quando houver implementação real.
-}
-
-pub enum ProviderSession {
-    Google(GoogleAccountApiHandle),
+    // Somente provedores implementados.
 }
 
 pub struct GoogleApiHandle {
-    // Referência segura à interface especializada providers/google/api/.
+    // Interface já descrita em google/api/INTERFACES.md.
 }
-pub struct GoogleAccountApiHandle {
-    // API Google e contexto autenticado vinculados a AccountId.
-}
-```
 
-`GoogleApiHandle`, `GoogleAccountApiHandle` e as variantes são **esboços**, não novas implementações de API. Referenciam o contrato já documentado em [Google API — INTERFACES](google/api/INTERFACES.md). Um `enum` permite representar retornos de tipos diferentes sem fingir que possuem os mesmos métodos. Outra estratégia tipada é aceitável se preservar a seleção explícita e o erro de incompatibilidade.
-
-**Semântica:**
-- `list()`: somente provedores instalados/registrados; informações de apresentação, **não** promessa de capacidades inexistentes.
-- `get(provider)`: obtém a interface concreta para operações que independem de uma conta autenticada (por exemplo, iniciar OAuth do Google). Não autentica nem registra conta.
-- `open(account)`: resolve o provedor da conta cadastrada por um **contexto autorizado fornecido por Accounts**, valida par `AccountId/ProviderId` e retorna o cliente/sessão específicos. A forma de fornecer esse contexto sem circularidade entre Accounts e Providers **ainda precisa ser definida**; não permitir que Providers leia diretamente a persistência privada de contas.
-- Não criar `ProviderRemoteObservation`, `ProviderRemoteFiles`, `ProviderTransfers` ou `ProviderAuthentication` como requisitos comuns de todos os serviços.
-
-## 3. Exemplo de obtenção por especialista
-
-```rust
-// Pseudocódigo Rust — apenas demonstra a dependência tipada.
-let api = match providers.open(account_id)? {
-    ProviderSession::Google(google) => google,
-};
-
-let changes = api.changes_list(/* GoogleSession, opções Google */)?;
-let normalized = google_specialist.to_remote_file(changes);
-// O especialista satisfaz o contrato de seu módulo pai.
-```
-
-**Não** exigir que `providers/` transforme `GoogleFile` em `RemoteFile` por meio de API comum. A transformação de modelos pertence ao especialista que consome a API, e o módulo pai exige apenas sua saída padronizada. O contrato técnico de Google API continua acessível ao especialista **após obtenção pela fábrica**.
-
-## 4. Contrato obrigatório pertence ao módulo consumidor
-
-| Módulo pai | Entrada do especialista | Saída obrigatória |
-| --- | --- | --- |
-| `accounts/auth` | Provedor selecionado, contexto de consentimento/identidade | Resultado autenticado, identidade verificada e credencial protegida conforme contrato de Accounts |
-| `detectors/remote` | `SyncId`, raiz, sessão/API e checkpoint injetados | `File` completo via `RemoteEventSink`; `RemotePollResult` conforme [RemoteDetector](../detectors/remote/INTERFACES.md) |
-| `operations/upload` | Operação autorizada e conta correspondente | Resultado/progresso de upload conforme contrato do operador (a definir) |
-| `operations/download` | Operação autorizada e conta correspondente | Resultado/progresso de download conforme contrato do operador (a definir) |
-
-O especialista Google pode usar os recursos do Google Drive livremente **dentro dos limites funcionais e de segurança** de seu módulo pai. Um futuro especialista OneDrive pode ter estratégia e API totalmente diferentes. Não gerar interfaces universais artificiais só para padronizar a chamada ao provedor.
-
-## 5. Autenticação e segredos
-
-`accounts/auth/` coordena fluxo da conta, autorização e armazenamento de credenciais no keyring. `providers/google/api/` implementa `authorization_request`, `exchange_authorization_code`, `refresh_access_token` e outros métodos específicos do Google. O especialista de autenticação os utiliza pela API obtida de Providers.
-
-`get` **não retorna tokens**; `open` retorna sessão vinculada à conta, sem revelar segredos a módulos que não precisam deles. Se uma implementação exigir contexto credencial, ele será injetado via contrato seguro com `accounts/auth`, não buscado no SQLite de Inventory/Accounts por acesso direto. Evitar logs, clones e serialização de segredos; tratar cancelamento, callback inválido e reautorização.
-
-## 6. Identidades, erros e comportamento
-
-```rust
 pub type ProviderResult<T> = Result<T, ProviderLookupError>;
 
 pub enum ProviderLookupError {
     UnknownProvider,
-    UnsupportedProviderForAccount,
-    AccountNotAuthorized,
-    AccountProviderMismatch,
-    SessionUnavailable,
+    ProviderUnavailable,
+    InitializationFailed,
 }
 ```
 
-São **erros de catálogo/seleção**, não substituem os erros ricos da API Google ou do contrato do módulo funcional. O especialista mapeia os erros de protocolo para o contrato do seu módulo, sem traduzir falsamente 403/404 em exclusão.
+`ProviderId` pertence aos modelos compartilhados. `GoogleApiHandle` é um **nome ilustrativo**, não uma interface alternativa. O código poderá empregar `enum`, fábrica tipada ou outra solução sem modificar o contrato funcional de cada API.
 
-- `ProviderId` identifica o tipo de serviço; `AccountId` identifica uma conexão autenticada com aquele serviço.
-- Falha de seleção/autorização nunca retorna uma sessão de outra conta, nem outro provedor como fallback silencioso.
-- A fábrica não avança checkpoint, não grava `FileBatch`, não executa upload/download por conta própria nem decide conflito.
-- O consumidor não pode contornar Providers criando outro cliente diretamente, mesmo que conheça a API específica.
+**Não exigir `open(AccountId)` como método universal de Providers.** Dados ou sessões para chamadas autenticadas são definidos pela API específica (por exemplo, `GoogleSession` nas assinaturas Google); Providers não mantém cadastro de contas nem resolve armazenamento de credenciais.
 
-## 7. Limites e pendências da implementação Rust
+## 2. Interface entregue pelo provedor
 
-1. Escolher `enum`, handle tipado ou factory genericamente parametrizada, considerando dependências e ownership de Rust.
-2. Resolver autorização de conta para `open(AccountId)` sem fazer Providers depender da persistência de Accounts. Uma porta de sessão/identity pode ser injetada na composição.
-3. Separar objeto API de sessão por conta sem expor credenciais ou tokens.
-4. Decidir `Send/Sync`, assincronicidade, cancelamento e comportamento das sessões em renovação/revogação.
-5. Documentar contrato funcional concreto de `accounts/auth`, `operations/upload` e `operations/download`; nenhum deles pode ser inventado aqui.
+O resultado de `get` fornece acesso às funções, tipos e erros **próprios do serviço**. A camada do provedor:
 
-Nenhuma assinatura acima representa código implementado.
+- Mapeia as operações oficiais para funções do aplicativo.
+- Valida e transforma parâmetros e resultados de transporte.
+- Encapsula construção de URLs, HTTP, serialização e peculiaridades do protocolo.
+- Expõe erros técnicos que preservam a semântica do serviço.
+- Implementa, quando a API oferece, operações de autenticação e uso de sessão.
+- Não exige equivalência artificial com outros provedores.
+
+A definição completa da API Google encontra-se em [`google/api/INTERFACES.md`](google/api/INTERFACES.md): **59 métodos Drive REST v3, 9 OAuth/OIDC e 10 de transferências/conveniências** já documentados. Não copiá-los para o catálogo.
+
+## 3. Exemplo de seleção
+
+```rust
+// Pseudocódigo para demonstrar seleção, não API Rust compilada.
+let api = match providers.get(provider_id)? {
+    ProviderApi::Google(google) => google,
+};
+// A partir daqui estão disponíveis os métodos específicos Google.
+// Cada chamada usa os argumentos descritos em google/api/INTERFACES.md.
+```
+
+A seleção entrega um cliente/interface; não executa automaticamente nenhuma operação externa, não autentica implicitamente e não armazena credenciais.
+
+## 4. Responsabilidades excluídas
+
+Providers não define o que fazer com resultados, quando realizar chamadas, qual estado funcional persistir ou quais passos compõem um fluxo do aplicativo. Não recebe nem interpreta estados ou decisões de sincronização.
+
+## 5. Pendências de implementação
+
+- Representação Rust de APIs heterogêneas (enum/handles/fábrica tipada), ownership, `Send/Sync` e async.
+- Inicialização e injeção de configurações técnicas específicas de cada serviço.
+- Como expor interfaces de clientes autenticados **sem gerenciar armazenamento de credenciais**.
+- Política de falhas na inicialização dos provedores.
+
+Essas pendências **não** autorizam criar uma camada universal de métodos de API.
