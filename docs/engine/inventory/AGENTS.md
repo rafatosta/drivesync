@@ -12,7 +12,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 | [README.md](README.md) | Modelo relacional, identidade dos itens, persistência, isolamento e regras de segurança |
 | [TESTS.md](TESTS.md) | Casos TDD por método, fixtures, integridade, concorrência, rollback, falhas e critérios de aceite |
 | [AGENTS.md da raiz](../../../AGENTS.md) | Regras gerais do repositório: escopo, commits, idioma, documentação e ambiente Flatpak |
-| [Google API — INTERFACES](../google_api/INTERFACES.md) | Contrato externo de `GoogleFile`; não recriar uma representação incompatível |
+| [Google API — INTERFACES](../providers/google/api/INTERFACES.md) | Contrato externo de `GoogleFile`; não recriar uma representação incompatível |
 
 **Ordem de precedência:** o contrato da interface define o comportamento público; o README define o modelo de dados; TESTS.md descreve como demonstrar ambos. Se encontrarem uma contradição real, **corrigir a documentação de forma explícita antes de implementar**, sem escolher silenciosamente um comportamento e sem alterar contratos por conveniência.
 
@@ -112,7 +112,7 @@ Antes de implementar cenários dependentes, resolver e documentar no `INTERFACES
 - Não instalar SDKs/extensões automaticamente se o ambiente estiver ausente. Registrar bloqueios e não afirmar verificações não executadas.
 - Respeitar organização Rust do repositório (`mod.rs` como ponto de organização pública, modelos relacionados em arquivos coesos), sem impor subdivisões artificiais.
 - Comentários de código, rustdoc e mensagens de commit **em inglês**. Preferir documentação por motivo, precondição, resultado e invariantes, não simplesmente repetir assinatura.
-- Não refatorar GUI, `google_api/`, `accounts/`, configurações ou Orquestrador para facilitar testes do Inventário. Mudanças de contrato entre módulos exigem revisão explícita de seu proprietário.
+- Não refatorar GUI, `providers/google/api/`, `accounts/`, configurações ou Orquestrador para facilitar testes do Inventário. Mudanças de contrato entre módulos exigem revisão explícita de seu proprietário.
 - No ambiente local, commits atômicos seguem as regras do `AGENTS.md` da raiz; **não publicar push/PR sem autorização explícita**.
 
 ## Entrega por unidade de implementação
