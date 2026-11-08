@@ -1,155 +1,98 @@
-# Models — INTERFACES (contratos de dados)
+# Models — INTERFACES (contratos conceituais)
 
-## 1. Existe interface operacional?
+## Estado deste documento
 
-**Não.** O módulo `models/` é uma biblioteca de **tipos de domínio e invariantes**, não uma dependência que precisa de serviço/trait para consultas, persistência ou transportes. `INTERFACES.md` documenta os **dados públicos**, sua semântica e as operações **puras de validação/conversão de valores** que venham a ser necessárias.
+**Etapa 1 — papéis e encapsulamento: aprovada. Etapa 2 — atributos: pendente.**
 
-Não criar `ModelManager`, `RemoteFileRepository`, `RemoteProvider` ou `get_file()` neste módulo. Interfaces operacionais pertencem a [Providers](../providers/README.md), [Detector](../detectors/INTERFACES.md), [Inventário](../inventory/INTERFACES.md) e [Operações](../operations/README.md).
+Este documento **não** descreve código Rust existente e **não autoriza implementar estruturas definitivas**. A implementação deverá ser reflexo literal da descrição aprovada, não de exemplos ou decisões do agente.
 
-As definições abaixo são **contratos conceituais em sintaxe Rust**, não código compilado nem garantia de que todas as estruturas já existem. Uso de referências, tipos de data, derives, visibilidade e serialização será resolvido ao implementar, sem comprometer os invariantes.
+`models/` não exige uma interface operacional (`ModelManager`, trait de armazenamento, `scan()`, `save()` etc.). Suas interfaces são os **próprios tipos de dados** e suas regras. As interfaces operacionais permanecem com Detector, Inventário, Provedores e Operações.
 
-## 2. Identidade e escopo
+## 1. LocalFile
+
+**Responsabilidade:** representar os dados de um arquivo/diretório **local** observados pelo componente apropriado. Não lê o disco, não calcula automaticamente hash, não decide exclusão e não conhece sincronização.
+
+**Consumidor:** `FileData::Local`, após a observação do Detector Local.
+
+**Atributos:** **a definir na etapa 2**, incluindo identidade, localização, tipo, metadados disponíveis e semântica da ausência de valores. Nenhum atributo apresentado em documentos anteriores deve ser tratado como decisão final.
+
+## 2. RemoteFile
+
+**Responsabilidade:** representar os dados de um arquivo/diretório **remoto** em formato consumível pelos módulos genéricos. Não consulta API, não autentica e não depende de `GoogleFile` como tipo obrigatório.
+
+**Consumidor:** `FileData::Remote`, após adaptação no especialista do Detector Remoto.
+
+**Dados específicos do provedor:** o objeto poderá encapsulá-los sem exigir que consumidores genéricos interpretem Google/OneDrive. O **formato, os campos e a estratégia de armazenamento desses dados ainda precisam ser definidos**.
+
+**Atributos:** **a definir na etapa 2**; não presumir os campos de `GoogleFile` como lista completa, obrigatória ou universal.
+
+## 3. FileData — discriminação de conteúdo
+
+**Responsabilidade:** encapsular **exatamente uma** representação de arquivo — local **ou** remota — sem que o Orquestrador tenha de lidar com tipos separados.
+
+A **única forma conceitual aprovada** é:
 
 ```rust
-pub struct ProviderId(pub String);       // "google", "onedrive" etc.
-pub struct AccountId(pub String);        // identidade da conta configurada
-pub struct SyncId(pub String);           // identidade da sincronização
-pub struct RemoteFileId(pub String);     // identidade do arquivo DENTRO da conta
-pub struct LocalFileId(pub String);      // identidade local verificada, se disponível
-
-pub struct RemoteFileRef {
-    pub account_id: AccountId,
-    pub file_id: RemoteFileId,
+pub enum FileData {
+    Local(LocalFile),
+    Remote(RemoteFile),
 }
 ```
 
-**Regra:** `RemoteFileId` isolado não é identidade global. `RemoteFileRef` é única somente quando `AccountId` é globalmente inequívoco e preserva a associação ao provedor. O identificador do provedor pertence ao registro de conta e pode aparecer como etiqueta auxiliar em dados serializados, mas **não substitui a conta** para resolver credenciais.
+O exemplo estabelece **variantes e relação de tipos**. Ownership Rust, `derive`, serialização e forma dos tipos internos ainda não estão definidos.
 
-`AccountId` já possui definição em `engine/src/models.rs`: a implementação deve **reutilizá-la ou migrar seu proprietário explicitamente**, nunca criar dois tipos incompatíveis com o mesmo nome. O mesmo vale para identificadores existentes do Inventário e do estado local.
+**Regras:**
+- `Local` e `Remote` são alternativas, não dois campos preenchidos simultaneamente.
+- `FileData` **não** indica por si só alteração, exclusão, instante ou confirmação.
+- O Analisador interpreta a variante. O Orquestrador apenas encaminha o `File` que a encapsula.
+- O Detector ou consumidor não deve converter indisponibilidade de uma observação em uma variante inventada.
 
-Validação de identidade é local/pura: valores vazios e referências inconsistentes são inválidos; a disponibilidade de uma conta autenticada **não** é uma propriedade do modelo. Identidades não incluem tokens ou segredos.
+## 4. File — observação autocontida
 
-## 3. RemoteFile — representação compartilhada
+**Responsabilidade:** encapsular os **dados observados** (`FileData`, quando disponíveis) e **todo o contexto necessário para que o Analisador compreenda a ocorrência** sem pedir ao Detector que reconstrua a notificação.
 
-```rust
-pub enum RemoteFileKind {
-    File,
-    Directory,
-    ProviderNative,
-    Other,
-    Unknown,
-}
+`File` é o objeto unitário de comunicação. **Não é** necessariamente um arquivo existente no momento de consumo; pode representar uma ocorrência que exige reavaliação de um caminho/escopo, mesmo quando não há metadados completos.
 
-pub struct RemoteFile {
-    pub reference: RemoteFileRef,
-    pub name: String,
-    pub kind: RemoteFileKind,
+**Não pertence ao File:** estado consolidado de sincronização (`SyncItem`), decisão de conflito, execução de operação, posse da fila ou autorização destrutiva.
 
-    // Propriedades disponíveis quando observadas com confiabilidade.
-    pub size: Option<u64>,
-    pub mime_type: Option<String>,
-    pub modified_at: Option<Timestamp>,
-    pub version: Option<RemoteVersion>,
-    pub checksum: Option<Checksum>,
-    pub parent_ids: Vec<RemoteFileId>,
+**Atributos:** **a definir na etapa 2.** Ainda não está decidido se `FileData` será campo opcional, enum maior com casos sem arquivo ou outra modelagem explícita. Também estão em aberto identidade da notificação, motivo/tipo de ocorrência, instante, escopo, cobertura e associação com conta/sincronização. Não converter esses exemplos em campos obrigatórios sem revisão.
 
-    // Dados específicos permanecem junto ao pacote, mas opacos
-    // para consumidores comuns. Veja a seção 5.
-    pub provider_data: Option<ProviderFileData>,
-}
+## 5. FileBatch — agregado de entrega (definido em detectors/)
+
+**Responsabilidade:** transportar **uma coleção de `File`** para o Orquestrador e permitir que o Detector gerencie entrega e confirmação segura.
+
+```text
+FileBatch
+└── files: coleção de File
 ```
 
-**Obrigatórios:** referência de arquivo, nome (inclusive raiz somente quando a representação admitir nome vazio com semântica explícita) e tipo classificável, que pode ser `Unknown`. Todos os outros campos são **observações opcionais**; `None` **não** indica ausência física, remoção de campo nem exclusão.
+**Proprietário:** [`detectors/`](../detectors/INTERFACES.md), **não `models/`**. Sua presença aqui documenta a relação entre os tipos, sem duplicar o contrato do Detector.
 
-`RemoteVersion` não pressupõe que versões de provedores diferentes sejam numericamente comparáveis. `Checksum` deve incluir algoritmo, não apenas digest. Pais podem representar referências ainda não resolvidas; `parent_ids=[]` **não prova que a API confirmou ausência de pais** quando a observação foi parcial.
+**Atributos:** lista de `File` é a relação **conceitualmente aprovada**. Identidade do lote, token/lease, tamanhos máximos, políticas de vazio, acknowledgements e assinaturas de métodos permanecem no contrato do Detector e serão ajustados quando a etapa 2 for concluída.
 
-Uma lista de campos em uma resposta do provedor que não inclui `size` ou `parents` não autoriza apagar valores antes conhecidos no Inventário. A aplicação pode utilizar **uma camada de observação/atualização com máscara de campos conhecidos**, pertencente ao produtor ou ao contrato de atualização do Inventário; não converter metadados parciais diretamente em substituição integral de `RemoteFile`.
+**Uso:** o Detector armazena/agrupa as observações e entrega `FileBatch`; o Orquestrador recebe a lista sem realizar `match` em `FileData`; o Analisador identifica as variantes e decide a análise.
 
-## 4. LocalFile — valor observado, não acesso ao disco
+## 6. Fluxo e ownership
 
-```rust
-pub enum LocalFileKind {
-    File,
-    Directory,
-    Symlink,
-    Other,
-    Unknown,
-}
-
-pub struct LocalFile {
-    pub id: Option<LocalFileId>,
-    pub relative_path: LocalRelativePath,
-    pub kind: LocalFileKind,
-    pub size: Option<u64>,
-    pub modified_at: Option<Timestamp>,
-    pub checksum: Option<Checksum>,
-}
+```text
+LocalFile  ─┐
+            ├─> FileData ─> File ─> FileBatch ─> Orquestrador ─> Analisador
+RemoteFile ─┘                 (models/)  (detectors/)
 ```
 
-`LocalRelativePath` deve preservar fielmente componentes aceitos na plataforma de destino; em sistemas Unix, nomes podem não ser UTF-8. Não escolher `String` como representação universal sem documentar a política de perda. `id=None` indica identidade local ainda não comprovada; inode, caminho e identidade da engine não são automaticamente equivalentes.
+- `models/` não importa `detectors/`, `inventory/` ou `providers/`.
+- Detectores podem depender dos contratos de `models/`.
+- `FileBatch` utiliza `File`, mas `File` não conhece `FileBatch`.
+- `SyncItem` só será tratado quando o planejamento do Inventário for revisado.
+- Storage guarda **o objeto completo necessário para reentrega**, sem perder seu conteúdo; confirmações devem impedir perda após falha. A modelagem da fila é propriedade do Detector/Storage.
 
-`LocalFile` não faz `stat`, não abre arquivos, não examina conteúdo e não atualiza o Inventário. O Detector Local produz dados através de sua observação.
+## 7. Questões reservadas para a etapa 2
 
-## 5. ProviderFileData — conteúdo opaco dentro de RemoteFile
+1. Atributos e tipos exatos de `LocalFile`.
+2. Atributos e tipos exatos de `RemoteFile`, inclusive dados específicos do provedor.
+3. Atributos e invariantes de `File` (inclusive representação de evento sem arquivo observado).
+4. Identidades compartilhadas, timestamps, caminhos, cobertura, completude e regras de opcionalidade.
+5. Validação, conversões puras e eventual serialização de dados, sem implementar acesso externo.
+6. Compatibilidade futura com o Inventário e evolução coordenada dos contratos do Detector/Storage.
 
-A ideia de `GoogleFile` ser **um atributo transportado por `RemoteFile`** é atendida por um **envelope genérico**, sem obrigar a crate `models` a importar o tipo Google:
-
-```rust
-pub struct ProviderFileData {
-    pub provider_id: ProviderId,
-    pub format_id: String,
-    pub format_version: u32,
-    pub payload: Vec<u8>,
-}
-```
-
-Na implementação Google, o especialista conhece `GoogleFile` e faz a adaptação:
-
-```rust
-// Dentro do especialista Google, NÃO dentro de models:
-fn encode_google_file(file: &GoogleFile) -> Result<ProviderFileData, AdaptError>;
-fn decode_google_file(data: &ProviderFileData) -> Result<GoogleFile, AdaptError>;
-```
-
-**Essas duas funções são exemplos de responsabilidades, não novas APIs do módulo models.** `ProviderFileData` é um envelope de dados opacos, tipados por provedor/formato/versão. Não contém token ou cliente. Os consumidores comuns o preservam sem desserializar. Um especialista pode validar identidade do provedor antes de interpretar. Isso permite acrescentar provedores **sem mudar o enum central**.
-
-O armazenamento de payload exige **limite de tamanho, formato versionado, validação e política de retenção** antes da implementação. Pode-se preservar apenas os metadados específicos necessários, em vez de toda a resposta JSON; `RemoteFile` não guarda conteúdo binário do arquivo. Se o payload não estiver disponível, `provider_data=None` é válido; o consumidor não deve inventá-lo.
-
-## 6. Tipos auxiliares e semântica
-
-```rust
-pub struct RemoteVersion(pub String); // versão opaca, sem ordenação global
-pub enum ChecksumAlgorithm { Md5, Sha256, Other(String) }
-pub struct Checksum {
-    pub algorithm: ChecksumAlgorithm,
-    pub digest: Vec<u8>,
-}
-pub struct Timestamp { /* instante com precisão e fuso definidos */ }
-pub struct LocalRelativePath { /* componentes preservados sem perda */ }
-```
-
-O contrato de `Timestamp` e a codificação dos caminhos serão definidos de forma compatível com os tipos existentes, sem criar versões paralelas. Comparação de hashes só é válida quando algoritmo, tamanho de digest e escopo de conteúdo são compatíveis.
-
-### Opcionalidade vs ausência comprovada
-
-- `Option<T>::None`: atributo não disponibilizado ou não observado, conforme o contrato de origem.
-- Ausência física de arquivo: **não** representada por `RemoteFile`; exige evidência de observação/estado pelo Detector e Inventário.
-- Limpeza de metadados antes existentes: operação explícita via atualização `FieldUpdate` no módulo proprietário, não inferência de `None`.
-- `Unknown` em tipo de arquivo: informação insuficiente; não tentar adivinhar pelo nome ou extensão.
-
-## 7. Fronteira do módulo
-
-Não pertencem a `models/`:
-
-- `GoogleFile`, `OneDriveFile` e modelos HTTP concretos;
-- `SyncItem`, baseline, presença, conflitos e fila de operações, definidos no Inventário ou no Analisador;
-- credenciais e sessões;
-- eventos, leases e lote de detecção;
-- `RemoteProvider`, `RemoteDetector`, `Uploader` e `Downloader` operacionais;
-- consultas à API, disco ou banco.
-
-## 8. Pendências antes de código
-
-Consolidar o proprietário único de `AccountId`, `SyncId`, `LocalFileId` e `Timestamp`; representação exata de `LocalRelativePath`; sinalização de metadados parciais; política de formato/limite do payload opaco; eventual integração de `RemoteFile` com o contrato legado de `InventoryManager`.
-
-**Não há API operacional a implementar nem métodos de serviço para enumerar neste documento.**
+**Regra de interpretação:** até aprovação desses pontos, **não há contrato literal de campos implementável**. Não reutilizar automaticamente exemplos anteriores de structs, métodos ou campos como se fossem decisões finais.
