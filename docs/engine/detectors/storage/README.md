@@ -156,3 +156,9 @@ FileBatch [detectors/]
 ```
 
 `EventStore` não decide conflitos nem compara arquivos. O `File` persiste sem projeção de campos; o mesmo ID com conteúdo divergente causa erro, e leitura sem confirmação não remove dados. `Processed` não comprova sincronização. Localização física da base, formato do codec e retenção dependem das revisões de implementação.
+
+## Fronteira com Inventário e confirmação de entrega
+
+A fila `EventStore` pertence exclusivamente ao Detector: persiste `File` completo, mantém leases e aplica `acknowledge`/`release_batch` após decisões do Orquestrador. A fila `sync_operations` do Inventário registra trabalho a executar e não substitui nem duplica a fila de observações. O Inventário **não** deve conter `remote_events` ou `remote_cursor`.
+
+A confirmação de `FileBatch` é **independente** do checkpoint do Detector Remoto e do `SyncBaseline`. O cursor remoto só é confirmado após a persistência durável dos `File` correspondentes; o ack do lote só ocorre após processamento seguro ou transferência durável de responsabilidade. Para perda de resposta ou reinício, testes devem verificar replay sem assumir exatamente uma entrega.
