@@ -34,7 +34,7 @@ A localização do checkpoint pertence a seu backend, não ao Detector Remoto. A
 
 ### Porta estável para metadados remotos
 
-O Detector Remoto recebe um **`RemoteFile` já produzido pelo especialista/adaptador do provedor**, sem conhecer os atributos internos ou a estrutura `GoogleFile`. O contrato de adaptação é **interno ao especialista** e deve permanecer estável quando `RemoteFile` ganhar ou perder campos.
+O Detector Remoto recebe um **`RemoteFile` já produzido pelo especialista/adaptador do provedor**, sem conhecer os atributos internos ou a estrutura `GoogleFile`. Cada especialista **obtém a API específica por [`providers/`](../../providers/INTERFACES.md)**, podendo usar seus tipos, endpoints e capacidades; a interface comum exigida é apenas a do `RemoteDetector` e a saída `File`/`RemotePollResult`. O contrato de adaptação é **interno ao especialista** e deve permanecer estável quando `RemoteFile` ganhar ou perder campos.
 
 ```rust
 // Contrato conceitual; RemoteFile pertence a models.
@@ -89,7 +89,7 @@ pub(super) struct RemoteStatusResult {
     pub last_observed_at: Option<Timestamp>,
     pub last_error: Option<RemoteError>,
 }
-pub(super) struct RemoteApiPort { /* porta interna do especialista selecionado */ }
+pub(super) struct RemoteApiPort { /* API tipada obtida da fábrica Providers pelo especialista */ }
 pub(super) struct RemoteSessionPort { /* sessão provida pela conta configurada */ }
 pub(super) struct RemoteEventSinkPort { /* RemoteEventSink */ }
 pub(super) struct RemoteCheckpointPort { /* RemoteCheckpoint */ }
