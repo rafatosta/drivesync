@@ -1,33 +1,19 @@
 # Providers — TESTS
 
-> Plano de testes do **catálogo e entrega de APIs específicas**. Nenhum teste foi executado nesta etapa documental.
+## Objetivo
 
-## Escopo
+Verificar que cada submódulo disponibiliza somente as operações reais da API externa que representa, sem acrescentar comportamento funcional da aplicação.
 
-A cobertura de Providers limita-se a listagem, seleção, inicialização e fornecimento da **interface correta**. Testes dos métodos de cada serviço pertencem à pasta da API correspondente: [Google API — TESTS](google/api/TESTS.md).
+## Verificações documentais
 
-| ID | Cenário | Resultado esperado |
+| ID | Cenário | Critério |
 | --- | --- | --- |
-| PRV-01 | Catálogo com Google implementado | `list` retorna Google uma vez |
-| PRV-02 | Selecionar `ProviderId` Google | `get` fornece a API Google tipada |
-| PRV-03 | Selecionar provedor desconhecido | `UnknownProvider` explícito |
-| PRV-04 | Provedor documentado mas não implementado | Não consta de `list` nem é anunciado como funcional |
-| PRV-05 | Inicialização do cliente específico falha | Erro de inicialização sem interface fictícia |
-| PRV-06 | Selecionar repetidamente o mesmo provedor | A interface continua corretamente tipada e utilizável |
-| PRV-07 | Dois provedores com APIs distintas | Nenhuma imposição de métodos comuns entre os clientes |
-| PRV-08 | Métodos técnicos do Google | A API fornecida referencia o contrato existente, sem implementação duplicada |
-| PRV-09 | API exige parâmetros de autenticação | A fábrica não realiza login nem persistência automática |
-| PRV-10 | Falha de configuração de um provedor | Erro isolado sem corromper catálogo de outros provedores |
-| PRV-11 | Revisão de dependências | Não existe segundo cliente de protocolo externo concorrendo com a implementação do provedor |
-| PRV-12 | Cadastro de novo provedor | Nova interface específica pode ser registrada sem alterar métodos das APIs existentes |
+| PRV-01 | Submódulo de serviço | Documentação corresponde à API oficial do serviço |
+| PRV-02 | Interfaces públicas | Não há contrato universal artificial entre provedores |
+| PRV-03 | Fronteira | Não existem decisões de sincronização, gerenciamento de transferências ou regras de negócio |
+| PRV-04 | Credenciais | Nenhuma persistência ou gestão de contas pertence ao provider |
+| PRV-05 | Mapeamento | Operações não são duplicadas entre `google/` e uma camada `google/api/` |
 
-## Fora do escopo
+Os testes técnicos de requisições, respostas, tipos e erros ficam na documentação específica: [Google — TESTS](google/TESTS.md).
 
-Não testar aqui armazenamento de contas, políticas de sessão, decisões funcionais, tratamento de eventos de sincronização ou interpretação dos resultados por outras partes do aplicativo. Protocolos OAuth, Drive REST e transferências Google devem ser testados no contrato especializado [`google/api/TESTS.md`](google/api/TESTS.md).
-
-## Critérios
-
-- Sem endpoints universais inventados.
-- Sem exposição de provedores inexistentes.
-- Sem funções Google duplicadas na fábrica.
-- Nenhum teste recebe status `PASS` sem execução real; cenários dependentes de representação Rust definitiva permanecem `BLOCKED`.
+**Estado:** plano de verificação documental, não testes executados.
