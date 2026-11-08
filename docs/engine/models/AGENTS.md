@@ -20,7 +20,7 @@ As definições de atributos, tipos, variantes, ausência e invariantes estão e
 1. `FileData` tem somente `Local(LocalFile)` e `Remote(RemoteFile)`. Não inventar `Both`, `Google`, `Unknown` ou lógica operacional.
 2. `File` encapsula os **sete campos propostos**: `id`, `sync_id`, `event`, `observed_at`, `coverage`, `scope`, `data`; não misturar com `SyncItem`.
 3. `File.id` identifica **a ocorrência**, não o arquivo físico; replay da mesma ocorrência preserva ID e payload.
-4. `LocalFile` e `RemoteFile` só armazenam os valores efetivamente observados. `None` não significa zero, ausência física ou comando de exclusão.
+4. `LocalFile` registra todos os grupos conhecidos de metadados reais Linux e seus estados de coleta; `RemoteFile` armazena os valores efetivamente observados. `None` não significa zero, ausência física ou comando de exclusão.
 5. `FieldValue::Unknown` e `FieldValue::Known([])` são semanticamente diferentes; não simplificar ambos para lista vazia.
 6. `ProviderFileData` contém somente metadados opacos, nunca tokens, credenciais, respostas completas não filtradas ou conteúdo do arquivo.
 7. Não construir I/O de arquivo, rede, SQLite, fila, autenticação, operações, detector ou analisador dentro de Models.
@@ -29,6 +29,21 @@ As definições de atributos, tipos, variantes, ausência e invariantes estão e
 10. Não definir limite/codificação de `ProviderFileData.payload` enquanto estiver pendente; bloquear implementação afetada, em vez de adivinhar.
 11. A construção de `File` deve respeitar as relações entre `event`, `scope`, `data` e `coverage` definidas no contrato; não fabricar dados para contornar validação.
 12. Não alterar `detectors/`, `detectors/storage/`, `inventory/` ou `operations/` para fazer compilar um exemplo conceitual de Models.
+
+## Metadados completos de LocalFile
+
+`LocalFile` não é mais o registro de seis campos. A proposta formal em [INTERFACES.md, seção 2](INTERFACES.md#2-localfile--metadados-reais-completos-do-linux) determina **todos os campos e subestruturas** de `kind`, `mode`, `owner`, `times`, `storage`, `flags`, `direct_io`, `atomic_write`, `xattrs`, `acl`, `symlink` e `extra_metadata`.
+
+- Usar `MetadataValue<T>` para distinguir valor conhecido, não consultado, não suportado, acesso negado e indisponível.
+- Preservar timestamps com nanossegundos; `ctime` não significa criação.
+- Preservar nomes e valores binários de xattrs e destino de symlinks, sem conversão com perda.
+- Não confundir `stx_attributes` com máscara de suporte, nem `dev` com `rdev`, nem tamanho lógico com espaço alocado.
+- Não declarar coleta completa quando houver grupos `NotCollected`. Múltiplas consultas não fornecem um snapshot transacional.
+- `LocalFile` não executa `statx`, xattr, ACL ou `readlink`: tais operações pertencem ao Detector Local.
+- Metadados sensíveis como ACL, capabilities e `security.*` não autorizam log, transmissão, restauração automática ou upload.
+- Hash de conteúdo/MIME inferido não são metadados intrínsecos: **não restaurar o antigo campo `LocalFile.hash`**.
+- Não inventar formatos, valores substitutos, limites de leitura, permissões ou política de coleta ainda pendentes.
+- **O contrato é conceitual e depende de aprovação antes da implementação Rust.**
 
 ## Execução futura
 
