@@ -4,7 +4,7 @@
 
 Este documento especifica **os testes a escrever antes de implementar** o módulo `inventory/`, seguindo **Contract-First + TDD**. A referência normativa de API é [INTERFACES.md](INTERFACES.md); a referência do modelo relacional e dos bancos é [README.md](README.md). Quando documentação e implementação divergirem, **não ajustar o teste para esconder a divergência**: corrigir a implementação ou formalizar a decisão no contrato antes de continuar.
 
-**Escopo:** os **20 métodos públicos** de `InventoryManager`, todos os tipos/atributos utilizados por esses métodos e os invariantes do banco `<raiz>/.drivesync/inventory.sqlite3`. O teste deve verificar **comportamento observável pela API**, persistência real e integridade, sem transformar o layout interno das tabelas em contrato público.
+**Escopo:** os **16 métodos públicos** de `InventoryManager`, todos os tipos/atributos utilizados por esses métodos e os invariantes do banco `<raiz>/.drivesync/inventory.sqlite3`. O teste deve verificar **comportamento observável pela API**, persistência real e integridade, sem transformar o layout interno das tabelas em contrato público.
 
 Não executar Google Drive real, OAuth, interface GTK, transferência física, nem alterar arquivos de usuário. Não criar nem modificar o banco global da aplicação, que pertence a outros módulos. Não criar compatibilidade com versões antigas da engine.
 
@@ -75,9 +75,13 @@ Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalF
 | INV-MDL-15 | Observação com `FileScope::WholeSync` sem identidade | Não criar item por nome/caminho; manter necessidade de reavaliação fora da tabela de itens |
 | INV-MDL-16 | Confirmação verificada após operação | Baseline, status, operação e histórico atômicos; não relacionada a ack do Detector |
 | INV-MDL-17 | Evolução dos campos `LocalFile`/`RemoteFile` | API `InventoryManager` mantém assinaturas; revisar só mapeamento de persistência autorizado |
-| INV-MDL-18 | Eventos remotos duplicados por `EventStore`/Inventário | **BLOCKED** até decisão de propriedade única para cursor/fila, sem banco duplicado |
+| INV-MDL-18 | Detector reentrega evento cujo `SyncItem` já foi atualizado | Inventário trata registro idempotente sem criar fila/cursor remoto adicional |
 
-**Bloqueios de implementação:** mapear campos selecionados de `LocalFile` e `RemoteFile` para persistência mantendo estados de coleta; definir codec de `ProviderFileData`; decidir proprietário único de cursor/eventos remotos. Não registrar PASS para os testes acima sem executar SQLite real com fixtures de Models.
+**Bloqueios de implementação:** mapear campos selecionados de `LocalFile` e `RemoteFile` para persistência mantendo estados de coleta; definir codec de `ProviderFileData`; checkpoint/eventos são de propriedade do Detector, sem API duplicada no Inventário. Não registrar PASS para os testes acima sem executar SQLite real com fixtures de Models.
+
+## Responsabilidades excluídas dos testes do Inventário
+
+Os testes de cursor, paginação remota, publicação de eventos, `FileBatch`, claim/lease e reconhecimento de eventos **pertencem aos testes do Detector Remoto e Detector Storage**, não ao Inventário. Os antigos cenários INV-15 a INV-18 dessa natureza foram retirados. Os novos INV-15 e INV-16 testam respectivamente `record_activity` e `list_activities`. Não criar mocks de APIs removidas ou adaptar interfaces legadas.
 
 ## 3. Cobertura obrigatória: todos os métodos
 
@@ -97,12 +101,8 @@ Os testes abaixo validam **o contrato-alvo**, não um módulo compilado. `LocalF
 | INV-12 | `list_operations` | `ListOperationsRequest` | `ListOperationsResult` |
 | INV-13 | `claim_operation` | `ClaimOperationRequest` | `ClaimOperationResult` |
 | INV-14 | `update_operation` | `UpdateOperationRequest` | `UpdateOperationResult` |
-| INV-15 | `publish_remote_changes` | `PublishRemoteChangesRequest` | `PublishRemoteChangesResult` |
-| INV-16 | `get_remote_cursor` | `GetRemoteCursorRequest` | `GetRemoteCursorResult` |
-| INV-17 | `list_remote_events` | `ListRemoteEventsRequest` | `ListRemoteEventsResult` |
-| INV-18 | `acknowledge_remote_event` | `AcknowledgeRemoteEventRequest` | `AcknowledgeRemoteEventResult` |
-| INV-19 | `record_activity` | `RecordActivityRequest` | `RecordActivityResult` |
-| INV-20 | `list_activities` | `ListActivitiesRequest` | `ListActivitiesResult` |
+| INV-15 | `record_activity` | `RecordActivityRequest` | `RecordActivityResult` |
+| INV-16 | `list_activities` | `ListActivitiesRequest` | `ListActivitiesResult` |
 
 Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondição conflitante; (c) retorno/erro correto; (d) persistência e reabertura quando altera dados; (e) ausência de efeitos fora de sua responsabilidade; (f) teste de `Option`/filtros/transições quando aplicável.
 
@@ -276,55 +276,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 
 **Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
 
-### INV-15 — `publish_remote_changes`
-
-**Contrato:** `publish_remote_changes(PublishRemoteChangesRequest) -> InventoryResult<PublishRemoteChangesResult>`.
-
-**Sucesso:** Persistir página de eventos e cursor juntos; aceitar página sem eventos; deduplicação.
-
-**Negativos e opcionais:** Cursor/generation divergentes; evento inválido; falha no meio da transação; repetição da mesma página.
-
-**Persistência e invariantes:** Cursor nunca avança sem eventos persistidos; eventos pendentes sobrevivem ao reinício.
-
-**Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
-
-### INV-16 — `get_remote_cursor`
-
-**Contrato:** `get_remote_cursor(GetRemoteCursorRequest) -> InventoryResult<GetRemoteCursorResult>`.
-
-**Sucesso:** Antes do primeiro cursor retorna `None`; depois recupera corpus, cursor, geração.
-
-**Negativos e opcionais:** Corpus malformado; banco indisponível; corpus diferente não retorna outro cursor.
-
-**Persistência e invariantes:** Consulta não altera cursor e não o cria por efeito colateral.
-
-**Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
-
-### INV-17 — `list_remote_events`
-
-**Contrato:** `list_remote_events(ListRemoteEventsRequest) -> InventoryResult<ListRemoteEventsResult>`.
-
-**Sucesso:** Listar pendentes/todos, por corpus/item, com paginação e eventos sem item vinculado.
-
-**Negativos e opcionais:** Cursor inválido, filtro sem matches, paginação inválida.
-
-**Persistência e invariantes:** Consulta não reconhece eventos; paginação sem duplicações.
-
-**Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
-
-### INV-18 — `acknowledge_remote_event`
-
-**Contrato:** `acknowledge_remote_event(AcknowledgeRemoteEventRequest) -> InventoryResult<AcknowledgeRemoteEventResult>`.
-
-**Sucesso:** Marcar evento processado e recuperar `processed_at` após reabrir.
-
-**Negativos e opcionais:** Evento inexistente, timestamp inválido; confirmar duas vezes com instantes incompatíveis deve respeitar política.
-
-**Persistência e invariantes:** Não modifica baseline, não remove evento por padrão, não avança cursor automaticamente.
-
-**Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
-
-### INV-19 — `record_activity`
+### INV-15 — `record_activity`
 
 **Contrato:** `record_activity(RecordActivityRequest) -> InventoryResult<RecordActivityResult>`.
 
@@ -336,7 +288,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 
 **Asserções obrigatórias:** comparar todos os atributos presentes na resposta, confirmar semântica de `None` e campos não aplicáveis, validar erros tipados e repetir os casos após fechar/reabrir `InventoryManager` quando houver escrita. Para cada teste de falha verificar que não ocorreu atualização parcial, excluindo-se apenas efeitos de teste previamente confirmados.
 
-### INV-20 — `list_activities`
+### INV-16 — `list_activities`
 
 **Contrato:** `list_activities(ListActivitiesRequest) -> InventoryResult<ListActivitiesResult>`.
 
@@ -359,8 +311,6 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 | `SyncBaseline` / `BaselineSide` | Sem baseline antes de confirmação; presença por lado; nome local preservado em bytes Unix; nome remoto em texto; pai, versão, checksum, tamanho e data nulos quando indisponíveis |
 | `SyncInfo` / `SyncIdentity` | Identidade estável, raiz correta, geração positiva; mesmo ID de conta mas raiz diferente deve ser rejeitado; `initial_download_complete` persiste |
 | `SyncOperation` | Status e direction/operation kind coerentes; `expected_remote_version=None`; `next_attempt_at`, erro, inicio e conclusão dependendo do estado |
-| `RemoteCursor` | Cursor inexistente `None`, cursor persistido completo e corpus distinto |
-| `RemoteEvent` | `item_id=None` enquanto não há vínculo; `remote_id=None` apenas com contexto suficiente; `observed_version=None`; `processed_at=None` antes do acknowledgement |
 | `SyncActivity` | `item_id` **obrigatório**; `operation_id=None` para conflito; descrição, erro, nome remoto e caminho opcionais; dados históricos não se alteram com nomes atuais |
 | `Page<T>` | Lista vazia, página parcial, `next_cursor=None` final, paginação em múltiplas páginas, cursor inválido e filtro incompatível |
 | `InventoryFailure` | `kind`, `retryable` e `message` sempre presentes; mensagens sem SQL, conteúdo de arquivos, tokens ou segredos |
@@ -380,8 +330,6 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 | `ConfirmSyncRequest.activity` | `None` apenas quando não é obrigatório registrar resultado | `Some` inclui `item_id` correto; ausência relevante rejeitada |
 | `NewSyncOperation.expected_remote_version` | Não fingir versão conhecida | Valor conhecido protege contra versão remota inesperada |
 | `NewSyncOperation.deduplication_key` | Sem chave explícita: sem deduplicação arbitrária | Mesma chave+ação retorna resultado idempotente; colisão divergente é rejeitada |
-| `RemoteCheckpoint.expected_cursor` | `None` exige inexistência de cursor anterior | `Some` exige correspondência exata |
-| `NewRemoteEvent.item_id` / `remote_id` | Pode haver ainda evento sem associação | Rejeitar evento impossível de reavaliar/identificar por contrato |
 | `SyncActivity.operation_id` | `None` em evento por arquivo fora da fila | `Some` deve apontar a operação do mesmo item |
 | `ActivityFilter.from` / `until` | Intervalo aberto | Validar limites e ordem temporal |
 | `PresenceState::Unknown` | Falta de comprovação; **não** é ausência | `AbsentConfirmed` necessita evidência e nunca resulta só de falha de rede |
@@ -389,7 +337,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 ### Invariantes de tipos públicos
 
 - Teste de compilação acessa **todos os tipos declarados nas seções 2–10 de `INTERFACES.md`**, incluindo enums, IDs, estruturas `*Request`, `*Result`, filtros e tipos parametrizados.
-- Teste de compilação usa os **20 métodos com seus objetos nomeados**, sem converter para argumentos posicionais.
+- Teste de compilação usa os **16 métodos com seus objetos nomeados**, sem converter para argumentos posicionais.
 - Testar `FieldUpdate<T>` nos três casos, identidade `ItemSelector` em suas quatro variantes (`RemoteRef` com conta), `ObservationTarget` em suas quatro variantes, os estados de `SyncStatus`, `OperationState`, `ActivityType` e `InventoryError`.
 - Todos os campos opcionais devem ter teste de **ausência legítima**, **presença válida** e **não alteração involuntária**; campos obrigatórios devem ter cobertura para valor válido e, quando representável, valor inválido.
 - `RemoteFile` com campos de mídia inexistentes (documento nativo), `LocalFile` sem inode confiável e nomes locais não UTF-8 **não** devem ser convertidos para valores artificiais.
@@ -399,7 +347,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 
 | Caso | Verificação |
 | --- | --- |
-| INV-DB-01 — arquivo único | `<raiz>/.drivesync/inventory.sqlite3` contém metadados, fila, cursor e histórico; **não** cria `history.sqlite3` |
+| INV-DB-01 — arquivo único | `<raiz>/.drivesync/inventory.sqlite3` contém metadados, fila operacional e histórico; **não** cria `history.sqlite3` |
 | INV-DB-02 — escopo | `sync_info` impede abrir uma pasta com `account_id`, `sync_id` ou `remote_root_id` incompatível |
 | INV-DB-03 — foreign keys | FKs ativadas em **toda conexão**; não persistir referência inexistente |
 | INV-DB-04 — exclusividade remota | Mesma identidade Google não pertence a dois `SyncItem` na mesma sincronização |
@@ -412,7 +360,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 | INV-DB-11 — dados sem JSON opaco | Objetos, listas, mapas e filas não são salvos inteiros em JSON/BLOB; bytes Unix de **um nome individual** podem ser BLOB |
 | INV-DB-12 — caminho reservado | `.drivesync/` não é emitido como conteúdo sincronizável e não é enviado ao Drive |
 | INV-DB-13 — correção de erro | Violação UNIQUE, FK ou CHECK traduzida em `InventoryFailure`, sem SQL exposto |
-| INV-DB-14 — múltiplas raízes | Dois bancos de sincronizações distintas não compartilham IDs locais ou cursores; objeto de uma raiz não pode ser escrito em outra |
+| INV-DB-14 — múltiplas raízes | Dois bancos de sincronizações distintas não compartilham identidades locais, remotas ou estados; objeto de uma raiz não pode ser escrito em outra |
 | INV-DB-15 — acesso privado | Nenhum método público expõe conexão, transação ou SQL; outros módulos acessam via requests/responses |
 | INV-DB-16 — versionamento | `PRAGMA user_version` compatível; esquema inesperado/corrompido falha **sem recriação automática** |
 
@@ -425,16 +373,13 @@ A inspeção do esquema é permitida **nos testes internos do módulo**, para co
 | INV-TX-01 | Falha entre persistir observação e atualizar vínculo | Rollback integral, sem `local_files`/`remote_files` órfãos que causem ambiguidade |
 | INV-TX-02 | Falha entre confirmar baseline e finalizar operação | Nenhuma conclusão parcial após reabertura |
 | INV-TX-03 | Falha entre completar operação e gravar `activity` | Operação não aparece concluída sem atividade relevante |
-| INV-TX-04 | Falha entre inserir eventos e atualizar cursor | Nenhuma alteração parcial de página |
 | INV-TX-05 | Dois writers atualizam mesma revisão | Um sucesso e outro `VersionMismatch`; nenhuma escrita perdida |
 | INV-TX-06 | Dois workers reivindicam mesma operação | Exatamente um `ClaimOperationResult` bem-sucedido |
 | INV-TX-07 | Mesma observação reaplicada | Sem duplicar `SyncItem`; política explícita para revisão/no-op |
-| INV-TX-08 | Mesma página remota repetida após falha | Sem duplicar eventos; cursor monotônico segundo o protocolo |
 | INV-TX-09 | Mesmo enqueue com chave de deduplicação | Uma operação lógica ou resultado idempotente, não duas execuções |
 | INV-TX-10 | Falha `SQLITE_BUSY`, `FULL`, I/O ou permissão | Erro tipado, nenhum falso sucesso, retry apenas se seguro |
 | INV-TX-11 | Repetir uma confirmação após resposta perdida | Não produzir duas atividades nem avançar baseline indevidamente |
 | INV-TX-12 | Crash/reinício com operação `Running` | Reavaliar resultado remoto antes de repetir; fila durável |
-| INV-TX-13 | Eventos recebidos mas não reconhecidos | Reinício preserva pendentes apesar de cursor avançado |
 | INV-TX-14 | Renomear/mover arquivo após atividade | Histórico preserva identidade e fotografia histórica |
 | INV-TX-15 | Remoção do item lógico com histórico existente | Tombstone mantém FK válida; não aplicar CASCADE |
 | INV-TX-16 | Fechar inventário e reabrir após commit | Metadados, baseline, fila, cursor e histórico consistentes |
@@ -520,13 +465,13 @@ A porcentagem acima é **meta futura**, não resultado de execução. Não decla
 
 ### Checklist de saída
 
-- [ ] Os 20 métodos compilam com os tipos documentados.
+- [ ] Os 16 métodos compilam com os tipos documentados.
 - [ ] SQLite é criado somente no inventário de uma pasta, sem banco de histórico separado.
 - [ ] Testes funcionais usam banco real isolado; falhas não deixam transações parciais.
 - [ ] Os campos selecionados de `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
 - [ ] A ausência de dados opcionais não vira exclusão automática.
 - [ ] Baseline só avança mediante confirmação válida; dados observados não o substituem.
-- [ ] Operações, cursor/eventos e histórico persistem após reinício.
+- [ ] Operações e histórico persistem após reinício; checkpoints e eventos do Detector são testados no módulo Detector.
 - [ ] Duas conexões concorrentes não quebram exclusividade/controle de revisão.
 - [ ] Cada atividade tem FK `item_id` válida; tombstone preserva histórico.
 - [ ] Nenhuma operação física é executada pelo Inventário.
