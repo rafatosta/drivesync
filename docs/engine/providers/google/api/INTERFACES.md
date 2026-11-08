@@ -1,6 +1,6 @@
 # Google API — INTERFACES
 
-**Fronteira de consumo:** o contrato Google é **específico deste provedor** e é disponibilizado aos especialistas pela [fábrica Providers](../../INTERFACES.md), conforme [composição Google](../INTERFACES.md). Seus métodos públicos são públicos **na API especializada**, não implicam interface comum Google/OneDrive nem autorização para criar clientes HTTP fora de Providers. Nenhuma assinatura técnica foi alterada por essa organização.
+**Fronteira técnica:** este documento define a interface específica Google. O catálogo [Providers](../../INTERFACES.md) disponibiliza essa interface por meio do [módulo Google](../INTERFACES.md). Os métodos não formam uma API universal e sua definição permanece concentrada aqui.
 
 **Contrato Rust v1 para TDD.** Todas as operações e os tipos declarados são públicos nesta versão. As assinaturas representam a API que será implementada, não código existente. Não há compromisso de reduzir a visibilidade dos métodos depois.
 
@@ -458,7 +458,7 @@ pub trait GoogleOAuthApi {
 | `GET https://openidconnect.googleapis.com/v1/userinfo` | Consultar identidade |
 | `GET https://accounts.google.com/.well-known/openid-configuration` | Descobrir endpoints OIDC e URL das chaves |
 
-`accounts/auth/` coordena cadastro, callback, estado de login e cofre de credenciais. `providers/google/api/` fornece as operações específicas do protocolo Google; não mantém contas cadastradas nem persiste tokens.
+A API fornece as operações específicas do protocolo OAuth/OIDC Google. Não mantém cadastro de contas nem define persistência de tokens; credenciais e contexto de sessão são dados técnicos dos métodos que os requerem.
 
 ## 5. Transferências e conveniências públicas adicionais
 
