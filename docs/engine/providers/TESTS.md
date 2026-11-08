@@ -1,50 +1,40 @@
-# Providers — TESTS: fronteira única de APIs externas
+# Providers — TESTS
 
-**Status:** plano de testes para arquitetura-alvo, não evidência de execução. Fonte do contrato: [INTERFACES.md](INTERFACES.md). Não usar credenciais pessoais ou Google Drive real nos testes unitários.
+> Testes do **catálogo/fábrica** de APIs específicas. Documentação de testes propostos, não executados. Referência: [INTERFACES.md](INTERFACES.md).
 
-## Estratégia
+## Escopo
 
-Testar (1) descoberta e composição por `ProviderId`, (2) autenticação e sessão por conta, (3) aquisição de dados e sua normalização, (4) comandos e transferências com erros/precondições, (5) **limites de dependência**. Usar fake do cliente de protocolo e keyring isolado nas integrações. Testes de contrato não precisam de uma conta Google real.
+Verificar seleção, retorno do tipo correto, isolamento por conta e controle de acesso. **Não** testar todos os métodos Google REST aqui: eles pertencem aos testes da [Google API](google/api/TESTS.md), enquanto os resultados exigidos de cada especialista pertencem aos testes do seu módulo pai.
 
-## Matriz de testes
-
-| ID | Cenário | Garantia |
+| ID | Cenário | Resultado esperado |
 | --- | --- | --- |
-| PRV-01 | Listagem de provedores | Apenas provedores realmente registrados; nenhum placeholder aparece como funcional |
-| PRV-02 | Selecionar `ProviderId` desconhecido | `UnknownProvider`, nenhum HTTP |
-| PRV-03 | Provedor não oferece capacidade solicitada | `UnsupportedCapability` explícito, sem sucesso fictício |
-| PRV-04 | Abrir conta com `AccountId` de outro provedor | Rejeição sem sessão cruzada |
-| PRV-05 | Duas contas do mesmo provedor | Identidade e credenciais rigorosamente isoladas |
-| PRV-06 | Iniciar login e concluir callback válido | `ProviderIdentity` e material protegido retornados ao AuthManager |
-| PRV-07 | Callback incorreto, state/PKCE inválido, token expirado | Falha sanitizada sem aceitar autenticação |
-| PRV-08 | Renovação e revogação | Apenas protocolos realmente suportados; falhas não removem conta silenciosamente |
-| PRV-09 | Requisição após revogação | Reautorização necessária, sem fallback a outra conta |
-| PRV-10 | Leitura de metadados `GoogleFile → RemoteFile` | Identidade qualificada e `MetadataValue<T>` preservados |
-| PRV-11 | Resposta parcial de API | Cobertura parcial explícita, sem `RemoteFileRef` inventado |
-| PRV-12 | Remoção Google Changes / HTTP 403 ou 404 | `RemovedOrInaccessible` ou erro ambíguo, **não** exclusão comprovada |
-| PRV-13 | Paginação e cursor opaco | Todas as páginas respeitadas; Providers **não** faz commit de checkpoint |
-| PRV-14 | Nome/caminho repetido em dois recursos | IDs remotos não confundidos |
-| PRV-15 | Renomear/mover com precondição obsoleta | `PreconditionFailed`, sem sobrescrever nem reupload implícito |
-| PRV-16 | Lixeira/exclusão com recurso inacessível | Erro; operação destrutiva nunca disparada por observação |
-| PRV-17 | Upload em chunks, erro de rede e retomada | Offset/bytes informados corretamente ou capacidade rejeitada |
-| PRV-18 | Download parcial, cancelamento e documento nativo | Dados e erro de capacidade corretos, sem falso sucesso |
-| PRV-19 | Rate limit, quota e offline | Erros tipados e `retry_after_seconds` quando conhecido |
-| PRV-20 | Erro da API inclui headers/tokens/corpo privado | `ProviderFailure` expõe somente mensagem sanitizada |
-| PRV-21 | Inspeção de dependências da engine | Nenhum consumidor importa `providers/google/api/`, HTTP ou `GoogleSession` |
-| PRV-22 | `accounts/auth` com sessão e segredo | Keyring pertence a Accounts; token não chega ao Detector/Inventário |
-| PRV-23 | Detector recebe dados e checkpoint não persistido | Sem dependência de commit dentro de Providers; Detector é proprietário |
-| PRV-24 | Novo provedor com capacidades parciais | Mesmas portas genéricas, sem alterar `models/` nem `InventoryManager` |
+| PRV-01 | Listar provedores registrados | `list()` retorna apenas implementações disponíveis |
+| PRV-02 | Selecionar Google | `get(google)` fornece `GoogleApiHandle`, sem autenticação implícita |
+| PRV-03 | ID de provedor inexistente | `UnknownProvider`, sem acesso externo |
+| PRV-04 | Placeholder `example/` não implementado | Não aparece em `list()` e não pode ser aberto |
+| PRV-05 | Abrir `AccountId` Google autorizado | `ProviderSession::Google` com sessão dessa conta |
+| PRV-06 | `AccountId` desconhecido ou sem autorização | Erro de seleção/autorização sem token alternativo |
+| PRV-07 | Provedor da conta difere do handle solicitado | `AccountProviderMismatch`, sem fallback |
+| PRV-08 | Duas contas Google diferentes | Sessões e credenciais isoladas |
+| PRV-09 | Sessão revogada ou expirada | Falha tipada/reautorização via Accounts; sem sucesso fictício |
+| PRV-10 | Especialista Google usa `changes_list` | Usa cliente obtido por Providers, sem HTTP avulso |
+| PRV-11 | Especialista Google produz saída do módulo pai | `File`/resultado normalizado no limite do Detector, não `GoogleChange` público |
+| PRV-12 | Outro serviço com API incompatível | Nova variante/handle sem exigir métodos Google ao outro serviço |
+| PRV-13 | Erro técnico Google | Mantém significado na API específica; especialista converte para erro funcional do seu módulo |
+| PRV-14 | Inspeção de dependências | Clientes remotos são criados apenas pela fábrica Providers |
+| PRV-15 | Testar `get` durante fluxo OAuth | Entrega API específica; `accounts/auth` controla estado/credenciais |
+| PRV-16 | Logout/reautorização com API obtida previamente | Contexto inválido não reutiliza autorização expirada nem atravessa contas |
 
-## Regras de aceitação
+## Limites de responsabilidade dos testes
 
-- Testar falhas de rede, autenticação, paginação, retries e precondições com provedor simulado.
-- Verificar que todas as chamadas remotas passam pela implementação de Providers e que consumidores só usam a API genérica.
-- Validar que a autorização pode ser recusada/cancelada e que a conta não é cadastrada como autenticada.
-- Validações de `RemoteFile` não fingem que campos não observados são `Known`.
-- Não confundir teste unitário de protocolo com teste real de sincronização; integração real demanda autorização e escopo explícitos.
+- **Providers:** descoberta, fábrica, seleção tipada, isolamento e autorização.
+- **`providers/google/api/`:** 59 métodos REST, OAuth/OIDC, semântica e erros de protocolo Google.
+- **`accounts/auth/`:** ciclo de login, keyring, estado da conta e credenciais.
+- **`detectors/remote/google/`:** estratégia de polling, conversão `GoogleChange/GoogleFile` para `File` e checkpoint seguro.
+- **Upload/Download Google:** transferências e retorno conforme interface dos módulos correspondentes.
 
-## Pendências antes de executar
+Não usar Google Drive real ou credenciais pessoais nos testes unitários. Usar fakes e, na integração, contexto de conta isolado. A ausência de contrato concreto dos operadores permanece `BLOCKED`, não é resultado `PASS`.
 
-As assinaturas async, formatos de token protegido, streams, `ProviderAccountPort`, limites de chunks, listas de capacidades e detalhes de mutações dependem de revisão. Casos correspondentes devem ser `BLOCKED`, nunca aprovados ficticiamente.
+## Critérios de aceite
 
-Referências: [README](README.md) · [INTERFACES](INTERFACES.md) · [AGENTS](AGENTS.md).
+O catálogo retorna API correta e não promete capacidades genéricas; os especialistas usam o cliente recebido, mas seus métodos continuam específicos ao provedor; módulos pais preservam contrato único. Nenhum consumidor cria HTTP externo por fora da fábrica, acessa segredo de outra conta ou incorpora métodos de protocolo na interface do módulo pai.
