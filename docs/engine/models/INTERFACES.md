@@ -68,6 +68,20 @@ pub enum FieldValue<T> {
 
 `FileId` deve ser preservado **idêntico durante retries da mesma ocorrência**. Reobservação posterior é nova ocorrência, salvo deduplicação explícita da origem comprovando ser a mesma. `AccountId`/ `SyncId`/ `LocalFileId` não são reimplementados para satisfazer este documento: ao integrar, manter apenas um proprietário e reexportar o tipo existente quando necessário.
 
+### Aviso pré-implementação: inventariar tudo, selecionar depois
+
+**BLOQUEIO DE IMPLEMENTAÇÃO:** os campos abaixo constituem um **inventário abrangente dos metadados conhecidos**, não uma ordem para coletar e persistir todos eles.
+
+A estratégia acordada é **considerar primeiro todos os dados disponíveis** e, depois de analisar necessidades reais da engine, **descartar deliberadamente os que não agregam valor**. Antes de iniciar a implementação de `LocalFile`, revisar **campo por campo**:
+
+1. Para qual decisão ou operação concreta do DriveSync o dado será necessário?
+2. O dado existe no filesystem/plataforma usada? Qual é a fonte e o custo de obtê-lo?
+3. Há risco de privacidade, segurança, tamanho, desempenho ou incompatibilidade?
+4. Deve ser coletado sempre, somente sob demanda, ou excluído do contrato final?
+5. Se necessário, precisa seguir dentro de `File` até o Analisador, ser persistido pelo Inventário, ou apenas consultado temporariamente?
+
+Registrar **manter / sob demanda / descartar**, com justificativa. Somente após essa revisão aprovar a **estrutura final implementável**, atualizar testes e alinhar os contratos consumidores. **Não interpretar a documentação detalhada a seguir como autorização para implementá-la literalmente antes da revisão.**
+
 ## 2. LocalFile — metadados reais completos do Linux
 
 ### 2.1. Escopo
