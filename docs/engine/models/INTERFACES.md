@@ -61,7 +61,7 @@ pub enum FieldValue<T> {
 | `RemoteFileId` | Identidade opaca retornada pelo serviço; comparar **junto com** a conta |
 | `RemoteFileRef` | Identidade remota qualificada por conta |
 | `LocalFileId` | Identidade local estável **somente se comprovada** pelo produtor; não confundir inode ou caminho com identidade da engine |
-| `FileId` | Identidade **da ocorrência encapsulada**; várias alterações do mesmo arquivo possuem `FileId` distintos, inclusive após reentrega do mesmo evento |
+| `FileId` | Identidade **da ocorrência encapsulada**; várias ocorrências distintas do mesmo arquivo possuem `FileId` distintos, mas reentregas da mesma ocorrência preservam o mesmo `FileId` |
 | `Timestamp` | Instante normalizado UTC em ms; o produtor preserva precisão real quando conhecida e não inventa instante de modificação |
 | `FileHash` | Hexadecimal de digest + algoritmo; comparar apenas hashes de mesmo algoritmo e escopo |
 | `FieldValue<T>` | Diferencia **não observado** de **observado e vazio**; não significa atualização ou comando de exclusão |
