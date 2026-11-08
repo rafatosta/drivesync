@@ -19,6 +19,16 @@ Sua implementação, seu watcher, suas varreduras e seus testes são **independe
 
 **`SyncItem` não faz parte desta revisão.** Sua eventual transferência para Models ocorrerá somente ao revisar o planejamento do Inventário. O Local **não cria nem exige `SyncItem`**, nem inventa `SyncItemId`.
 
+## Coleta isolada da lógica do Detector
+
+O Detector Local **não monta `LocalFile` atributo por atributo**. Sua responsabilidade é detectar a necessidade de observação, selecionar o escopo, chamar um **coletor de metadados locais** por interface estável e encaminhar o `LocalFile` devolvido de forma opaca.
+
+O coletor é um componente especializado de aquisição/adaptação de metadados do filesystem, separado do watcher, da varredura e do pipeline de notificações. Rotinas auxiliares podem obter grupos adicionais (`statx`, atributos estendidos, ACLs, links, flags etc.) sem introduzir dependências desses campos no Detector.
+
+**Critério obrigatório:** incluir, remover ou reorganizar campos de `models::LocalFile` **não exige qualquer alteração na lógica do Detector Local**. É permitido ajustar o coletor, os testes do coletor e consumidores interessados no campo. O Detector permanece desacoplado do esquema de metadados.
+
+Isso não altera a distinção entre `LocalFile` observado, aviso sem arquivo e cobertura parcial, nem transfere I/O para `models/`. A coleta completa por categoria deve seguir o contrato e a futura revisão de necessidade dos metadados.
+
 ## Fluxo
 
 ```mermaid
