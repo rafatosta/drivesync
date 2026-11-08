@@ -2,15 +2,15 @@
 
 ## Integração revisada com Models — contrato-alvo
 
-**Proprietário dos dados:** [Models](../models/INTERFACES.md) define `LocalFile`, `RemoteFile`, `RemoteFileRef`, `File`, `FileData`, `FileEvent`, `MetadataValue<T>` e IDs compartilhados. O Inventário define **somente** `SyncItem`, `SyncBaseline`, presença, status, fila de operações, atividades e acesso ao próprio banco. Nem `GoogleFile` de API, nem `FileBatch`/lease do Detector devem aparecer no contrato público do Inventário.
+**Proprietário dos dados:** [Models](../models/INTERFACES.md) define `LocalFile`, `RemoteFile`, `RemoteFileRef`, `File`, `FileData`, `FileEvent`, `MetadataValue<T>` e IDs compartilhados. O Inventário define **somente** `SyncItem`, `SyncBaseline`, presença, status, fila de operações, atividades e acesso ao próprio banco. O contrato público utiliza seus tipos de domínio e as identidades necessárias às operações.
 
 **Correspondência de identidades:** `SyncItemId` é item lógico persistente; `File.id` é ocorrência; `LocalFile.local_id` pode estar ausente; `RemoteFile.reference` é `RemoteFileRef(AccountId,RemoteFileId)` qualificado pela conta. Não usar caminho, nome, inode ou ID remoto não qualificado como identidade global. `SyncItem.revision` é controle otimista de escrita, não versão remota nem ID de evento.
 
-**Forma das entradas:** `RecordLocalObservation.observation.observed` e `RecordRemoteObservation.observation.observed` recebem **`File` integral** com a variante correspondente de `FileData`; o Analisador fornece `PresenceState` e a prova do escopo. O Inventário não interpreta `FileEventKind` para gerar operações nem converter uma remoção suspeita em ausência confirmada. `data=None` mantém reavaliação e último snapshot conhecido. `Present` exige `Some(FileData)` da origem correta, e `AbsentConfirmed` exige prova independente suficiente.
+**Forma das entradas:** `RecordLocalObservation.observation.observed` e `RecordRemoteObservation.observation.observed` recebem **`File` integral** com a variante correspondente de `FileData`; a requisição inclui `PresenceState` e a prova de escopo. A presença confirmada exige evidência explícita; uma remoção suspeita preserva estado indeterminado. `data=None` mantém reavaliação e último snapshot conhecido. `Present` exige `Some(FileData)` da origem correta, e `AbsentConfirmed` exige prova independente suficiente.
 
 **Preservação de metadados:** `MetadataValue::NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable` não equivalem a valores conhecidos nem apagam silenciosamente os últimos campos válidos. A seleção definitiva dos campos a persistir depende da revisão de utilidade; preservar `ProviderFileData` somente quando aprovado, filtrado e com codec seguro. `models/` permanece sem I/O.
 
-**Separação de responsabilidades aprovada:** [Detector Storage](../detectors/storage/INTERFACES.md) detém a fila `File`/leases/ack, [Detector Remoto](../detectors/remote/INTERFACES.md) detém a porta de checkpoint e o Inventário detém `SyncItem`, baseline, fila de operações e histórico. Os quatro métodos duplicados de cursor/eventos foram **removidos deste contrato**, sem adaptadores legados.
+**Dados do inventário:** `SyncItem`, baseline, fila de operações e histórico são persistidos nas estruturas definidas neste contrato.
 
 **Estado:** revisão conceitual documentada. As estruturas e assinaturas ainda não representam Rust implementado; não foram executados testes.
 
@@ -32,11 +32,11 @@ Essa convenção é aplicada **inclusive a buscas, filtros, fila de operações 
 
 ### Dependências externas e limites
 
-- `RemoteFile`, `LocalFile`, `FileData`, `FileEvent`, `File` e identidades comuns são importados de `models/`; o Inventário não importa `providers/google/api/`.
+- `RemoteFile`, `LocalFile`, `FileData`, `FileEvent`, `File` e identidades comuns são tipos utilizados nas entradas e respostas do contrato.
 - `LocalFile` será importado do componente responsável pelos metadados locais. O contrato conceitual de Models já define os grupos de metadados; a seleção final dos campos para persistência é pendente de revisão pré-implementação.
 - As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `RemoteFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
-- Esta API trata **um inventário por instância**, validado por `sync_id`. Não administra contas, conexões globais, GSettings ou bancos de outros módulos.
+- Esta API trata **um inventário por instância**, validado por `sync_id`.
 
 ## 2. Tipos fundamentais
 
@@ -166,7 +166,7 @@ pub struct SyncActivity {
 }
 ```
 
-O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência de `LocalFile.kind` e `RemoteFile.classification.kind` com `ItemKind` compete ao **Analisador**; Inventário não interpreta tipos de arquivos nem dados específicos do provedor.
+O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. `ItemKind` é persistido conforme os dados validados recebidos pela interface.
 O nome local deve preservar bytes Unix quando necessário; `BaselineSide.local_name_bytes` é reservado ao lado local. O objeto `SyncActivity` conserva os dados relevantes no momento do evento, sem depender do nome atual do arquivo. **Atividade sem `item_id` não é permitida**; eventos globais de aplicação pertencem a outro componente.
 
 `SyncItem.local` e `SyncItem.remote` não indicam sozinhos exclusão. A ausência comprovada é expressa por `PresenceState::AbsentConfirmed` com evidência apropriada.
@@ -234,7 +234,7 @@ pub struct RecordLocalObservation {
 }
 pub struct LocalObservation {
     pub observed: File,           // FileData::Local ou data=None para reavaliação
-    pub presence: PresenceState,  // decisão/evidência fornecida pelo Analisador
+    pub presence: PresenceState,  // presença e evidência informadas na requisição
     pub proof: ObservationProof,  // necessário para ausência confirmada
 }
 pub struct RecordRemoteObservation {
@@ -363,11 +363,9 @@ pub struct UpdateOperationResult { pub operation: SyncOperation }
 
 As operações são **solicitações persistidas**, não autorização automática para executar. `ClaimOperation` deve ser atômico e impedir dois workers de reivindicarem a mesma operação. Não oferecer `Complete` em `UpdateOperation`: a conclusão verificável passa por `ConfirmSyncRequest` para manter fila, baseline e histórico consistentes. Ao reiniciar, estados `Running` com resultado desconhecido são reavaliados antes de reexecutar.
 
-## 7. Fronteira de propriedade: detecção e checkpoints
+## 7. Integridade dos registros
 
-O **Detector** é o único proprietário da fila de observações `File`, reservas, reconhecimento e reentrega por `EventStore`. O **Detector Remoto** é o proprietário lógico dos checkpoints/cursos de observação por `RemoteCheckpoint.read/commit`, via backend de persistência especializado. O Inventário **não** expõe, replica nem confirma checkpoints ou eventos de detecção.
-
-**Ordem de segurança:** persistir todos os `File` de uma página no `EventStore` com aceite durável *antes* de confirmar o novo checkpoint. Se a confirmação do checkpoint falhar, reobservar a página e deduplicar/reconciliar as ocorrências; uma página parcialmente persistida não autoriza avanço. A associação e o estado dos itens só são gravados pelo Inventário após interpretação do Analisador. A localização física, transações e protocolo de replay do backend de checkpoint ficam para implementação e testes do Detector Remoto, sem gravação cruzada direta em `inventory.sqlite3`.
+O inventário persiste identidades, observações e estados confirmados através das operações documentadas. As atualizações respeitam revisões, evidências e transações previstas neste contrato.
 
 ## 8. Atividades — histórico vinculado a arquivo
 
@@ -640,7 +638,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Assinatura:** `fn record_remote(..., request: RecordRemoteObservation) -> InventoryResult<RecordObservationResult>`.
 
-**Finalidade:** Registra o `File` remoto recebido do Analisador, sem chamar API do provedor nem confirmar sincronização.
+**Finalidade:** registra a observação remota e os respectivos metadados e evidências.
 
 **Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.observed`: `File` com `FileData::Remote(RemoteFile)` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
 
@@ -767,11 +765,11 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 ## Regra adicional — observações não associáveis
 
-O método `record_local` aceita apenas `File` cujo `scope` corresponde ao lado local; `record_remote` apenas ao lado remoto. Quando `File.data=Some`, sua variante deve corresponder à requisição, e o objeto é armazenado sem projeção arbitrária de metadados autorizados. `File.data=None` pode atualizar diagnóstico/prova **somente se o alvo já estiver seguramente associado**. Eventos globais, `FileScope::WholeSync` e sinais sem identidade confiável não criam `SyncItem` por `NewItem` automaticamente. Permanecem no fluxo do Detector/Analisador até decisão de escopo.
+O método `record_local` aceita apenas `File` cujo `scope` corresponde ao lado local; `record_remote` apenas ao lado remoto. Quando `File.data=Some`, sua variante deve corresponder à requisição, e o objeto é armazenado sem projeção arbitrária de metadados autorizados. `File.data=None` pode atualizar diagnóstico/prova **somente se o alvo já estiver seguramente associado**. Eventos globais, `FileScope::WholeSync` e sinais sem identidade confiável não criam `SyncItem` por `NewItem` automaticamente. A atualização depende de uma associação confiável e de evidência suficiente.
 
-A identidade do `File` (ocorrência) não deve ser persistida como chave do `SyncItem`. A implementação futura deverá decidir a retenção de referência de última observação e a idempotência, sem duplicar a fila de entrega do Detector. O Inventário não decide a ação a partir de `FileEventKind`, embora preserve dados do evento para fins de prova/diagnóstico quando isso for aprovado.
+A identidade do `File` (ocorrência) não deve ser persistida como chave do `SyncItem`. A implementação futura deverá decidir a retenção de referência de última observação e a idempotência, preservando a identidade lógica dos itens. Os dados de observação são preservados para prova e diagnóstico conforme os campos aprovados.
 
-**Responsabilidade resolvida:** esta API não contém `RemoteCursor`, `RemoteEvent` ou métodos de publicação/reconhecimento de eventos. O Detector controla entrega e checkpoint; InventoryManager só persiste o estado derivado após análise. Detalhes de persistência física e recuperação do checkpoint pertencem ao Detector Remoto.
+**Escopo da interface:** persistência e consulta do estado de itens, baseline, operações e atividades.
 
 ## 13. Garantias de evolução e testes
 
@@ -780,7 +778,7 @@ A identidade do `File` (ocorrência) não deve ser persistida como chave do `Syn
 3. **Comportamento opcional explícito:** novas propriedades de entrada devem preservar o comportamento quando não fornecidas. Se a semântica mudar, atualizar o contrato e testar deliberadamente.
 4. **Contrato separado da persistência:** alterar colunas, índices e tabelas não muda automaticamente `SyncItem` nem as assinaturas públicas.
 5. **TDD:** testar primeiro casos mínimos, opcionais, erros, idempotência, rollback, paginação, FKs, revisão/concorrência, reinício e dados parciais.
-6. **Banco real isolado:** testes de Inventário usam SQLite real em diretório temporário, com `LocalFile` e `RemoteFile` sintéticos, sem depender de provedor nem de outros módulos funcionando.
+6. **Banco real isolado:** testes de Inventário usam SQLite real em diretório temporário, com `LocalFile` e `RemoteFile` sintéticos, com dados sintéticos e dependências isoladas.
 7. **Segurança:** atividades vinculadas a item, nenhum dado pessoal/segredo em erro, ausência observada versus desconhecida sempre diferenciadas.
 8. **Sem compatibilidade legada:** não adicionar adaptadores/migração para estados antigos por padrão; proteger arquivos do usuário e falhar com erro explícito quando esquema incompatível.
 
