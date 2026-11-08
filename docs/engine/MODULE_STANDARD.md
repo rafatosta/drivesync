@@ -2,7 +2,7 @@
 
 ## 1. Finalidade e aplicação
 
-Esta especificação orienta **novos módulos da engine** a partir dos padrões consolidados em [Google API](google_api/README.md) e [Inventário](inventory/README.md). O objetivo é definir uma base **mínima, consistente e reutilizável**, sem impedir que cada módulo acrescente seções pertinentes à sua natureza. Deve ser aplicada a módulos como `accounts/`, `configuration/`, detectores, analisador, orquestrador e operadores.
+Esta especificação orienta **novos módulos da engine** a partir dos padrões consolidados em [Google API](providers/google/api/README.md) e [Inventário](inventory/README.md). O objetivo é definir uma base **mínima, consistente e reutilizável**, sem impedir que cada módulo acrescente seções pertinentes à sua natureza. Deve ser aplicada a módulos como `accounts/`, `configuration/`, detectores, analisador, orquestrador e operadores.
 
 **Quatro documentos constituem a base documental recomendada:**
 
@@ -24,6 +24,12 @@ Quando um componente possui submódulos que são **unidades reais de implementa�
 **Isolamento de testes:** testar o pai com fakes das portas dos filhos; testar cada filho real isoladamente, usando fakes das próprias dependências e recursos reais temporários quando aplicável. “Implementar o pai” **não significa** implementar automaticamente todos os filhos, nem “implementar um filho” exige que seus irmãos estejam prontos. Integração conjunta é uma etapa separada.
 
 Exemplo: [Detector](detectors/README.md) com [Local](detectors/local/README.md), [Remoto](detectors/remote/README.md) e [Storage](detectors/storage/README.md). O Detector coordena uma **fila privada de eventos** pelo Storage; Local/Remoto produzem eventos individuais; o Orquestrador consome **lotes mistos** exclusivamente pela API pública do Detector. **Lote misto não resolve conflitos de sincronização.**
+
+### Organização por responsabilidade e por provedor
+
+A documentação acompanha o **proprietário da responsabilidade**: APIs externas em [`providers/`](providers/README.md), com [Google API](providers/google/api/README.md); a estratégia Google do Detector Remoto em [`detectors/remote/google/`](detectors/remote/google/README.md); contratos comuns em `models/`; execução funcional de Upload/Download nos seus próprios módulos. **A implementação de um especialista é independente da implementação dos seus irmãos**, e seus testes ficam junto à sua documentação. Não duplicar contratos HTTP nos especialistas.
+
+Esta é uma estrutura **documental proposta**, que não implica migração física de código Rust, novas funcionalidades ou modelos já implementados.
 
 ## 2. README.md — responsabilidades e modelo do módulo
 
@@ -102,7 +108,7 @@ colaterais autorizados, pré-condições e falhas tipadas.
 ### Objetos de entrada e saída
 
 - **Módulos próprios do DriveSync:** preferir um objeto de requisição coeso e um de resposta nomeado por operação, sobretudo quando os parâmetros pertencem à mesma ação. Ex.: `fn get_item(&self, request: GetItemRequest) -> InventoryResult<GetItemResult>`.
-- **Adaptação de contratos externos:** respeitar a assinatura já validada ou imposta pelo serviço/SDK. O `google_api/` é exemplo: IDs, sessão, `options` e `request` podem ser parâmetros distintos. **Não converter contratos existentes para objeto único apenas por padronização visual.**
+- **Adaptação de contratos externos:** respeitar a assinatura já validada ou imposta pelo serviço/SDK. O `providers/google/api/` é exemplo: IDs, sessão, `options` e `request` podem ser parâmetros distintos. **Não converter contratos existentes para objeto único apenas por padronização visual.**
 - O objeto de entrada não deve virar um “saco” genérico de opções desconexas. Separar componentes coesos e usar enums para escolhas mutuamente exclusivas.
 - Diferenciar `None` (**não fornecido/desconhecido**, conforme contrato) de `Clear` (**limpeza explícita**) e de estados como ausência comprovada.
 - A adição de um campo à `pub struct` pode quebrar construções por literal em Rust, mesmo sem alterar a assinatura do método. Utilizar builders/construtores/`Default` quando fizer sentido, **sem prometer compatibilidade automática**.
@@ -245,7 +251,7 @@ Métodos, cenários, comandos, resultados e limitações verificáveis.
 
 | Referência | O que exemplifica |
 | --- | --- |
-| [google_api/README.md](google_api/README.md), [INTERFACES](google_api/INTERFACES.md), [TESTS](google_api/TESTS.md), [AGENTS](google_api/AGENTS.md) | Contratos extensos de integração externa; método a método sem alterar protocolo; servidor HTTP simulado |
+| [providers/google/api/README.md](providers/google/api/README.md), [INTERFACES](providers/google/api/INTERFACES.md), [TESTS](providers/google/api/TESTS.md), [AGENTS](providers/google/api/AGENTS.md) | Contratos extensos de integração externa; método a método sem alterar protocolo; servidor HTTP simulado |
 | [inventory/README.md](inventory/README.md), [INTERFACES](inventory/INTERFACES.md), [TESTS](inventory/TESTS.md), [AGENTS](inventory/AGENTS.md) | Contratos próprios com requisição/resposta; persistência SQLite privada; baseline, fila, histórico e TDD transacional |
 
 **Este documento padroniza o mínimo, não reabre as decisões técnicas dos módulos de referência.** Novos módulos podem adicionar seções e artefatos quando necessário; mudanças no padrão devem manter os critérios de legibilidade, documentação contratual, verificabilidade e isolamento.
