@@ -1,72 +1,12 @@
-# Providers — catálogo e fábrica de APIs externas
+# Providers — acesso a APIs externas
 
-## Responsabilidade
+## Objetivo
 
-`providers/` é a **porta única de obtenção de APIs de serviços externos** da engine. O módulo mantém o catálogo de provedores realmente disponíveis, permite selecionar um `ProviderId` e fornece **a API específica do serviço**, opcionalmente vinculada a uma conta autenticada. **Não padroniza métodos de autenticação, listagem, alterações, upload ou download entre provedores.**
+O módulo `providers/` é a **interface de acesso aos serviços externos** do DriveSync. Cada provedor mapeia sua API oficial para funções, tipos, requisições, respostas e erros próprios, encapsulando HTTP, endpoints, protocolos, formatos e particularidades técnicas. Para obter a API de um serviço, utiliza-se o catálogo de Providers.
 
-A padronização funcional pertence a **cada módulo consumidor**: `accounts/auth/` define o que espera da autenticação; `detectors/remote/` define o que deve observar e emitir; `operations/upload/` e `operations/download/` definem os resultados das transferências. Os especialistas de cada módulo conhecem a API específica do provedor e traduzem seus resultados para o contrato do respectivo módulo.
+**O módulo fornece acesso; não determina o uso desse acesso.** Não define fluxos de trabalho, políticas, persistência de estado da aplicação nem contratos funcionais de outras partes do software.
 
-## Diagrama de dependências
-
-```mermaid
-flowchart TB
-    A["accounts/auth — especialista Google"]
-    D["detectors/remote/google"]
-    U["operations/upload/google"]
-    DL["operations/download/google"]
-    P["providers/ — catálogo e obtenção"]
-    G["Google API tipada"]
-    X["Google OAuth / Drive REST"]
-
-    A -->|"solicita API Google"| P
-    D -->|"solicita API Google"| P
-    U -->|"solicita API Google"| P
-    DL -->|"solicita API Google"| P
-    P -->|"retorna API específica"| G
-    G --> X
-```
-
-Apenas os clientes obtidos por `providers/` executam chamadas de protocolo ao serviço remoto. **Especialistas podem conhecer tipos e métodos específicos da API recebida**; a restrição é não criar outros clientes HTTP/OAuth independentes fora do catálogo. Interfaces dos módulos pais permanecem comuns.
-
-## Contrato mínimo da fachada
-
-| Operação de Providers | Responsabilidade |
-| --- | --- |
-| `list` | Enumerar provedores **realmente disponíveis** |
-| `get` | Selecionar provedor e fornecer sua API/descritor tipado |
-| `open` | Obter API do provedor vinculada a uma conta autenticada e validada |
-
-A definição conceitual está em [INTERFACES.md](INTERFACES.md). O provedor `example/` é somente documentação e não deve ser anunciado como funcional.
-
-## Contratos por módulo — não por API universal
-
-| Módulo | Contrato único do módulo | Especialista |
-| --- | --- | --- |
-| `accounts/auth/` | Identificar/autenticar conta e controlar credenciais | Usa Google OAuth/OIDC pela API Google obtida de Providers |
-| `detectors/remote/` | Observar e emitir `models::File`; manter checkpoint | Usa Google Changes e Files, sem exigir que outro serviço tenha esses endpoints |
-| `operations/upload/` | Executar upload autorizado e relatar resultado verificável | Usa uploads Google apropriados |
-| `operations/download/` | Executar download autorizado e relatar resultado verificável | Usa downloads Google apropriados |
-
-```mermaid
-flowchart LR
-    P["Providers"]
-    G["API Google específica"]
-    P --> G
-    G --> A["Especialista Google"]
-    A --> C["Contrato do módulo pai"]
-```
-
-`GoogleFile` e `GoogleChange` podem existir **dentro do especialista Google**; seus limites de saída são `RemoteFile`, `File`, resultados de operações ou identidade de conta, conforme o módulo pai. `models/` e `inventory/` continuam independentes de Google.
-
-## Autenticação e sessão
-
-`accounts/` é proprietário do cadastro; `accounts/auth/` coordena consentimento, ciclo de vida de credenciais e keyring. Providers entrega a API específica Google (incluindo operações de OAuth) e, ao abrir uma conta, fornece contexto/sessão autorizada sem expor tokens para consumidores que não precisam deles. As operações e o protocolo de autenticação são **da API específica**, não de uma trait `ProviderAuthentication` obrigatória para todos os serviços.
-
-A seleção é feita por `ProviderId`, a conta por `AccountId`; duas contas Google não compartilham sessões por acidente. A API pode ser reutilizada por especialistas de capacidades distintas, sob o contexto da conta correto.
-
-O diretório [Google Provider](google/README.md) possui os quatro documentos padrão para **composição e exposição** da API específica, e [Google API](google/api/INTERFACES.md) permanece a fonte de verdade técnica de seus métodos e tipos.
-
-## Organização documental
+## Estrutura documental
 
 ```text
 providers/
@@ -74,16 +14,54 @@ providers/
 ├── INTERFACES.md
 ├── TESTS.md
 ├── AGENTS.md
-├── google/
-│   ├── README.md
-│   └── api/          # Contratos específicos Google Drive/OAuth/OIDC
-└── example/          # Placeholder, não funcional
+└── google/
+    ├── README.md
+    ├── INTERFACES.md
+    ├── TESTS.md
+    ├── AGENTS.md
+    └── api/
+        ├── README.md
+        ├── INTERFACES.md
+        ├── TESTS.md
+        └── AGENTS.md
 ```
 
-A [API Google](google/api/INTERFACES.md) permanece específica e completa, sem forçar um mínimo comum de 59 métodos para outros serviços.
+- `providers/`: catálogo dos provedores disponíveis e obtenção de sua interface específica.
+- `providers/google/`: disponibilização da interface Google já mapeada.
+- `providers/google/api/`: documentação **autoritativa** das funções, tipos e contratos técnicos da API Google.
 
-## Limites e estado
+## Funcionamento
 
-Providers **não** detecta alterações, não decide conflitos, não persiste eventos `File` ou checkpoints, não executa a fila `SyncOperation` nem administra o Inventário. É exclusivamente a entrada para obter clientes de serviços externos com identidade/sessão corretas.
+```mermaid
+flowchart TB
+    C["Providers: catálogo de serviços"]
+    G["Google: interface de API"]
+    X["Outro provedor: interface de API"]
+    R["Funções mapeadas da API"]
+    S["Serviço externo"]
+    C --> G
+    C -.-> X
+    G --> R
+    R --> S
+```
 
-**Estado:** contrato arquitetural documental proposto, não afirma implementação Rust. A forma tipada de retorno de diferentes APIs (`enum`, handle genérico ou factory tipada), o ciclo de sessão e regras de segurança serão refinados antes de código.
+A seleção de um provedor retorna a **interface específica** do serviço. Não há exigência de um conjunto universal de métodos compartilhados: cada serviço possui suas operações e características. Um segundo provedor só passa a integrar a lista quando sua implementação estiver realmente disponível.
+
+## Credenciais e autenticação
+
+A API de um serviço pode expor funções para iniciar autenticação, trocar códigos, renovar tokens, identificar usuários ou realizar requisições autenticadas, **conforme os protocolos que ela efetivamente oferece**. Providers abstrai essas chamadas técnicas.
+
+**Providers não é proprietário de contas, tokens, armazenamento de credenciais, keyring nem políticas de sessão da aplicação.** Quando uma chamada necessitar de credenciais ou contexto autenticado, isso é expresso pelo contrato da API específica. O módulo processa os dados necessários à requisição, sem impor onde sejam guardados.
+
+## Limites
+
+- Não construir uma API universal de arquivos, autenticação, upload, download ou detecção.
+- Não criar decisões de negócio nem determinar quando ou por que uma função externa será chamada.
+- Não converter funções externas em regras de sincronização.
+- Não armazenar estados funcionais alheios à integração com o serviço.
+- Não duplicar funções já especificadas dentro da API de um provedor.
+- Não alegar suporte a serviços ainda não implementados.
+
+**Estado:** documentação de arquitetura-alvo; não constitui evidência de código Rust existente.
+
+[INTERFACES](INTERFACES.md) · [TESTS](TESTS.md) · [AGENTS](AGENTS.md) · [Google](google/README.md)
