@@ -138,7 +138,7 @@ sequenceDiagram
     participant L as LocalDetector
     participant C as LocalMetadataCollector
     participant S as LocalNotificationSink
-    participant D as Detector pai / Storage
+    participant D as Detector pai e Storage
     F-->>L: sinal de watcher ou varredura
     L->>C: collect(LocalMetadataRequest)
     C-->>L: LocalMetadataResult { file, coverage }
@@ -153,7 +153,7 @@ sequenceDiagram
         S-->>L: Ok
     else falha ou backpressure
         D-->>S: erro
-        S-->>L: erro; requer replay/revarredura
+        S-->>L: erro e necessidade de replay ou revarredura
     end
 ```
 
