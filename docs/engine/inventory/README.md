@@ -140,7 +140,7 @@ As relações `sync_items.local_file_id` e `sync_items.google_file_id` são **FK
 | Objeto Rust | Dono do contrato | Papel no Inventário |
 | --- | --- | --- |
 | `LocalFile` | Componente responsável pelos metadados locais (a definir integralmente) | Produz/representa uma observação local |
-| `GoogleFile` | `google_api/` | Produz/representa uma observação remota |
+| `GoogleFile` | `providers/google/api/` | Produz/representa uma observação remota |
 | `SyncItem` | `inventory/` | Reúne as duas representações, baseline e situação de sincronização |
 
 ```rust
