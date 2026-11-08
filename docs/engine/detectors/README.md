@@ -90,52 +90,90 @@ As figuras seguintes representam **somente as relações e tipos declarados** em
 
 ### 1. Estrutura modular e dependências
 
+O desenho foi separado em **dois diagramas complementares**: a composição mostra quem pertence a qual módulo; o fluxo mostra como os contratos se comunicam. Assim, não há setas de transferência de dados atravessando os contêineres de módulos.
+
+#### 1.1 Composição dos módulos
+
 ```mermaid
 flowchart TB
-    ORQ["Orquestrador"]
-    MOD["models/: File e FileData"]
-    FS["Filesystem"]
-    GAPI["providers/google/api/"]
-    CFG["Conta e sessão da sincronização"]
+    subgraph DET["detectors/"]
+        direction TB
+        D["Detector<br/>Fachada pública · 8 operações"]
 
-    subgraph DET["detectors/ — API pública"]
-        D["Detector: 8 operações"]
-        subgraph LOCAL["local/ — produtor local"]
-            L["LocalDetector: 5 operações"]
-            C["LocalMetadataCollector"]
-        end
-        subgraph REM["remote/ — coordenador remoto"]
-            R["RemoteDetector: 5 operações"]
-            subgraph GOOGLE["remote/google/"]
-                G["Especialista Google"]
-                A["RemoteMetadataAdapter"]
+        subgraph SUB["Submódulos independentes"]
+            direction LR
+            subgraph LOCAL["local/"]
+                direction TB
+                L["LocalDetector<br/>5 operações"]
+                LC["LocalMetadataCollector"]
+                L -->|"collect"| LC
             end
-            EX["remote/example/: placeholder"]
+            subgraph REM["remote/"]
+                direction TB
+                R["RemoteDetector<br/>5 operações"]
+                G["google/<br/>Especialista Google"]
+                E["example/<br/>Placeholder"]
+                R --> G
+                R -.-> E
+            end
+            subgraph STORE["storage/"]
+                direction TB
+                S["EventStore<br/>open + 5 métodos"]
+            end
         end
-        subgraph STORE["storage/ — fila privada"]
-            S["EventStore: 6 operações"]
-        end
-    end
 
-    ORQ -->|"única API pública"| D
-    D -->|"controle / sink"| L
-    D -->|"controle / sink"| R
-    D -->|"fila durável"| S
-    FS --> L
-    L -->|"collect"| C
-    C -->|"lê metadados"| FS
-    R -->|"especialista Google documentado"| G
-    G -->|"API contratada"| GAPI
-    G -->|"adapta metadados"| A
-    R -.->|"placeholder, não implementado"| EX
-    CFG -.->|"composição por conta e provedor ainda não tipada"| R
-    L -->|"FileData::Local"| MOD
-    A -->|"FileData::Remote"| MOD
-    MOD -.->|"File completo por sink"| D
-    S -.->|"FileBatch composto pelo Detector"| D
+        D -->|"controle / sink"| L
+        D -->|"controle / sink"| R
+        D -->|"fila durável"| S
+    end
 ```
 
-**Leitura do diagrama:** agrupamento representa **propriedade de módulo**; setas contínuas representam relações previstas nos contratos e portas; setas tracejadas sinalizam dependência de tipo ou **composição ainda não especificada**. `example/` é apenas um marcador documental, não um backend funcional. O Detector pai consome interfaces internas dos filhos, **não precisa conhecer suas implementações**. O especialista Google depende do contrato da API Google, e `models/` oferece tipos, nunca um serviço com I/O.
+O diagrama acima representa **propriedade e dependências internas**, não a sequência de detecção. `google/` é o especialista documentado; `example/` é somente um ponto de extensão ainda sem implementação. O Detector pai conhece as portas internas, não os detalhes concretos dos filhos.
+
+#### 1.2 Fluxo entre serviços
+
+```mermaid
+flowchart LR
+    O["Orquestrador"]
+    D["Detector<br/>Fachada pública"]
+    L["LocalDetector"]
+    R["RemoteDetector"]
+    S["EventStore"]
+    A["Analisador"]
+
+    L -->|"notify(File)"| D
+    R -->|"emit(File)"| D
+    D -->|"enqueue(File)"| S
+    S -->|"claim_batch: Vec<File>"| D
+    D -->|"FileBatch"| O
+    O -->|"File sem interpretar origem"| A
+```
+
+O fluxo acima mostra apenas **entrega e consumo**. As chamadas de controle (`start`, `stop`, `request_scan`, `status`) e de confirmação (`acknowledge`, `release_events`) continuam documentadas nas [interfaces](INTERFACES.md) e no [diagrama de sequência](#2-fluxos-de-observação-durabilidade-e-consumo), sem sobrecarregar esta visão.
+
+#### 1.3 Dependências externas e seleção do provedor
+
+```mermaid
+flowchart LR
+    FS["Filesystem"]
+    LC["LocalMetadataCollector"]
+    LF["LocalFile"]
+
+    CTX["Conta / sessão<br/>da sincronização"]
+    R["RemoteDetector"]
+    G["Especialista Google"]
+    API["Google API"]
+    RA["RemoteMetadataAdapter"]
+    RF["RemoteFile"]
+
+    FS --> LC --> LF
+    CTX -.->|"composição ainda não tipada"| R
+    R -->|"especialista documentado"| G
+    G -->|"API contratada"| API
+    API -->|"metadados"| RA --> RF
+```
+
+`LocalFile` e `RemoteFile` são tipos de `models/`, não serviços de I/O. O vínculo `SyncId → AccountId → ProviderId` e a fábrica de seleção **não têm assinatura definida nas interfaces**; a linha tracejada representa somente essa decisão conceitual. O especialista Google usa o adaptador para formar `RemoteFile`; o resultado é encapsulado em `FileData::Remote` na emissão de `File`.
 
 #### Organização documental navegável
 
