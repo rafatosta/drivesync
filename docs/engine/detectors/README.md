@@ -14,14 +14,21 @@ O Detector **consome somente a API** de cada filho. Não precisa conhecer watche
 
 ```mermaid
 flowchart TD
-    L["Local: eventos individuais"] --> D["Detector: coordena produção"]
-    R["Remoto: eventos individuais"] --> D
-    D -->|"enqueue por evento"| S["Storage: fila durável"]
-    S -->|"claim_batch"| D
-    D -->|"FileBatch misto"| O["Orquestrador: consumidor"]
-    O -->|"acknowledge Processed/Discarded"| D
-    D -->|"acknowledge por API"| S
-    O -->|"start, stop, request_scan, status"| D
+    FS[Filesystem] --> LC[Coletor local]
+    LC --> LF[LocalFile]
+    API[API do provedor] --> RA[Adaptador especializado]
+    RA --> RF[RemoteFile com ProviderFileData]
+    LF --> L[Detector Local]
+    RF --> R[Detector Remoto]
+    L -->|"File + FileData::Local"| D[Detector pai]
+    R -->|"File + FileData::Remote"| D
+    D -->|"enqueue File completo"| S[Storage durável]
+    S -->|"claim Vec File"| D
+    D -->|"FileBatch"| O[Orquestrador]
+    O -->|"encaminha File sem interpretar origem"| AN[Analisador]
+    AN --> INV[Inventário]
+    O -->|"ack/release do lote"| D
+    D -->|"ack/release"| S
 ```
 
 O Detector recebe alterações locais e remotas **concorrentes** sem criar duas filas públicas. Cada `File.id` identifica a ocorrência; o Storage preserva IDs e ordem de enfileiramento, enquanto o Detector entrega **um lote contendo eventos das duas origens**. O lote pode incluir várias alterações do mesmo arquivo observadas de lados diferentes.
