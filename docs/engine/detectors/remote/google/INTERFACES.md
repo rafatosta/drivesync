@@ -2,7 +2,7 @@
 
 ## 1. Contrato adotado
 
-A implementação `GoogleRemoteDetector` deve satisfazer **exatamente a interface interna** [RemoteDetector](../INTERFACES.md) quanto a ciclo de vida, observação, estado e emissão individual. Ela não define nova API pública para o Orquestrador.
+A implementação `GoogleRemoteDetector` deve satisfazer **exatamente a interface interna** [RemoteDetector](../INTERFACES.md) quanto a ciclo de vida, observação, estado e emissão individual. Sua interface abrange apenas observação, estado e emissão das ocorrências.
 
 ## 2. Dependências injetadas
 
@@ -45,7 +45,7 @@ Rotinas auxiliares do especialista podem consultar detalhes adicionais (permiss�
 
 **Não redefinir** os cinco métodos ou os modelos base de `RemoteDetector`. Mudanças no contrato pai exigem revisão separada.
 
-## 5. Unidade entregue ao Detector pai
+## 5. Unidade de ocorrência emitida
 
 `RemoteEventSink.emit(file: File)` recebe **uma observação completa**. Quando `GoogleFile.id` existe, o adaptador fornece `File.data=Some(FileData::Remote(remote_file))` e contexto `FileEvent`/`FileScope` de Models. Sem identidade confiável ou diante de `GoogleChange.removed` sem objeto, emitir `RecheckRequired` ou `ScopeUnavailable` com `data=None`; não gerar `RemoteFile` falso.
 
