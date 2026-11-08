@@ -62,3 +62,97 @@ O registro persistido não é um evento reduzido. Ele contém **`models::File` c
 A estrutura externa de lote pertence ao Detector; o Storage devolve `Vec<File>` com reserva interna. O mesmo `File.id` e bytes semânticos devem ser preservados na reentrega. Um ID reapresentado com conteúdo divergente é erro, não atualização silenciosa. Fila, lease e ack não dependem dos atributos internos do modelo; mudanças exigem, quando necessário, apenas ajuste do codec versionado.
 
 A revisão de necessidade, limites e sanitização de dados sensíveis é pré-requisito de implementação. Não guardar conteúdo binário do arquivo nem credenciais. Não alterar Inventário/SyncItem.
+
+
+## Arquitetura visual do Storage do Detector
+
+Estas figuras reproduzem as operações de [Storage — INTERFACES](INTERFACES.md), com `EventStore` como **porta interna privada**. SQLite é a implementação física **proposta**, não uma dependência do módulo pai nem uma prova de código executado.
+
+### Componentes e dependências
+
+```mermaid
+flowchart TD
+    L["LocalNotificationSink.notify(File)"]
+    R["RemoteEventSink.emit(File)"]
+    D["Detector pai"]
+    ES["EventStore: open / enqueue / claim_batch / acknowledge / release_batch / status"]
+    E["detection_events: File integral"]
+    CL["delivery_claims: lease e lote"]
+    ST["store_identity / store_metadata"]
+    O["Orquestrador via Detector.take_events"]
+    L --> D
+    R --> D
+    D -->|"API interna"| ES
+    ES -->|"observações duráveis"| E
+    ES -->|"reservas e confirmações"| CL
+    ES -->|"identidade e integridade"| ST
+    ES -->|"claim: Vec<File> + lease"| D
+    D -->|"FileBatch"| O
+```
+
+O diagrama representa **entidades lógicas já documentadas**, não um diagrama físico de tabelas aprovado. `FileBatch` é composto no Detector pai; o Storage armazena `File`, não um segundo tipo de evento reduzido.
+
+### Sequência de durabilidade, reserva e recuperação
+
+```mermaid
+sequenceDiagram
+    participant P as Produtor local/remoto
+    participant D as Detector pai
+    participant S as EventStore
+    participant O as Orquestrador
+    P->>D: sink notify/emit(File)
+    D->>S: enqueue(EnqueueEventRequest { file })
+    alt commit durável
+        S-->>D: EnqueueEventResult
+        D-->>P: Ok
+    else falha de persistência
+        S-->>D: erro
+        D-->>P: erro / backpressure
+    end
+    O->>D: take_events(TakeEventsRequest)
+    D->>S: claim_batch(ClaimBatchRequest)
+    S-->>D: ClaimBatchResult { files, lease_id, intervalos }
+    D-->>O: FileBatch
+    alt confirmação explícita
+        O->>D: acknowledge(batch_id, disposition)
+        D->>S: acknowledge(lease_id, disposition)
+    else liberação explícita
+        O->>D: release_events(batch_id)
+        D->>S: release_batch(lease_id)
+    else consumidor desaparece
+        Note over S: lease expira e os mesmos File ficam elegíveis
+    end
+```
+
+### Estados lógicos dos registros
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: enqueue confirmado
+    Pending --> Leased: claim_batch
+    Leased --> Pending: release_batch ou lease expirado
+    Leased --> Acknowledged: acknowledge Processed
+    Leased --> Discarded: acknowledge Discarded
+```
+
+```text
+EnqueueEventRequest
+└── file: File [models/, integral]
+    ├── id / sync_id / observed_at / coverage / scope
+    ├── event: FileEvent { kind, previous, current }
+    └── data: Option<FileData> [LocalFile ou RemoteFile]
+
+ClaimBatchResult [storage/]
+├── lease_id: Option<LeaseId>
+├── files: Vec<File>
+├── first_observed_at: Option<Timestamp>
+└── last_observed_at: Option<Timestamp>
+    ↓
+FileBatch [detectors/]
+├── batch_id: Option<BatchId>
+├── files: Vec<File>
+├── first_observed_at: Option<Timestamp>
+└── last_observed_at: Option<Timestamp>
+```
+
+`EventStore` não decide conflitos nem compara arquivos. O `File` persiste sem projeção de campos; o mesmo ID com conteúdo divergente causa erro, e leitura sem confirmação não remove dados. `Processed` não comprova sincronização. Localização física da base, formato do codec e retenção dependem das revisões de implementação.
