@@ -18,9 +18,9 @@ Essa convenção é aplicada **inclusive a buscas**, filtros, cursores, eventos,
 
 ### Dependências externas e limites
 
-- `GoogleFile` é importado do contrato público de `providers/google/api/`; o Inventário não o redefine.
+- `RemoteFile` é importado do contrato público de `providers/google/api/`; o Inventário não o redefine.
 - `LocalFile` será importado do componente responsável pelos metadados locais. Seu contrato completo permanece **em aberto**; esta especificação depende apenas dele como **tipo** e de uma identidade local informada separadamente.
-- As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `GoogleFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
+- As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `RemoteFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
 - Esta API trata **um inventário por instância**, validado por `sync_id`. Não administra contas, conexões globais, GSettings ou bancos de outros módulos.
 
@@ -34,13 +34,9 @@ pub type InventoryResult<T> = Result<T, InventoryFailure>;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SyncItemId(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SyncId(pub String);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct AccountId(pub String);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct LocalFileId(pub String);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StoredGoogleFileId(pub String); // PK local, NÃO é o ID do provedor
+// SyncId, AccountId, LocalFileId, RemoteFileRef, LocalRelativePath, Timestamp,
+// File, FileData, LocalFile e RemoteFile são importados do proprietário comum Models.
+// NÃO redefinir seus identificadores no Inventário.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OperationId(pub i64);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,7 +46,6 @@ pub struct ActivityId(pub i64);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CorpusId(pub String);
 
-pub struct Timestamp(pub String); // RFC 3339 validado na fronteira da API
 pub struct Pagination {
     pub limit: u32,
     pub after: Option<String>, // cursor opaco emitido pela mesma consulta
@@ -77,7 +72,7 @@ pub enum FieldUpdate<T> { Keep, Set(T), Clear }
 
 **Distinções obrigatórias:** `Option<T>` significa valor não fornecido ou não conhecido, segundo o contexto; **não** é comando para apagar dados. Campos declarados sem `Option` são obrigatórios para construir a requisição/resultado, mas isso não implica que o valor represente uma observação comprovada; por exemplo, `PresenceState::Unknown` é um valor válido e explícito. Em comandos de atualização parcial, usar `FieldUpdate<T>` para diferenciar `Keep`, `Set` e `Clear`. Para dados do provedor, campos ausentes em uma resposta com `fields` parcial **não** autorizam limpeza.
 
-`StoredGoogleFileId` é uma chave interna do SQLite. A identidade canônica do recurso remoto continua sendo o ID do Google (por exemplo `GoogleFile.id`). Não expor chaves locais de armazenamento como substitutas do ID do provedor.
+`RemoteFileRef` (conta + ID remoto) é a identidade canônica de um recurso em qualquer provedor. Chaves físicas de banco são detalhes internos, nunca tipos públicos substitutos de `RemoteFileRef`. `File.id` identifica a ocorrência detectada, **não** o `SyncItem` nem o arquivo remoto.
 
 ## 3. Tipos de domínio entregues nas respostas
 
@@ -86,7 +81,7 @@ pub struct SyncItem {
     pub id: SyncItemId,
     pub kind: ItemKind,
     pub local: Option<LocalFile>,
-    pub remote: Option<GoogleFile>,
+    pub remote: Option<RemoteFile>,
     pub baseline: Option<SyncBaseline>,
     pub local_presence: PresenceState,
     pub remote_presence: PresenceState,
@@ -106,7 +101,7 @@ pub struct BaselineSide {
     pub presence: PresenceState,
     pub name: Option<String>,       // nome remoto, ou textual quando aplicável
     pub local_name_bytes: Option<Vec<u8>>, // bytes exatos do nome local
-    pub parent_identity: Option<String>, // ID pai remoto ou SyncItemId local serializado como ID lógico
+    pub parent_identity: Option<String>, // baseline histórico tipado será definido antes de implementar
     pub version: Option<String>,
     pub checksum: Option<String>,
     pub size: Option<u64>,
@@ -178,7 +173,7 @@ pub struct SyncActivity {
 }
 ```
 
-O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência exata com `LocalFile.file_type` e `GoogleFile.mime_type` será validada no detector/analisador.
+O tipo `ItemKind` representa a natureza lógica do item como decisão de projeto; a presença de `Symlink` e `Other` **não** implica autorização automática para sincronizar esses tipos. A correspondência de `LocalFile.kind` e `RemoteFile.classification.kind` com `ItemKind` compete ao **Analisador**; Inventário não interpreta tipos de arquivos nem dados específicos do provedor.
 \nO nome local deve preservar bytes Unix quando necessário; `BaselineSide.local_name_bytes` é reservado ao lado local. O objeto `SyncActivity` conserva os dados relevantes no momento do evento, sem depender do nome atual do arquivo. **Atividade sem `item_id` não é permitida**; eventos globais de aplicação pertencem a outro componente.
 
 `SyncItem.local` e `SyncItem.remote` não indicam sozinhos exclusão. A ausência comprovada é expressa por `PresenceState::AbsentConfirmed` com evidência apropriada.
@@ -212,9 +207,9 @@ pub struct MarkInitialDownloadCompleteResult { pub info: SyncInfo }
 pub struct GetItemRequest { pub selector: ItemSelector }
 pub enum ItemSelector {
     Id(SyncItemId),
-    RemoteId(String),
+    RemoteRef(RemoteFileRef),
     LocalId(LocalFileId),
-    LocalRelativePath(std::path::PathBuf),
+    LocalRelativePath(LocalRelativePath),
 }
 pub struct GetItemResult { pub item: Option<SyncItem> }
 
@@ -226,7 +221,7 @@ pub struct ItemFilter {
     pub statuses: Vec<SyncStatus>, // vazio = sem filtro de status
     pub local_presence: Option<PresenceState>,
     pub remote_presence: Option<PresenceState>,
-    pub remote_parent_id: Option<String>,
+    pub remote_parent: Option<RemoteFileRef>,
     pub local_parent_item_id: Option<SyncItemId>,
 }
 pub struct ListItemsResult { pub page: Page<SyncItem> }
@@ -245,10 +240,9 @@ pub struct RecordLocalObservation {
     pub expected_revision: Option<u64>, // None apenas em inclusão/descoberta ainda sem revisão
 }
 pub struct LocalObservation {
-    pub file: Option<LocalFile>,
-    pub presence: PresenceState,
-    pub proof: ObservationProof,
-    pub relative_path: Option<std::path::PathBuf>, // pode não ser conhecido
+    pub observed: File,           // FileData::Local ou data=None para reavaliação
+    pub presence: PresenceState,  // decisão/evidência fornecida pelo Analisador
+    pub proof: ObservationProof,  // necessário para ausência confirmada
 }
 pub struct RecordRemoteObservation {
     pub selector: ObservationTarget,
@@ -256,13 +250,13 @@ pub struct RecordRemoteObservation {
     pub expected_revision: Option<u64>, // None apenas em inclusão/descoberta ainda sem revisão
 }
 pub struct RemoteObservation {
-    pub file: Option<GoogleFile>,
+    pub observed: File,           // FileData::Remote ou data=None para reavaliação
     pub presence: PresenceState,
     pub proof: ObservationProof,
 }
 pub enum ObservationTarget {
     Existing(SyncItemId),
-    ByRemoteId(String),
+    ByRemoteRef(RemoteFileRef),
     ByLocalId(LocalFileId),
     NewItem, // somente após validação de unicidade
 }
@@ -278,7 +272,7 @@ pub struct LinkItemRequest {
 }
 pub struct ItemLinksChange {
     pub local_file_id: FieldUpdate<LocalFileId>,
-    pub google_file_id: FieldUpdate<StoredGoogleFileId>,
+    pub remote_ref: FieldUpdate<RemoteFileRef>,
 }
 pub struct LinkItemResult { pub item: SyncItem }
 
@@ -294,10 +288,10 @@ pub struct ItemStatusChange {
 pub struct UpdateItemStatusResult { pub item: SyncItem }
 ```
 
-- `RecordLocalObservation` e `RecordRemoteObservation` **nunca** avançam o baseline.
+- `RecordLocalObservation` e `RecordRemoteObservation` **nunca** avançam o baseline. Ambos recebem o envelope `models::File` **completo**, cuja variante local/remota é validada no Inventário. A revisão `SyncItem.revision` não é `File.id` nem `RemoteFile.content.version`.
 - `PresenceState::AbsentConfirmed` exige `ObservationProof` confiável e escopo observado de forma suficiente, sem apagar o último registro nem quebrar os vínculos.
-- `Unknown` com `file: None` preserva atributos anteriores; `Some(file)` com `Present` atualiza somente os campos efetivamente observados.
-- Não persistir `GoogleFile` em JSON opaco: mapear campos e suas relações. Os campos não observados preservam o valor antigo ou a ausência de conhecimento conforme contrato de observação.
+- `presence=Unknown` e `observed.data=None` preservam o último snapshot confiável; `Present` requer `File.data=Some` da variante correta. Um evento `Deleted` ou `ScopeUnavailable` **não** produz `AbsentConfirmed` sem prova adicional.
+- Não importar nem persistir `RemoteFile` diretamente: o adaptador do provedor produz `RemoteFile` e `ProviderFileData` filtrado. Mapear os campos comuns selecionados para persistência e preservar estados `MetadataValue<T>`; não limpar propriedades não coletadas. Detalhes sensíveis e codec especializado dependem da revisão antes da implementação.
 - Associar arquivos já pertencentes a outro `SyncItem` retorna erro de unicidade; nunca reatribuir silenciosamente.
 
 ### Confirmação atômica
@@ -570,7 +564,7 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 
 ## 11. Decisões de projeto: obrigatoriedade, opcionalidade e ausência de dados
 
-**Esta seção define o contrato atual do Inventário**, não uma comparação histórica. A distribuição de responsabilidades é intencional: `LocalFile` e `GoogleFile` representam metadados observados; `SyncItem` representa identidade e relacionamento; `SyncBaseline` preserva apenas fatos anteriormente confirmados. Campos opcionais existem **porque o dado pode ser desconhecido, não aplicável, ainda não criado ou condicionado por uma operação**. Esses casos não devem ser confundidos.
+**Esta seção define o contrato atual do Inventário**, não uma comparação histórica. A distribuição de responsabilidades é intencional: `LocalFile` e `RemoteFile` representam metadados observados; `SyncItem` representa identidade e relacionamento; `SyncBaseline` preserva apenas fatos anteriormente confirmados. Campos opcionais existem **porque o dado pode ser desconhecido, não aplicável, ainda não criado ou condicionado por uma operação**. Esses casos não devem ser confundidos.
 
 **Decisão:** `SyncItem` não duplica nome, ID remoto ou pais dos objetos associados; consulta essas informações nas representações local/remota. Se o vínculo atual for removido, o baseline e eventuais tombstones preservam a evidência necessária à recuperação. A API não transforma `None` em valor fictício.
 
@@ -580,7 +574,7 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 | --- | --- | --- | --- |
 | `SyncItem` | `id`, `kind`, presenças, `status`, `revision` | `local`, `remote`, `baseline`, `conflict_reason`, `last_checked_at`, `last_synced_at` | `None` em um lado não comprova exclusão; `baseline=None` é válido antes da primeira confirmação |
 | `SyncBaseline` | lados e `confirmed_at` quando criado | o próprio baseline pode não existir; nomes, pais, hashes, versões, tamanhos e datas por lado | Proibir baseline sintético apenas para preencher campos |
-| `BaselineSide` | `presence` | `name`, `local_name_bytes`, `parent_identity`, `version`, `checksum`, `size`, `modified_at` | Nome local em bytes; remoto em texto; `None` em arquivos nativos Google não é erro |
+| `BaselineSide` | `presence` | `name`, `local_name_bytes`, `parent_identity`, `version`, `checksum`, `size`, `modified_at` | Nome local em bytes; remoto em texto; `None` em arquivos nativos provedor não é erro |
 | `SyncInfo` e `SyncIdentity` | `sync_id`, `account_id`, `remote_root_id`; geração e inicialização em `SyncInfo` | Nenhum desses campos é opcional | Abrir com identidade divergente deve falhar |
 | `SyncOperation` | IDs, direção, tipo, estado, revisão base, tentativas, criação | `expected_remote_version`, `next_attempt_at`, `last_error_kind`, `started_at`, `completed_at` | Não fabricar versão remota; timestamps dependem do estado |
 | `RemoteCursor` | corpus, cursor, geração | Nenhum após cursor cadastrado | Ausência do cursor completo é `GetRemoteCursorResult.cursor=None` |
@@ -623,11 +617,11 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 - **Não observado:** `Option::None` ou atributo de metadados não retornado significa desconhecido/não fornecido, jamais `AbsentConfirmed` automaticamente.
 - **Ausência comprovada:** `PresenceState::AbsentConfirmed` só após uma observação válida do escopo e das condições necessárias; manter a última representação para reconciliação.
 - **Ainda não criado:** `baseline=None`, `GetRemoteCursorResult.cursor=None` e `GetItemResult.item=None` são ausências estruturais legítimas, mas diferentes de falha de armazenamento.
-- **Não aplicável:** tamanho/checksum/versão de documentos Google Workspace, diretórios e links podem ser indisponíveis legitimamente; não preencher valores artificiais.
+- **Não aplicável:** tamanho/checksum/versão de documentos provedor Workspace, diretórios e links podem ser indisponíveis legitimamente; não preencher valores artificiais.
 - **Atualização:** `FieldUpdate::Keep` preserva, `Set` grava e `Clear` limpa explicitamente; validar quais campos admitem limpeza.
 - **Estado de operação:** `started_at`, `completed_at`, `next_attempt_at` variam conforme etapa e não devem ser exigidos fora dela.
 - **Vetor vazio:** filtros de lista com `Vec::new()` significam ausência de restrição; diferenciar de `None` de filtro escalar.
-- **Exceções:** `GoogleFile` e `LocalFile` podem conter campos internos `Option<T>` próprios, governados pelos respectivos contratos, **não** por estas tabelas.
+- **Exceções:** `RemoteFile` e `LocalFile` podem conter campos internos `Option<T>` próprios, governados pelos respectivos contratos, **não** por estas tabelas.
 
 ### Evolução de structs sem alterar métodos
 
@@ -713,9 +707,9 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Assinatura:** `fn record_remote(..., request: RecordRemoteObservation) -> InventoryResult<RecordObservationResult>`.
 
-**Finalidade:** Insere ou atualiza observação recebida da Google API sem editar o Drive nem confirmar sincronização.
+**Finalidade:** Insere ou atualiza observação recebida da provedor API sem editar o Drive nem confirmar sincronização.
 
-**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.file`: `GoogleFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
+**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.file`: `RemoteFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
 
 **Retorno:** `item`: representação remota e estado; `created`: indica novo vínculo.
 
@@ -727,7 +721,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Associa ou desassocia representações local e remota ao mesmo `SyncItem`.
 
-**Parâmetros:** `item_id`: vínculo-alvo; `changes.local_file_id` e `changes.google_file_id`: `Keep` preserva, `Set` vincula e `Clear` remove a referência; `expected_revision`: controle otimista.
+**Parâmetros:** `item_id`: vínculo-alvo; `changes.local_file_id` e `changes.remote_ref`: `Keep` preserva, `Set` vincula e `Clear` remove a referência; `expected_revision`: controle otimista.
 
 **Retorno:** `item`: vínculo com associações atualizadas.
 
@@ -893,14 +887,14 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 3. **Comportamento opcional explícito:** novas propriedades de entrada devem preservar o comportamento quando não fornecidas. Se a semântica mudar, atualizar o contrato e testar deliberadamente.
 4. **Contrato separado da persistência:** alterar colunas, índices e tabelas não muda automaticamente `SyncItem` nem as assinaturas públicas.
 5. **TDD:** testar primeiro casos mínimos, opcionais, erros, idempotência, rollback, paginação, FKs, revisão/concorrência, reinício e dados parciais.
-6. **Banco real isolado:** testes de Inventário usam SQLite real em diretório temporário, com `LocalFile` e `GoogleFile` sintéticos, sem depender de Google nem de outros módulos funcionando.
+6. **Banco real isolado:** testes de Inventário usam SQLite real em diretório temporário, com `LocalFile` e `RemoteFile` sintéticos, sem depender de provedor nem de outros módulos funcionando.
 7. **Segurança:** atividades vinculadas a item, nenhum dado pessoal/segredo em erro, ausência observada versus desconhecida sempre diferenciadas.
 8. **Sem compatibilidade legada:** não adicionar adaptadores/migração para estados antigos por padrão; proteger arquivos do usuário e falhar com erro explícito quando esquema incompatível.
 
 ### Pontos ainda dependentes de outra especificação
 
 - Campos definitivos de `LocalFile` e como reconstruir fielmente `LocalFile` de colunas.
-- Projeção relacional e reconstrução de `GoogleFile` completo, inclusive campos não retornados pelo Drive.
+- Projeção relacional e reconstrução de `RemoteFile` completo, inclusive campos não retornados pelo Drive.
 - Semântica exata de `ObservationProof.complete_scope`, chaves de deduplicação, paginação e política de retenção.
 - Tipo concreto de tempo e de bytes locais no projeto.
 - Definição de operações simultâneas sobre um mesmo item e estratégias de lock. Estes detalhes devem ser fechados antes de implementar os respectivos métodos, **sem mudar a orientação a objetos da API**.
