@@ -32,9 +32,24 @@ FileBatch                         detectors/ — agrupamento e confirmação
 
 ### LocalFile
 
-`local_id?`, `relative_path`, `kind`, `size_bytes?`, `modified_at?`, `hash?`.
+`LocalFile` representa **todos os grupos conhecidos de metadados reais da entrada Linux**, e não somente tamanho/data/hash. A estrutura completa, os tipos e os estados de coleta estão em [INTERFACES.md, seção 2](INTERFACES.md#2-localfile--metadados-reais-completos-do-linux).
 
-Representa o que o Detector Local realmente observou. Um atributo opcional ausente **não** significa que o arquivo não existe.
+| Campo em LocalFile | Metadados reais |
+| --- | --- |
+| `local_id`, `relative_path` | Identidade lógica opcional e caminho relativo em bytes |
+| `kind` | Tipo de entrada: arquivo, diretório, symlink, FIFO, socket, dispositivo etc. |
+| `mode`, `owner` | Bits de modo/permissões, UID/GID |
+| `times` | atime, mtime, ctime, btime com nanossegundos |
+| `storage` | Tamanho, blocos alocados, inode, links, dispositivos, montagem, subvolume |
+| `flags` | Atributos statx/máscara de suporte e flags do filesystem |
+| `direct_io`, `atomic_write` | Restrições e capacidades relatadas pelo filesystem |
+| `xattrs`, `acl` | Atributos estendidos binários e ACLs POSIX |
+| `symlink` | Alvo literal do symlink, sem seguir |
+| `extra_metadata` | Complementos identificados por família/driver |
+
+Cada metadado consultável distingue `Known(valor)`, `NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable`. **Completo significa que o modelo representa os campos e a situação real da coleta; não significa que o Linux forneça cada valor.**
+
+`statx` não devolve sozinho ACLs, xattrs e todos os dados específicos do filesystem. Consultas adicionais são responsabilidade do Detector Local. **Hash de conteúdo e MIME inferido são dados derivados, não metadados intrínsecos do filesystem; o campo antigo `LocalFile.hash` foi removido.**
 
 ### RemoteFile
 
