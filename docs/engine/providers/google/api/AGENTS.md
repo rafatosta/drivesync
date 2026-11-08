@@ -1,5 +1,7 @@
 # Instruções para agentes — Google API (DriveSync)
 
+> **Fronteira revisada:** esta pasta implementa a API **técnica Google** e seus contratos atuais. O diretório [Google Provider](../INTERFACES.md) faz a composição/entrega da API via [Providers](../../INTERFACES.md). Especialistas Google podem importar tipos e chamar métodos específicos da API recebida, mas não criar clientes HTTP paralelos. Preservar as interfaces técnicas existentes e seus testes.
+
 ## Escopo
 
 Implementar e testar **exclusivamente** o módulo independente `providers/google/api/` da engine Rust, que abstrai a integração com **Google Drive REST API v3, Google OAuth 2.0 e OpenID Connect**. Os consumidores devem enxergar apenas tipos, operações e erros do contrato; não devem construir URLs, interpretar JSON do Google, conhecer endpoints nem repetir constantes específicas do provedor.
