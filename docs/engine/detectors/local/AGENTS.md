@@ -17,6 +17,18 @@ Implementar **somente `detectors/local/`** conforme [README](README.md), [INTERF
 9. O Local não compara baseline, não decide conflitos, não cria upload/download e não declara ausência comprovada com watcher isolado.
 10. Implementação própria e testes isolados; não refatorar módulos irmãos para facilitar testes.
 
+## Regra de não regressão por alteração de LocalFile
+
+**O Detector Local NÃO deve mudar quando forem incluídos/removidos campos de `LocalFile`.** Proibido construir `LocalFile` campo a campo no watcher/scanner/notificador ou usar acesso direto a campos para escolher se emite uma observação. Em vez disso:
+
+1. Injetar/usar a porta estável `LocalMetadataCollector::collect` documentada em [INTERFACES.md](INTERFACES.md).
+2. Delegar coleta, construção e rotinas adicionais ao componente especializado de metadados locais.
+3. Tratar `LocalFile` como **valor opaco** no pipeline de detecção e emitir o objeto integral recebido.
+4. Ao evoluir os campos, alterar **somente o contrato de dados, o coletor e os testes correspondentes**, além de eventuais consumidores reais — **não** watcher, scanner ou emissão.
+5. Garantir que o coletor continue testável isoladamente com filesystem temporário e que `models/` não passe a executar I/O.
+
+A revisão de utilidade dos metadados permanece obrigatória antes de implementar a proposta integral.
+
 ## Desenvolvimento Contract-First + TDD
 
 Desenvolver em unidades RED → GREEN → REFACTOR: criação, ciclo de vida, observação/transformação para `LocalFile`, entrega de `LocalNotice`, falhas e recuperação. Testar filesystem real temporário e sink fake; os testes de dados puros ficam em `models/TESTS.md`.
