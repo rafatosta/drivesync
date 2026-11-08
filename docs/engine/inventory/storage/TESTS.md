@@ -4,7 +4,7 @@
 
 ## Escopo e estratégia
 
-Única infraestrutura de acesso ao SQLite de cada sincronização, incluindo abertura segura, integridade e transações. Exercitar o submódulo por interfaces internas com `inventory.sqlite3` **real e isolado**, fixtures determinísticas, contas/raízes fictícias e injeção controlada de falhas. Não usar Google Drive real, credenciais ou arquivos pessoais.
+Única infraestrutura de acesso ao SQLite de cada sincronização, incluindo abertura segura, integridade e transações. Exercitar o submódulo por interfaces internas com `inventory.sqlite3` **real e isolado**, fixtures determinísticas, contas/raízes fictícias e injeção controlada de falhas. Utilizar somente dados sintéticos e armazenamento de teste isolado.
 
 ## Matriz de cenários
 
@@ -19,7 +19,7 @@
 | STO-07 | Reabrir após commit concluído | Dados e relações íntegros |
 | STO-08 | Duas sincronizações separadas | Dados não se misturam |
 | STO-09 | Disco cheio/permissão negada/banco bloqueado | Erro sanitizado e sem sucesso fictício |
-| STO-10 | Inspeção do esquema | Nenhuma fila ou cursor do Detector presente |
+| STO-10 | Inspeção do esquema | Esquema contém apenas tabelas previstas para o inventário |
 
 ## Critérios transversais
 
@@ -27,7 +27,7 @@
 2. Fechar e reabrir SQLite após persistência para verificar durabilidade, IDs, vínculos e estados.
 3. Isolar duas sincronizações com `SyncId` e `AccountId` distintos; não misturar itens.
 4. Validar `InventoryFailure` sanitizado, sem tokens, SQL ou caminhos pessoais nos erros.
-5. Cobrir concorrência, idempotência e rollback quando aplicável; fakes do Detector/Analisador não substituem banco real.
+5. Cobrir concorrência, idempotência e rollback quando aplicável; usar SQLite real para comprovar persistência.
 6. Não declarar `PASS` para um caso sem executá-lo. Distinguir testes `BLOCKED` pelos pontos ainda não especificados.
 
 ## Pontos bloqueadores e aceite
