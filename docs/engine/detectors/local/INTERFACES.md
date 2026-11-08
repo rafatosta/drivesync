@@ -69,6 +69,31 @@ pub(super) trait LocalNotificationSink: Send + Sync {
 - A observação não carrega `SyncItemId`, `SyncItem`, `GoogleFile` ou estruturas do Inventário. A associação ao item é responsabilidade posterior.
 - Um evento watcher pode motivar observação, mas não é sinônimo de arquivo confirmado. Um aviso de reavaliação pode existir sem `LocalFile`.
 
+### Porta estável de obtenção de LocalFile
+
+O Detector conhece apenas **a solicitação de coleta e o resultado**, sem acessar a composição interna de `LocalFile`. Proposta de porta conceitual, independente da lista de campos do modelo:
+
+```rust
+pub(super) struct LocalMetadataRequest {
+    pub relative_path: LocalRelativePath,
+    // O contexto da raiz é provido na construção do coletor.
+}
+pub(super) struct LocalMetadataResult {
+    pub file: Option<LocalFile>,
+    pub coverage: LocalScanCoverage,
+}
+pub(super) trait LocalMetadataCollector: Send + Sync {
+    fn collect(&self, request: LocalMetadataRequest)
+        -> LocalDetectorResult<LocalMetadataResult>;
+}
+```
+
+**A interface de coleta é estável mesmo que `LocalFile` ganhe ou perca campos.** `file=None` e cobertura/erros representam ausência de metadados confiáveis, **não exclusão comprovada**. Escolha de sincronicidade e ownership concretos fica para a etapa de código; não criar métodos adicionais por atributo.
+
+O coletor implementa internamente as chamadas de sistema e **pode delegar a funções auxiliares** a aquisição de grupos mais caros ou específicos (ACLs, xattrs, flags, dados de symlink). O código do Detector Local não conhece nem enumera esses grupos e não constrói `LocalFile` por struct literal. Sua única função é solicitar a coleta e transportar **o objeto devolvido sem projetar/reduzir seus campos**.
+
+**Separação:** a definição `LocalFile` pertence a `models/`; a coleta com I/O pertence ao adaptador local; watcher, varredura e avisos pertencem ao Detector Local. Nenhuma modificação de `LocalFile` deve exigir mudança na lógica do Detector. A porta está descrita conceitualmente, sem implementação nesta etapa.
+
 ## 3. Objetos internos de requisição e resultado
 
 ```rust
