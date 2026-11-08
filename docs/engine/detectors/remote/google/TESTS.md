@@ -32,3 +32,15 @@ Cada caso testa estados, chamadas, argumentos, erros e resultados; nenhum teste 
 ## 4. Aceite
 
 Cobrir os cinco métodos do contrato pai e os casos Google aplicáveis. Executar Rust exclusivamente no Flatpak. Relatar PASS/FAIL/BLOCKED e evidências reais; testes simulados não comprovam integração com Google real. **Nenhum teste foi executado pela criação deste documento.**
+
+## 5. Alinhamento com File e RemoteFile
+
+| Caso | Evidência esperada |
+| --- | --- |
+| GRD-M-01 | `GoogleFile` com ID vira `FileData::Remote(RemoteFile)` com referência qualificada pela conta |
+| GRD-M-02 | Metadados comuns/parciais e `ProviderFileData` filtrado são preservados integralmente no `File` emitido |
+| GRD-M-03 | Ausência de ID do GoogleFile gera reavaliação sem RemoteFile fictício |
+| GRD-M-04 | Rename/Move com identidade correlacionada mantém `event.previous/current` |
+| GRD-M-05 | Removed/perda de acesso não vira exclusão confirmada |
+| GRD-M-06 | Mudança de esquema do RemoteFile altera só adaptador e fixtures; polling e sink permanecem intocados |
+| GRD-M-07 | Checkpoint falho exige replay do `File` completo após persistência incerta |
