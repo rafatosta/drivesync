@@ -2,7 +2,7 @@
 
 ## 1. Visibilidade e tipos
 
-Contrato **interno** consumido pelo `Detector`, não reexportado ao Orquestrador. O RemoteDetector pode ter estruturas/algoritmos diferentes do Local. Não depende de uma implementação real do pai nem de `storage/`; recebe portas tipadas injetadas.
+Contrato **interno** consumido pelo `Detector`, não reexportado ao Orquestrador. O RemoteDetector é o contrato funcional que especialistas por provedor implementam; eles podem ter estruturas/algoritmos diferentes entre si e em relação ao Local. Não depende de uma implementação real do pai nem de `storage/`; recebe portas tipadas injetadas.
 
 ```rust
 pub(super) type RemoteResult<T> = Result<T, RemoteFailure>;
@@ -49,8 +49,8 @@ A localização do checkpoint pertence a seu backend, não ao Detector Remoto. A
 pub(super) struct RemoteCreateRequest {
     pub sync_id: SyncId,
     pub remote_root_id: String,
-    pub session: GoogleSession,
-    pub google_api: GoogleApiPort,
+    pub session: RemoteSessionPort,
+    pub remote_api: RemoteApiPort,
     pub sink: RemoteEventSinkPort,
     pub checkpoints: RemoteCheckpointPort,
     pub polling_interval: Option<Duration>,
@@ -76,12 +76,13 @@ pub(super) struct RemoteStatusResult {
     pub last_observed_at: Option<Timestamp>,
     pub last_error: Option<RemoteError>,
 }
-pub(super) struct GoogleApiPort { /* interface do google_api */ }
+pub(super) struct RemoteApiPort { /* porta interna do especialista selecionado */ }
+pub(super) struct RemoteSessionPort { /* sessão provida pela conta configurada */ }
 pub(super) struct RemoteEventSinkPort { /* RemoteEventSink */ }
 pub(super) struct RemoteCheckpointPort { /* RemoteCheckpoint */ }
 ```
 
-As declarações de portas acima são **esboços tipados**, não API compilada; ao implementar, escolher ownership/async apropriados sem expor concretudes ao pai. `GoogleSession` deve ser do contrato `google_api/`.
+As declarações de portas acima são **esboços tipados**, não API compilada; ao implementar, escolher ownership/async apropriados sem expor concretudes ao pai. o especialista deve utilizar a sessão do provedor conforme o contrato de `accounts/` e sua API.
 
 ## 3. Métodos internos
 
@@ -99,7 +100,7 @@ impl RemoteDetector {
 
 ### REM-01 — `new`
 
-**Finalidade:** criar detector remoto isolado com raiz, sessão e portas.
+**Finalidade:** criar detector remoto isolado com raiz, sessão de provedor selecionado e portas.
 **Parâmetros:** sync_id/remote_root_id e APIs/sink/checkpoint obrigatórios; intervalo opcional significa padrão interno.
 **Retorno:** instância Stopped, sem HTTP.
 **Limites e erros:** identidade inválida ou dependência incompatível falha; não inicia OAuth por conta própria.
@@ -113,10 +114,10 @@ impl RemoteDetector {
 
 ### REM-03 — `poll_once`
 
-**Finalidade:** ler páginas e **emitir um sinal por chamada de `RemoteEventSink.emit`**, confirmando checkpoint depois da aceitação durável.
+**Finalidade:** ler alterações conforme o especialista e **emitir um sinal por chamada de `RemoteEventSink.emit`**, confirmando checkpoint depois da aceitação durável.
 **Parâmetros:** modo da leitura e page_budget opcional; ausência de limite não significa página única.
 **Retorno:** cobertura, número emitido, continuação e checkpoint efetivamente confirmado (opcional).
-**Limites e erros:** falha do sink não avança cursor; `removed` não confirma exclusão; `has_more` implica cobertura parcial da rodada.
+**Limites e erros:** falha do sink não avança cursor; sinal de remoção do provedor não confirma exclusão; `has_more` implica cobertura parcial da rodada.
 
 ### REM-04 — `stop`
 
