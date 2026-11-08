@@ -12,7 +12,7 @@ Sua implementação, seu watcher, suas varreduras e seus testes são **independe
 | --- | --- | --- |
 | `models/` | Define `LocalFile`, `LocalEntryKind`, `LocalRelativePath` e identidades compartilhadas | Não lê disco, não observa mudanças |
 | `detectors/local/` | Coordena observação, solicita coleta por porta estável, emite sinais tipados e avalia cobertura | Não modifica baseline, não conhece SQL nem implementações dos demais filhos |
-| `detectors/` | Recebe cada sinal local/remoto, adapta para evento público e chama Storage | Não executa observação física local |
+| `detectors/` | Recebe File integral de Local/Remoto e o encaminha ao Storage sem projeção | Não executa observação física local |
 | `detectors/storage/` | Persiste fila de notificações, leases e confirmações | Não observa filesystem |
 | `inventory/` | Persiste estado e associa observações a `SyncItem` segundo seu contrato | Não é dependência de gravação do Detector Local |
 | `analyzer/` | Analisa divergências e conflitos | Não é chamado diretamente pelo Local |
@@ -35,9 +35,9 @@ Isso não altera a distinção entre `LocalFile` observado, aviso sem arquivo e 
 flowchart LR
     FS[Filesystem] --> LOC[Detector Local]
     MOD[Models: LocalFile] -.-> LOC
-    LOC -->|"LocalNotice individual + LocalFile opcional"| DET[Detector pai]
+    LOC -->|"File individual: FileData::Local opcional"| DET[Detector pai]
     DET -->|"enqueue"| STO[Storage do Detector]
-    DET -->|"EventBatch"| ORQ[Orquestrador]
+    DET -->|"FileBatch: Vec<File>"| ORQ[Orquestrador]
     ORQ --> AN[Analisador]
     AN --> INV[Inventário]
 ```
@@ -81,7 +81,7 @@ O Local observa eventos de criação, mudança, renomeação e movimento, mas es
 
 1. Toda observação de metadados disponível usa `models::LocalFile`, e não uma struct paralela própria de arquivo.
 2. Cada `LocalNotificationSink.notify` recebe **um** `File`; não há dois canais públicos para alterações locais.
-3. `LocalNotice.local_file=None` significa que o aviso não carrega metadados seguros; **não** significa exclusão.
+3. `File.data=None` significa que o aviso não carrega metadados seguros; **não** significa exclusão.
 4. Sem acesso ou modificação de baseline, fila de operações, histórico, banco ou serviço remoto.
 5. A falha de entrega não deve ser tratada como sucesso; eventos podem ser reemitidos.
 6. `stop` encerra observação; `start` recupera mudanças por nova inspeção conforme cobertura.
