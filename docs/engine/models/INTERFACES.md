@@ -68,29 +68,167 @@ pub enum FieldValue<T> {
 
 `FileId` deve ser preservado **idêntico durante retries da mesma ocorrência**. Reobservação posterior é nova ocorrência, salvo deduplicação explícita da origem comprovando ser a mesma. `AccountId`/ `SyncId`/ `LocalFileId` não são reimplementados para satisfazer este documento: ao integrar, manter apenas um proprietário e reexportar o tipo existente quando necessário.
 
-## 2. LocalFile — dados de uma observação local
+## 2. LocalFile — metadados reais completos do Linux
+
+### 2.1. Escopo
+
+`LocalFile` representa **os metadados reais da entrada do filesystem, com a maior fidelidade que o Linux permite**, e não apenas os campos mínimos necessários à sincronização. O tipo é **somente dados**: o Detector Local executa consultas e preenche o modelo; Models não faz I/O.
+
+Não existe uma syscall que entregue tudo: `statx` cobre o núcleo; `readlink`, `listxattr/getxattr`, APIs POSIX ACL e consultas específicas do filesystem cobrem outras categorias. Alguns atributos podem ser inacessíveis, não suportados ou ainda não consultados. Portanto, **um objeto completo contém os campos e os respectivos estados de coleta, não necessariamente um valor para cada campo**.
+
+### 2.2. Contrato conceitual tipado
 
 ```rust
+pub enum MetadataValue<T> {
+    Known(T),
+    NotCollected,
+    Unsupported,
+    PermissionDenied,
+    Unavailable,
+}
+
+pub enum LocalEntryKind {
+    Regular, Directory, Symlink, Fifo, Socket,
+    BlockDevice, CharacterDevice, Other, Unknown,
+}
+
+pub struct LocalTimestamp {
+    pub unix_seconds: i64,
+    pub nanoseconds: u32, // 0..=999_999_999
+}
+pub struct DeviceNumber { pub major: u32, pub minor: u32 }
+
+pub struct LocalFileMode {
+    pub raw_mode: u32, // tipo + bits reportados, sem perdas
+    pub permission_bits: u16, // rwx, setuid, setgid, sticky
+}
+pub struct LocalOwner {
+    pub uid: MetadataValue<u32>,
+    pub gid: MetadataValue<u32>,
+}
+pub struct LocalTimes {
+    pub accessed_at: MetadataValue<LocalTimestamp>, // atime
+    pub modified_at: MetadataValue<LocalTimestamp>, // mtime
+    pub changed_at: MetadataValue<LocalTimestamp>,  // ctime: mudança de status, NÃO criação
+    pub created_at: MetadataValue<LocalTimestamp>,  // btime, se disponível
+}
+pub struct LocalStorage {
+    pub size_bytes: MetadataValue<u64>,             // tamanho lógico
+    pub allocated_blocks_512b: MetadataValue<u64>,  // blocos de 512 bytes
+    pub preferred_block_size: MetadataValue<u32>,
+    pub hard_link_count: MetadataValue<u64>,
+    pub inode: MetadataValue<u64>,
+    pub filesystem_device: MetadataValue<DeviceNumber>,
+    pub represented_device: MetadataValue<DeviceNumber>, // rdev em device nodes
+    pub mount_id: MetadataValue<u64>,
+    pub subvolume_id: MetadataValue<u64>,
+}
+pub struct LocalFileFlags {
+    pub statx_attributes: MetadataValue<u64>,
+    pub statx_attributes_mask: MetadataValue<u64>,
+    pub filesystem_flags: MetadataValue<u64>, // consulta específica quando disponível
+}
+pub struct LocalDirectIo {
+    pub memory_alignment: MetadataValue<u32>,
+    pub offset_alignment: MetadataValue<u32>,
+    pub read_offset_alignment: MetadataValue<u32>,
+}
+pub struct LocalAtomicWrite {
+    pub unit_min: MetadataValue<u32>,
+    pub unit_max: MetadataValue<u32>,
+    pub segments_max: MetadataValue<u32>,
+    pub unit_max_opt: MetadataValue<u32>,
+}
+pub struct LocalXattr {
+    pub name: Vec<u8>, // namespace e nome completos, sem transformação com perda
+    pub value: MetadataValue<Vec<u8>>,
+}
+pub struct LocalXattrs {
+    pub entries: MetadataValue<Vec<LocalXattr>>,
+}
+pub enum LocalAclTag {
+    OwnerUser, NamedUser(u32), OwnerGroup, NamedGroup(u32),
+    Mask, Other,
+}
+pub struct LocalAclEntry {
+    pub tag: LocalAclTag,
+    pub permission_bits: u8,
+}
+pub struct LocalAcl { pub entries: Vec<LocalAclEntry> }
+pub struct LocalAcls {
+    pub access: MetadataValue<LocalAcl>,
+    pub default: MetadataValue<LocalAcl>, // aplicável a diretórios
+}
+pub struct LocalSymlink {
+    pub target: MetadataValue<Vec<u8>>, // readlink, sem seguir o alvo
+}
+pub struct FilesystemMetadata {
+    pub namespace: String,  // FS/driver/família de atributo
+    pub name: String,
+    pub value: Vec<u8>,
+}
 pub struct LocalFile {
     pub local_id: Option<LocalFileId>,
     pub relative_path: LocalRelativePath,
-    pub kind: FileKind,
-    pub size_bytes: Option<u64>,
-    pub modified_at: Option<Timestamp>,
-    pub hash: Option<FileHash>,
+    pub kind: MetadataValue<LocalEntryKind>,
+    pub mode: MetadataValue<LocalFileMode>,
+    pub owner: LocalOwner,
+    pub times: LocalTimes,
+    pub storage: LocalStorage,
+    pub flags: LocalFileFlags,
+    pub direct_io: LocalDirectIo,
+    pub atomic_write: LocalAtomicWrite,
+    pub xattrs: LocalXattrs,
+    pub acl: LocalAcls,
+    pub symlink: LocalSymlink,
+    pub extra_metadata: MetadataValue<Vec<FilesystemMetadata>>,
 }
 ```
 
-| Atributo | Tipo | Obrigatório? | Origem e semântica |
-| --- | --- | --- | --- |
-| `local_id` | `Option<LocalFileId>` | Campo sim; valor não | Detector Local; `None` quando não existe identidade estável comprovada |
-| `relative_path` | `LocalRelativePath` | Sim | Nome/caminho **relativo à raiz sincronizada**, em bytes Unix; a raiz é `[]` |
-| `kind` | `FileKind` | Sim | Tipo verificado no filesystem; usar `Unknown` quando não determinado |
-| `size_bytes` | `Option<u64>` | Campo sim; valor não | Tamanho de conteúdo, quando medido; `None` não significa tamanho zero |
-| `modified_at` | `Option<Timestamp>` | Campo sim; valor não | mtime observado; `None` não significa momento atual |
-| `hash` | `Option<FileHash>` | Campo sim; valor não | Só preencher quando realmente calculado; detecção não exige leitura integral |
+### 2.3. Relação entre atributos e fontes
 
-**Invariantes:** não seguir symlink para fora da raiz; `size_bytes` e `hash` só descrevem arquivo regular quando mensuráveis; caminho não pode conter byte NUL, iniciar com `/` nem conter segmentos `.` ou `..`. O objeto é valor imutável do instante observado; ele próprio não lê disco. Não usar `local_id` como `SyncItemId`.
+| Grupo | Dados reais | Fonte e observação |
+| --- | --- | --- |
+| Entrada/identidade | `local_id`, `relative_path`, `kind` | Detector, `lstat/statx`; o ID de domínio não é inode |
+| Modo | tipo, permissões rwx e setuid/setgid/sticky | `stat/statx`; ACL não é substituída pelo mode |
+| Proprietário | UID, GID numéricos | `stat/statx`; nomes de usuários/grupos dependem do ambiente, não são intrínsecos |
+| Datas | atime, mtime, ctime, btime | `statx`; segundos e nanos; btime nem sempre disponível |
+| Armazenamento | tamanho lógico, blocos alocados, bloco preferido | `statx`; blocos alocados em unidades de 512 B |
+| Inode/links | inode, hard links, device do filesystem | `statx`; não implicam identidade estável global |
+| Dispositivos especiais | represented device major/minor | `statx`/rdev; não confundir com device do filesystem |
+| Montagem/subvolume | mount ID, subvolume ID | `statx`; dependem de kernel/FS |
+| Flags | atributos e máscara de suporte; flags especiais | `statx` e APIs específicas; a máscara deve ser preservada |
+| Direct I/O | alinhamentos de memória, offset e leitura | `statx` quando disponível |
+| Escrita atômica | unidades e segmentos permitidos | `statx` quando disponível |
+| Xattrs | pares nome/valor em bytes; namespaces `user.*`, `security.*`, `system.*`, `trusted.*` etc. | `listxattr/getxattr` com semântica de no-follow em symlinks |
+| ACLs POSIX | entradas completas de acesso e ACL padrão | APIs ACL; ACL padrão apenas em diretórios |
+| Symlink | bytes literais do destino | `readlink`; nunca seguir para fora da raiz |
+| Complementos | metadados adicionais identificados por família/driver | consultas específicas; não substituir campos conhecidos por blob genérico |
+
+**Não são metadados intrínsecos do inode:** hash de conteúdo, MIME inferido, imagens em miniatura, tags de mídia e conteúdo do arquivo. A antiga propriedade `LocalFile.hash` é removida deste contrato de **metadados reais**; qualquer análise derivada deve ser especificada separadamente.
+
+### 2.4. Invariantes e limites
+
+1. Em `MetadataValue<T>`, `Known(0)`, `Known(false)` e `Known([])` são valores comprovados; diferem de `NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable`.
+2. `LocalFile` mantém seus campos mesmo quando algum grupo está indisponível. `NotCollected` indica coleta incompleta, **não** representa leitura completa.
+3. `statx` usa `stx_mask` para informar quais campos foram preenchidos e `stx_attributes_mask` para suporte das flags. Não considerar valores numéricos sem a respectiva evidência.
+4. Se o nome do xattr foi enumerado mas seu valor não pôde ser lido, manter o nome e `value=PermissionDenied` ou `Unavailable`, não `Known([])`.
+5. `acl.default` em arquivo não diretório é não aplicável; essa distinção será normalizada sem inventar entradas. `MetadataValue::Unsupported` pode representar esse caso no contrato proposto.
+6. A observação pode ocorrer durante mutações concorrentes: consultas múltiplas **não** produzem uma fotografia atômica garantida. O Detector deve sinalizar inconsistência e solicitar reobservação quando necessário.
+7. `LocalRelativePath` preserva bytes Unix, não aceita NUL, caminho absoluto, `.` ou `..`; nunca seguir symlink externo.
+8. Xattrs, ACLs e labels de segurança podem conter dados sensíveis. Ter esses campos em Models **não autoriza enviá-los ao Google Drive, registrar valores em log ou sincronizar permissões automaticamente**. Persistência/retensão e limite de payload exigem revisão de segurança.
+9. `LocalFile` pode registrar todos os metadados disponíveis ao processo, mas **não promete acessar metadados privados do kernel, exclusivos de outro filesystem, bloqueados pelo Flatpak, ou ainda não enumerados**.
+10. Consultas caras e opcionais (por exemplo, extents/FIEMAP) e análise do conteúdo não são obrigatórias para produzir cada notificação. Se forem incorporadas, devem ganhar campos/famílias e políticas próprias, não inferências silenciosas.
+11. `FileData::Local(LocalFile)` continua com a mesma relação de encapsulamento; `SyncItem` permanece fora da revisão.
+
+### 2.5. Pendências de implementação
+
+- Padrão para `MetadataValue` por campos não aplicáveis, além de `Unsupported`, se for necessário distinguir `NotApplicable`.
+- Limites de tamanho e retenção de Xattrs e `extra_metadata`, que podem carregar informações sensíveis.
+- Política de coleta: básica/expandida/completa, sem declarar `Complete` quando houver categorias obrigatórias não consultadas.
+- Compatibilização com assinaturas já documentadas do Detector Local (modelo anterior de seis atributos).
+
+**Estado: proposta formal de atributos, ainda não implementada nem aprovada como contrato Rust final.**
 
 ## 3. RemoteFile — dados de uma observação remota
 
