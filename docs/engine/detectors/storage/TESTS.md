@@ -2,7 +2,7 @@
 
 ## 1. Objetivo e método
 
-Plano **Contract-First + TDD** para o **Storage real**; usar SQLite real temporário e acesso somente pela API `EventStore`. Não usar um mock do próprio armazenamento como prova de persistência. Não executar Local, Remoto, Detector público, Google API nem Orquestrador. Fakes de relógio e injeção de falha são permitidos.
+Plano **Contract-First + TDD** para o **Storage real**; usar SQLite real temporário e acesso somente pela API `EventStore`. Não usar um mock do próprio armazenamento como prova de persistência. Executar os testes de persistência de forma independente, com dados sintéticos e sem serviços externos. Fakes de relógio e injeção de falha são permitidos.
 
 RED → GREEN → REFACTOR por unidades coesas; validar o conjunto após cada etapa. `INTERFACES.md` define as seis operações do contrato; `README.md` define a propriedade e invariantes.
 
