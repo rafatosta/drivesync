@@ -48,7 +48,7 @@ O Detector recebe alterações locais e remotas **concorrentes** sem criar duas 
 
 1. Cada filho chama seu sink **uma vez por evento**; o Detector recebe e invoca `EventStore.enqueue`.
 2. **Só confirmar ao produtor depois do commit durável**. Falha exige backpressure/replay ou reobservação; não declarar sucesso.
-3. O Orquestrador chama `take_events` e recebe `FileBatch`, com `batch_id`, `events`, `first_observed_at` e `last_observed_at`.
+3. O Orquestrador chama `take_events` e recebe `FileBatch`, com `batch_id`, `files`, `first_observed_at` e `last_observed_at`.
 4. `take_events` apenas **reserva** eventos, não os elimina. `acknowledge(Processed | Discarded)` registra a decisão do Orquestrador. `release_events` devolve lote não confirmado.
 5. Se o Orquestrador estiver ocupado ou desligado, o Detector **acumula eventos persistidos**. Crash antes do ack permite reentrega pelo lease expirado (sem promessa de exatamente uma vez).
 
@@ -83,3 +83,156 @@ O Detector recebe **um `models::File` por emissão**, vindo de Local ou Remoto. 
 Storage persiste cada `File` inteiro antes da entrega; a API `take_events` devolve `FileBatch { files: Vec<File>, ... }`, em geral com um item. O Orquestrador encaminha os `File` ao Analisador, que interpreta origem e observa o Inventário antes de decidir operações. A confirmação do lote significa apenas transferência segura de responsabilidade/processamento, **não sincronização realizada**.
 
 A evolução de atributos de `LocalFile`/`RemoteFile` fica isolada nos coletores/adaptadores. Detector pai não projeta campos, não gera `SyncItem` e não interpreta propriedades do provedor. Todos os exemplos aqui são **documentação-alvo**, não Rust implementado.
+
+## Arquitetura visual — reprodução das interfaces
+
+As figuras seguintes representam **somente as relações e tipos declarados** em [Detector — INTERFACES](INTERFACES.md), [Local — INTERFACES](local/INTERFACES.md), [Remoto — INTERFACES](remote/INTERFACES.md), [Google — INTERFACES](remote/google/INTERFACES.md), [Storage — INTERFACES](storage/INTERFACES.md) e [Models — INTERFACES](../models/INTERFACES.md). Não são diagramas derivados de código Rust compilado.
+
+### 1. Estrutura modular e dependências
+
+```mermaid
+flowchart TB
+    ORQ["Orquestrador"]
+    D["detectors/ — Detector (fachada pública)"]
+    L["detectors/local/ — LocalDetector"]
+    R["detectors/remote/ — RemoteDetector (contrato comum)"]
+    S["detectors/storage/ — EventStore"]
+    G["detectors/remote/google/ — especialista"]
+    P["providers/google/api/ — GoogleFile"]
+    M["models/ — File, FileData, LocalFile, RemoteFile"]
+
+    ORQ -->|"8 métodos públicos: new/start/stop/request_scan/status/take_events/acknowledge/release_events"| D
+    D -->|"controle e LocalNotificationSink"| L
+    D -->|"controle e RemoteEventSink"| R
+    D -->|"open/enqueue/claim_batch/acknowledge/release_batch/status"| S
+    R -->|"especialista selecionado por portas injetadas"| G
+    G -->|"cliente Google API"| P
+    L -.->|"tipos compartilhados"| M
+    G -.->|"RemoteFile e File"| M
+    R -.->|"tipos compartilhados"| M
+    D -.->|"FileBatch contém File"| M
+    S -.->|"persiste File integral"| M
+```
+
+**Exatamente conforme interfaces:** o Orquestrador chama somente `Detector`; o pai conhece as **portas internas** de Local, Remoto e Storage, não suas implementações concretas. O especialista Google depende do contrato Google API. `models/` fornece dados, não um serviço.
+
+### 2. Fluxos de observação, durabilidade e consumo
+
+```mermaid
+sequenceDiagram
+    participant L as LocalDetector
+    participant R as RemoteDetector
+    participant D as Detector
+    participant S as EventStore
+    participant O as Orquestrador
+    participant A as Analisador
+
+    opt Observação local
+        L->>D: LocalNotificationSink.notify(File)
+        D->>S: enqueue(EnqueueEventRequest { file: File })
+        S-->>D: EnqueueEventResult
+        D-->>L: aceite durável ou falha
+    end
+    opt Observação remota
+        R->>D: RemoteEventSink.emit(File)
+        D->>S: enqueue(EnqueueEventRequest { file: File })
+        S-->>D: EnqueueEventResult
+        D-->>R: aceite durável ou falha
+        Note over R: Checkpoint só pode avançar após aceite durável
+    end
+    O->>D: take_events(TakeEventsRequest)
+    D->>S: claim_batch(ClaimBatchRequest)
+    S-->>D: ClaimBatchResult { files: Vec<File>, lease_id, intervalos }
+    D-->>O: TakeEventsResult { batch: FileBatch }
+    O->>A: encaminha File sem interpretar FileData
+    alt processamento/assunção segura de responsabilidade
+        O->>D: acknowledge(batch_id, disposition)
+        D->>S: acknowledge(lease_id, disposition)
+    else sem confirmação
+        O->>D: release_events(batch_id)
+        D->>S: release_batch(lease_id)
+        Note over S: Lease expirado permite reentrega
+    end
+```
+
+O diagrama mostra **sequências condicionais**, não uma ordem obrigatória entre as fontes. O Storage atribui reserva/lease, o pai entrega `FileBatch` e o Orquestrador responde com reconhecimento ou liberação. `Processed` **não** implica que o arquivo foi sincronizado.
+
+### 3. Encapsulamento exato dos tipos
+
+```mermaid
+flowchart TD
+    B["FileBatch [detectors/]"]
+    BID["batch_id: Option<BatchId>"]
+    BT["first_observed_at / last_observed_at: Option<Timestamp>"]
+    V["files: Vec<File>"]
+    F["File [models/]"]
+    INFO["id: FileId | sync_id: SyncId | observed_at: Timestamp | coverage: ObservationCoverage | scope: FileScope"]
+    E["event: FileEvent"]
+    K["kind: FileEventKind (8 variantes)"]
+    OLD["previous: Option<FileLocation>"]
+    NEW["current: Option<FileLocation>"]
+    DATA["data: Option<FileData>"]
+    LOCAL["Local(LocalFile)"]
+    REMOTE["Remote(RemoteFile)"]
+    PROV["provider_data: MetadataValue<ProviderFileData>"]
+
+    B --> BID
+    B --> BT
+    B --> V
+    V --> F
+    F --> INFO
+    F --> E
+    E --> K
+    E --> OLD
+    E --> NEW
+    F --> DATA
+    DATA --> LOCAL
+    DATA --> REMOTE
+    REMOTE --> PROV
+```
+
+```text
+FileBatch                                             detectors/
+├── batch_id: Option<BatchId>
+├── files: Vec<File>
+│   └── File                                          models/
+│       ├── id: FileId
+│       ├── sync_id: SyncId
+│       ├── observed_at: Timestamp
+│       ├── coverage: ObservationCoverage
+│       ├── scope: FileScope
+│       ├── event: FileEvent
+│       │   ├── kind: FileEventKind
+│       │   ├── previous: Option<FileLocation>
+│       │   └── current: Option<FileLocation>
+│       └── data: Option<FileData>
+│           ├── Local(LocalFile)
+│           └── Remote(RemoteFile)
+│               └── provider_data: MetadataValue<ProviderFileData>
+├── first_observed_at: Option<Timestamp>
+└── last_observed_at: Option<Timestamp>
+```
+
+`FileEventKind` enumera `Created`, `Modified`, `Deleted`, `Renamed`, `Moved`, `MetadataChanged`, `RecheckRequired` e `ScopeUnavailable`. `FileLocation` mantém localização anterior/atual **quando conhecida**, não versões completas dos metadados. Um `File.data=None` não comprova exclusão. `FileBatch` pode misturar origens e não interpreta nem mescla os eventos.
+
+### 4. Métodos e portas exatamente documentados
+
+| Proprietário | API / porta | Declarações existentes |
+| --- | --- | --- |
+| `detectors/` | `Detector` | `new`, `start`, `stop`, `request_scan`, `status`, `take_events`, `acknowledge`, `release_events` |
+| `detectors/local/` | `LocalDetector` | `new`, `start`, `scan_once`, `stop`, `status` |
+| `detectors/local/` | `LocalMetadataCollector` | `collect(LocalMetadataRequest) → LocalMetadataResult` |
+| `detectors/local/` | `LocalNotificationSink` | `notify(File)` |
+| `detectors/remote/` | `RemoteDetector` | `new`, `start`, `poll_once`, `stop`, `status` |
+| `detectors/remote/` | `RemoteMetadataAdapter` | `observe(RemoteMetadataRequest) → RemoteMetadataResult` |
+| `detectors/remote/` | `RemoteEventSink` | `emit(File)` |
+| `detectors/remote/` | `RemoteCheckpoint` | `read(SyncId)`, `commit(SyncId, checkpoint)` |
+| `detectors/storage/` | `EventStore` | `open` (função de abertura), `enqueue`, `claim_batch`, `acknowledge`, `release_batch`, `status` |
+
+### 5. Seleção do provedor: o que a interface comprova e o que ainda está em aberto
+
+O contrato de `RemoteCreateRequest` **contém** `sync_id`, `remote_root_id`, `session: RemoteSessionPort`, `remote_api: RemoteApiPort`, `sink: RemoteEventSinkPort`, `checkpoints: RemoteCheckpointPort` e `polling_interval`. O especialista Google é documentado em `remote/google/` e satisfaz o contrato remoto.
+
+Foi definida a **direção conceitual** de escolher a implementação a partir da **conta/provedor da sincronização**; detalhes estão no [README do Detector Remoto](remote/README.md#seleção-da-implementação-por-provedor--decisão-de-composição). Entretanto, as interfaces atuais **não apresentam** um tipo de fábrica/registry, uma assinatura de seleção de `ProviderId` ou a implementação da ligação `SyncId → AccountId → ProviderId`. Por isso, **nenhuma seta dos diagramas deve ser interpretada como prova de que essa fábrica já existe**. É uma responsabilidade de composição a especificar depois, sem alterar os contratos atuais neste documento.
+
+**Preservação do escopo:** nenhum método, tipo, assinatura, requisito de persistência ou comportamento foi adicionado aos arquivos `INTERFACES.md` durante esta visualização. Os diagramas reproduzem os contratos conceituais existentes; não demonstram código Rust nem testes executados.
