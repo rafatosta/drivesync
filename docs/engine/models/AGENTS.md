@@ -64,6 +64,18 @@ Somente depois de a seleção ser explicitamente aprovada, consolidar os atribut
 - Acrescentar testes de regressão que verifiquem evolução do esquema com o Detector não modificado.
 - Não confundir **interface de coleta** (interna ao detector local) com interface operacional pública de `models/`; Models continua apenas dados.
 
+## Contrato conceitual dos eventos em File
+
+`File.event` é um objeto `FileEvent` com `kind: FileEventKind`, `previous: Option<FileLocation>` e `current: Option<FileLocation>`. São oito tipos de evento documentados em [INTERFACES.md](INTERFACES.md#5-file--observação-autocontida-e-atributos-do-evento): criação, edição, exclusão suspeita, renomeação, movimentação, mudança de metadados, reavaliação e indisponibilidade.
+
+- `FileLocation` representa caminho local ou localização remota (conta/ID, nome e pai quando disponíveis), não dois snapshots completos de metadados.
+- `Deleted` pode ocorrer sem `FileData`; nunca tratar um evento de remoção ou `data=None` como autorização de excluir arquivos.
+- Renomeação/movimentação requer correlação confiável entre anterior/atual. Sem evidência, usar `RecheckRequired`.
+- Orquestrador apenas transporta `File`; **Analisador** interpreta origem e evento.
+- Nenhuma alteração deste contrato autoriza acoplar o Detector aos campos internos de `LocalFile`; manter a porta estável do coletor.
+- O desenho completo de `FileBatch` e do protocolo de ack é propriedade do Detector. Não migrar `SyncItem`.
+- Não implementar até a aprovação da especificação e da revisão de metadados anteriores ao código.
+
 ## Execução futura
 
 Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GREEN → REFACTOR conforme [TESTS](TESTS.md), executar Cargo/Rust apenas no Flatpak do projeto e relatar PASS/FAIL/BLOCKED. Integração e testes de lote/ack pertencem ao Detector, não aos testes de Models.
