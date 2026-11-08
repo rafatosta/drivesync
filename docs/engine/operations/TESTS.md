@@ -60,6 +60,49 @@ Os testes seguem [INTERFACES.md](INTERFACES.md) e [README.md](README.md). Cada m
 - OPR-R-04: `bytes_transferred` contabiliza os bytes efetivamente transferidos na execução.
 - OPR-R-05: falhas devolvem `OperatorError` apropriado, sem vazar credenciais ou dados sensíveis.
 
+## Testes unitários da biblioteca privada
+
+A biblioteca privada possui uma matriz própria, vinculada à seção [7.4 de INTERFACES.md](INTERFACES.md#74-comportamento-verificável-de-cada-função). Exercitar as funções com arquivos e diretórios temporários **reais** em um escopo isolado, incluindo casos de erro. Não utilizar arquivos pessoais. As asserções devem inspecionar o filesystem após cada operação, independentemente dos valores retornados.
+
+### Casos por função
+
+| Caso | Função | Preparação e ação | Evidência de sucesso | Falhas e invariantes |
+| --- | --- | --- | --- | --- |
+| OPR-L-01 | `open_local_resource` | Abrir arquivo existente sob raiz temporária | Referência aponta ao recurso correto e conserva o escopo | Arquivo ausente, `..`, symlink externo, caminho absoluto fora do escopo e substituição concorrente são rejeitados |
+| OPR-L-02 | `local_metadata` | Consultar arquivo conhecido e diretório | Tipo/tamanho e demais atributos disponíveis correspondem a consultas independentes | Permissão negada, referência obsoleta, metadados opcionais indisponíveis; nenhuma informação inventada |
+| OPR-L-03 | `read_local` | Ler conteúdo binário em múltiplos blocos | Bytes recebidos são idênticos ao conteúdo original; arquivo não é modificado | Diretório como fonte, arquivo inacessível e erro de leitura são propagados |
+| OPR-L-04 | `create_local_directory` | Criar subdiretório com nome válido | Exatamente uma nova entrada diretório aparece sob o pai esperado | Nome vazio, separador, `..`, colisão e falta de permissão não alteram outras entradas |
+| OPR-L-05 | `create_local_file` | Criar arquivo regular vazio em diretório temporário | Arquivo criado tem tamanho zero, referência correta e permissões previstas | Colisão com arquivo/diretório existente preserva os bytes anteriores; nome inválido falha |
+| OPR-L-06 | `create_temp_file` | Criar dois temporários no mesmo diretório | Nomes/identidades são exclusivos; nenhum arquivo final é criado | Falha de criação, diretório sem acesso e descarte/limpeza não alteram destino final |
+| OPR-L-07 | `write_local` | Copiar dados binários em blocos, inclusive leitura/escrita parcial simulada | Conteúdo temporário e contador de bytes conferem; progresso é monotônico | Falha de leitura/escrita, cancelamento e espaço insuficiente não publicam destino parcial |
+| OPR-L-08 | `atomic_replace` | Publicar temporário completo sobre arquivo conhecido | Novo conteúdo aparece integralmente, referência final correta; versão anterior não é visível parcialmente | Revisão/identidade divergente e falha pré-publicação preservam destino anterior; verificar efeitos de interrupção |
+| OPR-L-09 | `rename_local` | Renomear arquivo e diretório no mesmo pai | Nome antigo desaparece, novo nome aparece, conteúdo e identidade são preservados quando suportado | Colisão, nome inválido e troca concorrente não sobrescrevem terceiros |
+| OPR-L-10 | `move_local` | Mover arquivo e diretório entre pastas temporárias | Entrada sai da pasta anterior e surge no destino com conteúdo correto | Destino ocupado, movimento de diretório para descendente, escopo externo e filesystem incompatível falham sem perdas |
+| OPR-L-11 | `delete_local` | Excluir recurso identificado em árvore com vizinhos | Apenas a entrada identificada desaparece; resultado corresponde ao efeito observado | Referência obsoleta, precondição divergente, recurso ausente e diretório não vazio preservam recursos não autorizados |
+| OPR-L-12 | `verify_local_integrity` | Comparar conteúdo com tamanho/hash conhecidos | `Verified` quando evidência corresponde; bytes originais permanecem intactos | Divergência gera erro de integridade; evidência insuficiente produz `NotAvailable`, sem sucesso fictício |
+
+### Cenários transversais de segurança
+
+| Caso | Cenário | Verificação obrigatória |
+| --- | --- | --- |
+| OPR-L-S01 | Raiz temporária com arquivo externo acessível por symlink | Operações de leitura/escrita/movimentação não escapam do escopo autorizado |
+| OPR-L-S02 | Alteração concorrente entre consulta e operação | A operação valida o recurso efetivo e rejeita referência obsoleta quando necessário |
+| OPR-L-S03 | Nomes Linux não UTF-8 válidos | Criação, leitura, renomeação e movimentação preservam bytes do nome |
+| OPR-L-S04 | Dois comandos simultâneos para o mesmo destino | Exclusividade, precondições e atomicidade evitam sobrescrita silenciosa |
+| OPR-L-S05 | Injeção de falhas antes e durante a publicação | Arquivo final permanece integralmente na versão antiga ou nova; erro identifica situação observada |
+| OPR-L-S06 | Operação interrompida e limpeza de temporários | Temporários são rastreáveis e recuperados ou descartados de acordo com estado comprovado |
+| OPR-L-S07 | Arquivos binários, vazios e maiores que o buffer de I/O | Conteúdo preservado e processamento em fluxo, sem truncamento por tamanho de bloco |
+| OPR-L-S08 | Escrita concluída seguida de queda simulada antes da sincronização de dados/diretório | Relato de durabilidade é compatível com as garantias do sistema de arquivos |
+| OPR-L-S09 | Retornos e mensagens de erro | Erros tipados, ausência de dados privados e nenhuma declaração de sucesso sem evidência |
+
+### Critérios para validar a implementação privada
+
+1. Cada caso `OPR-L-01` a `OPR-L-12` possui ao menos um teste positivo e um teste de falha com asserções sobre o estado real do filesystem.
+2. Verificações de integridade e identidade usam valores esperados independentes da função testada.
+3. Testes que necessitam simular falha, concorrência ou crash explicam o ponto de injeção e distinguem o que foi realmente executado do que foi apenas modelado.
+4. Todo comportamento não definido suficientemente pela interface é marcado `BLOCKED`, com a definição técnica pendente registrada; não atribuir `PASS` com base em mocks que apenas repetem resultados esperados.
+5. A implementação privada é validada diretamente, separadamente dos testes de fachada `OPR-01` a `OPR-11`.
+
 ## Critérios de aceite
 
 1. Todos os métodos públicos têm testes positivos, negativos e de validação de resultados.
