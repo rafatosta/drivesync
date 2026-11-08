@@ -1,51 +1,21 @@
-# Inventário / storage — Storage
+# Inventory — Storage
 
-> **Estado:** proposta documental de submódulo interno; **não é código Rust implementado**. A API pública continua em [InventoryManager](../INTERFACES.md), com 16 métodos.
+## Objetivo
 
-## Objetivo e responsabilidade
+Disponibilizar a persistência SQLite do inventário, assegurando acesso consistente, integridade e transações atômicas.
 
-Única infraestrutura de acesso ao SQLite de cada sincronização, incluindo abertura segura, integridade e transações.
+## Funcionamento
 
-## Entradas, operações e resultados
+Abre e valida o banco `inventory.sqlite3`, gerencia seu esquema, índices e integridade referencial, e fornece contextos de leitura e transação. As operações transacionais são confirmadas ou revertidas atomicamente e as falhas são representadas por erros tipados.
 
-**Entradas:** `OpenInventoryRequest`, `SyncIdentity`, closures/operações internas sobre `InventoryTx<'_>` e estruturas dos repositórios.
+## Interface
 
-1. `open` — validar identidade e existência sem recriar banco inválido.
-2. `read` — oferecer acesso de leitura sob contexto privado.
-3. `transaction` — executar trabalho multi-repositório com commit/rollback atômico.
-4. Manter esquema, FK, índices e tradução de falhas SQL para `InventoryFailure`.
+- `open`: abre e valida o inventário.
+- `read`: executa consultas no contexto de leitura.
+- `transaction`: executa operações em transação atômica.
 
-**Saídas:** Contexto de armazenamento validado, resultados genéricos ou erros sanitizados; jamais expor `Connection` para a API externa.
-
-## Fronteiras e dependências
-
-**Dependências permitidas:** Tipos públicos do Inventário apenas para identidade/erros; repositórios recebem `InventoryTx`, sem conexão independente.
-
-**Fora do escopo:** Não interpreta `SyncItem`, não decide operações, não faz rede ou detecção, não acessa `detector.sqlite3` e não cria tabela `remote_events`/`remote_cursor`.
-
-Nenhum submódulo usa conexão SQLite própria; o contexto transacional pertence a [storage](../storage/INTERFACES.md). Regras que atravessam módulos são coordenadas por `InventoryManager`.
-
-## Fluxo interno
-
-```mermaid
-flowchart LR
-    C["InventoryManager"] -->|"chamada interna"| R["storage/"]
-    R -->|"contexto transacional"| S["inventory/storage/"]
-    S --> DB["inventory.sqlite3"]
-```
-
-Este diagrama representa **limites de responsabilidade**, não módulos de código já implementados.
-
-## Decisões pendentes
-
-DDL final, WAL/locking, timeouts, provisionamento com raiz inacessível, índices, conexões e teste de crash em subprocesso. Não preencher as lacunas com comportamento presumido.
+**Entradas principais:** `OpenInventoryRequest`, `SyncIdentity` e `InventoryTx`.
 
 ## Documentação
 
-[INTERFACES.md](INTERFACES.md) — portas e assinaturas internas propostas.
-
-[TESTS.md](TESTS.md) — matriz de cenários para o submódulo.
-
-[AGENTS.md](AGENTS.md) — regras de implementação e validação.
-
-[Inventário / README](../README.md) — visão de conjunto e composição.
+[Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
