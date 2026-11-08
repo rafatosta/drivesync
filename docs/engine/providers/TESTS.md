@@ -1,40 +1,33 @@
 # Providers — TESTS
 
-> Testes do **catálogo/fábrica** de APIs específicas. Documentação de testes propostos, não executados. Referência: [INTERFACES.md](INTERFACES.md).
+> Plano de testes do **catálogo e entrega de APIs específicas**. Nenhum teste foi executado nesta etapa documental.
 
 ## Escopo
 
-Verificar seleção, retorno do tipo correto, isolamento por conta e controle de acesso. **Não** testar todos os métodos Google REST aqui: eles pertencem aos testes da [Google API](google/api/TESTS.md), enquanto os resultados exigidos de cada especialista pertencem aos testes do seu módulo pai.
+A cobertura de Providers limita-se a listagem, seleção, inicialização e fornecimento da **interface correta**. Testes dos métodos de cada serviço pertencem à pasta da API correspondente: [Google API — TESTS](google/api/TESTS.md).
 
 | ID | Cenário | Resultado esperado |
 | --- | --- | --- |
-| PRV-01 | Listar provedores registrados | `list()` retorna apenas implementações disponíveis |
-| PRV-02 | Selecionar Google | `get(google)` fornece `GoogleApiHandle`, sem autenticação implícita |
-| PRV-03 | ID de provedor inexistente | `UnknownProvider`, sem acesso externo |
-| PRV-04 | Placeholder `example/` não implementado | Não aparece em `list()` e não pode ser aberto |
-| PRV-05 | Abrir `AccountId` Google autorizado | `ProviderSession::Google` com sessão dessa conta |
-| PRV-06 | `AccountId` desconhecido ou sem autorização | Erro de seleção/autorização sem token alternativo |
-| PRV-07 | Provedor da conta difere do handle solicitado | `AccountProviderMismatch`, sem fallback |
-| PRV-08 | Duas contas Google diferentes | Sessões e credenciais isoladas |
-| PRV-09 | Sessão revogada ou expirada | Falha tipada/reautorização via Accounts; sem sucesso fictício |
-| PRV-10 | Especialista Google usa `changes_list` | Usa cliente obtido por Providers, sem HTTP avulso |
-| PRV-11 | Especialista Google produz saída do módulo pai | `File`/resultado normalizado no limite do Detector, não `GoogleChange` público |
-| PRV-12 | Outro serviço com API incompatível | Nova variante/handle sem exigir métodos Google ao outro serviço |
-| PRV-13 | Erro técnico Google | Mantém significado na API específica; especialista converte para erro funcional do seu módulo |
-| PRV-14 | Inspeção de dependências | Clientes remotos são criados apenas pela fábrica Providers |
-| PRV-15 | Testar `get` durante fluxo OAuth | Entrega API específica; `accounts/auth` controla estado/credenciais |
-| PRV-16 | Logout/reautorização com API obtida previamente | Contexto inválido não reutiliza autorização expirada nem atravessa contas |
+| PRV-01 | Catálogo com Google implementado | `list` retorna Google uma vez |
+| PRV-02 | Selecionar `ProviderId` Google | `get` fornece a API Google tipada |
+| PRV-03 | Selecionar provedor desconhecido | `UnknownProvider` explícito |
+| PRV-04 | Provedor documentado mas não implementado | Não consta de `list` nem é anunciado como funcional |
+| PRV-05 | Inicialização do cliente específico falha | Erro de inicialização sem interface fictícia |
+| PRV-06 | Selecionar repetidamente o mesmo provedor | A interface continua corretamente tipada e utilizável |
+| PRV-07 | Dois provedores com APIs distintas | Nenhuma imposição de métodos comuns entre os clientes |
+| PRV-08 | Métodos técnicos do Google | A API fornecida referencia o contrato existente, sem implementação duplicada |
+| PRV-09 | API exige parâmetros de autenticação | A fábrica não realiza login nem persistência automática |
+| PRV-10 | Falha de configuração de um provedor | Erro isolado sem corromper catálogo de outros provedores |
+| PRV-11 | Revisão de dependências | Não existe segundo cliente de protocolo externo concorrendo com a implementação do provedor |
+| PRV-12 | Cadastro de novo provedor | Nova interface específica pode ser registrada sem alterar métodos das APIs existentes |
 
-## Limites de responsabilidade dos testes
+## Fora do escopo
 
-- **Providers:** descoberta, fábrica, seleção tipada, isolamento e autorização.
-- **`providers/google/api/`:** 59 métodos REST, OAuth/OIDC, semântica e erros de protocolo Google.
-- **`accounts/auth/`:** ciclo de login, keyring, estado da conta e credenciais.
-- **`detectors/remote/google/`:** estratégia de polling, conversão `GoogleChange/GoogleFile` para `File` e checkpoint seguro.
-- **Upload/Download Google:** transferências e retorno conforme interface dos módulos correspondentes.
+Não testar aqui armazenamento de contas, políticas de sessão, decisões funcionais, tratamento de eventos de sincronização ou interpretação dos resultados por outras partes do aplicativo. Protocolos OAuth, Drive REST e transferências Google devem ser testados no contrato especializado [`google/api/TESTS.md`](google/api/TESTS.md).
 
-Não usar Google Drive real ou credenciais pessoais nos testes unitários. Usar fakes e, na integração, contexto de conta isolado. A ausência de contrato concreto dos operadores permanece `BLOCKED`, não é resultado `PASS`.
+## Critérios
 
-## Critérios de aceite
-
-O catálogo retorna API correta e não promete capacidades genéricas; os especialistas usam o cliente recebido, mas seus métodos continuam específicos ao provedor; módulos pais preservam contrato único. Nenhum consumidor cria HTTP externo por fora da fábrica, acessa segredo de outra conta ou incorpora métodos de protocolo na interface do módulo pai.
+- Sem endpoints universais inventados.
+- Sem exposição de provedores inexistentes.
+- Sem funções Google duplicadas na fábrica.
+- Nenhum teste recebe status `PASS` sem execução real; cenários dependentes de representação Rust definitiva permanecem `BLOCKED`.
