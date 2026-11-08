@@ -1,6 +1,6 @@
 # Google API — TESTS.md
 
-> **Separação dos testes:** este documento cobre métodos e tipos técnicos da API Google. A seleção pelo catálogo e o vínculo de sessão pertencem a [Google Provider — TESTS](../TESTS.md). Não duplicar a implementação ou os testes de 78 métodos no diretório pai.
+> **Escopo:** este documento cobre os métodos e tipos técnicos da API Google. A obtenção da interface pelo catálogo é testada em [Google — TESTS](../TESTS.md). Não duplicar os testes de 78 métodos no diretório pai.
 
 ## 1. Objetivo e limites
 
