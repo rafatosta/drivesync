@@ -1,26 +1,19 @@
-# Agentes — Detector Remoto
+# Orientações para agentes — Detector Remoto
 
-## Escopo e fontes
+## Objetivo
 
-Implementar **somente `detectors/remote/`**, independentemente do Detector pai, Local e Storage reais. Ler [INTERFACES.md](INTERFACES.md), [README.md](README.md), [TESTS.md](TESTS.md), [AGENTS raiz](../../../../AGENTS.md), [padrão](../../MODULE_STANDARD.md) e a documentação do especialista [Google](google/README.md), quando estiver implementando Google.
+Implementar observação de alterações remotas, com eventos individuais e checkpoint de leitura.
 
-## Regras
+## Regras de implementação
 
-- Remoto produz **eventos individuais** e os entrega por `RemoteEventSink` injetado; nunca constrói `File` público nem recebe API do Orquestrador.
-- Não importar o Storage concreto nem assumir onde sua fila está armazenada. Sucesso do sink significa persistência durável confirmada.
-- Estratégia própria por especialista: polling, consulta paginada e checkpoint quando disponíveis, sem impor comportamento ao Local.
-- Checkpoint não pode avançar antes de aceitação durável dos eventos correspondentes; replay é necessário quando houver resultado incerto.
-- Erro de rede, acesso, cursor ou leitura parcial não confirma exclusão. Não realizar sincronização física.
-- O contrato Remoto é independente de provedor; cada especialista usa a interface exposta em `providers/<provedor>/`, sem implementar HTTP, OAuth ou chamadas diretas à API externa.
-- Remoto não administra `inventory.sqlite3` nem `detector.sqlite3`; qualquer backend de checkpoint será injetado por contrato tipado.
-- A API é interna a `detectors/`; não criar reexportação externa de `RemoteDetector`.
+- Seguir as operações e os contratos documentados em [INTERFACES.md](INTERFACES.md).
+- Utilizar apenas as funções públicas de [Providers](../../providers/README.md) para acesso às APIs externas.
+- Processar paginação, cursores e resultados parciais conforme as capacidades de cada serviço.
+- Preservar a identidade e o conteúdo observado dos eventos.
+- Confirmar checkpoints somente após entrega durável das ocorrências correspondentes.
+- Representar erros e perda de cobertura como estados observados, sem presumir exclusão.
+- Manter a lógica de interpretação de cada serviço em seu especialista.
 
-## Testes e autonomia
+## Validação
 
-TDD incremental (RED/GREEN/REFACTOR) com fake de porta remota/sessão/scheduler/sink/checkpoint; testar mecanismo real do Remoto, não mock do próprio objeto. “Implemente o Detector Remoto” abrange **cinco métodos** e cenários de `TESTS.md`, **não** implica implementação do pai/Local/Storage.
-
-Executar Rust/Cargo somente no Flatpak do projeto; comentários/commits em inglês; commits locais coesos; sem push/PR sem autorização. Reportar casos executados, resultados, bloqueios e integrações ainda não validadas. **Somente documentação nesta etapa.**
-
-## Regra de encapsulamento Models
-
-O Remoto emite `File` completo por `RemoteEventSink.emit`, não `RemoteObservation` mínimo nem `DetectorEvent` duplicado. Metadados de provedor são adaptados de `GoogleFile` a `RemoteFile` exclusivamente no especialista e transmitidos como `FileData::Remote`. `FileEventKind` identifica sinais com evidência; `previous/current` guardam mudanças de localização. Perda de acesso, sem ID e falha de cursor geram reavaliação, não exclusão confirmada. Campos de RemoteFile podem evoluir sem alterar polling ou fila.
+Seguir [TESTS.md](TESTS.md), utilizando interfaces simuladas dos serviços, eventos e checkpoints isolados. Aplicar também as instruções gerais do [AGENTS.md da raiz](../../../../AGENTS.md).
