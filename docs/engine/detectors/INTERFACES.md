@@ -15,9 +15,7 @@ pub enum DetectorState { Stopped, Starting, Running, Degraded, Stopping, Failed 
 pub enum DetectorStartMode { Initial, Restart }
 pub enum DetectorStopMode { DrainInFlight, StopNow }
 pub enum DetectorScanReason { Manual, Recovery, ConsistencyCheck }
-pub enum DetectorScanScope { All, Items(Vec<SyncItemId>) }
-pub enum DetectorEventKind { ChangeObserved, RecheckRequired, ScopeUnavailable }
-pub enum DetectorCoverage { Complete, Partial, Unavailable }
+pub enum DetectorScanScope { All, Scopes(Vec<FileScope>) }
 pub enum EventDisposition { Processed, Discarded }
 pub enum DetectorError {
     InvalidState, InvalidScope, InvalidIdentity, SourceUnavailable,
@@ -29,18 +27,11 @@ pub struct DetectorFailure {
     pub retryable: bool,
     pub message: String, // sanitizada
 }
-pub struct DetectorEvent {
-    pub event_id: DetectionEventId,
-    pub sync_id: SyncId,
-    pub item_id: Option<SyncItemId>,
-    pub kind: DetectorEventKind,
-    pub observed_at: Timestamp,
-    pub coverage: DetectorCoverage,
-    pub scope_hint: Option<ScopeHint>,
-}
-pub struct EventBatch {
-    pub batch_id: Option<BatchId>, // None somente com events vazio
-    pub events: Vec<DetectorEvent>,
+// File, FileScope, FileEvent, FileData, FileId e Timestamp vêm de models/.
+// O lote e seu lease são responsabilidade exclusiva de detectors/.
+pub struct FileBatch {
+    pub batch_id: Option<BatchId>, // None somente quando files vazio
+    pub files: Vec<File>,           // objetos COMPLETOS, sem projeção de campos
     pub first_observed_at: Option<Timestamp>,
     pub last_observed_at: Option<Timestamp>,
 }
@@ -54,7 +45,7 @@ pub struct DetectorStatus {
 }
 ```
 
-Eventos de fontes distintas conservam `event_id` e informação suficiente para reavaliação por item/escopo. O objeto público **não precisa expor qual mecanismo produziu** a alteração; se houver utilidade posterior em apresentar a origem, isso será uma decisão explícita e não exigirá duas APIs. `item_id=None` sinaliza reavaliação sem identidade estável.
+A fachada recebe e persiste **`models::File` integral**, incluindo `id`, `sync_id`, `event { kind, previous, current }`, `scope`, `coverage`, `observed_at` e `data: Option<FileData>`. Não mantém evento paralelo reduzido a IDs. O Orquestrador recebe `FileBatch.files` e o encaminha ao Analisador sem interpretar `Local`/`Remote`. `File.data=None` é válido para remoção suspeita e reavaliação, **nunca exclusão confirmada**.
 
 ## 3. Requests e resultados públicos
 
@@ -78,7 +69,7 @@ pub struct DetectorScanResult { pub accepted: bool, pub correlation_id: Option<S
 pub struct DetectorStatusRequest {}
 pub struct DetectorStatusResult { pub status: DetectorStatus }
 pub struct TakeEventsRequest { pub max_events: u32, pub lease_duration: Duration }
-pub struct TakeEventsResult { pub batch: EventBatch }
+pub struct TakeEventsResult { pub batch: FileBatch }
 pub struct AcknowledgeEventsRequest {
     pub batch_id: BatchId,
     pub disposition: EventDisposition,
@@ -93,7 +84,7 @@ pub trait EventAvailableSink: Send + Sync {
 pub struct EventAvailableSinkHandle { /* porta tipada */ }
 ```
 
-`event_available_sink=None`: Orquestrador pode consumir por consulta periódica sem receber avisos. Aviso de disponibilidade não confirma consumo. `max_events` e duração de lease devem ser positivos. `EventBatch.events=[]` implica `batch_id=None`, e instantes opcionais ausentes.
+`event_available_sink=None`: Orquestrador pode consumir por consulta periódica sem receber avisos. Aviso de disponibilidade não confirma consumo. `max_events` e duração de lease devem ser positivos. `FileBatch.files=[]` implica `batch_id=None`, e instantes opcionais ausentes.
 
 ## 4. Assinaturas públicas
 
@@ -137,7 +128,7 @@ impl Detector {
 ### DET-04 — `request_scan`
 
 **Finalidade:** pedir observação adicional, sem ordenar como Local/Remoto a executam.
-**Parâmetros:** `All` ou `Items` com IDs válidos; motivo; ID de correlação opcional.
+**Parâmetros:** `All` ou `Scopes` com escopos `FileScope` válidos; motivo; ID de correlação opcional.
 **Retorno:** aceitação/agendamento.
 **Limites e erros:** sem upload/download; não analisar baseline ou conflito.
 
@@ -152,7 +143,7 @@ impl Detector {
 
 **Finalidade:** reservar **um lote unificado**, que pode conter eventos locais e remotos produzidos em paralelo.
 **Parâmetros:** `max_events > 0` e lease válido.
-**Retorno:** `EventBatch` com IDs estáveis, eventos individuais e intervalo do primeiro/último instante **observado**.
+**Retorno:** `FileBatch` com `File` completos, IDs estáveis, eventos individuais e intervalo do primeiro/último instante **observado**.
 **Limites e erros:** leitura não apaga, não agrupa eventos conflitantes no mesmo ID e não resolve divergência. Ordem da fila representa **ordem durável de enfileiramento**, não causalidade entre as fontes. O mesmo item pode aparecer várias vezes no mesmo lote.
 
 ### DET-07 — `acknowledge`
@@ -177,13 +168,15 @@ impl Detector {
 | [Remoto](remote/INTERFACES.md) | Controle e sink interno de **um evento por emissão** | Polling, cursor e REST |
 | [Storage](storage/INTERFACES.md) | `open`, `enqueue`, `claim_batch`, `acknowledge`, `release_batch`, `status` | Caminho, schema, SQL e SQLite |
 
-Os adapters internos normalizam sinais para `DetectionEventRecord`. Sucesso de emissão só ocorre após `enqueue` durável. Os filhos **não precisam usar a mesma struct**, contanto que implementem seus contratos e a fachada converta sem perda de identidade/evidência.
+Os produtores entregam `models::File` por sinks internos, sem criar uma segunda representação de evento. O pai valida `sync_id`, persiste **o File integral** via Storage e somente então confirma o sink. O Storage devolve os mesmos objetos, não recriações por nome ou ID. Reentrega mantém `File.id` e conteúdo. O Detector não interpreta atributos de `LocalFile`/`RemoteFile`.
 
 ## 7. Garantias e pendências
 
 **Produtor–consumidor:** eventos acumulam até serem reservados e confirmados; crash após claim permite redelivery por lease. O Orquestrador pode receber simultaneamente sinais locais/remotos num mesmo lote e encaminhá-los à reconciliação, mas **não há resolução automática de conflitos no Detector**.
 
 **Não há pausa pública**: `stop` interrompe produção, `start` retoma; descarte ocorre apenas em `acknowledge(Discarded)`. Fila sobrevive à parada. Nenhuma observação prova exclusão sem evidência completa.
+
+**Integração obrigatória com Models:** `FileBatch` pertence a Detector, `File`/`FileData`/`FileEvent`/`FileScope` a Models. `FileEventKind` possui Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired, ScopeUnavailable. `File.event.previous/current` são localizações, não cópias de metadados. Nenhum `SyncItemId` é necessário para transportar uma ocorrência. Não acrescentar/remover campos no Detector quando `LocalFile`/`RemoteFile` evoluir: seus coletores/adaptadores especializados tratam isso. A distinção entre evento detectado e ação confirmada é do Analisador.
 
 **Decisões a fechar na implementação:** ownership Rust dos tipos comuns, fábrica interna das dependências, meios de sinalização, async e semântica de parada em trânsito, política de limites/backpressure e tipos temporais. Sem quebrar o isolamento dos submódulos.
 
