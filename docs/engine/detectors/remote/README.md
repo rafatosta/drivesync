@@ -100,3 +100,90 @@ flowchart TD
 A figura separa propositalmente o **contrato documentado** (requisição de criação, portas, especialista Google e `RemoteEventSink.emit(File)`) da **decisão de composição ainda sem assinatura** (origem da associação conta/provedor e seleção da instância). A implementação Google observa o serviço e emite `File` completo; o módulo pai persiste por sua API de Storage. Nenhum especialista é selecionado novamente por evento.
 
 A inclusão de um novo provedor exige um especialista e um adaptador correspondentes, além do mecanismo de registro/seleção a ser definido; **não** modifica `FileData`, o Orquestrador ou os contratos de lotes do Detector.
+
+
+## Visão visual dos contratos internos do serviço Remoto
+
+Os diagramas a seguir estão vinculados aos tipos e métodos existentes em [Remote — INTERFACES](INTERFACES.md). **Linhas contínuas** representam contratos/portas documentados; **linhas tracejadas** representam a decisão de composição por conta e provedor, cujo mecanismo concreto ainda não tem assinatura.
+
+### Composição por conta e execução pelo especialista
+
+```mermaid
+flowchart TD
+    C["Conta da sincronização"]
+    P["ProviderId e sessão compatível"]
+    REQ["RemoteCreateRequest"]
+    R["RemoteDetector: new, start, poll_once, stop, status"]
+    S["RemoteSessionPort / RemoteApiPort"]
+    G["Especialista Google: remote/google/"]
+    EX["Especialista example: placeholder documental"]
+    GA["Google API do provedor"]
+    A["RemoteMetadataAdapter.observe"]
+    RF["RemoteMetadataResult: Option RemoteFile"]
+    E["RemoteEventSink.emit(File)"]
+    D["Detector pai"]
+
+    C -.->|"associação conceitual SyncId/AccountId"| P
+    P -.->|"seleção/composição ainda não tipada"| REQ
+    REQ --> R
+    R --> S
+    S -->|"especialista Google documentado"| G
+    S -.->|"outro provedor, sem implementação"| EX
+    G --> GA
+    GA --> A
+    A --> RF
+    RF --> G
+    G --> E
+    E --> D
+```
+
+O vínculo entre sincronização e conta é um requisito de composição já registrado, **não** um método novo do `RemoteDetector`. O contrato atual recebe `sync_id`, `remote_root_id`, `session`, `remote_api`, `sink`, `checkpoints` e `polling_interval` por `RemoteCreateRequest`. A instância selecionada é reutilizada durante a operação; não há seleção de provedor em todo `poll_once`.
+
+### Paginação, checkpoint e persistência
+
+```mermaid
+sequenceDiagram
+    participant R as RemoteDetector
+    participant G as Especialista selecionado
+    participant API as API do provedor
+    participant C as RemoteCheckpoint
+    participant S as RemoteEventSink
+    participant D as Detector pai / Storage
+    R->>G: poll_once(RemotePollRequest)
+    G->>C: read(sync_id)
+    C-->>G: checkpoint opcional
+    G->>API: consultar página de mudanças/metadados
+    API-->>G: resposta parcial ou completa
+    opt cada File emitido com evidência segura
+        G->>S: emit(File)
+        S->>D: enqueue(File completo)
+        D-->>S: aceite durável ou falha
+        S-->>G: Ok ou erro
+    end
+    alt todos os Files relevantes duráveis
+        G->>C: commit(sync_id, checkpoint)
+        C-->>G: confirmação
+    else emissão falhou ou página incompleta
+        Note over G,C: não avançar checkpoint; recuperar/repetir
+    end
+    G-->>R: RemotePollResult { coverage, emitted, has_more, checkpoint_confirmed }
+```
+
+### Encapsulamento do objeto remoto
+
+```text
+RemoteEventSink.emit(File)
+└── File                                    models/
+    ├── id / sync_id / observed_at / coverage / scope
+    ├── event: FileEvent { kind, previous, current }
+    └── data: Option<FileData>
+        ├── Some(Remote(RemoteFile))
+        │   ├── reference: RemoteFileRef    [conta + ID do arquivo]
+        │   ├── provider: ProviderId
+        │   ├── identity / classification / location / times
+        │   ├── content / state / access / presentation
+        │   └── provider_data: MetadataValue<ProviderFileData>
+        └── None                            [reavaliação]
+```
+
+`RemoteFile` é produzido pelo adaptador do provedor e não deve ser projetado para campos mínimos pelo intermediário. Falha de rede, cursor expirado e perda de acesso não equivalem a exclusão confirmada. As assinaturas reais do mecanismo de fábrica/registro continuam **não especificadas**.
