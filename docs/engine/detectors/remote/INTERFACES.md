@@ -164,3 +164,13 @@ impl RemoteDetector {
 - `GoogleChange.removed=true`, perda de acesso, HTTP 403/404, cursor inválido ou paginação incompleta não comprovam exclusão; solicitar reavaliação ou registrar escopo indisponível.
 - O adaptador especializado sabe converter `GoogleFile` em `RemoteFile`; o Detector não acessa seus atributos internos nem muda com sua evolução.
 - O checkpoint só avança depois da persistência durável do `File` completo; replay preserva identidade da ocorrência. Não realizar operações de sincronização nem exigir `SyncItem`.
+
+## 7. Propriedade exclusiva do checkpoint remoto
+
+**Decisão aprovada:** o Detector Remoto é o proprietário lógico do checkpoint de observação (`RemoteCheckpoint.read/commit`). A porta `RemoteCheckpointPort` já declarada continua inalterada; o backend concreto e sua localização física ainda precisam de validação. O Inventário **não** mantém `remote_cursor`, não avança o checkpoint, não lê o cursor de detecção e não expõe métodos equivalentes.
+
+O especialista somente confirma a posição da página **depois de todos os `File` daquela página terem recebido aceite de persistência durável** pelo sink do Detector, que grava por `EventStore.enqueue`. Em falha parcial ou dúvida sobre persistência, não confirmar checkpoint: recuperar/reler página; replay precisa ser idempotente e preservar a integridade das ocorrências, com o protocolo de deduplicação a definir no Detector. O avanço do cursor significa *observação entregue duravelmente*, **não** análise concluída, baseline confirmado ou sincronização finalizada.
+
+**Fronteira de falhas:** sem transação atômica compartilhada entre storage de eventos e backend de checkpoint, a ordenação `enqueue durável → commit do checkpoint` impede avançar antes de persistir, mas admite replay da mesma página após falha de checkpoint. Não prometer entrega exatamente uma vez nem exclusão de duplicatas sem protocolo testado. Não criar acesso direto do Detector ao SQLite do Inventário.
+
+A confirmação de `FileBatch` pelo Orquestrador acontece pela fachada do Detector, separadamente do checkpoint de leitura remota. O `InventoryManager` mantém somente estados de `SyncItem`, baseline, fila de operações e atividade, após o Analisador interpretar `File`.
