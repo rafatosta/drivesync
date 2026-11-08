@@ -2,7 +2,7 @@
 
 ## 1. Isolamento e TDD
 
-Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface definida pelo módulo (testes HTTP/Google ficam em `remote/google/`) e um sink individual **fake durável**, com falhas configuráveis. Usar checkpoint backend fake ou temporário apropriado. **Não** exigir Detector Local, `EventStore`, SQLite do Detector, Orquestrador ou serviço remoto real. TDD: RED, GREEN, REFACTOR, regressão por unidade coesa.
+Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface definida pelo módulo (testes HTTP/Google ficam em `remote/google/`) e um sink individual **fake durável**, com falhas configuráveis. Usar checkpoint backend fake ou temporário apropriado. Executar os cenários em isolamento, sem serviço remoto real. TDD: RED, GREEN, REFACTOR, regressão por unidade coesa.
 
 ## 2. Fixtures
 
@@ -24,7 +24,7 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 
 **Sucesso:** construir sem requisição HTTP; retorno Stopped com portas injetadas.
 **Negativos e opcionais:** ID de raiz ausente, sessão de outra conta, polling_interval omitido/presente.
-**Retorno e invariantes:** não cria ou acessa banco do Detector e não conhece Orquestrador.
+**Retorno e invariantes:** utiliza somente as portas fornecidas pela interface.
 **Verificação:** spies nas dependências.
 
 ### REM-02 — `start`
@@ -68,7 +68,7 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 | REM-S-07 | 403/404/timeout | Erro remoto tipado, não ausência |
 | REM-S-08 | Arquivo Google nativo, hashes ausentes | Não inventar propriedades |
 | REM-S-09 | Page budget insuficiente | Partial/has_more, sem completar falsamente |
-| REM-S-10 | Alterações concorrentes no inventário inicial | Cursor anterior e leitura conciliados |
+| REM-S-10 | Alterações concorrentes na observação inicial | Cursor anterior e leitura conciliados |
 | REM-S-11 | Stop/restart | Retomada a partir do último checkpoint seguro |
 | REM-S-12 | Emissão de sinais | Cada chamada ao sink contém exatamente um evento |
 
