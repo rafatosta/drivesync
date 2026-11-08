@@ -13,10 +13,10 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 | `empty_root` | Raiz temporária válida, vazia | Leitura completa sem eventos de exclusão inventados |
 | `local_tree` | Arquivos/subpastas com nomes UTF-8 e não UTF-8 Unix | `LocalFile.relative_path` preservado |
 | `unknown_identity` | Arquivo sem identidade local estável comprovada | `LocalFile.local_id=None`; sem `SyncItemId` inventado |
-| `unknown_metadata` | Permissões ou atributos indisponíveis | Campos opcionais `None`; cobertura compatível |
+| `unknown_metadata` | Permissões ou atributos indisponíveis | Campos `MetadataValue::NotCollected`/`Unavailable`; cobertura compatível |
 | `closed_app_changes` | Criar/editar/mover durante stop | Recuperação por nova varredura |
 | `partial_tree` | Subárvore inacessível | Aviso de reavaliação sem `LocalFile` e cobertura Partial |
-| `removed_candidate` | Arquivo desaparece ou evento de remoção chega | `LocalNotice.local_file=None`, sem exclusão confirmada |
+| `removed_candidate` | Arquivo desaparece ou evento de remoção chega | `File.data=None`, sem exclusão confirmada |
 | `symlink_external` | Link para fora da raiz | Nenhuma leitura externa |
 | `reserved_directory` | `.drivesync/` alterado | Ignorar dados internos |
 | `concurrent_edits` | Mudança entre watcher e scan | Não declarar leitura completa sem evidência |
@@ -41,7 +41,7 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 
 ### LOC-03 — `scan_once`
 
-**Sucesso:** produzir `LocalNotice` com `local_file=Some(LocalFile)` para metadados verificados; preservar tipos, caminhos e opcionais de Models.
+**Sucesso:** produzir `File` com `File.data=Some(FileData::Local(LocalFile))` para metadados verificados; preservar tipos, caminhos e opcionais de Models.
 **Negativos/opcionais:** Full/Paths; Paths vazio ou fora da raiz; leitura parcial; symlink; request_id None/Some; sink rejeita.
 **Retorno/invariantes:** contagem observada distinta de avisos **aceitos**; sem lista paralela de eventos; sem baseline.
 **Verificação:** capturas do sink com valores de `LocalFile` concretos e cobertura apropriada.
@@ -68,9 +68,9 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 | LOC-M-02 | Diretório | Aviso contém `Known(LocalEntryKind::Directory)`; sem conteúdo fabricado |
 | LOC-M-03 | Symlink | Modelo `Symlink`, sem seguir alvo externo |
 | LOC-M-04 | Nome Unix não UTF-8 | Caminho preserva componentes sem conversão com perda |
-| LOC-M-05 | Identidade local não comprovada | `id=None`; sem gerar `SyncItemId` |
+| LOC-M-05 | Identidade local não comprovada | `local_id=None`; sem gerar `SyncItemId` |
 | LOC-M-06 | Hash/tamanho não observados | metadados `NotCollected` ou `Unavailable`, conforme a coleta conforme observação; sem preencher por suposição |
-| LOC-M-07 | Evento de remoção | Aviso com `local_file=None` + escopo quando possível |
+| LOC-M-07 | Evento de remoção | Aviso com `File.data=None` + escopo quando possível |
 | LOC-M-08 | Watcher overflow | Recheck com cobertura degradada e sem `LocalFile` obrigatório |
 | LOC-M-09 | Sink aceita | Um aviso individual por chamada, contado como entregue |
 | LOC-M-10 | Sink rejeita | Falha propagada; não contar como evento persistido |
@@ -104,3 +104,16 @@ Pendências ainda bloqueadoras de casos particulares: implementação de `LocalR
 | LOC-COL-06 | Coletor devolve file=None | Detector emite reavaliação segundo cobertura, sem inventar exclusão |
 
 Testes do coletor exercitam syscalls e funções auxiliares em filesystem temporário. **Teste de arquitetura:** alterações no layout de `LocalFile` devem ser demonstradas sem alterações nos arquivos-fonte do Detector (exceto no componente coletor/adaptador e seus testes). Este é um critério de aceite, não somente uma recomendação.
+
+## 8. Testes de encapsulamento de eventos
+
+| ID | Cenário | Resultado |
+| --- | --- | --- |
+| LOC-F-01 | Arquivo criado | `FileEventKind::Created`, `File.data=Some(FileData::Local(...))`, `current=Some(Local(...))` |
+| LOC-F-02 | Edição/metadata | `Modified` ou `MetadataChanged` somente com evidência; metadados atuais íntegros |
+| LOC-F-03 | Renomeação/movimentação | `previous/current` corretos quando identidade correlacionada; senão `RecheckRequired` |
+| LOC-F-04 | Remoção por watcher | `Deleted` como indício ou `RecheckRequired`, nunca operação de exclusão |
+| LOC-F-05 | Escopo inacessível | `ScopeUnavailable`, `coverage=Unavailable`, `data=None` |
+| LOC-F-06 | Coletor fake acrescenta campo | Detector continua inalterado e repassa `LocalFile` sem perda |
+| LOC-F-07 | Sink fake recusa `File` | Falha propagada; nenhuma entrega considerada durável |
+| LOC-F-08 | Retry após falha | Mesma ocorrência pode ser reentregue com ID estável, sem invenção de metadados |
