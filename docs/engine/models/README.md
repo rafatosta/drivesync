@@ -1,78 +1,108 @@
 # Models — núcleo de domínio da engine
 
-## Finalidade
+## Objetivo
 
-`models/` define a **linguagem de dados compartilhada do DriveSync**. Detector, Inventário, Analisador e Operações devem trabalhar com os mesmos conceitos, sem criar representações incompatíveis de um arquivo.
+`models/` é o **núcleo de representação de dados do DriveSync**: os módulos funcionais compartilham os mesmos objetos de arquivo e de observação. O núcleo **não implementa serviços**; não acessa Google API, filesystem, SQLite, filas, nem resolve conflitos.
 
-O módulo **representa dados**. Não consulta APIs, não observa filesystem, não persiste, não resolve conflitos, não gerencia filas e não executa operações. Sua interface é formada por **tipos e invariantes**, não por uma trait de serviço ou um `ModelManager`.
+Os atributos estão especificados em [INTERFACES.md](INTERFACES.md) como **proposta fechada para revisão do responsável**. Como a implementação futura deverá reproduzir literalmente a documentação aprovada, **não considerar o código Rust ilustrativo como já implementado ou autorizado** até aprovação explícita.
 
-## Hierarquia aprovada
+## Hierarquia e proprietários
 
 ```text
-FileBatch                     [detectors/ — contrato de entrega]
-└── files: coleção de File
-    └── File                  [models/ — observação de arquivo]
-        └── FileData          [models/ — variante dos dados]
-            ├── Local(LocalFile)
-            └── Remote(RemoteFile)
+detectors/
+└── FileBatch
+    └── files: Vec<File>
+        models/
+        └── File
+            └── data: Option<FileData>
+                ├── Local(LocalFile)
+                └── Remote(RemoteFile)
 ```
 
-Os três conceitos são distintos e não devem ser reduzidos a um único tipo.
+| Tipo | Proprietário | Responsabilidade |
+| --- | --- | --- |
+| `LocalFile` | `models/` | Fotografia dos metadados locais realmente observados |
+| `RemoteFile` | `models/` | Fotografia normalizada dos metadados remotos e dados especializados opacos |
+| `FileData` | `models/` | Escolher **exatamente uma** representação, local ou remota, sem comportamento |
+| `File` | `models/` | Encapsular uma **ocorrência autocontida**, com dados, contexto e escopo |
+| `FileBatch` | [`detectors/`](../detectors/INTERFACES.md) | Agrupar ocorrências para entrega segura, identificação de lote e confirmação |
 
-| Conceito | Quem define | O que significa | O que não faz |
+O **Orquestrador recebe `FileBatch` e encaminha seus `File` sem distinguir origem**. O Analisador interpreta `FileData`. O Detector pai/Storage preserva o objeto completo para reentrega; não converte a notificação em um mero caminho ou ID.
+
+## Atributos de LocalFile
+
+| Nome | Tipo | Origem | Semântica |
 | --- | --- | --- | --- |
-| **`LocalFile`** | `models/` | Representação de dados observados em um item local | Não observa o disco |
-| **`RemoteFile`** | `models/` | Representação normalizada de dados observados em um item remoto | Não chama a API; não é `GoogleFile` |
-| **`FileData`** | `models/` | **Uma** das duas representações: local **ou** remota | Não decide o tratamento; não representa uma fila |
-| **`File`** | `models/` | Objeto **autocontido de uma observação**, que encapsula `FileData` quando disponível e seu contexto de detecção | Não é o estado consolidado `SyncItem`; não executa alterações |
-| **`FileBatch`** | [`detectors/`](../detectors/README.md) | Coleção de `File` preparada para entrega e confirmação pelo Detector pai | Não é modelo de arquivo; não interpreta os dados |
+| `local_id` | `Option<LocalFileId>` | Detector Local | Identidade estável comprovada, quando existir |
+| `relative_path` | `LocalRelativePath` | Detector Local | Caminho relativo à raiz, preservando bytes Unix |
+| `kind` | `FileKind` | Detector Local | Tipo observado; pode ser `Unknown` |
+| `size_bytes` | `Option<u64>` | Detector Local | Tamanho, se medido |
+| `modified_at` | `Option<Timestamp>` | Detector Local | mtime observado, sem inventar instante |
+| `hash` | `Option<FileHash>` | Detector Local | Hash somente se realmente calculado |
 
-**Decisão sobre encapsulamento:** o Orquestrador recebe `FileBatch` com uma lista de `File` e **não precisa distinguir `LocalFile` de `RemoteFile`**. O Analisador inspeciona `FileData` e aplica as regras apropriadas. O Detector pai e seu Storage entregam/preservam os objetos; não resolvem diferenças ou conflitos.
+`LocalFile` é um **valor**, não um observador. A leitura do filesystem pertence ao Detector Local. `None` em atributo opcional não representa exclusão, zero ou outra afirmação que não foi observada.
 
-## Fluxo conceitual
+## Atributos de RemoteFile
 
-```mermaid
-flowchart TD
-    L[Detector Local] -->|LocalFile| FD[FileData]
-    R[Detector Remoto] -->|RemoteFile| FD
-    FD --> F[File autocontido]
-    F --> D[Detector pai]
-    D --> S[Storage: fila durável e reentrega]
-    S --> B[FileBatch: lista de File]
-    B --> O[Orquestrador: encaminhamento]
-    O --> A[Analisador: interpreta FileData]
+| Nome | Tipo | Origem | Semântica |
+| --- | --- | --- | --- |
+| `reference` | `RemoteFileRef` | Especialista remoto | Identidade qualificada por conta |
+| `provider` | `ProviderId` | Contexto da conta | Serviço ao qual o recurso pertence |
+| `name` | `String` | Serviço remoto | Nome observado |
+| `kind` | `FileKind` | Especialista remoto | Tipo normalizado, inclusive nativo do provedor |
+| `mime_type` | `Option<String>` | Serviço remoto | MIME quando conhecido |
+| `size_bytes` | `Option<u64>` | Serviço remoto | Tamanho quando disponível |
+| `modified_at` | `Option<Timestamp>` | Serviço remoto | Data fornecida pelo provedor |
+| `version` | `Option<String>` | Serviço remoto | Revisão/ETag opaca |
+| `hash` | `Option<FileHash>` | Serviço remoto | Hash conhecido com algoritmo explícito |
+| `parent_ids` | `FieldValue<Vec<RemoteFileId>>` | Serviço remoto | `Unknown` ≠ `Known([])` |
+| `provider_data` | `Option<ProviderFileData>` | Especialista remoto | Metadados particulares do provedor, opacos ao núcleo |
+
+`ProviderFileData` encapsula `provider`, `format`, `format_version` e `payload`, que contém **apenas metadados especializados**, jamais o conteúdo do arquivo, credenciais ou clientes de API. A implementação Google continua proprietária de `GoogleFile` em [`providers/google/api/`](../providers/google/api/README.md).
+
+## Atributos de FileData e File
+
+`FileData` não possui campos: é um `enum` com **duas variantes fechadas**:
+
+```rust
+pub enum FileData {
+    Local(LocalFile),
+    Remote(RemoteFile),
+}
 ```
 
-**Entrega:** o Storage mantém uma notificação completa pendente até reconhecimento seguro do consumidor. Uma entrega comum pode ter **um único `File`**, mas a interface é sempre um lote. O armazenamento é uma proteção contra falhas, não uma fonte para reconstruir metadados perdidos.
+`File` encapsula o contexto da observação, independentemente da origem:
 
-**Observação não equivale a estado atual:** um `File` expressa os fatos conhecidos em um instante; o Analisador pode exigir nova verificação antes de uma operação destrutiva. Em falhas de varredura, remoção suspeita ou indisponibilidade, poderá haver observação sem `LocalFile`/`RemoteFile` disponível; a representação exata desse caso será definida na etapa dos atributos, sem transformar ausência de dados em exclusão confirmada.
+| Nome | Tipo | Origem | Semântica |
+| --- | --- | --- | --- |
+| `id` | `FileId` | Produtor do evento | ID estável da ocorrência, preservado em retry |
+| `sync_id` | `SyncId` | Escopo da sincronização | Impede misturar observações de raízes distintas |
+| `event` | `FileEvent` | Detector produtor | `ObservedChange`, `RecheckRequired`, `ScopeUnavailable` |
+| `observed_at` | `Timestamp` | Detector produtor | Momento da observação, não mtime do conteúdo |
+| `coverage` | `ObservationCoverage` | Detector produtor | `Complete`, `Partial`, `Unavailable` |
+| `scope` | `FileScope` | Detector produtor | `Local(path)`, `Remote(ref)` ou `WholeSync` |
+| `data` | `Option<FileData>` | Detector produtor | `Some` quando há metadados observados; `None` exige reavaliação |
 
-## Propriedade e limites
+**Invariantes:** `ObservedChange` exige `data=Some`; `ScopeUnavailable` exige `data=None` e cobertura `Unavailable`. Quando `data=Some`, a origem e a referência devem coincidir com `scope`. `None` **não é exclusão comprovada**.
 
-- `LocalFile`, `RemoteFile`, `FileData` e `File` pertencem a `models/`.
-- `FileBatch` **não** pertence a `models/`; é o contrato de agregação/entrega do Detector.
-- `GoogleFile` continua em [`providers/google/api/`](../providers/google/api/README.md); `RemoteFile` pode preservar metadados específicos de provedor sem importar o tipo Google.
-- `SyncItem` **não será introduzido nem movido nesta etapa**. Sua posição será reavaliada **quando o planejamento do Inventário for revisado**.
-- IDs e tipos auxiliares existentes devem ter um único proprietário; não duplicar `AccountId` ou criar aliases incompatíveis.
+## FileBatch — contexto externo ao Models
 
-## O que foi aprovado e o que não foi
+A [interface do Detector](../detectors/INTERFACES.md) já contém a identidade do lote e a lista de eventos de seu contrato anterior. Ao ser revisada para o novo fluxo, a **única mudança conceitual obrigatória** é que a lista de entrega passe a conter **`File` completos**, mantendo identificação/reserva/confirmação de lote na responsabilidade do Detector.
 
-**Aprovado agora:** nomes `FileData`, `File`, `FileBatch`; relações de encapsulamento; divisão de responsabilidade; independência do Orquestrador em relação à origem local/remota; distinção entre observação e estado consolidado.
+Não definir nem implementar `FileBatch` dentro de `models/`. O Orquestrador recebe um lote mesmo quando houver apenas um `File`. O Storage deve preservar a **mesma ocorrência e o mesmo conteúdo** até reconhecimento seguro, com reentrega em falhas.
 
-**Próxima etapa — ainda NÃO definida:** campos exatos, obrigatoriedade/opcionalidade, tipos de IDs, eventos, contexto, cobertura, data, localização, formato de metadados específicos, serialização e invariantes por atributo. Exemplos anteriores de structs e campos **não são contrato aprovado**.
+## Tipos auxiliares e invariantes
 
-A implementação futura deverá refletir **literalmente a especificação aprovada**, sem escolher atributos, variantes, comportamentos ou mecanismos de entrega por inferência. Não implementar enquanto essas definições permanecerem abertas.
+`ProviderId`, `AccountId`, `SyncId`, `RemoteFileId`, `RemoteFileRef`, `LocalFileId`, `FileId`, `Timestamp`, `FileKind`, `HashAlgorithm`, `FileHash`, `LocalRelativePath`, `FieldValue<T>`, `ProviderFileData`, `FileEvent`, `ObservationCoverage` e `FileScope` constam de [INTERFACES.md](INTERFACES.md), onde estão definidos **tipos, variantes e regras de validação**.
 
-## Estrutura documental
+- Identidade remota é qualificada pela conta; não confundir `RemoteFileId` com `FileId` de ocorrência.
+- Caminhos locais preservam bytes Unix, são relativos à raiz e não permitem escapes por `..`.
+- `Unknown` é não observado; `Known([])` prova lista observada e vazia.
+- Os modelos são dados autocontidos **do momento observado**, não garantia de que o arquivo continua inalterado.
+- `SyncItem` e a revisão do Inventário ficam **expressamente para outra etapa**.
 
-```text
-docs/engine/models/
-├── README.md       # conceitos, hierarquia, ownership
-├── INTERFACES.md   # contratos de tipos; atributos ainda pendentes
-├── TESTS.md        # critérios de teste conceituais; casos finais após atributos
-└── AGENTS.md       # regras para implementação futura
-```
+## Estado e documentação
 
-A organização física futura do Rust também não está fixada. Este diretório é **documentação de arquitetura-alvo**, não descrição do código atual.
+**Etapa de atributos:** proposta formal para aprovação, não implementação. Estão em aberto, antes de codificar: política concreta de payload especializado (formato/limite) e compatibilidade das identidades já existentes. Nenhuma dessas pendências autoriza o agente a inventar decisões.
 
 [INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md).
