@@ -4,7 +4,7 @@
 
 O **Inventário** é responsável exclusivamente pelo **acesso e pela persistência dos dados de cada pasta sincronizada**. Os demais módulos consomem suas interfaces e não executam SQL diretamente nesse banco. Dados globais da aplicação, contas e preferências **não** são responsabilidade do Inventário.
 
-O Inventário registra identidades dos itens, metadados observados, vínculos, último estado confirmado, operações pendentes, cursores e atividades. Ele **não** observa o filesystem ou o Google Drive por conta própria, nem executa upload/download ou escolhe qual versão deve prevalecer em um conflito.
+O Inventário registra identidades dos itens, metadados observados, vínculos, último estado confirmado, operações pendentes e atividades. A propriedade dos cursores/eventos remotos está pendente de revisão com Detector. Ele **não** observa o filesystem ou o Google Drive por conta própria, nem executa upload/download ou escolhe qual versão deve prevalecer em um conflito.
 
 ## Banco de dados por pasta sincronizada
 
@@ -30,161 +30,160 @@ O diretório oculto `.drivesync/` guarda o estado durável **daquela sincroniza�
 
 O Inventário **não abre nem gerencia um `app.sqlite3`**. A existência e o esquema desse banco global continuam como proposta pendente de revisão nos módulos responsáveis.
 
-## 1. Tabelas e relações do inventário (`inventory.sqlite3`)
+## 1. Modelo lógico do inventário e seus relacionamentos
 
-Este banco representa os arquivos e o processamento **de um único par de pastas**.
+O Inventário é o **proprietário de `SyncItem`**, identificador lógico persistente de um arquivo/diretório associado à sincronização. **Não redefine `LocalFile`, `RemoteFile`, `File` nem seus IDs**, que pertencem a [Models](../models/INTERFACES.md). `File.id` identifica uma **ocorrência** observada, enquanto `SyncItem.id` identifica o **item lógico** ao longo de múltiplas observações e operações.
 
-### Tabelas e relacionamentos
+### Encapsulamento — observado × registrado × confirmado
 
-| Tabela | Chave | Conteúdo |
+```mermaid
+flowchart TB
+    DET["Detector: FileBatch com Vec File"]
+    AN["Analisador: interpreta FileData e evidência"]
+    INV["InventoryManager: grava estado observado"]
+    ITEM["SyncItem: identidade lógica / presenças / status"]
+    L["local: Option LocalFile"]
+    R["remote: Option RemoteFile"]
+    B["baseline: Option SyncBaseline"]
+    OPS["sync_operations: fila de ações"]
+    HIST["activity: histórico por item"]
+    DET --> AN
+    AN -->|"RecordLocalObservation / RecordRemoteObservation"| INV
+    INV --> ITEM
+    ITEM --> L
+    ITEM --> R
+    ITEM --> B
+    ITEM --> OPS
+    ITEM --> HIST
+```
+
+```text
+File [models/]                           evento/observação, não entidade persistente estável
+├── id: FileId                            identifica a ocorrência
+├── event: FileEvent                      kind, previous, current
+├── coverage / scope / observed_at
+└── data: Option<FileData>
+    ├── Local(LocalFile)
+    └── Remote(RemoteFile)
+
+                     ↓ Analisador / registro de observação
+
+SyncItem [inventory/]                    item lógico e persistente
+├── id: SyncItemId
+├── kind: ItemKind
+├── local: Option<LocalFile>              último estado local conhecido
+├── remote: Option<RemoteFile>            último estado remoto conhecido
+├── local_presence: PresenceState
+├── remote_presence: PresenceState
+├── baseline: Option<SyncBaseline>        último estado sincronizado confirmado
+├── status: SyncStatus
+├── conflict_reason: Option<String>
+├── revision: u64                         controle otimista do item
+├── last_checked_at: Option<Timestamp>
+└── last_synced_at: Option<Timestamp>
+```
+
+**Não duplicar modelos:** o Inventário armazena o último estado conhecido de cada lado em `SyncItem`, **não** dois objetos `File` simultâneos ou `GoogleFile` específico da API. Eventos `File.event` são fatos observados; `SyncStatus`, `PresenceState` e `SyncBaseline` são conclusões/estados persistentes. `FileEventKind::Deleted` e `File.data=None` não são provas suficientes de `AbsentConfirmed`.
+
+### Estruturas relacionais previstas (não DDL final)
+
+| Estrutura | Chave conceitual | Conteúdo |
 | --- | --- | --- |
-| `sync_info` | `singleton=1` | `sync_id`, conta, raiz remota, geração, conclusão da sincronização inicial |
-| `local_files` | `local_file_id` | Nome/caminho local, tipo, tamanho, horários, dispositivo, inode, checksum |
-| `google_files` | `google_file_id` | `remote_id` exclusivo, nome, MIME, versão, tamanho, datas, hashes, lixeira e drive |
-| `google_file_parents` | `(google_file_id, parent_remote_id)` | Uma linha por relacionamento pai do arquivo no Drive |
-| `sync_items` | `item_id` | Vínculo com `local_file_id` e `google_file_id`, presença, status, revisão e horários |
-| `sync_baselines` | `item_id` | Estado anterior **confirmado**: presença, nomes, pais, versões, hashes e instante |
-| `sync_operations` | `operation_id` | Fila persistente de ações, estado, tipo, direção, tentativas e falhas |
-| `remote_cursor` | `corpus` | Cursor de alterações remoto e geração correspondente |
-| `remote_events` | `event_id` | Eventos de alterações remotas recebidos, pendentes ou reconhecidos |
-| `activity` | `activity_id` | Histórico cronológico de operações por arquivo, com `item_id` obrigatório e `operation_id` opcional |
+| `sync_info` | singleton | `SyncId`, `AccountId`, raiz remota, geração e inicialização |
+| `local_files` | identidade local interna / item vinculado | Metadados locais selecionados do **`models::LocalFile`**, com estados `MetadataValue<T>` preservados |
+| `remote_files` | referência única por **conta + ID remoto** | Metadados remotos selecionados de **`models::RemoteFile`**, `ProviderId` e identidade do recurso |
+| `remote_file_parents` | arquivo remoto + ID do pai | Relacionamentos remotos com pais quando observados; não inventar pai para resultado parcial |
+| `sync_items` | `SyncItemId` | Relaciona último local/remoto, presenças, status, revisão e diagnóstico |
+| `sync_baselines` | `SyncItemId` | Último estado **confirmado**, separado de observações |
+| `sync_operations` | `OperationId` | Fila de ações, retry e precondições; distinta da fila de eventos do Detector |
+| `activity` | `ActivityId` | Histórico com relação obrigatória a `SyncItem` |
+| `remote_cursor` / `remote_events` (sobreposição pendente) | **PENDENTE de decisão de propriedade** | Contrato anterior do Inventário se sobrepõe a checkpoint do Detector Remoto e eventos do Detector Storage; **não implementar duplicação** |
 
-### Diagrama do banco de cada sincronização
+`ProviderFileData` é um envelope de metadados específicos, **não conteúdo de arquivo**. Seu codec, campos selecionados e necessidade de retenção serão definidos antes de implementar. O Inventário não importa `GoogleFile` nem usa cliente de Google API. O princípio de **não serializar estruturas inteiras em JSON/BLOB indiscriminadamente** permanece; atributos complexos exigirão mapeamento revisado. Não truncar metadados recebidos silenciosamente depois de aceitar o registro.
+
+### Diagrama lógico entidade-relacionamento
 
 ```mermaid
 erDiagram
-    SYNC_ITEMS o|--o| LOCAL_FILES : "local_file_id"
-    SYNC_ITEMS o|--o| GOOGLE_FILES : "google_file_id"
-    GOOGLE_FILES ||--o{ GOOGLE_FILE_PARENTS : "possui pais"
-    SYNC_ITEMS ||--o| SYNC_BASELINES : "ultimo confirmado"
-    SYNC_ITEMS ||--o{ SYNC_OPERATIONS : "fila por item"
-    SYNC_ITEMS o|--o{ REMOTE_EVENTS : "evento associado"
-    REMOTE_CURSOR ||--o{ REMOTE_EVENTS : "origem do evento"
-    SYNC_ITEMS ||--o{ ACTIVITY : "historico do item"
-    SYNC_OPERATIONS o|--o{ ACTIVITY : "resultado da operacao"
-
+    SYNC_INFO ||--o{ SYNC_ITEMS : "uma sincronizacao"
+    SYNC_ITEMS o|--o| LOCAL_FILES : "estado local"
+    SYNC_ITEMS o|--o| REMOTE_FILES : "estado remoto"
+    REMOTE_FILES ||--o{ REMOTE_FILE_PARENTS : "pais observados"
+    SYNC_ITEMS ||--o| SYNC_BASELINES : "estado confirmado"
+    SYNC_ITEMS ||--o{ SYNC_OPERATIONS : "fila operacional"
+    SYNC_ITEMS ||--o{ ACTIVITY : "historico"
+    SYNC_OPERATIONS o|--o{ ACTIVITY : "resultado"
     SYNC_INFO {
-        INTEGER singleton PK
-        TEXT sync_id
+        TEXT sync_id PK
         TEXT account_id
         TEXT remote_root_id
         INTEGER generation
     }
-    LOCAL_FILES {
-        TEXT local_file_id PK
-        BLOB name
-        INTEGER size
-        INTEGER modified_ns
-        INTEGER inode
-    }
-    GOOGLE_FILES {
-        TEXT google_file_id PK
-        TEXT remote_id UK
-        TEXT name
-        TEXT mime_type
-        TEXT version
-    }
-    GOOGLE_FILE_PARENTS {
-        TEXT google_file_id PK,FK
-        TEXT parent_remote_id PK
-    }
     SYNC_ITEMS {
         TEXT item_id PK
-        TEXT local_file_id FK,UK
-        TEXT google_file_id FK,UK
+        TEXT local_file_ref FK
+        TEXT remote_file_ref FK
         TEXT local_presence
         TEXT remote_presence
         TEXT sync_status
         INTEGER revision
     }
+    LOCAL_FILES {
+        TEXT local_file_ref PK
+        BLOB relative_path
+        TEXT metadata_state
+    }
+    REMOTE_FILES {
+        TEXT remote_file_ref PK
+        TEXT account_id
+        TEXT provider_id
+        TEXT remote_file_id
+        TEXT metadata_state
+    }
+    REMOTE_FILE_PARENTS {
+        TEXT remote_file_ref FK
+        TEXT parent_remote_id
+    }
     SYNC_BASELINES {
-        TEXT item_id PK,FK
+        TEXT item_id PK
         TEXT confirmed_at
+        TEXT local_signature
         TEXT remote_version
-        TEXT local_checksum
     }
     SYNC_OPERATIONS {
         INTEGER operation_id PK
         TEXT item_id FK
-        TEXT operation_kind
-        TEXT direction
         TEXT state
-    }
-    REMOTE_CURSOR {
-        TEXT corpus PK
-        TEXT cursor
-        INTEGER generation
-    }
-    REMOTE_EVENTS {
-        INTEGER event_id PK
-        TEXT corpus FK
-        TEXT item_id FK
-        TEXT event_kind
-        TEXT processed_at
+        TEXT kind
     }
     ACTIVITY {
         INTEGER activity_id PK
         TEXT item_id FK
-        INTEGER operation_id FK
         TEXT event_type
-        TEXT origin
         TEXT outcome
-        TEXT occurred_at
     }
 ```
 
-As relações `sync_items.local_file_id` e `sync_items.google_file_id` são **FKs opcionais e únicas**. Assim, um item lógico pode existir só no local, só no Google, nos dois lados ou ficar temporariamente sem representação atual. A falta da referência **não prova exclusão**.
+**Diagrama conceitual:** nomes `local_file_ref`, `remote_file_ref` e `metadata_state` são apenas indicadores de identidade/grupos, **não definição de colunas SQLite já aprovadas**. Preservar unicidade de `RemoteFileRef(account_id,file_id)`; IDs locais só são estáveis quando comprovados. `RemoteFile` pode ser de qualquer provedor suportado, sem tabela `google_files` no contrato genérico.
 
-### `LocalFile`, `GoogleFile` e `SyncItem`
+### Estados persistentes e regras de atualização
 
-| Objeto Rust | Dono do contrato | Papel no Inventário |
-| --- | --- | --- |
-| `LocalFile` | Componente responsável pelos metadados locais (a definir integralmente) | Produz/representa uma observação local |
-| `GoogleFile` | `providers/google/api/` | Produz/representa uma observação remota |
-| `SyncItem` | `inventory/` | Reúne as duas representações, baseline e situação de sincronização |
+| Campo | Semântica |
+| --- | --- |
+| `SyncItem.local` / `remote` | Último snapshot observado e confiável, mesmo quando há reavaliação pendente |
+| `local_presence` / `remote_presence` | `Unknown`, `Present`, `AbsentConfirmed`; somente prova suficiente permite ausência confirmada |
+| `SyncBaseline` | Estado **anterior confirmado**, não avançado por observação nova |
+| `SyncStatus` | Diagnóstico/condição aplicado pelo consumidor autorizado, não pelo Detector |
+| `SyncItem.revision` | Revisão de concorrência do registro, independente de `File.id` ou versão remota |
+| `sync_operations` | Fila persistente de operações de sincronização, separada do Detector Storage |
 
-```rust
-// Contrato conceitual, não assinatura definitiva.
-pub struct SyncItem {
-    pub id: SyncItemId,
-    pub local: Option<LocalFile>,
-    pub remote: Option<GoogleFile>,
-    pub baseline: Option<SyncBaseline>,
-    pub local_presence: PresenceState,
-    pub remote_presence: PresenceState,
-    pub status: SyncStatus,
-}
-```
+**Observação parcial:** `MetadataValue::NotCollected` não apaga valor anterior conhecido; `Known(false)`, `Known([])` e `Known(0)` são observações reais. Uma atualização precisa conservar o estado de coleta ou a prova de que houve nova inspeção completa. Não transformar `Unsupported`, `PermissionDenied` ou `Unavailable` em dados conhecidos.
 
-O Inventário constrói o `SyncItem` a partir das tabelas relacionadas (por exemplo, com `LEFT JOIN`). A aplicação não precisa conhecer o esquema para consultar um arquivo.
+**Associação:** `SyncItem` pode existir só no lado local, só no remoto, nos dois lados ou sem snapshot atual (tombstone), conservando vínculo e baseline até decisão segura. Movimentar ou renomear preserva `SyncItemId` quando a identidade foi correlacionada; o Analisador decide a correspondência, não o Inventário por nome semelhante.
 
-Os atributos de `LocalFile` ainda poderão evoluir. Os de `GoogleFile` são orientados pelo contrato da Google API. **As tabelas guardam os atributos necessários à persistência**, não necessariamente uma cópia integral de todos os objetos externos. Campos opcionais não recebidos não se convertem automaticamente em zero, `false` ou exclusão.
+### Fronteira com Detector / cursores
 
-### Presença, estado e baseline
-
-| Campo/estado | Valores | Significado |
-| --- | --- | --- |
-| `local_presence`, `remote_presence` | `unknown`, `present`, `absent_confirmed` | Desconhecido, presença observada ou ausência efetivamente comprovada |
-| `sync_status` | `pending_reconciliation`, `pending_upload`, `pending_download`, `synced`, `conflict`, `error` | Condição registrada para o Analisador/Orquestrador |
-| `revision` | Inteiro positivo | Versão para evitar atualizações concorrentes obsoletas |
-| `SyncBaseline` | Registro opcional por item | Último estado **efetivamente confirmado** em ambos os lados |
-
-Uma observação atualiza metadados locais ou remotos **sem avançar o baseline**. Apenas a confirmação de uma operação concluída e verificada altera o baseline.
-
-O baseline deve reter ao menos presença, nome, pai/localização, versão/assinatura e instante de confirmação. Ele é separado das tabelas de estado observado para evitar sobrescrever o passado ao detectar mudanças atuais.
-
-### Fila de operações, cursores e eventos
-
-| Estrutura | Campos/estados principais | Regra |
-| --- | --- | --- |
-| `sync_operations` | `item_id`, `direction` (upload/download), `operation_kind` (criar, conteúdo, renomear, mover, lixeira, excluir, restaurar), `state` (pendente, executando, retry, bloqueada, concluída, falha), `attempt_count`, `next_attempt_at`, precondição de versão | Registra trabalho durável, inclusive offline; não executa a ação |
-| `remote_cursor` | `corpus`, `cursor`, `generation` | Representa até onde as alterações remotas foram observadas |
-| `remote_events` | `corpus`, `remote_id`, `item_id?`, tipo, versão, `observed_at`, `processed_at?` | Evento só fica reconhecido após reavaliação explícita |
-
-- Publicar o cursor de uma página e seus eventos deve ser **transacional** no inventário.
-- Avançar o cursor não significa que os eventos foram processados.
-- Depois de interrupção, recuperar a fila e os eventos pendentes e **reavaliar antes de repetir** escritas com resultado desconhecido.
-- O Inventário persiste as operações, mas a **decisão de executá-las** pertence aos módulos de coordenação e análise.
+O [Detector Remoto](../detectors/remote/INTERFACES.md) declara `RemoteCheckpoint.read/commit`; o [Detector Storage](../detectors/storage/INTERFACES.md) persiste o `File` inteiro e reserva `FileBatch`. **O Inventário não deve implementar outra fila de entrega dos mesmos eventos ou avançar o cursor do Detector independentemente**. As quatro APIs antigas de cursores/eventos ainda aparecem na interface existente do Inventário e exigem decisão explícita de eliminação ou realocação **antes de implementar**. Não inventar compatibilidade, migração ou duplicação entre bancos; a revisão atual apenas aponta a sobreposição e mantém inalteradas as assinaturas não relacionadas.
 
 ## 2. Histórico como parte de `inventory.sqlite3`
 
@@ -194,7 +193,7 @@ O baseline deve reter ao menos presença, nome, pai/localização, versão/assin
 | --- | --- | --- |
 | `sync_items` e `sync_baselines` | Como está o arquivo agora? Qual foi seu último estado sincronizado? | `relatorio.pdf` está pendente de upload |
 | `sync_operations` | O que precisa ser executado, está em execução ou deve ser retomado? | Atualizar conteúdo remoto após reconexão |
-| `remote_events` | Quais sinais de mudança remota ainda exigem reavaliação? | Google sinalizou alteração no arquivo X |
+| `remote_events` (sobreposição pendente) | Quais sinais de mudança remota ainda exigem reavaliação? | Google sinalizou alteração no arquivo X |
 | `activity` | O que foi feito ou tentado, quando, por quem/qual origem e com qual resultado? | Upload concluído às 15:32; tentativa anterior falhou |
 
 ### Quando registrar uma atividade
