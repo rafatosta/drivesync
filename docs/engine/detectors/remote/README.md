@@ -49,3 +49,9 @@ Seu único contrato de saída é um **sink interno de eventos individuais**, inj
 [INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md) · [Especialista Google](google/README.md) · [Detector pai](../README.md).
 
 **Estado:** especificação proposta, sem testes executados nem implementação.
+
+## Alinhamento a Models
+
+O especialista converte metadados do serviço, por exemplo `GoogleFile`, em `RemoteFile` usando um adaptador isolado. Emite **`models::File` inteiro** por chamada ao sink interno, com `FileData::Remote(RemoteFile)` quando o arquivo foi observado e ID real. Evento e localização anterior/atual utilizam `FileEventKind`, `FileEvent` e `FileLocation` de Models; sem dados seguros, emite reavaliação com `data=None`. A fachada e o Orquestrador jamais leem os campos de RemoteFile e Storage não os reduz.
+
+O pipeline conserva checkpoint, paginação e replay: o cursor só é confirmado depois de persistir a observação inteira. Mudar atributos remotos afeta apenas o adaptador especializado e seus testes, não a lógica de detecção. `removed` pode significar perda de acesso, portanto não prova exclusão.
