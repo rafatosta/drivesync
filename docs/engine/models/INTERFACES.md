@@ -252,41 +252,126 @@ A assinatura interna de coleta ficará definida em [Detector Local — INTERFACE
 
 **Estado: proposta formal de atributos, ainda não implementada nem aprovada como contrato Rust final.**
 
-## 3. RemoteFile — dados de uma observação remota
+## 3. RemoteFile — metadados remotos e associação ao provedor
+
+### 3.1. Objetivo, abrangência e identidade
+
+`RemoteFile` é o **modelo genérico de um arquivo originado em um provedor remoto**, com duas camadas complementares:
+
+1. **Atributos normalizados**, em grupos, para que o Analisador e outros módulos possam utilizar informações comuns **sem saber se são do Google Drive ou de outro serviço**.
+2. **`ProviderFileData`**, um pacote **opaco, identificado por provedor, formato e versão**, que preserva os metadados especializados do **objeto original do provedor** (por exemplo, um `GoogleFile`), sem importar `GoogleFile` na crate `models/`.
+
+A associação é feita por **`RemoteFileRef(account_id, file_id)` + `ProviderId`**, não por nome/caminho, nome de usuário, MIME ou referência a um cliente HTTP. Renomear ou mover o arquivo **não** deve alterar seu vínculo ao recurso remoto quando o ID remoto continua o mesmo. IDs de provedores/contas diferentes não são intercambiáveis. O `provider_data` não cria uma nova identidade do arquivo.
+
+Esta seção é um **inventário documental abrangente de campos remotos** antes da etapa de seleção. Assim como `LocalFile`, deve-se **levantar todos os metadados disponíveis primeiro e depois decidir manter, coletar sob demanda ou descartar**, por custo, privacidade, suporte e necessidade. **Não implementar automaticamente todos os campos.**
+
+### 3.2. Contrato conceitual de RemoteFile
+
+Os grupos abaixo são uma **proposta conceitual tipada**. A forma precisa de cada grupo, as listas, a serialização e os campos finais exigem aprovação; não são structs Rust compiladas.
 
 ```rust
 pub struct RemoteFile {
-    pub reference: RemoteFileRef,
-    pub provider: ProviderId,
-    pub name: String,
-    pub kind: FileKind,
-    pub mime_type: Option<String>,
-    pub size_bytes: Option<u64>,
-    pub modified_at: Option<Timestamp>,
-    pub version: Option<String>,
-    pub hash: Option<FileHash>,
-    pub parent_ids: FieldValue<Vec<RemoteFileId>>,
-    pub provider_data: Option<ProviderFileData>,
+    // Associação estável ao recurso original
+    pub reference: RemoteFileRef, // conta + ID remoto
+    pub provider: ProviderId,     // Google, OneDrive etc.
+
+    // Metadados comuns, quando efetivamente fornecidos
+    pub identity: RemoteIdentityMetadata,
+    pub classification: RemoteClassificationMetadata,
+    pub location: RemoteLocationMetadata,
+    pub times: RemoteTimeMetadata,
+    pub content: RemoteContentMetadata,
+    pub state: RemoteStateMetadata,
+    pub access: RemoteAccessMetadata,
+    pub presentation: RemotePresentationMetadata,
+
+    // Snapshot de metadados especializados do provedor, sem conteúdo
+    pub provider_data: MetadataValue<ProviderFileData>,
+}
+
+pub struct RemoteIdentityMetadata {
+    pub name: MetadataValue<String>,
+    pub description: MetadataValue<String>,
+    pub original_filename: MetadataValue<String>,
+}
+
+pub struct RemoteClassificationMetadata {
+    pub kind: MetadataValue<FileKind>,
+    pub mime_type: MetadataValue<String>,
+    pub file_extension: MetadataValue<String>,
+    pub full_file_extension: MetadataValue<String>,
+}
+
+pub struct RemoteLocationMetadata {
+    pub parent_ids: MetadataValue<Vec<RemoteFileId>>,
+    pub container_id: MetadataValue<String>, // ex.: driveId, se aplicável
+}
+
+pub struct RemoteTimeMetadata {
+    pub created_at: MetadataValue<Timestamp>,
+    pub modified_at: MetadataValue<Timestamp>,
+    pub trashed_at: MetadataValue<Timestamp>,
+    pub viewed_at: MetadataValue<Timestamp>,
+}
+
+pub struct RemoteContentMetadata {
+    pub size_bytes: MetadataValue<u64>,
+    pub quota_bytes_used: MetadataValue<u64>,
+    pub version: MetadataValue<String>, // opaque; não ordenar entre provedores
+    pub revision_id: MetadataValue<String>,
+    pub hashes: MetadataValue<Vec<FileHash>>,
+}
+
+pub struct RemoteStateMetadata {
+    pub trashed: MetadataValue<bool>,
+    pub explicitly_trashed: MetadataValue<bool>,
+    pub starred: MetadataValue<bool>,
+    pub shared: MetadataValue<bool>,
+    pub owned_by_me: MetadataValue<bool>,
+}
+
+pub struct RemoteAccessMetadata {
+    // Somente informações que admitem semântica genérica;
+    // estruturas complexas ou específicas permanecem em provider_data.
+    pub can_read: MetadataValue<bool>,
+    pub can_download: MetadataValue<bool>,
+    pub can_edit: MetadataValue<bool>,
+    pub can_delete: MetadataValue<bool>,
+    pub can_rename: MetadataValue<bool>,
+    pub can_move: MetadataValue<bool>,
+    pub can_share: MetadataValue<bool>,
+}
+
+pub struct RemotePresentationMetadata {
+    pub web_view_link: MetadataValue<String>,
+    pub web_content_link: MetadataValue<String>,
+    pub thumbnail_link: MetadataValue<String>,
+    pub icon_link: MetadataValue<String>,
 }
 ```
 
-| Atributo | Tipo | Obrigatório? | Origem e semântica |
-| --- | --- | --- | --- |
-| `reference` | `RemoteFileRef` | Sim | ID do recurso qualificado pela conta, fornecido pelo especialista |
-| `provider` | `ProviderId` | Sim | Serviço selecionado pela conta; precisa corresponder ao registro da conta |
-| `name` | `String` | Sim | Nome retornado pelo serviço; manter Unicode sem normalização destrutiva |
-| `kind` | `FileKind` | Sim | Classificação conhecida; `ProviderNative` para itens nativos do serviço; `Unknown` se indeterminado |
-| `mime_type` | `Option<String>` | Campo sim; valor não | MIME quando retornado; ausência não implica `application/octet-stream` |
-| `size_bytes` | `Option<u64>` | Campo sim; valor não | Tamanho disponível; documentos nativos podem não possuir tamanho em bytes |
-| `modified_at` | `Option<Timestamp>` | Campo sim; valor não | Data fornecida pelo serviço, sem inventar precisão |
-| `version` | `Option<String>` | Campo sim; valor não | Versão/ETag **opaca**; não ordenar nem comparar entre provedores |
-| `hash` | `Option<FileHash>` | Campo sim; valor não | Digest retornado ou verificado; não inventar hash para documento nativo |
-| `parent_ids` | `FieldValue<Vec<RemoteFileId>>` | Sim | `Unknown` = lista não observada; `Known([])` = ausência de pais realmente conhecida |
-| `provider_data` | `Option<ProviderFileData>` | Campo sim; valor não | Metadados especializados opacos; `None` quando não recebidos/necessários |
+Os grupos normalizados **não são cópias integrais** do modelo Google: representam conceitos aproveitáveis por múltiplos serviços. Não duplicar em campos genéricos todos os dados de permissões, ACLs remotas, labels, restrições ou atributos de mídia quando a semântica do outro provedor não for equivalente. Esses detalhes ficam no envelope especializado. O Analisador pode usar os campos normalizados e consultar o especialista quando realmente precisar entender dados particulares.
 
-`RemoteFile` nunca carrega conteúdo do arquivo, sessão, token, cliente HTTP, cursor de mudanças nem comando de exclusão. Um `RemoteFileId` bruto não é identidade única entre contas.
+`MetadataValue<T>`, definido na seção de `LocalFile`, distingue `Known(T)`, `NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable`. Para um campo omitido por `fields` parcial da API, usar `NotCollected`, **não** `Known(false)`, `Known(0)` ou `Known([])`. A presença de um recurso na lixeira não equivale automaticamente a autorização para excluir localmente.
 
-### 3.1 ProviderFileData — metadados especializados
+### 3.3. Matriz dos metadados normalizados
+
+| Grupo | Metadados | Origem exemplificada no GoogleFile |
+| --- | --- | --- |
+| Referência | `reference` e `provider` | `GoogleFile.id` + conta autenticada + provedor `google` |
+| Identidade e nome | `name`, `description`, `original_filename` | `name`, `description`, `originalFilename` |
+| Tipo | `kind`, MIME e extensões | `mimeType`, `fileExtension`, `fullFileExtension`; tipos nativos e atalhos requerem classificação própria |
+| Localização | `parent_ids`, `container_id` | `parents`, `driveId`; parcialidade não significa raiz |
+| Datas | criação, modificação, lixeira e último acesso/visualização | `createdTime`, `modifiedTime`, `trashedTime`, `viewedByMeTime` quando disponíveis |
+| Conteúdo/versões | tamanho, cota, versão, revisão, hashes | `size`, `quotaBytesUsed`, `version`, `headRevisionId`, MD5/SHA-1/SHA-256 |
+| Estado | lixeira, marcado, compartilhado, propriedade | `trashed`, `explicitlyTrashed`, `starred`, `shared`, `ownedByMe` |
+| Capacidades comuns | leitura/download/edição/exclusão/renomeação/movimentação/compartilhamento | `capabilities` **quando fornecidas**; não inferir `can_read` só porque uma resposta chegou |
+| Links de apresentação | abrir no navegador, conteúdo, miniatura e ícone | `webViewLink`, `webContentLink`, `thumbnailLink`, `iconLink` |
+| Especialização | capacidades completas, permissões, atalhos, labels, metadata de mídia e políticas | `provider_data` com snapshot tipado do recurso de origem |
+
+**Observação de precisão:** campos com nomes semelhantes podem ter semânticas diferentes entre provedores. A normalização somente é permitida se a equivalência for demonstrada; caso contrário, deixar `Unsupported`/`NotCollected` e preservar o valor original no `provider_data`. `can_move` é propositalmente conceitual: no Google há capacidades de mover **dentro** e **para fora** do drive, que não devem ser reduzidas a um único booleano sem definir a política; não fabricar `Known(true/false)`.
+
+### 3.4. ProviderFileData — vínculo fiel ao objeto do provedor
 
 ```rust
 pub struct ProviderFileData {
@@ -297,14 +382,80 @@ pub struct ProviderFileData {
 }
 ```
 
-| Atributo | Tipo | Obrigatório? | Regra |
-| --- | --- | --- | --- |
-| `provider` | `ProviderId` | Sim | Deve coincidir com `RemoteFile.provider` |
-| `format` | `String` | Sim | Identificador não vazio do formato do payload |
-| `format_version` | `u32` | Sim | Versão positiva da codificação específica |
-| `payload` | `Vec<u8>` | Sim | **Somente metadados** especializados, jamais conteúdo do arquivo ou credenciais |
+| Campo | Função | Regra |
+| --- | --- | --- |
+| `provider` | Identifica quem interpreta o conteúdo | Igual a `RemoteFile.provider` e ao provedor da conta de `reference` |
+| `format` | Identifica o esquema de metadados transportados | Por exemplo `google.drive.file-metadata` (identificador ilustrativo, não formato aprovado) |
+| `format_version` | Identifica a versão do esquema | Nunca assumir que uma versão desconhecida é decodificável |
+| `payload` | Bytes de um snapshot **filtrado de metadados do recurso do provedor** | Não transportar conteúdo binário do arquivo, tokens, sessões, credenciais ou objetos de rede |
 
-O envelope é opaco para Models/Orquestrador. Somente o especialista que conhece o provedor interpreta seu conteúdo e valida seu formato. Limite de tamanho e codificação concreta do payload devem ser fixados **antes da implementação**; não armazenar respostas HTTP brutas sem filtragem de segredos.
+#### Como um GoogleFile é associado
+
+```text
+providers/google/api/
+└── GoogleFile (objeto da API, campos opcionais)
+    │
+    ▼ especialista/adaptador Google
+    ├── valida id da resposta + conta provedora
+    ├── preenche RemoteFile.reference (account_id + file_id)
+    ├── normaliza campos comprovadamente observados
+    └── codifica metadados especializados em ProviderFileData
+         ├── provider: google
+         ├── format: esquema do snapshot Google
+         ├── format_version: versão
+         └── payload: metadados filtrados e identificáveis
+    │
+    ▼ RemoteFile
+       ├── reference + provider
+       ├── identity / classification / location / times ...
+       └── provider_data
+    │
+    ▼ FileData::Remote(RemoteFile)
+       ▼ File (ocorrência + evento)
+       ▼ FileBatch (Detector)
+       ▼ Orquestrador
+       ▼ Analisador (interpreta origem/ocorrência)
+```
+
+**Associação reversível de metadados, não de capacidade de acesso:** um especialista Google pode interpretar o `ProviderFileData` de formato conhecido, identificando o `GoogleFile` (ou a projeção sanitizada equivalente) que o originou. O `RemoteFile` guarda a **identidade do recurso**; o especialista usa a conta para recuperar autenticação quando for executar uma API — nunca usa tokens extraídos do payload.
+
+**Fidelidade:** se `GoogleFile` foi fornecido por resposta parcial, o adaptador preserva a distinção entre campo não solicitado e campo conhecido. O `payload` não precisa carregar todos os campos da API, mas os metadados **efetivamente coletados e selecionados para retenção** devem manter identidade, semântica, tipos, valores e informação de presença, incluindo listas vazias e `false`. Uma conversão de volta não pode alegar reconstruir o `GoogleFile` completo se houve filtragem/perda.
+
+**Resolução da identidade:** `GoogleFile.id` pode vir ausente em resposta parcial. Sem ID real **não criar `RemoteFileRef` fictício** nem usar nome/caminho como substituto; o especialista gera uma observação de reavaliação `File.data=None` com o melhor escopo conhecido. `GoogleChange.removed=true` também pode indicar **perda de acesso**, sem metadados; não construir `RemoteFile` vazio nem concluir exclusão automática.
+
+### 3.5. Campos específicos conhecidos no GoogleFile
+
+O contrato já existente em [Google API — INTERFACES](../providers/google/api/INTERFACES.md#91-estruturas-de-saída-e-metadados) lista os campos do recurso `GoogleFile`. Exemplos de categorias que **devem ser consideradas na revisão**, sem forçá-las ao núcleo normalizado:
+
+| Categoria do provedor | Campos conhecidos na API Google |
+| --- | --- |
+| Atalhos | `shortcutDetails.targetId`, `targetMimeType`, `targetResourceKey` |
+| Capacidades detalhadas | `capabilities.canEdit`, `canCopy`, `canDownload`, `canDelete`, `canRename`, `canMoveItemWithinDrive`, `canMoveItemOutOfDrive`, `canAddChildren`, `canListChildren`, `canShare`, `canReadRevisions` etc. |
+| Permissões/compartilhamento | `permissions`, `permissionIds`, `owners`, `lastModifyingUser`, `sharingUser`, `writersCanShare`, `copyRequiresWriterPermission`, herança |
+| Organização | `driveId`, `teamDriveId`, `spaces`, `folderColorRgb` |
+| Propriedades e indexação | `properties`, `appProperties`, `contentHints` |
+| Metadados de mídia | `imageMediaMetadata`, `videoMediaMetadata`, incluindo localizações de foto quando disponíveis |
+| Labels | `labelInfo` e campos com valores próprios |
+| Restrições/segurança | `contentRestrictions`, `downloadRestrictions`, `inheritedPermissionsDisabled`, `clientEncryptionDetails` |
+| Outros | `resourceKey`, `modifiedByMeTime`, `hasThumbnail`, `ownedByMe` etc. |
+
+**Riscos:** `resourceKey`, permissões, usuários, metadados de localização e detalhes de criptografia podem ser sensíveis. Não armazenar payload bruto com dados sensíveis sem revisão de necessidade, limpeza, retenção e controle de acesso. Em especial, **não copiar `wrappedKey` ou outras informações de descriptografia para a fila do Detector apenas porque aparecem no objeto da API**. A presença do campo no catálogo não é autorização para coletar ou persistir.
+
+### 3.6. Isolamento do Detector Remoto e coleta especializada
+
+**Alterações nos campos de `RemoteFile` não podem exigir modificações na lógica do Detector Remoto, na fachada de Detector ou no Orquestrador.** Assim como `LocalFile`, o Detector utiliza uma **interface estável de adaptação/coleta de metadados** e encaminha `RemoteFile` como valor opaco, sem inicializá-lo campo a campo nem inspecionar propriedades para entregar notificações.
+
+O **adaptador especializado do provedor**, por exemplo o adaptador Google, sabe traduzir `GoogleFile` para `RemoteFile`, preencher grupos genéricos, formar `ProviderFileData` e consultar dados adicionais por rotinas auxiliares quando necessário. A interface de integração concreta pertence ao [Detector Remoto](../detectors/remote/INTERFACES.md), e **não** a um serviço dentro de `models/`.
+
+Revisões de atributos podem alterar o adaptador, os testes e consumidores específicos que realmente utilizam os campos, mas **não** o mecanismo de polling, cursor, scan, fila ou notificações. Se uma classificação de evento exigir comparar metadados, usar uma porta especializada responsável pela classificação, sem acoplar o Detector ao esquema de `RemoteFile`.
+
+### 3.7. Revisão obrigatória antes da implementação
+
+**NÃO IMPLEMENTAR A LISTA INTEGRAL AUTOMATICAMENTE.** A estratégia é primeiro catalogar todos os metadados disponíveis no provedor e **somente depois descartar ou coletar sob demanda aqueles que não precisam participar do fluxo**.
+
+Para cada grupo/campo, registrar: finalidade para sincronização, origem/capacidade do provedor, custo e escopos de API, caráter sensível, necessidade de retenção e destinatário (`File`, Inventário, especialista ou consulta pontual). Concluir com **manter / sob demanda / descartar** e justificativa.
+
+Não implementar `RemoteFile` e `ProviderFileData` como contrato literal antes de decidir codificação, versão, limite de payload, sanitização e compatibilidade de identidades. **`SyncItem` permanece reservado à revisão posterior do Inventário.**
 
 ## 4. FileData — uma variante, nenhum comportamento
 
