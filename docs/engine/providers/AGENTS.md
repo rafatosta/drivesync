@@ -1,35 +1,30 @@
-# Providers — AGENTS: fronteira única de integrações externas
+# Providers — AGENTS
 
-## Objetivo e escopo
+## Missão
 
-Implementar `providers/` como **único ponto da engine para APIs remotas**, conforme [README](README.md), [INTERFACES](INTERFACES.md) e [TESTS](TESTS.md). O estado é documentação de arquitetura-alvo; **não afirmar implementação Rust existente**.
+Implementar Providers **somente como catálogo e fábrica tipada das APIs específicas** por `ProviderId`/`AccountId`. Seguir [README.md](README.md), [INTERFACES.md](INTERFACES.md) e [TESTS.md](TESTS.md). O desenho é uma proposta documental, não implementação Rust confirmada.
 
-## Dependências e limites obrigatórios
+## Regras obrigatórias
 
-1. **Apenas `providers/` executa protocolos HTTP/REST/OAuth contra provedores**. Outros módulos recebem `ProviderAuthentication`, `ProviderRemoteObservation`, `ProviderRemoteFiles` ou `ProviderTransfers` via fachada de Providers.
-2. `providers/google/api/` continua sendo contrato técnico especializado, **privado à implementação Google para os consumidores da engine**, mesmo que seus tipos Rust internos sejam públicos dentro da crate por razões técnicas. Não importar `GoogleFile`, `GoogleSession` ou clientes REST do Google em Accounts, Detector, Operações, Inventário ou Models.
-3. O catálogo de provedores inclui **somente implementações reais**. `example/` é placeholder, não backend funcional, não deve aparecer como opção de login.
-4. `accounts/` possui o cadastro; `accounts/auth/` coordena consentimento, keyring, renovação e revogação; Providers executa protocolo externo e traduz resposta. Credenciais protegidas jamais entram em logs/SQLite de inventário, `File` ou `SyncItem`.
-5. O Detector Remoto decide quando ler alterações e gerencia checkpoint + `EventStore`; Providers **não** produz `FileBatch`, não reconhece eventos e não confirma checkpoint.
-6. Operações autorizadas de upload, download, renomeação, movimentação e exclusão usam Providers, mas são decididas/executadas funcionalmente por seus operadores. Providers não inspeciona baseline nem resolve conflito.
-7. `RemoteFile` genérico e `RemoteFileRef` pertencem a Models. Conversão de `GoogleFile` e retenção de `ProviderFileData` ficam em `providers/google/`, mantendo estados de coleta.
-8. Erros de acesso, token, rede, paginação, limite de cota e recurso indisponível não provam exclusão remota.
-9. Adição de recurso específico do Google deve primeiro avaliar capacidade genérica reutilizável; quando não houver equivalência, não forçar campos falsos ou acrescentar 59 métodos ao contrato genérico.
-10. Não modificar código Rust, criar adaptadores legados, remover APIs externas existentes ou alterar assinaturas de módulos consumidores sem solicitação de implementação e testes específicos.
+1. Providers mantém `list/get/open` como superfície conceitual mínima; não cria traits obrigatórias universais de autenticação, detecção, arquivos ou transferência.
+2. Cada serviço fornece **sua própria API completa** por um handle tipado. [Google API](google/api/INTERFACES.md) preserva métodos, modelos e erros próprios de Google.
+3. Apenas APIs obtidas pela fábrica Providers podem realizar comunicação externa com serviços remotos. Especialistas podem importar tipos Google, mas **não criar clientes HTTP/OAuth paralelos**.
+4. O **contrato comum está no módulo consumidor**, não em Providers: especialista de Detector implementa `RemoteDetector`, especialista Upload implementa contrato Upload quando definido, e assim por diante.
+5. O especialista transforma saída específica (`GoogleChange`, `GoogleFile`) para tipos do contrato de seu módulo (`File`, `RemoteFile`, estados) **sem alterar a interface pai**.
+6. `accounts/auth/` possui gestão de sessão, consentimento e keyring; a API Google oferece protocolo OAuth/OIDC e sua comunicação externa. Nenhum token bruto no Inventário ou GUI.
+7. `get(ProviderId)` não é login; `open(AccountId)` requer conta resolvida/autorizada e não pode cruzar identidades. Providers não lê banco privado de Accounts.
+8. `example/` é placeholder não implementado: não anunciar como disponível, não criar stubs funcionais.
+9. Não criar versões fictícias de interfaces OneDrive nem projetar um conjunto de endpoints que todas APIs precisem implementar.
+10. Providers não controla `FileBatch`, checkpoint, `SyncItem`, fila de operações, reconciliação ou política de exclusão; consumidores especializados fazem seu trabalho conforme contrato.
 
-## Processo de implementação
+## TDD e verificação
 
-- Começar por catálogo, validação de conta/sessão e portas mínimas necessárias ao primeiro provedor (Google); não implementar um conector universal hipotético.
-- Fazer TDD por capacidade, com fake da API especializada e keyring de teste; separar testes de autenticação e chamadas de arquivos.
-- Preservar contratos específicos Google existentes como implementação de protocolo, sem promovê-los à API da engine.
-- Só adicionar capacidades efetivamente implementadas ao catálogo e à UI; operações não suportadas são erro explícito.
-- Provar isolamento: dois `AccountId`, reautorização, retries, cancelamento, limitação de cota e identidades remotas iguais em contas diferentes.
-- Documentar quais métodos Rust foram realmente implementados, testados e quais permanecem conceituais.
+- Testar a fábrica com `ProviderId` válido/inválido, abertura de sessão por conta, erro de incompatibilidade e isolamento entre contas.
+- Testar a integração com especialista fake usando API fornecida; garantir que output obedeça ao contrato do módulo pai.
+- Colocar testes de protocolo no submódulo Google API; não duplicar seus 59 métodos em Providers.
+- Inspecionar dependências para impedir construções diretas de HTTP externo fora de Providers.
+- Registrar quais chamadas foram compiladas/executadas, quais são conceituais e quais estão bloqueadas por contrato ainda não aprovado.
 
-## Decisões em aberto — não improvisar
+## Pendências reais
 
-Tipos concretos e segredos de autenticação, lifetime/async, sessão por conta, codecs de metadados, transferências retomáveis, remoção vs perda de acesso, paginação e cursores são pontos que precisam ser fechados antes do código. Não chamar implementação incompleta de sucesso.
-
-## Referências de consumidores
-
-[Accounts](../accounts/README.md) · [Detector Remoto](../detectors/remote/INTERFACES.md) · [Upload](../operations/upload/README.md) · [Download](../operations/download/README.md) · [Models](../models/INTERFACES.md).
+Retorno heterogêneo em Rust (`enum` vs fábrica tipada), autorização da conta sem dependência circular, representação de sessão/credenciais, async/ownership e contratos completos de autenticação/operadores. Não preencher lacunas artificialmente, não migrar formatos legados e não alterar código Rust sem solicitação.
