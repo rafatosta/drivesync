@@ -28,7 +28,7 @@ Receber alterações de ambos os lados **num único lote não resolve conflitos*
 
 O Detector fornece criação, início, parada, observação solicitada, status, reserva de eventos em lote, confirmação e liberação. Não expõe APIs de filhos, não executa operações físicas nem determina políticas de conflito. Cada um dos três filhos é testável com portas fake sem os outros implementados.
 
-Referência: [Detector](engine/detectors/README.md), [API pública](engine/detectors/INTERFACES.md), [Storage](engine/detectors/storage/README.md).
+Referência: [Detector](engine/detectors/README.md), [API pública](engine/detectors/INTERFACES.md), [Storage](engine/detectors/storage/README.md), [Detector Remoto Google](engine/detectors/remote/google/README.md) e [estrutura de Providers](engine/providers/README.md).
 
 ### 2.2 Inventário (InventoryManager)
 
@@ -104,7 +104,7 @@ O operador preserva as garantias de transferência, integridade, interrupção e
 
 **Upload e Download são operadores direcionais**, não apenas funções de transferência de bytes.
 
-### 2.7 Google API
+### 2.7 Google API — `providers/google/api/`
 
 **Responsabilidade:** abstrair a comunicação técnica com os serviços e recursos do Google Drive.
 
@@ -132,7 +132,7 @@ flowchart TD
     I["Inventário / InventoryManager"]
     U["Operador de Upload"]
     D["Operador de Download"]
-    G["Google API"]
+    G["Google API — providers/google/api"]
 
     DL -->|"evento individual"| DET
     DR -->|"evento individual"| DET
