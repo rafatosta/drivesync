@@ -1,10 +1,10 @@
 # Google API
 
-> **Posição arquitetural:** esta é a API **técnica específica Google**. A fábrica [Providers](../../INTERFACES.md) disponibiliza a implementação por meio de [Google Provider](../INTERFACES.md); os especialistas dos módulos consumidores podem usar todos os métodos/tipos Google necessários, preservando o contrato de saída do módulo pai. Esta organização **não substitui nem altera** as operações listadas abaixo.
+> **Posição arquitetural:** esta pasta é a fonte de verdade da **API técnica específica Google**. Ela mapeia serviços Google para funções, tipos, parâmetros, resultados e erros próprios. [Providers](../../INTERFACES.md) disponibiliza essa interface por meio de [Google](../INTERFACES.md), sem duplicar métodos.
 
 ## Objetivo
 
-**Centralizar e abstrair toda integração específica com o Google** — Google Drive API, OAuth/OpenID Connect, URLs, endpoints, escopos, parâmetros, configurações do provedor, formatos de arquivos, limites, respostas e erros. Os outros módulos consomem **operações e tipos públicos**, sem conhecer detalhes HTTP ou constantes do Google.
+**Centralizar e abstrair toda integração específica com o Google** — Google Drive API, OAuth/OpenID Connect, URLs, endpoints, escopos, parâmetros, configurações do provedor, formatos de arquivos, limites, respostas e erros. O contrato expõe **operações e tipos públicos**, sem exigir que detalhes HTTP ou constantes de protocolo sejam reproduzidos fora da API.
 
 ## Interfaces públicas — contrato inicial
 
@@ -69,7 +69,7 @@ Os erros não expõem tokens, respostas privadas do provedor ou URLs com credenc
 | Centralização | Nenhum consumidor define URLs, endpoints, escopos, cabeçalhos, parâmetros ou constantes específicas da API do Google |
 | Configuração | Identificadores de cliente, variáveis de ambiente e arquivos OAuth específicos do Google são interpretados neste módulo |
 | Dados | Tipos e respostas específicos do Google são definidos aqui e expostos em formato tipado |
-| Autenticação | `accounts/auth/` conduz o fluxo de contas e persiste credenciais; a `providers/google/api/` conhece o protocolo e os serviços Google |
+| Autenticação | A API expõe as funções técnicas Google OAuth/OIDC; não armazena cadastros de contas nem define onde credenciais serão persistidas |
 | Paginação | Resultados paginados informam explicitamente sua continuação; uma página não é tratada como inventário completo |
 | Operações | Criação, atualização, renomeação, movimentação e exclusão são operações distintas; mover ou renomear não implica reupload |
 | Segurança | A API rejeita respostas excessivas ou inválidas, não vaza credenciais e não transforma falhas em sucesso |
