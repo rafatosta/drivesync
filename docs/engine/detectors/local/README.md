@@ -10,7 +10,7 @@ Sua implementação, seu watcher, suas varreduras e seus testes são **independe
 
 | Componente | Faz | Não faz |
 | --- | --- | --- |
-| `models/` | Define `LocalFile`, `LocalFileKind`, `LocalRelativePath` e identidades compartilhadas | Não lê disco, não observa mudanças |
+| `models/` | Define `LocalFile`, `LocalEntryKind`, `LocalRelativePath` e identidades compartilhadas | Não lê disco, não observa mudanças |
 | `detectors/local/` | Coordena observação, solicita coleta por porta estável, emite sinais tipados e avalia cobertura | Não modifica baseline, não conhece SQL nem implementações dos demais filhos |
 | `detectors/` | Recebe cada sinal local/remoto, adapta para evento público e chama Storage | Não executa observação física local |
 | `detectors/storage/` | Persiste fila de notificações, leases e confirmações | Não observa filesystem |
@@ -45,7 +45,7 @@ flowchart LR
 1. Validar `sync_id` e raiz local fornecida pela composição do Detector.
 2. Iniciar watcher e varredura, preservando evidência de observação durante a instalação do watcher.
 3. Solicitar ao coletor o `LocalFile` com **somente atributos realmente observados**; o Detector não monta seus campos.
-4. Para cada ocorrência, emitir um `LocalNotice` contendo o `LocalFile` **quando disponível** e um escopo relativo para reavaliação quando não houver arquivo conhecido.
+4. Para cada ocorrência, emitir um `File` contendo `FileData::Local(LocalFile)` **quando disponível** e um escopo relativo para reavaliação quando não houver arquivo conhecido.
 5. O sink do Detector pai confirma sucesso apenas após persistência durável em Storage; se falhar, o Local não declara observação entregue e mantém necessidade de replay/revarredura.
 6. Após reinício, reobservar o escopo local: o watcher não reconstrói o histórico de alterações feitas enquanto a aplicação esteve parada.
 
@@ -80,7 +80,7 @@ O Local observa eventos de criação, mudança, renomeação e movimento, mas es
 ## Invariantes
 
 1. Toda observação de metadados disponível usa `models::LocalFile`, e não uma struct paralela própria de arquivo.
-2. Cada `LocalNotificationSink.notify` recebe **um** `LocalNotice`; não há dois canais públicos para alterações locais.
+2. Cada `LocalNotificationSink.notify` recebe **um** `File`; não há dois canais públicos para alterações locais.
 3. `LocalNotice.local_file=None` significa que o aviso não carrega metadados seguros; **não** significa exclusão.
 4. Sem acesso ou modificação de baseline, fila de operações, histórico, banco ou serviço remoto.
 5. A falha de entrega não deve ser tratada como sucesso; eventos podem ser reemitidos.
@@ -90,3 +90,9 @@ O Local observa eventos de criação, mudança, renomeação e movimento, mas es
 [INTERFACES.md](INTERFACES.md) · [TESTS.md](TESTS.md) · [AGENTS.md](AGENTS.md) · [Models](../../models/README.md).
 
 **Estado:** arquitetura-alvo documentada. Não representa código implementado nem testes executados.
+
+## Eventos e encapsulamento conforme Models
+
+Cada emissão contém **um único `models::File`**, não `LocalNotice` ou struct paralela. O contexto é `FileEvent {kind, previous, current}`, `FileScope::Local`, `observed_at`, `coverage`, `sync_id` e `File.id`. O payload é `Some(FileData::Local(LocalFile))` quando há observação segura; `None` pode representar remoção suspeita ou reavaliação.
+
+O Detector Local só solicita `LocalFile` ao coletor especializado e o incorpora integralmente, sem acessar suas propriedades. Classificação `Created/Modified/Deleted/Renamed/Moved/MetadataChanged` requer evidência; renomeação/movimento correlacionados carregam localizações anterior/atual. Falhas e ambiguidade geram `RecheckRequired` ou `ScopeUnavailable`, **nunca exclusão confirmada**.
