@@ -2,7 +2,7 @@
 
 ## 1. Testabilidade independente
 
-Implementar TDD do **especialista Google real** com Google API fake/servidor HTTP simulado, sink individual fake, checkpoints isolados e scheduler/relógio controláveis. Não usar conta Google real, Storage real, Local, Orquestrador nem o Detector pai real.
+Implementar TDD do **especialista Google real** com interface fake de `providers/google/`, sink individual fake, checkpoints isolados e scheduler/relógio controláveis. Não usar conta Google real, Storage real, Local, Orquestrador nem o Detector pai real.
 
 ## 2. Casos por método da interface remota
 
@@ -26,6 +26,8 @@ Implementar TDD do **especialista Google real** com Google API fake/servidor HTT
 - **GRD-G-08:** múltiplas contas Google não misturam IDs, cursores ou sessões.
 - **GRD-G-09:** intervalos de polling independentes do Detector Local.
 - **GRD-G-10:** todos os caminhos emitem **um evento por chamada**, sem acessar fila Storage.
+
+Os testes verificam chamadas à interface do provedor e interpretação das respostas. A conformidade HTTP da API Google é verificada em [Providers — Google TESTS](../../../providers/google/TESTS.md).
 
 Cada caso testa estados, chamadas, argumentos, erros e resultados; nenhum teste do especialista pode simplesmente simular o próprio `GoogleRemoteDetector`.
 
