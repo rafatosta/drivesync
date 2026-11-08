@@ -22,7 +22,7 @@
 
 ```rust
 // Evitar:
-fn record_local(&self, item_id: SyncItemId, file: LocalFile, time: Timestamp, revision: u64);
+fn record_local(&self, item_id: SyncItemId, observed: File, revision: u64);
 
 // Contrato escolhido:
 fn record_local(&self, request: RecordLocalObservation) -> InventoryResult<RecordObservationResult>;
@@ -32,7 +32,7 @@ Essa convenção é aplicada **inclusive a buscas**, filtros, cursores, eventos,
 
 ### Dependências externas e limites
 
-- `RemoteFile` é importado do contrato público de `providers/google/api/`; o Inventário não o redefine.
+- `RemoteFile`, `LocalFile`, `FileData`, `FileEvent`, `File` e identidades comuns são importados de `models/`; o Inventário não importa `providers/google/api/`.
 - `LocalFile` será importado do componente responsável pelos metadados locais. O contrato conceitual de Models já define os grupos de metadados; a seleção final dos campos para persistência é pendente de revisão pré-implementação.
 - As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `RemoteFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
@@ -47,7 +47,6 @@ pub type InventoryResult<T> = Result<T, InventoryFailure>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SyncItemId(pub String);
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 // SyncId, AccountId, LocalFileId, RemoteFileRef, LocalRelativePath, Timestamp,
 // File, FileData, LocalFile e RemoteFile são importados do proprietário comum Models.
 // NÃO redefinir seus identificadores no Inventário.
@@ -711,7 +710,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Insere ou atualiza a observação local e seu vínculo lógico sem modificar o baseline.
 
-**Parâmetros:** `selector`: vínculo existente, chave local ou `NewItem`; `observation.observed`: metadados quando presente; `presence`: situação comprovada; `proof`: origem, instante e escopo; caminho local é obtido de `LocalFile.relative_path`/`File.scope`; `expected_revision`: necessária para atualização de item existente, `None` apenas para criação.
+**Parâmetros:** `selector`: vínculo existente, chave local ou `NewItem`; `observation.observed`: `File` contendo metadados quando disponíveis; `presence`: situação comprovada; `proof`: origem, instante e escopo; caminho local é obtido de `LocalFile.relative_path`/`File.scope`; `expected_revision`: necessária para atualização de item existente, `None` apenas para criação.
 
 **Retorno:** `item`: estado atualizado com revisão; `created`: informa se o vínculo foi criado.
 
@@ -721,9 +720,9 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Assinatura:** `fn record_remote(..., request: RecordRemoteObservation) -> InventoryResult<RecordObservationResult>`.
 
-**Finalidade:** Insere ou atualiza observação recebida da provedor API sem editar o Drive nem confirmar sincronização.
+**Finalidade:** Registra o `File` remoto recebido do Analisador, sem chamar API do provedor nem confirmar sincronização.
 
-**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.observed`: `RemoteFile` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
+**Parâmetros:** `selector`: identidade lógica/remota ou novo item; `observation.observed`: `File` com `FileData::Remote(RemoteFile)` quando presente; `presence`/`proof`: fato e evidência; `expected_revision`: versão requerida ao editar item conhecido.
 
 **Retorno:** `item`: representação remota e estado; `created`: indica novo vínculo.
 
@@ -893,6 +892,14 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 - `ConfirmSyncResult.completed_operation` e `.activity` são opcionais porque nem toda confirmação envolve uma operação da fila ou um evento histórico; quando a ação é relevante e concluída, a atividade torna-se exigência condicional.
 - `PublishRemoteChangesResult.duplicate` só é significativo quando existe política de deduplicação confiável para o evento; não inventar equivalência apenas por coincidência de data.
 - `InventoryFailure.retryable` indica possibilidade de uma **nova tentativa controlada**, não permissão para repetir uma escrita sem verificar identidade, revisão, idempotência ou resultado anterior.
+
+## Regra adicional — observações não associáveis
+
+O método `record_local` aceita apenas `File` cujo `scope` corresponde ao lado local; `record_remote` apenas ao lado remoto. Quando `File.data=Some`, sua variante deve corresponder à requisição, e o objeto é armazenado sem projeção arbitrária de metadados autorizados. `File.data=None` pode atualizar diagnóstico/prova **somente se o alvo já estiver seguramente associado**. Eventos globais, `FileScope::WholeSync` e sinais sem identidade confiável não criam `SyncItem` por `NewItem` automaticamente. Permanecem no fluxo do Detector/Analisador até decisão de escopo.
+
+A identidade do `File` (ocorrência) não deve ser persistida como chave do `SyncItem`. A implementação futura deverá decidir a retenção de referência de última observação e a idempotência, sem duplicar a fila de entrega do Detector. O Inventário não decide a ação a partir de `FileEventKind`, embora preserve dados do evento para fins de prova/diagnóstico quando isso for aprovado.
+
+**Bloqueio conhecido:** esta especificação ainda apresenta `RemoteCursor` e `RemoteEvent` e quatro métodos relacionados, herdados do contrato do Inventário antes do Detector unificado. Eles colidem parcialmente com `RemoteCheckpoint` e `EventStore`. **Não implementar as APIs em duplicidade** até decidir a propriedade única do checkpoint/evento, sem adaptação legada.
 
 ## 13. Garantias de evolução e testes
 
