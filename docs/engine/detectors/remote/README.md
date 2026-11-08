@@ -55,3 +55,48 @@ Seu único contrato de saída é um **sink interno de eventos individuais**, inj
 O especialista converte metadados do serviço, por exemplo `GoogleFile`, em `RemoteFile` usando um adaptador isolado. Emite **`models::File` inteiro** por chamada ao sink interno, com `FileData::Remote(RemoteFile)` quando o arquivo foi observado e ID real. Evento e localização anterior/atual utilizam `FileEventKind`, `FileEvent` e `FileLocation` de Models; sem dados seguros, emite reavaliação com `data=None`. A fachada e o Orquestrador jamais leem os campos de RemoteFile e Storage não os reduz.
 
 O pipeline conserva checkpoint, paginação e replay: o cursor só é confirmado depois de persistir a observação inteira. Mudar atributos remotos afeta apenas o adaptador especializado e seus testes, não a lógica de detecção. `removed` pode significar perda de acesso, portanto não prova exclusão.
+
+## Seleção da implementação por provedor — decisão de composição
+
+O módulo `detectors/remote/` é o **intermediário/contrato comum** das implementações remotas. A **conta associada à sincronização**, e não uma pergunta feita ao provedor para descobrir qual serviço está vigente, determina qual especialista deve ser utilizado.
+
+A associação conceitual é `SyncId → AccountId → ProviderId → sessão compatível → especialista`. O componente de contas/configuração fornece contexto de conta e sessão apropriados; o Detector Remoto usa essas informações durante a **composição da instância**, selecionando a implementação do serviço correspondente. Não há um único provedor global "ativo": sincronizações simultâneas podem ter contas e serviços diferentes.
+
+A seleção deve verificar correspondência entre conta, provedor, sessão e raiz remota. Falha de correspondência **não** permite utilizar outra conta ou outro especialista por aproximação. Depois de selecionado, o especialista atende às operações do contrato remoto sem nova seleção em cada `poll_once`; mudanças de conta/provedor exigem composição controlada de nova instância.
+
+### O que as interfaces atuais efetivamente declaram
+
+A [interface remota](INTERFACES.md) **já prevê** `RemoteCreateRequest { sync_id, remote_root_id, session: RemoteSessionPort, remote_api: RemoteApiPort, sink: RemoteEventSinkPort, checkpoints: RemoteCheckpointPort, polling_interval }` e os cinco métodos `new`, `start`, `poll_once`, `stop` e `status`. Portanto, há **portas injetadas para sessão e API de um especialista selecionado**, sem dependência da fachada pública em `GoogleFile`.
+
+**Não está definido literalmente nas interfaces atuais:** a assinatura de uma fábrica/registry de provedores, o tipo concreto que liga `SyncId` a `AccountId`/`ProviderId`, o mecanismo de obtenção da sessão e as regras de recomposição. Esses detalhes ficam **pendentes da revisão de composição**, não devem ser inventados na implementação. Nenhuma nova trait ou método foi acrescentado aqui.
+
+### Encaminhamento conceitual
+
+```mermaid
+flowchart TD
+    CFG["Associação da sincronização a uma conta"]
+    AC["Contexto de conta / provedor / sessão"]
+    RC["RemoteCreateRequest: sessão, API, raiz, sink e checkpoint"]
+    REM["detectors/remote/: contrato comum"]
+    GOOGLE["detectors/remote/google/: especialista Google"]
+    OTHER["Outro especialista: somente quando existir contrato próprio"]
+    GAPI["providers/google/api/: GoogleFile"]
+    ADAPT["RemoteMetadataAdapter: RemoteFile"]
+    SINK["RemoteEventSink.emit(File)"]
+    PARENT["detectors/: fachada pai"]
+
+    CFG --> AC
+    AC -->|"composição ainda não especificada"| RC
+    RC --> REM
+    REM -->|"implementação Google selecionada"| GOOGLE
+    REM -.->|"extensão futura, sem contrato concreto"| OTHER
+    GOOGLE --> GAPI
+    GAPI --> ADAPT
+    ADAPT --> GOOGLE
+    GOOGLE --> SINK
+    SINK --> PARENT
+```
+
+A figura separa propositalmente o **contrato documentado** (requisição de criação, portas, especialista Google e `RemoteEventSink.emit(File)`) da **decisão de composição ainda sem assinatura** (origem da associação conta/provedor e seleção da instância). A implementação Google observa o serviço e emite `File` completo; o módulo pai persiste por sua API de Storage. Nenhum especialista é selecionado novamente por evento.
+
+A inclusão de um novo provedor exige um especialista e um adaptador correspondentes, além do mecanismo de registro/seleção a ser definido; **não** modifica `FileData`, o Orquestrador ou os contratos de lotes do Detector.
