@@ -12,7 +12,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 | [README.md](README.md) | Modelo relacional, identidade dos itens, persistência, isolamento e regras de segurança |
 | [TESTS.md](TESTS.md) | Casos TDD por método, fixtures, integridade, concorrência, rollback, falhas e critérios de aceite |
 | [AGENTS.md da raiz](../../../AGENTS.md) | Regras gerais do repositório: escopo, commits, idioma, documentação e ambiente Flatpak |
-| [Google API — INTERFACES](../providers/google/api/INTERFACES.md) | Contrato externo de `GoogleFile`; não recriar uma representação incompatível |
+| [Google API — INTERFACES](../providers/google/api/INTERFACES.md) | Contrato externo de `RemoteFile`; não recriar uma representação incompatível |
 
 **Ordem de precedência:** o contrato da interface define o comportamento público; o README define o modelo de dados; TESTS.md descreve como demonstrar ambos. Se encontrarem uma contradição real, **corrigir a documentação de forma explícita antes de implementar**, sem escolher silenciosamente um comportamento e sem alterar contratos por conveniência.
 
@@ -21,7 +21,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 - **O Inventário é dono de seu banco e de sua API**; outros módulos não recebem conexão SQLite, SQL, transações, tabelas, cursores de banco nem detalhes de armazenamento.
 - Cada método público recebe **um objeto de requisição** e retorna `InventoryResult<ObjetoDeResultado>`. Manter exatamente as assinaturas e os tipos de [INTERFACES.md](INTERFACES.md); não substituir objetos coesos por muitos parâmetros posicionais.
 - Construir requests por construtores, `Default` ou builders quando apropriado, para reduzir impacto de novos campos opcionais. **Não presumir** que adicionar campo a `pub struct` mantém compatibilidade de literais Rust.
-- Tipos `LocalFile` e `GoogleFile` pertencem aos respectivos módulos; usar seus contratos, sem reimplementá-los ou acessar diretamente o estado privado do provedor.
+- `LocalFile`, `RemoteFile`, `File`, `FileData`, `MetadataValue<T>`, `RemoteFileRef` e identidades compartilhadas pertencem a **Models**. Não importar `RemoteFile` nem redefinir os tipos em Inventário.
 - O Inventário **persiste fatos e estados**. Não observa o filesystem/Google por conta própria, não analisa qual versão vence um conflito, não organiza a política de sincronização e não executa uploads, downloads, renomeações ou exclusões físicas.
 - Contas globais, conexões entre pastas, configurações, segredos OAuth e autenticação pertencem a outros módulos. **Não criar nem administrar `app.sqlite3`** dentro do Inventário.
 
@@ -49,7 +49,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 ### Identidade, observações e baseline
 
 1. `SyncItemId` é uma identidade lógica estável, independente de caminho, nome, inode ou ordem de leitura. Um item pode ter representação apenas local, apenas remota, ambas ou nenhuma representação atual quando houver tombstone.
-2. `LocalFile` e `GoogleFile` são observações. `Option::None` e campos ausentes **não comprovam exclusão** e não viram zero, `false`, texto vazio nem dados inventados.
+2. `LocalFile` e `RemoteFile` são observações. `Option::None` e campos ausentes **não comprovam exclusão** e não viram zero, `false`, texto vazio nem dados inventados.
 3. `PresenceState::Unknown`, `Present` e `AbsentConfirmed` são estados distintos. Somente uma observação com escopo e evidência suficientes pode registrar ausência confirmada.
 4. Atualizações de observações **nunca avançam** `SyncBaseline`. O baseline existe apenas após estado comprovadamente sincronizado, e pode estar ausente antes da primeira confirmação.
 5. Renomeação e movimentação preservam a identidade do item; pais locais e remotos podem divergir enquanto há mudanças pendentes. IDs da Google API não devem ser substituídos por chaves internas SQLite.
@@ -65,6 +65,18 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 5. Cada `SyncActivity` tem `item_id` **obrigatório**, referenciando um `SyncItem` do mesmo banco. `operation_id` é opcional. Eventos globais não entram na tabela `activity`.
 6. Preservar atividades após renomeação, movimentação ou remoção do arquivo. Manter tombstones quando há histórico referenciando item; não usar cascata que o apague.
 7. Retry, redelivery de evento e resposta perdida devem respeitar idempotência, deduplicação e verificação de estado. Não duplicar operações/atividades nem avançar baseline por repetição.
+
+## Regra de integração com File e SyncItem
+
+- `SyncItem` é **exclusivamente do Inventário**, com `local: Option<LocalFile>`, `remote: Option<RemoteFile>`, presença, baseline confirmado, status e revisão. `File` é observação transitória fornecida pelo Detector e interpretada pelo Analisador. `File.id` **não** é `SyncItemId`.
+- `RecordLocalObservation.observation.observed` recebe `models::File` com origem local; `RecordRemoteObservation.observation.observed` recebe `models::File` com origem remota. Não aceitar variante incorreta nem construir `RemoteFile` diretamente a partir de `GoogleFile`.
+- A identidade remota é `RemoteFileRef(account_id, file_id)`, com unicidade por conta; não é ID de linha SQLite, nome ou caminho. `LocalFile.local_id` pode estar ausente; não inventar identidade.
+- `File.data=None`, `FileEventKind::Deleted`, `ScopeUnavailable` e falha de API **não comprovam ausência**. `AbsentConfirmed` exige evidência independente suficiente, após análise. Eventos globais sem vínculo seguro não criam `SyncItem` automático.
+- `MetadataValue::NotCollected`, `Unsupported`, `Unavailable` e `PermissionDenied` **não** devem zerar campos conhecidos. `Known(false)`, `Known([])` e `Known(0)` são dados observados, não ausências.
+- Uma observação **nunca** avança `SyncBaseline`; confirmação verificada de uma operação atualiza baseline, fila, estado e atividade na mesma transação.
+- A fila de operações do Inventário é distinta da fila de notificações de `File` do Detector. `remote_cursor`/`remote_events` e quatro APIs relacionadas **têm propriedade em aberto** frente a `RemoteCheckpoint` e `EventStore`. **Não duplicar** a fila/checkpoint; registrar BLOCKED até decidir uma única responsabilidade.
+- Persistência dos grupos de metadados e `ProviderFileData` exige **revisão pré-implementação**: catalogar tudo, escolher `manter/sob demanda/descartar`, definir codec e privacidade. Não prometer round-trip de atributo descartado nem serializar o objeto inteiro como blob opaco inadvertidamente.
+- Proposta documental, não alterar código Rust, Detector ou Models apenas para adaptar o Inventário nesta etapa.
 
 ## Método de trabalho: Contract-First + TDD
 
@@ -91,7 +103,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 ## Regras concretas dos testes
 
 - **Banco SQLite real, isolado, um diretório temporário por teste.** Um mock do Inventário não demonstra FKs, índices, transações, consistência após fechamento nem durabilidade.
-- `GoogleFile` e `LocalFile` sintéticos, nenhum Google Drive real, OAuth, credencial pessoal, serviço externo, arquivo de usuário nem interface gráfica.
+- `RemoteFile` e `LocalFile` sintéticos, nenhum Google Drive real, OAuth, credencial pessoal, serviço externo, arquivo de usuário nem interface gráfica.
 - Verificar os **20 contratos públicos** e os cenários identificados em [TESTS.md](TESTS.md): casos positivos, negativos, opcionais, integração do banco, concorrência, rollback, operações offline e recuperação.
 - Usar dois handles/threads reais onde necessário para demonstrar a correção da revisão otimista e a reivindicação única de operação.
 - Injetar erros determinísticos em transações para provar rollback; uma conexão simplesmente fechada **não equivale** a simular crash de processo. Se necessário, usar subprocesso isolado para testar interrupção abrupta.
@@ -102,7 +114,7 @@ Implementar e testar **exclusivamente** o componente `inventory/` da engine Rust
 
 ## Pontos ainda abertos — não improvisar contratos
 
-Antes de implementar cenários dependentes, resolver e documentar no `INTERFACES.md` as definições pendentes de `LocalFile`, reconstrução fiel de `GoogleFile`, critérios de `ObservationProof`, política de paginação e cursores, regras de deduplicação, transições da marca de sincronização inicial e retenção de tombstones.
+Antes de implementar cenários dependentes, resolver e documentar no `INTERFACES.md` as definições pendentes de `LocalFile`, reconstrução fiel de `RemoteFile`, critérios de `ObservationProof`, política de paginação e cursores, regras de deduplicação, transições da marca de sincronização inicial e retenção de tombstones.
 
 **Regras de segurança já são obrigatórias mesmo antes desses detalhes:** não presumir exclusão; não duplicar operações por erro de replay; não declarar uma transferência concluída sem comprovação; não apagar histórico por limpeza de inventário.
 
