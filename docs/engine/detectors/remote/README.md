@@ -148,7 +148,7 @@ sequenceDiagram
     participant API as API do provedor
     participant C as RemoteCheckpoint
     participant S as RemoteEventSink
-    participant D as Detector pai / Storage
+    participant D as Detector pai e Storage
     R->>G: poll_once(RemotePollRequest)
     G->>C: read(sync_id)
     C-->>G: checkpoint opcional
@@ -164,9 +164,9 @@ sequenceDiagram
         G->>C: commit(sync_id, checkpoint)
         C-->>G: confirmação
     else emissão falhou ou página incompleta
-        Note over G,C: não avançar checkpoint; recuperar/repetir
+        Note over G,C: Manter checkpoint e recuperar na próxima leitura
     end
-    G-->>R: RemotePollResult { coverage, emitted, has_more, checkpoint_confirmed }
+    G-->>R: RemotePollResult com cobertura, contagem, continuação e checkpoint
 ```
 
 ### Encapsulamento do objeto remoto
