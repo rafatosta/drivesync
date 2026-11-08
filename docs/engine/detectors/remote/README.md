@@ -18,7 +18,7 @@ Seu único contrato de saída é um **sink interno de eventos individuais**, inj
 ## Limites
 
 - Sem SQL, armazenamento de notificações, `inventory.sqlite3`, `detector.sqlite3`, Orquestrador ou gerenciamento de contas globais.
-- Sem chamadas HTTP diretamente: os especialistas (por exemplo, [Google](google/README.md)) utilizam a API do respectivo provedor, como [Google API](../../providers/google/api/INTERFACES.md).
+- Os especialistas (por exemplo, [Google](google/README.md)) acessam serviços externos exclusivamente pelas funções de [Providers](../../providers/README.md), como [Google — INTERFACES](../../providers/google/INTERFACES.md).
 - `removed=true` é sinal de reavaliação (pode significar perda de acesso), não prova inequívoca de exclusão.
 - Sem inferir ausência por falha 403/404, timeout, paginação incompleta, cursor inválido, escopo limitado ou campos parciais.
 - O arquivo remoto é identificado por ID estável; nome, versão e pais são metadados mutáveis.
@@ -27,7 +27,7 @@ Seu único contrato de saída é um **sink interno de eventos individuais**, inj
 
 1. Receber sessão, raiz, parâmetros de intervalo e sink individuais.
 2. Durante `start`, agendar leitura inicial ou retomada incremental conforme checkpoint.
-3. Em cada ciclo, a implementação do provedor consulta sua API, converte mudanças em eventos individuais e publica ao sink.
+3. Em cada ciclo, o especialista utiliza a interface do provedor para consultar alterações, interpreta os resultados e publica eventos individuais no sink.
 4. Só depois que o sink confirmar persistência durável, confirmar checkpoint correspondente por seu backend injetado.
 5. Consultar novamente segundo agendamento próprio. Push pode ser usado como otimização, nunca como garantia de entrega.
 6. Se parar, encerrar polling; sinais já aceitos permanecem sob responsabilidade do Detector. Na próxima inicialização, recuperação por cursor ou nova leitura segura é responsabilidade deste produtor — não reconstituir necessariamente cada operação intermediária.
@@ -80,7 +80,7 @@ flowchart TD
     REM["detectors/remote/: contrato comum"]
     GOOGLE["detectors/remote/google/: especialista Google"]
     OTHER["Outro especialista: somente quando existir contrato próprio"]
-    GAPI["providers/google/api/: GoogleFile"]
+    GAPI["providers/google/: GoogleFile"]
     ADAPT["RemoteMetadataAdapter: RemoteFile"]
     SINK["RemoteEventSink.emit(File)"]
     PARENT["detectors/: fachada pai"]
