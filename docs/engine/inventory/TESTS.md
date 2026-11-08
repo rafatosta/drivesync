@@ -382,7 +382,7 @@ A inspeção do esquema é permitida **nos testes internos do módulo**, para co
 | INV-TX-12 | Crash/reinício com operação `Running` | Reavaliar resultado remoto antes de repetir; fila durável |
 | INV-TX-14 | Renomear/mover arquivo após atividade | Histórico preserva identidade e fotografia histórica |
 | INV-TX-15 | Remoção do item lógico com histórico existente | Tombstone mantém FK válida; não aplicar CASCADE |
-| INV-TX-16 | Fechar inventário e reabrir após commit | Metadados, baseline, fila, cursor e histórico consistentes |
+| INV-TX-16 | Fechar inventário e reabrir após commit | Metadados, baseline, fila de operações e histórico consistentes |
 
 **Não afirmar que testes isolados simulam crash de processo se só fecham conexões.** Para garantia mais forte, executar subprocesso descartável que finalize abruptamente entre checkpoints, depois reabrir e verificar invariantes. Injeção de falha no SQLite é uma evidência complementar.
 
@@ -417,7 +417,7 @@ Esses cenários verificam a **representação e durabilidade** dos fatos. Não d
 | `InvalidIdentity` | Inventário aberto com conta, `sync_id` ou raiz remota diferentes | Bloqueio sem alterar banco |
 | `NotFound` | Escrita exige item/operação/evento inexistente | Erro, sem criar por acidente |
 | `AlreadyExists` / `DuplicateAssociation` | ID remoto ou vínculo local duplicado | Unicidade preservada |
-| `VersionMismatch` | Revisão, geração ou cursor esperado incorretos | Releitura necessária; sem escrita perdida |
+| `VersionMismatch` | Revisão do item ou geração esperada incorreta | Releitura necessária; sem escrita perdida |
 | `InvalidTransition` | Claim de Completed, finalizar sem confirmar | Estado anterior intacto |
 | `UnconfirmedAbsence` / `MissingObservation` | Deleção deduzida só por erro ou `Present` sem arquivo | Rejeição ou preservação de estado |
 | `MissingActivity` | Conclusão de ação relevante sem atividade | Rollback |
