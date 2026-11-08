@@ -107,6 +107,16 @@ A entrega normal pode transportar apenas uma ocorrência e ser imediata. O Stora
 - IDs do código atual devem ser reutilizados ou migrados explicitamente; não duplicar tipos existentes.
 - `LocalRelativePath` preserva bytes Unix relativos à raiz sem normalização com perda.
 
+## Aviso obrigatório antes de implementar — revisão de necessidade dos dados
+
+**NÃO IMPLEMENTAR DIRETAMENTE O ESQUEMA COMPLETO SEM ESTA REVISÃO.**
+
+A abordagem de documentação é **levantamento abrangente primeiro, seleção depois**: mapear todos os metadados reais conhecidos e potencialmente disponíveis, compreender a origem e a semântica de cada campo e **somente então decidir quais serão coletados, transportados, persistidos e efetivamente utilizados** pelo DriveSync.
+
+Antes de escrever código, revisar cada grupo/atributo com base em requisitos concretos dos consumidores (Detector, Inventário, Analisador, Operações e UI). Registrar a decisão **manter, coletar sob demanda ou descartar** e a justificativa; distinguir dados baratos de obter de dados caros, sensíveis ou não suportados. Não presumir que estar documentado significa coleta obrigatória em toda varredura, nem que um campo deve ser armazenado ou sincronizado na nuvem.
+
+**Até a revisão ser concluída, a listagem completa permanece um catálogo conceitual, não um contrato de implementação integral aprovado.**
+
 ## Documentação e estado
 
 - [INTERFACES.md](INTERFACES.md): **fonte de verdade para nomes, tipos, obrigatoriedade e invariantes dos atributos**.
