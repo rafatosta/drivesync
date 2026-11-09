@@ -8,6 +8,26 @@
 
 **Fontes:** [Drive REST v3](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery v3](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest), [OAuth desktop](https://developers.google.com/identity/protocols/oauth2/native-app), [OpenID Connect](https://developers.google.com/identity/openid-connect/reference).
 
+## Execução síncrona e assíncrona — orientação provisória
+
+**Lacuna técnica existente:** as assinaturas de REST/OAuth/transferência ainda são apresentadas como `fn` com resultados imediatos, e `GoogleByteStream` utiliza `std::io::Read` conceitual. Esses exemplos **não constituem decisão de executar HTTP de forma bloqueante no loop GTK**. Durante a implementação, chamadas que aguardam HTTP, leitura/escrita de bytes ou processamento de resposta remota deverão usar I/O assíncrono ou workers apropriados. Validação/formatação local sem I/O poderá permanecer síncrona. A decisão de runtime e tipos concretos de streams precisa de testes antes de fixar assinaturas Rust definitivas.
+
+Não modificar automaticamente os 59 métodos REST, 9 OAuth/OIDC e 10 complementares para um único `trait` ou protocolo artificial. Manter argumentos, semântica, tipos e contratos específicos da API Google; ajustar apenas a estratégia efetiva de execução e streaming quando validada.
+
+### Estado da chamada — não estado global
+
+| Operação técnica | Informação que a API permite conhecer |
+| --- | --- |
+| REST comum e OAuth/OIDC | Resultado/erro tipado da requisição; timeout ou resposta perdida pode deixar efeito remoto indeterminado |
+| Listagens e mudanças | Página/cursor retornados, não conclusão de uma varredura inteira |
+| Upload resumível | `GoogleUploadProgress::Incomplete` e intervalo efetivamente confirmado; `Complete` apenas quando a API confirma |
+| Download/exportação | Stream e metadados HTTP da resposta; a leitura dos bytes e a integridade final são controladas pelo consumidor |
+| Operação remota de longa duração | `GoogleOperation.done` e eventual consulta explícita `operations_get`, sem polling automático obrigatório |
+
+O módulo **não** cria `GoogleProviderStatus`, consulta `status()` global, callbacks de interface, agenda de transferências, armazenamento de progresso por arquivo, fila de retry ou métodos `start/pause/stop`. Cada método é uma chamada técnica delimitada. Não prometer cancelamento de efeito já enviado; interrupção da leitura/HTTP não comprova reversão. Quando a resposta de uma operação de escrita se perde após o envio, preservar a incerteza; o consumidor decide como verificar o estado antes de repetir.
+
+**Feedback técnico:** manter erros tipados, `retryable`, indicação `retry_after_seconds`, estado parcial e limites do protocolo quando existirem. Bytes transportados pelo stream não se transformam em uma porcentagem de sincronização dentro do provider. O `ProgressReporter` pertence ao Operador e não deve ser importado por `providers/google/`.
+
 ## 1. Tipos públicos fundamentais e erros
 
 ```rust
