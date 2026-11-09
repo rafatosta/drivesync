@@ -31,6 +31,14 @@ As manipulações de nome e localização preservam a identidade do recurso semp
 
 Cada método recebe uma requisição tipada e retorna um resultado tipado. As assinaturas, precondições, estados de execução e regras de verificação são detalhados em [INTERFACES.md](INTERFACES.md).
 
+## Acompanhamento e cancelamento
+
+O Operador executa **uma ação assíncrona delimitada por chamada**, sem fila ou gerenciador próprio de tarefas. Todas as dez requisições aceitam `ExecutionOptions` com **progresso e cancelamento opcionais**, inclusive operações curtas como renomear ou excluir.
+
+O acompanhamento informa fases reais (`Preparing`, `Transferring`, `Applying`, `Verifying`, `Finalizing`) e bytes efetivamente transferidos, quando aplicável. O resultado final da operação continua sendo o retorno tipado; nenhuma atualização de progresso prova que o arquivo foi sincronizado ou verificado.
+
+Cancelamento é cooperativo e ocorre apenas em pontos seguros: não desfaz efeitos já aplicados, não interrompe publicação atômica de forma insegura e não transforma resultado remoto indeterminado em cancelamento confirmado. O Analyzer consome as atualizações e pode incorporá-las à consulta de estado de seu `SyncItem`; o Operador não conhece Orquestrador, GTK ou interface gráfica e não oferece `status()` global nem `pause/resume/stop`.
+
 ## Implementações especializadas
 
 - [Google](google/README.md) — executor de operações sobre arquivos e diretórios do Google Drive.
