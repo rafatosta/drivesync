@@ -19,3 +19,7 @@ Abre e valida o banco `inventory.sqlite3`, gerencia seu esquema, índices e inte
 ## Documentação
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
+
+## Backup e reconstrução
+
+A política de recuperação é coordenada por [Configurations](../../configuration/README.md); este Storage realiza fisicamente backup/restauração validada e preserva a base danificada. Corrupção comprovada: **avisar usuário → solicitar restauração automática → caso falhe, avisar novamente e reconstruir banco vazio**. Após recuperação, a inicialização retoma observação local/remota e análise normal, sem inventar baseline ou executar exclusões por falta de histórico. Falhas de acesso temporárias não iniciam reconstrução.
