@@ -16,7 +16,7 @@ O checkpoint avança somente depois que os eventos correspondentes têm entrega 
 - `start`: inicia ciclos de observação.
 - `poll_once`: executa uma rodada de consulta.
 - `stop`: interrompe a observação.
-- `status`: apresenta o estado da observação.
+- `status`: apresenta estado, **atividade atual**, contadores da rodada e erros de observação.
 
 ## Especialistas
 
@@ -27,3 +27,7 @@ O checkpoint avança somente depois que os eventos correspondentes têm entrega 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
 **Estado:** especificação documental; não comprova implementação Rust.
+
+## Controle pelo Detector pai
+
+A pausa de **entrega ao Orquestrador** não pausa o polling remoto: eventos continuam sendo emitidos ao sink persistente do Detector e o checkpoint só avança após persistência durável. Apenas `stop` interrompe a observação de fato, preservando o checkpoint. O Orquestrador decide eventuais verificações após intervalo sem detecção; o Remoto não assume reconciliação ou execução de Scanner. O pai deve expor a condição remota separadamente da local.
