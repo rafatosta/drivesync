@@ -20,9 +20,11 @@ Abre e valida o banco `inventory.sqlite3`, gerencia seu esquema, índices e inte
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-## Backup e reconstrução
+## Backup e restauração
 
-O Storage é proprietário da política padrão e da execução física de backup/restauração, sem dependência obrigatória de [Configuration](../../configuration/README.md), que pode fornecer apenas preferências opcionais por demanda. O Storage preserva a base danificada. Corrupção comprovada: **avisar usuário → solicitar restauração automática → caso falhe, avisar novamente e reconstruir banco vazio**. Após recuperação, a inicialização retoma observação local/remota e análise normal, sem inventar baseline ou executar exclusões por falta de histórico. Falhas de acesso temporárias não iniciam reconstrução.
+O Storage continua responsável por identidade, esquema, transações e validação do Inventário. Ele registra localização autorizada e identidade do banco em [Configuration](../../configuration/INTERFACES.md), que implementa **uma única rotina comum de backup consistente e restauração SQLite**. O Storage não duplica o algoritmo físico de cópia.
+
+Corrupção comprovada exige sinalizar indisponibilidade, garantir ausência de conexões/transações ativas antes da troca e solicitar restauração ao mecanismo comum. Depois, o Storage reabre e valida identidade e esquema antes de informar `Restored`. Se o backup não puder ser restaurado, manter `Unavailable` e preservar os dados anteriores. Reconstrução vazia não faz parte de `restore_database`: requer autorização da coordenação e inicialização do esquema pelo Storage. Falhas de acesso transitórias não iniciam restauração.
 
 ## Disponibilidade operacional
 
