@@ -14,12 +14,22 @@ pub type DetectorResult<T> = Result<T, DetectorFailure>;
 pub enum DetectorState { Stopped, Starting, Running, Degraded, Stopping, Failed }
 pub enum DetectorStartMode { Initial, Restart }
 pub enum DetectorStopMode { DrainInFlight, StopNow }
+pub enum DeliveryState { Enabled, Paused }
+pub enum DetectorActivity { Watching, Scanning, Polling, Recovering, Waiting, Unavailable, Inactive }
+pub struct DetectorSourceStatus {
+    pub state: DetectorState,
+    pub activity: DetectorActivity,
+    pub last_observation_at: Option<Timestamp>,
+    pub last_error: Option<DetectorError>,
+    pub observed_in_current_round: u64,
+    pub emitted_in_current_round: u64,
+}
 pub enum DetectorScanReason { Manual, Recovery, ConsistencyCheck }
 pub enum DetectorScanScope { All, Scopes(Vec<FileScope>) }
 pub enum EventDisposition { Processed, Discarded }
 pub enum DetectorError {
     InvalidState, InvalidScope, InvalidIdentity, SourceUnavailable,
-    StoreUnavailable, Backpressure, InvalidBatch, LeaseExpired,
+    StoreUnavailable, Backpressure, DeliveryPaused, InvalidBatch, LeaseExpired,
     Cancelled, Internal,
 }
 pub struct DetectorFailure {
@@ -37,6 +47,9 @@ pub struct FileBatch {
 }
 pub struct DetectorStatus {
     pub state: DetectorState,
+    pub delivery: DeliveryState,
+    pub local: DetectorSourceStatus,
+    pub remote: DetectorSourceStatus,
     pub pending_events: u64,
     pub leased_events: u64,
     pub degraded_sources: u32,
@@ -56,8 +69,15 @@ pub struct DetectorCreateRequest {
     // Fontes e Storage são construídos por composição privada.
 }
 pub struct DetectorCreateResult { pub detector: Detector, pub state: DetectorState }
-pub struct DetectorStartRequest { pub mode: DetectorStartMode }
+pub struct DetectorStartRequest {
+    pub mode: DetectorStartMode,
+    pub delivery: DeliveryState, // escolha inicial atômica, sem janela start/pause
+}
 pub struct DetectorStartResult { pub state: DetectorState }
+pub struct DetectorPauseRequest {}
+pub struct DetectorPauseResult { pub delivery: DeliveryState }
+pub struct DetectorResumeRequest {}
+pub struct DetectorResumeResult { pub delivery: DeliveryState }
 pub struct DetectorStopRequest { pub mode: DetectorStopMode }
 pub struct DetectorStopResult { pub state: DetectorState, pub in_flight: u32 }
 pub struct DetectorScanRequest {
@@ -93,6 +113,8 @@ pub struct Detector { /* implementação privada */ }
 impl Detector {
     pub fn new(request: DetectorCreateRequest) -> DetectorResult<DetectorCreateResult>;
     pub fn start(&self, request: DetectorStartRequest) -> DetectorResult<DetectorStartResult>;
+    pub fn pause(&self, request: DetectorPauseRequest) -> DetectorResult<DetectorPauseResult>;
+    pub fn resume(&self, request: DetectorResumeRequest) -> DetectorResult<DetectorResumeResult>;
     pub fn stop(&self, request: DetectorStopRequest) -> DetectorResult<DetectorStopResult>;
     pub fn request_scan(&self, request: DetectorScanRequest) -> DetectorResult<DetectorScanResult>;
     pub fn status(&self, request: DetectorStatusRequest) -> DetectorResult<DetectorStatusResult>;
@@ -113,47 +135,61 @@ impl Detector {
 
 ### DET-02 — `start`
 
-**Finalidade:** iniciar os produtores com suas estratégias independentes.
-**Parâmetros:** início inicial ou após parada.
+**Finalidade:** solicitar o início de **Local e Remoto juntos**, com estratégias internas independentes e entrega inicial definida atomicamente.
+**Parâmetros:** início inicial ou após parada, e entrega `Enabled` ou `Paused`.
 **Retorno:** estado agregado; não significa leitura concluída.
-**Limites e erros:** falha de uma origem pode resultar Degraded; não descarta pendências.
+**Limites e erros:** ambos recebem solicitação de início mesmo quando um falha; estado agregado `Degraded`, com erros individuais preservados. Não existe comando público para iniciar apenas uma origem. Aceite de início não comprova observação concluída.
 
-### DET-03 — `stop`
+### DET-03 — `pause`
 
-**Finalidade:** interromper produtores.
+**Finalidade:** suspender **apenas a entrega externa**; Local e Remoto continuam observando e gravando eventos duravelmente no Storage.
+**Parâmetros:** request vazio.
+**Retorno:** entrega `Paused`.
+**Limites e erros:** novos `take_events` devem retornar `DeliveryPaused` sem reservar eventos; lotes já reservados permanecem válidos para `acknowledge`, `release_events` ou expiração. Chamada repetida idempotente.
+
+### DET-04 — `resume`
+
+**Finalidade:** liberar novamente a entrega dos eventos persistidos.
+**Parâmetros:** request vazio.
+**Retorno:** entrega `Enabled`.
+**Limites e erros:** não inicia fontes, não reconcilia o histórico e não compensa períodos de observação interrompida. Chamada repetida idempotente; requer serviço em estado operacional apropriado.
+
+### DET-05 — `stop`
+
+**Finalidade:** interromper efetivamente **as duas fontes** de observação e suspender a entrega, preservando os dados persistidos.
 **Parâmetros:** `DrainInFlight` ou `StopNow`.
 **Retorno:** estado e trabalhos ainda em andamento.
-**Limites e erros:** nenhuma modalidade remove eventos já persistidos ou confirma consumo.
+**Limites e erros:** `DrainInFlight` e `StopNow` diferem na finalização segura de observações em trânsito; retorno pode indicar `Stopping` até encerramento. Não remover eventos ou checkpoints persistidos, nem confirmar lotes. **O Orquestrador decide como lidar com mudanças ocorridas durante o intervalo sem detecção**; não delegar ao Detector Scanner, análise ou reconciliação automática.
 
-### DET-04 — `request_scan`
+### DET-06 — `request_scan`
 
 **Finalidade:** pedir observação adicional, sem ordenar como Local/Remoto a executam.
 **Parâmetros:** `All` ou `Scopes` com escopos `FileScope` válidos; motivo; ID de correlação opcional.
 **Retorno:** aceitação/agendamento.
 **Limites e erros:** sem upload/download; não analisar baseline ou conflito.
 
-### DET-05 — `status`
+### DET-07 — `status`
 
 **Finalidade:** consultar saúde agregada e fila.
 **Parâmetros:** objeto vazio.
-**Retorno:** estado, quantidade pendente/reservada, erros opcionais.
+**Retorno:** estado agregado, permissão de entrega, estado/atividade/erro de cada origem e contadores correntes, mais estatísticas de fila.
 **Limites e erros:** não reserva eventos.
 
-### DET-06 — `take_events`
+### DET-08 — `take_events`
 
 **Finalidade:** reservar **um lote unificado**, que pode conter eventos locais e remotos produzidos em paralelo.
 **Parâmetros:** `max_events > 0` e lease válido.
 **Retorno:** `FileBatch` com `File` completos, IDs estáveis, eventos individuais e intervalo do primeiro/último instante **observado**.
-**Limites e erros:** leitura não apaga, não agrupa eventos conflitantes no mesmo ID e não resolve divergência. Ordem da fila representa **ordem durável de enfileiramento**, não causalidade entre as fontes. O mesmo item pode aparecer várias vezes no mesmo lote.
+**Limites e erros:** quando entrega estiver `Paused`, retornar `DeliveryPaused` **sem fazer claim no Storage**; serializar pausa e reserva para que nenhuma nova reserva ocorra após pausa confirmada. Lotes anteriores seguem válidos. Leitura não apaga, não agrupa eventos conflitantes no mesmo ID e não resolve divergência. Ordem da fila representa **ordem durável de enfileiramento**, não causalidade entre as fontes. O mesmo item pode aparecer várias vezes no mesmo lote.
 
-### DET-07 — `acknowledge`
+### DET-09 — `acknowledge`
 
 **Finalidade:** confirmar lote como consumido ou explicitamente descartado.
 **Parâmetros:** `batch_id` válido; `Processed` ou `Discarded`.
 **Retorno:** quantidade confirmada.
 **Limites e erros:** lote não confirmado permanece recuperável; confirmação não significa arquivo sincronizado.
 
-### DET-08 — `release_events`
+### DET-10 — `release_events`
 
 **Finalidade:** devolver lote reservado para reentrega.
 **Parâmetros:** `batch_id` válido.
@@ -174,7 +210,7 @@ Os produtores entregam `models::File` por sinks internos, sem criar uma segunda 
 
 **Produtor–consumidor:** eventos acumulam até serem reservados e confirmados; crash após claim permite redelivery por lease. Um lote pode conter simultaneamente sinais locais e remotos, sem alterar sua identidade ou conteúdo.
 
-**Não há pausa pública**: `stop` interrompe produção, `start` retoma; descarte ocorre apenas em `acknowledge(Discarded)`. Fila sobrevive à parada. Nenhuma observação prova exclusão sem evidência completa.
+**Separação operacional:** `pause/resume` controlam entrega, não observação; `stop` encerra observação e suspende entrega; `start` inicia sempre ambas as fontes. A fila sobrevive à pausa e à parada, e apenas `acknowledge(Discarded)` pode descartar explicitamente um lote. O Orquestrador assume as consequências da escolha de interromper detecção. `DetectorState`, `DeliveryState` e estados de origem são independentes. Nenhuma observação prova exclusão sem evidência completa.
 
 **Integração obrigatória com Models:** `FileBatch` pertence a Detector, `File`/`FileData`/`FileEvent`/`FileScope` a Models. `FileEventKind` possui Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired, ScopeUnavailable. `File.event.previous/current` são localizações, não cópias de metadados. Nenhum `SyncItemId` é necessário para transportar uma ocorrência. Não acrescentar/remover campos no Detector quando `LocalFile`/`RemoteFile` evoluir: seus coletores/adaptadores especializados tratam isso. O evento representa uma observação, não uma ação executada.
 
