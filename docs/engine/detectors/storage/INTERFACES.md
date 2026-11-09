@@ -132,3 +132,13 @@ Definir serialização fiel e versionada do File completo, ownership/traits conc
 - Evolução de campos nos modelos pode exigir revisão do codec, mas não da lógica de fila, lease ou confirmação. Storage trata File como valor opaco.
 - Dados sensíveis (ACL, xattrs, usuários, labels, detalhes de segurança) exigem política aprovada de retenção, sanitização e limite. Se não puder persistir com fidelidade, recusar o enqueue com falha tipada; nunca truncar silenciosamente após aceite.
 - Os registros persistidos representam ocorrências detectadas e seu estado de entrega.
+
+## Proteção do banco de eventos e recuperação
+
+Quando o Store comprovar corrupção de seu armazenamento, deve emitir `StoreFailure` tipado e **mensagem de erro ao usuário**, solicitar a [Configurations](../../configuration/README.md) a política de recuperação automática e executar localmente a restauração de backup validado. Configurations não manipula fila, lease, cursor ou SQL de terceiros.
+
+Se a restauração falhar, **informar novamente o usuário** e reconstruir um Store vazio, preservando a base danificada. Isso **não equivale a eventos processados**: observações perdidas devem ser refeitas pela fonte local/remota; cursor ausente ou incoerente exige reobservação segura (por exemplo, listagem remota completa quando o checkpoint incremental não for utilizável). Não liberar uma fila recém-criada como prova de ausência de alterações.
+
+Não confundir corrupção com `Unavailable`, `Conflict`, `CapacityExceeded`, identidade divergente, `SQLITE_BUSY` ou esquema incompatível: esses erros não devem provocar reconstrução automática. Se a criação do novo Store falhar, permanecer em erro sem confirmar entrega fictícia. O contrato público do Detector permanece inalterado; a recuperação precisa ser sinalizada à coordenação de inicialização.
+
+Backups consistentes, WAL, validação de identidade, preservação dos arquivos danificados e rotação são executados pelo Storage sob política de Configurations. Especificação documental, não código implementado.
