@@ -1,9 +1,11 @@
-//! DriveSync binary entry point; application composition lives in `app`.
-mod app;
-mod core;
-mod features;
-mod ui;
+//! DriveSync binary entry point.
+//! GUI temporarily disabled during engine reconstruction.
+
+// mod app;
+// mod core;
+// mod features;
+// mod ui;
 
 fn main() -> adw::gtk::glib::ExitCode {
-    app::run()
+    adw::gtk::glib::ExitCode::SUCCESS
 }
