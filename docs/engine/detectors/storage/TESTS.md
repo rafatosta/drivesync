@@ -111,3 +111,13 @@ RED → GREEN → REFACTOR por unidades coesas; validar o conjunto após cada et
 | STO-R06 | Não é possível criar novo Store | Erro persistente, sem liberar consumo ou afirmar entrega |
 
 Exercitar SQLite isolado e falhas injetadas, incluindo reabertura e efeito sobre checkpoints. **Especificação TDD, sem testes executados.**
+
+## Alinhamento com recuperação SQLite comum
+
+- O Storage registra a própria identidade na infraestrutura de recuperação de Configuration, sem repassar eventos à camada de cópia.
+- Backup do banco ativo é snapshot consistente; restauração exige exclusividade e preservação do banco/WAL anterior.
+- Depois de restaurar, o Storage valida identidade, schema, integridade e estado da fila.
+- Falha de restauração não cria automaticamente fila vazia; reconstrução separada requer decisão da coordenação.
+- Reabrir banco restaurado não comprova que eventos do intervalo posterior ao backup foram processados.
+
+**Testes documentais; ainda não executados.**
