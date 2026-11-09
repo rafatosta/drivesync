@@ -25,6 +25,7 @@ pub(crate) trait InventoryStorage {
 
 pub(crate) struct StorageOpenResult {
     // Contexto privado de armazenamento + SyncInfo validado.
+    // Inclui InventoryRecoveryOutcome::{Normal, Restored, Rebuilt}.
 }
 
 pub(crate) struct InventoryTx<'a> {
@@ -60,6 +61,14 @@ sequenceDiagram
 
 O diagrama é **lógico**; a propriedade de commit/rollback permanece com `storage/`, mesmo que o contexto seja passado aos repositórios como empréstimo. `confirm_sync` é uma única transação: se falhar histórico, operação, baseline ou status, nada fica parcialmente concluído.
 
+## Diagnóstico de disponibilidade sem SQL público
+
+O Storage é o proprietário físico da disponibilidade do SQLite. Internamente mantém snapshot de `Ready`, `Recovering` ou `Unavailable` e o último resultado da abertura/recuperação (`Normal`, `Restored`, `Rebuilt`). O InventoryManager converte esse diagnóstico para sua nova API pública `status(InventoryStatusRequest)`, sem expor storage, conexões ou dados internos.
+
+O diagnóstico deve ser **consultável sem iniciar SQL nem aguardar a conclusão de transações**. É observação da última condição conhecida, não garantia de que o próximo `read` ou `transaction` será bem-sucedido. A recuperação pode ocorrer durante a abertura, antes de existir InventoryManager: nesse caso, o resultado segue por `StorageOpenResult` / `OpenInventoryResult`; uma falha de abertura permanece erro tipado.
+
+O Storage não é serviço de sincronização: não cria `pause`, `start`, `stop`, progresso de consulta SQLite, fila de jobs ou callbacks de GUI. I/O bloqueante do SQLite deve ocorrer fora da thread principal GTK, por integração apropriada do consumidor.
+
 ## Invariantes
 
 1. Banco incompatível, corrompido, inacessível ou de outra sincronização: **erro**, jamais recriação destrutiva.
@@ -77,7 +86,7 @@ Criação/abertura e identidade; FK/UNIQUE/CHECK; duas sincronizações isoladas
 
 ## Recuperação automática e reconstrução segura
 
-Para **corrupção comprovada** de SQLite, `inventory/storage/` deve emitir erro tipado, disponibilizar **mensagem ao usuário**, solicitar a política de restauração automática a [Configurations](../../configuration/README.md) e executar a operação física na própria fronteira Storage. Configurations não acessa SQL nem tabelas.
+Para **corrupção comprovada** de SQLite, `inventory/storage/` deve emitir erro tipado, disponibilizar **mensagem ao usuário** pelo mecanismo de notificação apropriado e aplicar **sua própria política padrão de recuperação automática**, realizando a operação física na fronteira Storage. [Configuration](../../configuration/README.md) é auxiliar e opcional: poderá disponibilizar preferências por demanda, mas sua ausência não impede backup, recuperação ou reconstrução. Nenhum outro módulo acessa SQL nem tabelas do Storage.
 
 - Isolar conexões/transações e arquivos WAL, preservar o banco danificado e selecionar backup consistente, íntegro, de mesma identidade; restaurar e revalidar.
 - Se a recuperação falhar, emitir **segunda mensagem** e criar estrutura limpa de Inventário, **sem fabricar baseline, associação local/remota, operações confirmadas ou histórico**. Não apagar o banco anterior. Se a recriação falhar, devolver erro e impedir operações com persistência indisponível.
@@ -85,4 +94,4 @@ Para **corrupção comprovada** de SQLite, `inventory/storage/` deve emitir erro
 - Backup restaurado não reverte mudanças do filesystem nem efeitos no Drive. Verificar defasagens em relação às filas/cursors de Detectores antes de executar ações destrutivas.
 - Falha transitória, identidade divergente e esquema incompatível **não** autorizam reset. O invariante "não recriar banco silenciosamente" permanece: a reconstrução aqui é **notificada, explícita e não destrutiva**, após tentativa automática de recuperação.
 
-A assinatura física da integração com Configurations permanece pendente de definição. Documentação proposta, não funcionalidade Rust implementada.
+A API concreta para notificar falhas ao usuário e a política física de backups ainda precisam ser definidas na implementação. Nenhuma integração com Configuration é obrigatória. Documentação proposta, não funcionalidade Rust implementada.
