@@ -32,3 +32,7 @@ Cada ocorrência é representada por `File`, incluindo identidade, contexto da a
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
 **Estado:** especificação documental; não comprova implementação Rust.
+
+## Persistência recuperável
+
+O banco privativo dos Detectores usa política de [Configurations](../configuration/README.md) por meio do [Detector Storage](storage/INTERFACES.md): corrupção comprovada gera aviso, restauração automática e, se esta falhar, novo aviso e reconstrução não destrutiva. A fila e checkpoints eventualmente perdidos não são considerados processados; a observação local/remota deve recuperar cobertura antes da liberação de consumo pelo Orquestrador. Os algoritmos e a API pública de eventos permanecem os mesmos.
