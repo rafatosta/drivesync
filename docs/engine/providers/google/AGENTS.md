@@ -18,6 +18,14 @@ Implementar e testar **exclusivamente** o módulo independente `providers/google
 
 **Não usar a implementação antiga da engine como especificação.** A documentação descreve o módulo que será construído; o código existente não restringe sua cobertura.
 
+## Execução assíncrona e fronteira de estado
+
+- O catálogo documenta operações técnicas oficiais. Não criar estado global `GoogleProviderStatus`, gerenciador de tarefas, `ProgressReporter` de sincronização, fila de retry ou novos métodos de ciclo de vida.
+- Chamadas que aguardam HTTP ou stream **não podem bloquear** o loop GTK; definir async/worker/streaming na implementação real por meio de testes antes de converter todas as assinaturas `fn` conceituais.
+- Respostas parciais (`HTTP 308`, ranges, páginas, `GoogleOperation.done=false`) e erros (`Retry-After`, autenticação, timeout, falta de resposta) são estado **técnico** da API, não confirmação de sincronização.
+- Não persistir credenciais, nem executar automaticamente verificação/reconciliação por pedido de cancelamento ou erro remoto. Cancelamento do transporte não comprova reversão de escrita.
+- Validar cenários G-AS-01 a G-AS-12 dos testes, sem afirmar que testes documentais equivalem a execução real.
+
 ## Método de trabalho: Contract-First + TDD
 
 | Etapa | Ação obrigatória | Critério de conclusão |
