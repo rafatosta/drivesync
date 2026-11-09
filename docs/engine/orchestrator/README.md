@@ -78,9 +78,11 @@ O Detector entrega `FileBatch { batch_id, files: Vec<File> }`. O Analyzer **não
 1. Validar `File.sync_id`, origem/variante `FileData`, escopo e evidências sem reinterpretar campos específicos do provedor.
 2. Resolver `ObservationTarget` pela API do Inventory: identidade remota qualificada, identidade local, item existente ou criação somente quando a unicidade estiver comprovada. Caminho/nome sozinho não prova identidade global. Se não resolver de forma inequívoca, registrar necessidade de reobservação e **não inventar** associação.
 3. Traduzir observação em `RecordLocalObservation` ou `RecordRemoteObservation`, com `PresenceState`, `ObservationProof` e revisão esperada. `Deleted`, `data=None`, cobertura incompleta e erro de fonte não autorizam `AbsentConfirmed` sem prova independente.
-4. Confirmar o lote no Detector **somente depois de todas as observações daquele lote estarem duravelmente registradas** no Inventory (ou de descarte explícito aprovado pela política). Se qualquer registro falhar, `release_events` quando válido, ou permitir expiração e redelivery. Não descartar parte de um lote usando `Processed` global.
+4. Confirmar o lote no Detector **somente depois de todas as observações daquele lote estarem duravelmente registradas e de o Inventário preservar a necessidade de reanálise de cada item afetado** (ou de descarte explícito aprovado pela política). Se qualquer registro falhar, `release_events` quando válido, ou permitir expiração e redelivery. Não descartar parte de um lote usando `Processed` global.
 5. Selecionar `SyncItemId` afetados usando resultados efetivamente persistidos; consolidar apenas **requisições de análise**, não fundir/remover as ocorrências do Detector. Uma nova observação pode exigir outra análise após a primeira.
 6. Chamar Analyzer sobre snapshot atual do item obtido do Inventory; não criar uma cópia concorrente do estado nem antecipar decisões físicas.
+
+**Segunda lacuna de continuidade:** `record_local/record_remote` não garantem expressamente que a gravação deixe o item em `PendingReconciliation` ou crie uma intenção durável de reanálise. Se o Detector receber ack e a aplicação cair **antes** de `Analyzer::analyze`, os eventos já não estarão na fila. É necessário formalizar o marcador durável de trabalho pendente no Inventário e seu mecanismo de recuperação/listagem antes de tratar esse fluxo como fechado.
 
 **Fronteira de atomicidade:** o ack da fila do Detector e a gravação do Inventory ocorrem em **bancos distintos**, sem transação distribuída documentada. Uma queda após `record_*` e antes de `acknowledge` provoca redelivery. A versão atual de Inventory **ainda não documenta deduplicação persistente por `File.id`**; logo a garantia de reprodução sem efeitos duplicados fica **BLOQUEADA** até adicionar contrato de idempotência de observação ou confirmação de ingestão por ID. Não marcar o lote `Processed` antes da durabilidade do Inventory apenas para esconder esse problema.
 
@@ -110,7 +112,7 @@ A coordenação pode oferecer status conceitual `Idle / Starting / Observing / R
 
 1. API externa de `facade/` não está transcrita na branch `docs/current-architecture`: seus dois arquivos `README.md` estão vazios. Este documento **não** define assinaturas de facade nem substitui a API de código atual.
 2. Persistência/recuperação de `PendingAction`, decisões e evidências por item.
-3. Ingestão idempotente `File.id` e ack coerente entre Detector Storage e Inventory.
+3. Ingestão idempotente `File.id`, **marcador durável de análise pendente** e ack coerente entre Detector Storage e Inventory.
 4. Fonte de prova, geração/cobertura e persistência dos diagnósticos de `Scanner`; cobertura remota inicial.
 5. Propriedade do cadastro de conexões `SyncId/AccountId` e preparação segura da pasta inicial com dados locais.
 6. Composição física, compartilhamento de instâncias por conta/sync, escalonamento, worker pools e política de concorrência: **adiados**.
