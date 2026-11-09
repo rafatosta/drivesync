@@ -74,3 +74,15 @@ O diagrama é **lógico**; a propriedade de commit/rollback permanece com `stora
 Criação/abertura e identidade; FK/UNIQUE/CHECK; duas sincronizações isoladas; concorrência de escrita, rollback, reabertura após commit, disco cheio/bloqueado/corrompido; ausência de exposição de SQL, credenciais e caminhos privados.
 
 **Pendentes:** DDL exato, índice/consulta, política WAL, busy timeout, provisionamento quando raiz indisponível, codec dos metadados escolhidos e opção para testes de crash em subprocesso.
+
+## Recuperação automática e reconstrução segura
+
+Para **corrupção comprovada** de SQLite, `inventory/storage/` deve emitir erro tipado, disponibilizar **mensagem ao usuário**, solicitar a política de restauração automática a [Configurations](../../configuration/README.md) e executar a operação física na própria fronteira Storage. Configurations não acessa SQL nem tabelas.
+
+- Isolar conexões/transações e arquivos WAL, preservar o banco danificado e selecionar backup consistente, íntegro, de mesma identidade; restaurar e revalidar.
+- Se a recuperação falhar, emitir **segunda mensagem** e criar estrutura limpa de Inventário, **sem fabricar baseline, associação local/remota, operações confirmadas ou histórico**. Não apagar o banco anterior. Se a recriação falhar, devolver erro e impedir operações com persistência indisponível.
+- Sinalizar `Normal`, `Restored` ou `Rebuilt` ao controle de inicialização, sem expor detalhes físicos à interface do Scanner/Analisador. O Scanner reconstrói observações locais; o Detector Remoto recupera observações remotas; o Analisador atua com evidências disponíveis e pede decisão por item quando não houver solução segura.
+- Backup restaurado não reverte mudanças do filesystem nem efeitos no Drive. Verificar defasagens em relação às filas/cursors de Detectores antes de executar ações destrutivas.
+- Falha transitória, identidade divergente e esquema incompatível **não** autorizam reset. O invariante "não recriar banco silenciosamente" permanece: a reconstrução aqui é **notificada, explícita e não destrutiva**, após tentativa automática de recuperação.
+
+A assinatura física da integração com Configurations permanece pendente de definição. Documentação proposta, não funcionalidade Rust implementada.
