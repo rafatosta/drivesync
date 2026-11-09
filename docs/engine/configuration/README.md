@@ -43,3 +43,20 @@ Esta separação trata **quem é dono do dado**, não impõe que módulos tenham
 - Enumerar as preferências globais e por sincronização.
 - Verificar quais chaves se adaptam a GSettings e quais requerem outro armazenamento.
 - Especificar APIs e cenários TDD sem expor detalhes da implementação.
+
+## Proteção e recuperação dos bancos dos módulos
+
+`configuration/` coordena **a política transversal de backup e recuperação** de armazenamentos persistentes, sem assumir propriedade dos dados: cada módulo continua responsável pelo próprio banco, esquema, conexões, integridade e restauração física via seu Storage. Configurations seleciona e valida a política de cópias, retenção e fallback e recebe solicitações tipadas; não executa SQL sobre bancos alheios.
+
+**Fluxo obrigatório diante de corrupção confirmada:**
+1. O Storage identifica corrupção real, suspende o uso do banco afetado e emite **mensagem de erro ao usuário** pelo mecanismo normal de notificações.
+2. O Storage solicita a Configurations **recuperação automática por backup**. O Storage fecha/isola conexões e WAL, restaura cópia consistente compatível, valida integridade e identidade, e reabre.
+3. Se a restauração falhar ou não houver backup válido, emitir **nova mensagem ao usuário** e **reconstruir uma estrutura de banco vazia**, preservando a base danificada e backups para eventual diagnóstico; nunca presumir dados históricos que foram perdidos.
+4. O módulo proprietário retoma sua API habitual; a coordenação da inicialização recebe uma indicação `Normal`, `Restored` ou `Rebuilt`, suficiente para exigir observações novas quando necessário. Os algoritmos do Scanner, Detectores, Reconciliador e Analisador não mudam.
+5. Se nem a reconstrução física for possível, informar a falha e **não executar sincronização sem armazenamento confiável**.
+
+**Distinções obrigatórias:** `SQLITE_BUSY`, disco cheio, problemas de permissão, dispositivo indisponível, esquema incompatível e identidade divergente **não são corrupção** e não autorizam reconstrução automática. Backups devem ser consistentes (para SQLite, Online Backup API ou equivalente), íntegros, vinculados à identidade correta, rotacionados sem perder a última cópia válida e protegidos contra cópias parciais. WAL/rollback de transação **não são histórico permanente**.
+
+**Após recuperação:** backup antigo pode ter baseline e checkpoints defasados; banco reconstruído não possui baseline confiável. Nem o Scanner nem o Analisador fazem tratamento especial de corrupção: trabalham com os estados disponíveis, e a ausência de informação é `Unknown`, nunca exclusão ou permissão para sobrescrever. Observações locais e remotas precisam ser refeitas/validadas antes de decisões destrutivas; decisões sem evidência suficiente são encaminhadas ao usuário **por item**. Perda de fila ou cursor dos Detectores exige nova cobertura de observação, não assumir que fila vazia significa que não houve alterações.
+
+**Estado:** política documental; integração e interface de notificação ainda não implementadas.
