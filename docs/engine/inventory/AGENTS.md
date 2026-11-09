@@ -27,6 +27,7 @@ A interface pública é `InventoryManager`, com as 17 operações documentadas. 
 - Manter um banco SQLite por pasta sincronizada, em `.drivesync/inventory.sqlite3`.
 - Validar a identidade `SyncIdentity` na abertura, preservando isolamento entre sincronizações.
 - Preservar bancos existentes em caso de indisponibilidade, corrupção ou esquema incompatível, retornando erros explícitos.
+- Registrar o banco na infraestrutura SQLite de Configuration e coordenar exclusividade e validação; não implementar cópias/restauração física duplicadas dentro do Storage.
 - Habilitar integridade referencial, chaves e restrições conforme o contrato.
 - Utilizar transações atômicas, rollback, controle de revisão e idempotência nas operações aplicáveis.
 - Persistir dados estruturados em formato relacional, observando a necessidade de serialização individual de campos específicos.
