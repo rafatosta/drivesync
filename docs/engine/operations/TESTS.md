@@ -103,6 +103,25 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de IN
 4. Todo comportamento não definido suficientemente pela interface é marcado `BLOCKED`, com a definição técnica pendente registrada; não atribuir `PASS` com base em mocks que apenas repetem resultados esperados.
 5. A implementação privada é validada diretamente, separadamente dos testes de fachada `OPR-01` a `OPR-11`.
 
+## Acompanhamento e cancelamento — casos adicionais
+
+| ID | Cenário | Resultado esperado |
+| --- | --- | --- |
+| OPR-P01 | Cada uma das dez requisições com `ExecutionOptions` | API aceita cancelamento e progress reporter opcionais sem requerer ambos |
+| OPR-P02 | Transferência lenta com reporter | Fases verdadeiras, bytes observados monotônicos e total somente se conhecido |
+| OPR-P03 | Renomear, mover, excluir, lixeira e restaurar com reporter | Fases adequadas sem fingir bytes transferidos |
+| OPR-P04 | Nenhum reporter instalado | Operação termina normalmente; progresso não é pré-condição |
+| OPR-P05 | Reporter lento, falha ou indisponível | Trabalho não fica bloqueado nem falha por causa do consumidor de telemetria |
+| OPR-P06 | Cancelamento antes do primeiro efeito | Nenhuma mudança material; erro tipado de cancelamento quando apropriado |
+| OPR-P07 | Cancelamento durante download antes de publicar | Arquivo final anterior preservado; temporário tratado com segurança |
+| OPR-P08 | Cancelamento após efeito remoto, resposta perdida | Resultado indeterminado informado; sem retry automático ou reversão presumida |
+| OPR-P09 | Cancelamento solicitado após ponto de commit | Não declarar cancelamento de efeito já confirmado; retorno representa realidade observada |
+| OPR-P10 | Progresso alcança total de bytes antes de verificação | Não afirmar `Verified` ou conclusão só por bytes iguais ao total |
+| OPR-P11 | Operações independentes em paralelo | Reporters isolados por chamada, sem misturar contagens |
+| OPR-P12 | Comandos concorrentes no mesmo destino | Precondições/identidade impedem alteração indevida; não depender de fila interna do Operador |
+
+Testes documentais devem usar execução controlada e fakes de IO para observar progresso durante a chamada, e filesystem temporário real onde aplicável. Sem evidência de teste Rust executado, não declarar aprovação.
+
 ## Critérios de aceite
 
 1. Todos os métodos públicos têm testes positivos, negativos e de validação de resultados.
