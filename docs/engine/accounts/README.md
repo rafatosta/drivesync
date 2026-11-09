@@ -51,11 +51,19 @@ O Provider **não é proprietário da persistência local de credenciais**. Sua 
 
 Não presumir transação única entre cadastro e keyring: falhas intermediárias devem ser recuperáveis/idempotentes; nunca anunciar conta conectada sem material de autorização persistido.
 
+## Estado das contas e acompanhamento da execução
+
+A condição conhecida de cada conta permanece em `Account.state` (`Connected`, `ReauthorizationRequired` ou `Unavailable`). **Esse campo não informa atividade em andamento nem comprova conectividade atual.**
+
+As operações de inclusão, remoção, obtenção de sessão e atualização da autorização podem ser assíncronas por dependerem de armazenamento seguro e de contratos técnicos externos. A nova consulta `Accounts::status()` apresenta **somente as operações ativas nesta instância**, sua categoria e fase atual (`Validating`, `CheckingAssociations`, `AccessingSecureStorage`, `PersistingCredentials`, `PersistingMetadata`, `Finalizing`). `add` aceita um `request_id` opcional para identificar o trabalho antes de a conta obter `AccountId`.
+
+O status é um snapshot rápido, **sem consultar rede, keyring ou cadastro a cada chamada**. Não informa progresso percentual nem aguarda OAuth realizado pelo Provider. As atividades deixam o snapshot ao terminar e o resultado/erro é devolvido pelo método original. `get`, `list` e `update` continuam consultas/alteração local delimitadas, sem tarefa monitorada. Não criar fila de jobs, `pause/resume/stop` nem expor segredos no acompanhamento.
+
 ## Persistência e recuperação
 
 O cadastro pode usar SQLite, arquivo estruturado ou outro meio conforme necessidade real. Consumidores não recebem handles de banco, queries SQL ou caminhos físicos. Credenciais devem permanecer em Secret Service/keyring (ou equivalente seguro); sem fallback para texto claro ou tabelas comuns.
 
-A política de backup coordenada por [Configuration](../configuration/README.md) aplica-se a bancos eventualmente adotados, **não exporta nem restaura automaticamente segredos**. Falha no keyring e necessidade de reautorização são condições próprias e não justificam reconstrução de inventários de sincronização.
+Se for adotada uma persistência própria para o cadastro, sua política de integridade e recuperação deve funcionar com padrões internos, independentemente do módulo auxiliar [Configuration](../configuration/README.md). Preferências opcionais poderão ser adicionadas por demanda, mas **não exportam nem restauram automaticamente segredos**. Falha no keyring e necessidade de reautorização são condições próprias e não justificam reconstrução de inventários de sincronização.
 
 ## Documentação
 
