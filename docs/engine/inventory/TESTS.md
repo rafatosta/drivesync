@@ -4,7 +4,7 @@
 
 Este documento especifica **os testes a escrever antes de implementar** o módulo `inventory/`, seguindo **Contract-First + TDD**. A referência normativa de API é [INTERFACES.md](INTERFACES.md); a referência do modelo relacional e dos bancos é [README.md](README.md). Quando documentação e implementação divergirem, **não ajustar o teste para esconder a divergência**: corrigir a implementação ou formalizar a decisão no contrato antes de continuar.
 
-**Escopo:** os **16 métodos públicos** de `InventoryManager`, todos os tipos/atributos utilizados por esses métodos e os invariantes do banco `<raiz>/.drivesync/inventory.sqlite3`. O teste deve verificar **comportamento observável pela API**, persistência real e integridade, sem transformar o layout interno das tabelas em contrato público.
+**Escopo:** os **17 métodos públicos** de `InventoryManager`, todos os tipos/atributos utilizados por esses métodos e os invariantes do banco `<raiz>/.drivesync/inventory.sqlite3`. O teste deve verificar **comportamento observável pela API**, persistência real e integridade, sem transformar o layout interno das tabelas em contrato público.
 
 Executar os testes com dados sintéticos, SQLite temporário isolado e injeção controlada de falhas.
 
@@ -125,6 +125,15 @@ Estas são **propostas de casos de teste**, ainda não executadas. Cada módulo 
 Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondição conflitante; (c) retorno/erro correto; (d) persistência e reabertura quando altera dados; (e) ausência de efeitos fora de sua responsabilidade; (f) teste de `Option`/filtros/transições quando aplicável.
 
 ## 4. Casos por método
+
+### INV-00 — `status`
+
+- `Ready` após abertura normal, sem executar SQL dentro de `status`.
+- `Restored` ou `Rebuilt` retornado por `open` e pelo status após recuperação bem-sucedida; reconstrução não significa baseline ou exclusão comprovados.
+- `Recovering` se uma instância válida atravessar uma recuperação, `Unavailable` em falha estrutural, com `last_error` sanitizado.
+- Falha de `open()` sem instância retorna `InventoryFailure`; nunca criar `InventoryStatusResult` fictício.
+- Consultas concorrentes a status não aguardam locks SQLite nem executam I/O.
+- Operações de Inventário não emitem porcentagem de SQL e o status não altera dados do Inventário.
 
 ### INV-01 — `open`
 
