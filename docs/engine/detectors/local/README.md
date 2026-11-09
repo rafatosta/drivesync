@@ -16,10 +16,14 @@ As ocorrências são emitidas individualmente em objetos `File`, com dados locai
 - `start`: inicia a captura de mudanças.
 - `scan_once`: executa uma varredura de verificação.
 - `stop`: interrompe a observação.
-- `status`: apresenta o estado e a cobertura de observação.
+- `status`: apresenta estado, **atividade atual**, contadores de rodada, cobertura e falhas.
 
 ## Documentação
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
 **Estado:** especificação documental; não comprova implementação Rust.
+
+## Controle pelo Detector pai
+
+A pausa de **entrega ao Orquestrador** não pausa o observador Local: as alterações continuam sendo emitidas ao sink persistente do Detector. Apenas `stop` interrompe efetivamente a observação. O Local não avalia as consequências de períodos interrompidos nem chama Scanner por iniciativa própria; o Orquestrador decide eventuais verificações. A interface de status permite ao pai informar a condição local independentemente da condição remota.
