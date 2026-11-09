@@ -84,14 +84,14 @@ Criação/abertura e identidade; FK/UNIQUE/CHECK; duas sincronizações isoladas
 
 **Pendentes:** DDL exato, índice/consulta, política WAL, busy timeout, provisionamento quando raiz indisponível, codec dos metadados escolhidos e opção para testes de crash em subprocesso.
 
-## Recuperação automática e reconstrução segura
+## Recuperação por mecanismo central SQLite
 
-Para **corrupção comprovada** de SQLite, `inventory/storage/` deve emitir erro tipado, disponibilizar **mensagem ao usuário** pelo mecanismo de notificação apropriado e aplicar **sua própria política padrão de recuperação automática**, realizando a operação física na fronteira Storage. [Configuration](../../configuration/README.md) é auxiliar e opcional: poderá disponibilizar preferências por demanda, mas sua ausência não impede backup, recuperação ou reconstrução. Nenhum outro módulo acessa SQL nem tabelas do Storage.
+O Inventory Storage registra sua identidade e localização física autorizada no mecanismo comum de [Configuration](../../configuration/INTERFACES.md), responsável pelos **snapshots consistentes SQLite e restauração física**. As conexões e transações ordinárias, DDL, identidade e validações de domínio continuam privados do Inventory Storage. Os repositórios de Items, Metadata, Baseline, Operations e Activity não precisam conhecer backup ou restauração.
 
-- Isolar conexões/transações e arquivos WAL, preservar o banco danificado e selecionar backup consistente, íntegro, de mesma identidade; restaurar e revalidar.
-- Se a recuperação falhar, emitir **segunda mensagem** e criar estrutura limpa de Inventário, **sem fabricar baseline, associação local/remota, operações confirmadas ou histórico**. Não apagar o banco anterior. Se a recriação falhar, devolver erro e impedir operações com persistência indisponível.
-- Sinalizar `Normal`, `Restored` ou `Rebuilt` ao controle de inicialização, sem expor detalhes físicos à interface do Scanner/Analisador. O Scanner reconstrói observações locais; o Detector Remoto recupera observações remotas; o Analisador atua com evidências disponíveis e pede decisão por item quando não houver solução segura.
-- Backup restaurado não reverte mudanças do filesystem nem efeitos no Drive. Verificar defasagens em relação às filas/cursors de Detectores antes de executar ações destrutivas.
-- Falha transitória, identidade divergente e esquema incompatível **não** autorizam reset. O invariante "não recriar banco silenciosamente" permanece: a reconstrução aqui é **notificada, explícita e não destrutiva**, após tentativa automática de recuperação.
+Diante de corrupção **comprovada**, o Storage deve informar erro e sua indisponibilidade, assegurar exclusividade de acesso ao banco e solicitar `restore_database` pelo identificador registrado. A troca física só acontece depois que conexões/transactions relevantes foram encerradas ou isoladas, com preservação do banco anterior e arquivos WAL/journal. Após o resultado físico, o Storage reabre e valida identidade, esquema e integridade do domínio. Apenas então o Inventário sinaliza `Restored`.
 
-A API concreta para notificar falhas ao usuário e a política física de backups ainda precisam ser definidas na implementação. Nenhuma integração com Configuration é obrigatória. Documentação proposta, não funcionalidade Rust implementada.
+A falha de restauração **não** deve criar automaticamente banco vazio. Se a coordenação autorizar explicitamente reconstrução posterior, o Storage utiliza sua rotina de inicialização do schema e sinaliza `Rebuilt`; não fabrica baseline, vínculos, atividades nem operações confirmadas. Scanner, Detector e Analyzer mantêm suas responsabilidades; a coordenação decide como recuperar cobertura e sincronização.
+
+Incompatibilidade de esquema, conta/sync_id divergente, `SQLITE_BUSY`, falha transitória, disco cheio e permissão negada não são corrupção confirmada e não podem iniciar substituição. A recuperação de backup pode representar estado antigo em relação ao Drive/filesystem; nenhuma ação destrutiva é autorizada por simples retorno de `Restored`.
+
+**Pendências:** estabelecer capacidade restrita de fechamento/coordenação de conexões e testes reais SQLite, WAL e falha entre preservação/substituição/reabertura. Não há Rust implementado.
