@@ -1,61 +1,69 @@
-# Configurações — módulo auxiliar de preferências do DriveSync
+# Configuration — preferências e recuperação de bancos
 
 ## Objetivo
 
-O módulo `configuration/` é **auxiliar, opcional e extensível por demanda**. Disponibiliza preferências da aplicação e parâmetros personalizáveis por sincronização, sem centralizar nem executar as responsabilidades operacionais da engine. Novas opções devem ser definidas somente quando sua necessidade surgir durante a implementação.
+`configuration/` disponibiliza **substituições opcionais dos parâmetros operacionais** e o **mecanismo comum de backup/restauração de bancos SQLite registrados**. Não executa detecção, análise, transferências ou sincronização e não toma decisões de conflitos.
 
-**A engine deve funcionar sem este módulo e sem preferências salvas**, utilizando comportamentos padrão pertencentes a cada módulo consumidor. Quando presente, Configuration pode fornecer valores de personalização; seus consumidores não conhecem arquivos de configuração, schemas, bancos ou chaves internas de armazenamento.
+O módulo permanece auxiliar para preferências: todos os módulos funcionam com seus próprios valores padrão quando não houver preferência salva. A infraestrutura comum de backup/recuperação pode ser utilizada por qualquer Storage SQLite registrado, mas a capacidade de registrar e restaurar um banco **não transforma Configuration em proprietário do banco**.
 
-**Cada módulo é proprietário de seus dados e pode persistir o que precisar**, com SQLite, GSettings, arquivos ou outro mecanismo, desde que a persistência fique privada atrás de sua API. Não existe obrigação de reunir tudo em um único banco global.
+## Primeira versão: parâmetros aceitos
 
-## Dados de configuração
+| Chave conceitual | Consumidor | Escopo inicial | Valor quando ausente |
+| --- | --- | --- | --- |
+| `detector.remote.poll_interval` | Detector Remoto | Por sincronização | Padrão do detector |
+| `detector.remote.page_budget` | Detector Remoto | Por sincronização | Padrão do detector |
+| `detector.local.debounce` | Detector Local | Por sincronização | Padrão do detector |
+| `detector.event_batch_size` | Detector, ao preparar entrega | Por sincronização | Padrão do Detector/consumidor |
+| `network.request_timeout` | Transporte HTTP, quando suportado | Global | Padrão do transporte |
+| `network.retry_delay` | Consumidor responsável por uma tentativa segura | Global | Padrão do consumidor, respeitando `Retry-After` |
 
-| Categoria | Exemplos | Proprietário |
-| --- | --- | --- |
-| Preferências globais | Notificações, comportamento da interface, políticas padrão e limites gerais | `configuration/` |
-| Preferências por sincronização | Limites de transferência, opções aplicáveis à conexão e políticas selecionadas | `configuration/`, usando `sync_id` fornecido pelo proprietário das conexões |
-| Dados de identidade da conta | `account_id`, `provider_user_id`, nome, e-mail | `accounts/` |
-| Cadastro de conexões | `sync_id`, `account_id`, raízes local/remota | Responsabilidade ainda a decidir; levantamento preservado em [`accounts/README.md`](../accounts/README.md) |
-| Autenticação e segredos | Tokens OAuth e outros materiais sensíveis | `accounts/`, internamente via Secret Service/keyring; protocolo externo em `providers/<provedor>/` |
-| Estado de arquivos e histórico por item | `SyncItem`, baseline, eventos, fila, atividades | `inventory/`, em SQLite por pasta |
+As chaves são **nomes documentais propostos**, não um esquema GSettings já criado. Os limites exatos e unidades devem ser fechados nos tipos e testes antes da implementação. Valores inválidos são recusados, não aplicados silenciosamente. `retry_delay` **não autoriza retry de escrita com resultado incerto** e não implementa uma fila; o responsável pela operação decide se pode tentar novamente. O timeout HTTP não elimina limites específicos de endpoints ou transferências longas.
 
-Esta separação trata **quem é dono do dado**, não impõe que módulos tenham necessariamente arquivos físicos diferentes. Um eventual mecanismo compartilhado exige contrato explícito; não autoriza um módulo a acessar tabelas de outro.
+**Não incluir agora:** uploads/downloads/análises simultâneos, quantidade de threads ou workers, prioridades globais, limitação de velocidade, tamanho de chunks, limite de download por tamanho, políticas futuras de exclusão e outros recursos ainda sem decisão. Esses ajustes não condicionam a independência das contas ou o desenvolvimento dos contratos dos módulos.
 
-## Convenções GNOME/GTK4 para preferências
+## Resolução e aplicação
 
-- **GSettings (GLib)** é o candidato principal para preferências tipadas e com chaves pré-definidas, geralmente armazenadas pelo backend dconf no GNOME. Ver [documentação da GLib](https://docs.gtk.org/gio/class.Settings.html).
-- `GtkSettings` trata opções de apresentação do GTK, não o cadastro de configurações próprias do aplicativo.
-- **Wayland não define o mecanismo de persistência** de preferências ou de dados do aplicativo.
-- Os diretórios XDG separam configurações (`XDG_CONFIG_HOME`), dados persistentes (`XDG_DATA_HOME`), estado (`XDG_STATE_HOME`) e cache (`XDG_CACHE_HOME`).
-- Se as configurações forem dinâmicas, complexas ou relacionais, avaliar outro mecanismo próprio. Arquivos JSON/TOML/keyfile ou SQLite não são proibidos; a escolha depende dos dados, consultas, necessidade de transações e testes.
-- **Não criar `app.sqlite3` automaticamente** apenas porque a aplicação tem contas e preferências.
+1. Uma configuração específica de `sync_id` prevalece sobre a global, **quando a chave admitir esse escopo**.
+2. Na ausência de preferência, usa-se o valor padrão mantido pelo módulo consumidor.
+3. A validação é tipada (durations, inteiros positivos e faixas permitidas), antes de entregar o valor.
+4. Configurações de observadores podem ser reaplicadas na próxima rodada segura; parâmetros por chamada são capturados no início da operação. A efetiva atualização dinâmica depende do suporte daquele módulo.
+5. O módulo não reinicia observadores, não cancela operações nem modifica módulos para aplicar uma preferência.
 
-## Persistência privativa e testabilidade
+**Por conta:** não criar ainda um terceiro nível de escopo. O isolamento e eventual compartilhamento de instâncias entre contas serão decididos na próxima etapa da arquitetura. Escopo de sincronização é identificado por `SyncId`, nunca por caminho como chave principal.
 
-1. Definir primeiro os contratos públicos de leitura, atualização, validação e notificação de mudanças.
-2. Escolher a persistência mais apropriada após classificar as opções e os seus tipos.
-3. Encapsular completamente a persistência; nenhum consumidor recebe conexão SQLite nem precisa saber onde fica o arquivo.
-4. Se houver dados por sincronização, a configuração utiliza `sync_id` e as APIs do módulo proprietário da conexão, sem consultar seu banco diretamente.
-5. Testar os contratos com armazenamento isolado/simulado e, quando aplicável, testar a persistência real do próprio módulo.
+## Recuperação SQLite centralizada
 
-**Situação atual:** `configuration/` não é o módulo central de todos os bancos; suas decisões de persistência são locais. O inventário tem SQLite por pasta definido. O armazenamento de contas e conexões será definido nos módulos responsáveis.
+### Divisão de responsabilidades
 
-## Implementação por demanda
+- **Configuration / recuperação SQLite:** registra **referências autorizadas** dos bancos; cria snapshots consistentes com os mecanismos oficiais do SQLite; seleciona, valida tecnicamente e restaura cópias; registra resultado `Normal/Restored/RecoveryFailed`, sem interpretar tabelas de domínio.
+- **Storage proprietário (Inventory, Detector ou outro):** decide onde cria seu banco e registra um descritor restrito em Configuration; mantém conexões, transações, identidade, schema e integridade de domínio; diagnostica corrupção; coordena seu fechamento/suspensão segura quando a restauração é necessária; valida identidade e formato após a restauração.
+- **Coordenação de inicialização:** toma decisões sobre reobservação, recuperação do estado lógico e sincronização depois que o Storage confirmar a reabertura. O mecanismo de restauração não supõe que backup de banco restaure mudanças já realizadas no filesystem ou no Drive.
 
-- Não antecipar um catálogo completo de preferências, interfaces ou tipos sem caso de uso concreto.
-- Cada módulo define e aplica seus valores padrão, mesmo se Configuration estiver ausente, vazio ou indisponível.
-- Configuration pode validar e disponibilizar apenas a **substituição opcional** de um valor padrão; não inicia Scanner, Detector, Analisador, backup ou operações de sincronização.
-- Acrescentar preferências e respectivos testes conforme as funcionalidades forem implementadas.
-- Escolher GSettings ou outra persistência apenas quando as necessidades concretas estiverem definidas.
+Configuration **não descobre bancos procurando arquivos no disco**, não recebe conexões de consulta pública nem altera tabelas do Inventário ou da fila. O caminho físico registrado é metadado restrito ao subsistema de recuperação, não uma preferência exportada para a GUI. Um banco que não foi registrado não é restaurado por adivinhação.
 
-## Relação provisória com backup e recuperação de bancos
+### Criar um backup seguro
 
-A proteção contra corrupção é **responsabilidade obrigatória do Storage proprietário de cada banco**, independentemente da existência de `configuration/`. O Storage deve definir sua política padrão de backup, validação e recuperação e manter sua interface funcional sem preferências externas.
+Usar preferencialmente a **Online Backup API do SQLite** para copiar um snapshot consistente de uma base que possa estar em uso. `VACUUM INTO` é alternativa possível quando apropriada, após validação técnica. **Não copiar simplesmente o arquivo `.sqlite3` ativo**, pois o WAL/journal pode conter dados relevantes.
 
-Configuration poderá futuramente disponibilizar **preferências opcionais**, como frequência de backup ou retenção, se houver demanda. Não coordena obrigatoriamente restauração, não recebe solicitações indispensáveis de recuperação, não manipula SQLite/WAL e não constitui dependência necessária para reconstrução de armazenamento.
+1. Receber registro do banco, com identificador/identidade opacos, caminho autorizado e política de acesso.
+2. Criar snapshot SQLite em destino temporário privado, sem compartilhar uma conexão de destino durante a cópia.
+3. Validar integridade técnica e identidade registrada; concluir e publicar o backup de forma segura, com permissões restritas.
+4. Conservar um backup anterior válido se a nova cópia ou a validação falhar.
+5. Não incluir credenciais do keyring em backups de bancos.
 
-Na ocorrência de corrupção comprovada, permanece a regra de segurança: informar o usuário, tentar restauração automática com backup válido e, se falhar, informar novamente e reconstruir a estrutura do banco de modo não destrutivo, preservando os dados danificados para diagnóstico. A recuperação física e suas falhas pertencem ao respectivo Storage; a sinalização ao restante da inicialização deve manter a segurança operacional, sem alterar os algoritmos do Scanner ou do Analisador.
+### Restaurar sem perda silenciosa
 
-**Nota de alinhamento documental:** referências anteriores em `inventory/storage/` e `detectors/storage/` que atribuem a Configuration uma coordenação obrigatória de recuperação deverão ser revistas na consolidação desses contratos. Esta definição é **provisória** e prevalece para delimitar o papel de Configuration; não modifica implementações Rust.
+1. Diante de corrupção **comprovada**, o Storage sinaliza indisponibilidade e solicita recuperação por identidade registrada; erros de permissão, `SQLITE_BUSY`, disco cheio, esquema incompatível ou identidade errada **não** autorizam restauração automática.
+2. Garantir exclusividade e ausência de conexões/transações ativas antes de trocar um banco, inclusive WAL/journal. Se não houver forma segura de interromper acessos, retornar erro e **não** substituir o banco.
+3. Preservar o conjunto danificado (incluindo WAL/journal relevantes) para diagnóstico e possível recuperação manual.
+4. Selecionar somente snapshot previamente validado para **a mesma identidade** e restaurar em local temporário antes da troca segura; verificar integridade técnica novamente.
+5. O Storage proprietário reabre, confere identidade, versão de esquema e invariantes próprios. Apenas depois disso o resultado é `Restored`.
+6. Caso não haja backup adequado ou a reabertura falhe, informar `RecoveryFailed`, sem descartar automaticamente o banco anterior. Uma **reconstrução vazia**, se desejada, é fluxo separado e explicitamente autorizado pela coordenação, utilizando a rotina de inicialização de schema do Storage — não é restauração.
 
-**Estado:** definição arquitetural provisória, com interfaces e preferências concretas a estabelecer somente por demanda.
+A implementação concreta da exclusividade, publicação atômica, permissões Flatpak, WAL, durabilidade, local de backups e notificação ao usuário ainda precisa ser definida e testada. A política de snapshots e retenção inicialmente utiliza defaults do próprio mecanismo comum, **sem criar chaves de preferência adicionais**. O usuário não precisa configurar o mecanismo para a recuperação existir.
+
+## Organização e API
+
+A proposta de interface, os cenários de teste e as regras de implementação estão em [INTERFACES.md](INTERFACES.md), [TESTS.md](TESTS.md) e [AGENTS.md](AGENTS.md). A persistência das preferências poderá usar GSettings ou mecanismo equivalente após validação; a recuperação SQLite não exige que todos os bancos compartilhem o mesmo armazenamento.
+
+**Estado:** planejamento documental; não há comprovação de implementação Rust nem de testes realizados.
