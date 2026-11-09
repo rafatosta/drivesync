@@ -57,6 +57,23 @@ Os testes exercitam o Scanner concreto sobre um **filesystem temporário real** 
 | SC-S11 | Campos de Models | `NotCollected`, `Unavailable` e similares não são transformados em dados inventados |
 | SC-S12 | Estado final | `Completed` com `issues>0` é permitido; `Partial` indica cobertura/gravação insuficiente |
 
+## Estado de execução — novos casos
+
+| Caso | Cenário | Resultado esperado |
+| --- | --- | --- |
+| SC-21 | `status()` antes de `scan()` | `Idle`, contadores zerados, sem timestamps, relatório ou erro |
+| SC-22 | `status()` durante varredura lenta | `Running`, leitura rápida, contadores coerentes que não exigem aguardar o trabalho |
+| SC-23 | Varredura com erros individuais, mas cobertura válida | `Completed` e `last_report_status=Completed`, `issues_recorded>0` |
+| SC-24 | Varredura termina com subárvore inacessível | `Completed` e `last_report_status=Partial`, não `Failed` |
+| SC-25 | Falha estrutural | `Failed`, `last_error` tipado, `finished_at` definido |
+| SC-26 | Cancelamento efetivo quando suportado | `Cancelled`, sem inventar conclusão |
+| SC-27 | Duas chamadas concorrentes de `scan()` | Segunda devolve `AlreadyRunning`, primeira continua sem duplicar trabalho |
+| SC-28 | Segunda execução após conclusão | Contadores e erro são reinicializados; `Running` e novo terminal observáveis |
+| SC-29 | Consulta repetida em paralelo à varredura | Snapshot consistente, sem bloqueio de I/O e sem efeitos no Inventário |
+| SC-30 | `current_directory` exposto | Somente caminho relativo, sem expor raiz privada; `None` quando indisponível |
+
+Não exigir porcentagem de progresso: o Scanner não conhece antecipadamente o número total de entradas. Os contadores refletem o trabalho efetivamente realizado, sem prometer ETA.
+
 ## Critérios de aceite
 
 1. Todos os métodos públicos possuem testes positivos e negativos, com asserções independentes sobre filesystem e Inventário.
