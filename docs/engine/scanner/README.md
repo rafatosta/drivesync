@@ -50,3 +50,7 @@ O Scanner não executa reparo de arquivo, download, upload, renomeação ou excl
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
 **Estado:** especificação documental inicial, não implementação Rust. A persistência de diagnósticos individuais no Inventário exige integração ainda não prevista integralmente em seu contrato atual.
+
+## Independência da recuperação de banco
+
+Se o Inventário tiver sido restaurado ou reconstruído após falha de armazenamento, o Scanner executa **a mesma varredura local** e registra as observações pela API habitual. Não solicita backup, não detecta corrupção SQLite nem tenta recuperar histórico. A inicialização só deve invocá-lo quando o Inventário estiver operacional; sem baseline anterior, ele não inventa associações ou exclusões. A política e as notificações de recuperação pertencem a [Configurations](../configuration/README.md) e [Inventory Storage](../inventory/storage/INTERFACES.md).
