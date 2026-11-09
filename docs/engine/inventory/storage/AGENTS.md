@@ -15,7 +15,9 @@ As assinaturas e regras de cada operação estão em [INTERFACES.md](INTERFACES.
 
 ## Estado e recuperação
 
-- Executar backup/restauração/reconstrução com política padrão segura, **sem exigir Configuration**.
+- Registrar o banco no mecanismo comum de backup/restauração SQLite de Configuration; **não duplicar** o algoritmo físico.
+- Garantir exclusividade antes da restauração e validar identidade/schema após reabrir.
+- Em falha de restauração, manter indisponibilidade e preservar o original; reconstrução vazia é fluxo separado, autorizado pela coordenação.
 - Expor snapshot interno de disponibilidade/recuperação ao InventoryManager; a consulta externa não executa SQL.
 - Diferenciar corrupção comprovada de bloqueio, disco cheio, permissões, erro de identidade e esquema incompatível; somente corrupção confirmada autoriza fluxo de restauração e reconstrução não destrutiva.
 - Não criar progresso artificial para transações SQLite, nem manter workers permanentes.
