@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Implementar um Scanner **somente local**, com os métodos `new` e `scan`, que percorre uma raiz de sincronização e atualiza as observações locais do Inventário, continuando diante de falhas individuais de arquivo.
+Implementar um Scanner **somente local**, com os métodos `new`, `scan` e `status`, que percorre uma raiz de sincronização e atualiza as observações locais do Inventário, continuando diante de falhas individuais de arquivo.
 
 ## Leitura obrigatória
 
@@ -29,6 +29,15 @@ Implementar um Scanner **somente local**, com os métodos `new` e `scan`, que pe
 - Respeitar escopo, symlinks, nomes não UTF-8 e exclusão do próprio diretório interno `.drivesync/`.
 - Diagnósticos não persistidos por falta de API adequada no Inventário devem ser declarados **lacuna de integração**, nunca simulados como estado durável disponível ao Analisador.
 - Não alterar interfaces de outros módulos como efeito colateral; registrar dependências de integração para revisão posterior.
+
+## Observabilidade
+
+- Manter `ScannerState` e `ScannerStatus` internos atualizados durante `scan()`, sem bloquear o consumidor de `status()`.
+- Diferenciar estado da execução (`Completed`) da cobertura final (`ScanStatus::Partial` ou `Completed`).
+- Publicar contadores apenas após passos efetivamente observados/persistidos; não inventar percentual ou ETA.
+- Impedir varreduras concorrentes por instância com erro `AlreadyRunning`, sem criar segundo percurso.
+- Não introduzir callbacks de GUI, polling obrigatório, thread dedicada ou novo método de cancelamento sem decisão posterior.
+- Cobrir os casos SC-21 a SC-30 documentados em TESTS.md.
 
 ## Testes
 
