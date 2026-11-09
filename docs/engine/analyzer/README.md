@@ -41,10 +41,21 @@ flowchart TD
 
 - `Analyzer::new(AnalyzerConfig) -> AnalyzerResult<Analyzer>`: configura acesso aos contratos dependentes.
 - `Analyzer::analyze(AnalyzeRequest) -> AnalyzerResult<AnalysisOutcome>`: processa exatamente um `SyncItem`, com resolução opcional.
+- `Analyzer::status(AnalysisStatusRequest) -> AnalyzerResult<AnalysisStatusResult>`: consulta a etapa e o progresso da execução ativa de um item, sem aguardar sua conclusão.
 
 `AnalysisOutcome` oferece `Completed`, `Pending` e `Failed`. `Pending` devolve um objeto autocontido para registrar a pendência e apresentar alternativas, sem suspender outros itens. `Failed` preserva os efeitos já ocorridos. A mesma função `analyze` retoma um item após decisão externa, validando novamente o estado.
 
 As assinaturas, campos, tipos, regras de falha e integração estão em [INTERFACES.md](INTERFACES.md).
+
+## Acompanhamento durante a análise
+
+`analyze()` é uma **tarefa assíncrona delimitada**, não um serviço que permanece observando eventos. Sua execução passa pelas etapas de validação, reconciliação, avaliação de conflito quando necessária, execução de comandos, verificação e confirmação. `status(item_id)` devolve uma fotografia interna da etapa atual e, quando existirem, contadores de comandos e progresso real das transferências fornecido pelo Operador.
+
+A consulta não espera I/O, não acessa SQLite, não produz operação e não consulta submódulos diretamente. `active=None` significa apenas que **não há uma análise em andamento para o item nesta instância**; a conclusão/pendência/falha é comunicada pelo retorno `AnalysisOutcome` e registros duráveis ficam no Inventário.
+
+Uma análise de item pode devolver `Pending` imediatamente ao constatar necessidade de decisão externa; o Analisador não mantém tarefa aberta aguardando resposta. Itens distintos podem ser analisados em paralelo, mas uma segunda chamada simultânea para o mesmo item retorna `AlreadyRunning`, preservando revisões e precondições do Inventário para evitar efeitos duplicados entre instâncias.
+
+Não criar `pause`, `resume` ou `stop` no Analisador. O gerenciamento de quando chamar ou não chamar análises pertence ao Orquestrador; execução e confirmação de comandos pertencem ao Analisador e ao Operador.
 
 ## Integração com os demais contratos
 
