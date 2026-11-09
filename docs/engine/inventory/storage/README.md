@@ -22,4 +22,8 @@ Abre e valida o banco `inventory.sqlite3`, gerencia seu esquema, índices e inte
 
 ## Backup e reconstrução
 
-A política de recuperação é coordenada por [Configurations](../../configuration/README.md); este Storage realiza fisicamente backup/restauração validada e preserva a base danificada. Corrupção comprovada: **avisar usuário → solicitar restauração automática → caso falhe, avisar novamente e reconstruir banco vazio**. Após recuperação, a inicialização retoma observação local/remota e análise normal, sem inventar baseline ou executar exclusões por falta de histórico. Falhas de acesso temporárias não iniciam reconstrução.
+O Storage é proprietário da política padrão e da execução física de backup/restauração, sem dependência obrigatória de [Configuration](../../configuration/README.md), que pode fornecer apenas preferências opcionais por demanda. O Storage preserva a base danificada. Corrupção comprovada: **avisar usuário → solicitar restauração automática → caso falhe, avisar novamente e reconstruir banco vazio**. Após recuperação, a inicialização retoma observação local/remota e análise normal, sem inventar baseline ou executar exclusões por falta de histórico. Falhas de acesso temporárias não iniciam reconstrução.
+
+## Disponibilidade operacional
+
+O Storage mantém internamente condição de disponibilidade e resultado de recuperação para expor ao `InventoryManager.status()`. Não disponibiliza SQL, conexões ou estados de transação à API pública. Cada operação continua delimitada e atômica; a consulta de status utiliza snapshot interno, não `PRAGMA` nem leitura concorrente do banco. A abertura bem-sucedida indica `Normal`, `Restored` ou `Rebuilt`; falha anterior à criação da instância é erro tipado.
