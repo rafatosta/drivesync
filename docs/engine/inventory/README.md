@@ -30,3 +30,7 @@ As assinaturas, entradas, retornos e regras de consistência estão em [INTERFAC
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
 **Estado:** especificação documental; sua existência não comprova implementação Rust.
+
+## Recuperação do Inventário
+
+A proteção do SQLite pertence a [Storage](storage/INTERFACES.md), coordenada pela política de [Configurations](../configuration/README.md). Corrupção comprovada gera erro e aviso ao usuário, tentativa de backup automático e, se esta falhar, novo aviso e reconstrução **não destrutiva** do banco, preservando o anterior para diagnóstico. Um inventário reconstruído não possui baseline confiável; o Scanner observa o estado local e o Analisador processa os estados disponíveis sem alterar seu algoritmo. Dúvidas sem evidência suficiente são encaminhadas ao usuário por item. Não interpretar ausência de registros como exclusão de arquivos.
