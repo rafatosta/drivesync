@@ -98,3 +98,16 @@ RED → GREEN → REFACTOR por unidades coesas; validar o conjunto após cada et
 | STO-F-08 | Payload impossível de armazenar com fidelidade | Falha/backpressure e nenhuma confirmação de enqueue; não truncar |
 
 **Não realizar testes de sync reais** neste módulo. SQLite real isolado, dentro do Flatpak, com `File` e fixtures de Models.
+
+## Casos adicionais — recuperação do armazenamento
+
+| ID | Cenário | Resultado esperado |
+| --- | --- | --- |
+| STO-R01 | Banco de eventos corrompido e backup íntegro | Mensagem ao usuário; Configurations coordena restauração; Store reabre validado |
+| STO-R02 | Falha de restauração | Segunda mensagem; Store vazio reconstruído sem destruir banco anterior |
+| STO-R03 | Reconstrução de fila com cursor remoto perdido | Detector refaz observação de cobertura suficiente; não inventa ausência de mudanças |
+| STO-R04 | Lease/evento recuperado de backup anterior | Não confirmar como processado por causa da recuperação; redelivery seguro |
+| STO-R05 | Falha temporária, schema incompatível, identidade divergente | Erro específico sem reconstrução automática |
+| STO-R06 | Não é possível criar novo Store | Erro persistente, sem liberar consumo ou afirmar entrega |
+
+Exercitar SQLite isolado e falhas injetadas, incluindo reabertura e efeito sobre checkpoints. **Especificação TDD, sem testes executados.**
