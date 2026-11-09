@@ -11,7 +11,16 @@ Implementar e manter o armazenamento persistente do estado de uma pasta sincroni
 - [TESTS.md](TESTS.md): cenários de conformidade e persistência.
 - Os submódulos `items`, `metadata`, `baseline`, `operations`, `activity` e `storage` possuem seus próprios contratos.
 
-A interface pública é `InventoryManager`, com as 16 operações documentadas. Cada método recebe uma requisição tipada e retorna `InventoryResult<T>`. A organização interna do código será definida conforme a implementação.
+A interface pública é `InventoryManager`, com as 17 operações documentadas. Cada método recebe uma requisição tipada e retorna `InventoryResult<T>`. A organização interna do código será definida conforme a implementação.
+
+## Disponibilidade e recuperação
+
+- `status()` consulta somente snapshot interno rápido, sem SQL nem esperar por transações ou restauração.
+- Manter estado `Ready/Recovering/Unavailable` e resultado da última abertura `Normal/Restored/Rebuilt`; não fazer inferências de cobertura, exclusão ou baseline a partir desses estados.
+- `open()` retorna erro se falhar antes de criar InventoryManager; quando abre com sucesso, sinaliza restauração/reconstrução para a inicialização.
+- Storage é proprietário de backup/restauração e opera com valores padrão **sem Configuration**; preferências futuras são opcionais.
+- Não introduzir gerenciador de jobs, callbacks de progresso de SQL ou `start/pause/stop`.
+- Operações SQLite podem bloquear: não executá-las no loop GTK; preservar atomicidade e erros tipados.
 
 ## Persistência e integridade
 
