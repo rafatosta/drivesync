@@ -132,8 +132,12 @@ pub(super) struct LocalStopResult {
     pub in_flight: u32,
 }
 pub(super) struct LocalStatusRequest {}
+pub(super) enum LocalActivity { Inactive, Watching, Scanning, Recovering, Unavailable }
 pub(super) struct LocalStatusResult {
     pub state: LocalDetectorState,
+    pub activity: LocalActivity,
+    pub observed_in_current_round: u64,
+    pub emitted_in_current_round: u64,
     pub last_observation_at: Option<Timestamp>,
     pub last_coverage: Option<LocalScanCoverage>,
     pub last_error: Option<LocalDetectorError>,
@@ -194,7 +198,7 @@ impl LocalDetector {
 
 **Finalidade:** obter diagnóstico interno do observador.
 **Parâmetros:** request vazio.
-**Retorno:** estado, última observação, cobertura e erro opcionais.
+**Retorno:** estado, atividade atual (`Watching`, `Scanning`, `Recovering` etc.), contadores da rodada ativa, última observação, cobertura e erro opcionais.
 **Erros/limites:** consulta sem scan, I/O remoto ou acesso a banco.
 
 ## 6. Semântica de tipos e ausência
@@ -213,3 +217,7 @@ O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da
 Pendências antes de implementar: ownership efetivo das identidades já existentes, representação concreta de `LocalRelativePath`, política de symlinks, semântica de cancelamento/concorrência, watcher/debounce e como transportar metadata observada no evento persistente sem perda de evidência. Os contratos de Detector pai e Storage devem aceitar e reentregar `File` integral.
 
 **Estado:** contrato de projeto não compilado, sem testes executados.
+
+## Integração com controle de entrega
+
+O Local **não possui `pause()` de entrega**: recebe `start/stop` do Detector pai e continua emitindo eventos pelo sink enquanto o pai estiver com entrega ao Orquestrador pausada. O pai persiste `File` antes de aceitar a emissão; pausa de consumo externo não bloqueia a observação local. `stop` interrompe efetivamente o watcher/leituras e preserva o que já foi aceito pelo sink, mas **não** executa Scanner nem reconciliação para compensar o intervalo sem detecção. Cabe ao Orquestrador decidir quando solicitar verificações após retomada. O resultado de `start` indica aceite, não garantia de cobertura completa.
