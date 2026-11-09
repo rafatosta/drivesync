@@ -84,8 +84,12 @@ pub(super) struct RemotePollResult {
 pub(super) struct RemoteStopRequest {}
 pub(super) struct RemoteStopResult { pub state: RemoteState }
 pub(super) struct RemoteStatusRequest {}
+pub(super) enum RemoteActivity { Inactive, Polling, Waiting, Recovering, Unavailable }
 pub(super) struct RemoteStatusResult {
     pub state: RemoteState,
+    pub activity: RemoteActivity,
+    pub observed_in_current_round: u64,
+    pub emitted_in_current_round: u64,
     pub last_observed_at: Option<Timestamp>,
     pub last_error: Option<RemoteError>,
 }
@@ -143,7 +147,7 @@ impl RemoteDetector {
 
 **Finalidade:** expor diagnóstico interno para o Detector pai.
 **Parâmetros:** consulta vazia.
-**Retorno:** estado, último instante e erro opcionais.
+**Retorno:** estado, atividade (`Polling`, `Waiting`, `Recovering` etc.), contadores da rodada ativa, último instante e erro opcionais.
 **Limites e erros:** não inicia HTTP; erro sanitizado sem token/corpo de resposta.
 
 ## 5. Semântica dos opcionais e pendências
@@ -174,3 +178,7 @@ O especialista somente confirma a posição da página **depois de todos os `Fil
 **Fronteira de falhas:** sem transação atômica compartilhada entre storage de eventos e backend de checkpoint, a ordenação `enqueue durável → commit do checkpoint` impede avançar antes de persistir, mas admite replay da mesma página após falha de checkpoint. Não prometer entrega exatamente uma vez nem exclusão de duplicatas sem protocolo testado. A implementação preserva o encapsulamento do checkpoint e das operações de persistência.
 
 A confirmação do checkpoint de leitura remota é independente da confirmação de entrega do lote de ocorrências.
+
+## Integração com controle de entrega
+
+O Remoto **não possui `pause()` de entrega**: continua consultando e emitindo eventos pelo sink enquanto o Detector pai estiver com entrega externa suspensa. O sink deve persistir `File` antes de confirmar recebimento, e o checkpoint remoto só avança após aceite durável. `stop` interrompe efetivamente polling, mas preserva checkpoint e eventos aceitos. **O Orquestrador decide** se e quando solicitar varredura ou recuperação de cobertura depois de um período sem detecção; o Remoto não coordena Scanner/Analisador nem decide consequências da interrupção. `status` deve ser rápido e não disparar HTTP.
