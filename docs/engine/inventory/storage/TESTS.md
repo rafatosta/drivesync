@@ -44,7 +44,7 @@ Aceite somente após a revisão dos contratos pendentes, implementação Rust e 
 
 | ID | Cenário | Resultado esperado |
 | --- | --- | --- |
-| STO-R01 | Corrupção comprovada, backup íntegro | Erro e mensagem ao usuário, solicitação a Configurations, restauração validada, reabertura |
+| STO-R01 | Corrupção comprovada, backup íntegro | Erro e mensagem ao usuário, uso da política padrão do próprio Storage (sem depender de Configuration), restauração validada, reabertura |
 | STO-R02 | Backup mais recente inválido, anterior íntegro | Nunca restaurar arquivo inválido; recuperar cópia válida conforme política |
 | STO-R03 | Falha de todas as tentativas de backup | Segunda mensagem; preservar banco danificado; criar estrutura vazia sem baseline inventado |
 | STO-R04 | Erro também na reconstrução | Erro estrutural e sincronização bloqueada; nenhum sucesso simulado |
@@ -54,3 +54,17 @@ Aceite somente após a revisão dos contratos pendentes, implementação Rust e 
 | STO-R08 | Banco reconstruído | Scanner e Analisador operam sem mudança de algoritmo; `Unknown` não vira `AbsentConfirmed` |
 
 Executar com SQLite real isolado, corrupção e falhas injetadas, dados sintéticos e ambiente Flatpak. **Testes documentados, ainda não executados.**
+
+## Testes de disponibilidade operacional
+
+| ID | Situação | Resultado esperado |
+| --- | --- | --- |
+| STO-S01 | `open` normal | Resultado `Normal`, disponibilidade `Ready` após inicialização |
+| STO-S02 | Recuperação por backup consistente | Resultado `Restored`, sem inventar baseline novo |
+| STO-S03 | Reconstrução segura após falha de backups | Resultado `Rebuilt`, estrutura vazia sem exclusões presumidas |
+| STO-S04 | Recuperação impossível | Erro tipado e indisponibilidade; não liberar operações inseguras |
+| STO-S05 | Leitura de snapshot de status durante acesso SQLite concorrente | Não executar SQL nem aguardar término da transação |
+| STO-S06 | Configuration ausente | Recuperação usa política padrão do Storage, sem erro de dependência opcional |
+| STO-S07 | Identidade divergente / esquema incompatível / SQLITE_BUSY | Não classificar corrupção nem recriar banco |
+
+Os testes são propostas, não foram executados.
