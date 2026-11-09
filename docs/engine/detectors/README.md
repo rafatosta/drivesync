@@ -45,4 +45,6 @@ Durante `pause`, as origens continuam registrando na fila persistente própria d
 
 ## Persistência recuperável
 
-O banco privativo dos Detectores é protegido pelo [Detector Storage](storage/INTERFACES.md), que funciona com regras padrão próprias e pode consultar preferências opcionais de [Configuration](../configuration/README.md): corrupção comprovada gera aviso, restauração automática e, se esta falhar, novo aviso e reconstrução não destrutiva. A fila e checkpoints eventualmente perdidos não são considerados processados; a observação local/remota deve recuperar cobertura antes da liberação de consumo pelo Orquestrador. Os algoritmos e a API pública de eventos permanecem os mesmos.
+A fila e os checkpoints pertencem ao [Detector Storage](storage/INTERFACES.md), com identidade, schema e transações privados. Para bancos SQLite registrados, [Configuration](../configuration/INTERFACES.md) oferece o **backup/restauração física comum**; o Storage garante exclusividade e valida o resultado antes de retomar seu uso.
+
+Corrupção comprovada não pode apagar silenciosamente eventos. Se a restauração não for possível, o banco permanece indisponível; eventual reconstrução vazia é decisão distinta da coordenação e não comprova ausência de alterações. Após perda de fila ou checkpoints, o Orquestrador deve coordenar a recuperação de cobertura antes da continuidade segura.
