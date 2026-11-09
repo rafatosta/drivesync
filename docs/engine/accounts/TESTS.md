@@ -37,6 +37,25 @@ Validar o cadastro e ciclo de vida de contas, a associação de credenciais arma
 | ACC-19 | Remoção repetida/crash intermediário | Não deixa referência órfã sem sinalização e recuperação |
 | ACC-20 | Provider não tem OAuth | Accounts não impõe endpoints ou fluxo Google universal |
 
+## Estado transitório e concorrência — testes adicionais
+
+| ID | Cenário | Resultado esperado |
+| --- | --- | --- |
+| ACC-S01 | `status()` sem tarefas ativas | `active_operations=[]`, sem implicar conectividade ou ausência de contas |
+| ACC-S02 | `add` antes de criar `AccountId` | Atividade `Adding` observável, `account_id=None` permitido e `request_id` preservado quando fornecido |
+| ACC-S03 | `add` grava keyring e cadastro | Fases reais de persistência observáveis, sem expor token/handle |
+| ACC-S04 | `remove` verifica vínculos | `Removing/CheckingAssociations`; `AccountInUse` encerra operação sem remover dados |
+| ACC-S05 | `acquire_session` acessa Secret Service | `AcquiringSession/AccessingSecureStorage`; falha tipada sem segredos |
+| ACC-S06 | `update_authorization` | `UpdatingAuthorization` e etapas efetivas; identidade divergente não substitui credenciais |
+| ACC-S07 | Operação `Ok`, `Err` ou cancelada | Retirada do snapshot em todos os desfechos; resultado permanece no método |
+| ACC-S08 | Várias contas com operações simultâneas | Estados independentes; sem mistura de IDs e erros |
+| ACC-S09 | Consulta de `status()` durante I/O lento | Snapshot coerente e rápido, sem SQL, keyring ou HTTP |
+| ACC-S10 | `get/list/update` local | Não gera tarefa monitorada fictícia nem executa autenticação remota |
+| ACC-S11 | Falha do keyring em uma operação | Falha reportada; nenhuma marcação global fictícia de desconexão |
+| ACC-S12 | Autorização no navegador ainda não entregue ao Accounts | `status()` não inventa fase de consentimento externo ao módulo |
+
+Usar fakes controlados que mantenham operações em fases definidas, sem depender de `sleep` arbitrário. Esses testes não foram executados.
+
 ## Invariantes transversais
 
 - Uma conta é identificada por `(provider, provider_user_id)`; e-mail e nome são mutáveis.
