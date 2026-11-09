@@ -20,6 +20,7 @@ Plano **não executado** de integração por contratos dos módulos. Usar implem
 | ORC-10 | Todos eventos persistidos e item afetado retornado | Somente então `acknowledge(Processed)`; análise recebe `SyncItem`, não `FileBatch` |
 | ORC-11 | Falha do Inventory no meio do lote | Sem ack global; `release_events`/lease preserva possibilidade de reentrega |
 | ORC-12 | Crash entre `record_*` e `acknowledge` | Redelivery exige deduplicação persistente por `File.id`; **BLOCKED até contrato no Inventory** |
+| ORC-12A | Crash após ack do Detector, antes de `analyze` | Inventory precisa manter trabalho pendente recuperável; **BLOCKED até contrato de marcação durável** |
 | ORC-13 | Mesmo item aparece várias vezes em lote | Preservar eventos; planejar reanálise sem perder mudanças; não coalescer observações persistidas |
 | ORC-14 | Analyzer devolve `Completed` | Não repetir Operator nem confirmar baseline no Orchestrator |
 | ORC-15 | Analyzer devolve `Pending` | Não bloquear outros itens, não acionar Operator; persistência da pendência **BLOCKED** |
@@ -47,6 +48,7 @@ Não aceitar um mock do Detector que sempre retorna `Ok` como comprovação de f
 
 | Contrato ainda faltante | Impacto |
 | --- | --- |
+| `Inventory` — marcar/listar análise pendente de maneira durável ao ingerir observações | Recuperação de itens após ack do Detector e crash antes do Analyzer |
 | `Inventory` — idempotência por `File.id`/identidade de ocorrência | Reentrega de lote não produz efeitos duplicados de observação |
 | `Inventory` — persistência/consulta de `PendingAction` e `Resolution` | Recuperar conflito após reinício |
 | `Inventory/Scanner` — cobertura, geração e diagnóstico persistente | Decidir segurança da observação inicial |
