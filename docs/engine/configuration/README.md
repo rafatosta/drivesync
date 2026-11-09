@@ -14,7 +14,7 @@ O módulo `configuration/` define, valida, consulta e atualiza **preferências d
 | Preferências por sincronização | Limites de transferência, opções aplicáveis à conexão e políticas selecionadas | `configuration/`, usando `sync_id` fornecido pelo proprietário das conexões |
 | Dados de identidade da conta | `account_id`, `provider_user_id`, nome, e-mail | `accounts/` |
 | Cadastro de conexões | `sync_id`, `account_id`, raízes local/remota | Responsabilidade ainda a decidir; levantamento preservado em [`accounts/README.md`](../accounts/README.md) |
-| Autenticação e segredos | Tokens OAuth e outros materiais sensíveis | `accounts/auth/`, via Secret Service/keyring |
+| Autenticação e segredos | Tokens OAuth e outros materiais sensíveis | `accounts/`, internamente via Secret Service/keyring; protocolo externo em `providers/<provedor>/` |
 | Estado de arquivos e histórico por item | `SyncItem`, baseline, eventos, fila, atividades | `inventory/`, em SQLite por pasta |
 
 Esta separação trata **quem é dono do dado**, não impõe que módulos tenham necessariamente arquivos físicos diferentes. Um eventual mecanismo compartilhado exige contrato explícito; não autoriza um módulo a acessar tabelas de outro.
