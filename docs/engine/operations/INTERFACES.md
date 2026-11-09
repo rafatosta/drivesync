@@ -69,13 +69,31 @@ pub struct ExecutionOptions {
     pub cancellation: Option<CancellationToken>,
     pub progress: Option<ProgressReporter>,
 }
+
+// Comunicação de progresso conceitual; ownership e contrato Rust concretos pendentes.
+pub enum ExecutionPhase {
+    Preparing,
+    Transferring,
+    Applying,
+    Verifying,
+    Finalizing,
+}
+pub struct ExecutionProgress {
+    pub phase: ExecutionPhase,
+    pub bytes_transferred: Option<u64>,
+    pub total_bytes: Option<u64>,
+}
+// ProgressReporter recebe ExecutionProgress sem controlar execução ou guardar fila.
+
 ```
 
 `ResourceRef` identifica um recurso existente; `DirectoryRef` identifica o contêiner de criação ou movimentação. O contexto remoto deve identificar uma sessão válida e o provedor específico. O método de obtenção dessa sessão fica encapsulado na composição do Operador.
 
 `ContentSource` representa a origem do conteúdo; a implementação pode usar leitura em fluxo para evitar carregar arquivos grandes na memória. `Preconditions` expressa versões/revisões esperadas. Ausência de precondição não equivale a permissão implícita de sobrescrita: o comando deve definir explicitamente o alvo e a intenção de substituição.
 
-`ExecutionOptions` é contexto opcional compartilhado de cancelamento e progresso, fornecido na requisição ou em mecanismo equivalente definido na implementação. Cancelamento é uma solicitação, não prova de reversão do efeito.
+`ExecutionOptions` é o contexto opcional compartilhado para **todas as dez operações**, incluindo comandos curtos de metadados e remoção. Os dois recursos são independentes: sem reporter, a operação continua; sem token, a operação também continua. O reporter comunica fases reais e, em transferências, bytes quando disponíveis, sem conhecer Analyzer, Orquestrador ou interface gráfica. `ExecutionProgress` não é resultado final e não confirma efeito remoto, integridade ou baseline.
+
+O cancelamento é **solicitação cooperativa**, não prova de reversão. Antes do ponto de efeito irreversível, pode impedir a execução; depois de aplicada uma alteração, a implementação deve verificar e reportar o resultado efetivo ou incerto, em vez de declarar cancelamento sem efeito. Não interromper uma transação, publicação atômica ou operação irreversível em ponto inseguro. A API do Operador **não** oferece `pause/resume/stop`, fila privada nem consulta global de jobs; cada chamada termina com retorno tipado ou erro, mesmo quando o callback de progresso está ausente.
 
 ## 3. Requisições
 
@@ -113,24 +131,29 @@ pub struct RenameRequest {
     pub target: ResourceRef,
     pub new_name: String,
     pub preconditions: Preconditions,
+    pub options: ExecutionOptions,
 }
 pub struct MoveRequest {
     pub target: ResourceRef,
     pub destination: DirectoryRef,
     pub preconditions: Preconditions,
+    pub options: ExecutionOptions,
 }
 pub struct DeleteRequest {
     pub target: ResourceRef,
     pub preconditions: Preconditions,
+    pub options: ExecutionOptions,
 }
 pub struct TrashRequest {
     pub target: ResourceRef,
     pub preconditions: Preconditions,
+    pub options: ExecutionOptions,
 }
 pub struct RestoreRequest {
     pub target: ResourceRef,
     pub destination: Option<DirectoryRef>,
     pub preconditions: Preconditions,
+    pub options: ExecutionOptions,
 }
 ```
 
@@ -173,7 +196,27 @@ pub struct DeleteResult {
 
 `Verified` exige evidência da alteração esperada. `Unverified` indica conclusão reportada sem evidência suficiente para confirmá-la. Uma execução com efeito **indeterminado** deve resultar em erro tipado apropriado e conservar informação suficiente para verificar o efeito antes de nova tentativa.
 
-## 5. Contrato funcional por método
+## 5. Estado da execução e progresso
+
+O Operador executa **uma ação por chamada assíncrona**. Seu estado observável é comunicado pelo `ProgressReporter` de `ExecutionOptions`, quando fornecido pelo chamador; **não criar `Operator::status()` nem um registro próprio de tarefas em execução**. O Analyzer é o consumidor direto autorizado a consolidar esses dados com o `SyncItem`. Todas as dez requisições aceitam `ExecutionOptions`, sem impor reporter/cancelamento quando não usados.
+
+| Fase | Significado |
+| --- | --- |
+| `Preparing` | Validando entrada, escopo, identidade, capacidade e precondições |
+| `Transferring` | Lendo/escrevendo conteúdo em fluxo, quando aplicável |
+| `Applying` | Executando criação, alteração, movimentação ou exclusão |
+| `Verifying` | Checando efeito/integridade observáveis |
+| `Finalizing` | Finalizando a chamada/recursos após efeito conhecido |
+
+As fases são **notificações de avanço da execução**, não máquina de estados de serviço. Uma operação pode pular fases inaplicáveis. Não enviar progresso fictício nem exigir fase `Transferring` em renomeação/exclusão. `bytes_transferred` é opcional, monotônico na mesma execução quando fornecido e corresponde somente aos bytes realmente transferidos; `total_bytes=None` quando desconhecido. Nenhum evento autoriza inferir 100% da sincronização ou verificação confirmada.
+
+`ProgressReporter` deve ser não bloqueante para o trabalho: reportar uma fotografia tipada, sem realizar I/O pesado ou executar callbacks da GUI dentro do Operador. Erro/ausência de observador não deve converter operação bem-sucedida em falha, nem mascarar falha real. Detalhes do canal, buffering, backpressure e threading são decisões de implementação. O retorno do método é a **única fonte conclusiva** do efeito observado.
+
+**Cancelamento:** `CancellationToken` é verificado em pontos seguros. Pedido anterior ao efeito pode resultar em `Cancelled`; depois que houver efeito local/remoto ou dúvida sobre resultado, preservar informação de conclusão parcial/indeterminação e exigir verificação antes de retry. Não prometer reversão automática, cancelamento instantâneo ou supressão de operação já confirmada. Em comandos curtos, o pedido pode chegar depois do ponto seguro e o retorno normal prevalece.
+
+**Concorrência:** o Operador não agenda trabalhos nem identifica `SyncItem`. Chamadas sobre recursos independentes podem coexistir; operações incompatíveis sobre o mesmo destino exigem precondições, validação de identidade e coordenação pelo chamador. O progress reporter pertence à chamada, não ao recurso global.
+
+## 6. Contrato funcional por método
 
 | Método | Entrada essencial | Resultado | Regras de execução |
 | --- | --- | --- | --- |
@@ -189,7 +232,7 @@ pub struct DeleteResult {
 | `trash` | Recurso, precondições | `ItemResult` | Aplica envio à lixeira quando disponível |
 | `restore` | Recurso, destino opcional, precondições | `ItemResult` | Restaura recurso quando disponível e retorna estado observado |
 
-## 6. Garantias compartilhadas
+## 7. Garantias compartilhadas
 
 - **Identidade:** operações utilizam IDs remotos e caminhos locais validados, evitando correlação por nome como substituto da identidade.
 - **Precondições:** quando fornecidas, são verificadas antes de alterações; condições remotas devem preferir mecanismos atômicos disponibilizados pelo provedor.
@@ -197,10 +240,10 @@ pub struct DeleteResult {
 - **Atomicidade local:** substituições de conteúdo devem utilizar escrita temporária e publicação segura quando aplicável.
 - **Retomada:** transferências interrompidas podem continuar a partir de progresso comprovado quando tecnicamente suportado.
 - **Erros:** `OperatorError` distingue recurso inexistente, acesso negado, conflito, precondição não satisfeita, operação não suportada, falta de espaço, falha de I/O/rede, cancelamento e efeito indeterminado.
-- **Progresso:** atualizações informam bytes transferidos e fases significativas quando disponíveis; ausência de progresso não implica ausência de execução.
+- **Progresso:** todas as dez requisições aceitam contexto opcional; atualizações informam fases reais e bytes quando disponíveis; ausência de progresso não implica ausência de execução, e a conclusão depende do resultado tipado.
 - **Contexto remoto:** chamadas de serviços externos são realizadas pelas interfaces de `providers/`, com seleção do provedor correspondente.
 
-## 7. Contrato de implementação especializada
+## 8. Contrato de implementação especializada
 
 Cada provedor possui um executor que implementa **todos os métodos** definidos pela interface `OperationExecutor`. A fachada pública identifica o provedor e a conta da sessão e encaminha a operação para a implementação correspondente.
 
@@ -228,13 +271,13 @@ pub(crate) trait OperationExecutor: Send + Sync {
 
 **Validação:** a mesma [suíte de conformidade](TESTS.md#conformidade-dos-executores-especializados) se aplica a todos os executores concretos.
 
-## 8. Biblioteca privada de operações locais
+## 9. Biblioteca privada de operações locais
 
 O próprio `Operator` disponibiliza funções internas reutilizáveis para manipular arquivos e diretórios no sistema de arquivos. Essas funções compõem uma **API privada de apoio à execução**: as implementações especializadas podem utilizá-las diretamente, sem precisar de um submódulo arquitetural adicional.
 
 A biblioteca oferece operações locais elementares, com resultados tipados e garantias de segurança. A organização física dessas funções em arquivos Rust é um detalhe de implementação.
 
-### 8.1. Contratos internos propostos
+### 9.1. Contratos internos propostos
 
 ```rust
 // Sketches of crate-private contracts; concrete ownership is defined in Rust.
@@ -392,6 +435,6 @@ Obtém a evidência aplicável sobre o conteúdo local (por exemplo, tamanho ou 
 
 As referências retornadas são vinculadas ao recurso efetivamente validado, não apenas a uma string de caminho. A implementação deve determinar como garantir essa propriedade no Linux com handles, descritores relativos e verificações de identidade; qualquer impossibilidade técnica precisa resultar em erro seguro e não em sucesso presumido.
 
-## 9. Definições para implementação
+## 10. Definições para implementação
 
 As estruturas ilustram a forma do contrato. Antes da implementação Rust, definir os tipos concretos de IDs e metadados, a representação de referências locais seguras, a forma de injetar a sessão remota, o tratamento de progresso/cancelamento e a compatibilidade entre capacidades de cada ambiente. Essas decisões preservam os objetivos e os métodos públicos acima.
