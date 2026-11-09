@@ -58,11 +58,33 @@ pub struct AccountsFailure {
 ```rust
 pub struct AddAccountRequest {
     pub provider: ProviderId,
+    pub request_id: Option<String>, // correlação opcional do registro em andamento
     // Entrada de autorização específica obtida pela API do provedor,
     // não um token bruto nem um protocolo OAuth reimplementado em Accounts.
     pub authorization: ProviderAuthorizationHandle,
 }
 pub struct AddAccountResult { pub account: Account, pub created: bool }
+
+// Apenas acompanhamento transitório da execução atual, não cadastro nem histórico.
+pub enum AccountOperationKind { Adding, Removing, AcquiringSession, UpdatingAuthorization }
+pub enum AccountOperationPhase {
+    Validating,
+    CheckingAssociations,
+    AccessingSecureStorage,
+    PersistingCredentials,
+    PersistingMetadata,
+    Finalizing,
+}
+pub struct ActiveAccountOperation {
+    pub account_id: Option<AccountId>, // None antes de identificar/criar conta
+    pub request_id: Option<String>,    // correlação de add, sem segredos
+    pub kind: AccountOperationKind,
+    pub phase: AccountOperationPhase,
+}
+pub struct AccountsStatusRequest {}
+pub struct AccountsStatusResult {
+    pub active_operations: Vec<ActiveAccountOperation>,
+}
 
 pub struct GetAccountRequest { pub account_id: AccountId }
 pub struct GetAccountResult { pub account: Account }
@@ -104,6 +126,7 @@ impl Accounts {
     pub fn new(config: AccountsConfig) -> AccountsResult<Self>;
 
     pub async fn add(&self, request: AddAccountRequest) -> AccountsResult<AddAccountResult>;
+    pub fn status(&self, request: AccountsStatusRequest) -> AccountsStatusResult;
     pub fn get(&self, request: GetAccountRequest) -> AccountsResult<GetAccountResult>;
     pub fn list(&self, request: ListAccountsRequest) -> AccountsResult<ListAccountsResult>;
     pub fn update(&self, request: UpdateAccountRequest) -> AccountsResult<UpdateAccountResult>;
@@ -115,11 +138,24 @@ impl Accounts {
 
 Os métodos usam **um objeto de requisição** e retornam objeto de resultado, no padrão da engine. A escolha de sincronicidade e integração concreta será validada antes de compilar; não atribuir operações de rede a `get`, `list` ou `update`.
 
-## 5. Comportamento por método
+## 5. Acompanhamento operacional
+
+**Separação obrigatória:** `Account.state` (`Connected`, `ReauthorizationRequired`, `Unavailable`) representa a condição **conhecida da conta e das credenciais**, não a atividade em execução, a disponibilidade instantânea da rede, nem o andamento do OAuth no navegador. `Accounts::status` informa operações **já iniciadas e ainda em andamento nesta instância** de Accounts; `active_operations=[]` não significa que todas as contas estejam conectadas nem que não haja autenticação externa.
+
+As operações `add`, `remove`, `acquire_session` e `update_authorization` são assíncronas pelo acesso potencialmente demorado ao keyring, Provider ou checagem de associações. Reportam internamente fases efetivamente alcançadas; nenhuma fase é percentual nem confirmação de persistência concluída. `get`, `list` e `update` são operações locais delimitadas; não criar progresso artificial para elas. A escolha de executor/worker para I/O potencialmente bloqueante deverá preservar a responsividade GTK.
+
+O `status()` é síncrono e rápido, sem consultar banco, Secret Service ou rede. É apenas um snapshot de `ActiveAccountOperation`, sem segredos, handles, tokens ou URLs de autorização. As operações ativas são retiradas do snapshot **em todos os desfechos** (`Ok`, `Err` e cancelamento, se houver); resultados e erros retornam pelo método original. O módulo **não guarda fila nem histórico de tarefas**, e não expõe `start`, `pause`, `resume` ou `stop`.
+
+`AddAccountRequest.request_id` é identificador opcional de correlação fornecido pelo chamador, útil para acompanhar `add` antes de haver `AccountId`. Quando ausente, `request_id=None` não impede a operação; a identificação da conta aparece assim que for verificada, se disponível. IDs de correlação são opacos e não devem conter segredos. A API não promete rastreamento durável de fluxos externos de consentimento: Accounts recebe a autorização técnica já obtida pela API especializada do Provider.
+
+**Consulta e falhas:** `get/list` e `Account.state` continuam sendo as fontes de situação conhecida das contas. Falhas concretas das operações são comunicadas por `AccountsFailure`, inclusive `SecureStorageUnavailable` e `CredentialMissing`, não convertidas em estado global artificial do módulo. `Unavailable` não é uma sonda de rede. Uma falha de keyring não deve marcar automaticamente todas as contas desconectadas ou remover credenciais.
+
+## 6. Comportamento por método
 
 | Método | Ação e retorno | Erros relevantes |
 | --- | --- | --- |
 | `new` | Preparar acesso ao cadastro e armazenamento seguro, sem iniciar OAuth | Configuração/storage indisponível |
+| `status` | Consultar snapshot transitório de operações assíncronas ativas, sem I/O ou segredos | Sem erro de rede/keyring; não consulta dependências |
 | `add` | Consumir resultado autorizado pelo Provider, obter identidade externa verificada, cadastrar conta e guardar credenciais com referência segura; repetição comprovadamente idêntica é idempotente | Provider indisponível, credencial inválida, identidade duplicada, keyring inacessível |
 | `get` | Consultar conta por ID estável, sem segredos | `NotFound` |
 | `list` | Listar contas e filtrar opcionalmente pelo provedor, sem consultar rede | `StorageUnavailable` |
@@ -130,15 +166,15 @@ Os métodos usam **um objeto de requisição** e retornam objeto de resultado, n
 
 `add`/atualizações credenciais são operações com **duas persistências distintas** (cadastro e keyring). Não há transação atômica universal: projetar compensação, idempotência e limpeza de registros parciais, sem expor segredos. Não declarar conta `Connected` com credencial não persistida.
 
-## 6. Limites de integração
+## 7. Limites de integração
 
 - **Provider:** operações OAuth/OIDC, identidades externas, tokens e renovação específicos; Accounts não duplica a API e não exige um catálogo/fábrica universal que o contrato Providers não possui.
 - **Armazenamento seguro:** Secret Service/keyring (ou equivalente apropriado) guarda segredos em escopo do aplicativo. Accounts possui o vínculo e a política de acesso local. Não registrar tokens em SQLite, configurações em texto claro ou logs.
 - **Conexões:** o cadastro de sincronizações ainda tem proprietário pendente; não criar tabelas, CRUD ou referências cruzadas implícitas em Accounts. Excluir conta exige conhecer uso por contrato explícito quando implementado.
 - **Inventário, Scanner, Detector, Analisador:** não acessam armazenamento de contas ou tokens diretamente; recorrem às APIs autorizadas.
-- **Recuperação:** falha de credenciais ou keyring indisponível não é "corrupção do inventário". A política de backup de [Configuration](../configuration/README.md) aplica-se apenas à persistência escolhida e sua propriedade, **nunca** a exportação de secrets.
+- **Recuperação:** falha de credenciais ou keyring indisponível não é "corrupção do inventário". Se o cadastro adotar persistência local, **seu armazenamento** define as regras seguras de integridade e recuperação com padrões próprios; [Configuration](../configuration/README.md) é auxiliar/opcional e pode oferecer preferências por demanda, **nunca** exportação automática de secrets.
 
-## 7. Pendências antes da implementação
+## 8. Pendências antes da implementação
 
 1. Tipo de passagem de autorização/sessão que não imponha uma API universal a todos os provedores.
 2. Contrato efetivo do proprietário de conexões para bloquear remoção com sincronizações ativas.
