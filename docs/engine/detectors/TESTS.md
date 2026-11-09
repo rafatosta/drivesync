@@ -39,20 +39,32 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Iniciar Local e Remoto via APIs internas, com estratégias distintas.
+**Sucesso:** Iniciar **ambas** as origens em uma chamada, inclusive com entrega inicialmente pausada e sem janela de reserva.
 
 **Negativos e opcionais:** Start repetido ou uma origem falha.
 
-**Retorno e invariantes:** Estado Degraded quando necessário; eventos já armazenados permanecem.
+**Retorno e invariantes:** Estado Degraded quando somente uma origem falha; status individual preserva o diagnóstico da fonte que falhou e a atividade da outra.
 
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-03 — `Detector::stop`
+### DET-03 — `Detector::pause`
+
+**Sucesso:** pausa entrega, Local e Remoto continuam emitindo e armazenando eventos.
+**Negativos:** pausa repetida, lote já reservado, corrida pause/take_events.
+**Invariantes:** nenhuma nova reserva após pausa confirmada; ack/release de lotes antigos permitidos.
+
+### DET-04 — `Detector::resume`
+
+**Sucesso:** libera consumo de lotes acumulados durante pausa.
+**Negativos:** resume repetido, tentativa quando ambos observadores estão parados.
+**Invariantes:** não dispara observação nem reconciliação e não modifica eventos.
+
+### DET-05 — `Detector::stop`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Parar as duas fontes em DrainInFlight ou StopNow.
+**Sucesso:** Parar efetivamente as duas fontes em DrainInFlight ou StopNow e suspender entrega.
 
 **Negativos e opcionais:** Fonte em falha, emissão concorrente, stop repetido.
 
@@ -61,7 +73,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-04 — `Detector::request_scan`
+### DET-06 — `Detector::request_scan`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
@@ -74,11 +86,11 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-05 — `Detector::status`
+### DET-07 — `Detector::status`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
-**Sucesso:** Consultar status agregado e números de pending/leased fornecidos pelo Store.
+**Sucesso:** Consultar estado agregado, entrega, estados/atividades/erros individuais de ambas as origens e números pending/leased fornecidos pelo Store.
 
 **Negativos e opcionais:** Nenhum produtor ativo, storage indisponível, uma fonte degradada.
 
@@ -87,20 +99,20 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-06 — `Detector::take_events`
+### DET-08 — `Detector::take_events`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
 **Sucesso:** Reservar lote de até N eventos locais e remotos intercalados em ordem de enfileiramento.
 
-**Negativos e opcionais:** N=0, lease inválido, fila vazia, Store falha.
+**Negativos e opcionais:** N=0, lease inválido, fila vazia, Store falha, entrega pausada (`DeliveryPaused`) sem claim.
 
 **Retorno e invariantes:** Lote pode conter mesmo item de ambas as origens; nenhuma eliminação por colisão; nenhum conflito decidido.
 
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-07 — `Detector::acknowledge`
+### DET-09 — `Detector::acknowledge`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
@@ -113,7 +125,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 **Verificação:** checar objeto público e chamadas às **portas fake**; inspecionar estado do Store fake por sua API, sem importar estruturas internas nem depender de implementações reais. Cada resultado é aferido com valores independentes dos algoritmos testados.
 
 
-### DET-08 — `Detector::release_events`
+### DET-10 — `Detector::release_events`
 
 **Contrato:** request/result e erros públicos documentados em [INTERFACES.md](INTERFACES.md).
 
@@ -146,7 +158,22 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 | DET-B-14 | Evento sem item conhecido | Mantém necessidade de reavaliação por escopo |
 | DET-B-15 | Repetição do mesmo evento após resultado incerto | Idempotência por ID quando comprovada; não suprimir alteração distinta |
 
-## 5. Isolamento de interfaces
+## 5. Casos de controle e estado
+
+| ID | Situação | Resultado |
+| --- | --- | --- |
+| DET-C-01 | `start(delivery=Paused)` | Local e Remoto começam a observar; nenhuma reserva externa antes de `resume` |
+| DET-C-02 | `pause` durante produção | Eventos persistidos continuam aumentando; consumo suspenso |
+| DET-C-03 | `resume` após eventos acumulados | `take_events` entrega pendências sem descartá-las |
+| DET-C-04 | `pause` concorrente com `take_events` | Nenhuma nova reserva após confirmação da pausa |
+| DET-C-05 | Lote reservado antes da pausa | `acknowledge`, `release_events` e expiração continuam válidos |
+| DET-C-06 | Uma origem falha, outra funciona | `Degraded` agregado e estados/erros individuais fiéis |
+| DET-C-07 | Rodada de observação em andamento | `status` informa atividade e contadores por origem |
+| DET-C-08 | `stop` | Local e Remoto interrompidos, entrega pausada; eventos/checkpoints preservados |
+| DET-C-09 | Reiniciar depois de `stop` | Ambos iniciam; Detector não executa análise/Scanner por iniciativa própria |
+| DET-C-10 | Notificação de eventos durante pausa | Nenhum lote entregue por callback; sinalização de disponibilidade não burla pausa |
+
+## 6. Isolamento de interfaces
 
 - Consumidor de teste só importa `Detector`, requests/results, `File`, `FileBatch` e tipos públicos.
 - Não pode importar `LocalDetector`, `RemoteDetector`, `EventStore` ou tipos SQLite através da fachada.
@@ -154,11 +181,11 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 - Local real é testável sem Remoto/Storage concretos; Remoto real sem Local/Storage concretos; Storage real sem ambos nem coordenador real.
 - A substituição de qualquer filho por fake não obriga reescrever os demais contratos.
 
-## 6. Erros, opcionalidade e aceite
+## 7. Erros, opcionalidade e aceite
 
 Testar `batch_id=None` somente para lote vazio, intervalos opcionais vazios em lote vazio, `event_available_sink=None`, identidade de sincronização, tipos de status, lease expirado/errado, requests inválidos, backpressure e falha de fonte.
 
-**Aceite integral do coordenador:** 8/8 métodos e casos DET-B aplicáveis executados no Flatpak, sem precisar executar filhos concretos. Integração real dos quatro requer fase separada. Cobertura declarada precisa de comandos/resultados efetivamente executados.
+**Aceite integral do coordenador:** 10/10 métodos e casos DET-B aplicáveis executados no Flatpak, sem precisar executar filhos concretos. Integração real dos quatro requer fase separada. Cobertura declarada precisa de comandos/resultados efetivamente executados.
 
 **Esta é uma especificação documental; nenhum teste foi executado.**
 
