@@ -135,7 +135,7 @@ resume_pending(sync_id, pending_id, selected_option):
 - `Detector.pause()` impede novos claims, **não** o registro local/remoto. `Detector.stop()` interrompe a observação; decisão de cobertura futura fica com o Orchestrator.
 - `take_events` retorna um `FileBatch` único com origem preservada. Se vier vazio, não há lote para ack e isso não prova ausência de mudanças futuras.
 - Processamento de `File` não é uma chamada de Analyzer. Primeiro é necessário registrar observação em Inventory e obter `SyncItem`.
-- O ack é de **lote inteiro**. Se um item falhar, não confirmar lote inteiro; suportar redelivery seguro exige idempotência no Inventory por `File.id` **ainda ausente do contrato**.
+- O ack é de **lote inteiro** e exige que a necessidade de análise dos itens afetados tenha sido **duravelmente preservada**. `record_*` ainda não promete transição automática para `PendingReconciliation`: essa é uma **lacuna contratual**. Se um item falhar, não confirmar lote inteiro; suportar redelivery seguro exige idempotência no Inventory por `File.id` **ainda ausente do contrato**.
 - `Processed` significa aceitação durável das observações na fronteira Inventory, **não** upload/download verificado. `Discarded` não é uma forma automática de tratar erro ou conflito.
 - `ObservationProof` e `PresenceState` precisam ser evidência extraída de `File`, escopo/cobertura e validação autorizada; não presumir `AbsentConfirmed` com base em evento `Deleted`.
 
@@ -151,6 +151,6 @@ resume_pending(sync_id, pending_id, selected_option):
 
 Apenas erros de coordenação devem ser próprios (`InvalidSyncScope`, `DependencyUnavailable`, `InitialObservationIncomplete`, `PersistenceGap`, `NeedsUserDecision` e `Internal` são **categorias candidatas**, não novo enum compilado). Preservar erros tipados e origem dos módulos, sem esconder `DetectorFailure` ou `AnalysisFailure` nem expor segredo.
 
-**Lacunas bloqueadoras:** (i) deduplicação durável por `File.id` e contrato de ack entre bancos, (ii) persistência/consulta de `PendingAction`/resoluções, (iii) diagnóstico de cobertura de Scanner no Inventory, (iv) evidência de cobertura remota inicial, (v) cadastro de conexão, (vi) recuperação de planos persistidos da fila. Não criar assinaturas fictícias de módulos proprietários para contornar essas lacunas.
+**Lacunas bloqueadoras:** (i) deduplicação durável por `File.id`, marcação durável dos itens que precisam de análise e contrato de ack entre bancos, (ii) persistência/consulta de `PendingAction`/resoluções, (iii) diagnóstico de cobertura de Scanner no Inventory, (iv) evidência de cobertura remota inicial, (v) cadastro de conexão, (vi) recuperação de planos persistidos da fila. Não criar assinaturas fictícias de módulos proprietários para contornar essas lacunas.
 
 **Estado:** contrato interno proposto para TDD; nenhum Rust compilado.
