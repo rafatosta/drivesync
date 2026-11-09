@@ -25,6 +25,16 @@ A documentação descreve uma arquitetura proposta e não comprova a existência
 - Manter assinaturas, resultados e tratamento de erros coerentes com `INTERFACES.md`. Detalhes de implementação podem ser organizados conforme as responsabilidades reais, sem impor antecipadamente arquivos ou camadas artificiais.
 - Preservar o escopo de cada alteração, a segurança de dados e as regras de documentação Rust.
 
+## Observabilidade e cancelamento
+
+- Manter as dez operações assíncronas independentes, sem fila, serviço persistente, `Operator::status`, `pause`, `resume` ou `stop`.
+- Disponibilizar `ExecutionOptions` em todas as requisições, com reporter e token de cancelamento **opcionais e independentes**.
+- Reportar apenas `ExecutionPhase` real e bytes efetivamente transferidos; não forçar progresso em comandos curtos nem inventar totais, percentuais ou ETA.
+- Fazer emissão de progresso não bloqueante e independente de GUI; falha do consumidor não deve alterar o efeito da operação.
+- Diferenciar cancelamento solicitado de cancelamento confirmado. Uma alteração que ocorreu ou cujo resultado é incerto requer verificação; jamais prometer rollback remoto.
+- Não adicionar metadados de `SyncItem` ou responsabilidades de Analyzer/Orquestrador à execução do Operador.
+- Atualizar os especialistas existentes para transportar `ExecutionOptions` das requisições; testar OPR-P01 a OPR-P12 em [TESTS.md](TESTS.md).
+
 ## Estratégia de testes
 
 Testar a fachada real com implementações de execução simuladas, verificando despacho por operação e provedor, validação dos parâmetros e propagação de resultados. Exercitar comportamento de arquivos em diretórios temporários reais e serviços remotos com interfaces de provedores simuladas. Cobrir segurança, concorrência, falhas, retomada e cancelamento conforme [TESTS.md](TESTS.md).
