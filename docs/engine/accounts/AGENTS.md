@@ -29,6 +29,18 @@
 11. Sem compatibilidade com formatos legados não solicitados, sem mudanças destrutivas ou migrações retroativas.
 12. Implementação Rust/testes reais somente no ambiente Flatpak; não alegar que testes foram executados sem evidência.
 
+## Estado operacional e observabilidade
+
+- Expor `Accounts::status()` como consulta síncrona, rápida, somente às operações **ativas nesta instância**; não consultar keyring, banco nem rede nessa consulta.
+- Não confundir `Account.state` com atividade de execução ou indicador de conectividade em tempo real.
+- Acompanhar `add/remove/acquire_session/update_authorization` por operações/fases transitórias; `get/list/update` não precisam de monitoramento artificial.
+- Preservar `AddAccountRequest.request_id` opcional para correlação antes do `AccountId`, sem carregar dados de autorização no status.
+- Remover o registro transitório em todos os desfechos, inclusive erro/cancelamento, sem registrar uma fila permanente ou um novo gerenciador de tarefas.
+- Não bloquear GTK com Secret Service ou I/O externo; definir runtime e threading concretos na implementação.
+- Não adicionar `pause/resume/stop` ou outra abstração universal de Provider. O fluxo externo de consentimento continua no Provider; Accounts recebe o resultado já autorizado.
+- Se houver armazenamento persistente de metadados, a política de recuperação é do seu Storage, sem dependência obrigatória de Configuration e sem backup automático de credenciais.
+- Cobrir ACC-S01 a ACC-S12 com testes determinísticos.
+
 ## Critério de aceite
 
 Quatro arquivos de contrato coerentes, API de contas independente da tecnologia de autenticação, keyring privado a Accounts, ausência de referências funcionais a `accounts/auth/` e cobertura TDD para falhas, isolamento e exclusão segura.
