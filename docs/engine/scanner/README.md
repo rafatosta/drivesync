@@ -6,6 +6,14 @@ Reconstruir as **observações do estado local** dos arquivos e diretórios de u
 
 É um módulo independente do [Detector Local](../detectors/local/README.md), do [Detector Remoto](../detectors/remote/README.md) e do [Analisador](../analyzer/README.md). Não recebe, consome ou publica eventos dos Detectores, não acessa a API de provedores, não decide conflitos e não executa operações de sincronização.
 
+## Acompanhamento da execução
+
+Além de `new()` e `scan()`, o Scanner expõe **`status()`**, uma consulta rápida ao estado de sua varredura corrente ou mais recente. Enquanto `scan()` trabalha, o Scanner atualiza um retrato observável (estado `Idle`, `Running`, `Completed`, `Failed` ou `Cancelled`; instante inicial; contadores de arquivos, diretórios, observações persistidas e problemas; diretório relativo atual quando conhecido). O estado terminal `Completed` indica término do trabalho, e **não** que a cobertura foi completa: essa informação permanece em `ScanReport.status = Completed | Partial`.
+
+`status()` não varre arquivos, não lê SQLite, não comunica com a GUI e não espera o fim da varredura. O relatório final `ScanReport` permanece como retorno de `scan()`. Acompanhamento é consultivo, não cria decisões de sincronização nem substitui o relatório final. Não calcular porcentagem sem total comprovado.
+
+Apenas uma varredura por instância pode estar ativa; segunda chamada concorrente de `scan()` deve retornar erro `AlreadyRunning` sem iniciar outro percurso. Uma falha individual incrementa o diagnóstico sem finalizar o Scanner. Não há nova API de `pause` ou `cancel` neste contrato.
+
 ## Uso na inicialização
 
 1. O Orquestrador inicia os Detectores, que acumulam observações em suas **próprias filas persistentes**, mantendo suspenso o consumo dessas filas.
