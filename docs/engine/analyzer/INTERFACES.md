@@ -2,7 +2,7 @@
 
 ## 1. Contrato público e tipos proprietários
 
-O Analisador oferece **uma função de construção e uma função de processamento individual**. A API pública recebe um `SyncItem` e uma resolução opcional; não recebe lotes nem delega ao chamador a execução das operações.
+O Analisador oferece **construção, processamento individual e consulta de execução em andamento por item**. A API pública recebe um `SyncItem` e uma resolução opcional; não recebe lotes nem delega ao chamador a execução das operações.
 
 Os tipos importados abaixo **não devem ser redefinidos**:
 - De [Inventário](../inventory/INTERFACES.md): `SyncItem`, `SyncItemId`, `SyncBaseline`, `PresenceState`, `SyncStatus`, `OperationId`, `SyncOperation`, `InventoryManager`, estruturas de operações, confirmação e atividades.
@@ -21,10 +21,56 @@ impl Analyzer {
         &self,
         request: AnalyzeRequest,
     ) -> AnalyzerResult<AnalysisOutcome>;
+
+    pub fn status(&self, request: AnalysisStatusRequest)
+        -> AnalyzerResult<AnalysisStatusResult>;
 }
 ```
 
-## 2. Configuração e entrada
+## 2. Estado consultável de análises em andamento
+
+```rust
+pub enum AnalysisPhase {
+    Validating,
+    Reconciling,
+    EvaluatingConflict,
+    Executing,
+    Verifying,
+    Confirming,
+}
+
+pub struct AnalysisStatusRequest {
+    pub item_id: SyncItemId,
+}
+
+pub struct AnalysisStatusResult {
+    pub active: Option<ActiveAnalysis>,
+}
+
+pub struct ActiveAnalysis {
+    pub item_id: SyncItemId,
+    pub item_revision: u64,
+    pub phase: AnalysisPhase,
+    pub started_at: Timestamp,
+    pub current_operation: Option<OperationKind>,
+    pub completed_operations: u32,
+    pub planned_operations: Option<u32>,
+    pub transfer: Option<TransferProgressSnapshot>,
+}
+
+pub struct TransferProgressSnapshot {
+    pub bytes_transferred: u64,
+    pub total_bytes: Option<u64>,
+}
+```
+
+O Analisador é **assíncrono por chamada**, não um serviço contínuo: `analyze()` executa um item e termina com `Completed`, `Pending` ou `Failed`. `status(item_id)` consulta **apenas uma execução ativa**, não uma fila de trabalho e não um histórico permanente. `active=None` significa que não há chamada ativa para aquele item **nesta instância**, não que ele está sincronizado, ausente ou livre de conflitos. O resultado terminal é sempre devolvido por `analyze()`, e o estado durável dos itens/operações pertence ao Inventário.
+
+`status()` deve ler uma fotografia interna coerente, rápida e sem I/O remoto, SQLite ou bloqueio até o final da tarefa. `phase` identifica a etapa corrente, não a conclusão do algoritmo; `current_operation` usa a categoria `OperationKind` já pertencente ao Inventário, sem inventar enum paralelo. A classificação deverá distinguir comandos como criação de diretório quando necessário na implementação; se não houver correspondência fiel, **não fabricar uma categoria**, deixando `current_operation=None` e usando a etapa `Executing`. `planned_operations=None` quando a lista ainda não foi construída. `transfer` só é preenchido quando existe progresso real reportado pelo Operador; não calcular porcentagens ou ETA sem total comprovado.
+
+**Concorrência:** permitir execuções de itens independentes, mas recusar imediatamente outra `analyze()` para o **mesmo `SyncItemId`** na mesma instância com `AnalyzerErrorKind::AlreadyRunning`, sem iniciar operação duplicada. Além dessa proteção local, toda execução mantém revisão e precondições do Inventário para prevenir concorrência entre instâncias. Não introduzir `pause`, `resume`, `stop` ou fila própria no Analyzer. Ao devolver `Pending`, não reter tarefa ativa aguardando usuário; uma nova invocação com `Resolution` revalida as evidências.
+
+## 3. Configuração e entrada
 
 ```rust
 pub struct AnalyzerConfig {
@@ -235,6 +281,7 @@ pub struct AnalyzerError {
 pub enum AnalyzerErrorKind {
     InvalidConfiguration,
     InvalidRequest,
+    AlreadyRunning,
     WrongSyncScope,
     DependencyUnavailable,
     StaleResolution,
@@ -249,6 +296,17 @@ pub enum AnalyzerErrorKind {
 A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do usuário ou caminhos desnecessários. Tipos técnicos subjacentes permanecem disponíveis ao diagnóstico em um mecanismo seguro, sem vazar detalhes sensíveis na API de apresentação.
 
 ## 7. Métodos públicos — contrato funcional
+
+### `Analyzer::status`
+
+**Assinatura:** `pub fn status(&self, request: AnalysisStatusRequest) -> AnalyzerResult<AnalysisStatusResult>`.
+
+**Finalidade:** oferecer o estado transitório da execução atual de um `SyncItem` sem interferir na análise. Pode ser chamado enquanto `analyze()` está em andamento. Não emite decisões, não reserva eventos, não consulta Inventário nem executa operações.
+
+**Resultado:** `ActiveAnalysis` quando o item está ativo nesta instância; `None` em caso contrário. A resposta é uma fotografia temporal, não um evento durável. Para o desfecho e histórico, utilizar `AnalysisOutcome` e o Inventário, respectivamente.
+
+**Limites:** rejeitar requisições inválidas ou de escopo incorreto. A implementação deve assegurar progresso observável durante I/O longo, inclusive quando o Operador fornece `ProgressReporter`. Para comandos que ainda não oferecem progresso, informar etapa e contador de comandos, sem simular bytes ou porcentagem.
+
 
 ### `Analyzer::new`
 
@@ -277,6 +335,8 @@ A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do
 
 **Limites e erros:** solicitações sem identidade válida, fora do escopo ou com resolução inválida falham por `AnalyzerResult::Err`. Conflito não resolvido e evidência insuficiente normalmente produzem `Pending`, não erro técnico. Falhas de operação ou confirmação após início produzem `Failed`.
 
+**Observabilidade:** atualizar fase, contadores e progresso interno durante a execução sem exigir que o Orquestrador conheça algoritmos privados. Reutilizar o progresso efetivo que o Operador fornece quando existir; nenhuma etapa de reconciliação/conflitos precisa produzir callbacks próprios. O estado ativo é retirado ao terminar a chamada, seja `Completed`, `Pending`, `Failed` ou `Err`.
+
 **Efeitos colaterais:** pode executar **várias operações para um item**, mas nunca processa um lote. Antes de executar, deve verificar que a decisão permanece compatível com o estado e a revisão. A confirmação deve seguir as regras de `InventoryManager::confirm_sync`. Se uma operação foi aplicada e a confirmação falhou, a próxima chamada deve reobservar o efeito, não simplesmente repetir o comando.
 
 **Concorrência:** análises simultâneas do mesmo `SyncItem` precisam ser serializadas por item ou rejeitadas por revisão/precondições, sem bloquear itens independentes. A forma concreta de sincronização é detalhe interno.
@@ -291,7 +351,7 @@ O Inventário é proprietário da fila, `SyncItem.revision`, status, baseline e 
 
 ## 9. Garantias e decisões de implementação
 
-1. A interface pública contém somente `new` e `analyze`; entrada e saída sempre tratam um item.
+1. A interface pública contém somente `new`, `analyze` e `status`; a análise continua por item, sem lote ou fila própria.
 2. A resolução não congela a chamada nem dá autorização irrestrita para sobrescrita.
 3. Nenhuma alteração destrutiva sem identidade, estado e precondições suficientes.
 4. Desfechos parciais preservam as operações realmente executadas e verificadas.
