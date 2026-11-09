@@ -23,6 +23,25 @@ Este documento especifica **os testes a escrever antes de implementar** o módul
 
 Os testes HTTP em servidor simulado são de **integração local do módulo**, embora não sejam integração com o serviço Google. Um *mock* que implemente o mesmo trait, sem executar o cliente HTTP, **não valida** a montagem de requisições.
 
+## Contratos de I/O e acompanhamento técnico
+
+| ID | Cenário | Resultado esperado |
+| --- | --- | --- |
+| G-AS-01 | Resposta HTTP lenta com execução GTK ativa | Nenhuma chamada de rede bloqueia o loop principal GTK; validar estratégia async/worker escolhida |
+| G-AS-02 | Transformação de argumentos/validação sem I/O | Pode executar sincronamente, sem criar job ou task state artificial |
+| G-AS-03 | Upload resumível com resposta HTTP 308 | Retornar `Incomplete` e faixa confirmada; não declarar upload concluído |
+| G-AS-04 | Consulta remota devolve `GoogleOperation.done=false` | Expor pendência técnica; não aguardar indefinidamente nem transformar em resultado final |
+| G-AS-05 | Download/exportação grande em stream | Entregar dados incrementalmente, sem exigir buffer completo na memória |
+| G-AS-06 | Stream HTTP termina inesperadamente | Erro técnico/resultado incompleto distinguível de transferência íntegra |
+| G-AS-07 | Timeout ou perda de resposta após solicitação de escrita | Não prometer que ação foi revertida nem que repetição é segura |
+| G-AS-08 | HTTP 429 e `Retry-After` | Traduzir erro e intervalo técnico, sem iniciar fila/retry funcional por conta própria |
+| G-AS-09 | Credenciais expiradas ou autorização insuficiente | Erro técnico correto, sem persistência de token pelo provedor |
+| G-AS-10 | Múltiplas chamadas em paralelo de contas distintas | Sessões e resultados isolados, sem status global e sem mistura de bytes ou erros |
+| G-AS-11 | Cancelamento durante transporte quando suportado | Não transformar cancelamento do transporte em garantia de ausência do efeito remoto |
+| G-AS-12 | Execução do Operador com reporter | Provedor não depende de `ProgressReporter`; Operador interpreta stream/offset técnicos externamente |
+
+Estes cenários são **especificação para implementação**, não testes executados. A confirmação de ausência de bloqueio no GTK requer teste com a execução concreta e não apenas um fake de respostas imediatas.
+
 ## 2. Organização do TDD
 
 | Fase | Entrega | Condição para avançar |
