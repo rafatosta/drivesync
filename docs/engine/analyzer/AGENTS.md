@@ -15,7 +15,7 @@ Implementar a API pública do Analisador para processar **um `SyncItem` por cham
 
 ## Orientações de implementação
 
-- Expor somente `new` e `analyze` como API pública desta primeira versão.
+- Expor somente `new`, `analyze` e `status` como API pública desta primeira versão.
 - Receber `AnalyzeRequest` com um único `SyncItem`; não introduzir entrada em lote nem esperar decisões do usuário dentro da chamada.
 - Representar explicitamente `Completed`, `Pending` e `Failed`; distinguir erros prévios à execução de falhas com efeitos parciais.
 - Reconciliador e Conflitos são componentes internos independentes; seus contratos serão definidos em etapa separada. Preparar pontos de integração testáveis sem presumir suas implementações.
@@ -28,6 +28,16 @@ Implementar a API pública do Analisador para processar **um `SyncItem` por cham
 - Distinguir falha técnica, conflito, evidência insuficiente e resultado de operação indeterminado; nunca converter incerteza em sucesso.
 - Preservar dados do usuário e impedir reexecução cega após perda de resposta ou erro de confirmação.
 - Conservar o escopo da tarefa e documentar com rustdoc as garantias não triviais quando houver código.
+
+## Observabilidade durante execução
+
+- `status(item_id)` consulta apenas a **análise ativa daquele item**, rapidamente e sem I/O; nenhum histórico de progresso ou fila privada de trabalho deve ser criado.
+- Atualizar fases reais: validação, reconciliação, avaliação de conflito, execução, verificação e confirmação; não inventar duração ou porcentagem.
+- Quando o Operador disponibilizar `ProgressReporter`, transportar as informações efetivamente reportadas para a consulta de status. Para comandos sem progresso, fornecer somente fase e contagens confiáveis.
+- Encerrar o registro transitório de atividade ao retornar `Completed`, `Pending`, `Failed` ou `Err`; a persistência de resultado/histórico é do Inventário.
+- Concorrência: permitir itens distintos, mas rejeitar a segunda análise simultânea do mesmo `SyncItemId` com `AlreadyRunning`. Continuar validando revisões/precondições, pois a proteção local não impede outras instâncias.
+- Não criar `pause`, `resume`, `stop`, notificação GTK ou ligação direta com o Orquestrador.
+- Cobrir os testes AN-P01 a AN-P12 descritos em `TESTS.md`.
 
 ## Estratégia de validação
 
