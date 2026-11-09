@@ -364,7 +364,7 @@ Todo método acima exige: (a) caso de sucesso; (b) entrada inválida ou precondi
 ### Invariantes de tipos públicos
 
 - Teste de compilação acessa **todos os tipos declarados nas seções 2–10 de `INTERFACES.md`**, incluindo enums, IDs, estruturas `*Request`, `*Result`, filtros e tipos parametrizados.
-- Teste de compilação usa os **16 métodos com seus objetos nomeados**, sem converter para argumentos posicionais.
+- Teste de compilação usa os **17 métodos com seus objetos nomeados**, sem converter para argumentos posicionais.
 - Testar `FieldUpdate<T>` nos três casos, identidade `ItemSelector` em suas quatro variantes (`RemoteRef` com conta), `ObservationTarget` em suas quatro variantes, os estados de `SyncStatus`, `OperationState`, `ActivityType` e `InventoryError`.
 - Todos os campos opcionais devem ter teste de **ausência legítima**, **presença válida** e **não alteração involuntária**; campos obrigatórios devem ter cobertura para valor válido e, quando representável, valor inválido.
 - `RemoteFile` com campos de mídia inexistentes (documento nativo), `LocalFile` sem inode confiável e nomes locais não UTF-8 **não** devem ser convertidos para valores artificiais.
@@ -492,7 +492,7 @@ A porcentagem acima é **meta futura**, não resultado de execução. Não decla
 
 ### Checklist de saída
 
-- [ ] Os 16 métodos compilam com os tipos documentados.
+- [ ] Os 17 métodos compilam com os tipos documentados.
 - [ ] SQLite é criado somente no inventário de uma pasta, sem banco de histórico separado.
 - [ ] Testes funcionais usam banco real isolado; falhas não deixam transações parciais.
 - [ ] Os campos selecionados de `LocalFile` e `RemoteFile` suportam round-trip dos campos cujo mapeamento está definido.
