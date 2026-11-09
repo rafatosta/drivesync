@@ -184,10 +184,28 @@ pub struct SyncIdentity {
     pub account_id: AccountId,
     pub remote_root_id: String,
 }
+pub enum InventoryRecoveryOutcome {
+    Normal,
+    Restored,
+    Rebuilt,
+}
+pub enum InventoryAvailability {
+    Ready,
+    Recovering,
+    Unavailable,
+}
+pub struct InventoryStatusRequest {}
+pub struct InventoryStatusResult {
+    pub availability: InventoryAvailability,
+    pub recovery: InventoryRecoveryOutcome,
+    pub last_error: Option<InventoryError>,
+}
+
 pub struct OpenInventoryResult {
     pub inventory: InventoryManager,
     pub info: SyncInfo,
     pub created: bool,
+    pub recovery: InventoryRecoveryOutcome,
 }
 pub struct GetSyncInfoRequest {}
 pub struct GetSyncInfoResult { pub info: SyncInfo }
@@ -415,6 +433,9 @@ pub struct InventoryManager { /* estado privado, conexão privada */ }
 impl InventoryManager {
     pub fn open(request: OpenInventoryRequest) -> InventoryResult<OpenInventoryResult>;
 
+    pub fn status(&self, request: InventoryStatusRequest)
+        -> InventoryStatusResult;
+
     pub fn get_sync_info(&self, request: GetSyncInfoRequest)
         -> InventoryResult<GetSyncInfoResult>;
     pub fn mark_initial_download_complete(&self, request: MarkInitialDownloadCompleteRequest)
@@ -452,7 +473,17 @@ impl InventoryManager {
 }
 ```
 
-**16 métodos públicos**: `open`, consultas e escopo, observações e associações, baseline/estado, fila de operações e histórico. **Nenhum método de evento ou cursor remoto permanece nesta API.**
+**17 métodos públicos**: `open`, consultas e escopo, observações e associações, baseline/estado, fila de operações e histórico. **Nenhum método de evento ou cursor remoto permanece nesta API.**
+
+### Acompanhamento de disponibilidade do Inventário
+
+`status()` é uma **consulta síncrona rápida a um snapshot interno de disponibilidade**, sem executar SQL, consulta de integridade ou operação de recuperação. `InventoryAvailability::Ready` informa que o InventoryManager está operacional segundo a última condição conhecida; não garante que todas as consultas futuras terão sucesso. `Recovering` sinaliza recuperação de corrupção comprovada e isolamento do banco; `Unavailable` bloqueia novas operações que não possam ser executadas com segurança. Erros já propagados pelas operações permanecem tipados, sem exigir uma notificação de progresso a cada transação.
+
+`InventoryRecoveryOutcome` diferencia abertura normal, restauração de backup válido e reconstrução vazia. Este diagnóstico é devolvido também em `OpenInventoryResult` para que a inicialização reconheça a perda potencial de histórico. A reconstrução **não** equivale a uma nova sincronização completa, nem prova ausência de arquivos. O resultado da recuperação não é apagado por uma chamada `status()`; uma nova abertura informa sua própria ocorrência.
+
+Não criar estados `Running`, `Paused` ou progresso de bytes para operações SQLite curtas. O Inventário não possui workers contínuos nem fila de tarefas executáveis. O estado de `SyncOperation` já persistido descreve **a intenção e andamento lógico da sincronização**, não a atividade da conexão SQLite ou um processo do Inventário.
+
+`status()` pressupõe uma instância construída com sucesso. Falha de `open()` antes da criação da instância é representada por `InventoryFailure`, sem status fictício. Consultas SQLite síncronas devem executar fora do loop gráfico do GTK quando puderem bloquear; `status()` não substitui timeout, transações ou isolamento do worker.
 
 ## 10. Erros públicos e comportamento
 
@@ -494,7 +525,7 @@ pub struct InventoryFailure {
 | `UnconfirmedAbsence`, `MissingObservation` | Não interpretar campo omitido/falha de observação como exclusão |
 | `MissingActivity` | Rejeitar confirmação de ação que exige registro histórico |
 | `InvalidCursor` | Rejeitar cursor de paginação inválido ou de filtro incompatível |
-| `CorruptDatabase`, `UnsupportedSchema` | Não reconstruir/destruir automaticamente o banco |
+| `CorruptDatabase`, `UnsupportedSchema` | Apenas corrupção **comprovada** permite rotina de restauração e reconstrução não destrutiva; esquema incompatível não autoriza recuperação por reset |
 | `PermissionDenied`, `StorageUnavailable`, `StorageFull`, `TransactionFailed` | Falha explícita; operações não ficam declaradas concluídas |
 | `SerializationFailed` | Recusar valores inválidos, preservando estado anterior |
 
@@ -561,6 +592,14 @@ Erros do SQLite são traduzidos para tipos próprios; nenhuma mensagem pública 
 ## 12. Contrato funcional de cada método público
 
 As assinaturas completas estão na seção 9. Esta seção explica **cada método e os campos de seus objetos de entrada e saída**, como interpretá-los e o que não é responsabilidade da chamada. Campos de entrada não listados como `Option` devem ser informados; campos condicionais podem ser representados por enum ou por `FieldUpdate`. Todos os métodos retornam `InventoryResult<ObjetoDeResultado>`, que traduz falhas para `InventoryFailure`.
+
+### 0. `status`
+
+**Assinatura:** `pub fn status(&self, request: InventoryStatusRequest) -> InventoryStatusResult`.
+
+**Finalidade:** obter o snapshot operacional mantido pelo InventoryManager, sem SQL nem bloqueio até o fim de transação/recuperação. Resultados transitórios podem mudar entre leitura e uso; cada chamada efetiva continua validando estado e erros.
+
+**Resultado:** disponibilidade atual, resultado de recuperação da abertura e último erro operacional sanitizado (quando existir). O último erro não impede `Ready` após recuperação bem-sucedida; não é evidência de corrupção se a falha real foi bloqueio, permissão ou disco cheio.
 
 ### 1. `open`
 
