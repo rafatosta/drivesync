@@ -117,3 +117,15 @@ Testes do coletor exercitam syscalls e funções auxiliares em filesystem tempor
 | LOC-F-06 | Coletor fake acrescenta campo | Detector continua inalterado e repassa `LocalFile` sem perda |
 | LOC-F-07 | Sink fake recusa `File` | Falha propagada; nenhuma entrega considerada durável |
 | LOC-F-08 | Retry após falha | Mesma ocorrência pode ser reentregue com ID estável, sem invenção de metadados |
+
+## Controle de entrega e estado — testes adicionais
+
+| ID | Cenário | Resultado |
+| --- | --- | --- |
+| LOC-S-01 | Pai suspendeu entrega ao Orquestrador | Local continua observando e emitindo pelo sink durável |
+| LOC-S-02 | `status()` durante watcher e verificação | Atividade fiel (`Watching` ou `Scanning`), contadores da rodada sem bloquear |
+| LOC-S-03 | Falha local com remoto saudável | Erro e estado local preservados no retorno ao pai, sem mascarar outra origem |
+| LOC-S-04 | `stop()` durante observação | Cessa captura após conclusão segura, sem apagar eventos já aceitos |
+| LOC-S-05 | `start()` após período parado | Retoma observação; Local não chama Scanner/Analisador nem decide reconciliação |
+
+**Estado:** cenários documentais, ainda não executados.
