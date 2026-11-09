@@ -24,3 +24,7 @@ O armazenamento deve preservar a integridade dos registros, tratar falhas explic
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
 **Estado:** especificação documental; não comprova implementação Rust.
+
+## Proteção e recuperação
+
+O Storage preserva a propriedade de sua fila persistente. Se detectar corrupção comprovada, informa erro ao usuário e solicita política de backup/restauração automática a [Configurations](../../configuration/README.md). Se a restauração falhar, informa novamente e reconstrói um banco vazio preservando o anterior. A fila vazia recém-criada **não comprova ausência de eventos externos**; o Detector precisa recuperar a cobertura e os checkpoints de observação antes de liberar seu consumo. Falhas transitórias, identidade divergente e esquema incompatível não autorizam reconstrução.
