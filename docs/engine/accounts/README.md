@@ -1,86 +1,72 @@
-# Contas — responsabilidades, cadastro e persistência
+# Accounts — cadastro de contas e guarda segura de credenciais
 
 ## Objetivo
 
-O módulo `accounts/` é responsável pelo **cadastro, identificação e ciclo de vida das contas conectadas** no DriveSync. Disponibiliza uma API pública para cadastrar, consultar, listar, atualizar e remover contas, sem expor seu meio de armazenamento aos consumidores.
+O módulo `accounts/` é responsável por **cadastrar, identificar, listar, consultar, atualizar e remover contas conectadas** no DriveSync. Também mantém o **vínculo da conta com credenciais armazenadas de modo seguro**, sem expor segredos a consumidores.
 
-O submódulo `accounts/auth/` coordena o fluxo de autenticação e o ciclo de vida de credenciais. Ele **obtém pelo catálogo [`providers/`](../providers/INTERFACES.md) a API específica do provedor selecionado** (por exemplo, a API Google com OAuth/OIDC); não há uma API universal de autenticação imposta a todos os provedores. O módulo de contas não implementa operações de sincronização nem consulta diretamente o banco do Inventário.
+**Não existe submódulo `accounts/auth/`.** Os mecanismos técnicos de autenticação, renovação de tokens e identificação remota específicos de cada serviço pertencem às APIs documentadas em [Providers](../providers/INTERFACES.md), como [Google OAuth/OIDC](../providers/google/INTERFACES.md). Accounts utiliza os resultados autorizados do Provider para registrar uma conta e vincular credenciais, mas **não implementa OAuth, OpenID Connect, PKCE, endpoints ou HTTP**.
 
-## Dados conhecidos de contas
+O cadastro de contas e o armazenamento de segredos têm responsabilidades diferentes, embora ambos sejam gerenciados por Accounts. O meio físico de persistência é privado; não é obrigatório usar SQLite no cadastro.
 
-Os campos abaixo preservam o modelo anteriormente discutido, ainda **conceitual**. Não representam uma decisão de criar obrigatoriamente uma tabela SQLite.
+## Dados pertencentes a Accounts
 
-| Campo | Natureza | Significado |
-| --- | --- | --- |
-| `account_id` | Identificador interno estável | Chave da conta na aplicação |
-| `provider` | Identificador do provedor | Inicialmente `google` |
-| `provider_user_id` | Identidade externa estável | Identificador OIDC `sub`, não e-mail |
-| `email` | Opcional e mutável | Endereço apresentado ao usuário |
-| `display_name` | Opcional e mutável | Nome apresentado |
-| `created_at` | Timestamp | Data de cadastro |
-| `updated_at` | Timestamp | Última atualização dos metadados |
-
-A combinação `(provider, provider_user_id)` deve identificar uma única conta cadastrada, independentemente de alterações de e-mail ou nome. Não persistir `access_token`, `refresh_token` ou segredos na estrutura de metadados da conta.
-
-### Modelo relacional candidato — somente se houver necessidade de SQLite
-
-```mermaid
-erDiagram
-    ACCOUNTS ||--o{ SYNC_CONNECTIONS : "conta utilizada"
-    ACCOUNTS {
-        TEXT account_id PK
-        TEXT provider
-        TEXT provider_user_id
-        TEXT email
-        TEXT display_name
-        TEXT created_at
-        TEXT updated_at
-    }
-    SYNC_CONNECTIONS {
-        TEXT sync_id PK
-        TEXT account_id FK
-        TEXT remote_root_id
-        TEXT local_root
-        BOOLEAN enabled
-        TEXT display_name
-        TEXT created_at
-    }
-```
-
-Essa é uma **proposta de relação de domínio**, não uma imposição de tabelas no mesmo banco. As conexões podem pertencer a um componente específico no futuro; nesse caso, a relação entre elas e as contas será validada por **API**, sem exigir FK entre armazenamentos independentes.
-
-## Dados conhecidos de conexões — responsabilidade em revisão
-
-Uma conexão relaciona uma conta, uma pasta remota e uma pasta local. O levantamento anterior propôs:
-
-| Campo | Significado |
+| Campo | Responsabilidade |
 | --- | --- |
-| `sync_id` | Identificador estável do vínculo de sincronização |
-| `account_id` | Conta à qual a conexão pertence |
-| `remote_root_id` | ID da pasta remota no Google Drive |
-| `local_root` | Caminho da pasta local selecionada |
-| `enabled` | Sincronização ativa ou desabilitada |
+| `account_id` | Identidade interna estável da conta na aplicação |
+| `provider` | Qual serviço fornece essa conta (por exemplo, Google) |
+| `provider_user_id` | Identidade externa estável verificada pelo provedor |
+| `email` | E-mail opcional, mutável e apenas de apresentação |
 | `display_name` | Nome de apresentação opcional |
-| `created_at` | Data de criação do vínculo |
+| `state` | Estado conhecido de disponibilidade da conta/credencial, não teste de conectividade |
+| `created_at`, `updated_at` | Histórico mínimo de cadastro e atualização |
 
-**Não foi decidido se conexões serão administradas por `accounts/`, por `configuration/` ou por um módulo dedicado.** Este levantamento permanece aqui para não perder as entidades já identificadas. `sync_id`, `account_id` e `remote_root_id` também são usados para validar o escopo de um inventário, mas o Inventário não é proprietário do cadastro global.
+A identidade natural para evitar duplicação é `(provider, provider_user_id)`. E-mail **não** identifica a conta de forma estável. Não armazenar `access_token`, `refresh_token` ou outros segredos nesses metadados.
 
-## API e persistência encapsulada
+### Relação com conexões de sincronização
 
-- Consumidores chamam operações do módulo de contas: cadastrar, listar, buscar, atualizar e remover conta, além de consultar as conexões associadas **quando o contrato entre módulos estiver definido**.
-- A implementação **pode escolher** SQLite, arquivo estruturado ou outro mecanismo adequado se houver necessidade; nenhum formato ou caminho é obrigatório neste estágio.
-- Apenas o módulo que possuir os dados consulta/grava sua persistência. Consumidores não recebem conexão SQLite, caminho do arquivo, transações SQL ou tabelas como API.
-- Caso outro módulo seja proprietário das conexões, a referência `account_id` será resolvida e validada por contrato entre módulos, não por acesso direto ao armazenamento da conta.
-- As credenciais são administradas por `accounts/auth/` em armazenamento seguro (Secret Service/keyring), acessado por sua própria API. A comunicação OAuth/OIDC externa é executada pela API do serviço obtida por `providers/`, sem cliente HTTP paralelo.
-- Cada módulo deve testar tanto sua **API pública** quanto o armazenamento escolhido, sem exigir que consumidores conheçam sua implementação.
-- Operações que removam uma conta devem considerar vínculos de sincronização existentes e nunca provocar exclusões remotas ou locais por efeito colateral implícito.
+Uma conta pode estar associada a várias sincronizações (`sync_id`, raiz local e raiz remota). **O proprietário definitivo do cadastro de conexões ainda não foi definido.** Accounts identifica as contas, mas não assume implicitamente a propriedade desses vínculos. Uma exclusão deve verificar vínculos ativos por contrato explícito e não remover arquivos ou sincronizações por efeito colateral.
 
-## Decisões pendentes
+## Fronteiras
 
-1. Contratos Rust completos de conta e de conexão.
-2. Proprietário definitivo do cadastro de conexões.
-3. Necessidade ou não de SQLite para cadastro global.
-4. Semântica de desativação/remoção de conta com conexões existentes.
-5. Local de persistência e testes de recuperação, somente depois da escolha técnica.
+| Responsabilidade | Proprietário |
+| --- | --- |
+| Cadastro, identidade local e metadados da conta | `accounts/` |
+| Armazenamento seguro e associação de credenciais à conta | `accounts/`, internamente via Secret Service/keyring ou equivalente |
+| Protocolo OAuth/OIDC, consentimento, refresh e revogação pela API | `providers/<provedor>/` |
+| API externa de arquivos e metadados do serviço | `providers/<provedor>/` |
+| Preferências globais e políticas transversais | `configuration/` |
+| Estado de arquivos, baseline e fila de operações | `inventory/` e `detectors/storage/`, cada um em seu escopo |
+| Cadastro de conexões de sincronização | **Pendente de decisão**, não presumido em Accounts |
 
-**Nesta etapa, documentam-se os dados e os limites de responsabilidade; nenhuma persistência é implementada.**
+O Provider **não é proprietário da persistência local de credenciais**. Sua interface de autenticação pode receber sessões e dados de autorização adequados ao serviço, sem exigir um contrato universal OAuth para todos os provedores. A forma concreta de integração deverá evitar o trânsito desnecessário de tokens brutos entre módulos.
+
+## Ciclo de vida de uma conta
+
+1. Usuário solicita adicionar uma conta e seleciona um provedor.
+2. A interface técnica do Provider executa a autorização e retorna identidade remota verificada e resultado autorizado.
+3. Accounts verifica a identidade, cadastra/associa a conta e **guarda segredos no armazenamento seguro local**.
+4. Consumidores autorizados requisitam uma sessão/referência segura associada a `account_id` para chamar a API específica do Provider.
+5. Se houver necessidade de reautorização, a condição é representada no estado da conta; Accounts coordena a atualização do vínculo, e Provider realiza o fluxo externo.
+6. Remoção elimina cadastro e credenciais locais somente após checar conexões vinculadas; não implica revogação remota ou remoção de arquivos.
+
+Não presumir transação única entre cadastro e keyring: falhas intermediárias devem ser recuperáveis/idempotentes; nunca anunciar conta conectada sem material de autorização persistido.
+
+## Persistência e recuperação
+
+O cadastro pode usar SQLite, arquivo estruturado ou outro meio conforme necessidade real. Consumidores não recebem handles de banco, queries SQL ou caminhos físicos. Credenciais devem permanecer em Secret Service/keyring (ou equivalente seguro); sem fallback para texto claro ou tabelas comuns.
+
+A política de backup coordenada por [Configuration](../configuration/README.md) aplica-se a bancos eventualmente adotados, **não exporta nem restaura automaticamente segredos**. Falha no keyring e necessidade de reautorização são condições próprias e não justificam reconstrução de inventários de sincronização.
+
+## Documentação
+
+[Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
+
+## Pendências da implementação
+
+- Propriedade e contrato do cadastro de conexões.
+- Adaptação segura de resultados/sessões entre Accounts e APIs específicas dos Providers, sem impor API universal.
+- Escolha da persistência do cadastro e detalhamento de Secret Service no Flatpak.
+- Coordenação e recuperação de falhas entre cadastro e armazenamento seguro.
+- Derivação consistente dos estados de conta e política de exclusão com conexões ativas.
+
+**Estado:** especificação documental; não comprova implementação Rust ou execução de testes.
