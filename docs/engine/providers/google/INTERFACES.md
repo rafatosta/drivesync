@@ -10,7 +10,7 @@
 
 ## Execução síncrona e assíncrona — orientação provisória
 
-**Lacuna técnica existente:** as assinaturas de REST/OAuth/transferência ainda são apresentadas como `fn` com resultados imediatos, e `GoogleByteStream` utiliza `std::io::Read` conceitual. Esses exemplos **não constituem decisão de executar HTTP de forma bloqueante no loop GTK**. Durante a implementação, chamadas que aguardam HTTP, leitura/escrita de bytes ou processamento de resposta remota deverão usar I/O assíncrono ou workers apropriados. Validação/formatação local sem I/O poderá permanecer síncrona. A decisão de runtime e tipos concretos de streams precisa de testes antes de fixar assinaturas Rust definitivas.
+**Decisão aprovada (substitui a lacuna anterior):** toda operação que aguarda HTTP ou transfere bytes é `async fn`, executada sobre `reqwest` assíncrono e Tokio; os métodos dos blocos de assinatura abaixo escritos como `fn` são a forma conceitual e devem ser lidos como `async fn` (hoje só `files_get` está implementado e escrito assim). Funções puras (construção de parâmetros, serialização/decodificação e tradução de erros) permanecem síncronas. Esta decisão **não** define política de concorrência, número de workers, retry, agendamento nem o tipo concreto de `GoogleByteStream` (hoje conceitual; continua pendente para o grupo de transferências).
 
 Não modificar automaticamente os 59 métodos REST, 9 OAuth/OIDC e 10 complementares para um único `trait` ou protocolo artificial. Manter argumentos, semântica, tipos e contratos específicos da API Google; ajustar apenas a estratégia efetiva de execução e streaming quando validada.
 
@@ -70,7 +70,7 @@ pub enum GoogleApiError {
     PermissionDenied,
     NotFoundOrInaccessible,
     PreconditionFailed,
-    RateLimited { retry_after_seconds: Option<u64> },
+    RateLimited,
     QuotaExceeded,
     ProviderUnavailable,
     Network,
@@ -140,7 +140,7 @@ A **assinatura Rust é o contrato principal**. Os argumentos identificados nas a
 **Exemplo — consulta de metadados:**
 
 ```rust
-fn files_get(
+async fn files_get(
     &self,
     session: &GoogleSession,
     file_id: &FileId,
@@ -362,7 +362,7 @@ pub trait GoogleFilesApi {
     fn files_export(&self, session: &GoogleSession, file_id: &FileId, mime_type: &MimeType) -> GoogleResult<GoogleByteStream>;
     fn files_generate_cse_token(&self, session: &GoogleSession, options: CseTokenOptions) -> GoogleResult<GoogleCseToken>;
     fn files_generate_ids(&self, session: &GoogleSession, options: GenerateIdsOptions) -> GoogleResult<GoogleGeneratedIds>;
-    fn files_get(&self, session: &GoogleSession, file_id: &FileId, options: FileGetOptions) -> GoogleResult<GoogleFile>;
+    async fn files_get(&self, session: &GoogleSession, file_id: &FileId, options: FileGetOptions) -> GoogleResult<GoogleFile>;
     fn files_list(&self, session: &GoogleSession, options: FileListOptions) -> GoogleResult<GoogleFileList>;
     fn files_list_labels(&self, session: &GoogleSession, file_id: &FileId, options: LabelListOptions) -> GoogleResult<GoogleLabelList>;
     fn files_modify_labels(&self, session: &GoogleSession, file_id: &FileId, request: GoogleModifyLabelsRequest) -> GoogleResult<GoogleModifyLabelsResponse>;
@@ -1506,7 +1506,8 @@ pub struct GoogleContentRestriction {
 
 pub struct GoogleDownloadRestrictions {
     pub item_download_restriction: Option<GoogleDownloadRestriction>,
-    pub effective_download_restriction: Option<GoogleDownloadRestriction>,
+    /// JSON `effectiveDownloadRestrictionWithContext` (Discovery v3).
+    pub effective_download_restriction_with_context: Option<GoogleDownloadRestriction>,
 }
 
 pub struct GoogleDownloadRestriction {
@@ -1532,7 +1533,6 @@ pub struct GoogleLabel {
     pub id: Option<String>,
     pub revision_id: Option<String>,
     pub fields: Option<std::collections::BTreeMap<String,GoogleLabelField>>,
-    pub name: Option<String>,
 }
 
 pub struct GoogleLabelField {
@@ -1991,7 +1991,10 @@ pub struct FileDownloadOptions {
 pub struct FileGetOptions {
     pub fields: Option<FieldMask>,
     pub supports_all_drives: Option<bool>,
-    pub acknowledge_abuse: Option<bool>,
+    /// Comma-separated label IDs for `labelInfo` (query `includeLabels`).
+    pub include_labels: Option<String>,
+    /// Only `published` is supported (query `includePermissionsForView`).
+    pub include_permissions_for_view: Option<String>,
 }
 
 pub struct FileListOptions {
@@ -2318,7 +2321,10 @@ A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`ki
 | `404` | `NotFoundOrInaccessible` | Não considerar exclusão remota comprovada |
 | `409`/`412` por condição/precondição | `PreconditionFailed` | Reavaliar metadados antes de repetir |
 | `410` em cursores de changes | `ExpiredCursor` | Invalidar cursor e reiniciar detecção segura |
-| `500`–`504` | `ProviderUnavailable` | Retry limitado, com backoff |
+| `500`–`504` (e demais `5xx`) | `ProviderUnavailable` | Retry limitado, com backoff |
+| `3xx` (redirecionamento) | `InvalidResponse` com `http_status` preservado | Redirecionamentos **não são seguidos** e o `Location` não é exposto; a API do Drive não deve redirecionar |
+| `2xx` diferente do esperado pela operação, p.ex. `204` em `files_get` | `InvalidResponse` | Falha explícita |
+| Corpo acima do limite de metadados, truncado ou inválido | `InvalidResponse` / `Network` | Nunca interpretar resposta parcial como completa |
 | Timeout, conexão ou resolução DNS | `Timeout` / `Network` | Retry condicionado a idempotência/resultado conhecido |
 | Conteúdo JSON inválido ou excessivo | `InvalidResponse` | Falha explícita, sem declarar sucesso |
 | Operação cancelada | `Cancelled` | Não confirmar resultado não verificado |
@@ -2326,7 +2332,20 @@ A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`ki
 | `308 Resume Incomplete` | **`GoogleUploadProgress::Incomplete`** | **Não é erro** e **não é conclusão** |
 | `Operation.done=false` | **`GoogleOperation` pendente** | **Não é erro** e **não é conclusão** |
 
-**Regras:** (1) `retryable` expressa uma recomendação técnica, mas reexecução de escrita exige considerar idempotência e efeito possivelmente já aplicado; (2) `provider_reason` contém só o código seguro da razão, nunca o corpo da resposta; (3) `http_status=None` é válido para falhas de rede/validação local; (4) erros de autorização de uma conta não invalidam as demais.
+**Regras:** (1) `retryable` expressa uma recomendação técnica, mas reexecução de escrita exige considerar idempotência e efeito possivelmente já aplicado; (2) `provider_reason` contém só o código seguro da razão, nunca o corpo da resposta; (3) `http_status=None` é válido para falhas de rede/validação local; (4) erros de autorização de uma conta não invalidam as demais; (5) `Retry-After` é representado **uma única vez**, em `GoogleApiFailure.retry_after_seconds` (a variante `RateLimited` não carrega dados), aceitando segundos inteiros ou HTTP-date (data passada resulta em `0`; valor inválido é descartado); (6) requisições de metadados usam timeout total e limite de bytes de resposta explícitos, fixos em produção; (7) endpoints diferentes dos oficiais existem apenas sob o feature `test-endpoints` e aceitam somente `http` com IP loopback.
 
 Fontes: [erros do Drive](https://developers.google.com/workspace/drive/api/guides/handle-errors), [parâmetro fields](https://developers.google.com/workspace/drive/api/guides/fields-parameter), [OAuth 2.0](https://developers.google.com/identity/protocols/oauth2/native-app).
 
+
+### 9.5 Divergências verificadas contra o Discovery v3 (auditoria TDD do grupo `files_get`)
+
+| Item | Correção/estado |
+| --- | --- |
+| `FileGetOptions` | Adicionados `includeLabels` e `includePermissionsForView` (parâmetros oficiais de `files.get`); `supportsTeamDrives` é obsoleto e não é exposto |
+| `GoogleDownloadRestrictions` | O campo oficial é `effectiveDownloadRestrictionWithContext`, não `effectiveDownloadRestriction` |
+| `GoogleLabel.name` | Inexistente no recurso `Label` oficial; removido |
+| `GoogleFile`, `GoogleFileCapabilities`, `GoogleImageMediaMetadata`, `GoogleDecryptionMetadata`, `GooglePermission` | **Decisão pendente:** o Discovery possui campos adicionais (ex.: `trashingUser`, `viewedByMe`, `exportLinks`, `canTrash`, `canModifyContent`); decidir quais fazem parte do contrato antes de GREEN dos grupos que os consumam |
+| `files_get` com `acknowledgeAbuse` | **Decidido:** o parâmetro só é válido com `alt=media`; foi removido de `FileGetOptions` e nunca é enviado em consultas de metadados. Pertence às operações de download (grupo de transferências) |
+| Execução | **Decidido:** I/O é `async` (reqwest + Tokio); sem política de concorrência |
+| `Retry-After` | **Decidido:** representado uma vez em `GoogleApiFailure`; `RateLimited` sem dados |
+| 3xx | **Decidido:** `InvalidResponse`, sem seguir redirecionamento |

@@ -7,3 +7,20 @@ license = "GPL-3.0-only"
 [lib]
 name = "drivesync_engine"
 path = "src/lib.rs"
+
+[dependencies]
+# Async HTTP client; rustls only, no default features (no cookies, no system proxy autodetection beyond env).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+httpdate = "1"
+
+[features]
+# Allows tests to point the Google provider at a local HTTP server.
+# Never enabled in production builds.
+test-endpoints = []
+
+[dev-dependencies]
+# Self dev-dependency: enables `test-endpoints` for unit and integration tests only.
+drivesync-engine = { path = ".", features = ["test-endpoints"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
