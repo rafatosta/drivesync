@@ -88,3 +88,15 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 | REM-F-06 | Replay/checkpoint | Mesmo File integral persiste; checkpoint não avança após falha de sink |
 | REM-F-07 | Evolução RemoteFile | Alterar adaptador e seus testes sem tocar polling, cursor ou emissão do Detector |
 | REM-F-08 | Provedor diferente | Mesmo contrato `File`/`RemoteFile`, sem dependência da fachada ao GoogleFile |
+
+## Controle de entrega e estado — testes adicionais
+
+| ID | Cenário | Resultado |
+| --- | --- | --- |
+| REM-S-01 | Pai suspendeu entrega ao Orquestrador | Remoto continua polling e persistindo eventos pelo sink |
+| REM-S-02 | `status()` durante polling/espera | Atividade correta (`Polling`/`Waiting`), contadores atuais e sem HTTP na consulta |
+| REM-S-03 | Falha remota com Local saudável | Status e último erro remotos disponíveis ao pai; não afetar estado do Local |
+| REM-S-04 | `stop()` no meio de paginação | Não avança checkpoint sem persistência completa; não perde eventos aceitos |
+| REM-S-05 | `start()` depois de período sem observação | Não executa reconciliação/Scanner por iniciativa própria; decisão é do Orquestrador |
+
+**Estado:** cenários documentais, ainda não executados.
