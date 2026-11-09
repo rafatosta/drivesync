@@ -2,7 +2,7 @@
 
 ## Objetivo e abordagem
 
-Validar a interface pública `new` e `analyze` com o **Analisador real** e dependências simuladas/injetadas. O processamento é por `SyncItem`, com invariantes de identidade, estados, execução, confirmação e recuperação.
+Validar a interface pública `new`, `analyze` e `status` com o **Analisador real** e dependências simuladas/injetadas. O processamento é por `SyncItem`, com invariantes de identidade, estados, execução, confirmação e recuperação.
 
 Fonte de verdade: [README.md](README.md) e [INTERFACES.md](INTERFACES.md). Os casos são especificações **TDD**, não testes já executados.
 
@@ -30,6 +30,25 @@ Fonte de verdade: [README.md](README.md) e [INTERFACES.md](INTERFACES.md). Os ca
 | AN-10 | `analyze` | Falha na persistência conserva informações do efeito aplicado | Retry não repete automaticamente operação já aplicada |
 | AN-11 | `analyze` | Itens independentes podem avançar sem aguardar decisão externa | Mesmo item em concorrência não executa duas alterações incompatíveis |
 | AN-12 | `analyze` | `SyncItem` com baseline `None` e presença comprovada é avaliado sem inventar histórico | `Unknown` e observação incompleta não se tornam `AbsentConfirmed` |
+
+## Acompanhamento de análise ativa — novos testes
+
+| ID | Cenário | Resultado esperado |
+| --- | --- | --- |
+| AN-P01 | `status(item_id)` antes de iniciar análise | `active=None`; não interpretar como Synced ou ausência |
+| AN-P02 | `status(item_id)` enquanto valida/reconcilia | Etapa coerente, leitura rápida e sem I/O/efeitos colaterais |
+| AN-P03 | Executando sequência de dois comandos | Etapa `Executing`, contagem de comandos concluídos e total conhecido quando houver |
+| AN-P04 | Upload/download com `ProgressReporter` do Operador | Transferência reporta bytes realmente observados; total opcional |
+| AN-P05 | Operação sem progresso disponível | `transfer=None`, sem porcentagem, ETA ou dados inventados |
+| AN-P06 | Item passa a `Pending` por conflito | `analyze` termina e `status.active=None`; decisão vem de nova chamada |
+| AN-P07 | `Completed`, `Failed` ou `Err` | Estado ativo removido; resultado terminal somente no retorno e Inventário |
+| AN-P08 | Dois itens distintos simultâneos | Cada `status(item_id)` reflete seu próprio estágio sem misturar contadores |
+| AN-P09 | Duas chamadas simultâneas para mesmo item | Segunda retorna `AlreadyRunning` sem duplicar operação |
+| AN-P10 | Consultas concorrentes a `status` durante operação lenta | Snapshot coerente sem esperar operação remota nem transação SQLite |
+| AN-P11 | Análise retomada por `Resolution` | Novo acompanhamento desde validação; revalidação de revisão/evidências obrigatória |
+| AN-P12 | Outro processo/instância compete pelo item | Revisão e precondições do Inventário impedem efeitos incompatíveis; `status` local não promete exclusividade global |
+
+Os testes só comprovam acompanhamento quando conseguem observar uma execução efetivamente ativa com sincronização determinística de fakes; não usar sleeps arbitrários como evidência de progresso. **Especificação TDD, não executada.**
 
 ## Testes de tipos e contratos de retorno
 
