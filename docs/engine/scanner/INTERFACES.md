@@ -2,7 +2,7 @@
 
 ## 1. Contrato e visibilidade
 
-A interface pública do Scanner contém apenas **construção** e **varredura local**. É invocada pelo Orquestrador; todos os acessos ao Inventário utilizam sua API pública. A varredura produz observações locais, nunca comandos de sincronização.
+A interface pública do Scanner contém **construção, varredura local e consulta de estado**. É invocada pelo Orquestrador; todos os acessos ao Inventário utilizam sua API pública. A varredura produz observações locais, nunca comandos de sincronização.
 
 As assinaturas Rust são **contratos propostos para implementação orientada a testes**, não tipos ou métodos já implementados.
 
@@ -16,6 +16,8 @@ impl Scanner {
         &self,
         request: ScanRequest,
     ) -> ScannerResult<ScanReport>;
+
+    pub fn status(&self) -> ScannerStatus;
 }
 ```
 
@@ -55,7 +57,36 @@ pub struct ScanRequest {
 
 A primeira versão não oferece varredura remota nem `ScanScope::Remote`: o Detector Remoto é responsável pelas mudanças no serviço externo.
 
-## 4. Relatório
+## 4. Estado durante a execução
+
+```rust
+pub enum ScannerState {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+pub struct ScannerStatus {
+    pub state: ScannerState,
+    pub started_at: Option<Timestamp>,
+    pub finished_at: Option<Timestamp>,
+    pub files_observed: u64,
+    pub directories_observed: u64,
+    pub items_recorded: u64,
+    pub issues_recorded: u64,
+    pub current_directory: Option<LocalRelativePath>,
+    pub last_report_status: Option<ScanStatus>,
+    pub last_error: Option<ScannerErrorKind>,
+}
+```
+
+**Semântica:** `status()` devolve uma fotografia interna rápida, sem consulta ao Inventário ou filesystem e sem aguardar `scan()`. A leitura deve ser coerente, com contadores correspondentes à mesma execução. `Idle`: ainda não iniciado; contadores zero e instantes/resultados opcionais ausentes. `Running`: contadores crescem conforme observações aceitas e problemas registrados; `current_directory` identifica opcionalmente a pasta relativa visitada, nunca um caminho absoluto privado. `Completed`: `scan()` retornou `Ok(ScanReport)`, **mesmo quando `ScanReport.status == Partial`**; `last_report_status` distingue cobertura. `Failed`: falha estrutural e `last_error` tipado; `Cancelled`: cancelamento efetivo caso disponível internamente, sem declarar relatório concluído.
+
+Uma nova execução reinicia contadores, instantes de execução e último erro; o estado da execução anterior continua consultável até a próxima. Não inferir porcentagem de progresso sem total de arquivos conhecido. `status()` não entrega lista de `ScanIssue` nem substitui persistência de diagnósticos no Inventário.
+
+## 5. Relatório
 
 ```rust
 pub struct ScanReport {
@@ -119,7 +150,7 @@ pub enum ScanIssueImpact {
 
 `ScanIssueLocation::RelativePath` é usada quando ainda não existe `SyncItemId` confiável. `message` deve ser sanitizada e não revelar segredos nem conteúdo privado. O relatório é resumo, **não substitui persistência** das condições dos itens.
 
-## 5. Falhas estruturais
+## 6. Falhas estruturais
 
 ```rust
 pub struct ScannerError {
@@ -129,6 +160,7 @@ pub struct ScannerError {
 
 pub enum ScannerErrorKind {
     InvalidConfiguration,
+    AlreadyRunning,
     WrongSyncScope,
     RootNotFound,
     RootInaccessible,
@@ -150,7 +182,7 @@ O `ScannerResult::Err` se destina a situações que **impossibilitam iniciar, pr
 
 Falhas transitórias e localizadas de `record_local`, inclusive revisão divergente, podem virar `ScanIssueKind::InventoryRecordFailed` e `Partial`; nunca declarar registro concluído quando a escrita falhou. Se a persistência geral estiver indisponível, retornar `ScannerError`.
 
-## 6. Contrato funcional de cada método
+## 7. Contrato funcional de cada método
 
 ### `Scanner::new`
 
@@ -180,9 +212,19 @@ Falhas transitórias e localizadas de `record_local`, inclusive revisão diverge
 
 **Resultado:** `ScanReport` com `Completed` ou `Partial`. O Scanner não devolve a lista de operações de upload/download, nem entrega `SyncItem` diretamente ao Analisador.
 
+**Concorrência:** existe no máximo um `scan()` em andamento por instância. Uma nova chamada durante `Running` retorna `AlreadyRunning` sem perturbar a execução em andamento. O estado `Running` é definido no início efetivo, e o estado terminal é publicado antes do retorno.
+
 **Erros:** somente as falhas estruturais tipadas anteriormente. Quando um item apresentar problema de leitura ou metadados, o resultado correto é diagnóstico e continuação, não `Err` geral.
 
-## 7. Persistência de observações e diagnósticos
+### `Scanner::status`
+
+**Assinatura:** `pub fn status(&self) -> ScannerStatus`.
+
+**Finalidade:** expor a fotografia da execução atual ou última execução, com estado, contagens, instante de início/fim e último erro estrutural. É uma **consulta síncrona, rápida e sem I/O**, apropriada a acompanhamento por um consumidor externo.
+
+**Retorno:** um `ScannerStatus` coerente. Não inicia ou cancela trabalhos, não consulta arquivos, não acessa o banco nem notifica o dispatcher. A exposição da informação à GUI é responsabilidade de outro componente.
+
+## 8. Persistência de observações e diagnósticos
 
 O Inventário é o proprietário de `SyncItem`, presenças, revisões e baseline. O Scanner registra **exclusivamente observações locais**. Os campos `remote`, `remote_presence`, `baseline`, `last_synced_at` e dados de operações confirmadas não são modificados pelo Scanner.
 
@@ -195,7 +237,7 @@ Quando uma leitura falha, distinguir:
 
 O Detector Local mantém sua fila própria e não escreve no Inventário através do Scanner. O Orquestrador inicia/aguarda o Scanner e, após conclusão, volta a consumir os eventos persistidos pelos Detectores. Não cabe ao Scanner ordenar ou reconciliar essas ocorrências.
 
-## 8. Concorrência e segurança
+## 9. Concorrência e segurança
 
 - O Scanner é uma observação, não uma fotografia transacional do filesystem: arquivos podem surgir, mudar ou desaparecer enquanto ele percorre a árvore.
 - Não interromper o levantamento por mudanças normais. Registrar o estado efetivamente observado ou sua incerteza; o Analisador/Reconciliador trata estados e eventos posteriores.
