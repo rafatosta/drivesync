@@ -196,7 +196,7 @@ pub struct DeleteResult {
 
 `Verified` exige evidência da alteração esperada. `Unverified` indica conclusão reportada sem evidência suficiente para confirmá-la. Uma execução com efeito **indeterminado** deve resultar em erro tipado apropriado e conservar informação suficiente para verificar o efeito antes de nova tentativa.
 
-## 5. Estado da execução e progresso
+## Estado da execução e progresso
 
 O Operador executa **uma ação por chamada assíncrona**. Seu estado observável é comunicado pelo `ProgressReporter` de `ExecutionOptions`, quando fornecido pelo chamador; **não criar `Operator::status()` nem um registro próprio de tarefas em execução**. O Analyzer é o consumidor direto autorizado a consolidar esses dados com o `SyncItem`. Todas as dez requisições aceitam `ExecutionOptions`, sem impor reporter/cancelamento quando não usados.
 
@@ -216,7 +216,7 @@ As fases são **notificações de avanço da execução**, não máquina de esta
 
 **Concorrência:** o Operador não agenda trabalhos nem identifica `SyncItem`. Chamadas sobre recursos independentes podem coexistir; operações incompatíveis sobre o mesmo destino exigem precondições, validação de identidade e coordenação pelo chamador. O progress reporter pertence à chamada, não ao recurso global.
 
-## 6. Contrato funcional por método
+## 5. Contrato funcional por método
 
 | Método | Entrada essencial | Resultado | Regras de execução |
 | --- | --- | --- | --- |
@@ -232,7 +232,7 @@ As fases são **notificações de avanço da execução**, não máquina de esta
 | `trash` | Recurso, precondições | `ItemResult` | Aplica envio à lixeira quando disponível |
 | `restore` | Recurso, destino opcional, precondições | `ItemResult` | Restaura recurso quando disponível e retorna estado observado |
 
-## 7. Garantias compartilhadas
+## 6. Garantias compartilhadas
 
 - **Identidade:** operações utilizam IDs remotos e caminhos locais validados, evitando correlação por nome como substituto da identidade.
 - **Precondições:** quando fornecidas, são verificadas antes de alterações; condições remotas devem preferir mecanismos atômicos disponibilizados pelo provedor.
@@ -243,7 +243,7 @@ As fases são **notificações de avanço da execução**, não máquina de esta
 - **Progresso:** todas as dez requisições aceitam contexto opcional; atualizações informam fases reais e bytes quando disponíveis; ausência de progresso não implica ausência de execução, e a conclusão depende do resultado tipado.
 - **Contexto remoto:** chamadas de serviços externos são realizadas pelas interfaces de `providers/`, com seleção do provedor correspondente.
 
-## 8. Contrato de implementação especializada
+## 7. Contrato de implementação especializada
 
 Cada provedor possui um executor que implementa **todos os métodos** definidos pela interface `OperationExecutor`. A fachada pública identifica o provedor e a conta da sessão e encaminha a operação para a implementação correspondente.
 
@@ -271,13 +271,13 @@ pub(crate) trait OperationExecutor: Send + Sync {
 
 **Validação:** a mesma [suíte de conformidade](TESTS.md#conformidade-dos-executores-especializados) se aplica a todos os executores concretos.
 
-## 9. Biblioteca privada de operações locais
+## 8. Biblioteca privada de operações locais
 
 O próprio `Operator` disponibiliza funções internas reutilizáveis para manipular arquivos e diretórios no sistema de arquivos. Essas funções compõem uma **API privada de apoio à execução**: as implementações especializadas podem utilizá-las diretamente, sem precisar de um submódulo arquitetural adicional.
 
 A biblioteca oferece operações locais elementares, com resultados tipados e garantias de segurança. A organização física dessas funções em arquivos Rust é um detalhe de implementação.
 
-### 9.1. Contratos internos propostos
+### 8.1. Contratos internos propostos
 
 ```rust
 // Sketches of crate-private contracts; concrete ownership is defined in Rust.
@@ -435,6 +435,6 @@ Obtém a evidência aplicável sobre o conteúdo local (por exemplo, tamanho ou 
 
 As referências retornadas são vinculadas ao recurso efetivamente validado, não apenas a uma string de caminho. A implementação deve determinar como garantir essa propriedade no Linux com handles, descritores relativos e verificações de identidade; qualquer impossibilidade técnica precisa resultar em erro seguro e não em sucesso presumido.
 
-## 10. Definições para implementação
+## 9. Definições para implementação
 
 As estruturas ilustram a forma do contrato. Antes da implementação Rust, definir os tipos concretos de IDs e metadados, a representação de referências locais seguras, a forma de injetar a sessão remota, o tratamento de progresso/cancelamento e a compatibilidade entre capacidades de cada ambiente. Essas decisões preservam os objetivos e os métodos públicos acima.
