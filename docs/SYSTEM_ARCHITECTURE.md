@@ -72,7 +72,7 @@ O Analisador **não implementa transferências nem modifica arquivos diretamente
 
 O Orquestrador trabalha com **informações globais da sincronização** (eventos recebidos, condições de operação, configurações e preferências do usuário); o Analisador trabalha com **informações dos itens** (identidades, metadados, estados e baseline). Ambos coordenam e tomam decisões em seus respectivos níveis, sem duplicar responsabilidades.
 
-O Orquestrador é também a **porta de entrada e saída da engine** para consumidores externos, por meio de seu submódulo `facade/`. Essa interface recebe solicitações e disponibiliza estados, progresso, erros e notificações, sem depender de GTK, libadwaita ou qualquer interface gráfica específica.
+A **porta de entrada pública da engine** é a API reexportada por `engine/src/lib.rs`. A conexão entre aplicativo, Providers e Accounts pertence ao componente privado [Connection](engine/connection/README.md), sem passar pelo Orquestrador. Contratos de sincronização serão acrescentados quando necessários; não há obrigação de uma facade universal ou de outra crate.
 
 O Orquestrador **não aciona diretamente os operadores de Upload e Download** e não executa operações físicas. O Analisador identifica e encaminha as operações compatíveis com as políticas e retorna ao Orquestrador quando uma decisão não puder ser tomada dentro dessas condições. O mecanismo concreto de fila e retomada será definido posteriormente.
 
@@ -117,7 +117,7 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 ## 3. Relacionamentos entre componentes
 
-**Organização de suporte:** `accounts/` gerencia contas e contém internamente `auth/`, responsável pelos mecanismos de autenticação e credenciais. A autenticação é acessada por contratos de `accounts/`; não constitui módulo de primeiro nível da arquitetura. `orchestrator/facade/` expõe o contrato externo da engine, sem centralizar a comunicação interna entre seus módulos.
+**Organização de suporte:** `accounts/` gerencia contas e contém internamente `auth/`, responsável pelos mecanismos de autenticação e credenciais. A autenticação é acessada por contratos de `accounts/`; não constitui módulo de primeiro nível da arquitetura. A raiz da crate expõe somente os contratos externos necessários, sem centralizar a comunicação interna entre módulos.
 
 **Dois níveis de coordenação:** o Orquestrador administra o processamento da sincronização como um todo; o Analisador administra a análise e a execução autorizada por arquivo ou diretório. A identificação de conflitos pode ser organizada como submódulo do Analisador, sem se tornar um oitavo componente independente na arquitetura macro.
 
@@ -174,7 +174,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 ## 5. Limites da arquitetura
 
-A engine funciona **independentemente da GUI**. A interface GTK/libadwaita, uma CLI ou outro consumidor externo utiliza o contrato de `orchestrator/facade/` para enviar ações e receber estados, progresso, erros e notificações. A Facade não importa nem depende de GTK/libadwaita e não participa obrigatoriamente da comunicação entre componentes internos.
+A engine funciona **independentemente da GUI**. GTK/libadwaita ou outro consumidor utiliza os contratos públicos reexportados pela raiz da crate. Connection compõe os serviços de autenticação e contas, independentemente do Orquestrador de sincronização e de GTK.
 
 O módulo `accounts/` é proprietário do cadastro das contas e encapsula `accounts/auth/` para autenticação e credenciais; o levantamento provisório de dados de conexões permanece documentado em `docs/engine/accounts/README.md` até que sua responsabilidade seja definida. O módulo `configuration/` é proprietário das preferências e políticas. **Cada módulo decide e encapsula sua própria persistência, se necessária**, expondo somente sua API; não existe um banco global obrigatório nem acesso direto ao armazenamento dos outros módulos. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
@@ -189,6 +189,6 @@ A organização é considerada respeitada quando:
 - situações não resolvíveis pelas políticas recebidas retornam ao Orquestrador para decisão adicional;
 - os resultados podem ser confirmados sobre a mesma identidade lógica no Inventário;
 - a implementação interna de um componente pode ser alterada sem exigir conhecimento dos detalhes internos dos demais;
-- a aplicação gráfica pode ser substituída por outro consumidor sem mudanças nos componentes internos, utilizando a Facade do Orquestrador.
+- a aplicação gráfica pode ser substituída por outro consumidor sem mudanças nos componentes internos, utilizando a API pública da engine.
 
 Os **fluxos de execução**, a **organização interna dos módulos** e o **plano de desenvolvimento** serão especificados separadamente.
