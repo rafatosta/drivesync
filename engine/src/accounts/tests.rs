@@ -315,7 +315,7 @@ async fn acc_06_17_20_reject_invalid_and_unsupported_without_effects() {
 }
 #[tokio::test]
 async fn acc_10_11_19_remove_in_use_repeat_and_recover() {
-    let f = Fixture::new();
+    let mut f = Fixture::new();
     let a = f.add("a").await;
     let sentinel = f.path.join("user-file");
     std::fs::write(&sentinel, b"preserve").unwrap();
@@ -346,6 +346,7 @@ async fn acc_10_11_19_remove_in_use_repeat_and_recover() {
     );
     assert_eq!(f.state(&a.id), AccountState::Unavailable);
     assert!(f.accounts.store.lock().unwrap().data.intent.is_some());
+    f.reopen();
     f.vault.fail_delete.store(false, Ordering::SeqCst);
     // The next operation first finishes the interrupted removal.
     assert!(
@@ -995,6 +996,8 @@ fn storage_rejects_linked_lock_and_staging_files() {
     let f = Fixture::new();
     let victim = f.path.join("preserve-me");
     std::fs::write(&victim, b"unchanged").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).unwrap();
     std::fs::hard_link(&victim, f.path.join("accounts.next")).unwrap();
     let store = &mut *f.accounts.store.lock().unwrap();
     assert!(store.save(store.data.clone()).is_err());
@@ -1058,4 +1061,104 @@ async fn cancellation_during_secure_write_finishes_before_later_session_access()
     assert_eq!(f.state(&id), AccountState::Connected);
     f.empty_status();
     assert!(f.accounts.store.lock().unwrap().data.intent.is_none());
+}
+
+#[tokio::test]
+async fn acc_08_multiple_provider_metadata_is_readable_without_authentication() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let mut alternative = a.clone();
+    alternative.id = AccountId("external-account".into());
+    alternative.provider = ProviderId("example-no-oauth".into());
+    alternative.state = AccountState::ReauthorizationRequired;
+    {
+        let mut store = f.accounts.store.lock().unwrap();
+        let mut data = store.data.clone();
+        data.records.insert(
+            alternative.id.clone(),
+            storage::Record {
+                account: alternative.clone(),
+                key: "example-no-oauth:external-account:generation".into(),
+            },
+        );
+        store.save(data).unwrap();
+    }
+    f.vault.fail_get.store(true, Ordering::SeqCst);
+    f.access.fail.store(true, Ordering::SeqCst);
+    let result = f
+        .accounts
+        .list(ListAccountsRequest {
+            provider: Some(alternative.provider.clone()),
+        })
+        .unwrap();
+    assert_eq!(result.accounts, vec![alternative]);
+    assert_eq!(
+        f.accounts
+            .list(ListAccountsRequest { provider: None })
+            .unwrap()
+            .accounts
+            .len(),
+        2
+    );
+    assert_eq!(
+        f.accounts
+            .list(ListAccountsRequest {
+                provider: Some(ProviderId("google".into()))
+            })
+            .unwrap()
+            .accounts,
+        vec![a]
+    );
+    f.empty_status();
+}
+
+#[tokio::test]
+async fn optional_refresh_token_allows_access_and_preserves_existing_renewal() {
+    let f = Fixture::new();
+    let mut request = f.authorization("access-only");
+    request.authorization.tokens.refresh_token = None;
+    let access_only = f.accounts.add(request).await.unwrap().account;
+    f.accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: access_only.id.clone(),
+        })
+        .await
+        .unwrap();
+    let key = f.key(&access_only.id);
+    f.vault
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(&key)
+        .unwrap()
+        .expires_at = 0;
+    // A provider adapter, rather than Accounts protocol code, determines that
+    // an access-only authorization cannot be renewed.
+    f.access.refresh_fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts
+            .acquire_session(AcquireSessionRequest {
+                account_id: access_only.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::AuthorizationFailed
+    );
+    f.access.refresh_fail.store(false, Ordering::SeqCst);
+    let a = f.add("a").await;
+    let mut request = f.authorization("a");
+    request.authorization.tokens.refresh_token = None;
+    f.accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization,
+        })
+        .await
+        .unwrap();
+    let key = f.key(&a.id);
+    assert_eq!(
+        f.vault.entries.lock().unwrap()[&key].refresh.as_deref(),
+        Some("refresh-secret:a")
+    );
 }

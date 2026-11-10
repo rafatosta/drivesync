@@ -261,7 +261,7 @@ impl Accounts {
         if tokens.access_token.is_empty()
             || !tokens.token_type.eq_ignore_ascii_case("Bearer")
             || tokens.expires_in == 0
-            || tokens.refresh_token.as_ref().is_none_or(|r| r.is_empty())
+            || tokens.refresh_token.as_ref().is_some_and(|r| r.is_empty())
         {
             return Err(error(AccountsError::AuthorizationFailed));
         }
@@ -368,10 +368,23 @@ impl Accounts {
             None,
             move |owner, op, runtime| {
                 let before = owner.record(&request.account_id)?;
-                let (identity, tokens) =
+                let (identity, mut tokens) =
                     owner.validate(&before.account.provider, request.authorization, &runtime)?;
                 if identity.subject != before.account.provider_user_id {
                     return Err(error(AccountsError::IdentityMismatch));
+                }
+                if tokens.refresh_token.is_none() {
+                    owner.phase(
+                        op,
+                        AccountOperationPhase::AccessingSecureStorage,
+                        Some(&request.account_id),
+                    );
+                    if let Some(previous) = owner.vault.get(&before.key)? {
+                        if !previous.matches(&before) {
+                            return Err(error(AccountsError::IdentityMismatch));
+                        }
+                        tokens.refresh_token = previous.refresh;
+                    }
                 }
                 let mut after = before.clone();
                 after.key = format!(
