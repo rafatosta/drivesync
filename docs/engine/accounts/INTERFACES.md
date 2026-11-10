@@ -6,7 +6,7 @@
 
 Não existe `accounts/auth/`. Armazenamento seguro de credenciais é uma responsabilidade **interna de Accounts**, não um submódulo público nem um segundo provedor de autenticação.
 
-Os tipos abaixo são **especificações Rust propostas**, não código implementado. Imports e tipos finais de `AccountId`, `ProviderId`, `Timestamp` e de sessão serão acertados na implementação; não recriar IDs já definidos em [Models](../models/INTERFACES.md).
+Os contratos abaixo estão implementados em `engine/src/accounts/`. `AccountId`, `ProviderId` e `Timestamp` pertencem a `engine::models` e são reexportados por Accounts e pela raiz da engine. A seção 8 concretiza configuração, handles e recuperação.
 
 ## 2. Dados públicos
 
@@ -115,11 +115,11 @@ pub struct UpdateAuthorizationRequest {
 pub struct UpdateAuthorizationResult { pub account: Account }
 ```
 
-`ProviderAuthorizationHandle` e `ProviderSessionHandle` são **placeholders conceituais de integração**, não tipos universais impostos a `providers/`. Sua concretização deve preservar a interface particular de cada provedor sem divulgar tokens. O fluxo externo de consentimento (navegador/callback, PKCE, troca de código, refresh, revogação) pertence ao Provider correspondente. `AcquireSession` apenas disponibiliza uma referência segura/escopada para o consumidor autorizado chamar esse Provider, sem revelar segredos.
+`ProviderAuthorizationHandle` e `ProviderSessionHandle` são **tipos de integração pertencentes a Accounts**, sem novos contratos impostos a `providers/`. A adaptação Google consome `GoogleTokenResponse` e empresta `GoogleSession`, sem permitir extração de tokens pelos consumidores de Accounts. O fluxo externo de consentimento (navegador/callback, PKCE, troca de código, refresh, revogação) pertence ao Provider correspondente. `AcquireSession` apenas disponibiliza uma referência segura/escopada para o consumidor autorizado chamar esse Provider, sem revelar segredos.
 
 `UpdateAccountRequest` altera apenas apresentação local; o e-mail e o ID externo são provenientes do provedor, não arbitrariamente editáveis pelo usuário. A operação de exclusão não implica revogação remota ou exclusão de arquivos sem solicitação/contrato explícito; se existir sincronização vinculada, devolver `AccountInUse` até resolução pela responsabilidade proprietária das conexões.
 
-## 4. Assinaturas públicas propostas
+## 4. Assinaturas públicas implementadas
 
 ```rust
 impl Accounts {
@@ -136,7 +136,7 @@ impl Accounts {
 }
 ```
 
-Os métodos usam **um objeto de requisição** e retornam objeto de resultado, no padrão da engine. A escolha de sincronicidade e integração concreta será validada antes de compilar; não atribuir operações de rede a `get`, `list` ou `update`.
+Os métodos usam **um objeto de requisição** e retornam objeto de resultado, no padrão da engine. A integração concreta usa workers Tokio para operações de credenciais; `get`, `list` e `update` não fazem rede.
 
 ## 5. Acompanhamento operacional
 
@@ -179,13 +179,32 @@ O `status()` é síncrono e rápido, sem consultar banco, Secret Service ou rede
 - `ProviderAuthorizationHandle::google(GoogleTokenResponse)` consome o resultado técnico já obtido por Providers. O handle pertence a Accounts, tem campos privados, não é serializável pela API pública e seu Debug é redigido. Não é exigido um novo tipo em Providers.
 - `ProviderSessionHandle::google()` empresta `&GoogleSession`, sem extrair tokens. Accounts usa `get_userinfo` para verificar identidade e `refresh_access_token` para renovar; toda comunicação Google permanece em Providers, que não será alterado.
 - `AccountsConfig::new(directory, application_id, associations)` configura cadastro JSON privado e Secret Service. `with_google(client, oauth_config)` habilita Google. Sem configuração, Google retorna `UnsupportedProvider`; outros serviços não são forçados a implementar OAuth.
-- `AccountId`, `ProviderId` e `Timestamp` terão um único proprietário em `engine::models`, com reexportação na raiz; nenhum modelo de arquivo será implementado nesta tarefa.
+- `AccountId`, `ProviderId` e `Timestamp` têm um único proprietário em `engine::models`, com reexportação na raiz; nenhum modelo de arquivo foi implementado nesta tarefa.
 - `AccountAssociations::lock_for_removal(account_id)` retorna uma guarda que impede novas associações até Drop, ou `AccountInUse`. O proprietário das conexões implementa esse contrato; Accounts não cria cadastro de sincronizações. Falha ou ausência de comprovação bloqueia a remoção. Não há implementação permissiva padrão.
-- O cadastro usa JSON versionado, substituição atômica, fsync e permissões privadas. Um lock exclusivo impede duas instâncias de abrir o mesmo cadastro. Corrupção/formato incompatível não são resetados. Configuration não é necessário.
+- O cadastro usa JSON versionado (limite interno de 16 MiB), substituição atômica, fsync e permissões privadas (diretório 0700, arquivos 0600). A abertura recusa symlinks, hard links e arquivos especiais antes de escrever. Um lock exclusivo impede duas instâncias de abrir o mesmo cadastro. Corrupção/formato incompatível não são resetados. Configuration não é necessário.
 - Antes de alterar secrets, persiste-se uma intenção sem segredo. Credenciais são versionadas em itens distintos no keyring. A publicação do novo cadastro ocorre somente após a persistência segura. A intenção retém referências para limpeza ou retomada após falha/reabertura; `get/list` mostram `Unavailable` enquanto a conta está em transição.
 - Operações assíncronas executam em worker Tokio e serializam mutações por instância. Cancelar a espera retira a atividade do status, mas não desfaz I/O já iniciado: o worker termina a unidade durável antes de liberar a exclusividade. Não há fila durável de tarefas. `new/get/list/update` são locais; chamadores GTK devem executá-los fora do loop principal quando envolverem disco.
-- Recuperação é tentada pelas operações assíncronas antes de iniciar outra mutação. Secret ausente em inclusão interrompida descarta somente o registro incompleto; em substituição preserva a versão anterior; remoção interrompida é retomada. Referências não são descartadas quando a limpeza segura falha.
+- Recuperação é tentada pelas operações assíncronas antes de iniciar outra mutação. Secret ausente em inclusão interrompida descarta somente o registro incompleto; em substituição preserva a versão anterior após verificar sua credencial (ou sinaliza reautorização se ela também estiver ausente); remoção interrompida é retomada. Referências não são descartadas quando a limpeza segura falha.
 - `update(display_name=None)` limpa o nome local; identidade/e-mail permanecem. Remover ID inexistente retorna `removed=false`. Adicionar identidade já cadastrada retorna `created=false` e não substitui credenciais; a substituição usa `update_authorization`.
 - Estado é conhecimento persistido: ausência de credencial/reautorização exige `ReauthorizationRequired`; falha transitória de keyring não altera todas as contas. Rede não é consultada por `get/list`. Refresh sem novo refresh token conserva o anterior, somente para a mesma conta; autorizações sem refresh token permitem acesso até expirar, quando a ausência de renovação exige reautorização. Atualização da mesma identidade sem novo refresh token conserva o anterior quando disponível.
 
-**Estado:** contrato de implementação; evidências de execução serão registradas em TESTS.md.
+**Estado:** implementado e validado isoladamente; evidências e limitações em TESTS.md.
+
+## 9. Configuração e proteção de remoção
+
+```rust
+impl AccountsConfig {
+    pub fn new(directory: PathBuf, application_id: impl Into<String>, associations: Arc<dyn AccountAssociations>) -> Self;
+    pub fn with_google(self, client: GoogleDriveClient, config: GoogleOAuthConfig) -> Self;
+}
+pub trait RemovalGuard: Send {}
+pub trait AccountAssociations: Send + Sync {
+    fn lock_for_removal(&self, account: &AccountId) -> AccountsResult<Box<dyn RemovalGuard>>;
+}
+```
+
+`new` configura o caminho absoluto de um diretório privado e o namespace do Secret Service. `Accounts::new` valida configuração e abre o cadastro, sem acessar rede ou keyring. `with_google` fornece o cliente existente de Providers e a configuração técnica usada para refresh; sem essa opção não há integração Google habilitada. Não fornecer segredos em identificadores de aplicação ou correlação.
+
+A guarda de remoção deve provar ausência de vínculos e impedir sua criação durante toda a remoção. O consumidor fornece essa implementação; o módulo não conhece tabelas de conexões. Falha de verificação impede a exclusão. `RemovalGuard::drop` libera a proteção; o callback executa no worker, nunca na thread GTK. Operações sobre o mesmo cadastro são exclusivas por instância; outra instância recebe `StorageUnavailable` até a liberação do lock.
+
+`get/update/acquire_session/update_authorization` retornam `NotFound` para conta ausente; `remove` retorna `removed=false`. `list(provider=None)` inclui todos os serviços cadastrados, mesmo sem integração habilitada; filtro sem resultados retorna lista vazia. `update` recusa nome vazio e alteração durante intenção de persistência pendente. As falhas têm mensagens sanitizadas, e `status` não tem retorno de erro.

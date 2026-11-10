@@ -46,3 +46,9 @@
 Quatro arquivos de contrato coerentes, API de contas independente da tecnologia de autenticação, keyring privado a Accounts, ausência de referências funcionais a `accounts/auth/` e cobertura TDD para falhas, isolamento e exclusão segura.
 
 **Integração:** adaptar os tipos Google dentro de Accounts; não alterar Providers. Usar o contrato de guarda do proprietário externo de conexões, sem assumir seu cadastro.
+
+## Implementação e regressão
+
+O código está em `engine/src/accounts/`. Testes de contrato estão em `engine/src/accounts/tests.rs` e `engine/tests/accounts.rs`. O runner `scripts/check-vault-isolated.py --test isolated_accounts_vault_roundtrip` só deve receber o binário de testes compilado no SDK e cria seu próprio Secret Service/barramento. Nunca rodar o teste ignorado contra o barramento pessoal.
+
+O consumidor deve fornecer `AccountAssociations` com exclusão real contra novas conexões; não substituir esse contrato por uma resposta permissiva em produção. Alterar a política de cancelamento exige preservar a intenção durável e a exclusividade enquanto I/O iniciado termina.
