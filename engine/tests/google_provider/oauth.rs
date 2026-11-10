@@ -19,7 +19,7 @@ fn auth_request() -> GoogleAuthorizationRequest {
     GoogleAuthorizationRequest {
         redirect_uri: "http://127.0.0.1:43123/callback".into(),
         state: "random-state".into(),
-        code_challenge: "a".repeat(43),
+        code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".into(),
         code_challenge_method: "S256".into(),
         scopes: vec!["openid".into()],
         ..Default::default()
@@ -84,7 +84,10 @@ fn authorization_url_contains_pkce_state_and_explicit_scopes() {
     ] {
         assert_eq!(q.get(k).unwrap(), v);
     }
-    assert_eq!(q.get("code_challenge").unwrap(), &"a".repeat(43));
+    assert_eq!(
+        q.get("code_challenge").unwrap(),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
     assert!(!result.url.contains("client-secret"));
     assert!(!format!("{result:?}").contains("random-state"));
 }
@@ -406,4 +409,17 @@ async fn malformed_token_responses_are_not_success() {
             GoogleApiError::InvalidResponse
         );
     }
+}
+
+#[test]
+fn noncanonical_s256_challenges_are_rejected() {
+    let mut request = auth_request();
+    request.code_challenge = "a".repeat(43);
+    assert_eq!(
+        GoogleDriveClient::new()
+            .authorization_request(&config(), request)
+            .unwrap_err()
+            .kind,
+        GoogleApiError::InvalidArgument
+    );
 }

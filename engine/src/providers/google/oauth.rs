@@ -69,6 +69,8 @@ impl GoogleDriveClient {
             || request.state.is_empty()
             || request.code_challenge_method != "S256"
             || request.code_challenge.len() != 43
+            // A 256-bit digest leaves two zero padding bits in its final symbol.
+            || !request.code_challenge.as_bytes().last().is_some_and(|last| b"AEIMQUYcgkosw048".contains(last))
             || !request
                 .code_challenge
                 .bytes()

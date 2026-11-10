@@ -2427,7 +2427,7 @@ autorização exige os escopos explícitos e permitidos pela configuração.
 
 `load_google_config` é async, com leitura de arquivo limitada a 64 KiB via Tokio.
 `authorization_request` é pura e síncrona: não abre navegador e não gera state ou
-verifier. O chamador fornece state não vazio e challenge S256 base64url com 43
+verifier. O chamador fornece state não vazio e challenge S256 base64url canônico com 43
 caracteres; troca de código exige verifier RFC 7636 com 43–128 caracteres.
 O redirect desktop deve ser HTTP loopback e corresponder a host/caminho da
 configuração, permitindo a porta efêmera do callback.
