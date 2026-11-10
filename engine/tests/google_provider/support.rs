@@ -129,9 +129,7 @@ impl Server {
                 let Ok((stream, _)) = listener.accept() else {
                     return;
                 };
-                if let Some(rec) = handle(stream, reply) {
-                    log.lock().unwrap().push(rec);
-                }
+                handle(stream, reply, &log);
             }
         });
         Self { base, requests }
@@ -160,7 +158,7 @@ pub fn session() -> GoogleSession {
     GoogleSession::new("account-a", "tok-A-secret")
 }
 
-fn handle(mut stream: TcpStream, reply: Reply) -> Option<Recorded> {
+fn handle(mut stream: TcpStream, reply: Reply, log: &Mutex<Vec<Recorded>>) -> Option<()> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     let head_end = loop {
@@ -195,6 +193,14 @@ fn handle(mut stream: TcpStream, reply: Reply) -> Option<Recorded> {
         }
         body.extend_from_slice(&chunk[..n]);
     }
+    // Record before responding: the client can observe completion as soon as
+    // the response reaches it, including header-only 204 responses.
+    log.lock().unwrap().push(Recorded {
+        method,
+        target,
+        headers,
+        body,
+    });
     thread::sleep(reply.delay);
     let mut out = format!("HTTP/1.1 {} X\r\nConnection: close\r\n", reply.status);
     match reply.framing {
@@ -209,10 +215,5 @@ fn handle(mut stream: TcpStream, reply: Reply) -> Option<Recorded> {
     let _ = stream.write_all(out.as_bytes());
     let _ = stream.write_all(&reply.body);
     let _ = stream.shutdown(Shutdown::Both);
-    Some(Recorded {
-        method,
-        target,
-        headers,
-        body,
-    })
+    Some(())
 }
