@@ -1,15 +1,13 @@
-//! Google Drive REST v3 mapping (technical API surface).
+//! Google Drive metadata mapping, independent of application synchronization.
 //!
-//! **TDD status:** only the types, error model and the `files_get` entry point
-//! exist, and the behaviour is intentionally *not implemented* (`unimplemented!`).
-//! The test suites under `tests/` define the expected behaviour (RED phase).
-//! See `docs/engine/providers/google/` for the contract.
+//! `files_get` uses bounded async HTTP and typed, sanitized responses. Other
+//! Google operations remain documented contracts for future groups.
 
 mod client;
 mod errors;
 mod models;
 
-pub use client::GoogleDriveClient;
+pub use client::{GoogleClientLimits, GoogleDriveClient};
 pub use errors::{GoogleApiError, GoogleApiFailure, GoogleResult};
 pub use models::*;
 

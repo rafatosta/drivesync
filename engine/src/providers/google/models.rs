@@ -4,13 +4,15 @@
 //! names follow `docs/engine/providers/google/INTERFACES.md`, verified against
 //! the official Drive v3 Discovery document.
 
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 macro_rules! string_id {
     ($($(#[$meta:meta])* $name:ident),+ $(,)?) => {
         $(
             $(#[$meta])*
-            #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+            #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Deserialize)]
+            #[serde(transparent)]
             pub struct $name(pub String);
         )+
     };
@@ -38,8 +40,7 @@ string_id!(
 #[derive(Clone)]
 pub struct GoogleSession {
     pub account_id: String,
-    #[allow(dead_code)]
-    access_token: String,
+    pub(super) access_token: String,
 }
 
 impl GoogleSession {
@@ -52,22 +53,22 @@ impl GoogleSession {
     }
 }
 
-// RED: a redacting `Debug` is behaviour covered by the credential-leak tests.
 impl std::fmt::Debug for GoogleSession {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unimplemented!("redacting Debug for GoogleSession (RED)")
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoogleSession")
+            .field("account_id", &self.account_id)
+            .finish_non_exhaustive()
     }
 }
 
 /// Query parameters of `files.get`.
 ///
 /// `None` means the parameter is not sent.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileGetOptions {
     pub fields: Option<FieldMask>,
     pub supports_all_drives: Option<bool>,
-    /// Official semantics: only applicable together with `alt=media`.
-    pub acknowledge_abuse: Option<bool>,
     /// Comma-separated label IDs for `labelInfo`.
     pub include_labels: Option<String>,
     /// Only `published` is supported by the API.
@@ -75,19 +76,39 @@ pub struct FileGetOptions {
 }
 
 /// Query string pairs of `files.get`, in official parameter names.
-// RED: behaviour pending. Internal helper exercised by unit tests.
-pub(crate) fn file_get_query(_options: &FileGetOptions) -> Vec<(String, String)> {
-    unimplemented!("files.get query mapping (RED)")
+pub(crate) fn file_get_query(options: &FileGetOptions) -> Vec<(String, String)> {
+    let mut query = Vec::new();
+    if let Some(fields) = &options.fields {
+        query.push(("fields".into(), fields.0.clone()));
+    }
+    if let Some(value) = options.supports_all_drives {
+        query.push(("supportsAllDrives".into(), value.to_string()));
+    }
+    if let Some(value) = &options.include_labels {
+        query.push(("includeLabels".into(), value.clone()));
+    }
+    if let Some(value) = &options.include_permissions_for_view {
+        query.push(("includePermissionsForView".into(), value.clone()));
+    }
+    query
 }
 
 /// Decodes a `File` resource from a successful response body.
-// RED: behaviour pending. Internal helper exercised by unit tests.
-pub(crate) fn parse_file(_body: &[u8]) -> super::GoogleResult<GoogleFile> {
-    unimplemented!("File JSON decoding (RED)")
+pub(crate) fn parse_file(body: &[u8]) -> super::GoogleResult<GoogleFile> {
+    // Reject non-object roots: serde structs can otherwise accept JSON sequences.
+    if body.iter().copied().find(|b| !b.is_ascii_whitespace()) != Some(b'{') {
+        return Err(super::GoogleApiFailure::new(
+            super::GoogleApiError::InvalidResponse,
+            None,
+        ));
+    }
+    serde_json::from_slice(body)
+        .map_err(|_| super::GoogleApiFailure::new(super::GoogleApiError::InvalidResponse, None))
 }
 
 /// Drive `File` resource. `None` means *not received*, never *absent in Drive*.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleFile {
     pub id: Option<FileId>,
     pub name: Option<String>,
@@ -146,14 +167,16 @@ pub struct GoogleFile {
     pub inherited_permissions_disabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleShortcutDetails {
     pub target_id: Option<FileId>,
     pub target_mime_type: Option<MimeType>,
     pub target_resource_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleFileCapabilities {
     pub can_edit: Option<bool>,
     pub can_copy: Option<bool>,
@@ -170,7 +193,8 @@ pub struct GoogleFileCapabilities {
     pub can_change_copy_requires_writer_permission: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleUser {
     pub display_name: Option<String>,
     pub email_address: Option<String>,
@@ -179,10 +203,12 @@ pub struct GoogleUser {
     pub me: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GooglePermission {
     pub id: Option<PermissionId>,
     /// JSON `type`.
+    #[serde(rename = "type")]
     pub type_: Option<String>,
     pub role: Option<String>,
     pub email_address: Option<String>,
@@ -197,7 +223,8 @@ pub struct GooglePermission {
     pub view: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GooglePermissionDetails {
     pub permission_type: Option<String>,
     pub role: Option<String>,
@@ -205,19 +232,22 @@ pub struct GooglePermissionDetails {
     pub inherited_from: Option<FileId>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleContentHints {
     pub indexable_text: Option<String>,
     pub thumbnail: Option<GoogleThumbnail>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleThumbnail {
     pub image: Option<String>,
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleImageMediaMetadata {
     pub width: Option<i32>,
     pub height: Option<i32>,
@@ -231,14 +261,16 @@ pub struct GoogleImageMediaMetadata {
     pub location: Option<GoogleGeoLocation>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleGeoLocation {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub altitude: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleVideoMediaMetadata {
     pub width: Option<i32>,
     pub height: Option<i32>,
@@ -246,19 +278,22 @@ pub struct GoogleVideoMediaMetadata {
     pub duration_millis: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleLabelInfo {
     pub labels: Option<Vec<GoogleLabel>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleLabel {
     pub id: Option<String>,
     pub revision_id: Option<String>,
     pub fields: Option<BTreeMap<String, GoogleLabelField>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleLabelField {
     pub value_type: Option<String>,
     pub text: Option<Vec<String>>,
@@ -268,7 +303,8 @@ pub struct GoogleLabelField {
     pub user: Option<Vec<GoogleUser>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleContentRestriction {
     pub read_only: Option<bool>,
     pub reason: Option<String>,
@@ -278,26 +314,30 @@ pub struct GoogleContentRestriction {
     pub system_restricted: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleDownloadRestrictions {
     pub item_download_restriction: Option<GoogleDownloadRestriction>,
     /// JSON `effectiveDownloadRestrictionWithContext`.
     pub effective_download_restriction_with_context: Option<GoogleDownloadRestriction>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleDownloadRestriction {
     pub restricted_for_readers: Option<bool>,
     pub restricted_for_writers: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleClientEncryptionDetails {
     pub encryption_state: Option<String>,
     pub decryption_metadata: Option<GoogleDecryptionMetadata>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GoogleDecryptionMetadata {
     pub wrapped_key: Option<String>,
     pub kacls_id: Option<String>,

@@ -34,7 +34,10 @@ async fn sends_get_with_bearer_token_and_no_query_or_body() {
     assert_eq!(req.target, "/drive/v3/files/abc");
     assert_eq!(req.header("authorization"), Some("Bearer tok-A-secret"));
     assert!(req.body.is_empty());
-    assert!(!req.target.contains("tok-A-secret"), "token sent in the URL");
+    assert!(
+        !req.target.contains("tok-A-secret"),
+        "token sent in the URL"
+    );
 }
 
 /// FG-C02: every option is sent under its official name, and nothing else is.
@@ -76,7 +79,11 @@ async fn file_id_is_percent_encoded_in_the_path() {
         .await;
     let req = &server.recorded()[0];
     assert_eq!(req.path(), "/drive/v3/files/a%2Fb%20c%3Fd%23e");
-    assert_eq!(req.target, req.path(), "reserved characters leaked to query");
+    assert_eq!(
+        req.target,
+        req.path(),
+        "reserved characters leaked to query"
+    );
 }
 
 /// FG-C04: each session sends its own token (no cross-account leakage).
@@ -362,10 +369,14 @@ async fn concurrent_calls_keep_sessions_isolated() {
         Reply::json(200, r#"{"id":"2"}"#),
     ]);
     let client = server.client();
-    let (a, b) = (GoogleSession::new("a", "TOKEN-A"), GoogleSession::new("b", "TOKEN-B"));
+    let (a, b) = (
+        GoogleSession::new("a", "TOKEN-A"),
+        GoogleSession::new("b", "TOKEN-B"),
+    );
+    let (one, two) = (id("one"), id("two"));
     let (first, second) = tokio::join!(
-        client.files_get(&a, &id("one"), FileGetOptions::default()),
-        client.files_get(&b, &id("two"), FileGetOptions::default()),
+        client.files_get(&a, &one, FileGetOptions::default()),
+        client.files_get(&b, &two, FileGetOptions::default()),
     );
     first.unwrap();
     second.unwrap();
@@ -375,7 +386,12 @@ async fn concurrent_calls_keep_sessions_isolated() {
         } else {
             "Bearer TOKEN-B"
         };
-        assert_eq!(req.header("authorization"), Some(expected), "{}", req.target);
+        assert_eq!(
+            req.header("authorization"),
+            Some(expected),
+            "{}",
+            req.target
+        );
     }
 }
 
@@ -392,7 +408,10 @@ async fn dropped_call_does_not_poison_the_client() {
             .files_get(&session(), &id("x"), FileGetOptions::default()),
     )
     .await;
-    assert!(cancelled.is_err(), "the call should still have been pending");
+    assert!(
+        cancelled.is_err(),
+        "the call should still have been pending"
+    );
 
     let ok_server = Server::start(vec![Reply::json(200, r#"{"id":"ok"}"#)]);
     let file = ok_server
@@ -401,4 +420,55 @@ async fn dropped_call_does_not_poison_the_client() {
         .await
         .unwrap();
     assert_eq!(file.id, Some(id("ok")));
+}
+
+/// FG-C21: both test endpoint bases reject non-loopback and ambiguous URLs.
+#[test]
+fn test_endpoints_are_restricted_to_literal_loopback_http() {
+    use drivesync_engine::providers::google::GoogleDriveClient;
+    let safe = "http://127.0.0.1:12345/drive/v3";
+    for unsafe_url in [
+        "https://127.0.0.1/drive/v3",
+        "http://localhost/drive/v3",
+        "http://192.0.2.1/drive/v3",
+        "http://example.test/drive/v3",
+        "http://127.0.0.1@192.0.2.1/drive/v3",
+        "http://user@127.0.0.1/drive/v3",
+        "http://127.0.0.1/drive/v3?key=secret",
+        "http://127.0.0.1/drive/v3#fragment",
+        "not a URL",
+    ] {
+        for (drive, upload) in [(unsafe_url, safe), (safe, unsafe_url)] {
+            let err = GoogleDriveClient::with_base_urls(drive, upload).unwrap_err();
+            assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+            assert_eq!(err.http_status, None);
+            assert!(!format!("{err:?}").contains("secret"));
+        }
+    }
+    assert!(GoogleDriveClient::with_base_urls(safe, "http://[::1]:12345/upload/drive/v3").is_ok());
+}
+
+/// FG-C22: zero limits cannot accidentally remove request bounds.
+#[test]
+fn zero_test_limits_are_rejected() {
+    use drivesync_engine::providers::google::GoogleDriveClient;
+    for limits in [limits(0, 1024), limits(1000, 0)] {
+        let err = GoogleDriveClient::new().with_limits(limits).unwrap_err();
+        assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+    }
+}
+
+/// FG-C23: only HTTP 200 represents a complete metadata response.
+#[tokio::test]
+async fn unexpected_success_status_is_rejected() {
+    for status in [201, 202, 204, 206] {
+        let server = Server::start(vec![Reply::json(status, "")]);
+        let err = server
+            .client()
+            .files_get(&session(), &id("x"), FileGetOptions::default())
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, GoogleApiError::InvalidResponse);
+        assert_eq!(err.http_status, Some(status));
+    }
 }

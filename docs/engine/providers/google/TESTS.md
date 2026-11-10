@@ -1088,3 +1088,43 @@ Cobertura por porcentagem **não substitui assertivas de contrato**. Se uma oper
 ## 13. Critério de encerramento desta etapa documental
 
 Este documento é o **plano dos testes**, não a execução deles. A etapa de implementação por TDD só começa quando o agente selecionar um grupo, escrever e executar testes inicialmente falhando, verificar as expectativas na documentação oficial e implementar o mínimo para fazê-los passar.
+
+
+## 14. Grupo implementado — `files_get`
+
+A retomada encontrou contratos e testes mais recentes que os stubs e um lockfile
+sem as dependências do provider. Após resolver o lockfile e alinhar assinaturas,
+os 28 testes unitários e 20 testes de contrato foram executados em RED: todos
+falharam nos stubs. O teste concorrente recebeu apenas bindings para os IDs,
+necessários para compilar os empréstimos no `tokio::join!`; suas expectativas
+foram preservadas.
+
+O GREEN implementa somente consulta de metadados `files_get`, query, modelos
+omitíveis, erros sanitizados, redirecionamentos desabilitados, isolamento de
+sessões, timeout total, leitura limitada e `Retry-After` em segundos/HTTP-date.
+Foram acrescentados três testes de regressão: validação de ambas as bases de
+endpoints locais, limites positivos e rejeição de outros status `2xx`.
+
+A suíte deste grupo contém 51 testes (28 unitários e 23 de contrato), sem casos
+ignorados. Ela usa dados sintéticos e servidores loopback. Não comprova acesso
+real ao Google, integração GTK nem funcionamento do aplicativo empacotado.
+Os demais métodos Google e os campos adicionais ainda indicados como pendentes
+em `INTERFACES.md` permanecem fora desta implementação.
+
+
+Validação realizada no `org.gnome.Sdk//50` do Flathub, com
+`PATH=/usr/lib/sdk/rust-stable/bin:$PATH`, conforme o manifesto Devel:
+
+- `cargo fmt --all --check`: passou.
+- `cargo clippy --locked -p drivesync-engine --all-targets -- -D warnings`: passou.
+- `cargo test --locked -p drivesync-engine`: 51 testes passaram, zero ignorados.
+- `cargo doc --locked --workspace --no-deps --document-private-items`: passou.
+- `cargo test --locked --workspace --doc`: passou, sem doctests definidos.
+- `cargo check --locked -p drivesync-engine --lib --no-default-features`: passou.
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` e
+  `cargo test --locked --workspace`: bloqueados pelos `env!` em
+  `tests/local_activity_diagnostic.rs`, que ainda exigem o executável removido
+  `drivesync-local-diagnostic`. Essa pendência da reconstrução está fora do grupo.
+
+O lockfile foi regenerado a partir dos manifests existentes. Nenhum SDK foi
+instalado ou atualizado e nenhuma conta Google foi utilizada.

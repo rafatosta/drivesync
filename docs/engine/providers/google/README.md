@@ -6,7 +6,7 @@ Disponibilizar a API do Google Drive, incluindo as operações de autenticação
 
 ## Execução e acompanhamento técnico
 
-As funções que acessam o Google podem realizar I/O de rede e devem ser implementadas sem bloquear o loop GTK. O mapeamento de funções rápidas e puras pode continuar síncrono; a escolha definitiva de assinaturas `async` e dos tipos de stream será validada na implementação Rust.
+As funções que acessam o Google podem realizar I/O de rede e devem ser implementadas sem bloquear o loop GTK. O mapeamento de funções rápidas e puras pode continuar síncrono; `files_get` já usa `reqwest` assíncrono sobre Tokio, conforme [INTERFACES.md](INTERFACES.md). Os tipos de stream permanecem pendentes para transferências.
 
 **Não há estado global de execução do Google Provider.** O status de cada requisição é sua resposta ou `GoogleApiFailure`. Paginação de listas e mudanças, `GoogleUploadProgress`, `GoogleDownloadStream` e `GoogleOperation` refletem apenas estados técnicos retornados pelo protocolo. O progresso completo de upload/download e o gerenciamento de operações são responsabilidades do Operador; este provedor não registra jobs, não faz reconciliação nem mantém fila.
 

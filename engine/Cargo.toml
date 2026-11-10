@@ -9,7 +9,7 @@ name = "drivesync_engine"
 path = "src/lib.rs"
 
 [dependencies]
-# Async HTTP client; rustls only, no default features (no cookies, no system proxy autodetection beyond env).
+# Async HTTP client; rustls only, no default features (no cookies, proxy discovery disabled by the client).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

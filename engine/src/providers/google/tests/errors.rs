@@ -195,8 +195,7 @@ fn known_reason_code_is_preserved() {
         failure.provider_reason.as_deref(),
         Some("storageQuotaExceeded")
     );
-    let from_details =
-        fail(403, None, &details_body("ACCESS_TOKEN_SCOPE_INSUFFICIENT"));
+    let from_details = fail(403, None, &details_body("ACCESS_TOKEN_SCOPE_INSUFFICIENT"));
     assert_eq!(
         from_details.provider_reason.as_deref(),
         Some("ACCESS_TOKEN_SCOPE_INSUFFICIENT")

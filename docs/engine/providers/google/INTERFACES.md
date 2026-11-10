@@ -8,9 +8,9 @@
 
 **Fontes:** [Drive REST v3](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery v3](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest), [OAuth desktop](https://developers.google.com/identity/protocols/oauth2/native-app), [OpenID Connect](https://developers.google.com/identity/openid-connect/reference).
 
-## Execução síncrona e assíncrona — orientação provisória
+## Execução síncrona e assíncrona
 
-**Decisão aprovada (substitui a lacuna anterior):** toda operação que aguarda HTTP ou transfere bytes é `async fn`, executada sobre `reqwest` assíncrono e Tokio; os métodos dos blocos de assinatura abaixo escritos como `fn` são a forma conceitual e devem ser lidos como `async fn` (hoje só `files_get` está implementado e escrito assim). Funções puras (construção de parâmetros, serialização/decodificação e tradução de erros) permanecem síncronas. Esta decisão **não** define política de concorrência, número de workers, retry, agendamento nem o tipo concreto de `GoogleByteStream` (hoje conceitual; continua pendente para o grupo de transferências).
+**Decisão aprovada (substitui a lacuna anterior):** toda operação que aguarda HTTP ou transfere bytes é `async fn`, executada sobre `reqwest` assíncrono e Tokio; os métodos dos blocos de assinatura abaixo escritos como `fn` são a forma conceitual e devem ser lidos como `async fn` (neste grupo, só `files_get` está implementado e escrito assim). Funções puras (construção de parâmetros, serialização/decodificação e tradução de erros) permanecem síncronas. Esta decisão **não** define política de concorrência, número de workers, retry, agendamento nem o tipo concreto de `GoogleByteStream` (hoje conceitual; continua pendente para o grupo de transferências).
 
 Não modificar automaticamente os 59 métodos REST, 9 OAuth/OIDC e 10 complementares para um único `trait` ou protocolo artificial. Manter argumentos, semântica, tipos e contratos específicos da API Google; ajustar apenas a estratégia efetiva de execução e streaming quando validada.
 
@@ -2336,6 +2336,21 @@ A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`ki
 
 Fontes: [erros do Drive](https://developers.google.com/workspace/drive/api/guides/handle-errors), [parâmetro fields](https://developers.google.com/workspace/drive/api/guides/fields-parameter), [OAuth 2.0](https://developers.google.com/identity/protocols/oauth2/native-app).
 
+
+### Limites concretos de `files_get`
+
+A implementação usa timeout total de 30 segundos e limite de 8 MiB para metadados,
+incluindo leitura incremental do corpo. Não segue redirects nem descobre proxies
+automaticamente. Só HTTP 200 com objeto JSON completo é sucesso. Erros HTTP com
+corpo excessivo preservam status e `Retry-After`, sem interpretar o corpo parcial.
+IDs vazios, `.` e `..` são rejeitados antes do envio; demais IDs são codificados
+como um único segmento. Falhas do transporte não expõem URLs ou causas brutas.
+
+`GoogleClientLimits` expõe os limites técnicos; `with_limits` e `with_base_urls`
+só existem com `test-endpoints`. O construtor de testes retorna
+`GoogleResult<GoogleDriveClient>`, valida ambas as bases e exige HTTP com IP
+loopback literal, sem credenciais, query ou fragmento. Não implementa uploads.
+A sessão é enviada por requisição, sem credenciais persistidas no cliente.
 
 ### 9.5 Divergências verificadas contra o Discovery v3 (auditoria TDD do grupo `files_get`)
 
