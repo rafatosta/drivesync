@@ -1,6 +1,6 @@
 //! Desktop OAuth, fixed identity endpoints and RS256 ID-token verification.
 //! No browser, callback server, account storage or credential persistence.
-use super::client::{decode, invalid_argument};
+use super::client::{decode_http as decode, invalid_argument};
 use super::*;
 use reqwest::{Method, Url};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -351,7 +351,7 @@ fn token_response(body: &[u8]) -> GoogleResult<GoogleTokenResponse> {
     Ok(response)
 }
 fn invalid_response() -> GoogleApiFailure {
-    GoogleApiFailure::new(GoogleApiError::InvalidResponse, None)
+    GoogleApiFailure::new(GoogleApiError::InvalidResponse, Some(200))
 }
 fn redirect(raw: &str) -> GoogleResult<Url> {
     let url = Url::parse(raw).map_err(|_| invalid_argument())?;

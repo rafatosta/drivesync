@@ -347,7 +347,10 @@ impl GoogleDriveClient {
                 return Err(invalid_response());
             }
             let body = self.response_body(response, status).await?;
-            let file: GoogleFile = decode(&body)?;
+            let file: GoogleFile = decode(&body).map_err(|mut failure| {
+                failure.http_status = Some(status);
+                failure
+            })?;
             if let (Some(total), Some(size)) = (total, file.size.as_deref()) {
                 if size.parse::<u64>().ok() != Some(total) {
                     return Err(invalid_response());

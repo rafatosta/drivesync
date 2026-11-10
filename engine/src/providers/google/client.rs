@@ -123,82 +123,18 @@ impl GoogleDriveClient {
         file_id: &FileId,
         options: FileGetOptions,
     ) -> GoogleResult<GoogleFile> {
-        if matches!(file_id.0.as_str(), "" | "." | "..") {
-            return Err(GoogleApiFailure::new(E::InvalidArgument, None));
-        }
-        let mut authorization =
-            header::HeaderValue::from_str(&format!("Bearer {}", session.access_token))
-                .map_err(|_| GoogleApiFailure::new(E::AuthenticationRequired, None))?;
-        if session.access_token.is_empty() {
-            return Err(GoogleApiFailure::new(E::AuthenticationRequired, None));
-        }
-        authorization.set_sensitive(true);
-        let mut url = self.drive_base.clone();
-        url.path_segments_mut()
-            .map_err(|_| GoogleApiFailure::new(E::InvalidArgument, None))?
-            .pop_if_empty()
-            .push("files")
-            .push(&file_id.0);
-        let query = file_get_query(&options);
-        if !query.is_empty() {
-            url.query_pairs_mut().extend_pairs(query);
-        }
-        let mut response = self
-            .http
-            .as_ref()
-            .map_err(Clone::clone)?
-            .get(url)
-            .header(header::AUTHORIZATION, authorization)
-            .timeout(self.limits.request_timeout)
-            .send()
-            .await
-            .map_err(transport_failure)?;
-        let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get(header::RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let now = SystemTime::now();
-        if status != 200 && !(400..=599).contains(&status) {
-            return Err(failure_from_response(
-                status,
-                retry_after.as_deref(),
-                &[],
-                now,
-            ));
-        }
-        let limit = self.limits.max_metadata_response_bytes;
-        let oversized = || {
-            if status == 200 {
-                GoogleApiFailure::new(E::InvalidResponse, Some(status))
-            } else {
-                failure_from_response(status, retry_after.as_deref(), &[], now)
-            }
-        };
-        if response
-            .content_length()
-            .is_some_and(|size| size > limit as u64)
-        {
-            return Err(oversized());
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(transport_failure)? {
-            if chunk.len() > limit - body.len() {
-                return Err(oversized());
-            }
-            body.extend_from_slice(&chunk);
-        }
-        if status != 200 {
-            return Err(failure_from_response(
-                status,
-                retry_after.as_deref(),
-                &body,
-                now,
-            ));
-        }
+        let body = self
+            .rest(
+                session,
+                reqwest::Method::GET,
+                &["files", &file_id.0],
+                "",
+                file_get_query(&options),
+                None,
+            )
+            .await?;
         parse_file(&body).map_err(|mut failure| {
-            failure.http_status = Some(status);
+            failure.http_status = Some(200);
             failure
         })
     }
@@ -377,4 +313,21 @@ impl GoogleDriveClient {
         }
         Ok(body)
     }
+}
+
+/// A metadata parser failure follows a received HTTP 200 response.
+pub(super) fn decode_http<T: serde::de::DeserializeOwned>(body: &[u8]) -> GoogleResult<T> {
+    decode(body).map_err(|mut error| {
+        error.http_status = Some(200);
+        error
+    })
+}
+
+/// Only changes endpoints interpret 410 as an expired change cursor.
+pub(super) fn cursor_failure(mut failure: GoogleApiFailure) -> GoogleApiFailure {
+    if failure.http_status == Some(410) {
+        failure.kind = E::ExpiredCursor;
+        failure.retryable = false;
+    }
+    failure
 }

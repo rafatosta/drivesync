@@ -3236,3 +3236,38 @@ async fn revisions_list_option_page_token() {
         Some("value")
     );
 }
+
+#[tokio::test]
+async fn expired_change_cursor_is_distinct_from_missing_metadata() {
+    let server = Server::start(vec![Reply::json(
+        410,
+        r#"{"error":{"message":"expired private cursor"}}"#,
+    )]);
+    let err = server
+        .client()
+        .changes_list(
+            &session(),
+            ChangeListOptions {
+                page_token: "old-cursor".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::ExpiredCursor);
+    assert_eq!(err.http_status, Some(410));
+    assert!(!err.retryable);
+    assert_eq!(server.recorded().len(), 1);
+}
+
+#[tokio::test]
+async fn malformed_metadata_retains_its_received_http_status() {
+    let server = Server::start(vec![Reply::json(200, "not-json")]);
+    let err = server
+        .client()
+        .about_get(&session(), AboutOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::InvalidResponse);
+    assert_eq!(err.http_status, Some(200));
+}

@@ -12,7 +12,7 @@ impl GoogleDriveClient {
         let query = vec![("requestId".into(), request_id.0.clone())];
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::POST, &["drives"], "", query, body)
                 .await?,
@@ -52,7 +52,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleDrive> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -74,7 +74,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleDrive> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -99,7 +99,7 @@ impl GoogleDriveClient {
         let query = super::client::query_for(&options, &["useDomainAdminAccess", "fields"])?;
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -138,7 +138,7 @@ impl GoogleDriveClient {
         )?;
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -176,7 +176,7 @@ impl GoogleDriveClient {
         )?;
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::POST, &["files"], "", query, body)
                 .await?,
@@ -222,7 +222,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleOperation> {
         let query = super::client::query_for(&options, &["revisionId", "mimeType", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -268,7 +268,7 @@ impl GoogleDriveClient {
         let query = Vec::new();
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -309,7 +309,7 @@ impl GoogleDriveClient {
         )?;
         let body =
             Some(serde_json::to_vec(&request).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -343,7 +343,7 @@ impl GoogleDriveClient {
         )?;
         let body =
             Some(serde_json::to_vec(&channel).map_err(|_| super::client::invalid_argument())?);
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,

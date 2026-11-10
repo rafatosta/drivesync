@@ -10,7 +10,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleAbout> {
         let query = super::client::query_for(&options, &["fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::GET, &["about"], "", query, body)
                 .await?,
@@ -26,7 +26,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleAccessProposal> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -49,7 +49,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleAccessProposalList> {
         let query = super::client::query_for(&options, &["pageToken", "pageSize", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -72,7 +72,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleApproval> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -95,7 +95,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleApprovalList> {
         let query = super::client::query_for(&options, &["pageToken", "pageSize", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -117,7 +117,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleApp> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -147,7 +147,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::GET, &["apps"], "", query, body)
                 .await?,
@@ -171,7 +171,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -212,10 +212,11 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::GET, &["changes"], "", query, body)
-                .await?,
+                .await
+                .map_err(super::client::cursor_failure)?,
         )
     }
 
@@ -229,7 +230,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleComment> {
         let query = super::client::query_for(&options, &["includeDeleted", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -261,7 +262,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -284,7 +285,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleDrive> {
         let query = super::client::query_for(&options, &["useDomainAdminAccess", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -315,7 +316,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::GET, &["drives"], "", query, body)
                 .await?,
@@ -330,7 +331,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleCseToken> {
         let query = super::client::query_for(&options, &["fileId", "parent", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -352,7 +353,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleGeneratedIds> {
         let query = super::client::query_for(&options, &["type", "count", "space", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -394,7 +395,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(session, reqwest::Method::GET, &["files"], "", query, body)
                 .await?,
@@ -416,7 +417,7 @@ impl GoogleDriveClient {
             }
         }
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -438,7 +439,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleOperation> {
         let query = Vec::new();
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -473,7 +474,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -507,7 +508,7 @@ impl GoogleDriveClient {
             ],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -532,7 +533,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleReply> {
         let query = super::client::query_for(&options, &["includeDeleted", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -566,7 +567,7 @@ impl GoogleDriveClient {
             &["includeDeleted", "pageSize", "pageToken", "fields"],
         )?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -590,7 +591,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleRevision> {
         let query = super::client::query_for(&options, &["acknowledgeAbuse", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,
@@ -613,7 +614,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleRevisionList> {
         let query = super::client::query_for(&options, &["pageToken", "pageSize", "fields"])?;
         let body = None;
-        super::client::decode(
+        super::client::decode_http(
             &self
                 .rest(
                     session,

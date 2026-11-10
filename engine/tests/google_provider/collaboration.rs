@@ -28,7 +28,10 @@ async fn access_proposals_resolve_wire_contract() {
             &session(),
             &FileId("f".into()),
             &ProposalId("p".into()),
-            ResolveAccessProposalRequest::default(),
+            ResolveAccessProposalRequest {
+                action: "DENY".into(),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -65,7 +68,10 @@ async fn access_proposals_resolve_remote_errors_are_sanitized() {
             &session(),
             &FileId("f".into()),
             &ProposalId("p".into()),
-            ResolveAccessProposalRequest::default(),
+            ResolveAccessProposalRequest {
+                action: "DENY".into(),
+                ..Default::default()
+            },
         )
         .await
         .expect_err("remote error");
@@ -201,7 +207,9 @@ async fn approvals_comment_wire_contract() {
             &session(),
             &FileId("f".into()),
             &ApprovalId("a".into()),
-            CommentApprovalRequest::default(),
+            CommentApprovalRequest {
+                message: "comment".into(),
+            },
         )
         .await
         .unwrap();
@@ -239,7 +247,9 @@ async fn approvals_comment_remote_errors_are_sanitized() {
             &session(),
             &FileId("f".into()),
             &ApprovalId("a".into()),
-            CommentApprovalRequest::default(),
+            CommentApprovalRequest {
+                message: "comment".into(),
+            },
         )
         .await
         .expect_err("remote error");
@@ -317,7 +327,12 @@ async fn approvals_reassign_wire_contract() {
             &session(),
             &FileId("f".into()),
             &ApprovalId("a".into()),
-            ReassignApprovalRequest::default(),
+            ReassignApprovalRequest {
+                add_reviewers: Some(vec![GoogleAddReviewer {
+                    added_reviewer_email: "new@example.test".into(),
+                }]),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -355,7 +370,12 @@ async fn approvals_reassign_remote_errors_are_sanitized() {
             &session(),
             &FileId("f".into()),
             &ApprovalId("a".into()),
-            ReassignApprovalRequest::default(),
+            ReassignApprovalRequest {
+                add_reviewers: Some(vec![GoogleAddReviewer {
+                    added_reviewer_email: "new@example.test".into(),
+                }]),
+                ..Default::default()
+            },
         )
         .await
         .expect_err("remote error");
@@ -374,7 +394,10 @@ async fn approvals_start_wire_contract() {
         .approvals_start(
             &session(),
             &FileId("f".into()),
-            StartApprovalRequest::default(),
+            StartApprovalRequest {
+                reviewer_emails: vec!["reviewer@example.test".into()],
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -411,7 +434,10 @@ async fn approvals_start_remote_errors_are_sanitized() {
         .approvals_start(
             &session(),
             &FileId("f".into()),
-            StartApprovalRequest::default(),
+            StartApprovalRequest {
+                reviewer_emails: vec!["reviewer@example.test".into()],
+                ..Default::default()
+            },
         )
         .await
         .expect_err("remote error");
@@ -1095,7 +1121,12 @@ async fn permissions_create_wire_contract() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions::default(),
         )
         .await
@@ -1114,7 +1145,7 @@ async fn permissions_create_wire_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
-        serde_json::json!({})
+        serde_json::json!({"type":"user","role":"reader","emailAddress":"u@example.test"})
     );
     assert_eq!(
         requests[0]
@@ -1136,7 +1167,12 @@ async fn permissions_create_remote_errors_are_sanitized() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions::default(),
         )
         .await
@@ -1156,7 +1192,12 @@ async fn permissions_create_option_send_notification_email() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 send_notification_email: Some(false),
                 ..Default::default()
@@ -1183,7 +1224,12 @@ async fn permissions_create_option_email_message() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 email_message: Some("value".into()),
                 ..Default::default()
@@ -1210,7 +1256,12 @@ async fn permissions_create_option_supports_all_drives() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 supports_all_drives: Some(false),
                 ..Default::default()
@@ -1237,7 +1288,12 @@ async fn permissions_create_option_transfer_ownership() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 transfer_ownership: Some(false),
                 ..Default::default()
@@ -1264,7 +1320,12 @@ async fn permissions_create_option_use_domain_admin_access() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 use_domain_admin_access: Some(false),
                 ..Default::default()
@@ -1291,7 +1352,12 @@ async fn permissions_create_option_fields() {
         .permissions_create(
             &session(),
             &FileId("f".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                type_: GooglePatch::Set("user".into()),
+                role: GooglePatch::Set("reader".into()),
+                email_address: GooglePatch::Set("u@example.test".into()),
+                ..Default::default()
+            },
             PermissionCreateOptions {
                 fields: Some(FieldMask("value".into())),
                 ..Default::default()
@@ -1427,7 +1493,10 @@ async fn permissions_update_wire_contract() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions::default(),
         )
         .await
@@ -1446,7 +1515,7 @@ async fn permissions_update_wire_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
-        serde_json::json!({})
+        serde_json::json!({"role":"reader"})
     );
     assert_eq!(
         requests[0]
@@ -1469,7 +1538,10 @@ async fn permissions_update_remote_errors_are_sanitized() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions::default(),
         )
         .await
@@ -1490,7 +1562,10 @@ async fn permissions_update_option_supports_all_drives() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions {
                 supports_all_drives: Some(false),
                 ..Default::default()
@@ -1518,7 +1593,10 @@ async fn permissions_update_option_use_domain_admin_access() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions {
                 use_domain_admin_access: Some(false),
                 ..Default::default()
@@ -1546,7 +1624,10 @@ async fn permissions_update_option_remove_expiration() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions {
                 remove_expiration: Some(false),
                 ..Default::default()
@@ -1574,7 +1655,10 @@ async fn permissions_update_option_transfer_ownership() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions {
                 transfer_ownership: Some(false),
                 ..Default::default()
@@ -1602,7 +1686,10 @@ async fn permissions_update_option_fields() {
             &session(),
             &FileId("f".into()),
             &PermissionId("p".into()),
-            GooglePermissionWrite::default(),
+            GooglePermissionWrite {
+                role: GooglePatch::Set("reader".into()),
+                ..Default::default()
+            },
             PermissionUpdateOptions {
                 fields: Some(FieldMask("value".into())),
                 ..Default::default()
@@ -2052,4 +2139,28 @@ async fn revisions_update_remote_errors_are_sanitized() {
     assert!(!failure.retryable);
     assert!(!format!("{failure:?}").contains("private-body"));
     assert!(!format!("{failure:?}").contains("tok-A-secret"));
+}
+
+#[tokio::test]
+async fn expired_watch_cursor_does_not_trigger_a_replacement_cursor_request() {
+    let server = Server::start(vec![Reply::json(410, "")]);
+    let err = server
+        .client()
+        .changes_watch(
+            &session(),
+            ChangeWatchOptions {
+                page_token: "old".into(),
+                ..Default::default()
+            },
+            GoogleChannelRequest {
+                id: "c".into(),
+                type_: "web_hook".into(),
+                address: "https://example.test/notify".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::ExpiredCursor);
+    assert_eq!(server.recorded().len(), 1);
 }

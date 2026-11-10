@@ -139,7 +139,6 @@ impl GoogleDriveClient {
         query: &[(&str, &str)],
         range: Option<GoogleByteRange>,
     ) -> GoogleResult<GoogleDownloadStream> {
-        let invalid = || GoogleApiFailure::new(GoogleApiError::InvalidResponse, None);
         let mut headers = Vec::new();
         if let Some(range) = &range {
             if range.end_inclusive.is_some_and(|end| end < range.start) {
@@ -173,6 +172,7 @@ impl GoogleDriveClient {
             .send(session, reqwest::Method::GET, url, None, &headers)
             .await?;
         let status = response.status().as_u16();
+        let invalid = || GoogleApiFailure::new(GoogleApiError::InvalidResponse, Some(status));
         let expected_status = if range.is_some() { 206 } else { 200 };
         if status != expected_status {
             return match self.response_body(response, expected_status).await {
