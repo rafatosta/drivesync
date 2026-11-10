@@ -18,7 +18,7 @@ base64 = "0.22"
 sha2 = "0.10"
 # Refuse symlinks and special files when opening private account metadata.
 libc = "0.2"
-tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "rt-multi-thread", "net", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "rt-multi-thread", "net", "time", "macros"] }
 jsonwebtoken = "9.3"
 # Private Accounts backend; all blocking D-Bus access runs on account workers.
 secret-service = { version = "=4.0.0", features = ["rt-async-io-crypto-rust"] }
