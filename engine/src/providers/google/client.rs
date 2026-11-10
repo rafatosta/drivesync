@@ -33,9 +33,11 @@ impl Default for GoogleClientLimits {
 /// Clones share the connection pool; authentication is attached per request.
 #[derive(Debug, Clone)]
 pub struct GoogleDriveClient {
-    drive_base: Url,
-    http: GoogleResult<Client>,
-    limits: GoogleClientLimits,
+    pub(super) drive_base: Url,
+    pub(super) http: GoogleResult<Client>,
+    pub(super) limits: GoogleClientLimits,
+    #[cfg(feature = "test-endpoints")]
+    pub(super) oauth_base: Option<Url>,
 }
 
 impl GoogleDriveClient {
@@ -48,6 +50,8 @@ impl GoogleDriveClient {
     fn from_base(drive_base: Url) -> Self {
         Self {
             drive_base,
+            #[cfg(feature = "test-endpoints")]
+            oauth_base: None,
             // Disable proxy discovery as well: tokens must go only to the selected endpoint.
             http: Client::builder()
                 .redirect(Policy::none())
@@ -202,7 +206,7 @@ impl Default for GoogleDriveClient {
 }
 
 /// Discards reqwest's URL and source chain, which can contain private data.
-fn transport_failure(error: reqwest::Error) -> GoogleApiFailure {
+pub(super) fn transport_failure(error: reqwest::Error) -> GoogleApiFailure {
     GoogleApiFailure::new(
         if error.is_timeout() {
             E::Timeout

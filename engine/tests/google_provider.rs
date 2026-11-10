@@ -4,6 +4,7 @@ mod google_provider {
     pub mod collaboration;
     pub mod files;
     pub mod mutations;
+    pub mod oauth;
     pub mod reads;
     pub mod support;
 }

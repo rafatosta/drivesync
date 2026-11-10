@@ -2240,7 +2240,8 @@ pub struct GoogleIdTokenValidation {
 
 pub struct GoogleIdClaims {
     pub iss: String,
-    pub aud: String,
+    pub aud: GoogleAudience,
+    pub azp: Option<String>,
     pub sub: String,
     pub exp: u64,
     pub iat: u64,
@@ -2410,3 +2411,30 @@ A forma concreta do stream será assíncrona, com erro tipado por leitura e sem
 buffer completo obrigatório. Uploads não terão retry automático; `308` preserva
 somente o intervalo confirmado. URIs de sessão serão validadas antes de enviar
 autorização e nunca expostas em Debug ou erros.
+
+
+### 9.7 Contrato concreto OAuth/OIDC
+
+`GoogleConfigSources` recebe valores de overrides já resolvidos pelo chamador:
+`client_id_env`/`client_secret_env` são os valores, e `oauth_file_env` é um caminho.
+Precedência: overrides individuais > arquivo indicado > arquivo empacotado.
+Arquivo explicitamente indicado inválido falha; não há fallback silencioso.
+São aceitos JSON desktop `installed` e o objeto `GoogleOAuthConfig` direto.
+Configuração pública de desktop não exige segredo. Escopos não são inventados;
+autorização exige os escopos explícitos e permitidos pela configuração.
+
+`load_google_config` é async, com leitura de arquivo limitada a 64 KiB via Tokio.
+`authorization_request` é pura e síncrona: não abre navegador e não gera state ou
+verifier. O chamador fornece state não vazio e challenge S256 base64url com 43
+caracteres; troca de código exige verifier RFC 7636 com 43–128 caracteres.
+O redirect desktop deve ser HTTP loopback e corresponder a host/caminho da
+configuração, permitindo a porta efêmera do callback.
+
+Validação de ID token exige assinatura RS256 por chave oficial, kid conhecido,
+issuer Google, audiência esperada, expiração, iat e nonce quando fornecido.
+`GoogleAudience` preserva string ou lista de strings do claim `aud`; `azp` é
+validado quando presente e exigido para múltiplas audiências. Tolerância de relógio
+é explícita (padrão 60 s, máximo 300 s). Chaves/discovery são consultadas sem cache
+persistente. A URL de chaves deve ser o endpoint Google conhecido; destinos locais
+existem apenas sob `test-endpoints`. Nenhuma URL retornada pela rede autoriza o
+envio de credenciais a um destino arbitrário.

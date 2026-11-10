@@ -89,6 +89,9 @@ pub(crate) fn failure_from_response(
         .collect();
     let has = |reason| reasons.contains(&reason) || details.contains(&reason);
     let kind = match status {
+        400 if json["error"] == "invalid_grant" => E::InvalidGrant,
+        400 if json["error"] == "invalid_client" => E::AuthenticationRequired,
+        400 if json["error"] == "access_denied" => E::PermissionDenied,
         400 => E::InvalidArgument,
         401 => E::AuthenticationRequired,
         403 if has("storageQuotaExceeded") => E::StorageQuotaExceeded,

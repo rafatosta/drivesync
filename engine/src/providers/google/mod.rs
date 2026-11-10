@@ -21,3 +21,7 @@ mod reads;
 mod mutations;
 
 mod collaboration;
+
+mod oauth_models;
+pub use oauth_models::*;
+mod oauth;
