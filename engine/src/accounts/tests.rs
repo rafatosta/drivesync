@@ -94,6 +94,7 @@ impl Barrier {
 }
 #[derive(Default)]
 struct FakeVault {
+    put_barrier: Mutex<Option<Arc<Barrier>>>,
     entries: Mutex<BTreeMap<String, Credentials>>,
     fail_get: AtomicBool,
     fail_put: AtomicBool,
@@ -114,6 +115,10 @@ impl Vault for FakeVault {
         Ok(self.entries.lock().unwrap().get(key).cloned())
     }
     fn put(&self, key: &str, value: &Credentials) -> AccountsResult<()> {
+        let barrier = self.put_barrier.lock().unwrap().take();
+        if let Some(b) = barrier {
+            b.wait();
+        }
         if self.fail_put.load(Ordering::SeqCst) {
             return Err(AccountsFailure::new(
                 AccountsError::SecureStorageUnavailable,
@@ -897,4 +902,90 @@ async fn repeated_add_missing_secret_marks_only_affected_account_for_reauthoriza
     );
     assert_eq!(f.state(&a.id), AccountState::ReauthorizationRequired);
     assert_eq!(f.state(&b.id), AccountState::Connected);
+}
+
+#[tokio::test]
+async fn acc_s03_metadata_failure_after_secure_write_recovers_after_restart() {
+    let mut f = Fixture::new();
+    let barrier = Arc::new(Barrier::default());
+    *f.vault.put_barrier.lock().unwrap() = Some(barrier.clone());
+    let owner = f.accounts.clone();
+    let request = f.authorization("a");
+    let pending = tokio::spawn(async move { owner.add(request).await });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    assert_eq!(
+        status.active_operations[0].phase,
+        AccountOperationPhase::PersistingCredentials
+    );
+    assert!(status.active_operations[0].account_id.is_some());
+    assert!(!format!("{status:?}").contains("secret:"));
+    assert_eq!(
+        f.accounts
+            .list(ListAccountsRequest { provider: None })
+            .unwrap()
+            .accounts[0]
+            .state,
+        AccountState::Unavailable
+    );
+    // The nonsecret intent is already durable. Fail the final metadata publication.
+    std::fs::create_dir(f.path.join("accounts.next")).unwrap();
+    barrier.open();
+    assert_eq!(
+        pending.await.unwrap().unwrap_err().kind,
+        AccountsError::StorageUnavailable
+    );
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+    f.empty_status();
+    std::fs::remove_dir(f.path.join("accounts.next")).unwrap();
+    f.reopen();
+    let repeated = f.accounts.add(f.authorization("a")).await.unwrap();
+    assert!(!repeated.created);
+    assert_eq!(repeated.account.state, AccountState::Connected);
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+}
+#[tokio::test]
+async fn recovery_does_not_restore_connected_when_previous_secret_is_missing() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    f.vault.fail_put.store(true, Ordering::SeqCst);
+    let request = f.authorization("a");
+    assert!(f
+        .accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization
+        })
+        .await
+        .is_err());
+    f.vault.entries.lock().unwrap().remove(&f.key(&a.id));
+    f.vault.fail_put.store(false, Ordering::SeqCst);
+    // An unrelated operation runs recovery, which must verify the rollback credential.
+    f.add("b").await;
+    assert_eq!(f.state(&a.id), AccountState::ReauthorizationRequired);
+}
+#[test]
+fn metadata_rejects_inconsistent_transaction_intent_without_overwriting() {
+    let mut f = Fixture::new();
+    let mut data = f.accounts.store.lock().unwrap().data.clone();
+    data.intent = Some(storage::Intent {
+        before: None,
+        after: None,
+    });
+    f.accounts.store.lock().unwrap().save(data).unwrap();
+    let placeholder = Accounts::new(AccountsConfig::new(
+        f.path.join("placeholder"),
+        "test.placeholder",
+        f.associations.clone(),
+    ))
+    .unwrap();
+    drop(std::mem::replace(&mut f.accounts, placeholder));
+    let before = std::fs::read(f.path.join("accounts.json")).unwrap();
+    let result = Accounts::new(AccountsConfig::new(
+        f.path.clone(),
+        "test.accounts",
+        f.associations.clone(),
+    ));
+    assert!(result.is_err());
+    assert_eq!(before, std::fs::read(f.path.join("accounts.json")).unwrap());
 }

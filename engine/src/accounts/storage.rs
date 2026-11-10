@@ -96,6 +96,34 @@ impl Storage {
                     return Err(storage_error());
                 }
             }
+            if let Some(intent) = &data.intent {
+                let visible = intent
+                    .before
+                    .as_ref()
+                    .or(intent.after.as_ref())
+                    .ok_or_else(storage_error)?;
+                let same_identity = |r: &Record| {
+                    r.account.id == visible.account.id
+                        && r.account.provider == visible.account.provider
+                        && r.account.provider_user_id == visible.account.provider_user_id
+                };
+                if !intent
+                    .before
+                    .iter()
+                    .chain(intent.after.iter())
+                    .all(same_identity)
+                    || !data.records.get(&visible.account.id).is_some_and(|r| {
+                        r.key == visible.key && r.account.state == AccountState::Unavailable
+                    })
+                    || intent
+                        .before
+                        .as_ref()
+                        .zip(intent.after.as_ref())
+                        .is_some_and(|(a, b)| a.key == b.key)
+                {
+                    return Err(storage_error());
+                }
+            }
             data
         } else {
             Data {

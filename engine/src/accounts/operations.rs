@@ -196,7 +196,20 @@ impl Accounts {
                     Some(after.clone())
                 }
                 Some(_) => return Err(error(AccountsError::IdentityMismatch)),
-                None => intent.before.clone(),
+                None => match intent.before.clone() {
+                    Some(mut before) => {
+                        match self.vault.get(&before.key)? {
+                            Some(value) if value.matches(&before) => {}
+                            Some(_) => return Err(error(AccountsError::IdentityMismatch)),
+                            None => {
+                                before.account.state = AccountState::ReauthorizationRequired;
+                                before.account.updated_at = now()?;
+                            }
+                        }
+                        Some(before)
+                    }
+                    None => None,
+                },
             }
         } else {
             if let Some(before) = &intent.before {
