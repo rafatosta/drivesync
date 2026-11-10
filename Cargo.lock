@@ -414,6 +414,7 @@ dependencies = [
 name = "drivesync-engine"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "drivesync-engine",
  "httpdate",
  "jsonwebtoken",
@@ -422,6 +423,7 @@ dependencies = [
  "secret-service",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 

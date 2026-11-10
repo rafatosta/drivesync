@@ -842,7 +842,7 @@ async fn isolated_accounts_vault_roundtrip() {
 
 #[path = "../../tests/google_provider/support.rs"]
 #[allow(dead_code)]
-mod http_support;
+pub(crate) mod http_support;
 #[tokio::test]
 async fn google_adapter_uses_only_existing_provider_operations() {
     use crate::providers::google::{GoogleDriveClient, GoogleOAuthConfig};
@@ -1221,4 +1221,9 @@ async fn metadata_rejects_credential_references_bound_to_another_account() {
     ));
     assert!(result.is_err());
     assert!(f.vault.entries.lock().unwrap().contains_key(&key_b));
+}
+
+/// Reuse the isolated vault dependency for connection composition tests only.
+pub(crate) fn use_isolated_vault(accounts: &mut Accounts) {
+    accounts.vault = Arc::new(FakeVault::default());
 }
