@@ -127,3 +127,44 @@ pub struct ActiveAccountOperation {
     pub kind: AccountOperationKind,
     pub phase: AccountOperationPhase,
 }
+
+/// Authorized addition; correlation is optional and must not contain secrets.
+pub struct AddAccountRequest {
+    pub provider: ProviderId,
+    pub request_id: Option<String>,
+    pub authorization: super::ProviderAuthorizationHandle,
+}
+/// A repeated verified identity returns created=false without replacing credentials.
+#[derive(Debug)]
+pub struct AddAccountResult {
+    pub account: Account,
+    pub created: bool,
+}
+/// Remove local account data after obtaining external association exclusion.
+pub struct RemoveAccountRequest {
+    pub account_id: AccountId,
+}
+/// False means the account was already absent.
+#[derive(Debug)]
+pub struct RemoveAccountResult {
+    pub removed: bool,
+}
+/// Obtain a provider session for one account.
+pub struct AcquireSessionRequest {
+    pub account_id: AccountId,
+}
+/// A session without public credential fields.
+#[derive(Debug)]
+pub struct AcquireSessionResult {
+    pub session: super::ProviderSessionHandle,
+}
+/// Replace authorization only after verifying the same external identity.
+pub struct UpdateAuthorizationRequest {
+    pub account_id: AccountId,
+    pub authorization: super::ProviderAuthorizationHandle,
+}
+/// Metadata after successful secure publication.
+#[derive(Debug)]
+pub struct UpdateAuthorizationResult {
+    pub account: Account,
+}

@@ -1,0 +1,803 @@
+//! Deterministic credential lifecycle and failure/recovery contracts.
+use super::*;
+#[tokio::test]
+async fn acc_03_04_05_09_12_14_15_18_lifecycle() {
+    let fixture = Fixture::new();
+    let a = fixture.add("subject-a").await;
+    assert_eq!(a.state, AccountState::Connected);
+    let repeated = fixture
+        .accounts
+        .add(fixture.authorization("subject-a"))
+        .await
+        .unwrap();
+    assert!(!repeated.created);
+    assert_eq!(a.id, repeated.account.id);
+    let b = fixture.add("subject-b").await;
+    assert_ne!(a.id, b.id);
+    assert_eq!(a.email, b.email);
+    let updated = fixture
+        .accounts
+        .update(UpdateAccountRequest {
+            account_id: a.id.clone(),
+            display_name: None,
+        })
+        .unwrap()
+        .account;
+    assert_eq!(updated.display_name, None);
+    assert_eq!(updated.provider_user_id, "subject-a");
+    let session = fixture
+        .accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(!format!("{:?}", session.session).contains("secret"));
+    let request = fixture.authorization("subject-b");
+    assert_eq!(
+        fixture
+            .accounts
+            .update_authorization(UpdateAuthorizationRequest {
+                account_id: a.id.clone(),
+                authorization: request.authorization
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::IdentityMismatch
+    );
+    let request = fixture.authorization("subject-a");
+    let replaced = fixture
+        .accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization,
+        })
+        .await
+        .unwrap()
+        .account;
+    assert_eq!(a.id, replaced.id);
+    assert_eq!(fixture.vault.entries.lock().unwrap().len(), 2);
+    let bytes = std::fs::read(fixture.path.join("accounts.json")).unwrap();
+    assert!(!String::from_utf8(bytes).unwrap().contains("secret"));
+}
+
+use crate::providers::google::GoogleTokenResponse;
+use credentials::{Credentials, Vault};
+use provider::{Access, Identity};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Condvar,
+    },
+};
+#[derive(Default)]
+struct Barrier {
+    arrived: tokio::sync::Notify,
+    state: Mutex<bool>,
+    release: Condvar,
+}
+impl Barrier {
+    fn wait(&self) {
+        self.arrived.notify_one();
+        let mut open = self.state.lock().unwrap();
+        while !*open {
+            open = self.release.wait(open).unwrap();
+        }
+    }
+    fn open(&self) {
+        *self.state.lock().unwrap() = true;
+        self.release.notify_all();
+    }
+}
+#[derive(Default)]
+struct FakeVault {
+    entries: Mutex<BTreeMap<String, Credentials>>,
+    fail_get: AtomicBool,
+    fail_put: AtomicBool,
+    fail_delete: AtomicBool,
+    barrier: Mutex<Option<Arc<Barrier>>>,
+}
+impl Vault for FakeVault {
+    fn get(&self, key: &str) -> AccountsResult<Option<Credentials>> {
+        let barrier = self.barrier.lock().unwrap().take();
+        if let Some(b) = barrier {
+            b.wait();
+        }
+        if self.fail_get.load(Ordering::SeqCst) {
+            return Err(AccountsFailure::new(
+                AccountsError::SecureStorageUnavailable,
+            ));
+        }
+        Ok(self.entries.lock().unwrap().get(key).cloned())
+    }
+    fn put(&self, key: &str, value: &Credentials) -> AccountsResult<()> {
+        if self.fail_put.load(Ordering::SeqCst) {
+            return Err(AccountsFailure::new(
+                AccountsError::SecureStorageUnavailable,
+            ));
+        }
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(key.into(), value.clone());
+        Ok(())
+    }
+    fn delete(&self, key: &str) -> AccountsResult<()> {
+        if self.fail_delete.load(Ordering::SeqCst) {
+            return Err(AccountsFailure::new(
+                AccountsError::SecureStorageUnavailable,
+            ));
+        }
+        self.entries.lock().unwrap().remove(key);
+        Ok(())
+    }
+}
+#[derive(Default)]
+struct FakeAccess {
+    fail: AtomicBool,
+    refresh_fail: AtomicBool,
+    calls: AtomicUsize,
+    barrier: Mutex<Option<Arc<Barrier>>>,
+}
+impl Access for FakeAccess {
+    fn identity(&self, _: &tokio::runtime::Handle, access: &str) -> AccountsResult<Identity> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let barrier = self.barrier.lock().unwrap().take();
+        if let Some(b) = barrier {
+            b.wait();
+        }
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(AccountsFailure::new(AccountsError::ProviderUnavailable));
+        }
+        Ok(Identity {
+            subject: access.strip_prefix("secret:").unwrap().into(),
+            email: Some("shared@example.invalid".into()),
+            name: Some("Presentation".into()),
+        })
+    }
+    fn refresh(
+        &self,
+        _: &tokio::runtime::Handle,
+        value: &Credentials,
+    ) -> AccountsResult<GoogleTokenResponse> {
+        if self.refresh_fail.load(Ordering::SeqCst) {
+            return Err(AccountsFailure::new(AccountsError::AuthorizationFailed));
+        }
+        Ok(GoogleTokenResponse {
+            access_token: format!("secret:{}", value.subject),
+            token_type: "Bearer".into(),
+            expires_in: 3600,
+            ..Default::default()
+        })
+    }
+}
+struct Lease;
+impl RemovalGuard for Lease {}
+#[derive(Default)]
+struct Associations {
+    in_use: AtomicBool,
+    barrier: Mutex<Option<Arc<Barrier>>>,
+}
+impl AccountAssociations for Associations {
+    fn lock_for_removal(&self, _: &AccountId) -> AccountsResult<Box<dyn RemovalGuard>> {
+        let barrier = self.barrier.lock().unwrap().take();
+        if let Some(b) = barrier {
+            b.wait();
+        }
+        if self.in_use.load(Ordering::SeqCst) {
+            Err(AccountsFailure::new(AccountsError::AccountInUse))
+        } else {
+            Ok(Box::new(Lease))
+        }
+    }
+}
+struct Fixture {
+    path: PathBuf,
+    accounts: Accounts,
+    vault: Arc<FakeVault>,
+    access: Arc<FakeAccess>,
+    associations: Arc<Associations>,
+}
+impl Fixture {
+    fn new() -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "accounts-unit-{}-{}-{}",
+            std::process::id(),
+            now().unwrap().unix_millis,
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let vault = Arc::new(FakeVault::default());
+        let access = Arc::new(FakeAccess::default());
+        let associations = Arc::new(Associations::default());
+        let mut accounts = Accounts::new(AccountsConfig::new(
+            path.clone(),
+            "test.accounts",
+            associations.clone(),
+        ))
+        .unwrap();
+        accounts.vault = vault.clone();
+        accounts.google = Some(access.clone());
+        Self {
+            path,
+            accounts,
+            vault,
+            access,
+            associations,
+        }
+    }
+    fn authorization(&self, subject: &str) -> AddAccountRequest {
+        AddAccountRequest {
+            provider: ProviderId("google".into()),
+            request_id: None,
+            authorization: ProviderAuthorizationHandle::google(GoogleTokenResponse {
+                access_token: format!("secret:{subject}"),
+                token_type: "Bearer".into(),
+                expires_in: 3600,
+                refresh_token: Some(format!("refresh-secret:{subject}")),
+                ..Default::default()
+            }),
+        }
+    }
+    async fn add(&self, subject: &str) -> Account {
+        self.accounts
+            .add(self.authorization(subject))
+            .await
+            .unwrap()
+            .account
+    }
+    fn state(&self, id: &AccountId) -> AccountState {
+        self.accounts
+            .get(GetAccountRequest {
+                account_id: id.clone(),
+            })
+            .unwrap()
+            .account
+            .state
+    }
+    fn key(&self, id: &AccountId) -> String {
+        self.accounts.store.lock().unwrap().data.records[id]
+            .key
+            .clone()
+    }
+    fn empty_status(&self) {
+        assert!(self
+            .accounts
+            .status(AccountsStatusRequest {})
+            .active_operations
+            .is_empty());
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[tokio::test]
+async fn acc_06_17_20_reject_invalid_and_unsupported_without_effects() {
+    let f = Fixture::new();
+    let mut request = f.authorization("a");
+    request.authorization.tokens.access_token.clear();
+    assert_eq!(
+        f.accounts.add(request).await.unwrap_err().kind,
+        AccountsError::AuthorizationFailed
+    );
+    f.access.fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts.add(f.authorization("a")).await.unwrap_err().kind,
+        AccountsError::ProviderUnavailable
+    );
+    f.access.fail.store(false, Ordering::SeqCst);
+    let mut request = f.authorization("a");
+    request.provider = ProviderId("example-no-oauth".into());
+    request.authorization.provider = request.provider.clone();
+    assert_eq!(
+        f.accounts.add(request).await.unwrap_err().kind,
+        AccountsError::UnsupportedProvider
+    );
+    assert!(f
+        .accounts
+        .list(ListAccountsRequest { provider: None })
+        .unwrap()
+        .accounts
+        .is_empty());
+    assert!(f.vault.entries.lock().unwrap().is_empty());
+    f.empty_status();
+}
+#[tokio::test]
+async fn acc_10_11_19_remove_in_use_repeat_and_recover() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let sentinel = f.path.join("user-file");
+    std::fs::write(&sentinel, b"preserve").unwrap();
+    f.associations.in_use.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts
+            .remove(RemoveAccountRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::AccountInUse
+    );
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+    f.associations.in_use.store(false, Ordering::SeqCst);
+    f.vault.fail_delete.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts
+            .remove(RemoveAccountRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::SecureStorageUnavailable
+    );
+    assert_eq!(f.state(&a.id), AccountState::Unavailable);
+    assert!(f.accounts.store.lock().unwrap().data.intent.is_some());
+    f.vault.fail_delete.store(false, Ordering::SeqCst);
+    // The next operation first finishes the interrupted removal.
+    assert!(
+        !f.accounts
+            .remove(RemoveAccountRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap()
+            .removed
+    );
+    assert!(f.vault.entries.lock().unwrap().is_empty());
+    assert_eq!(std::fs::read(sentinel).unwrap(), b"preserve");
+    let b = f.add("b").await;
+    assert!(
+        f.accounts
+            .remove(RemoveAccountRequest { account_id: b.id })
+            .await
+            .unwrap()
+            .removed
+    );
+    f.empty_status();
+}
+#[tokio::test]
+async fn acc_13_refresh_preserves_refresh_token_and_identity() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let key = f.key(&a.id);
+    f.vault
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(&key)
+        .unwrap()
+        .expires_at = 0;
+    let session = f
+        .accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(session.session.google().account_id, a.id.0);
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+    let key = f.key(&a.id);
+    assert_eq!(
+        f.vault.entries.lock().unwrap()[&key].refresh.as_deref(),
+        Some("refresh-secret:a")
+    );
+    f.vault
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(&key)
+        .unwrap()
+        .expires_at = 0;
+    f.access.refresh_fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts
+            .acquire_session(AcquireSessionRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::AuthorizationFailed
+    );
+    assert_eq!(f.state(&a.id), AccountState::ReauthorizationRequired);
+    let request = f.authorization("a");
+    f.accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization,
+        })
+        .await
+        .unwrap();
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+}
+#[tokio::test]
+async fn acc_16_write_failure_leaves_recoverable_intent() {
+    let f = Fixture::new();
+    f.vault.fail_put.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.accounts.add(f.authorization("a")).await.unwrap_err().kind,
+        AccountsError::SecureStorageUnavailable
+    );
+    let accounts = f
+        .accounts
+        .list(ListAccountsRequest { provider: None })
+        .unwrap()
+        .accounts;
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].state, AccountState::Unavailable);
+    assert!(f.accounts.store.lock().unwrap().data.intent.is_some());
+    f.vault.fail_put.store(false, Ordering::SeqCst);
+    let a = f.add("a").await;
+    f.vault.fail_put.store(true, Ordering::SeqCst);
+    let request = f.authorization("a");
+    assert!(f
+        .accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization
+        })
+        .await
+        .is_err());
+    f.vault.fail_put.store(false, Ordering::SeqCst);
+    f.accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+}
+#[tokio::test]
+async fn acc_s02_s03_s07_s08_s09_s11_controlled_activity_and_cancellation() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let barrier = Arc::new(Barrier::default());
+    *f.access.barrier.lock().unwrap() = Some(barrier.clone());
+    let owner = f.accounts.clone();
+    let mut request = f.authorization("b");
+    request.request_id = Some("correlation-b".into());
+    let pending = tokio::spawn(async move { owner.add(request).await });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    assert_eq!(status.active_operations.len(), 1);
+    assert_eq!(
+        status.active_operations[0].request_id.as_deref(),
+        Some("correlation-b")
+    );
+    assert_eq!(status.active_operations[0].account_id, None);
+    assert_eq!(
+        status.active_operations[0].phase,
+        AccountOperationPhase::Validating
+    );
+    // A different request is visible independently even while waiting for the worker.
+    let owner = f.accounts.clone();
+    let id = a.id.clone();
+    let other = tokio::spawn(async move {
+        owner
+            .acquire_session(AcquireSessionRequest { account_id: id })
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert_eq!(
+        f.accounts
+            .status(AccountsStatusRequest {})
+            .active_operations
+            .len(),
+        2
+    );
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        f.accounts
+            .status(AccountsStatusRequest {})
+            .active_operations
+            .len(),
+        1
+    );
+    barrier.open();
+    other.await.unwrap().unwrap();
+    f.empty_status();
+    let barrier = Arc::new(Barrier::default());
+    *f.vault.barrier.lock().unwrap() = Some(barrier.clone());
+    f.vault.fail_get.store(true, Ordering::SeqCst);
+    let owner = f.accounts.clone();
+    let id = a.id.clone();
+    let pending = tokio::spawn(async move {
+        owner
+            .acquire_session(AcquireSessionRequest { account_id: id })
+            .await
+    });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    assert_eq!(
+        status.active_operations[0].phase,
+        AccountOperationPhase::AccessingSecureStorage
+    );
+    assert_eq!(status.active_operations[0].account_id.as_ref(), Some(&a.id));
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+    barrier.open();
+    assert_eq!(
+        pending.await.unwrap().unwrap_err().kind,
+        AccountsError::SecureStorageUnavailable
+    );
+    f.empty_status();
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+}
+
+impl Fixture {
+    fn reopen(&mut self) {
+        let placeholder = Accounts::new(AccountsConfig::new(
+            self.path.join("placeholder"),
+            "test.placeholder",
+            self.associations.clone(),
+        ))
+        .unwrap();
+        drop(std::mem::replace(&mut self.accounts, placeholder));
+        let mut accounts = Accounts::new(AccountsConfig::new(
+            self.path.clone(),
+            "test.accounts",
+            self.associations.clone(),
+        ))
+        .unwrap();
+        accounts.vault = self.vault.clone();
+        accounts.google = Some(self.access.clone());
+        self.accounts = accounts;
+    }
+}
+#[tokio::test]
+async fn acc_16_18_restart_reconciles_both_persistence_boundaries() {
+    let mut f = Fixture::new();
+    let a = f.add("a").await;
+    f.reopen();
+    assert_eq!(
+        f.accounts
+            .get(GetAccountRequest {
+                account_id: a.id.clone()
+            })
+            .unwrap()
+            .account,
+        a
+    );
+    let before_key = f.key(&a.id);
+    // Write succeeds, but old-generation cleanup fails. The intent must survive reopening.
+    f.vault.fail_delete.store(true, Ordering::SeqCst);
+    let request = f.authorization("a");
+    assert!(f
+        .accounts
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization
+        })
+        .await
+        .is_err());
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 2);
+    assert_eq!(f.state(&a.id), AccountState::Unavailable);
+    f.reopen();
+    assert_eq!(f.state(&a.id), AccountState::Unavailable);
+    f.vault.fail_delete.store(false, Ordering::SeqCst);
+    f.accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_ne!(f.key(&a.id), before_key);
+    assert_eq!(f.vault.entries.lock().unwrap().len(), 1);
+    assert_eq!(f.state(&a.id), AccountState::Connected);
+    // Failed new credential creation rolls back to the original account after restart.
+    f.vault.fail_put.store(true, Ordering::SeqCst);
+    assert!(f.accounts.add(f.authorization("b")).await.is_err());
+    f.reopen();
+    f.vault.fail_put.store(false, Ordering::SeqCst);
+    f.accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        f.accounts
+            .list(ListAccountsRequest { provider: None })
+            .unwrap()
+            .accounts
+            .len(),
+        1
+    );
+}
+#[tokio::test]
+async fn acc_12_missing_and_mismatched_credentials_fail_closed() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let b = f.add("b").await;
+    let key_a = f.key(&a.id);
+    let key_b = f.key(&b.id);
+    let other = f.vault.entries.lock().unwrap()[&key_b].clone();
+    let original = f
+        .vault
+        .entries
+        .lock()
+        .unwrap()
+        .insert(key_a.clone(), other)
+        .unwrap();
+    assert_eq!(
+        f.accounts
+            .acquire_session(AcquireSessionRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::IdentityMismatch
+    );
+    f.vault
+        .entries
+        .lock()
+        .unwrap()
+        .insert(key_a.clone(), original);
+    f.vault.entries.lock().unwrap().remove(&key_a);
+    assert_eq!(
+        f.accounts
+            .acquire_session(AcquireSessionRequest {
+                account_id: a.id.clone()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        AccountsError::CredentialMissing
+    );
+    assert_eq!(f.state(&a.id), AccountState::ReauthorizationRequired);
+    assert_eq!(f.state(&b.id), AccountState::Connected);
+}
+#[tokio::test]
+async fn acc_s04_s06_remove_and_reauthorization_phases() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let barrier = Arc::new(Barrier::default());
+    *f.access.barrier.lock().unwrap() = Some(barrier.clone());
+    let owner = f.accounts.clone();
+    let request = f.authorization("a");
+    let id = a.id.clone();
+    let pending = tokio::spawn(async move {
+        owner
+            .update_authorization(UpdateAuthorizationRequest {
+                account_id: id,
+                authorization: request.authorization,
+            })
+            .await
+    });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    assert_eq!(
+        status.active_operations[0].kind,
+        AccountOperationKind::UpdatingAuthorization
+    );
+    assert_eq!(status.active_operations[0].account_id.as_ref(), Some(&a.id));
+    barrier.open();
+    pending.await.unwrap().unwrap();
+    f.empty_status();
+    let barrier = Arc::new(Barrier::default());
+    *f.associations.barrier.lock().unwrap() = Some(barrier.clone());
+    f.associations.in_use.store(true, Ordering::SeqCst);
+    let owner = f.accounts.clone();
+    let id = a.id.clone();
+    let pending =
+        tokio::spawn(async move { owner.remove(RemoveAccountRequest { account_id: id }).await });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    assert_eq!(
+        status.active_operations[0].kind,
+        AccountOperationKind::Removing
+    );
+    assert_eq!(
+        status.active_operations[0].phase,
+        AccountOperationPhase::CheckingAssociations
+    );
+    barrier.open();
+    assert_eq!(
+        pending.await.unwrap().unwrap_err().kind,
+        AccountsError::AccountInUse
+    );
+    f.empty_status();
+}
+#[tokio::test]
+async fn acc_09_local_updates_do_not_call_dependencies() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let calls = f.access.calls.load(Ordering::SeqCst);
+    f.vault.fail_get.store(true, Ordering::SeqCst);
+    let updated = f
+        .accounts
+        .update(UpdateAccountRequest {
+            account_id: a.id.clone(),
+            display_name: Some("New name".into()),
+        })
+        .unwrap()
+        .account;
+    assert_eq!(updated.email, a.email);
+    assert_eq!(updated.id, a.id);
+    assert_eq!(updated.created_at, a.created_at);
+    assert_eq!(
+        f.accounts
+            .update(UpdateAccountRequest {
+                account_id: a.id.clone(),
+                display_name: Some(" ".into())
+            })
+            .unwrap_err()
+            .kind,
+        AccountsError::InvalidRequest
+    );
+    assert_eq!(
+        f.accounts
+            .list(ListAccountsRequest {
+                provider: Some(ProviderId("google".into()))
+            })
+            .unwrap()
+            .accounts
+            .len(),
+        1
+    );
+    assert!(f
+        .accounts
+        .list(ListAccountsRequest {
+            provider: Some(ProviderId("other".into()))
+        })
+        .unwrap()
+        .accounts
+        .is_empty());
+    assert_eq!(f.access.calls.load(Ordering::SeqCst), calls);
+    f.empty_status();
+}
+/// This opt-in test requires the private bus created by check-vault-isolated.py.
+#[tokio::test]
+#[ignore = "requires an isolated Secret Service, never the desktop keyring"]
+async fn isolated_accounts_vault_roundtrip() {
+    let root = std::env::var("DRIVESYNC_TEST_VAULT_ROOT").expect("private vault root required");
+    let bus = std::env::var("DBUS_SESSION_BUS_ADDRESS").expect("private bus required");
+    assert_eq!(bus, format!("unix:path={root}/bus"));
+    let f = Fixture::new();
+    let mut owner = f.accounts.clone();
+    owner.vault = Arc::new(credentials::Keyring {
+        application: format!("test.drivesync.accounts.{}", std::process::id()),
+    });
+    let a = owner
+        .add(f.authorization("isolated-a"))
+        .await
+        .unwrap()
+        .account;
+    let result = owner
+        .acquire_session(AcquireSessionRequest {
+            account_id: a.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.session.google().account_id, a.id.0);
+    let request = f.authorization("isolated-a");
+    owner
+        .update_authorization(UpdateAuthorizationRequest {
+            account_id: a.id.clone(),
+            authorization: request.authorization,
+        })
+        .await
+        .unwrap();
+    let key = f.key(&a.id);
+    owner
+        .remove(RemoveAccountRequest { account_id: a.id })
+        .await
+        .unwrap();
+    let vault = owner.vault.clone();
+    assert!(tokio::task::spawn_blocking(move || vault.get(&key))
+        .await
+        .unwrap()
+        .unwrap()
+        .is_none());
+}

@@ -1,5 +1,9 @@
 //! Account identity, local metadata and private credential ownership.
+mod credentials;
 mod models;
+mod operations;
+mod provider;
+pub use provider::{ProviderAuthorizationHandle, ProviderSessionHandle};
 mod storage;
 pub use models::*;
 use std::{
@@ -19,6 +23,7 @@ pub struct AccountsConfig {
     directory: PathBuf,
     application: String,
     associations: Arc<dyn AccountAssociations>,
+    google: Option<Arc<dyn provider::Access>>,
 }
 impl AccountsConfig {
     /// Selects a private absolute directory and application-scoped secure storage.
@@ -31,14 +36,28 @@ impl AccountsConfig {
             directory,
             application: application_id.into(),
             associations,
+            google: None,
         }
+    }
+    /// Enables Google through the existing provider client and OAuth configuration.
+    pub fn with_google(
+        mut self,
+        client: crate::providers::google::GoogleDriveClient,
+        config: crate::providers::google::GoogleOAuthConfig,
+    ) -> Self {
+        self.google = Some(Arc::new(provider::GoogleAccess { client, config }));
+        self
     }
 }
 /// Local account service. Clones share the same store and operational state.
 #[derive(Clone)]
 pub struct Accounts {
     store: Arc<Mutex<Storage>>,
-    _associations: Arc<dyn AccountAssociations>,
+    associations: Arc<dyn AccountAssociations>,
+    vault: Arc<dyn credentials::Vault>,
+    google: Option<Arc<dyn provider::Access>>,
+    gate: Arc<Mutex<()>>,
+    activities: Arc<operations::Activities>,
 }
 impl Accounts {
     /// Opens metadata exclusively. Performs no OAuth, network or keyring I/O.
@@ -47,9 +66,15 @@ impl Accounts {
         Ok(Self {
             store: Arc::new(Mutex::new(Storage::open(
                 config.directory,
-                config.application,
+                config.application.clone(),
             )?)),
-            _associations: config.associations,
+            associations: config.associations,
+            vault: Arc::new(credentials::Keyring {
+                application: config.application,
+            }),
+            google: config.google,
+            gate: Arc::new(Mutex::new(())),
+            activities: Arc::new(operations::Activities::default()),
         })
     }
     /// Reads a local snapshot. No authentication or secure-storage access.
@@ -109,7 +134,7 @@ impl Accounts {
     /// Returns current in-memory activity without accessing any dependency.
     pub fn status(&self, _: AccountsStatusRequest) -> AccountsStatusResult {
         AccountsStatusResult {
-            active_operations: vec![],
+            active_operations: self.activities.snapshot(),
         }
     }
 }
@@ -123,3 +148,6 @@ fn now() -> AccountsResult<Timestamp> {
             .map_err(|_| AccountsFailure::new(AccountsError::Internal))?,
     })
 }
+
+#[cfg(test)]
+mod tests;
