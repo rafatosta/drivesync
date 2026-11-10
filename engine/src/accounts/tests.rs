@@ -989,3 +989,73 @@ fn metadata_rejects_inconsistent_transaction_intent_without_overwriting() {
     assert!(result.is_err());
     assert_eq!(before, std::fs::read(f.path.join("accounts.json")).unwrap());
 }
+
+#[test]
+fn storage_rejects_linked_lock_and_staging_files() {
+    let f = Fixture::new();
+    let victim = f.path.join("preserve-me");
+    std::fs::write(&victim, b"unchanged").unwrap();
+    std::fs::hard_link(&victim, f.path.join("accounts.next")).unwrap();
+    let store = &mut *f.accounts.store.lock().unwrap();
+    assert!(store.save(store.data.clone()).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"unchanged");
+}
+
+#[tokio::test]
+async fn recovery_status_does_not_mix_another_accounts_identity() {
+    let f = Fixture::new();
+    f.vault.fail_put.store(true, Ordering::SeqCst);
+    assert!(f
+        .accounts
+        .add(f.authorization("interrupted-a"))
+        .await
+        .is_err());
+    f.vault.fail_put.store(false, Ordering::SeqCst);
+    let barrier = Arc::new(Barrier::default());
+    *f.access.barrier.lock().unwrap() = Some(barrier.clone());
+    let owner = f.accounts.clone();
+    let request = f.authorization("new-b");
+    let pending = tokio::spawn(async move { owner.add(request).await });
+    barrier.arrived.notified().await;
+    let status = f.accounts.status(AccountsStatusRequest {});
+    // Always release before asserting, so a regression cannot strand the worker.
+    barrier.open();
+    pending.await.unwrap().unwrap();
+    assert_eq!(status.active_operations[0].account_id, None);
+    assert_eq!(
+        status.active_operations[0].phase,
+        AccountOperationPhase::Validating
+    );
+}
+#[tokio::test]
+async fn cancellation_during_secure_write_finishes_before_later_session_access() {
+    let f = Fixture::new();
+    let barrier = Arc::new(Barrier::default());
+    *f.vault.put_barrier.lock().unwrap() = Some(barrier.clone());
+    let owner = f.accounts.clone();
+    let request = f.authorization("a");
+    let pending = tokio::spawn(async move { owner.add(request).await });
+    barrier.arrived.notified().await;
+    let id = f
+        .accounts
+        .status(AccountsStatusRequest {})
+        .active_operations[0]
+        .account_id
+        .clone()
+        .unwrap();
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    f.empty_status();
+    barrier.open();
+    let session = f
+        .accounts
+        .acquire_session(AcquireSessionRequest {
+            account_id: id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(session.session.google().account_id, id.0);
+    assert_eq!(f.state(&id), AccountState::Connected);
+    f.empty_status();
+    assert!(f.accounts.store.lock().unwrap().data.intent.is_none());
+}

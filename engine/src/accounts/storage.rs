@@ -5,7 +5,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
 };
 #[derive(Clone, Serialize, Deserialize)]
@@ -43,6 +43,7 @@ impl Storage {
         if !directory.exists() {
             std::fs::DirBuilder::new()
                 .recursive(true)
+                .mode(0o700)
                 .create(&directory)
                 .map_err(|_| storage_error())?;
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
@@ -52,21 +53,7 @@ impl Storage {
         if !meta.is_dir() || meta.permissions().mode() & 0o077 != 0 {
             return Err(storage_error());
         }
-        let open = |name: &str| -> AccountsResult<File> {
-            let path = directory.join(name);
-            if path.symlink_metadata().is_ok_and(|m| !m.is_file()) {
-                return Err(storage_error());
-            }
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .mode(0o600)
-                .open(path)
-                .map_err(|_| storage_error())
-        };
-        let lock = open("accounts.lock")?;
+        let lock = private_file(&directory.join("accounts.lock"), true)?;
         lock.try_lock().map_err(|_| storage_error())?;
         let path = directory.join("accounts.json");
         let exists = path.try_exists().map_err(|_| storage_error())?;
@@ -76,8 +63,7 @@ impl Storage {
                 return Err(storage_error());
             }
             let mut bytes = Vec::new();
-            File::open(path)
-                .map_err(|_| storage_error())?
+            private_file(&path, false)?
                 .take(16 * 1024 * 1024 + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|_| storage_error())?;
@@ -146,17 +132,15 @@ impl Storage {
     /// Publish only after the complete replacement is durable. Never reset on error.
     pub fn save(&mut self, data: Data) -> AccountsResult<()> {
         let bytes = serde_json::to_vec(&data).map_err(|_| storage_error())?;
+        if bytes.len() > 16 * 1024 * 1024 {
+            return Err(storage_error());
+        }
         let path = self.directory.join("accounts.next");
         if path.symlink_metadata().is_ok_and(|m| !m.is_file()) {
             return Err(storage_error());
         }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|_| storage_error())?;
+        let mut file = private_file(&path, true)?;
+        file.set_len(0).map_err(|_| storage_error())?;
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| storage_error())?;
@@ -168,4 +152,23 @@ impl Storage {
             .and_then(|f| f.sync_all())
             .map_err(|_| storage_error())
     }
+}
+
+/// Validate the opened descriptor before any truncation; path prechecks alone
+/// would allow hard-link writes and symlink replacement races.
+fn private_file(path: &std::path::Path, create: bool) -> AccountsResult<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(create)
+        .create(create)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| storage_error())?;
+    let meta = file.metadata().map_err(|_| storage_error())?;
+    if !meta.is_file() || meta.nlink() != 1 || meta.permissions().mode() & 0o077 != 0 {
+        return Err(storage_error());
+    }
+    Ok(file)
 }

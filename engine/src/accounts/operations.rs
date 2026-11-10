@@ -107,6 +107,7 @@ impl Accounts {
                 .lock()
                 .map_err(|_| error(AccountsError::Internal))?;
             owner.recover(id)?;
+            owner.phase(id, AccountOperationPhase::Validating, None);
             work(owner.clone(), id, runtime)
         })
         .await
@@ -180,7 +181,7 @@ impl Accounts {
         self.phase(
             operation,
             AccountOperationPhase::AccessingSecureStorage,
-            Some(&identity),
+            None,
         );
         let _association_guard = if intent.after.is_none() {
             Some(self.associations.lock_for_removal(&identity)?)
@@ -217,11 +218,7 @@ impl Accounts {
             }
             None
         };
-        self.phase(
-            operation,
-            AccountOperationPhase::PersistingMetadata,
-            Some(&identity),
-        );
+        self.phase(operation, AccountOperationPhase::PersistingMetadata, None);
         let mut store = self.store.lock().map_err(|_| storage::storage_error())?;
         let mut data = store.data.clone();
         data.records.remove(&identity);

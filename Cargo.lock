@@ -417,6 +417,7 @@ dependencies = [
  "drivesync-engine",
  "httpdate",
  "jsonwebtoken",
+ "libc",
  "reqwest",
  "secret-service",
  "serde",

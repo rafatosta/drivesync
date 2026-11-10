@@ -14,6 +14,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 httpdate = "1"
+# Refuse symlinks and special files when opening private account metadata.
+libc = "0.2"
 tokio = { version = "1", features = ["fs", "io-util", "rt", "sync"] }
 jsonwebtoken = "9.3"
 # Private Accounts backend; all blocking D-Bus access runs on account workers.
