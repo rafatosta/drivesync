@@ -1747,7 +1747,14 @@ pub struct GoogleOperationMetadata {
 pub struct GoogleRpcStatus {
     pub code: Option<i32>,
     pub message: Option<String>,
-    pub details: Option<Vec<String>>,
+    pub details: Option<Vec<GoogleRpcDetail>>,
+}
+
+pub struct GoogleRpcDetail {
+    pub type_url: Option<String>,
+    pub reason: Option<String>,
+    pub domain: Option<String>,
+    pub metadata: Option<std::collections::BTreeMap<String, String>>,
 }
 
 pub struct GoogleDownloadFileResponse {
@@ -1846,7 +1853,7 @@ pub struct GoogleAppList {
 }
 
 pub struct GoogleApprovalList {
-    pub approvals: Vec<GoogleApproval>,
+    pub items: Vec<GoogleApproval>,
     pub next_page_token: Option<String>,
 }
 
@@ -2133,24 +2140,34 @@ pub struct ApproveApprovalRequest {
 }
 
 pub struct CancelApprovalRequest {
-    pub comment: Option<String>,
+    pub message: Option<String>,
 }
 
 pub struct CommentApprovalRequest {
-    pub comment: String,
+    pub message: String,
 }
 
 pub struct DeclineApprovalRequest {
-    pub comment: Option<String>,
+    pub message: Option<String>,
 }
 
 pub struct ReassignApprovalRequest {
-    pub reviewers: Vec<GoogleApprovalReviewer>,
-    pub comment: Option<String>,
+    pub replace_reviewers: Option<Vec<GoogleReplaceReviewer>>,
+    pub add_reviewers: Option<Vec<GoogleAddReviewer>>,
+    pub message: Option<String>,
+}
+pub struct GoogleReplaceReviewer {
+    pub removed_reviewer_email: String,
+    pub added_reviewer_email: String,
+}
+pub struct GoogleAddReviewer {
+    pub added_reviewer_email: String,
 }
 
 pub struct StartApprovalRequest {
-    pub reviewers: Vec<GoogleApprovalReviewer>,
+    pub reviewer_emails: Vec<String>,
+    pub lock_file: Option<bool>,
+    pub message: Option<String>,
     pub due_time: Option<String>,
     pub file_content_change_behavior: Option<String>,
 }
@@ -2364,3 +2381,32 @@ A sessão é enviada por requisição, sem credenciais persistidas no cliente.
 | Execução | **Decidido:** I/O é `async` (reqwest + Tokio); sem política de concorrência |
 | `Retry-After` | **Decidido:** representado uma vez em `GoogleApiFailure`; `RateLimited` sem dados |
 | 3xx | **Decidido:** `InvalidResponse`, sem seguir redirecionamento |
+
+
+### 9.6 Auditoria dos grupos restantes (Discovery revisão 20261106)
+
+Fonte normativa: https://www.googleapis.com/discovery/v1/apis/drive/v3/rest.
+A implementação preserva o catálogo de 59 métodos REST, sem os aliases obsoletos
+`teamdrives`. As estruturas públicas são projeções tipadas, não todo o Discovery.
+Campos desconhecidos da API são ignorados; campos omitidos não provam ausência.
+
+Correções antes de implementar:
+
+- `LabelListOptions.page_size` mapeia para `maxResults`, não `pageSize`.
+- `GoogleApprovalList.items` corresponde ao JSON `items`.
+- Cancelamento, comentário e recusa de aprovação usam `message`.
+- Início usa `reviewerEmails`; reatribuição usa `addReviewers` e
+  `replaceReviewers`, com os tipos oficiais de e-mail.
+- `GoogleRpcStatus.details` usa detalhes tipados de erro, sem strings opacas.
+- Opções compartilhadas são filtradas por método: `includeDeleted` só em
+  leituras de comentários/respostas, `acknowledgeAbuse` não em metadados de revisão.
+- `GoogleChange.change_id` e `GoogleAppList.next_page_token` são campos de
+  compatibilidade que não são preenchidos pela API atual.
+- `GooglePatch::Unchanged` omite o campo, `Set` envia o valor e `Clear` envia null;
+  o método remoto ainda valida se o campo admite limpeza. `parents` é aceito na
+  criação; mover arquivo existente usa `addParents`/`removeParents`.
+
+A forma concreta do stream será assíncrona, com erro tipado por leitura e sem
+buffer completo obrigatório. Uploads não terão retry automático; `308` preserva
+somente o intervalo confirmado. URIs de sessão serão validadas antes de enviar
+autorização e nunca expostas em Debug ou erros.

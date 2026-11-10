@@ -4,14 +4,14 @@
 //! names follow `docs/engine/providers/google/INTERFACES.md`, verified against
 //! the official Drive v3 Discovery document.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 macro_rules! string_id {
     ($($(#[$meta:meta])* $name:ident),+ $(,)?) => {
         $(
             $(#[$meta])*
-            #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Deserialize)]
+            #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
             #[serde(transparent)]
             pub struct $name(pub String);
         )+
@@ -64,7 +64,7 @@ impl std::fmt::Debug for GoogleSession {
 /// Query parameters of `files.get`.
 ///
 /// `None` means the parameter is not sent.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileGetOptions {
     pub fields: Option<FieldMask>,
@@ -107,7 +107,7 @@ pub(crate) fn parse_file(body: &[u8]) -> super::GoogleResult<GoogleFile> {
 }
 
 /// Drive `File` resource. `None` means *not received*, never *absent in Drive*.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFile {
     pub id: Option<FileId>,
@@ -167,7 +167,7 @@ pub struct GoogleFile {
     pub inherited_permissions_disabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleShortcutDetails {
     pub target_id: Option<FileId>,
@@ -175,7 +175,7 @@ pub struct GoogleShortcutDetails {
     pub target_resource_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFileCapabilities {
     pub can_edit: Option<bool>,
@@ -193,7 +193,7 @@ pub struct GoogleFileCapabilities {
     pub can_change_copy_requires_writer_permission: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleUser {
     pub display_name: Option<String>,
@@ -203,7 +203,7 @@ pub struct GoogleUser {
     pub me: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GooglePermission {
     pub id: Option<PermissionId>,
@@ -223,7 +223,7 @@ pub struct GooglePermission {
     pub view: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GooglePermissionDetails {
     pub permission_type: Option<String>,
@@ -232,21 +232,21 @@ pub struct GooglePermissionDetails {
     pub inherited_from: Option<FileId>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleContentHints {
     pub indexable_text: Option<String>,
     pub thumbnail: Option<GoogleThumbnail>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleThumbnail {
     pub image: Option<String>,
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleImageMediaMetadata {
     pub width: Option<i32>,
@@ -261,7 +261,7 @@ pub struct GoogleImageMediaMetadata {
     pub location: Option<GoogleGeoLocation>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleGeoLocation {
     pub latitude: Option<f64>,
@@ -269,7 +269,7 @@ pub struct GoogleGeoLocation {
     pub altitude: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleVideoMediaMetadata {
     pub width: Option<i32>,
@@ -278,13 +278,13 @@ pub struct GoogleVideoMediaMetadata {
     pub duration_millis: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleLabelInfo {
     pub labels: Option<Vec<GoogleLabel>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleLabel {
     pub id: Option<String>,
@@ -292,7 +292,7 @@ pub struct GoogleLabel {
     pub fields: Option<BTreeMap<String, GoogleLabelField>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleLabelField {
     pub value_type: Option<String>,
@@ -303,7 +303,7 @@ pub struct GoogleLabelField {
     pub user: Option<Vec<GoogleUser>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleContentRestriction {
     pub read_only: Option<bool>,
@@ -314,7 +314,7 @@ pub struct GoogleContentRestriction {
     pub system_restricted: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleDownloadRestrictions {
     pub item_download_restriction: Option<GoogleDownloadRestriction>,
@@ -322,21 +322,21 @@ pub struct GoogleDownloadRestrictions {
     pub effective_download_restriction_with_context: Option<GoogleDownloadRestriction>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleDownloadRestriction {
     pub restricted_for_readers: Option<bool>,
     pub restricted_for_writers: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleClientEncryptionDetails {
     pub encryption_state: Option<String>,
     pub decryption_metadata: Option<GoogleDecryptionMetadata>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleDecryptionMetadata {
     pub wrapped_key: Option<String>,

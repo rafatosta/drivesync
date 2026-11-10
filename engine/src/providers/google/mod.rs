@@ -6,6 +6,8 @@
 mod client;
 mod errors;
 mod models;
+mod resources;
+pub use resources::*;
 
 pub use client::{GoogleClientLimits, GoogleDriveClient};
 pub use errors::{GoogleApiError, GoogleApiFailure, GoogleResult};
