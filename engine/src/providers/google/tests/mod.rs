@@ -8,3 +8,5 @@ mod files_get;
 mod serialization;
 
 mod resources;
+
+mod model_fields;

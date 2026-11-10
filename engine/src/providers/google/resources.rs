@@ -1331,3 +1331,12 @@ impl GoogleFileWrite {
         Ok(())
     }
 }
+
+/// General typed page retained by the public contract. Endpoint-specific pages
+/// expose their official collection names and completeness fields separately.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GooglePage<T> {
+    pub items: Vec<T>,
+    pub next_page_token: Option<String>,
+}

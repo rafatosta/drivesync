@@ -31,3 +31,6 @@ pub use downloads::{GoogleByteRange, GoogleByteStream, GoogleDownloadStream};
 
 mod uploads;
 pub use uploads::{GoogleUploadChunk, GoogleUploadProgress, GoogleUploadSession};
+
+mod api;
+pub use api::*;
