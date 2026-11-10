@@ -8,9 +8,9 @@
 
 **Fontes:** [Drive REST v3](https://developers.google.com/workspace/drive/api/reference/rest/v3), [Discovery v3](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest), [OAuth desktop](https://developers.google.com/identity/protocols/oauth2/native-app), [OpenID Connect](https://developers.google.com/identity/openid-connect/reference).
 
-## Execução síncrona e assíncrona — orientação provisória
+## Execução síncrona e assíncrona
 
-**Lacuna técnica existente:** as assinaturas de REST/OAuth/transferência ainda são apresentadas como `fn` com resultados imediatos, e `GoogleByteStream` utiliza `std::io::Read` conceitual. Esses exemplos **não constituem decisão de executar HTTP de forma bloqueante no loop GTK**. Durante a implementação, chamadas que aguardam HTTP, leitura/escrita de bytes ou processamento de resposta remota deverão usar I/O assíncrono ou workers apropriados. Validação/formatação local sem I/O poderá permanecer síncrona. A decisão de runtime e tipos concretos de streams precisa de testes antes de fixar assinaturas Rust definitivas.
+**Implementado:** toda operação que aguarda HTTP ou transfere bytes usa `async fn`, com `reqwest` assíncrono e Tokio. A leitura de configuração também é assíncrona. Funções puras (parâmetros, serialização, tradução de erros e `authorization_request`) permanecem síncronas. Os blocos conceituais com `fn` abaixo devem ser lidos dessa forma. Os 15 traits públicos usam futures `Send` equivalentes às chamadas assíncronas, e `GoogleDriveClient` implementa todos eles. Não há política global de concorrência, workers, retry ou agendamento. O stream concreto está descrito na seção 9.8.
 
 Não modificar automaticamente os 59 métodos REST, 9 OAuth/OIDC e 10 complementares para um único `trait` ou protocolo artificial. Manter argumentos, semântica, tipos e contratos específicos da API Google; ajustar apenas a estratégia efetiva de execução e streaming quando validada.
 
@@ -32,7 +32,7 @@ O módulo **não** cria `GoogleProviderStatus`, consulta `status()` global, call
 
 ```rust
 pub type GoogleResult<T> = Result<T, GoogleApiFailure>;
-pub type GoogleByteStream = Box<dyn std::io::Read + Send>;
+pub struct GoogleByteStream { /* encapsulated asynchronous HTTP body */ }
 
 pub struct FileId(pub String);
 pub struct DriveId(pub String);
@@ -70,7 +70,7 @@ pub enum GoogleApiError {
     PermissionDenied,
     NotFoundOrInaccessible,
     PreconditionFailed,
-    RateLimited { retry_after_seconds: Option<u64> },
+    RateLimited,
     QuotaExceeded,
     ProviderUnavailable,
     Network,
@@ -101,7 +101,7 @@ pub struct GoogleApiFailure {
 | Atualização | Objetos `*Write` distinguem **não alterar** e **limpar** um campo |
 | Lista | Paginação explícita, não inferir completude de uma única página |
 | Tipos Google | Serialização JSON, parâmetros HTTP e URLs ficam encapsulados |
-| Fluxos | `GoogleByteStream` é assinatura conceitual; I/O async poderá ser escolhido na validação técnica |
+| Fluxos | `GoogleByteStream` expõe leitura incremental assíncrona com erros tipados (seção 9.8) |
 | Resultados | Nenhuma resposta parcial se converte em sucesso final |
 | Erros | Categorias sanitizadas; sem credenciais, tokens e corpo HTTP privado |
 
@@ -140,7 +140,7 @@ A **assinatura Rust é o contrato principal**. Os argumentos identificados nas a
 **Exemplo — consulta de metadados:**
 
 ```rust
-fn files_get(
+async fn files_get(
     &self,
     session: &GoogleSession,
     file_id: &FileId,
@@ -362,7 +362,7 @@ pub trait GoogleFilesApi {
     fn files_export(&self, session: &GoogleSession, file_id: &FileId, mime_type: &MimeType) -> GoogleResult<GoogleByteStream>;
     fn files_generate_cse_token(&self, session: &GoogleSession, options: CseTokenOptions) -> GoogleResult<GoogleCseToken>;
     fn files_generate_ids(&self, session: &GoogleSession, options: GenerateIdsOptions) -> GoogleResult<GoogleGeneratedIds>;
-    fn files_get(&self, session: &GoogleSession, file_id: &FileId, options: FileGetOptions) -> GoogleResult<GoogleFile>;
+    async fn files_get(&self, session: &GoogleSession, file_id: &FileId, options: FileGetOptions) -> GoogleResult<GoogleFile>;
     fn files_list(&self, session: &GoogleSession, options: FileListOptions) -> GoogleResult<GoogleFileList>;
     fn files_list_labels(&self, session: &GoogleSession, file_id: &FileId, options: LabelListOptions) -> GoogleResult<GoogleLabelList>;
     fn files_modify_labels(&self, session: &GoogleSession, file_id: &FileId, request: GoogleModifyLabelsRequest) -> GoogleResult<GoogleModifyLabelsResponse>;
@@ -504,7 +504,7 @@ pub trait GoogleTransferApi {
 | `GoogleByteRange` | `start: u64`, `end_inclusive: Option<u64>` |
 | `GoogleDownloadStream` | Fluxo de bytes, status HTTP, `content_length?`, `content_range?`, `etag?`, `mime_type?` |
 | `GoogleUploadSession` | Identificador/URI opaca de sessão, tamanho total opcional; deve ser tratada como informação sensível |
-| `GoogleUploadChunk` | Offset inicial, bytes, total esperado e indicador de finalização |
+| `GoogleUploadChunk` | Offset inicial, bytes e total esperado que determina o bloco final |
 | `GoogleUploadProgress` | `Incomplete { received_range }` ou `Complete { file: GoogleFile }`; `308` significa **incompleto** |
 | `GoogleOperation` | `done=false` não equivale a transferência concluída; usar `operations_get` para acompanhar |
 
@@ -1506,7 +1506,8 @@ pub struct GoogleContentRestriction {
 
 pub struct GoogleDownloadRestrictions {
     pub item_download_restriction: Option<GoogleDownloadRestriction>,
-    pub effective_download_restriction: Option<GoogleDownloadRestriction>,
+    /// JSON `effectiveDownloadRestrictionWithContext` (Discovery v3).
+    pub effective_download_restriction_with_context: Option<GoogleDownloadRestriction>,
 }
 
 pub struct GoogleDownloadRestriction {
@@ -1532,7 +1533,6 @@ pub struct GoogleLabel {
     pub id: Option<String>,
     pub revision_id: Option<String>,
     pub fields: Option<std::collections::BTreeMap<String,GoogleLabelField>>,
-    pub name: Option<String>,
 }
 
 pub struct GoogleLabelField {
@@ -1747,7 +1747,14 @@ pub struct GoogleOperationMetadata {
 pub struct GoogleRpcStatus {
     pub code: Option<i32>,
     pub message: Option<String>,
-    pub details: Option<Vec<String>>,
+    pub details: Option<Vec<GoogleRpcDetail>>,
+}
+
+pub struct GoogleRpcDetail {
+    pub type_url: Option<String>,
+    pub reason: Option<String>,
+    pub domain: Option<String>,
+    pub metadata: Option<std::collections::BTreeMap<String, String>>,
 }
 
 pub struct GoogleDownloadFileResponse {
@@ -1846,7 +1853,7 @@ pub struct GoogleAppList {
 }
 
 pub struct GoogleApprovalList {
-    pub approvals: Vec<GoogleApproval>,
+    pub items: Vec<GoogleApproval>,
     pub next_page_token: Option<String>,
 }
 
@@ -1991,7 +1998,10 @@ pub struct FileDownloadOptions {
 pub struct FileGetOptions {
     pub fields: Option<FieldMask>,
     pub supports_all_drives: Option<bool>,
-    pub acknowledge_abuse: Option<bool>,
+    /// Comma-separated label IDs for `labelInfo` (query `includeLabels`).
+    pub include_labels: Option<String>,
+    /// Only `published` is supported (query `includePermissionsForView`).
+    pub include_permissions_for_view: Option<String>,
 }
 
 pub struct FileListOptions {
@@ -2130,24 +2140,34 @@ pub struct ApproveApprovalRequest {
 }
 
 pub struct CancelApprovalRequest {
-    pub comment: Option<String>,
+    pub message: Option<String>,
 }
 
 pub struct CommentApprovalRequest {
-    pub comment: String,
+    pub message: String,
 }
 
 pub struct DeclineApprovalRequest {
-    pub comment: Option<String>,
+    pub message: Option<String>,
 }
 
 pub struct ReassignApprovalRequest {
-    pub reviewers: Vec<GoogleApprovalReviewer>,
-    pub comment: Option<String>,
+    pub replace_reviewers: Option<Vec<GoogleReplaceReviewer>>,
+    pub add_reviewers: Option<Vec<GoogleAddReviewer>>,
+    pub message: Option<String>,
+}
+pub struct GoogleReplaceReviewer {
+    pub removed_reviewer_email: String,
+    pub added_reviewer_email: String,
+}
+pub struct GoogleAddReviewer {
+    pub added_reviewer_email: String,
 }
 
 pub struct StartApprovalRequest {
-    pub reviewers: Vec<GoogleApprovalReviewer>,
+    pub reviewer_emails: Vec<String>,
+    pub lock_file: Option<bool>,
+    pub message: Option<String>,
     pub due_time: Option<String>,
     pub file_content_change_behavior: Option<String>,
 }
@@ -2220,7 +2240,8 @@ pub struct GoogleIdTokenValidation {
 
 pub struct GoogleIdClaims {
     pub iss: String,
-    pub aud: String,
+    pub aud: GoogleAudience,
+    pub azp: Option<String>,
     pub sub: String,
     pub exp: u64,
     pub iat: u64,
@@ -2261,6 +2282,7 @@ pub struct GoogleByteRange {
 }
 
 pub struct GoogleDownloadStream {
+    pub http_status: u16,
     pub body: GoogleByteStream,
     pub content_length: Option<u64>,
     pub content_range: Option<String>,
@@ -2318,7 +2340,10 @@ A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`ki
 | `404` | `NotFoundOrInaccessible` | Não considerar exclusão remota comprovada |
 | `409`/`412` por condição/precondição | `PreconditionFailed` | Reavaliar metadados antes de repetir |
 | `410` em cursores de changes | `ExpiredCursor` | Invalidar cursor e reiniciar detecção segura |
-| `500`–`504` | `ProviderUnavailable` | Retry limitado, com backoff |
+| `500`–`504` (e demais `5xx`) | `ProviderUnavailable` | Retry limitado, com backoff |
+| `3xx` (redirecionamento) | `InvalidResponse` com `http_status` preservado | Redirecionamentos **não são seguidos** e o `Location` não é exposto; a API do Drive não deve redirecionar |
+| `2xx` diferente do esperado pela operação, p.ex. `204` em `files_get` | `InvalidResponse` | Falha explícita |
+| Corpo acima do limite de metadados, truncado ou inválido | `InvalidResponse` / `Network` | Nunca interpretar resposta parcial como completa |
 | Timeout, conexão ou resolução DNS | `Timeout` / `Network` | Retry condicionado a idempotência/resultado conhecido |
 | Conteúdo JSON inválido ou excessivo | `InvalidResponse` | Falha explícita, sem declarar sucesso |
 | Operação cancelada | `Cancelled` | Não confirmar resultado não verificado |
@@ -2326,7 +2351,128 @@ A interface retorna **`GoogleApiFailure`**, que separa a categoria estável (`ki
 | `308 Resume Incomplete` | **`GoogleUploadProgress::Incomplete`** | **Não é erro** e **não é conclusão** |
 | `Operation.done=false` | **`GoogleOperation` pendente** | **Não é erro** e **não é conclusão** |
 
-**Regras:** (1) `retryable` expressa uma recomendação técnica, mas reexecução de escrita exige considerar idempotência e efeito possivelmente já aplicado; (2) `provider_reason` contém só o código seguro da razão, nunca o corpo da resposta; (3) `http_status=None` é válido para falhas de rede/validação local; (4) erros de autorização de uma conta não invalidam as demais.
+**Regras:** (1) `retryable` expressa uma recomendação técnica, mas reexecução de escrita exige considerar idempotência e efeito possivelmente já aplicado; (2) `provider_reason` contém só o código seguro da razão, nunca o corpo da resposta; (3) `http_status=None` é válido para falhas de rede/validação local; (4) erros de autorização de uma conta não invalidam as demais; (5) `Retry-After` é representado **uma única vez**, em `GoogleApiFailure.retry_after_seconds` (a variante `RateLimited` não carrega dados), aceitando segundos inteiros ou HTTP-date (data passada resulta em `0`; valor inválido é descartado); (6) requisições de metadados usam timeout total e limite de bytes de resposta explícitos, fixos em produção; (7) endpoints diferentes dos oficiais existem apenas sob o feature `test-endpoints` e aceitam somente `http` com IP loopback.
 
 Fontes: [erros do Drive](https://developers.google.com/workspace/drive/api/guides/handle-errors), [parâmetro fields](https://developers.google.com/workspace/drive/api/guides/fields-parameter), [OAuth 2.0](https://developers.google.com/identity/protocols/oauth2/native-app).
 
+
+### Limites concretos de `files_get`
+
+A implementação usa timeout total de 30 segundos e limite de 8 MiB para metadados,
+incluindo leitura incremental do corpo. Não segue redirects nem descobre proxies
+automaticamente. Só HTTP 200 com objeto JSON completo é sucesso. Erros HTTP com
+corpo excessivo preservam status e `Retry-After`, sem interpretar o corpo parcial.
+IDs vazios, `.` e `..` são rejeitados antes do envio; demais IDs são codificados
+como um único segmento. Falhas do transporte não expõem URLs ou causas brutas.
+
+`GoogleClientLimits` expõe os limites técnicos; `with_limits` e `with_base_urls`
+só existem com `test-endpoints`. O construtor de testes retorna
+`GoogleResult<GoogleDriveClient>`, valida ambas as bases e exige HTTP com IP
+loopback literal, sem credenciais, query ou fragmento. Não implementa uploads.
+A sessão é enviada por requisição, sem credenciais persistidas no cliente.
+
+### 9.5 Divergências verificadas contra o Discovery v3 (auditoria TDD do grupo `files_get`)
+
+| Item | Correção/estado |
+| --- | --- |
+| `FileGetOptions` | Adicionados `includeLabels` e `includePermissionsForView` (parâmetros oficiais de `files.get`); `supportsTeamDrives` é obsoleto e não é exposto |
+| `GoogleDownloadRestrictions` | O campo oficial é `effectiveDownloadRestrictionWithContext`, não `effectiveDownloadRestriction` |
+| `GoogleLabel.name` | Inexistente no recurso `Label` oficial; removido |
+| `GoogleFile`, `GoogleFileCapabilities`, `GoogleImageMediaMetadata`, `GoogleDecryptionMetadata`, `GooglePermission` | **Projeção implementada:** todos os campos declarados neste contrato estão tipados. O Discovery também possui campos adicionais (ex.: `trashingUser`, `viewedByMe`, `exportLinks`, `canTrash`, `canModifyContent`), que não integram esta projeção pública. Sua inclusão futura exige ampliar contrato e testes; não se afirma cobertura integral dos schemas Google |
+| `files_get` com `acknowledgeAbuse` | **Decidido:** o parâmetro só é válido com `alt=media`; foi removido de `FileGetOptions` e nunca é enviado em consultas de metadados. Pertence às operações de download (grupo de transferências) |
+| Execução | **Decidido:** I/O é `async` (reqwest + Tokio); sem política de concorrência |
+| `Retry-After` | **Decidido:** representado uma vez em `GoogleApiFailure`; `RateLimited` sem dados |
+| 3xx | **Decidido:** `InvalidResponse`, sem seguir redirecionamento |
+
+
+### 9.6 Auditoria dos grupos restantes (Discovery revisão 20261106)
+
+Fonte normativa: https://www.googleapis.com/discovery/v1/apis/drive/v3/rest.
+A implementação preserva o catálogo de 59 métodos REST, sem os aliases obsoletos
+`teamdrives`. As estruturas públicas são projeções tipadas, não todo o Discovery.
+Campos desconhecidos da API são ignorados; campos omitidos não provam ausência.
+
+Correções antes de implementar:
+
+- `LabelListOptions.page_size` mapeia para `maxResults`, não `pageSize`.
+- `GoogleApprovalList.items` corresponde ao JSON `items`.
+- Cancelamento, comentário e recusa de aprovação usam `message`.
+- Início usa `reviewerEmails`; reatribuição usa `addReviewers` e
+  `replaceReviewers`, com os tipos oficiais de e-mail.
+- `GoogleRpcStatus.details` usa detalhes tipados de erro, sem strings opacas.
+- Opções compartilhadas são filtradas por método: `includeDeleted` só em
+  leituras de comentários/respostas, `acknowledgeAbuse` não em metadados de revisão ou watch. Esses campos
+  de compatibilidade não autorizam enviar o parâmetro sem `alt=media`.
+- `GoogleChange.change_id` e `GoogleAppList.next_page_token` são campos de
+  compatibilidade que não são preenchidos pela API atual.
+- `GooglePatch::Unchanged` omite o campo, `Set` envia o valor e `Clear` envia null;
+  o método remoto ainda valida se o campo admite limpeza. `parents` é aceito na
+  criação; mover arquivo existente usa `addParents`/`removeParents`. PATCH (incluindo início
+  de upload de atualização) rejeita `parents` no corpo antes do envio.
+
+A forma concreta do stream será assíncrona, com erro tipado por leitura e sem
+buffer completo obrigatório. Uploads não terão retry automático; `308` preserva
+somente o intervalo confirmado. URIs de sessão serão validadas antes de enviar
+autorização e nunca expostas em Debug ou erros.
+
+
+### 9.7 Contrato concreto OAuth/OIDC
+
+`GoogleConfigSources` recebe valores de overrides já resolvidos pelo chamador:
+`client_id_env`/`client_secret_env` são os valores, e `oauth_file_env` é um caminho.
+Precedência: overrides individuais > arquivo indicado > arquivo empacotado.
+Arquivo explicitamente indicado inválido falha; não há fallback silencioso.
+São aceitos JSON desktop `installed` e o objeto `GoogleOAuthConfig` direto.
+Configuração pública de desktop não exige segredo. Escopos não são inventados;
+autorização exige os escopos explícitos e permitidos pela configuração.
+
+`load_google_config` é async, com leitura de arquivo limitada a 64 KiB via Tokio.
+`authorization_request` é pura e síncrona: não abre navegador e não gera state ou
+verifier. O chamador fornece state não vazio e challenge S256 base64url canônico com 43
+caracteres; troca de código exige verifier RFC 7636 com 43–128 caracteres.
+O redirect desktop deve ser HTTP loopback e corresponder a host/caminho da
+configuração, permitindo a porta efêmera do callback.
+
+Validação de ID token exige assinatura RS256 por chave oficial, kid conhecido,
+issuer Google, audiência esperada, expiração, iat e nonce quando fornecido.
+`GoogleAudience` preserva string ou lista de strings do claim `aud`; `azp` é
+validado quando presente e exigido para múltiplas audiências. Tolerância de relógio
+é explícita (padrão 60 s, máximo 300 s). Chaves/discovery são consultadas sem cache
+persistente. A URL de chaves deve ser o endpoint Google conhecido; destinos locais
+existem apenas sob `test-endpoints`. Nenhuma URL retornada pela rede autoriza o
+envio de credenciais a um destino arbitrário.
+
+### 9.8 Streaming e retomada de bytes
+
+`GoogleByteStream` é um tipo concreto com
+`async fn next_chunk(&mut self) -> GoogleResult<Option<Vec<u8>>>`; não implementa
+`std::io::Read`. Uma falha encerra o stream e nunca confirma integridade. A leitura
+é incremental, sem carregar o arquivo completo. `GoogleDownloadStream` também
+expõe `http_status: u16`. Comprimento conhecido é verificado no EOF; corpo truncado
+é `IncompleteTransfer`, timeout continua `Timeout`.
+
+Range inválido falha antes do envio. Pedido de intervalo exige HTTP 206 e
+`Content-Range` coerente com início, limite e comprimento; HTTP 200 não é tratado
+como se começasse no offset solicitado. Sem range exige HTTP 200. `files_export`
+e `export_file_bytes` usam a exportação oficial, sem confundir com `alt=media`.
+O timeout de transporte vale também durante leitura; cancelamento por descarte
+não prova reversão ou ausência de recebimento remoto.
+
+### 9.9 Upload resumível e conveniências de metadados
+
+Sessões são iniciadas no endpoint oficial de upload com `uploadType=resumable`.
+A URI recebida só é aceita se tiver a mesma origem e caminho sob a base de upload
+configurada, sem usuário/fragmento; toda utilização revalida essa restrição.
+`GoogleUploadSession` e `GoogleUploadChunk` ocultam URI/bytes em Debug.
+
+Blocos não finais têm tamanho múltiplo de 256 KiB; o bloco final pode ser menor.
+Tamanhos e offsets são validados com aritmética verificada. Quando o total não é
+conhecido, blocos não vazios continuam não finais até um bloco informar o total.
+Um arquivo vazio usa `Content-Range: bytes */0`. Consulta de progresso usa corpo
+vazio e `bytes */total` (ou `bytes */*`). `Range` de resposta 308 confirma apenas
+`bytes=0-N`; cabeçalho ausente significa nenhum intervalo confirmado, não sucesso.
+404/410 de sessão viram `ExpiredUploadSession`. Respostas 200/201 com recurso
+completo são a única confirmação final; não há retry nem consulta automática.
+
+`trash_file`, `rename_file` e `move_file` usam exclusivamente PATCH de metadados,
+com `supportsAllDrives=true`. Mover usa `addParents` e `removeParents`, nunca bytes.

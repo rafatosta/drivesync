@@ -1088,3 +1088,136 @@ Cobertura por porcentagem **não substitui assertivas de contrato**. Se uma oper
 ## 13. Critério de encerramento desta etapa documental
 
 Este documento é o **plano dos testes**, não a execução deles. A etapa de implementação por TDD só começa quando o agente selecionar um grupo, escrever e executar testes inicialmente falhando, verificar as expectativas na documentação oficial e implementar o mínimo para fazê-los passar.
+
+
+## 14. Grupo implementado — `files_get`
+
+A retomada encontrou contratos e testes mais recentes que os stubs e um lockfile
+sem as dependências do provider. Após resolver o lockfile e alinhar assinaturas,
+os 28 testes unitários e 20 testes de contrato foram executados em RED: todos
+falharam nos stubs. O teste concorrente recebeu apenas bindings para os IDs,
+necessários para compilar os empréstimos no `tokio::join!`; suas expectativas
+foram preservadas.
+
+O GREEN implementa somente consulta de metadados `files_get`, query, modelos
+omitíveis, erros sanitizados, redirecionamentos desabilitados, isolamento de
+sessões, timeout total, leitura limitada e `Retry-After` em segundos/HTTP-date.
+Foram acrescentados três testes de regressão: validação de ambas as bases de
+endpoints locais, limites positivos e rejeição de outros status `2xx`.
+
+A suíte deste grupo contém 51 testes (28 unitários e 23 de contrato), sem casos
+ignorados. Ela usa dados sintéticos e servidores loopback. Não comprova acesso
+real ao Google, integração GTK nem funcionamento do aplicativo empacotado.
+Os demais métodos Google e os campos adicionais ainda indicados como pendentes
+em `INTERFACES.md` permanecem fora desta implementação.
+
+
+Validação realizada no `org.gnome.Sdk//50` do Flathub, com
+`PATH=/usr/lib/sdk/rust-stable/bin:$PATH`, conforme o manifesto Devel:
+
+- `cargo fmt --all --check`: passou.
+- `cargo clippy --locked -p drivesync-engine --all-targets -- -D warnings`: passou.
+- `cargo test --locked -p drivesync-engine`: 51 testes passaram, zero ignorados.
+- `cargo doc --locked --workspace --no-deps --document-private-items`: passou.
+- `cargo test --locked --workspace --doc`: passou, sem doctests definidos.
+- `cargo check --locked -p drivesync-engine --lib --no-default-features`: passou.
+- `cargo clippy --locked --workspace --all-targets -- -D warnings` e
+  `cargo test --locked --workspace`: bloqueados pelos `env!` em
+  `tests/local_activity_diagnostic.rs`, que ainda exigem o executável removido
+  `drivesync-local-diagnostic`. Essa pendência da reconstrução está fora do grupo.
+
+O lockfile foi regenerado a partir dos manifests existentes. Nenhum SDK foi
+instalado ou atualizado e nenhuma conta Google foi utilizada.
+
+
+## 15. Implementação integral do catálogo — 2026-11-10
+
+O catálogo contratado está implementado em `engine/src/providers/google/`:
+**59 métodos REST + 9 OAuth/OIDC + 10 transferências/conveniências = 78 operações**,
+expostas por `GoogleDriveClient` e pelos 15 traits específicos de recurso.
+A conferência entre as assinaturas públicas de `INTERFACES.md` e os métodos
+concretos não encontrou operações ausentes; não há `unimplemented!()` ou `todo!()`
+no módulo. Não foi introduzido contrato universal de providers.
+
+### Sequência TDD realizada
+
+| Grupo | Operações | Evidência RED e GREEN |
+| --- | ---: | --- |
+| `files_get` (etapa anterior) | 1 REST | Suíte original preservada; regressão continua passando |
+| Modelos e escrita parcial | Tipos compartilhados | Serialização de patch falhou no stub; Set/Clear/Unchanged passaram |
+| Consultas e paginação | 24 REST | 120 novos testes HTTP falharam nos stubs e passaram após implementação |
+| Arquivos e shared drives | 13 REST | 51 testes HTTP em RED; GREEN e regressões de patch e retry |
+| Colaboração e notificações | 20 REST | 68 testes HTTP em RED; GREEN de ações, permissões, comentários, respostas, revisões e canais |
+| OAuth/OIDC | 9 | 15 testes iniciais em RED; GREEN de configuração, forms, identidade, assinatura e claims; regressão PKCE adicional em RED/GREEN |
+| Downloads e exportação | 1 REST + 3 transferências | 9 testes iniciais em RED; GREEN e regressões de corpo atrasado, EOF e timeout |
+| Upload e conveniências | 7 | 8 testes iniciais em RED; regressões de total/tamanho/completação também em RED antes das correções |
+| Interfaces públicas | 15 traits / 78 assinaturas | Chamada pelo trait falhou no stub, depois executou transporte real local; futures Send verificadas pelo compilador |
+
+Os testes adicionais verificam 119 projeções/opções e estruturas de escrita:
+campos presentes, omitidos, listas, nomes JSON e alterações explícitas. As
+assertivas usam fixtures fixadas pelo contrato, sem gerar expectativas com o
+builder HTTP da implementação. A redução de repetição compartilhou somente a
+mecânica das assertivas; nomes dos testes e fixtures JSON foram preservados.
+
+Foram corrigidas inconsistências antes do aceite: corpos de aprovações,
+`maxResults` de labels, `items` na lista de aprovações, IDs temporários no teste
+concorrente, registro do servidor antes de responder, `parents` em PATCH,
+`acknowledgeAbuse` sem `alt=media`, expiração de cursor de changes, preservação
+do status HTTP, integridade de uploads e encoding canônico do challenge S256.
+Não foram relaxadas as expectativas originais de `files_get`.
+
+### Resultado final e ambiente
+
+**463 testes passaram: 151 unitários e 312 de contrato HTTP/interface pública;
+zero falhas e zero ignorados no provider.** Execução no `org.gnome.Sdk//50` do
+Flathub, com a extensão `rust-stable` definida no manifesto Devel.
+
+Após baixar as dependências técnicas declaradas, a verificação final usou
+`flatpak run --devel --unshare=network --command=sh ... org.gnome.Sdk//50`:
+rede externa indisponível, servidores de teste exclusivamente loopback.
+`PATH=/usr/lib/sdk/rust-stable/bin:$PATH` e cache Cargo isolado em
+`target/provider-cargo`. Nenhum SDK ou extensão foi instalado ou atualizado.
+
+| Comando dentro do SDK | Resultado |
+| --- | --- |
+| `cargo fmt --all --check` | Passou |
+| `cargo test --locked --offline -p drivesync-engine` | 463 testes passaram, nenhum ignorado |
+| `cargo clippy --locked --offline -p drivesync-engine --all-targets -- -D warnings` | Passou |
+| `cargo doc --locked --offline --workspace --no-deps --document-private-items` | Passou |
+| `cargo test --locked --offline --workspace --doc` | Passou; nenhum doctest definido |
+| `cargo check --locked --offline -p drivesync-engine --lib --no-default-features` | Passou |
+| `cargo clippy --locked --offline --workspace --all-targets -- -D warnings` | Bloqueado pelo teste antigo do diagnóstico, descrito abaixo |
+| `cargo test --locked --offline --workspace` | Bloqueado pelo mesmo teste antigo |
+
+`tests/local_activity_diagnostic.rs:41` e `:154` ainda usam
+`env!("CARGO_BIN_EXE_drivesync-local-diagnostic")`, mas esse executável foi
+removido anteriormente na reconstrução da engine. Essa falha do workspace
+permaneceu fora da implementação do Google Provider; nenhum teste foi ignorado
+ou removido para ocultá-la.
+
+### Limites do resultado
+
+- Validação sintética local não comprova autenticação ou operações no Google
+  real, integração GTK, acessibilidade, portais ou aplicativo Flatpak instalado.
+- Os recursos retornados são as projeções públicas documentadas; não se afirma
+  reprodução integral de todos os schemas/campos/opções existentes no Discovery.
+- Não foi medida cobertura percentual de branches; as metas da seção 11 não
+  devem ser interpretadas como métricas executadas ou comprovadas.
+- G-AS-01 foi exercitado como I/O assíncrono com timers e corpo HTTP atrasado;
+  sua aceitação com GTK ativo continua exigindo integração real da aplicação.
+- O timeout de transporte também pode encerrar streams longos. Sem comprimento
+  conhecido, EOF confirma apenas o término HTTP, não integridade de arquivo.
+- Descartar uma future de escrita não comprova ausência de efeito remoto.
+  Uploads/cancelamento não fazem retry, polling, rollback ou recuperação por conta própria.
+- Nenhuma conta, credencial real ou arquivo do usuário foi usado nos testes.
+  A chave RSA de teste foi gerada para fixtures e é deliberadamente pública.
+
+### Referências verificadas
+
+- [Discovery Drive v3, revisão 20261106](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest).
+- [OAuth para desktop](https://developers.google.com/identity/protocols/oauth2/native-app).
+- [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect).
+- [Uploads retomáveis](https://developers.google.com/workspace/drive/api/guides/manage-uploads).
+- [Download e exportação](https://developers.google.com/workspace/drive/api/guides/manage-downloads).
+- [RFC 7636 — PKCE, incluindo o vetor S256 do apêndice B](https://www.rfc-editor.org/rfc/rfc7636).
+- [API de verificação JWT usada](https://docs.rs/jsonwebtoken/9.3.1/jsonwebtoken/struct.Validation.html).
