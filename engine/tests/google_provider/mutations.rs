@@ -26,8 +26,11 @@ async fn drives_create_wire_contract() {
     let result = client
         .drives_create(
             &session(),
-            &RequestId("req".into()),
-            GoogleDriveWrite::default(),
+            &RequestId("d0ac58f2-5d04-4e7b-9c3a-a111b4db317e".into()),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -45,7 +48,7 @@ async fn drives_create_wire_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
-        serde_json::json!({})
+        serde_json::json!({"name":"shared drive"})
     );
     assert_eq!(
         requests[0]
@@ -53,7 +56,7 @@ async fn drives_create_wire_contract() {
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>(),
         serde_json::from_str::<std::collections::BTreeMap<String, String>>(
-            r#"{"requestId": "req"}"#
+            r#"{"requestId": "d0ac58f2-5d04-4e7b-9c3a-a111b4db317e"}"#
         )
         .unwrap()
     );
@@ -69,8 +72,11 @@ async fn drives_create_remote_errors_are_sanitized() {
     let failure = client
         .drives_create(
             &session(),
-            &RequestId("req".into()),
-            GoogleDriveWrite::default(),
+            &RequestId("d0ac58f2-5d04-4e7b-9c3a-a111b4db317e".into()),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
         )
         .await
         .expect_err("remote error");
@@ -289,7 +295,10 @@ async fn drives_update_wire_contract() {
         .drives_update(
             &session(),
             &DriveId("d".into()),
-            GoogleDriveWrite::default(),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
             DriveUpdateOptions::default(),
         )
         .await
@@ -308,7 +317,7 @@ async fn drives_update_wire_contract() {
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap(),
-        serde_json::json!({})
+        serde_json::json!({"name":"shared drive"})
     );
     assert_eq!(
         requests[0]
@@ -330,7 +339,10 @@ async fn drives_update_remote_errors_are_sanitized() {
         .drives_update(
             &session(),
             &DriveId("d".into()),
-            GoogleDriveWrite::default(),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
             DriveUpdateOptions::default(),
         )
         .await
@@ -350,7 +362,10 @@ async fn drives_update_option_use_domain_admin_access() {
         .drives_update(
             &session(),
             &DriveId("d".into()),
-            GoogleDriveWrite::default(),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
             DriveUpdateOptions {
                 use_domain_admin_access: Some(false),
                 ..Default::default()
@@ -377,7 +392,10 @@ async fn drives_update_option_fields() {
         .drives_update(
             &session(),
             &DriveId("d".into()),
-            GoogleDriveWrite::default(),
+            GoogleDriveWrite {
+                name: GooglePatch::Set("shared drive".into()),
+                ..Default::default()
+            },
             DriveUpdateOptions {
                 fields: Some(FieldMask("value".into())),
                 ..Default::default()
@@ -1392,7 +1410,7 @@ async fn files_watch_option_acknowledge_abuse() {
             .iter()
             .find(|(key, _)| key == "acknowledgeAbuse")
             .map(|(_, value)| value.as_str()),
-        Some("false")
+        None
     );
 }
 
@@ -1486,4 +1504,24 @@ async fn failed_mutation_is_not_retried() {
     assert_eq!(failure.kind, GoogleApiError::ProviderUnavailable);
     assert!(failure.retryable);
     assert_eq!(server.recorded().len(), 1);
+}
+
+#[tokio::test]
+async fn parent_replacement_in_update_body_is_rejected_instead_of_ignored() {
+    let server = Server::start(vec![]);
+    let err = server
+        .client()
+        .files_update(
+            &session(),
+            &FileId("f".into()),
+            GoogleFileWrite {
+                parents: GooglePatch::Set(vec![FileId("new".into())]),
+                ..Default::default()
+            },
+            FileUpdateOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+    assert!(server.recorded().is_empty());
 }

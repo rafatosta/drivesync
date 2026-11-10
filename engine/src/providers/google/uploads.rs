@@ -73,6 +73,7 @@ impl GoogleDriveClient {
         options: FileUpdateOptions,
         total_bytes: Option<u64>,
     ) -> GoogleResult<GoogleUploadSession> {
+        request.validate_update()?;
         let query = query_for(
             &options,
             &[

@@ -2400,12 +2400,14 @@ Correções antes de implementar:
   `replaceReviewers`, com os tipos oficiais de e-mail.
 - `GoogleRpcStatus.details` usa detalhes tipados de erro, sem strings opacas.
 - Opções compartilhadas são filtradas por método: `includeDeleted` só em
-  leituras de comentários/respostas, `acknowledgeAbuse` não em metadados de revisão.
+  leituras de comentários/respostas, `acknowledgeAbuse` não em metadados de revisão ou watch. Esses campos
+  de compatibilidade não autorizam enviar o parâmetro sem `alt=media`.
 - `GoogleChange.change_id` e `GoogleAppList.next_page_token` são campos de
   compatibilidade que não são preenchidos pela API atual.
 - `GooglePatch::Unchanged` omite o campo, `Set` envia o valor e `Clear` envia null;
   o método remoto ainda valida se o campo admite limpeza. `parents` é aceito na
-  criação; mover arquivo existente usa `addParents`/`removeParents`.
+  criação; mover arquivo existente usa `addParents`/`removeParents`. PATCH (incluindo início
+  de upload de atualização) rejeita `parents` no corpo antes do envio.
 
 A forma concreta do stream será assíncrona, com erro tipado por leitura e sem
 buffer completo obrigatório. Uploads não terão retry automático; `308` preserva

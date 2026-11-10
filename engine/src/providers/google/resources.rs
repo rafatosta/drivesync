@@ -1320,3 +1320,14 @@ pub struct ResolveAccessProposalRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub send_notification: Option<bool>,
 }
+
+impl GoogleFileWrite {
+    /// Updating parents in the JSON body can be ignored remotely. Require the
+    /// official addParents/removeParents query mechanism instead.
+    pub(super) fn validate_update(&self) -> GoogleResult<()> {
+        if !matches!(self.parents, GooglePatch::Unchanged) {
+            return Err(super::client::invalid_argument());
+        }
+        Ok(())
+    }
+}

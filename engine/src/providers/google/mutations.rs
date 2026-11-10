@@ -290,6 +290,7 @@ impl GoogleDriveClient {
         request: GoogleFileWrite,
         options: FileUpdateOptions,
     ) -> GoogleResult<GoogleFile> {
+        request.validate_update()?;
         let query = super::client::query_for(
             &options,
             &[
@@ -336,7 +337,6 @@ impl GoogleDriveClient {
                 "supportsTeamDrives",
                 "supportsAllDrives",
                 "includeLabels",
-                "acknowledgeAbuse",
                 "includePermissionsForView",
                 "fields",
             ],
