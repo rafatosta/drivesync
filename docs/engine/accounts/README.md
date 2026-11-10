@@ -69,12 +69,8 @@ Se for adotada uma persistência própria para o cadastro, sua política de inte
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-## Pendências da implementação
+## Decisões de implementação
 
-- Propriedade e contrato do cadastro de conexões.
-- Adaptação segura de resultados/sessões entre Accounts e APIs específicas dos Providers, sem impor API universal.
-- Escolha da persistência do cadastro e detalhamento de Secret Service no Flatpak.
-- Coordenação e recuperação de falhas entre cadastro e armazenamento seguro.
-- Derivação consistente dos estados de conta e política de exclusão com conexões ativas.
+A adaptação de `GoogleTokenResponse` e `GoogleSession` pertence a Accounts e usa a API existente de Providers. Não é necessária uma alteração em Providers. Cadastro JSON privado, Secret Service, guarda de remoção e recuperação de intenções estão detalhados em [INTERFACES.md](INTERFACES.md#8-decisões-concretas-da-implementação).
 
-**Estado:** especificação documental; não comprova implementação Rust ou execução de testes.
+O proprietário definitivo das conexões continua externo; ele deverá fornecer a guarda de remoção contratada. A integração com a interface GTK e migrações de formatos antigos não pertencem a esta entrega.

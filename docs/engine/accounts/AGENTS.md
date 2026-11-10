@@ -45,4 +45,4 @@
 
 Quatro arquivos de contrato coerentes, API de contas independente da tecnologia de autenticação, keyring privado a Accounts, ausência de referências funcionais a `accounts/auth/` e cobertura TDD para falhas, isolamento e exclusão segura.
 
-**Estado:** documento orientativo, não implementação.
+**Integração:** adaptar os tipos Google dentro de Accounts; não alterar Providers. Usar o contrato de guarda do proprietário externo de conexões, sem assumir seu cadastro.

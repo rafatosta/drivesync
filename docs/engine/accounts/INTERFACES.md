@@ -174,12 +174,18 @@ O `status()` é síncrono e rápido, sem consultar banco, Secret Service ou rede
 - **Inventário, Scanner, Detector, Analisador:** não acessam armazenamento de contas ou tokens diretamente; recorrem às APIs autorizadas.
 - **Recuperação:** falha de credenciais ou keyring indisponível não é "corrupção do inventário". Se o cadastro adotar persistência local, **seu armazenamento** define as regras seguras de integridade e recuperação com padrões próprios; [Configuration](../configuration/README.md) é auxiliar/opcional e pode oferecer preferências por demanda, **nunca** exportação automática de secrets.
 
-## 8. Pendências antes da implementação
+## 8. Decisões concretas da implementação
 
-1. Tipo de passagem de autorização/sessão que não imponha uma API universal a todos os provedores.
-2. Contrato efetivo do proprietário de conexões para bloquear remoção com sincronizações ativas.
-3. Persistência escolhida para cadastro de contas e integração específica do Secret Service/Flatpak.
-4. Política de erro, compensação e idempotência entre cadastro e keyring.
-5. Forma de derivar `AccountState` sem exigir rede para consultas locais.
+- `ProviderAuthorizationHandle::google(GoogleTokenResponse)` consome o resultado técnico já obtido por Providers. O handle pertence a Accounts, tem campos privados, não é serializável pela API pública e seu Debug é redigido. Não é exigido um novo tipo em Providers.
+- `ProviderSessionHandle::google()` empresta `&GoogleSession`, sem extrair tokens. Accounts usa `get_userinfo` para verificar identidade e `refresh_access_token` para renovar; toda comunicação Google permanece em Providers, que não será alterado.
+- `AccountsConfig::new(directory, application_id, associations)` configura cadastro JSON privado e Secret Service. `with_google(client, oauth_config)` habilita Google. Sem configuração, Google retorna `UnsupportedProvider`; outros serviços não são forçados a implementar OAuth.
+- `AccountId`, `ProviderId` e `Timestamp` terão um único proprietário em `engine::models`, com reexportação na raiz; nenhum modelo de arquivo será implementado nesta tarefa.
+- `AccountAssociations::lock_for_removal(account_id)` retorna uma guarda que impede novas associações até Drop, ou `AccountInUse`. O proprietário das conexões implementa esse contrato; Accounts não cria cadastro de sincronizações. Falha ou ausência de comprovação bloqueia a remoção. Não há implementação permissiva padrão.
+- O cadastro usa JSON versionado, substituição atômica, fsync e permissões privadas. Um lock exclusivo impede duas instâncias de abrir o mesmo cadastro. Corrupção/formato incompatível não são resetados. Configuration não é necessário.
+- Antes de alterar secrets, persiste-se uma intenção sem segredo. Credenciais são versionadas em itens distintos no keyring. A publicação do novo cadastro ocorre somente após a persistência segura. A intenção retém referências para limpeza ou retomada após falha/reabertura; `get/list` mostram `Unavailable` enquanto a conta está em transição.
+- Operações assíncronas executam em worker Tokio e serializam mutações por instância. Cancelar a espera retira a atividade do status, mas não desfaz I/O já iniciado: o worker termina a unidade durável antes de liberar a exclusividade. Não há fila durável de tarefas. `new/get/list/update` são locais; chamadores GTK devem executá-los fora do loop principal quando envolverem disco.
+- Recuperação é tentada pelas operações assíncronas antes de iniciar outra mutação. Secret ausente em inclusão interrompida descarta somente o registro incompleto; em substituição preserva a versão anterior; remoção interrompida é retomada. Referências não são descartadas quando a limpeza segura falha.
+- `update(display_name=None)` limpa o nome local; identidade/e-mail permanecem. Remover ID inexistente retorna `removed=false`. Adicionar identidade já cadastrada retorna `created=false` e não substitui credenciais; a substituição usa `update_authorization`.
+- Estado é conhecimento persistido: ausência de credencial/reautorização exige `ReauthorizationRequired`; falha transitória de keyring não altera todas as contas. Rede não é consultada por `get/list`. Refresh sem novo refresh token conserva o anterior, somente para a mesma conta; nova autorização externa precisa conter credencial renovável.
 
-**Estado:** documentação contratual proposta, não implementação Rust.
+**Estado:** contrato de implementação; evidências de execução serão registradas em TESTS.md.
