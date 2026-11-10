@@ -25,3 +25,6 @@ mod collaboration;
 mod oauth_models;
 pub use oauth_models::*;
 mod oauth;
+
+mod downloads;
+pub use downloads::{GoogleByteRange, GoogleByteStream, GoogleDownloadStream};

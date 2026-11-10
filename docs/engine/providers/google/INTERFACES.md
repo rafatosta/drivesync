@@ -2438,3 +2438,19 @@ validado quando presente e exigido para múltiplas audiências. Tolerância de r
 persistente. A URL de chaves deve ser o endpoint Google conhecido; destinos locais
 existem apenas sob `test-endpoints`. Nenhuma URL retornada pela rede autoriza o
 envio de credenciais a um destino arbitrário.
+
+### 9.8 Streaming e retomada de bytes
+
+`GoogleByteStream` é um tipo concreto com
+`async fn next_chunk(&mut self) -> GoogleResult<Option<Vec<u8>>>`; não implementa
+`std::io::Read`. Uma falha encerra o stream e nunca confirma integridade. A leitura
+é incremental, sem carregar o arquivo completo. `GoogleDownloadStream` também
+expõe `http_status: u16`. Comprimento conhecido é verificado no EOF; corpo truncado
+é `IncompleteTransfer`, timeout continua `Timeout`.
+
+Range inválido falha antes do envio. Pedido de intervalo exige HTTP 206 e
+`Content-Range` coerente com início, limite e comprimento; HTTP 200 não é tratado
+como se começasse no offset solicitado. Sem range exige HTTP 200. `files_export`
+e `export_file_bytes` usam a exportação oficial, sem confundir com `alt=media`.
+O timeout de transporte vale também durante leitura; cancelamento por descarte
+não prova reversão ou ausência de recebimento remoto.
