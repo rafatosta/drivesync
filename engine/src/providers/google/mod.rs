@@ -19,3 +19,5 @@ mod tests;
 mod reads;
 
 mod mutations;
+
+mod collaboration;
