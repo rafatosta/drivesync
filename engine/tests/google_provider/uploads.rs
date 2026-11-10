@@ -434,3 +434,22 @@ async fn dropped_upload_does_not_replay_or_query_its_uncertain_effect() {
     assert!(result.is_err());
     assert_eq!(server.recorded().len(), 1);
 }
+
+#[tokio::test]
+async fn unknown_total_blocks_cannot_be_announced_as_final() {
+    let server = Server::start(vec![Reply::json(200, r#"{"id":"f","size":"262144"}"#)]);
+    let err = server
+        .client()
+        .upload_chunk(
+            &session(),
+            &upload(&server, None),
+            GoogleUploadChunk {
+                start: 0,
+                bytes: vec![0; 262144],
+                total_bytes: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::InvalidResponse);
+}

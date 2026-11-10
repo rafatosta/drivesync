@@ -343,7 +343,7 @@ impl GoogleDriveClient {
             ));
         }
         if status == 200 || status == 201 {
-            if total.zip(sent_end).is_some_and(|(total, end)| total != end) {
+            if sent_end.is_some_and(|end| total != Some(end)) {
                 return Err(invalid_response());
             }
             let body = self.response_body(response, status).await?;
