@@ -801,3 +801,100 @@ async fn isolated_accounts_vault_roundtrip() {
         .unwrap()
         .is_none());
 }
+
+#[path = "../../tests/google_provider/support.rs"]
+#[allow(dead_code)]
+mod http_support;
+#[tokio::test]
+async fn google_adapter_uses_only_existing_provider_operations() {
+    use crate::providers::google::{GoogleDriveClient, GoogleOAuthConfig};
+    use http_support::{Reply, Server};
+    let server = Server::start(vec![
+        Reply::json(200, r#"{"sub":"a","email":"verified@example.invalid"}"#),
+        Reply::json(
+            200,
+            r#"{"access_token":"secret:a","token_type":"Bearer","expires_in":3600}"#,
+        ),
+        Reply::json(200, r#"{"sub":"a"}"#),
+    ]);
+    let mut f = Fixture::new();
+    let client = GoogleDriveClient::new()
+        .with_oauth_base(&server.base)
+        .unwrap();
+    f.accounts.google = Some(Arc::new(provider::GoogleAccess {
+        client,
+        config: GoogleOAuthConfig {
+            client_id: "synthetic-client".into(),
+            ..Default::default()
+        },
+    }));
+    let a = f.add("a").await;
+    assert_eq!(a.provider_user_id, "a");
+    assert_eq!(a.email.as_deref(), Some("verified@example.invalid"));
+    let key = f.key(&a.id);
+    f.vault
+        .entries
+        .lock()
+        .unwrap()
+        .get_mut(&key)
+        .unwrap()
+        .expires_at = 0;
+    f.accounts
+        .acquire_session(AcquireSessionRequest { account_id: a.id })
+        .await
+        .unwrap();
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].path(), "/v1/userinfo");
+    assert_eq!(requests[0].header("authorization"), Some("Bearer secret:a"));
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(requests[1].path(), "/token");
+    let body = String::from_utf8_lossy(&requests[1].body);
+    assert!(body.contains("grant_type=refresh_token"));
+    assert!(body.contains("refresh_token=refresh-secret%3Aa"));
+    assert_eq!(requests[2].path(), "/v1/userinfo");
+}
+#[tokio::test]
+async fn google_adapter_maps_provider_failures_without_secret_diagnostics() {
+    use crate::providers::google::{GoogleDriveClient, GoogleOAuthConfig};
+    use http_support::{Reply, Server};
+    for (status, body, expected) in [
+        (
+            401,
+            r#"{"error":{"message":"private-secret"}}"#,
+            AccountsError::AuthorizationFailed,
+        ),
+        (503, "private-secret", AccountsError::ProviderUnavailable),
+    ] {
+        let server = Server::start(vec![Reply::json(status, body)]);
+        let mut f = Fixture::new();
+        f.accounts.google = Some(Arc::new(provider::GoogleAccess {
+            client: GoogleDriveClient::new()
+                .with_oauth_base(&server.base)
+                .unwrap(),
+            config: GoogleOAuthConfig::default(),
+        }));
+        let failure = f.accounts.add(f.authorization("a")).await.unwrap_err();
+        assert_eq!(failure.kind, expected);
+        assert!(!failure.message.contains("private-secret"));
+        assert!(f
+            .accounts
+            .list(ListAccountsRequest { provider: None })
+            .unwrap()
+            .accounts
+            .is_empty());
+    }
+}
+#[tokio::test]
+async fn repeated_add_missing_secret_marks_only_affected_account_for_reauthorization() {
+    let f = Fixture::new();
+    let a = f.add("a").await;
+    let b = f.add("b").await;
+    f.vault.entries.lock().unwrap().remove(&f.key(&a.id));
+    assert_eq!(
+        f.accounts.add(f.authorization("a")).await.unwrap_err().kind,
+        AccountsError::CredentialMissing
+    );
+    assert_eq!(f.state(&a.id), AccountState::ReauthorizationRequired);
+    assert_eq!(f.state(&b.id), AccountState::Connected);
+}

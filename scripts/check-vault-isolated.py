@@ -16,7 +16,7 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
-    parser.add_argument("--test", choices=["isolated_vault_roundtrip", "isolated_vault_invalid_encoding_is_preserved"], default="isolated_vault_roundtrip")
+    parser.add_argument("--test", choices=["isolated_vault_roundtrip", "isolated_vault_invalid_encoding_is_preserved", "isolated_accounts_vault_roundtrip"], default="isolated_vault_roundtrip")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     manifest = Path(__file__).resolve().parents[1] / "flatpak/com.rtosta.DriveSync.Devel.yml"
@@ -60,7 +60,7 @@ def main():
                 for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "DRIVESYNC_TEST_VAULT_ROOT"]:
                     command.append(f"--env={name}={env[name]}")
                 command += ["--command=env", sdk, f"DBUS_SESSION_BUS_ADDRESS={env['DBUS_SESSION_BUS_ADDRESS']}", str(binary)]
-                test = f"auth::storage::tests::{args.test}"
+                test = f"accounts::tests::{args.test}" if args.test.startswith("isolated_accounts_") else f"auth::storage::tests::{args.test}"
                 listing = subprocess.run(command + ["--list", "--format", "terse"], env=env, capture_output=True, text=True, check=True, timeout=30)
                 if f"{test}: test" not in listing.stdout.splitlines():
                     raise RuntimeError("Selected binary does not contain the isolated vault test")

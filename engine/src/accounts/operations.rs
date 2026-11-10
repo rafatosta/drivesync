@@ -309,10 +309,10 @@ impl Accounts {
                         AccountOperationPhase::AccessingSecureStorage,
                         Some(&record.account.id),
                     );
-                    let secret = owner
-                        .vault
-                        .get(&record.key)?
-                        .ok_or_else(|| error(AccountsError::CredentialMissing))?;
+                    let Some(secret) = owner.vault.get(&record.key)? else {
+                        owner.mark_reauthorization(&record)?;
+                        return Err(error(AccountsError::CredentialMissing));
+                    };
                     if !secret.matches(&record) {
                         return Err(error(AccountsError::IdentityMismatch));
                     }
