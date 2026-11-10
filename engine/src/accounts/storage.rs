@@ -75,7 +75,7 @@ impl Storage {
             for (id, r) in &data.records {
                 if id != &r.account.id
                     || id.0.is_empty()
-                    || r.key.is_empty()
+                    || !valid_credential_reference(r)
                     || r.account.provider_user_id.trim().is_empty()
                     || !identities.insert((&r.account.provider, &r.account.provider_user_id))
                 {
@@ -89,7 +89,8 @@ impl Storage {
                     .or(intent.after.as_ref())
                     .ok_or_else(storage_error)?;
                 let same_identity = |r: &Record| {
-                    r.account.id == visible.account.id
+                    valid_credential_reference(r)
+                        && r.account.id == visible.account.id
                         && r.account.provider == visible.account.provider
                         && r.account.provider_user_id == visible.account.provider_user_id
                 };
@@ -171,4 +172,15 @@ fn private_file(path: &std::path::Path, create: bool) -> AccountsResult<File> {
         return Err(storage_error());
     }
     Ok(file)
+}
+
+/// Credential generations are scoped to their provider and account, preventing
+/// a corrupt metadata reference from deleting another account's secure item.
+fn valid_credential_reference(record: &Record) -> bool {
+    let prefix = format!("{}:{}:", record.account.provider.0, record.account.id.0);
+    !record.account.provider.0.trim().is_empty()
+        && record
+            .key
+            .strip_prefix(&prefix)
+            .is_some_and(|generation| !generation.is_empty())
 }

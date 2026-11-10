@@ -806,6 +806,38 @@ async fn isolated_accounts_vault_roundtrip() {
         .unwrap()
         .unwrap()
         .is_none());
+    // Malformed secure material remains in the private service for explicit
+    // recovery; it must not be silently overwritten, deleted or backed up.
+    tokio::task::spawn_blocking(move || {
+        use secret_service::{blocking::SecretService, EncryptionType};
+        let application = format!("test.drivesync.accounts.{}", std::process::id());
+        let vault = credentials::Keyring {
+            application: application.clone(),
+        };
+        let service = SecretService::connect(EncryptionType::Dh).unwrap();
+        let collection = service.get_default_collection().unwrap();
+        let key = "synthetic-corrupt-credential";
+        let item = collection
+            .create_item(
+                "Synthetic invalid account credential",
+                std::collections::HashMap::from([
+                    ("application", application.as_str()),
+                    ("account-credential", key),
+                ]),
+                b"invalid-synthetic-json",
+                true,
+                "application/json",
+            )
+            .unwrap();
+        assert_eq!(
+            vault.get(key).err().unwrap().kind,
+            AccountsError::CredentialMissing
+        );
+        assert_eq!(item.get_secret().unwrap(), b"invalid-synthetic-json");
+        item.delete().unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 #[path = "../../tests/google_provider/support.rs"]
@@ -1161,4 +1193,32 @@ async fn optional_refresh_token_allows_access_and_preserves_existing_renewal() {
         f.vault.entries.lock().unwrap()[&key].refresh.as_deref(),
         Some("refresh-secret:a")
     );
+}
+
+#[tokio::test]
+async fn metadata_rejects_credential_references_bound_to_another_account() {
+    let mut f = Fixture::new();
+    let a = f.add("a").await;
+    let b = f.add("b").await;
+    let key_b = f.key(&b.id);
+    {
+        let mut store = f.accounts.store.lock().unwrap();
+        let mut data = store.data.clone();
+        data.records.get_mut(&a.id).unwrap().key = key_b.clone();
+        store.save(data).unwrap();
+    }
+    let placeholder = Accounts::new(AccountsConfig::new(
+        f.path.join("placeholder"),
+        "test.placeholder",
+        f.associations.clone(),
+    ))
+    .unwrap();
+    drop(std::mem::replace(&mut f.accounts, placeholder));
+    let result = Accounts::new(AccountsConfig::new(
+        f.path.clone(),
+        "test.accounts",
+        f.associations.clone(),
+    ));
+    assert!(result.is_err());
+    assert!(f.vault.entries.lock().unwrap().contains_key(&key_b));
 }
