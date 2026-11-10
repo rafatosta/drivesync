@@ -97,6 +97,8 @@ pub struct Reply {
     pub body: Vec<u8>,
     /// Pause before answering, to exercise timeouts.
     pub delay: Duration,
+    /// Pause after headers, before body bytes, to test incremental reads.
+    pub body_delay: Duration,
     pub framing: Framing,
 }
 
@@ -107,6 +109,7 @@ impl Reply {
             headers: vec![("Content-Type", "application/json".into())],
             body: body.as_bytes().to_vec(),
             delay: Duration::ZERO,
+            body_delay: Duration::ZERO,
             framing: Framing::Exact,
         }
     }
@@ -219,6 +222,7 @@ fn handle(mut stream: TcpStream, reply: Reply, log: &Mutex<Vec<Recorded>>) -> Op
     }
     out.push_str("\r\n");
     let _ = stream.write_all(out.as_bytes());
+    thread::sleep(reply.body_delay);
     let _ = stream.write_all(&reply.body);
     let _ = stream.shutdown(Shutdown::Both);
     Some(())

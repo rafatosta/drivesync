@@ -57,3 +57,15 @@ fn approval_models_use_discovery_fields() {
         serde_json::json!({"addReviewers":[{"addedReviewerEmail":"new@example.test"}]})
     );
 }
+
+#[test]
+fn generic_public_pages_preserve_typed_items_and_cursor() {
+    let page: GooglePage<FileId> =
+        serde_json::from_str(r#"{"items":["f"],"nextPageToken":"next"}"#).unwrap();
+    assert_eq!(page.items, vec![FileId("f".into())]);
+    assert_eq!(page.next_page_token.as_deref(), Some("next"));
+    assert_eq!(
+        serde_json::to_value(page).unwrap(),
+        serde_json::json!({"items":["f"],"nextPageToken":"next"})
+    );
+}

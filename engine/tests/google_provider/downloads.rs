@@ -233,3 +233,72 @@ async fn download_errors_do_not_expose_body_or_redirect_urls() {
         assert!(!format!("{err:?}").contains("private"));
     }
 }
+
+#[tokio::test]
+async fn media_headers_arrive_before_the_body_and_metadata_limits_do_not_buffer_it() {
+    use std::time::Duration;
+    let mut reply = Reply::json(200, &"x".repeat(65536));
+    reply.body_delay = Duration::from_millis(700);
+    let server = Server::start(vec![reply]);
+    let client = server.client_with_limits(GoogleClientLimits {
+        request_timeout: Duration::from_secs(5),
+        max_metadata_response_bytes: 1024,
+    });
+    let mut response = tokio::time::timeout(
+        Duration::from_millis(300),
+        client.get_file_bytes(&session(), &FileId("f".into()), None),
+    )
+    .await
+    .expect("headers must not wait for the body")
+    .unwrap();
+    assert_eq!(response.content_length, Some(65536));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), response.body.next_chunk())
+            .await
+            .is_err()
+    );
+    assert_eq!(collect(response.body).await.unwrap().len(), 65536);
+}
+
+#[tokio::test]
+async fn an_incomplete_stream_cannot_turn_into_successful_eof_on_a_later_read() {
+    let mut reply = Reply::json(200, "abc");
+    reply.framing = Framing::Declared(100);
+    let server = Server::start(vec![reply]);
+    let mut response = server
+        .client()
+        .get_file_bytes(&session(), &FileId("f".into()), None)
+        .await
+        .unwrap();
+    loop {
+        match response.body.next_chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("truncation was accepted"),
+            Err(error) => {
+                assert_eq!(error.kind, GoogleApiError::IncompleteTransfer);
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        response.body.next_chunk().await.unwrap_err().kind,
+        GoogleApiError::IncompleteTransfer
+    );
+}
+
+#[tokio::test]
+async fn metadata_timeout_includes_body_reading_after_headers() {
+    use std::time::Duration;
+    let mut reply = Reply::json(200, r#"{"id":"f"}"#);
+    reply.body_delay = Duration::from_millis(700);
+    let server = Server::start(vec![reply]);
+    let err = server
+        .client_with_limits(GoogleClientLimits {
+            request_timeout: Duration::from_millis(200),
+            max_metadata_response_bytes: 1024,
+        })
+        .files_get(&session(), &FileId("f".into()), FileGetOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::Timeout);
+}
