@@ -28,3 +28,6 @@ mod oauth;
 
 mod downloads;
 pub use downloads::{GoogleByteRange, GoogleByteStream, GoogleDownloadStream};
+
+mod uploads;
+pub use uploads::{GoogleUploadChunk, GoogleUploadProgress, GoogleUploadSession};

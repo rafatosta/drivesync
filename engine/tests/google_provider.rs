@@ -8,4 +8,5 @@ mod google_provider {
     pub mod oauth;
     pub mod reads;
     pub mod support;
+    pub mod uploads;
 }

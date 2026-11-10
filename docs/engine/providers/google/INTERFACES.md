@@ -504,7 +504,7 @@ pub trait GoogleTransferApi {
 | `GoogleByteRange` | `start: u64`, `end_inclusive: Option<u64>` |
 | `GoogleDownloadStream` | Fluxo de bytes, status HTTP, `content_length?`, `content_range?`, `etag?`, `mime_type?` |
 | `GoogleUploadSession` | Identificador/URI opaca de sessão, tamanho total opcional; deve ser tratada como informação sensível |
-| `GoogleUploadChunk` | Offset inicial, bytes, total esperado e indicador de finalização |
+| `GoogleUploadChunk` | Offset inicial, bytes e total esperado que determina o bloco final |
 | `GoogleUploadProgress` | `Incomplete { received_range }` ou `Complete { file: GoogleFile }`; `308` significa **incompleto** |
 | `GoogleOperation` | `done=false` não equivale a transferência concluída; usar `operations_get` para acompanhar |
 
@@ -2454,3 +2454,22 @@ como se começasse no offset solicitado. Sem range exige HTTP 200. `files_export
 e `export_file_bytes` usam a exportação oficial, sem confundir com `alt=media`.
 O timeout de transporte vale também durante leitura; cancelamento por descarte
 não prova reversão ou ausência de recebimento remoto.
+
+### 9.9 Upload resumível e conveniências de metadados
+
+Sessões são iniciadas no endpoint oficial de upload com `uploadType=resumable`.
+A URI recebida só é aceita se tiver a mesma origem e caminho sob a base de upload
+configurada, sem usuário/fragmento; toda utilização revalida essa restrição.
+`GoogleUploadSession` e `GoogleUploadChunk` ocultam URI/bytes em Debug.
+
+Blocos não finais têm tamanho múltiplo de 256 KiB; o bloco final pode ser menor.
+Tamanhos e offsets são validados com aritmética verificada. Quando o total não é
+conhecido, blocos não vazios continuam não finais até um bloco informar o total.
+Um arquivo vazio usa `Content-Range: bytes */0`. Consulta de progresso usa corpo
+vazio e `bytes */total` (ou `bytes */*`). `Range` de resposta 308 confirma apenas
+`bytes=0-N`; cabeçalho ausente significa nenhum intervalo confirmado, não sucesso.
+404/410 de sessão viram `ExpiredUploadSession`. Respostas 200/201 com recurso
+completo são a única confirmação final; não há retry nem consulta automática.
+
+`trash_file`, `rename_file` e `move_file` usam exclusivamente PATCH de metadados,
+com `supportsAllDrives=true`. Mover usa `addParents` e `removeParents`, nunca bytes.

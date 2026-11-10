@@ -120,8 +120,14 @@ pub struct Server {
 impl Server {
     /// Serves the given replies in order, one per connection.
     pub fn start(replies: Vec<Reply>) -> Self {
+        Self::start_with(|_| replies)
+    }
+
+    /// Builds dynamic Location headers after choosing the isolated loopback port.
+    pub fn start_with(make_replies: impl FnOnce(&str) -> Vec<Reply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let replies = make_replies(&base);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let log = requests.clone();
         thread::spawn(move || {

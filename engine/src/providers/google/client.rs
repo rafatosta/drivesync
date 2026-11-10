@@ -10,6 +10,7 @@ use super::{
     GoogleFile, GoogleResult, GoogleSession,
 };
 
+const UPLOAD_BASE: &str = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_BASE: &str = "https://www.googleapis.com/drive/v3";
 
 /// Technical metadata bounds. Production uses a 30-second total timeout and
@@ -34,6 +35,7 @@ impl Default for GoogleClientLimits {
 #[derive(Debug, Clone)]
 pub struct GoogleDriveClient {
     pub(super) drive_base: Url,
+    pub(super) upload_base: Url,
     pub(super) http: GoogleResult<Client>,
     pub(super) limits: GoogleClientLimits,
     #[cfg(feature = "test-endpoints")]
@@ -50,6 +52,7 @@ impl GoogleDriveClient {
     fn from_base(drive_base: Url) -> Self {
         Self {
             drive_base,
+            upload_base: Url::parse(UPLOAD_BASE).expect("constant upload URL is valid"),
             #[cfg(feature = "test-endpoints")]
             oauth_base: None,
             // Disable proxy discovery as well: tokens must go only to the selected endpoint.
@@ -93,8 +96,10 @@ impl GoogleDriveClient {
             Ok(url)
         }
         let drive_base = validate(drive_base.into())?;
-        validate(upload_base.into())?;
-        Ok(Self::from_base(drive_base))
+        let upload_base = validate(upload_base.into())?;
+        let mut client = Self::from_base(drive_base);
+        client.upload_base = upload_base;
+        Ok(client)
     }
 
     /// Overrides positive request limits for tests only.
@@ -320,9 +325,13 @@ impl GoogleDriveClient {
             .header(header::AUTHORIZATION, authorization)
             .timeout(self.limits.request_timeout);
         if let Some(body) = body {
-            request = request
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(body);
+            request = request.body(body);
+            if !extra
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+            {
+                request = request.header(header::CONTENT_TYPE, "application/json");
+            }
         }
         for (key, value) in extra {
             request = request.header(*key, value);
