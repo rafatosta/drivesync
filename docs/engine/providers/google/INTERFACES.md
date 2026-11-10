@@ -10,7 +10,7 @@
 
 ## Execução síncrona e assíncrona
 
-**Decisão aprovada (substitui a lacuna anterior):** toda operação que aguarda HTTP ou transfere bytes é `async fn`, executada sobre `reqwest` assíncrono e Tokio; os métodos dos blocos de assinatura abaixo escritos como `fn` são a forma conceitual e devem ser lidos como `async fn` (neste grupo, só `files_get` está implementado e escrito assim). Funções puras (construção de parâmetros, serialização/decodificação e tradução de erros) permanecem síncronas. Esta decisão **não** define política de concorrência, número de workers, retry, agendamento nem o tipo concreto de `GoogleByteStream` (hoje conceitual; continua pendente para o grupo de transferências).
+**Implementado:** toda operação que aguarda HTTP ou transfere bytes usa `async fn`, com `reqwest` assíncrono e Tokio. A leitura de configuração também é assíncrona. Funções puras (parâmetros, serialização, tradução de erros e `authorization_request`) permanecem síncronas. Os blocos conceituais com `fn` abaixo devem ser lidos dessa forma. Os 15 traits públicos usam futures `Send` equivalentes às chamadas assíncronas, e `GoogleDriveClient` implementa todos eles. Não há política global de concorrência, workers, retry ou agendamento. O stream concreto está descrito na seção 9.8.
 
 Não modificar automaticamente os 59 métodos REST, 9 OAuth/OIDC e 10 complementares para um único `trait` ou protocolo artificial. Manter argumentos, semântica, tipos e contratos específicos da API Google; ajustar apenas a estratégia efetiva de execução e streaming quando validada.
 
@@ -32,7 +32,7 @@ O módulo **não** cria `GoogleProviderStatus`, consulta `status()` global, call
 
 ```rust
 pub type GoogleResult<T> = Result<T, GoogleApiFailure>;
-pub type GoogleByteStream = Box<dyn std::io::Read + Send>;
+pub struct GoogleByteStream { /* encapsulated asynchronous HTTP body */ }
 
 pub struct FileId(pub String);
 pub struct DriveId(pub String);
@@ -101,7 +101,7 @@ pub struct GoogleApiFailure {
 | Atualização | Objetos `*Write` distinguem **não alterar** e **limpar** um campo |
 | Lista | Paginação explícita, não inferir completude de uma única página |
 | Tipos Google | Serialização JSON, parâmetros HTTP e URLs ficam encapsulados |
-| Fluxos | `GoogleByteStream` é assinatura conceitual; I/O async poderá ser escolhido na validação técnica |
+| Fluxos | `GoogleByteStream` expõe leitura incremental assíncrona com erros tipados (seção 9.8) |
 | Resultados | Nenhuma resposta parcial se converte em sucesso final |
 | Erros | Categorias sanitizadas; sem credenciais, tokens e corpo HTTP privado |
 
@@ -2282,6 +2282,7 @@ pub struct GoogleByteRange {
 }
 
 pub struct GoogleDownloadStream {
+    pub http_status: u16,
     pub body: GoogleByteStream,
     pub content_length: Option<u64>,
     pub content_range: Option<String>,
@@ -2377,7 +2378,7 @@ A sessão é enviada por requisição, sem credenciais persistidas no cliente.
 | `FileGetOptions` | Adicionados `includeLabels` e `includePermissionsForView` (parâmetros oficiais de `files.get`); `supportsTeamDrives` é obsoleto e não é exposto |
 | `GoogleDownloadRestrictions` | O campo oficial é `effectiveDownloadRestrictionWithContext`, não `effectiveDownloadRestriction` |
 | `GoogleLabel.name` | Inexistente no recurso `Label` oficial; removido |
-| `GoogleFile`, `GoogleFileCapabilities`, `GoogleImageMediaMetadata`, `GoogleDecryptionMetadata`, `GooglePermission` | **Decisão pendente:** o Discovery possui campos adicionais (ex.: `trashingUser`, `viewedByMe`, `exportLinks`, `canTrash`, `canModifyContent`); decidir quais fazem parte do contrato antes de GREEN dos grupos que os consumam |
+| `GoogleFile`, `GoogleFileCapabilities`, `GoogleImageMediaMetadata`, `GoogleDecryptionMetadata`, `GooglePermission` | **Projeção implementada:** todos os campos declarados neste contrato estão tipados. O Discovery também possui campos adicionais (ex.: `trashingUser`, `viewedByMe`, `exportLinks`, `canTrash`, `canModifyContent`), que não integram esta projeção pública. Sua inclusão futura exige ampliar contrato e testes; não se afirma cobertura integral dos schemas Google |
 | `files_get` com `acknowledgeAbuse` | **Decidido:** o parâmetro só é válido com `alt=media`; foi removido de `FileGetOptions` e nunca é enviado em consultas de metadados. Pertence às operações de download (grupo de transferências) |
 | Execução | **Decidido:** I/O é `async` (reqwest + Tokio); sem política de concorrência |
 | `Retry-After` | **Decidido:** representado uma vez em `GoogleApiFailure`; `RateLimited` sem dados |
