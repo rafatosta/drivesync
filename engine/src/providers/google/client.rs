@@ -212,3 +212,156 @@ fn transport_failure(error: reqwest::Error) -> GoogleApiFailure {
         None,
     )
 }
+
+/// Creates a sanitized local input failure.
+pub(super) fn invalid_argument() -> GoogleApiFailure {
+    GoogleApiFailure::new(E::InvalidArgument, None)
+}
+
+/// Converts endpoint-specific options, omitting unsupported shared fields.
+pub(super) fn query_for<T: serde::Serialize>(
+    options: &T,
+    allowed: &[&str],
+) -> GoogleResult<Vec<(String, String)>> {
+    let value = serde_json::to_value(options).map_err(|_| invalid_argument())?;
+    let mut query = Vec::new();
+    if let Some(object) = value.as_object() {
+        for (key, value) in object {
+            if value.is_null() || !allowed.contains(&key.as_str()) {
+                continue;
+            }
+            let text = match value {
+                serde_json::Value::String(value) => value.clone(),
+                serde_json::Value::Array(values) => values
+                    .iter()
+                    .map(|v| v.as_str().ok_or_else(invalid_argument))
+                    .collect::<GoogleResult<Vec<_>>>()?
+                    .join(","),
+                serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+                _ => return Err(invalid_argument()),
+            };
+            query.push((key.clone(), text));
+        }
+    }
+    Ok(query)
+}
+
+/// Decodes only complete JSON objects, without exposing parser diagnostics.
+pub(super) fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> GoogleResult<T> {
+    if body.iter().copied().find(|b| !b.is_ascii_whitespace()) != Some(b'{') {
+        return Err(GoogleApiFailure::new(E::InvalidResponse, None));
+    }
+    serde_json::from_slice(body).map_err(|_| GoogleApiFailure::new(E::InvalidResponse, None))
+}
+
+impl GoogleDriveClient {
+    /// Executes one bounded REST call. The method determines its expected status;
+    /// mutations are never retried and a lost response leaves effects uncertain.
+    pub(super) async fn rest(
+        &self,
+        session: &GoogleSession,
+        method: reqwest::Method,
+        segments: &[&str],
+        suffix: &str,
+        query: Vec<(String, String)>,
+        body: Option<Vec<u8>>,
+    ) -> GoogleResult<Vec<u8>> {
+        let expected = if method == reqwest::Method::DELETE {
+            204
+        } else {
+            200
+        };
+        let mut url = self.drive_base.clone();
+        {
+            let mut path = url.path_segments_mut().map_err(|_| invalid_argument())?;
+            path.pop_if_empty();
+            for segment in segments {
+                if matches!(*segment, "" | "." | "..") {
+                    return Err(invalid_argument());
+                }
+                path.push(segment);
+            }
+        }
+        if !suffix.is_empty() {
+            url.set_path(&format!("{}{suffix}", url.path()));
+        }
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query);
+        }
+        let response = self.send(session, method, url, body, &[]).await?;
+        self.response_body(response, expected).await
+    }
+
+    /// Adds credentials to this request only; no URL or raw error is propagated.
+    pub(super) async fn send(
+        &self,
+        session: &GoogleSession,
+        method: reqwest::Method,
+        url: Url,
+        body: Option<Vec<u8>>,
+        extra: &[(&str, String)],
+    ) -> GoogleResult<reqwest::Response> {
+        if session.access_token.is_empty() {
+            return Err(GoogleApiFailure::new(E::AuthenticationRequired, None));
+        }
+        let mut authorization =
+            header::HeaderValue::from_str(&format!("Bearer {}", session.access_token))
+                .map_err(|_| GoogleApiFailure::new(E::AuthenticationRequired, None))?;
+        authorization.set_sensitive(true);
+        let mut request = self
+            .http
+            .as_ref()
+            .map_err(Clone::clone)?
+            .request(method, url)
+            .header(header::AUTHORIZATION, authorization)
+            .timeout(self.limits.request_timeout);
+        if let Some(body) = body {
+            request = request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body);
+        }
+        for (key, value) in extra {
+            request = request.header(*key, value);
+        }
+        request.send().await.map_err(transport_failure)
+    }
+
+    /// Bounded response reading also applies to errors and replies without length.
+    pub(super) async fn response_body(
+        &self,
+        mut response: reqwest::Response,
+        expected: u16,
+    ) -> GoogleResult<Vec<u8>> {
+        let status = response.status().as_u16();
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let now = SystemTime::now();
+        let failure = || failure_from_response(status, retry_after.as_deref(), &[], now);
+        if status != expected && !(400..=599).contains(&status) {
+            return Err(failure());
+        }
+        let limit = self.limits.max_metadata_response_bytes;
+        if response.content_length().is_some_and(|n| n > limit as u64) {
+            return Err(failure());
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(transport_failure)? {
+            if chunk.len() > limit - body.len() {
+                return Err(failure());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if status != expected {
+            return Err(failure_from_response(
+                status,
+                retry_after.as_deref(),
+                &body,
+                now,
+            ));
+        }
+        Ok(body)
+    }
+}

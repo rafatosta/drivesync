@@ -2,5 +2,6 @@
 
 mod google_provider {
     pub mod files;
+    pub mod reads;
     pub mod support;
 }
