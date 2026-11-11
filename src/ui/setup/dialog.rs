@@ -12,6 +12,7 @@ pub(super) enum Event {
     Provider(ProviderId, bool),
     Back,
     Continue,
+    Finish,
     Connect,
     Copy,
     ChooseLocal,
@@ -142,6 +143,8 @@ impl SetupDialog {
             cb(Event::Provider(id, selected))
         }));
         let cb = callback.clone();
+        self.review.on_finish(move || cb(Event::Finish));
+        let cb = callback.clone();
         self.back.connect_clicked(move |_| cb(Event::Back));
         let cb = callback.clone();
         self.next.connect_clicked(move |_| cb(Event::Continue));
@@ -210,6 +213,7 @@ impl SetupDialog {
             account.unwrap_or(""),
             path.as_deref().unwrap_or(""),
             remote.as_deref().unwrap_or(""),
+            state.can_finish(),
         );
     }
     pub fn copy_authorization_url(&self, url: &str) {

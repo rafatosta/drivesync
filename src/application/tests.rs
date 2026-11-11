@@ -56,7 +56,14 @@ fn account_only_layout_and_initial_name_editor() {
         created_at: Timestamp { unix_millis: 0 },
         updated_at: Timestamp { unix_millis: 0 },
     };
-    let page = crate::ui::dashboard::build(
+    let dashboard = crate::ui::dashboard::build();
+    assert!(find(dashboard.upcast_ref(), "dashboard-content")
+        .unwrap()
+        .first_child()
+        .is_none());
+    assert!(find(dashboard.upcast_ref(), "account-name-editor").is_none());
+    capture(&window, &dashboard, "dashboard-empty");
+    let page = crate::ui::preferences::accounts::build(
         &context,
         vec![account.clone()],
         &nav,
@@ -82,8 +89,14 @@ fn account_only_layout_and_initial_name_editor() {
     ] {
         assert!(find(page.upcast_ref(), removed).is_none());
     }
-    let page =
-        crate::ui::dashboard::build(&context, vec![account.clone()], &nav, &toasts, None, false);
+    let page = crate::ui::preferences::accounts::build(
+        &context,
+        vec![account.clone()],
+        &nav,
+        &toasts,
+        None,
+        false,
+    );
     assert!(!find(page.upcast_ref(), "account-name-editor")
         .unwrap()
         .is_visible());

@@ -22,7 +22,9 @@ use std::{
 pub(super) struct Controller {
     context: Context,
     // Retain routing infrastructure while its view is detached from the overlay.
-    _navigation: adw::NavigationView,
+    navigation: adw::NavigationView,
+    toasts: adw::ToastOverlay,
+    finishing: Cell<bool>,
     providers: Vec<RegisteredProvider>,
     state: RefCell<SetupState>,
     provisional_accounts: RefCell<BTreeSet<AccountId>>,
@@ -74,7 +76,9 @@ impl Controller {
         }
         let controller = Rc::new(Self {
             context: context.clone(),
-            _navigation: navigation.clone(),
+            navigation: navigation.clone(),
+            toasts: toasts.clone(),
+            finishing: Cell::new(false),
             providers,
             state: RefCell::new(state),
             provisional_accounts,
@@ -167,6 +171,10 @@ impl Controller {
                     }
                     Step::Review => (),
                 }
+            }
+            Event::Finish => {
+                self.finish_setup();
+                return;
             }
             Event::Connect => {
                 self.connect();
@@ -267,6 +275,10 @@ impl Controller {
     }
     /// Normal close and app Quit wait for cancellation and secure local logout.
     fn request_close(self: &Rc<Self>) {
+        if self.finishing.get() {
+            self.state.borrow_mut().closing = true;
+            return;
+        }
         {
             let mut state = self.state.borrow_mut();
             if state.closed || state.closing {
@@ -307,6 +319,7 @@ impl Controller {
     }
     fn maybe_cleanup(self: &Rc<Self>) {
         if !self.state.borrow().closing
+            || self.finishing.get()
             || self.state.borrow().signing_in
             || self.cleanup_running.replace(true)
         {
@@ -323,8 +336,15 @@ impl Controller {
                 {
                     Ok(result) => {
                         for account in result.accounts {
-                            if !setup::validate_configuration(&account).await.is_complete() {
-                                owner.provisional_accounts.borrow_mut().insert(account.id);
+                            match crate::services::configuration::load(&account.id).await {
+                                Ok(None) => {
+                                    owner.provisional_accounts.borrow_mut().insert(account.id);
+                                }
+                                Ok(Some(_)) => (),
+                                Err(_) => {
+                                    owner.cleanup_failed(gettext("Saved configuration could not be read. Your account has been preserved."));
+                                    return;
+                                }
                             }
                         }
                     }
@@ -441,6 +461,9 @@ impl Controller {
                 }
                 Err(error) => Err(error),
             };
+            if owner.preserve_completed_account(&result).await {
+                return;
+            }
             owner.finish_connection(result, generation);
             if owner.state.borrow().closing {
                 owner.maybe_cleanup();
@@ -499,6 +522,24 @@ impl Controller {
         owner.remote_fixture.set(true);
         owner.render();
         window.present();
+        window
+    }
+    #[cfg(test)]
+    pub(super) fn with_completed_account(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Account,
+    ) -> gtk::Window {
+        let (window, owner) = Self::build(context, navigation, toasts, None);
+        window.present();
+        gtk::glib::spawn_future_local(async move {
+            let result = Ok(drivesync_engine::FinishGoogleSignInResult {
+                account,
+                created: false,
+            });
+            assert!(owner.preserve_completed_account(&result).await);
+        });
         window
     }
     #[cfg(test)]
@@ -565,7 +606,7 @@ impl Controller {
         let owner = Rc::downgrade(self);
         let task = gtk::glib::spawn_future_local(async move {
             let result =
-                super::remote_folders::EngineFolderSource::open(engine, account.id.clone()).await;
+                crate::ui::components::remote_folder_picker::engine_source::EngineFolderSource::open(engine, account.id.clone()).await;
             let Some(owner) = owner.upgrade() else {
                 return;
             };
@@ -591,7 +632,7 @@ impl Controller {
                 Err(error) => {
                     let mut state = owner.state.borrow_mut();
                     state.busy = false;
-                    if super::remote_folders::needs_authorization(&error) {
+                    if crate::ui::components::remote_folder_picker::engine_source::needs_authorization(&error) {
                         state.require_remote_authorization();
                     } else {
                         state.feedback = crate::core::messages::engine_error(&error);
@@ -704,6 +745,176 @@ impl Controller {
             owner.state.borrow_mut().busy = false;
             if !owner.state.borrow().closed && !owner.state.borrow().closing {
                 owner.render();
+            }
+        });
+    }
+    /// Existing completed identities must never become provisional through Add Account.
+    async fn preserve_completed_account(
+        self: &Rc<Self>,
+        result: &drivesync_engine::EngineResult<drivesync_engine::FinishGoogleSignInResult>,
+    ) -> bool {
+        let Ok(result) = result else {
+            return false;
+        };
+        let saved = crate::services::configuration::load(&result.account.id).await;
+        if matches!(saved, Ok(None)) {
+            return false;
+        }
+        let close = self.state.borrow().closing;
+        self.provisional_accounts
+            .borrow_mut()
+            .remove(&result.account.id);
+        self.state.borrow_mut().closed = true;
+        self.state.borrow_mut().signing_in = false;
+        crate::application::navigation::show_dashboard(
+            &self.context,
+            &self.navigation,
+            &self.toasts,
+        );
+        if saved.is_err() {
+            crate::application::navigation::reload_accounts(
+                &self.context,
+                &self.navigation,
+                &self.toasts,
+                None,
+            );
+        } else {
+            self.toasts.add_toast(adw::Toast::new(&gettext(
+                "This account is already configured. Change its settings in Preferences.",
+            )));
+        }
+        if close {
+            if let Some(window) = self.view.window() {
+                window.close();
+            }
+        }
+        true
+    }
+    /// Clears abandoned registrations while protecting every completed account.
+    async fn cleanup_other_accounts(
+        &self,
+        engine: &Engine,
+        selected: &AccountId,
+    ) -> Result<(), String> {
+        let accounts = engine
+            .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+            .await
+            .map_err(|e| crate::core::messages::engine_error(&e))?;
+        for account in accounts.accounts {
+            if &account.id == selected {
+                continue;
+            }
+            match crate::services::configuration::load(&account.id).await {
+                Ok(Some(_)) => (),
+                Ok(None) => {
+                    if !accounts::disconnect(engine, account.id.clone())
+                        .await
+                        .map_err(|e| crate::core::messages::engine_error(&e))?
+                    {
+                        return Err(gettext(
+                            "The saved setup could not be discarded. Try again.",
+                        ));
+                    }
+                    self.provisional_accounts.borrow_mut().remove(&account.id);
+                }
+                Err(_) => {
+                    return Err(gettext(
+                        "Saved configuration could not be read. Your account has been preserved.",
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
+    fn finish_setup(self: &Rc<Self>) {
+        if !self.state.borrow().can_finish() {
+            return;
+        }
+        let Some(engine) = self.engine() else {
+            self.state.borrow_mut().feedback =
+                gettext("The account service is unavailable. Try again.");
+            self.render();
+            return;
+        };
+        let value = {
+            let state = self.state.borrow();
+            crate::services::configuration::Configuration {
+                account_id: state.account.as_ref().unwrap().id.clone(),
+                local_uri: state.draft.local_uri.clone().unwrap(),
+                remote_id: state.remote_folder.as_ref().unwrap().folder.id.0.clone(),
+                remote_path: state.remote_path().unwrap(),
+            }
+        };
+        self.finishing.set(true);
+        self.state.borrow_mut().busy = true;
+        self.state.borrow_mut().feedback = gettext("Checking and saving configuration…");
+        self.render();
+        let owner = self.clone();
+        gtk::glib::spawn_future_local(async move {
+            let cleanup = owner
+                .cleanup_other_accounts(&engine, &value.account_id)
+                .await;
+            if let Err(message) = cleanup {
+                owner.finishing.set(false);
+                owner.state.borrow_mut().busy = false;
+                owner.state.borrow_mut().feedback = message;
+                if owner.state.borrow().closing {
+                    owner.maybe_cleanup();
+                } else {
+                    owner.render();
+                }
+                return;
+            }
+
+            #[cfg(test)]
+            let result = if owner.remote_fixture.get() {
+                match setup::check_local_folder(&value.local_uri).await {
+                    Ok(()) => {
+                        crate::services::configuration::seed_for_test(&value).await;
+                        Ok(value)
+                    }
+                    Err(_) => Err(gettext(
+                        "The selected folder is unavailable. Choose another folder.",
+                    )),
+                }
+            } else {
+                crate::services::configuration::save_checked(&engine, value).await
+            };
+            #[cfg(not(test))]
+            let result = crate::services::configuration::save_checked(&engine, value).await;
+            owner.finishing.set(false);
+            match result {
+                Ok(value) => {
+                    let close = owner.state.borrow().closing;
+                    owner
+                        .provisional_accounts
+                        .borrow_mut()
+                        .remove(&value.account_id);
+                    owner.state.borrow_mut().closed = true;
+                    owner
+                        .context
+                        .navigation_generation
+                        .set(owner.context.navigation_generation.get().wrapping_add(1));
+                    crate::application::navigation::show_dashboard(
+                        &owner.context,
+                        &owner.navigation,
+                        &owner.toasts,
+                    );
+                    if close {
+                        if let Some(window) = owner.view.window() {
+                            window.close();
+                        }
+                    }
+                }
+                Err(message) => {
+                    owner.state.borrow_mut().busy = false;
+                    owner.state.borrow_mut().feedback = message;
+                    if owner.state.borrow().closing {
+                        owner.maybe_cleanup();
+                    } else {
+                        owner.render();
+                    }
+                }
             }
         });
     }

@@ -8,12 +8,14 @@ pub(crate) fn install(
     app: &adw::Application,
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
+    context: &crate::application::Context,
 ) {
     adw::StyleManager::default()
         .set_color_scheme(super::appearance(Preferences::load().color_scheme));
     let action = gtk::gio::SimpleAction::new("preferences", None);
     let weak_navigation = navigation.downgrade();
     let weak_toasts = toasts.downgrade();
+    let context = context.clone();
     action.connect_activate(move |_, _| {
         let (Some(nav), Some(toasts)) = (weak_navigation.upgrade(), weak_toasts.upgrade()) else {
             return;
@@ -26,14 +28,22 @@ pub(crate) fn install(
                 return;
             }
         }
-        nav.push(&build(&nav, &toasts));
+        nav.push(&build_with_context(&context, &nav, &toasts));
     });
     app.add_action(&action);
     app.set_accels_for_action("app.preferences", &["<Primary>comma"]);
 }
 
 /// Builds the preferences submenu and its content inside the main navigation.
+#[cfg(test)]
 pub(crate) fn build(
+    navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+) -> adw::NavigationPage {
+    build_with_context(&crate::application::Context::default(), navigation, toasts)
+}
+fn build_with_context(
+    context: &crate::application::Context,
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
 ) -> adw::NavigationPage {
@@ -146,7 +156,41 @@ pub(crate) fn build(
     background_page.add(&background);
     pages.add_named(&background_page, Some("background"));
 
+    pages.add_named(&super::configuration::build(context), Some("configuration"));
+    let accounts_container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    accounts_container.set_widget_name("preferences-accounts");
+    pages.add_named(&accounts_container, Some("accounts"));
+    if let Some(engine) = context.engine.borrow().clone() {
+        let container = accounts_container.downgrade();
+        let owner = context.clone();
+        let nav = navigation.downgrade();
+        let overlay = toasts.downgrade();
+        gtk::glib::spawn_future_local(async move {
+            let result = engine
+                .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+                .await;
+            if let (Some(container), Some(nav), Some(toasts)) =
+                (container.upgrade(), nav.upgrade(), overlay.upgrade())
+            {
+                match result {
+                    Ok(result) => container.append(&super::accounts::build(
+                        &owner,
+                        result.accounts,
+                        &nav,
+                        &toasts,
+                        None,
+                        false,
+                    )),
+                    Err(error) => container.append(&gtk::Label::new(Some(
+                        &crate::core::messages::engine_error(&error),
+                    ))),
+                }
+            }
+        });
+    }
     let sections = [
+        ("configuration", "Configuration", "folder-symbolic", "account local remote folder configuration"),
+        ("accounts", "Accounts", "avatar-default-symbolic", "accounts name sign in authorization disconnect"),
         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
         ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed "),
     ];

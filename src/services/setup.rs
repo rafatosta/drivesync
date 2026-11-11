@@ -16,8 +16,8 @@ pub(crate) fn list_providers() -> Vec<RegisteredProvider> {
 pub(crate) struct SetupDraft {
     pub local_uri: Option<String>,
 }
+#[cfg(test)]
 impl SetupDraft {
-    #[cfg(test)]
     fn encode(&self) -> glib::GString {
         let file = glib::KeyFile::new();
         if let Some(uri) = &self.local_uri {
@@ -44,6 +44,7 @@ fn draft_file(id: &AccountId) -> gio::File {
     )
 }
 /// Reads an existing draft. Missing files are normal; malformed files are errors.
+#[cfg(test)]
 pub(crate) async fn load_draft(id: &AccountId) -> Result<SetupDraft, glib::Error> {
     match draft_file(id).load_contents_future().await {
         Ok((bytes, _)) => {
@@ -118,6 +119,17 @@ pub(crate) fn display_path(uri: &str) -> String {
         .map(|p: PathBuf| p.display().to_string())
         .unwrap_or_else(|| uri.into())
 }
+/// Removes only this account's setup draft, without traversing user directories.
+pub(crate) async fn discard_draft(account_id: &AccountId) -> bool {
+    match draft_file(account_id)
+        .delete_future(glib::Priority::DEFAULT)
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => error.matches(gio::IOErrorEnum::NotFound),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,64 +188,5 @@ mod tests {
             file.parent().unwrap().path().unwrap(),
             glib::user_config_dir().join("drivesync/setup")
         );
-    }
-}
-
-/// Result of checking one directory; absent remote support never means valid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DirectoryCheck {
-    Missing,
-    Invalid,
-    Valid,
-    Unavailable,
-}
-/// Fresh checks, never a persisted or UI-provided completion flag.
-#[derive(Clone, Debug)]
-pub(crate) struct ConfigurationValidation {
-    pub authorized: bool,
-    pub local: DirectoryCheck,
-    pub remote: DirectoryCheck,
-}
-impl ConfigurationValidation {
-    /// Both directories must be verified before routing this account to Dashboard.
-    pub fn is_complete(&self) -> bool {
-        self.authorized
-            && self.local == DirectoryCheck::Valid
-            && self.remote == DirectoryCheck::Valid
-    }
-}
-/// Revalidates local drafts and fails closed for the unavailable remote contract.
-/// This must be replaced by real remote validation when the engine owns complete
-/// synchronization configurations. Draft files cannot grant dashboard access.
-pub(crate) async fn validate_configuration(
-    account: &drivesync_engine::Account,
-) -> ConfigurationValidation {
-    let local = match load_draft(&account.id).await {
-        Ok(draft) => match draft.local_uri {
-            Some(uri) => {
-                if check_local_folder(&uri).await.is_ok() {
-                    DirectoryCheck::Valid
-                } else {
-                    DirectoryCheck::Invalid
-                }
-            }
-            None => DirectoryCheck::Missing,
-        },
-        Err(_) => DirectoryCheck::Invalid,
-    };
-    ConfigurationValidation {
-        authorized: account.state == drivesync_engine::AccountState::Connected,
-        local,
-        remote: DirectoryCheck::Unavailable,
-    }
-}
-/// Removes only this account's setup draft, without traversing user directories.
-pub(crate) async fn discard_draft(account_id: &AccountId) -> bool {
-    match draft_file(account_id)
-        .delete_future(glib::Priority::DEFAULT)
-        .await
-    {
-        Ok(()) => true,
-        Err(error) => error.matches(gio::IOErrorEnum::NotFound),
     }
 }

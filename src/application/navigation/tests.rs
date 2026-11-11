@@ -1,11 +1,10 @@
-//! Authorization and persisted drafts cannot grant dashboard access on their own.
+//! Completed configuration owns startup routing; authorization failure must not erase it.
 use super::*;
-use crate::services::setup::DirectoryCheck;
 use drivesync_engine::{AccountState, ProviderId, Timestamp};
 #[test]
-fn dashboard_requires_authorization_and_both_validated_directories() {
+fn only_completed_records_grant_dashboard_access_and_survive_reauthorization() {
     assert_eq!(initial_destination(&[]), InitialDestination::Setup);
-    let account = Account {
+    let mut account = Account {
         id: AccountId("fixture".into()),
         provider: ProviderId("google".into()),
         provider_user_id: "subject".into(),
@@ -15,37 +14,17 @@ fn dashboard_requires_authorization_and_both_validated_directories() {
         created_at: Timestamp { unix_millis: 0 },
         updated_at: Timestamp { unix_millis: 0 },
     };
-    for local in [
-        DirectoryCheck::Missing,
-        DirectoryCheck::Invalid,
-        DirectoryCheck::Valid,
-        DirectoryCheck::Unavailable,
-    ] {
-        for remote in [
-            DirectoryCheck::Missing,
-            DirectoryCheck::Invalid,
-            DirectoryCheck::Valid,
-            DirectoryCheck::Unavailable,
-        ] {
-            for authorized in [false, true] {
-                let validation = ConfigurationValidation {
-                    authorized,
-                    local,
-                    remote,
-                };
-                let expected = if authorized
-                    && local == DirectoryCheck::Valid
-                    && remote == DirectoryCheck::Valid
-                {
-                    InitialDestination::Dashboard
-                } else {
-                    InitialDestination::Setup
-                };
-                assert_eq!(
-                    initial_destination(&[(account.clone(), validation)]),
-                    expected
-                );
-            }
-        }
-    }
+    assert_eq!(
+        initial_destination(&[(account.clone(), false)]),
+        InitialDestination::Setup
+    );
+    assert_eq!(
+        initial_destination(&[(account.clone(), true)]),
+        InitialDestination::Dashboard
+    );
+    account.state = AccountState::ReauthorizationRequired;
+    assert_eq!(
+        initial_destination(&[(account, true)]),
+        InitialDestination::Dashboard
+    );
 }

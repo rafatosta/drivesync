@@ -807,3 +807,51 @@ msgstr "Conecte sua conta do Google para permitir que o DriveSync acesse seus ar
 
 msgid "You will be redirected to Google to authorize access.\nDriveSync does not store your password."
 msgstr "Você será redirecionado ao Google para autorizar o acesso.\nO DriveSync não armazena sua senha."
+
+msgid "Configuration"
+msgstr "Configuração"
+
+msgid "The configuration is incomplete."
+msgstr "A configuração está incompleta."
+
+msgid "Authorize your account before completing setup."
+msgstr "Autorize sua conta antes de concluir a configuração."
+
+msgid "The configuration could not be saved. Try again."
+msgstr "Não foi possível salvar a configuração. Tente novamente."
+
+msgid "Saved configuration could not be read. Your account has been preserved."
+msgstr "Não foi possível ler a configuração salva. Sua conta foi preservada."
+
+msgid "4 of 4 · Review configuration"
+msgstr "4 de 4 · Revisar configuração"
+
+msgid "Review configuration"
+msgstr "Revisar configuração"
+
+msgid "Finish setup"
+msgstr "Concluir configuração"
+
+msgid "Your configuration will be checked and saved. You can change it later in Preferences."
+msgstr "Sua configuração será verificada e salva. Você poderá alterá-la depois em Preferências."
+
+msgid "Checking and saving configuration…"
+msgstr "Verificando e salvando a configuração…"
+
+msgid "Loading saved configuration…"
+msgstr "Carregando a configuração salva…"
+
+msgid "No completed configuration."
+msgstr "Nenhuma configuração concluída."
+
+msgid "Changes are checked before they are saved."
+msgstr "As alterações são verificadas antes de serem salvas."
+
+msgid "Configuration saved."
+msgstr "Configuração salva."
+
+msgid "Choose a local folder"
+msgstr "Escolher uma pasta local"
+
+msgid "This account is already configured. Change its settings in Preferences."
+msgstr "Esta conta já está configurada. Altere suas configurações em Preferências."

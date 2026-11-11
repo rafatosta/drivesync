@@ -2,13 +2,9 @@
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
 
-/// Creates the native primary menu. Account connection resolves through the
-/// containing navigation view; application actions remain available on all pages.
+/// Creates the native application menu; account actions live in Preferences.
 pub(crate) fn button() -> gtk::MenuButton {
     let model = gtk::gio::Menu::new();
-    let accounts = gtk::gio::Menu::new();
-    accounts.append(Some(&gettext("Add Account…")), Some("connection.open"));
-    model.append_section(None, &accounts);
     let application = gtk::gio::Menu::new();
     application.append(Some(&gettext("Preferences")), Some("app.preferences"));
     application.append(Some(&gettext("About DriveSync")), Some("app.about"));
@@ -23,7 +19,7 @@ pub(crate) fn button() -> gtk::MenuButton {
         .build()
 }
 
-/// Creates the header shortcut for the same `connection.open` action used by the menu.
+/// Creates the Preferences-only shortcut for the `connection.open` action.
 pub(crate) fn add_account_button() -> gtk::Button {
     gtk::Button::builder()
         .icon_name("list-add-symbolic")

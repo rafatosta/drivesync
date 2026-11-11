@@ -8,7 +8,7 @@ use drivesync_engine::{
 };
 use std::{cell::Cell, rc::Rc};
 /// Account binding is immutable for the lifetime of a picker.
-pub(super) struct EngineFolderSource {
+pub(crate) struct EngineFolderSource {
     engine: Engine,
     account: AccountId,
     authorization_required: Rc<Cell<bool>>,
@@ -67,7 +67,7 @@ fn convert(folder: drivesync_engine::RemoteFolder) -> RemoteFolder {
         parent_id: folder.parent_id.map(RemoteFolderId),
     }
 }
-pub(super) fn needs_authorization(error: &EngineError) -> bool {
+pub(crate) fn needs_authorization(error: &EngineError) -> bool {
     matches!(
         error.kind,
         EngineErrorKind::RemoteFolder(RemoteFolderErrorKind::AuthorizationRequired)

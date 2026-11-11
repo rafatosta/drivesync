@@ -3,7 +3,7 @@ use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountState};
 use std::rc::Rc;
 /// User intent without references to layout widgets.
-pub(in crate::ui::dashboard) enum AccountEvent {
+pub(in crate::ui::preferences::accounts) enum AccountEvent {
     Edit,
     Cancel,
     Save(String),
@@ -11,7 +11,7 @@ pub(in crate::ui::dashboard) enum AccountEvent {
     Disconnect,
 }
 /// Owns its complete layout; outside modules receive only its root and handle.
-pub(in crate::ui::dashboard) struct AccountDetails {
+pub(in crate::ui::preferences::accounts) struct AccountDetails {
     root: gtk::ScrolledWindow,
     heading: gtk::Label,
     avatar: adw::Avatar,
@@ -150,7 +150,7 @@ impl AccountDetails {
 }
 /// Weak presentation handle permits late operations to finish after dismissal.
 #[derive(Clone)]
-pub(in crate::ui::dashboard) struct AccountDetailsHandle {
+pub(in crate::ui::preferences::accounts) struct AccountDetailsHandle {
     heading: gtk::glib::WeakRef<gtk::Label>,
     avatar: gtk::glib::WeakRef<adw::Avatar>,
     editor: gtk::glib::WeakRef<adw::PreferencesGroup>,

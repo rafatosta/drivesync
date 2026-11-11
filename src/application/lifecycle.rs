@@ -48,10 +48,11 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
             &toasts,
         ));
         let window = crate::ui::dashboard::window::build(app, &toasts);
+        let shutdown_context = context.clone();
         app.connect_shutdown(move |_| {
             if let (Some(engine), Some(id)) = (
-                context.engine.borrow().as_ref(),
-                context.pending.borrow_mut().take(),
+                shutdown_context.engine.borrow().as_ref(),
+                shutdown_context.pending.borrow_mut().take(),
             ) {
                 engine.cancel_google_sign_in(CancelGoogleSignInRequest { connection_id: id });
             }
@@ -74,7 +75,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
         background::install(app, &window);
         background::install_startup(app, &window, &toasts);
         main_menu::install(app, &window);
-        preferences::install(app, &navigation, &toasts);
+        preferences::install(app, &navigation, &toasts, &context);
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     });
     app.run()

@@ -135,7 +135,7 @@ pub(crate) fn exercise(
     );
     state.step = Step::Review;
     view.render(&state);
-    assert!(!find(dialog.upcast_ref(), "setup-start").is_sensitive());
+    assert!(find(dialog.upcast_ref(), "setup-start").is_sensitive());
     capture(dialog.upcast_ref(), "setup-review");
     assert_eq!(
         header_positions(dialog.upcast_ref(), "review"),
@@ -256,7 +256,7 @@ pub(crate) fn exercise(
             .as_deref(),
         Some("Meu Drive / Projetos")
     );
-    assert!(!find(&setup, "setup-start").is_sensitive());
+    assert!(find(&setup, "setup-start").is_sensitive());
     assert!(find_type::<adw::NavigationSplitView>(setup.upcast_ref()).is_none());
     assert_eq!(visible_windows(), 1);
     assert!(
@@ -407,6 +407,170 @@ pub(crate) fn exercise(
     capture(host.upcast_ref(), "setup-fresh-start");
     host.close();
     wait_until(|| !host.is_visible());
+
+    // Completion persists choices, mounts an empty dashboard, and survives a restart.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let app = window
+        .application()
+        .and_downcast::<adw::Application>()
+        .unwrap();
+    host.set_application(Some(&app));
+    crate::ui::preferences::install(&app, &nav, &toasts, &context);
+    crate::ui::components::connection::install_action(&context, &nav, &toasts);
+    let mut completed = account.clone();
+    completed.id = drivesync_engine::AccountId("completed-fixture".into());
+    gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::remove(&completed.id))
+        .unwrap();
+    let local_path = gtk::glib::user_data_dir().join("completion-local");
+    std::fs::create_dir_all(&local_path).unwrap();
+    let local_uri = gtk::gio::File::for_path(&local_path).uri().to_string();
+    let setup = super::controller::Controller::with_local_choice(
+        &context,
+        &nav,
+        &toasts,
+        completed.clone(),
+        local_uri.clone(),
+    );
+    find(&setup, "setup-choose-remote")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    let picker = remote_picker();
+    let select =
+        button_with_label(picker.upcast_ref(), &gettextrs::gettext("Select folder")).unwrap();
+    wait_until(|| select.is_sensitive());
+    select.emit_clicked();
+    let next = find(&setup, "setup-continue")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    wait_until(|| next.is_sensitive());
+    next.emit_clicked();
+    wait_until(|| !next.is_visible());
+    let finish = find(&setup, "setup-start")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    std::fs::remove_dir(&local_path).unwrap();
+    finish.emit_clicked();
+    wait_until(|| finish.is_sensitive());
+    assert_eq!(host.widget_name(), "drivesync-account-setup");
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&completed.id))
+        .unwrap()
+        .is_none());
+    std::fs::create_dir(&local_path).unwrap();
+    finish.emit_clicked();
+    wait_until(|| host.widget_name() == "drivesync-dashboard");
+    assert!(find(&setup, "dashboard-content").first_child().is_none());
+    assert!(!contains(setup.upcast_ref(), "setup-continue"));
+    assert_eq!(visible_windows(), 1);
+    nav.activate_action("connection.open", None).unwrap();
+    assert_eq!(host.widget_name(), "drivesync-dashboard");
+    assert!(!contains(setup.upcast_ref(), "setup-continue"));
+    capture(&setup, "dashboard-completed");
+    app.activate_action("preferences", None);
+    wait_until(|| {
+        nav.visible_page()
+            .is_some_and(|p| p.widget_name() == "drivesync-preferences")
+    });
+    assert!(contains(setup.upcast_ref(), "preferences-configuration"));
+    find(&setup, "preferences-back")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    wait_until(|| {
+        nav.visible_page()
+            .is_some_and(|p| p.widget_name() == "drivesync-dashboard")
+    });
+    assert!(find(&setup, "dashboard-content").first_child().is_none());
+    host.close();
+    wait_until(|| !host.is_visible());
+    let saved = gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&completed.id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.local_uri, local_uri);
+    let (host, nav, toasts) = new_host();
+    completed.state = drivesync_engine::AccountState::ReauthorizationRequired;
+    crate::application::navigation::show_accounts(
+        &context,
+        vec![completed.clone()],
+        &nav,
+        &toasts,
+        None,
+        false,
+    );
+    wait_until(|| {
+        nav.visible_page()
+            .is_some_and(|p| p.widget_name() == "drivesync-dashboard")
+    });
+    assert!(!contains(host.upcast_ref(), "setup-continue"));
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&completed.id))
+        .unwrap()
+        .is_some());
+    host.destroy();
+
+    let (host, nav, toasts) = new_host();
+    let existing = super::controller::Controller::with_completed_account(
+        &context,
+        &nav,
+        &toasts,
+        completed.clone(),
+    );
+    wait_until(|| host.widget_name() == "drivesync-dashboard");
+    assert!(!contains(existing.upcast_ref(), "setup-continue"));
+    assert_eq!(
+        gtk::glib::MainContext::default()
+            .block_on(crate::services::configuration::load(&completed.id))
+            .unwrap(),
+        Some(saved.clone())
+    );
+    host.close();
+    wait_until(|| !host.is_visible());
+
+    // Closing during the final commit waits without removing the completed record.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let mut closing = account.clone();
+    closing.id = drivesync_engine::AccountId("completion-close-fixture".into());
+    gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::remove(&closing.id))
+        .unwrap();
+    let setup = super::controller::Controller::with_local_choice(
+        &context,
+        &nav,
+        &toasts,
+        closing.clone(),
+        saved.local_uri.clone(),
+    );
+    find(&setup, "setup-choose-remote")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    let picker = remote_picker();
+    let select =
+        button_with_label(picker.upcast_ref(), &gettextrs::gettext("Select folder")).unwrap();
+    wait_until(|| select.is_sensitive());
+    select.emit_clicked();
+    let next = find(&setup, "setup-continue")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    wait_until(|| next.is_sensitive());
+    next.emit_clicked();
+    wait_until(|| !next.is_visible());
+    find(&setup, "setup-start")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    setup.close();
+    assert!(host.is_visible());
+    wait_until(|| !host.is_visible());
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&closing.id))
+        .unwrap()
+        .is_some());
 }
 fn new_host() -> (adw::Window, adw::NavigationView, adw::ToastOverlay) {
     let nav = adw::NavigationView::new();

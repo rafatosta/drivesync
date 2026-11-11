@@ -1,6 +1,6 @@
 //! Fresh configuration checks choose the one primary window's presentation.
 use super::Context;
-use crate::services::setup::{self, ConfigurationValidation};
+use crate::services::configuration;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId, ListAccountsRequest};
 #[derive(Debug, PartialEq, Eq)]
@@ -8,13 +8,8 @@ pub(crate) enum InitialDestination {
     Setup,
     Dashboard,
 }
-pub(crate) fn initial_destination(
-    accounts: &[(Account, ConfigurationValidation)],
-) -> InitialDestination {
-    if accounts
-        .iter()
-        .any(|(_, validation)| validation.is_complete())
-    {
+pub(crate) fn initial_destination(accounts: &[(Account, bool)]) -> InitialDestination {
+    if accounts.iter().any(|(_, completed)| *completed) {
         InitialDestination::Dashboard
     } else {
         InitialDestination::Setup
@@ -27,8 +22,8 @@ pub(crate) fn show_accounts(
     accounts: Vec<Account>,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
-    selected: Option<&AccountId>,
-    edit: bool,
+    _selected: Option<&AccountId>,
+    _edit: bool,
 ) {
     if nav.root().is_none() {
         return;
@@ -39,20 +34,26 @@ pub(crate) fn show_accounts(
     let context = context.clone();
     let navigation = nav.downgrade();
     let overlay = toasts.downgrade();
-    let selected = selected.cloned();
     gtk::glib::spawn_future_local(async move {
         let mut checked = Vec::new();
         for account in accounts {
-            let validation = setup::validate_configuration(&account).await;
-            checked.push((account, validation));
+            match configuration::load(&account.id).await {
+                Ok(saved) => checked.push((account, saved.is_some())),
+                Err(_) => {
+                    if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
+                        show_error(&context, &nav, &toasts, &gettextrs::gettext("Saved configuration could not be read. Your account has been preserved."));
+                    }
+                    return;
+                }
+            }
         }
         if context.navigation_generation.get() != generation {
             return;
         }
         // A previous process may have stopped during consent or cleanup. Never
         // resume its account or draft: remove only incomplete local registrations.
-        for (account, validation) in &checked {
-            if validation.is_complete() {
+        for (account, completed) in &checked {
+            if *completed {
                 continue;
             }
             let engine = context.engine.borrow().clone();
@@ -89,18 +90,7 @@ pub(crate) fn show_accounts(
                 crate::ui::setup::mount(&context, &nav, &toasts, None);
             }
             InitialDestination::Dashboard => {
-                let ready = checked
-                    .into_iter()
-                    .filter_map(|(account, validation)| validation.is_complete().then_some(account))
-                    .collect();
-                nav.replace(&[crate::ui::dashboard::build(
-                    &context,
-                    ready,
-                    &nav,
-                    &toasts,
-                    selected.as_ref(),
-                    edit,
-                )]);
+                show_dashboard(&context, &nav, &toasts);
             }
         }
     });
@@ -135,7 +125,12 @@ fn show_error(
         }
     });
     status.set_child(Some(&retry));
-    nav.replace(&[adw::NavigationPage::new(&status, "DriveSync")]);
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.pack_end(&crate::ui::components::main_menu::button());
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&status));
+    nav.replace(&[adw::NavigationPage::new(&toolbar, "DriveSync")]);
 }
 /// Shared reload for completed dashboard account actions. Setup keeps its
 /// routing view detached and owns its own logout; it cannot navigate by closing.
@@ -197,3 +192,18 @@ pub(crate) fn connected(
 }
 #[cfg(test)]
 mod tests;
+
+/// Mounts the completed destination in the same primary window, without a setup
+/// history entry. Saved configuration is editable only through Preferences.
+pub(crate) fn show_dashboard(
+    _context: &Context,
+    nav: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+) {
+    toasts.set_child(Some(nav));
+    if let Some(window) = nav.root().and_downcast::<gtk::Window>() {
+        window.set_widget_name("drivesync-dashboard");
+        window.set_title(Some("DriveSync"));
+    }
+    nav.replace(&[crate::ui::dashboard::build()]);
+}

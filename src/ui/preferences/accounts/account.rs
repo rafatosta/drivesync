@@ -12,7 +12,7 @@ pub(super) fn build(
     toasts: &adw::ToastOverlay,
     edit: bool,
 ) -> gtk::ScrolledWindow {
-    let view = super::super::components::AccountDetails::new(account, edit);
-    super::super::controller::bind_account(&view, account, context, nav, toasts, updated);
+    let view = super::components::AccountDetails::new(account, edit);
+    super::controller::bind_account(&view, account, context, nav, toasts, updated);
     view.widget().clone()
 }

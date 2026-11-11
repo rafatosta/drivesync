@@ -55,5 +55,6 @@ pub(crate) async fn disconnect(engine: &Engine, account_id: AccountId) -> Engine
             account_id: account_id.clone(),
         })
         .await?;
-    Ok(super::setup::discard_draft(&account_id).await)
+    let removed = super::configuration::remove(&account_id).await.is_ok();
+    Ok(super::setup::discard_draft(&account_id).await && removed)
 }

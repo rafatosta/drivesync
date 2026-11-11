@@ -5,6 +5,7 @@ use gettextrs::gettext;
 pub(in crate::ui::setup) struct ReviewPage {
     root: gtk::Box,
     summary: Summary,
+    finish: gtk::Button,
 }
 impl ReviewPage {
     pub fn new() -> Self {
@@ -31,27 +32,34 @@ impl ReviewPage {
         let header = super::PageHeader::new(
             "review",
             &illustration,
-            &gettext("Start synchronization"),
+            &gettext("Review configuration"),
             &gettext("Review your connected account and selected folder."),
         );
         root.append(header.widget());
         let summary = Summary::new();
         root.append(summary.widget());
-        root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. Folder choices are kept only while setup is open.")).wrap(true).build());
+        root.append(&gtk::Label::builder().label(gettext("Your configuration will be checked and saved. You can change it later in Preferences.")).wrap(true).build());
         let start = gtk::Button::builder()
-            .label(gettext("Start synchronization"))
+            .label(gettext("Finish setup"))
             .sensitive(false)
-            .tooltip_text(gettext("Synchronization is not available yet."))
             .css_classes(["suggested-action"])
             .build();
         start.set_widget_name("setup-start");
         root.append(&start);
-        Self { root, summary }
+        Self {
+            root,
+            summary,
+            finish: start,
+        }
+    }
+    pub fn on_finish(&self, callback: impl Fn() + 'static) {
+        self.finish.connect_clicked(move |_| callback());
     }
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {
         &self.root
     }
-    pub fn update(&self, provider: &str, account: &str, local: &str, remote: &str) {
+    pub fn update(&self, provider: &str, account: &str, local: &str, remote: &str, enabled: bool) {
         self.summary.set_details(provider, account, local, remote);
+        self.finish.set_sensitive(enabled);
     }
 }

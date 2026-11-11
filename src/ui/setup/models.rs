@@ -25,7 +25,7 @@ impl Step {
             Self::Provider => gettextrs::gettext("1 of 4 · Choose provider"),
             Self::Connection => gettextrs::gettext("2 of 4 · Connect account"),
             Self::Synchronization => gettextrs::gettext("3 of 4 · Configure synchronization"),
-            Self::Review => gettextrs::gettext("4 of 4 · Start synchronization"),
+            Self::Review => gettextrs::gettext("4 of 4 · Review configuration"),
         }
     }
 }
@@ -130,6 +130,15 @@ impl SetupState {
                 .join(" / ")
         })
     }
+    pub fn can_finish(&self) -> bool {
+        self.step == Step::Review
+            && !self.busy
+            && !self.closed
+            && !self.closing
+            && self.authorized()
+            && self.draft.local_uri.is_some()
+            && self.remote_folder.is_some()
+    }
     pub fn authorized(&self) -> bool {
         !self.remote_authorization_required
             && self.account.as_ref().is_some_and(|account| {
@@ -210,8 +219,14 @@ mod tests {
             path: vec![root],
         });
         assert!(state.can_continue());
+        state.step = Step::Review;
+        assert!(state.can_finish());
+        state.busy = true;
+        assert!(!state.can_finish());
+        state.busy = false;
         state.closed = true;
         assert!(!state.can_continue());
+        assert!(!state.can_finish());
     }
     #[test]
     fn busy_operations_block_navigation_and_back_keeps_choices() {

@@ -1,7 +1,7 @@
 # Capturas da interface
 
 O teste `account_only_layout_and_initial_name_editor` monta widgets reais com
-contas fictícias. Verifica o Dashboard e seu editor separadamente, preferências e
+contas fictícias. Verifica o dashboard vazio, a edição de contas em Preferências e
 o Setup ocupando uma única janela. Não inicia OAuth real, keyring ou autostart.
 Os testes ficam em `src/application/tests.rs` e `src/ui/setup/tests.rs`.
 
@@ -25,16 +25,16 @@ dbus-run-session -- cargo test -p drivesync --bin drivesync \
 
 O diretório de saída deve estar acessível ao Flatpak. São geradas:
 
-- `new-account.png` e `preferences.png`;
+- `dashboard-empty.png`, `dashboard-completed.png`, `new-account.png` (editor em Preferências) e `preferences.png`;
 - `setup-provider.png` e `setup-connection.png`;
 - `setup-synchronization.png` e `setup-review.png`;
 - `setup-review-small-dark.png`;
 - `setup-single-window-review.png` e `setup-fresh-start.png`.
 
 Sem a variável de saída, o teste verifica os widgets sem salvar as imagens.
-A seleção remota ainda está indisponível e o botão de iniciar sincronização fica
-bloqueado. Não há captura de tela intermediária ou de contas pendentes: essas
-telas foram removidas. As escolhas atuais são mantidas em memória e descartadas
+A conclusão valida e salva as escolhas e abre o dashboard vazio. O fixture usa
+contas e pastas fictícias; não inicia sincronização nem consentimento real. Não há captura de tela intermediária ou de contas pendentes: essas
+telas foram removidas. As escolhas incompletas são mantidas em memória e descartadas
 junto com a conexão provisória ao fechar sem concluir.
 
 O teste cria arquivos legados somente no perfil temporário para verificar sua

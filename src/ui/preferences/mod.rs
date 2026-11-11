@@ -12,3 +12,6 @@ fn appearance(scheme: ColorScheme) -> adw::ColorScheme {
         ColorScheme::Dark => adw::ColorScheme::ForceDark,
     }
 }
+
+pub(crate) mod accounts;
+mod configuration;
