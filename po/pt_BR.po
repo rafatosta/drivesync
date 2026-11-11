@@ -652,9 +652,6 @@ msgstr "Seleção de pasta salva como rascunho."
 msgid "The setup draft could not be saved. Try again."
 msgstr "Não foi possível salvar o rascunho da configuração. Tente novamente."
 
-msgid "Complete authorization in your browser, then return here."
-msgstr "Conclua a autorização no navegador e volte para cá."
-
 msgid "4 of 4 · Start synchronization"
 msgstr "4 de 4 · Iniciar sincronização"
 

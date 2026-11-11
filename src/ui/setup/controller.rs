@@ -415,8 +415,7 @@ impl Controller {
                         *owner.context.pending.borrow_mut() = Some(id.clone());
                         owner.state.borrow_mut().authorization_url =
                             Some(begin.authorization_url.clone());
-                        owner.state.borrow_mut().feedback =
-                            gettext("Complete authorization in your browser, then return here.");
+                        owner.state.borrow_mut().feedback.clear();
                         owner.render();
                         let launching = Rc::downgrade(&owner);
                         gtk::glib::spawn_future_local(async move {

@@ -36,8 +36,6 @@ impl ConnectionPage {
             .halign(gtk::Align::Center)
             .width_request(260)
             .height_request(44)
-            .margin_top(12)
-            .margin_bottom(12)
             .build();
         connect.set_widget_name("setup-connect");
         connect.add_css_class("setup-google-sign-in");
@@ -72,9 +70,13 @@ impl ConnectionPage {
         root.append(&description);
         root.append(&identity);
         root.append(&spinner);
-        root.append(&connect);
+        let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        actions.set_margin_top(12);
+        actions.set_margin_bottom(12);
+        actions.append(&connect);
+        actions.append(&copy);
+        root.append(&actions);
         root.append(&security);
-        root.append(&copy);
         Self {
             root,
             icon,

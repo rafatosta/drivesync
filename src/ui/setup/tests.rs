@@ -84,6 +84,7 @@ pub(crate) fn exercise(
             .as_str(),
         gettextrs::gettext("Cancel sign-in").as_str()
     );
+    capture(dialog.upcast_ref(), "setup-connection-waiting");
     state.signing_in = false;
     state.busy = false;
     state.authorization_url = None;
