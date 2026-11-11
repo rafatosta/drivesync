@@ -78,7 +78,7 @@ outros componentes. Estilos específicos permanecem no componente correspondente
 
 ## As quatro páginas
 
-As etapas compartilham o tamanho mínimo de 680 × 620 pixels lógicos. A janela
+As etapas compartilham o tamanho mínimo de 760 × 720 pixels lógicos. A janela
 pode ser ampliada pelo usuário, e a navegação não redefine seu tamanho. Esse
 mínimo pertence ao conteúdo do Setup e deixa de valer quando ele é removido.
 

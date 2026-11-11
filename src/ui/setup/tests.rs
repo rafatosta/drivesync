@@ -107,7 +107,10 @@ pub(crate) fn exercise(
     state.remote_authorization_required = false;
     state.feedback.clear();
     state.step = Step::Synchronization;
-    state.draft.local_uri = Some("file:///tmp/drivesync-fixture/Google%20Drive".into());
+    state.draft.local_uri =
+        Some("file:///run/user/1000/doc/fixture-portal-grant/Downloads/Google%20Drive".into());
+    state.feedback =
+        gettextrs::gettext("Local folder selected. Nothing is saved until setup is completed.");
     let root = crate::ui::components::remote_folder_picker::MockFolderSource::default().root();
     state.remote_folder = Some(
         crate::ui::components::remote_folder_picker::RemoteFolderLocation {
@@ -117,10 +120,24 @@ pub(crate) fn exercise(
     );
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-synchronization");
+    let scroll = find(dialog.upcast_ref(), "setup-synchronization-scroll")
+        .downcast::<gtk::ScrolledWindow>()
+        .unwrap();
+    assert!(
+        scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0,
+        "configuration content must fit at the common setup minimum"
+    );
     state.step = Step::Review;
     view.render(&state);
     assert!(!find(dialog.upcast_ref(), "setup-start").is_sensitive());
     capture(dialog.upcast_ref(), "setup-review");
+    let scroll = find(dialog.upcast_ref(), "setup-review-scroll")
+        .downcast::<gtk::ScrolledWindow>()
+        .unwrap();
+    assert!(
+        scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0,
+        "review content must fit at the common setup minimum"
+    );
     dialog.set_default_size(360, 480);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
     capture(dialog.upcast_ref(), "setup-review-small-dark");

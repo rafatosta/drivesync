@@ -13,7 +13,7 @@ impl SynchronizationPage {
         let root = super::content(
             &gettextrs::gettext("Configure synchronization"),
             &gettextrs::gettext("Choose where your files will be stored on this computer."),
-            "folder-symbolic",
+            include_str!("../../../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"),
         );
         let remote = adw::PreferencesGroup::builder()
             .title(gettext("Remote folder"))

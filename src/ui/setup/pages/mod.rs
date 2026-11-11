@@ -9,10 +9,12 @@ pub(super) use provider::ProviderPage;
 pub(super) use review::ReviewPage;
 pub(super) use synchronization::SynchronizationPage;
 /// Shared page composition, independent of the dialog navigation.
-fn content(title: &str, description: &str, icon: &str) -> gtk::Box {
+fn content(title: &str, description: &str, icon_svg: &str) -> gtk::Box {
     let root = crate::ui::content();
-    let image = gtk::Image::from_icon_name(icon);
-    image.set_pixel_size(72);
+    root.set_spacing(12);
+    root.set_margin_top(16);
+    root.set_margin_bottom(16);
+    let image = crate::ui::components::svg_icon(icon_svg, 80);
     root.append(&image);
     root.append(
         &gtk::Label::builder()

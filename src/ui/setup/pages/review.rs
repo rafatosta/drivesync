@@ -9,7 +9,9 @@ pub(in crate::ui::setup) struct ReviewPage {
 impl ReviewPage {
     pub fn new() -> Self {
         let root = crate::ui::content();
-        root.set_spacing(16);
+        root.set_spacing(12);
+        root.set_margin_top(16);
+        root.set_margin_bottom(16);
         let bytes = gtk::glib::Bytes::from_static(include_bytes!(
             "../../../../data/illustrations/cloud-sync-success.svg"
         ));
@@ -17,35 +19,41 @@ impl ReviewPage {
         let paintable = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap())
             .lookup_by_gicon(
                 &icon,
-                260,
+                340,
                 1,
                 gtk::TextDirection::None,
                 gtk::IconLookupFlags::empty(),
             );
         let illustration = gtk::Picture::for_paintable(&paintable);
-        illustration.set_size_request(260, 140);
+        illustration.set_size_request(340, 183);
         illustration.set_can_shrink(true);
         // Crop the square icon canvas to the artwork's native wide aspect ratio.
         illustration.set_content_fit(gtk::ContentFit::Cover);
         illustration.set_halign(gtk::Align::Center);
-        root.append(&illustration);
-        root.append(
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        header.append(&illustration);
+        let introduction = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        introduction.set_valign(gtk::Align::Center);
+        introduction.set_hexpand(true);
+        introduction.append(
             &gtk::Label::builder()
                 .label(gettext("Start synchronization"))
                 .wrap(true)
-                .justify(gtk::Justification::Center)
+                .xalign(0.0)
                 .css_classes(["title-1"])
                 .build(),
         );
-        root.append(
+        introduction.append(
             &gtk::Label::builder()
                 .label(gettext(
                     "Review your connected account and selected folder.",
                 ))
                 .wrap(true)
-                .justify(gtk::Justification::Center)
+                .xalign(0.0)
                 .build(),
         );
+        header.append(&introduction);
+        root.append(&header);
         let summary = Summary::new();
         root.append(summary.widget());
         root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. Folder choices are kept only while setup is open.")).wrap(true).build());

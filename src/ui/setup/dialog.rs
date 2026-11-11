@@ -37,7 +37,7 @@ pub(super) struct SetupDialog {
 impl SetupDialog {
     pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
-        window.set_default_size(680, 620);
+        window.set_default_size(760, 720);
         let css = gtk::CssProvider::new();
         css.load_from_data(include_str!("style.css"));
         gtk::style_context_add_provider_for_display(
@@ -54,7 +54,7 @@ impl SetupDialog {
         window.set_widget_name("drivesync-account-setup");
         let toolbar = adw::ToolbarView::new();
         // Keep the setup minimum local to its content when the main window is reused.
-        toolbar.set_size_request(680, 620);
+        toolbar.set_size_request(760, 720);
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new("DriveSync", "");
         header.set_title_widget(Some(&title));
@@ -74,11 +74,14 @@ impl SetupDialog {
         let review = ReviewPage::new();
         stack.add_named(provider.widget(), Some("provider"));
         stack.add_named(connection.widget(), Some("connection"));
-        stack.add_named(
-            &crate::ui::scroll(synchronization.widget(), 560),
-            Some("synchronization"),
-        );
-        stack.add_named(&crate::ui::scroll(review.widget(), 560), Some("review"));
+        let configuration_scroll = crate::ui::scroll(synchronization.widget(), 680);
+        configuration_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        configuration_scroll.set_widget_name("setup-synchronization-scroll");
+        stack.add_named(&configuration_scroll, Some("synchronization"));
+        let review_scroll = crate::ui::scroll(review.widget(), 680);
+        review_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        review_scroll.set_widget_name("setup-review-scroll");
+        stack.add_named(&review_scroll, Some("review"));
         body.append(&stack);
         let feedback = gtk::Label::builder()
             .wrap(true)
