@@ -20,6 +20,10 @@ fn find(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
 fn account_only_layout_and_initial_name_editor() {
     let profile = std::env::var("XDG_DATA_HOME").expect("isolated XDG profile required");
     assert!(profile.starts_with("/tmp/drivesync-ui-test-"));
+    if let Ok(directory) = std::env::var("DRIVESYNC_UI_LOCALE_DIR") {
+        crate::core::i18n::init();
+        gettextrs::bindtextdomain("drivesync", directory).unwrap();
+    }
     adw::init().unwrap();
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let app = adw::Application::builder()

@@ -801,3 +801,12 @@ msgstr "Conecte suas contas de armazenamento em nuvem e mantenha seus arquivos s
 
 msgid "Choose a provider to get started:"
 msgstr "Escolha um provedor para começar:"
+
+msgid "Sign in with Google"
+msgstr "Entrar com Google"
+
+msgid "Connect your Google account to allow DriveSync to access your files on Google Drive."
+msgstr "Conecte sua conta do Google para permitir que o DriveSync acesse seus arquivos no Google Drive."
+
+msgid "You will be redirected to Google to authorize access.\nDriveSync does not store your password."
+msgstr "Você será redirecionado ao Google para autorizar o acesso.\nO DriveSync não armazena sua senha."

@@ -39,7 +39,7 @@ impl SetupDialog {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
         window.set_default_size(680, 620);
         let css = gtk::CssProvider::new();
-        css.load_from_data(".setup-provider-choice { border: 1px solid alpha(currentColor, 0.15); } .setup-provider-choice.selected { border-color: @accent_color; background-color: alpha(@accent_color, 0.10); }");
+        css.load_from_data(include_str!("style.css"));
         gtk::style_context_add_provider_for_display(
             &gtk::prelude::WidgetExt::display(window),
             &css,
@@ -73,10 +73,7 @@ impl SetupDialog {
         let synchronization = SynchronizationPage::new();
         let review = ReviewPage::new();
         stack.add_named(provider.widget(), Some("provider"));
-        stack.add_named(
-            &crate::ui::scroll(connection.widget(), 560),
-            Some("connection"),
-        );
+        stack.add_named(connection.widget(), Some("connection"));
         stack.add_named(
             &crate::ui::scroll(synchronization.widget(), 560),
             Some("synchronization"),
@@ -156,14 +153,18 @@ impl SetupDialog {
     }
     pub fn render(&self, state: &SetupState) {
         self.stack.set_visible_child_name(state.step.name());
-        self.title.set_subtitle(&if state.step == Step::Provider {
-            String::new()
-        } else {
-            state.step.title()
-        });
+        self.title.set_subtitle(
+            &if matches!(state.step, Step::Provider | Step::Connection) {
+                String::new()
+            } else {
+                state.step.title()
+            },
+        );
         self.back.set_visible(state.step != Step::Provider);
         self.back.set_sensitive(!state.busy);
-        self.next.set_visible(state.step != Step::Review);
+        self.next.set_visible(
+            state.step != Step::Review && (state.step != Step::Connection || state.authorized()),
+        );
         self.next.set_sensitive(state.can_continue());
         self.disconnect.set_visible(state.account.is_some());
         self.disconnect.set_sensitive(!state.busy);
@@ -183,7 +184,7 @@ impl SetupDialog {
                 .unwrap_or(&v.provider_user_id)
         });
         self.connection.update(
-            provider,
+            state.provider.as_ref(),
             account.filter(|_| state.authorized() || state.remote_authorization_required),
             state.busy,
             state.signing_in && !state.closing,

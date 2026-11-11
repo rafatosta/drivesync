@@ -68,18 +68,37 @@ pub(crate) fn exercise(
     state.step = Step::Connection;
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-connection");
+    assert!(!find(dialog.upcast_ref(), "setup-continue").is_visible());
+    assert!(!find(dialog.upcast_ref(), "setup-copy").is_visible());
+    state.signing_in = true;
+    state.busy = true;
+    state.authorization_url = Some("https://example.invalid/authorize".into());
+    view.render(&state);
+    assert!(find(dialog.upcast_ref(), "setup-connect").is_sensitive());
+    assert!(find(dialog.upcast_ref(), "setup-copy").is_visible());
+    assert_eq!(
+        find(dialog.upcast_ref(), "setup-connect-label")
+            .downcast::<gtk::Label>()
+            .unwrap()
+            .label()
+            .as_str(),
+        gettextrs::gettext("Cancel sign-in").as_str()
+    );
+    state.signing_in = false;
+    state.busy = false;
+    state.authorization_url = None;
     state.account = Some(account.clone());
     state.require_remote_authorization();
     view.render(&state);
     assert!(!find(dialog.upcast_ref(), "setup-continue").is_sensitive());
     assert!(find(dialog.upcast_ref(), "setup-connect").is_visible());
     assert_eq!(
-        find(dialog.upcast_ref(), "setup-connect")
-            .downcast::<gtk::Button>()
+        find(dialog.upcast_ref(), "setup-connect-label")
+            .downcast::<gtk::Label>()
             .unwrap()
             .label()
-            .as_deref(),
-        Some(gettextrs::gettext("Authorize Drive access…").as_str())
+            .as_str(),
+        gettextrs::gettext("Authorize Drive access…").as_str()
     );
     capture(dialog.upcast_ref(), "setup-reauthorize-drive");
     state.remote_authorization_required = false;

@@ -85,7 +85,7 @@ mínimo pertence ao conteúdo do Setup e deixa de valer quando ele é removido.
 | Página | Comportamento |
 | --- | --- |
 | Escolher provedor | Solicita ao cadastro público de Providers os provedores disponíveis. A UI não mantém uma lista alternativa. Desmarcar a seleção bloqueia Continuar. |
-| Conectar conta | Autoriza pelo navegador, permite copiar o link, cancelar e tentar novamente. A conta permanece provisória durante o Setup. |
+| Conectar conta | Centraliza o ícone e nome do provedor, explicação de acesso, botão Entrar com Google e aviso de segurança. Durante a autorização permite cancelar e copiar o link disponível. Continuar aparece após a autorização. A conta permanece provisória durante o Setup. |
 | Configurar sincronização | Escolhe a pasta local e verifica existência, tipo e permissão anunciada de escrita. As escolhas ficam apenas em memória. A seleção remota ainda está indisponível. |
 | Iniciar sincronização | Exibe o resumo. O botão Iniciar sincronização permanece bloqueado enquanto os requisitos não forem atendidos. Não há atalho para abrir o Dashboard. |
 
