@@ -37,7 +37,20 @@ pub(super) struct SetupDialog {
 impl SetupDialog {
     pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
-        window.set_default_size(680, 620);
+        window.set_default_size(-1, -1);
+        let css = gtk::CssProvider::new();
+        css.load_from_data(".setup-provider-choice { border: 1px solid alpha(currentColor, 0.15); } .setup-provider-choice.selected { border-color: @accent_color; background-color: alpha(@accent_color, 0.10); }");
+        gtk::style_context_add_provider_for_display(
+            &gtk::prelude::WidgetExt::display(window),
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        window.connect_destroy(move |window| {
+            gtk::style_context_remove_provider_for_display(
+                &gtk::prelude::WidgetExt::display(window),
+                &css,
+            )
+        });
         window.set_widget_name("drivesync-account-setup");
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
@@ -48,12 +61,16 @@ impl SetupDialog {
         header.pack_start(&back);
         toolbar.add_top_bar(&header);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        let stack = gtk::Stack::builder().vexpand(true).build();
+        let stack = gtk::Stack::builder()
+            .vexpand(true)
+            .hhomogeneous(false)
+            .vhomogeneous(false)
+            .build();
         let provider = ProviderPage::new(providers);
         let connection = ConnectionPage::new();
         let synchronization = SynchronizationPage::new();
         let review = ReviewPage::new();
-        stack.add_named(&crate::ui::scroll(provider.widget(), 560), Some("provider"));
+        stack.add_named(provider.widget(), Some("provider"));
         stack.add_named(
             &crate::ui::scroll(connection.widget(), 560),
             Some("connection"),
@@ -74,6 +91,7 @@ impl SetupDialog {
         body.append(&feedback);
         let next = gtk::Button::builder()
             .label(gettextrs::gettext("Continue"))
+            .width_request(100)
             .halign(gtk::Align::End)
             .margin_start(24)
             .margin_end(24)
@@ -135,8 +153,19 @@ impl SetupDialog {
             .connect_clicked(move |_| callback(Event::Disconnect));
     }
     pub fn render(&self, state: &SetupState) {
+        if let Some(window) = self.window() {
+            if state.step == Step::Provider {
+                window.set_default_size(-1, -1);
+            } else {
+                window.set_default_size(680, 620);
+            }
+        }
         self.stack.set_visible_child_name(state.step.name());
-        self.title.set_subtitle(&state.step.title());
+        self.title.set_subtitle(&if state.step == Step::Provider {
+            String::new()
+        } else {
+            state.step.title()
+        });
         self.back.set_visible(state.step != Step::Provider);
         self.back.set_sensitive(!state.busy);
         self.next.set_visible(state.step != Step::Review);

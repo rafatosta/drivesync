@@ -795,3 +795,9 @@ msgstr "Você não tem permissão para acessar esta pasta."
 
 msgid "Access is not authorized. Close this dialog and reconnect your account."
 msgstr "O acesso não foi autorizado. Feche esta janela e reconecte sua conta."
+
+msgid "Connect your cloud storage accounts and keep your files synchronized on your computer."
+msgstr "Conecte suas contas de armazenamento em nuvem e mantenha seus arquivos sincronizados no seu computador."
+
+msgid "Choose a provider to get started:"
+msgstr "Escolha um provedor para começar:"
