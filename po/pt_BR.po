@@ -717,3 +717,45 @@ msgstr "Não foi possível descartar a configuração salva. Tente novamente."
 
 msgid "Local folder selected. Nothing is saved until setup is completed."
 msgstr "Pasta local selecionada. Nada será salvo até a configuração ser concluída."
+
+msgid "Select remote folder"
+msgstr "Selecionar pasta remota"
+
+msgid "Choose a remote folder to synchronize"
+msgstr "Escolha a pasta remota para sincronizar"
+
+msgid "Selected folder"
+msgstr "Pasta selecionada"
+
+msgid "Select folder"
+msgstr "Selecionar pasta"
+
+msgid "Select current folder using the last breadcrumb"
+msgstr "Selecione a pasta atual pelo último item do caminho"
+
+msgid "Loading folders…"
+msgstr "Carregando pastas…"
+
+msgid "Access to this folder is not authorized."
+msgstr "O acesso a esta pasta não foi autorizado."
+
+msgid "Folder not found."
+msgstr "Pasta não encontrada."
+
+msgid "Unable to load folders. Try again."
+msgstr "Não foi possível carregar as pastas. Tente novamente."
+
+msgid "This folder has no subfolders."
+msgstr "Esta pasta não contém subpastas."
+
+msgid "Repeated page token"
+msgstr "Token de paginação repetido"
+
+msgid "Refresh"
+msgstr "Atualizar"
+
+msgid "Forward"
+msgstr "Avançar"
+
+msgid "Close"
+msgstr "Fechar"
