@@ -1,7 +1,5 @@
-//! GTK4/Libadwaita first-run presentation.
-//!
-//! Constructs the welcome page and its reusable presentation widgets, while
-//! Browser authorization is presented by the shared connection module.
+//! Setup landing for new and incomplete accounts.
+//! Presentation emits resume/disconnect intent; application controllers own I/O.
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
 
@@ -105,7 +103,7 @@ fn build_view() -> WelcomeView {
     }
 }
 
-/// Creates the empty dashboard with the add-account action.
+/// Creates the initial setup landing with the add-account action.
 #[cfg(test)]
 pub(crate) fn build() -> adw::ToolbarView {
     let view = build_view();
