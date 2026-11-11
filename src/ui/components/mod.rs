@@ -4,3 +4,5 @@ pub(crate) mod main_menu;
 mod widgets;
 pub(crate) use widgets::{content, row, scroll};
 pub(crate) mod confirmation;
+
+pub(crate) mod remote_folder_picker;

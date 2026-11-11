@@ -4,6 +4,7 @@ mod controller;
 mod dialog;
 mod models;
 mod pages;
+mod remote_folders;
 use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::Account;

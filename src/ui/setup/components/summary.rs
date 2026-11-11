@@ -6,6 +6,7 @@ pub(in crate::ui::setup) struct Summary {
     account: adw::ActionRow,
     provider: adw::ActionRow,
     local: adw::ActionRow,
+    remote: adw::ActionRow,
 }
 impl Summary {
     pub fn new() -> Self {
@@ -16,19 +17,24 @@ impl Summary {
         root.add(&provider);
         root.add(&account);
         root.add(&local);
+        let remote = crate::ui::row(&gettext("Remote folder"), "", "folder-remote-symbolic");
+        remote.set_widget_name("setup-review-remote");
+        root.add(&remote);
         Self {
             root,
             account,
             provider,
             local,
+            remote,
         }
     }
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {
         &self.root
     }
-    pub fn set_details(&self, provider: &str, account: &str, local: &str) {
+    pub fn set_details(&self, provider: &str, account: &str, local: &str, remote: &str) {
         self.provider.set_subtitle(provider);
         self.account.set_subtitle(account);
         self.local.set_subtitle(local);
+        self.remote.set_subtitle(remote);
     }
 }

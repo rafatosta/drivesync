@@ -15,6 +15,7 @@ pub(super) enum Event {
     Connect,
     Copy,
     ChooseLocal,
+    ChooseRemote,
     Disconnect,
 }
 /// Owns presentation widgets privately; the window is weak to permit dismissal
@@ -127,6 +128,9 @@ impl SetupDialog {
         let cb = callback.clone();
         self.synchronization
             .on_choose(move || cb(Event::ChooseLocal));
+        let cb = callback.clone();
+        self.synchronization
+            .on_choose_remote(move || cb(Event::ChooseRemote));
         self.disconnect
             .connect_clicked(move |_| callback(Event::Disconnect));
     }
@@ -156,17 +160,24 @@ impl SetupDialog {
         });
         self.connection.update(
             provider,
-            account.filter(|_| state.authorized()),
+            account.filter(|_| state.authorized() || state.remote_authorization_required),
             state.busy,
             state.signing_in && !state.closing,
             state.authorization_url.is_some(),
+            state.remote_authorization_required,
         );
         let path = state.draft.local_uri.as_deref().map(setup::display_path);
-        self.synchronization.update(path.as_deref(), !state.busy);
+        let remote = state.remote_path();
+        self.synchronization.update(
+            path.as_deref(),
+            remote.as_deref(),
+            !state.busy && state.authorized(),
+        );
         self.review.update(
             provider,
             account.unwrap_or(""),
             path.as_deref().unwrap_or(""),
+            remote.as_deref().unwrap_or(""),
         );
     }
     pub fn copy_authorization_url(&self, url: &str) {

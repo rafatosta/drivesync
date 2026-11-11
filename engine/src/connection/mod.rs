@@ -1,5 +1,6 @@
 //! Application connection lifecycle, independent of GTK and synchronization.
 mod models;
+mod remote_folders;
 mod sign_in;
 use crate::{accounts::*, providers::google::*};
 pub use models::*;
@@ -94,7 +95,12 @@ impl Engine {
                         .await
                     {
                         Ok(mut config) => {
-                            config.scopes = vec!["openid".into(), "email".into(), "profile".into()];
+                            config.scopes = vec![
+                                "openid".into(),
+                                "email".into(),
+                                "profile".into(),
+                                "https://www.googleapis.com/auth/drive.metadata.readonly".into(),
+                            ];
                             Some(config)
                         }
                         Err(_) => None,

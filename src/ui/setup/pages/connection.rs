@@ -52,17 +52,20 @@ impl ConnectionPage {
         busy: bool,
         signing_in: bool,
         has_url: bool,
+        reauthorize: bool,
     ) {
         self.provider.set_label(provider);
         self.identity.set_label(identity.unwrap_or(""));
-        self.connect.set_visible(identity.is_none());
+        self.connect.set_visible(identity.is_none() || reauthorize);
         self.connect.set_sensitive(!busy || signing_in);
         self.connect.set_label(&if signing_in {
             gettext("Cancel sign-in")
+        } else if reauthorize {
+            gettext("Authorize Drive access…")
         } else {
             gettext("Sign In…")
         });
-        self.copy.set_visible(identity.is_none());
+        self.copy.set_visible(identity.is_none() || reauthorize);
         self.copy.set_sensitive(has_url);
         self.spinner.set_spinning(busy);
         self.spinner.set_visible(busy);

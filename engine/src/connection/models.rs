@@ -64,6 +64,7 @@ pub enum EngineErrorKind {
     ProviderUnavailable,
     Accounts(AccountsError),
     Internal,
+    RemoteFolder(RemoteFolderErrorKind),
 }
 /// Sanitized error, without backend text, OAuth codes or credential material.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,4 +99,34 @@ impl From<crate::accounts::AccountsFailure> for EngineError {
         error.retryable = value.retryable;
         error
     }
+}
+
+/// Metadata-only folder reference; IDs belong to the selected account's provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+}
+/// One page of immediate folders; continuation tokens are opaque.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFolderPage {
+    pub folders: Vec<RemoteFolder>,
+    pub next_page_token: Option<String>,
+}
+/// A read-only query scoped to one locally registered account.
+pub struct ListRemoteFoldersRequest {
+    pub account_id: AccountId,
+    pub parent_id: String,
+    pub page_token: Option<String>,
+}
+/// Stable remote browsing failures; no server diagnostics or credentials escape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteFolderErrorKind {
+    AuthorizationRequired,
+    PermissionDenied,
+    NotFound,
+    Unavailable,
+    InvalidResponse,
+    InvalidRequest,
 }

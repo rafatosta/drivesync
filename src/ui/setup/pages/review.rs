@@ -15,7 +15,7 @@ impl ReviewPage {
         );
         let summary = Summary::new();
         root.append(summary.widget());
-        root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. Remote folder configuration and file checks have not been performed.")).wrap(true).build());
+        root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. Folder choices are kept only while setup is open.")).wrap(true).build());
         let start = gtk::Button::builder()
             .label(gettext("Start synchronization"))
             .sensitive(false)
@@ -29,7 +29,7 @@ impl ReviewPage {
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {
         &self.root
     }
-    pub fn update(&self, provider: &str, account: &str, local: &str) {
-        self.summary.set_details(provider, account, local);
+    pub fn update(&self, provider: &str, account: &str, local: &str, remote: &str) {
+        self.summary.set_details(provider, account, local, remote);
     }
 }
