@@ -10,11 +10,19 @@ pub(in crate::ui::setup) struct SynchronizationPage {
 }
 impl SynchronizationPage {
     pub fn new() -> Self {
-        let root = super::content(
-            &gettextrs::gettext("Configure synchronization"),
-            &gettextrs::gettext("Choose where your files will be stored on this computer."),
+        let root = super::content();
+        root.set_widget_name("setup-synchronization-page");
+        let icon = crate::ui::components::svg_icon(
             include_str!("../../../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"),
+            96,
         );
+        let header = super::PageHeader::new(
+            "synchronization",
+            &icon,
+            &gettext("Configure synchronization"),
+            &gettext("Choose where your files will be stored on this computer."),
+        );
+        root.append(header.widget());
         let remote = adw::PreferencesGroup::builder()
             .title(gettext("Remote folder"))
             .build();

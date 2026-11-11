@@ -37,7 +37,7 @@ pub(super) struct SetupDialog {
 impl SetupDialog {
     pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
-        window.set_default_size(760, 720);
+        window.set_default_size(760, 800);
         let css = gtk::CssProvider::new();
         css.load_from_data(include_str!("style.css"));
         gtk::style_context_add_provider_for_display(
@@ -54,7 +54,7 @@ impl SetupDialog {
         window.set_widget_name("drivesync-account-setup");
         let toolbar = adw::ToolbarView::new();
         // Keep the setup minimum local to its content when the main window is reused.
-        toolbar.set_size_request(760, 720);
+        toolbar.set_size_request(760, 800);
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new("DriveSync", "");
         header.set_title_widget(Some(&title));
@@ -67,13 +67,17 @@ impl SetupDialog {
             .vexpand(true)
             .hhomogeneous(false)
             .vhomogeneous(false)
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .transition_duration(180)
             .build();
         let provider = ProviderPage::new(providers);
         let connection = ConnectionPage::new();
         let synchronization = SynchronizationPage::new();
         let review = ReviewPage::new();
         stack.add_named(provider.widget(), Some("provider"));
-        stack.add_named(connection.widget(), Some("connection"));
+        let connection_scroll = crate::ui::scroll(connection.widget(), 680);
+        connection_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+        stack.add_named(&connection_scroll, Some("connection"));
         let configuration_scroll = crate::ui::scroll(synchronization.widget(), 680);
         configuration_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         configuration_scroll.set_widget_name("setup-synchronization-scroll");

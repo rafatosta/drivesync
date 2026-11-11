@@ -15,21 +15,13 @@ pub(in crate::ui::setup) struct ConnectionPage {
 }
 impl ConnectionPage {
     pub fn new() -> Self {
-        let root = crate::ui::content();
-        root.set_spacing(12);
-        root.set_valign(gtk::Align::Center);
-        let icon = gtk::Image::builder()
-            .pixel_size(96)
-            .halign(gtk::Align::Center)
-            .build();
-        let provider = gtk::Label::builder()
-            .css_classes(["title-1"])
-            .wrap(true)
-            .justify(gtk::Justification::Center)
-            .build();
-        let description = gtk::Label::builder()
-            .label(gettext("Connect your Google account to allow DriveSync to access your files on Google Drive."))
-            .wrap(true).justify(gtk::Justification::Center).max_width_chars(52).halign(gtk::Align::Center).build();
+        let root = super::content();
+        root.set_widget_name("setup-connection-page");
+        let icon = gtk::Image::builder().pixel_size(96).build();
+        let header = super::PageHeader::new("connection", &icon, "", &gettext(
+            "Connect your Google account to allow DriveSync to access your files on Google Drive."));
+        let provider = header.title().clone();
+        root.append(header.widget());
         let identity = gtk::Label::builder().wrap(true).selectable(true).build();
         let spinner = gtk::Spinner::new();
         let connect = gtk::Button::builder()
@@ -65,9 +57,6 @@ impl ConnectionPage {
         security.append(&gtk::Label::builder()
             .label(gettext("You will be redirected to Google to authorize access.\nDriveSync does not store your password."))
             .wrap(true).xalign(0.0).max_width_chars(48).css_classes(["caption"]).build());
-        root.append(&icon);
-        root.append(&provider);
-        root.append(&description);
         root.append(&identity);
         root.append(&spinner);
         let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);

@@ -25,6 +25,10 @@ fn account_only_layout_and_initial_name_editor() {
         gettextrs::bindtextdomain("drivesync", directory).unwrap();
     }
     adw::init().unwrap();
+    // Headless captures inspect final pages without an interactive animation clock.
+    gtk::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let app = adw::Application::builder()
         .application_id("com.rtosta.DriveSync.AccountLayoutFixture")
@@ -170,6 +174,11 @@ fn capture(window: &adw::ApplicationWindow, child: &impl IsA<gtk::Widget>, name:
 fn capture_dialog(window: &gtk::Window, name: &str) {
     let output = std::env::var("DRIVESYNC_UI_PREVIEW_DIR").ok();
     window.present();
+    // Capture the settled page after its transition and asynchronous icon loading.
+    let settle = gtk::glib::MainLoop::new(None, false);
+    let finish = settle.clone();
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(240), move || finish.quit());
+    settle.run();
     let mut rendered = None;
     for _ in 0..20 {
         window.queue_draw();

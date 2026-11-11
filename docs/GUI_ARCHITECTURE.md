@@ -78,7 +78,13 @@ outros componentes. Estilos específicos permanecem no componente correspondente
 
 ## As quatro páginas
 
-As etapas compartilham o tamanho mínimo de 760 × 720 pixels lógicos. A janela
+Com exceção da seleção inicial de provedor, as etapas compartilham um cabeçalho
+vertical: área de ilustração de 184 pixels lógicos, título centralizado e descrição.
+As margens, a largura de conteúdo e as posições do cabeçalho são comuns; os
+controles específicos seguem abaixo. A troca de página usa uma transição suave
+de 180 ms e respeita a preferência de animações do GTK.
+
+As etapas compartilham o tamanho mínimo de 760 × 800 pixels lógicos. A janela
 pode ser ampliada pelo usuário, e a navegação não redefine seu tamanho. Esse
 mínimo pertence ao conteúdo do Setup e deixa de valer quando ele é removido.
 

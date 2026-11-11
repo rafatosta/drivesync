@@ -68,6 +68,7 @@ pub(crate) fn exercise(
     state.step = Step::Connection;
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-connection");
+    let header_position = header_positions(dialog.upcast_ref(), "connection");
     assert!(!find(dialog.upcast_ref(), "setup-continue").is_visible());
     assert!(!find(dialog.upcast_ref(), "setup-copy").is_visible());
     state.signing_in = true;
@@ -120,6 +121,11 @@ pub(crate) fn exercise(
     );
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-synchronization");
+    assert_eq!(
+        header_positions(dialog.upcast_ref(), "synchronization"),
+        header_position,
+        "artwork and titles must stay aligned between setup steps"
+    );
     let scroll = find(dialog.upcast_ref(), "setup-synchronization-scroll")
         .downcast::<gtk::ScrolledWindow>()
         .unwrap();
@@ -131,6 +137,11 @@ pub(crate) fn exercise(
     view.render(&state);
     assert!(!find(dialog.upcast_ref(), "setup-start").is_sensitive());
     capture(dialog.upcast_ref(), "setup-review");
+    assert_eq!(
+        header_positions(dialog.upcast_ref(), "review"),
+        header_position,
+        "artwork and titles must stay aligned between setup steps"
+    );
     let scroll = find(dialog.upcast_ref(), "setup-review-scroll")
         .downcast::<gtk::ScrolledWindow>()
         .unwrap();
@@ -545,4 +556,14 @@ fn button_with_label(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
         child = widget.next_sibling();
     }
     None
+}
+
+/// Compares actual positions after the page transition settles.
+fn header_positions(window: &gtk::Window, step: &str) -> (f32, f32) {
+    let artwork = find(window, &format!("setup-{step}-artwork"));
+    let title = find(window, &format!("setup-{step}-title"));
+    (
+        artwork.compute_bounds(window).unwrap().y(),
+        title.compute_bounds(window).unwrap().y(),
+    )
 }
