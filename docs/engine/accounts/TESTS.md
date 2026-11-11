@@ -99,3 +99,8 @@ O cliente Google real é exercitado por `google_adapter_uses_only_existing_provi
 ### Limites
 
 O contrato de Accounts é exercitado de forma independente. O proprietário definitivo de conexões deve integrar a guarda de remoção; seus vínculos reais e a integração GTK não foram exercitados. Não foi medida porcentagem de cobertura. Google real e aplicativo instalado não foram testados. A suíte global permanece bloqueada pelo diagnóstico descrito acima, portanto não há declaração de regressão global aprovada.
+
+
+## Atualização após a integração da interface — 2026-11-10
+
+O bloqueio global registrado na entrega original acima foi resolvido pelo novo recorte do front-end: o teste de diagnóstico local obsoleto foi removido com os componentes de observação/sincronização, sem alterar os testes de Accounts ou Providers. `cargo test --workspace --locked` e Clippy de todos os targets agora passaram. O caso de Secret Service isolado foi executado novamente e aprovado. Os números atuais e os limites da integração estão em [Connection — TESTS](../connection/TESTS.md#execução--2026-11-10).

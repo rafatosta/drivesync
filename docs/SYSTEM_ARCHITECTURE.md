@@ -117,7 +117,7 @@ O componente oferece acesso ao provedor, não uma segunda fonte de verdade local
 
 ## 3. Relacionamentos entre componentes
 
-**Organização de suporte:** `accounts/` gerencia contas e contém internamente `auth/`, responsável pelos mecanismos de autenticação e credenciais. A autenticação é acessada por contratos de `accounts/`; não constitui módulo de primeiro nível da arquitetura. A raiz da crate expõe somente os contratos externos necessários, sem centralizar a comunicação interna entre módulos.
+**Organização de suporte:** `accounts/` gerencia cadastro, identidade e guarda segura de credenciais. A autenticação técnica pertence a Providers; Connection coordena sua utilização com Accounts. Não existe `accounts/auth/`. A raiz da crate expõe somente os contratos externos necessários, sem centralizar a comunicação interna entre módulos.
 
 **Dois níveis de coordenação:** o Orquestrador administra o processamento da sincronização como um todo; o Analisador administra a análise e a execução autorizada por arquivo ou diretório. A identificação de conflitos pode ser organizada como submódulo do Analisador, sem se tornar um oitavo componente independente na arquitetura macro.
 
@@ -176,7 +176,7 @@ O diagrama mostra **relações e responsabilidades**, não uma sequência de exe
 
 A engine funciona **independentemente da GUI**. GTK/libadwaita ou outro consumidor utiliza os contratos públicos reexportados pela raiz da crate. Connection compõe os serviços de autenticação e contas, independentemente do Orquestrador de sincronização e de GTK.
 
-O módulo `accounts/` é proprietário do cadastro das contas e encapsula `accounts/auth/` para autenticação e credenciais; o levantamento provisório de dados de conexões permanece documentado em `docs/engine/accounts/README.md` até que sua responsabilidade seja definida. O módulo `configuration/` é proprietário das preferências e políticas. **Cada módulo decide e encapsula sua própria persistência, se necessária**, expondo somente sua API; não existe um banco global obrigatório nem acesso direto ao armazenamento dos outros módulos. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
+O módulo `accounts/` é proprietário do cadastro e da guarda segura de credenciais, enquanto Providers oferece a autenticação técnica; o levantamento provisório de dados de conexões permanece documentado em `docs/engine/accounts/README.md` até que sua responsabilidade seja definida. O módulo `configuration/` é proprietário das preferências e políticas. **Cada módulo decide e encapsula sua própria persistência, se necessária**, expondo somente sua API; não existe um banco global obrigatório nem acesso direto ao armazenamento dos outros módulos. Esses serviços dão suporte à engine sem pertencerem à interface gráfica.
 
 A persistência dos itens, estados e histórico é definida pelo `docs/engine/inventory/README.md`. Esta arquitetura não cria um segundo inventário nos detectores nem atribui ao Orquestrador acesso direto ao SQLite.
 

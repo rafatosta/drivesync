@@ -22,8 +22,10 @@ Remover seleção de pastas, observadores, download inicial, timeline, transfer�
 
 ## Execução e isolamento
 
-A engine possui executor Tokio privado. Seus métodos assíncronos podem ser aguardados pelo contexto GLib sem exigir que GTK configure Tokio. Arquivos e Secret Service são acessados fora da thread gráfica. Fechar a janela de conexão cancela a tentativa até o início da persistência; não promete desfazer escrita já iniciada.
+A engine possui executor Tokio privado. Seus métodos assíncronos podem ser aguardados pelo contexto GLib sem exigir que GTK configure Tokio. Arquivos e Secret Service são acessados fora da thread gráfica. Fechar a janela de conexão cancela a tentativa até a entrega da etapa de cadastro/atualização a Accounts; não promete desfazer trabalho durável já iniciado.
 
 A configuração OAuth é carregada exclusivamente pelo método existente de Providers a partir de um arquivo explicitamente selecionado pelo bootstrap. Sua ausência não impede listar contas nem abrir a interface; tentar conectar apresenta erro de configuração. Não há migração de formatos legados ou autenticação real automática.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações](AGENTS.md)
+
+**Estado:** implementado; os resultados e limites da validação estão em [TESTS.md](TESTS.md#execução--2026-11-10).
