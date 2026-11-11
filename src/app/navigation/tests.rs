@@ -1,59 +1,27 @@
-//! Unit tests for initial routing decisions.
-use super::{initial_destination, InitialDestination};
-use drivesync_engine::{
-    AccountId, AccountSummary, AuthError, DriveFolder, FolderConfiguration, RestoredAccount,
-};
-
-fn saved(configured: bool, error: Option<AuthError>) -> RestoredAccount {
-    let id = AccountId("google:test".into());
-    RestoredAccount {
-        account: AccountSummary {
-            id: id.clone(),
-            provider_subject: "test".into(),
-            email: None,
-        },
-        error,
-        folder: configured.then(|| FolderConfiguration {
-            account_id: id,
-            remote: DriveFolder {
-                id: "folder-A".into(),
-                name: "Projects".into(),
-            },
-            local: "/tmp/local".into(),
-            local_display: "/tmp/local".into(),
-        }),
-    }
-}
+//! First-run decisions use local records rather than remote authentication.
+use super::*;
+use drivesync_engine::{AccountState, ProviderId, Timestamp};
 #[test]
-fn saved_accounts_always_open_dashboard_regardless_of_configuration() {
-    assert_eq!(initial_destination(&[]), InitialDestination::Accounts);
-    assert_eq!(
-        initial_destination(&[saved(false, None)]),
-        InitialDestination::Dashboard
-    );
-    assert_eq!(
-        initial_destination(&[saved(false, Some(AuthError::Network))]),
-        InitialDestination::Dashboard
-    );
-    for error in [
-        None,
-        Some(AuthError::Network),
-        Some(AuthError::ReauthorizationRequired),
+fn first_run_and_saved_accounts_choose_the_correct_page() {
+    assert_eq!(initial_destination(&[]), InitialDestination::Welcome);
+    for state in [
+        AccountState::Connected,
+        AccountState::ReauthorizationRequired,
+        AccountState::Unavailable,
     ] {
+        let account = Account {
+            id: AccountId("fixture".into()),
+            provider: ProviderId("google".into()),
+            provider_user_id: "subject".into(),
+            email: None,
+            display_name: None,
+            state,
+            created_at: Timestamp { unix_millis: 0 },
+            updated_at: Timestamp { unix_millis: 0 },
+        };
         assert_eq!(
-            initial_destination(&[saved(true, error)]),
+            initial_destination(&[account]),
             InitialDestination::Dashboard
         );
     }
-    assert_eq!(
-        initial_destination(&[
-            saved(false, None),
-            saved(true, Some(AuthError::SecureStorage))
-        ]),
-        InitialDestination::Dashboard
-    );
-    assert_eq!(
-        initial_destination(&[saved(false, None), saved(false, None)]),
-        InitialDestination::Dashboard
-    );
 }

@@ -2,18 +2,16 @@
 
 **A Google Drive client for Linux.**
 
-DriveSync is an early-stage Linux application for managing Google accounts and choosing local and remote folders. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release.
+DriveSync is an early-stage Linux application for connecting Google accounts and editing their local names. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release.
 
 ## What you can do today
 
-**The current application does not synchronize files.** Choosing folders does not
-download, upload, monitor, resolve conflicts or delete their contents. DriveSync
-is not a backup service.
+**The current application does not synchronize files.** The interface currently focuses on account connection and local account names.
 
 | Feature | Current availability and limits |
 | --- | --- |
 | Google accounts | Connect and manage multiple accounts, each with its own settings and credentials. |
-| Folder selection | Choose one Google Drive folder and one local folder per account. Local folders for different accounts cannot overlap. |
+| Account identity | Edit and save a local name without changing the Google profile. New accounts open this editor automatically. |
 | Background operation | Keep the application running when allowed by the desktop. No synchronization runs in the background. |
 
 ## Download and install the experimental Flatpak
@@ -47,7 +45,7 @@ flatpak run com.rtosta.DriveSync
 
 Continue with installation only if the checksum reports `OK`. Flatpak may download the required runtime during installation. You can also launch **DriveSync** from your desktop's application menu.
 
-Connect your Google account, then choose a Google Drive folder and a local destination. Start with a dedicated folder containing disposable test files. The prebuilt application already includes its OAuth client configuration: you do not need to create a Google Cloud project or provide a JSON file.
+Connect your Google account, then review and save its local display name. The prebuilt application already includes its OAuth client configuration: you do not need to create a Google Cloud project or provide a JSON file.
 
 ### Google sign-in status
 

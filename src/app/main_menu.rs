@@ -48,9 +48,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
                     "Source revision: {}",
                     crate::core::build_info::REVISION
                 ))
-                .comments(gettext(
-                    "Manage Google accounts and choose local and Drive folders. Files are not synchronized.",
-                ))
+                .comments(gettext("Connect and manage your Google accounts securely."))
                 .build();
             about.present();
         }

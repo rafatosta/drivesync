@@ -5,13 +5,11 @@
 //!
 //! - [`model`]: typed values and their key-file representation.
 //! - [`window`]: the adaptive preferences page and the `app.preferences` action.
-mod accounts;
 mod model;
 mod window;
 
-pub(crate) use accounts::{AccountSettings, Accounts};
 pub(crate) use model::{ColorScheme, Preferences};
-pub(crate) use window::{build, install, open};
+pub(crate) use window::install;
 
 /// Returns whether closing the window should post the "keeps running" notification.
 pub(crate) fn notify_on_close() -> bool {
@@ -22,3 +20,6 @@ pub(crate) fn notify_on_close() -> bool {
 pub(crate) fn keep_running() -> bool {
     Preferences::load().keep_running
 }
+
+#[cfg(test)]
+pub(crate) use window::build as test_build;

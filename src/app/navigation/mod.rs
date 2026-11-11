@@ -1,66 +1,69 @@
-//! Navigation decisions and transitions between account-related pages.
-//!
-//! Routing reflects saved folder configuration without equating stored
-//! metadata with authenticated Google sessions.
-use crate::core::worker::work;
-use adw::prelude::*;
-use drivesync_engine::{AccountSummary, DriveSyncEngine, RestoredAccount};
-use std::sync::Arc;
-
-/// First screen to show after attempting to restore saved accounts.
+//! Routing based on local account metadata, without assuming current connectivity.
+use super::Context;
+use adw::{gtk, prelude::*};
+use drivesync_engine::{Account, AccountId, ListAccountsRequest};
 #[derive(Debug, PartialEq, Eq)]
-pub enum InitialDestination {
-    Accounts,
+pub(crate) enum InitialDestination {
+    Welcome,
     Dashboard,
 }
-/// Selects the initial screen according to saved accounts and configuration.
-///
-/// An empty list opens welcome. Every saved account opens the dashboard,
-/// where folder configuration is edited inline.
-pub fn initial_destination(accounts: &[RestoredAccount]) -> InitialDestination {
+pub(crate) fn initial_destination(accounts: &[Account]) -> InitialDestination {
     if accounts.is_empty() {
-        InitialDestination::Accounts
+        InitialDestination::Welcome
     } else {
         InitialDestination::Dashboard
     }
 }
-/// Restores the dashboard with the newly authorized account selected.
-///
-/// The storage/restoration operation runs off the GTK main thread. The
-/// completion callback navigates on the main context and reports errors in
-/// a toast. Navigation handles are weakly held while the job is running.
-pub fn open_account(
-    engine: Arc<DriveSyncEngine>,
-    account: AccountSummary,
+/// Replaces the root page so stale welcome/editor views do not remain in history.
+pub(crate) fn show_accounts(
+    context: &Context,
+    accounts: Vec<Account>,
+    nav: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    selected: Option<&AccountId>,
+    edit: bool,
+) {
+    let page = match initial_destination(&accounts) {
+        InitialDestination::Welcome => adw::NavigationPage::new(
+            &crate::features::welcome::build(),
+            &gettextrs::gettext("Welcome"),
+        ),
+        InitialDestination::Dashboard => {
+            crate::features::dashboard::build(context, accounts, nav, toasts, selected, edit)
+        }
+    };
+    nav.replace(&[page]);
+}
+/// Reloads the authoritative list after connection, selecting and editing a new account.
+pub(crate) fn connected(
+    context: &Context,
+    id: AccountId,
+    created: bool,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
 ) {
-    let worker = engine.clone();
-    let nav = nav.downgrade();
-    let toasts = toasts.downgrade();
-    work(
-        move || worker.restore_accounts(),
-        move |result| {
-            if let (Some(nav), Some(toasts)) = (nav.upgrade(), toasts.upgrade()) {
-                match result {
-                    Ok(accounts) => {
-                        nav.replace(&[crate::features::dashboard::build_selected(
-                            engine.clone(),
-                            accounts,
-                            &nav,
-                            &toasts,
-                            Some(&account.id.0),
-                        )]);
-                    }
-                    Err(e) => {
-                        toasts.add_toast(adw::Toast::new(&e.to_string()));
-                        let _ = nav.activate_action("accounts.refresh", None);
-                    }
-                }
+    let Some(engine) = context.engine.borrow().clone() else {
+        return;
+    };
+    let weak_nav = nav.downgrade();
+    let weak_toasts = toasts.downgrade();
+    let context = context.clone();
+    gtk::glib::spawn_future_local(async move {
+        let result = engine
+            .list_accounts(ListAccountsRequest { provider: None })
+            .await;
+        let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) else {
+            return;
+        };
+        match result {
+            Ok(result) => {
+                show_accounts(&context, result.accounts, &nav, &toasts, Some(&id), created)
             }
-        },
-    );
+            Err(error) => toasts.add_toast(adw::Toast::new(&crate::core::messages::engine_error(
+                &error,
+            ))),
+        }
+    });
 }
-
 #[cfg(test)]
 mod tests;

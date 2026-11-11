@@ -1,240 +1,194 @@
-//! Per-account presentation using existing folder and sign-out actions.
+//! Account metadata and explicit local-name editing through the public engine API.
+use crate::app::Context;
 use adw::{gtk, prelude::*};
-use drivesync_engine::{DriveSyncEngine, RestoredAccount};
-use std::sync::Arc;
-
-/// Builds isolated account pages; absent capabilities remain disabled.
-pub(super) fn populate(
-    engine: Arc<DriveSyncEngine>,
-    accounts: Vec<RestoredAccount>,
+use drivesync_engine::{Account, AccountState, UpdateAccountRequest};
+use std::{cell::RefCell, rc::Rc};
+/// Displays identity without interpreting stored authorization as live connectivity.
+pub(super) fn build(
+    account: &Account,
+    context: &Context,
+    sidebar: &adw::ActionRow,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
-    list: &gtk::ListBox,
-    details: &gtk::Stack,
-    services: (
-        &super::components::activities::Activities,
-        &super::components::transfers::TransferFeed,
-    ),
-) -> std::rc::Rc<crate::features::preferences::Accounts> {
-    let (activities, transfers) = services;
-    let mut settings = vec![];
-    let mut menus = vec![];
-    for saved in accounts {
-        let name = saved.account.email.as_deref().unwrap_or("Google Account");
-        let state = saved
-            .error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "Connected".into());
-        let user = adw::ActionRow::builder()
-            .title(name)
-            .subtitle(&state)
-            .use_markup(false)
-            .build();
-        let avatar = adw::Avatar::new(32, Some(name), true);
-        user.add_prefix(&avatar);
-        user.set_subtitle_selectable(false);
-        user.set_title_lines(0);
-        user.set_subtitle_lines(2);
-        user.set_tooltip_text(Some(name));
-        user.set_activatable(true);
-        user.set_selectable(true);
-        list.append(&user);
-        let content = crate::ui::content();
-        let heading = super::components::account_header::AccountHeader::new(name, &state);
-        let sign_out = crate::features::accounts::session::sign_out_button(
-            engine.clone(),
-            saved.account.id.clone(),
-            nav,
-            toasts,
-        );
-        sign_out.set_visible(false);
-        content.append(&sign_out);
-        let needs_setup = saved.folder.is_none();
-        let dashboard = gtk::Box::new(gtk::Orientation::Vertical, 24);
-        dashboard.set_visible(!needs_setup);
-        dashboard.append(heading.widget());
-        content.append(&dashboard);
-        let preferences_editor = gtk::Box::new(gtk::Orientation::Vertical, 0);
-
-        let editor = gtk::Box::new(gtk::Orientation::Vertical, 24);
-        editor.set_widget_name("account-settings-editor");
-        let description = adw::PreferencesGroup::builder()
-            .title(gettextrs::gettext("Identity"))
-            .build();
-        let entry = adw::EntryRow::builder()
-            .title("Account description")
-            .build();
-        entry.set_widget_name("account-display-name");
-        description.add(&entry);
-        let email = adw::ActionRow::builder()
-            .title("Email")
-            .subtitle(name)
-            .use_markup(false)
-            .subtitle_selectable(true)
-            .build();
-        email.set_widget_name("account-email");
-        email.set_subtitle_lines(2);
-        email.set_tooltip_text(Some(name));
-        description.add(&email);
-        editor.append(&description);
-        heading.bind_description(engine.clone(), &saved, &entry, &description, &user, &avatar);
-
-        let folders =
-            super::components::folders::build(engine.clone(), &saved, content.upcast_ref());
-        let history = super::components::local_history::LocalHistory::new(
-            engine.clone(),
-            saved.account.id.clone(),
-            activities.receiver(),
-        );
-        let restart = history.restart_callback();
-        let sync = gtk::Button::from_icon_name("view-refresh-symbolic");
-        sync.set_widget_name("sync-account-now");
-        sync.set_valign(gtk::Align::Center);
-        sync.set_tooltip_text(Some(&gettextrs::gettext("Sync now")));
-        heading.widget().append(&sync);
-        let (download, refresh_download) = super::components::initial_download::build(
-            engine.clone(),
-            &saved,
-            transfers.clone(),
-            activities.refresh_callback(),
-            &sync,
-        );
-        editor.append(folders.widget());
-        if needs_setup {
-            content.append(&editor);
-        } else {
-            preferences_editor.append(&editor);
-        }
-        let (weak_content, weak_editor, weak_preferences, weak_dashboard, weak_entry) = (
-            content.downgrade(),
-            editor.downgrade(),
-            preferences_editor.downgrade(),
-            dashboard.downgrade(),
-            entry.downgrade(),
-        );
-        folders.connect_saved(move || {
-            if let (Some(content), Some(editor), Some(preferences), Some(dashboard)) = (
-                weak_content.upgrade(),
-                weak_editor.upgrade(),
-                weak_preferences.upgrade(),
-                weak_dashboard.upgrade(),
+    edit: bool,
+) -> gtk::ScrolledWindow {
+    let content = crate::ui::content();
+    let current = Rc::new(RefCell::new(account.clone()));
+    let name = account
+        .display_name
+        .as_deref()
+        .or(account.email.as_deref())
+        .unwrap_or("Google Account");
+    let avatar = adw::Avatar::new(80, Some(name), true);
+    content.append(&avatar);
+    let heading = gtk::Label::builder()
+        .label(name)
+        .wrap(true)
+        .css_classes(["title-1"])
+        .build();
+    content.append(&heading);
+    let identity = adw::PreferencesGroup::builder()
+        .title(gettextrs::gettext("Identity"))
+        .build();
+    identity.add(&crate::ui::row(
+        &gettextrs::gettext("Email"),
+        account.email.as_deref().unwrap_or("—"),
+        "mail-unread-symbolic",
+    ));
+    let state = match account.state {
+        AccountState::Connected => "Authorized",
+        AccountState::ReauthorizationRequired => "Sign-in required",
+        AccountState::Unavailable => "Unavailable",
+    };
+    identity.add(&crate::ui::row(
+        &gettextrs::gettext("Account status"),
+        &gettextrs::gettext(state),
+        "dialog-information-symbolic",
+    ));
+    content.append(&identity);
+    let editor = adw::PreferencesGroup::builder()
+        .title(gettextrs::gettext("Account name"))
+        .description(gettextrs::gettext(
+            "Choose a local name for this account. Your Google profile will not change.",
+        ))
+        .visible(edit)
+        .build();
+    editor.set_widget_name("account-name-editor");
+    let entry = adw::EntryRow::builder()
+        .title(gettextrs::gettext("Name"))
+        .text(account.display_name.as_deref().unwrap_or(""))
+        .build();
+    entry.set_widget_name("account-display-name");
+    editor.add(&entry);
+    content.append(&editor);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    actions.set_halign(gtk::Align::Center);
+    let modify = gtk::Button::with_label(&gettextrs::gettext("Edit account"));
+    modify.set_visible(!edit);
+    modify.set_widget_name("account-edit");
+    let save = gtk::Button::with_label(&gettextrs::gettext("Save"));
+    save.add_css_class("suggested-action");
+    save.set_visible(edit);
+    save.set_widget_name("account-save");
+    let cancel = gtk::Button::with_label(&gettextrs::gettext("Cancel"));
+    cancel.set_visible(edit);
+    actions.append(&modify);
+    actions.append(&save);
+    actions.append(&cancel);
+    content.append(&actions);
+    let toggle = {
+        let editor = editor.downgrade();
+        let modify = modify.downgrade();
+        let save = save.downgrade();
+        let cancel = cancel.downgrade();
+        Rc::new(move |editing| {
+            if let (Some(editor), Some(modify), Some(save), Some(cancel)) = (
+                editor.upgrade(),
+                modify.upgrade(),
+                save.upgrade(),
+                cancel.upgrade(),
             ) {
-                if !dashboard.is_visible() {
-                    if let Some(entry) = weak_entry
-                        .upgrade()
-                        .filter(|entry| !entry.text().is_empty())
-                    {
-                        entry.emit_by_name::<()>("apply", &[]);
-                    }
-                    content.remove(&editor);
-                    preferences.append(&editor);
-                    dashboard.set_visible(true);
-                }
+                editor.set_visible(editing);
+                modify.set_visible(!editing);
+                save.set_visible(editing);
+                cancel.set_visible(editing);
             }
-            restart();
-            refresh_download();
-        });
-        dashboard.append(&download);
-        dashboard.append(history.widget());
-        if saved.error.is_some() {
-            let reconnect = gtk::Button::with_label("Check or Reconnect Account");
-            let weak_nav = nav.downgrade();
-            reconnect.connect_clicked(move |_| {
-                if let Some(nav) = weak_nav.upgrade() {
-                    let _ = nav.activate_action("connection.open", None);
-                }
-            });
-            content.append(&reconnect);
+        })
+    };
+    let open_editor = toggle.clone();
+    modify.connect_clicked(move |_| open_editor(true));
+    let close_editor = toggle.clone();
+    let last_saved = current.clone();
+    let weak_entry = entry.downgrade();
+    cancel.connect_clicked(move |_| {
+        if let Some(entry) = weak_entry.upgrade() {
+            entry.set_text(last_saved.borrow().display_name.as_deref().unwrap_or(""));
         }
-        details.add_named(&crate::ui::scroll(&content, 760), Some(&saved.account.id.0));
-        menus.push((
-            folders.actions().clone(),
-            heading,
-            user,
-            content,
-            sign_out,
-            saved.account.id.clone(),
-        ));
-        settings.push(crate::features::preferences::AccountSettings::new(
-            saved,
-            preferences_editor,
-        ));
-    }
-    let settings = crate::features::preferences::Accounts::new(settings);
-    for (folders, heading, user, content, sign_out, id) in menus {
-        let weak_content = content.downgrade();
-        let actions = super::components::account_actions::AccountActions::new(
-            &folders,
-            &sign_out,
-            move || {
-                if let Some(content) = weak_content.upgrade() {
-                    let _ = content.activate_action("account.configure", Some(&id.0.to_variant()));
-                }
-            },
-        );
-        actions.install(&user);
-        actions.install(&content);
-        let sidebar_menu = actions.menu();
-        sidebar_menu.set_widget_name("sidebar-account-menu");
-        sidebar_menu.add_css_class("flat");
-        user.add_suffix(&sidebar_menu);
-        let menu = actions.menu();
-        menu.set_widget_name("dashboard-account-menu");
-        heading.set_menu(&menu);
-    }
-    settings
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    #[ignore = "requires a desktop display and an isolated XDG_DATA_HOME"]
-    fn discarded_dashboard_releases_components_and_observers() {
-        adw::init().unwrap();
-        assert!(std::env::var("XDG_DATA_HOME")
-            .unwrap()
-            .starts_with("/tmp/drivesync-ui-"));
-        fn named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
-            if widget.widget_name() == name {
-                return Some(widget.clone());
-            }
-            let mut child = widget.first_child();
-            while let Some(current) = child {
-                if let Some(found) = named(&current, name) {
-                    return Some(found);
-                }
-                child = current.next_sibling();
-            }
-            None
-        }
-        let saved = RestoredAccount {
-            account: drivesync_engine::AccountSummary {
-                id: drivesync_engine::AccountId("google:disposed-ui".into()),
-                provider_subject: "disposed-ui".into(),
-                email: Some("fixture@example.com".into()),
-            },
-            error: None,
-            folder: None,
+        close_editor(false);
+    });
+    let owner = context.clone();
+    let saved = current.clone();
+    let ui = (
+        entry.downgrade(),
+        heading.downgrade(),
+        avatar.downgrade(),
+        sidebar.downgrade(),
+        toasts.downgrade(),
+        cancel.downgrade(),
+    );
+    save.connect_clicked(move |button| {
+        let (Some(engine), Some(entry)) = (owner.engine.borrow().clone(), ui.0.upgrade()) else {
+            return;
         };
-        let nav = adw::NavigationView::new();
-        let toasts = adw::ToastOverlay::new();
-        let page = crate::features::dashboard::build(
-            Arc::new(DriveSyncEngine::new()),
-            vec![saved],
-            &nav,
-            &toasts,
-        );
-        assert!(named(page.upcast_ref(), "start-synchronization").is_none());
-        assert!(named(page.upcast_ref(), "account-sync-toggle").is_none());
-        let page_ref = page.downgrade();
-        drop(page);
-        let wait = gtk::glib::MainLoop::new(None, false);
-        let finish = wait.clone();
-        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
-            finish.quit()
+        let value = entry.text().trim().to_owned();
+        let display_name = if value.is_empty() { None } else { Some(value) };
+        let id = saved.borrow().id.clone();
+        button.set_sensitive(false);
+        entry.set_sensitive(false);
+        if let Some(cancel) = ui.5.upgrade() {
+            cancel.set_sensitive(false);
+        }
+        let weak_button = button.downgrade();
+        let ui = ui.clone();
+        let saved = saved.clone();
+        let toggle = toggle.clone();
+        gtk::glib::spawn_future_local(async move {
+            let result = engine
+                .update_account(UpdateAccountRequest {
+                    account_id: id,
+                    display_name,
+                })
+                .await;
+            if let Some(button) = weak_button.upgrade() {
+                button.set_sensitive(true);
+            }
+            if let Some(entry) = ui.0.upgrade() {
+                entry.set_sensitive(true);
+            }
+            if let Some(cancel) = ui.5.upgrade() {
+                cancel.set_sensitive(true);
+            }
+            match result {
+                Ok(result) => {
+                    let name = result
+                        .account
+                        .display_name
+                        .as_deref()
+                        .or(result.account.email.as_deref())
+                        .unwrap_or("Google Account");
+                    if let Some(heading) = ui.1.upgrade() {
+                        heading.set_label(name);
+                    }
+                    if let Some(avatar) = ui.2.upgrade() {
+                        avatar.set_text(Some(name));
+                    }
+                    if let Some(sidebar) = ui.3.upgrade() {
+                        sidebar.set_title(name);
+                    }
+                    *saved.borrow_mut() = result.account;
+                    toggle(false);
+                }
+                Err(error) => {
+                    if let Some(toasts) = ui.4.upgrade() {
+                        toasts.add_toast(adw::Toast::new(&crate::core::messages::engine_error(
+                            &error,
+                        )));
+                    }
+                }
+            }
         });
-        wait.run();
-        assert!(page_ref.upgrade().is_none());
-    }
+    });
+    let authorize = gtk::Button::with_label(&gettextrs::gettext("Sign in again"));
+    authorize.set_halign(gtk::Align::Center);
+    let id = account.id.clone();
+    let context = context.clone();
+    let weak_nav = nav.downgrade();
+    let weak_toasts = toasts.downgrade();
+    authorize.connect_clicked(move |_| {
+        if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
+            crate::features::accounts::connection::show(&context, &nav, &toasts, Some(id.clone()));
+        }
+    });
+    content.append(&authorize);
+    crate::ui::scroll(&content, 700)
 }

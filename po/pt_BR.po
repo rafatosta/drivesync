@@ -468,3 +468,69 @@ msgstr "Conectar"
 
 msgid "My Drive"
 msgstr "Meu Drive"
+
+msgid "Connect and manage your Google accounts securely."
+msgstr "Conecte e gerencie suas contas do Google com segurança."
+
+msgid "Account name"
+msgstr "Nome da conta"
+
+msgid "Account status"
+msgstr "Estado da conta"
+
+msgid "Authorized"
+msgstr "Autorizada"
+
+msgid "Sign-in required"
+msgstr "Autenticação necessária"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Edit account"
+msgstr "Editar conta"
+
+msgid "Sign in again"
+msgstr "Autenticar novamente"
+
+msgid "Choose a local name for this account. Your Google profile will not change."
+msgstr "Escolha um nome local para esta conta. Seu perfil do Google não será alterado."
+
+msgid "Your account is being saved. Please wait."
+msgstr "Sua conta está sendo salva. Aguarde."
+
+msgid "Could not open the browser. Copy the link to continue."
+msgstr "Não foi possível abrir o navegador. Copie o link para continuar."
+
+msgid "Google sign-in is not configured for this installation."
+msgstr "A autenticação do Google não está configurada nesta instalação."
+
+msgid "Sign-in was cancelled."
+msgstr "A autenticação foi cancelada."
+
+msgid "Sign-in expired. Please try again."
+msgstr "A autenticação expirou. Tente novamente."
+
+msgid "Google authorization was not completed. Please try again."
+msgstr "A autorização do Google não foi concluída. Tente novamente."
+
+msgid "Google could not be reached. Check your connection and try again."
+msgstr "Não foi possível acessar o Google. Verifique sua conexão e tente novamente."
+
+msgid "Sign in with the Google account selected in DriveSync."
+msgstr "Autentique-se com a conta do Google selecionada no DriveSync."
+
+msgid "Secure credential storage is unavailable. Unlock your keyring and try again."
+msgstr "O armazenamento seguro de credenciais está indisponível. Desbloqueie seu chaveiro e tente novamente."
+
+msgid "Saved accounts could not be accessed. Your data has been kept."
+msgstr "Não foi possível acessar as contas salvas. Seus dados foram preservados."
+
+msgid "The account name could not be saved. Check the value and try again."
+msgstr "Não foi possível salvar o nome da conta. Verifique o valor e tente novamente."
+
+msgid "The account request could not be completed. Please try again."
+msgstr "Não foi possível concluir a solicitação da conta. Tente novamente."

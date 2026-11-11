@@ -1,51 +1,76 @@
-//! GTK application startup, window composition and shutdown cancellation.
-use super::{main_menu, restoration};
-use crate::core::{background, i18n};
-use crate::features::preferences;
+//! Native application startup and shutdown, independent of sync mechanisms.
+use super::{main_menu, restoration, Context};
+use crate::{
+    core::{background, i18n},
+    features::preferences,
+};
 use adw::prelude::*;
-use drivesync_engine::DriveSyncEngine;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
-/// The build profile selects the installed Flatpak application identity.
-/// Development remains the fallback for plain local Cargo builds.
+use drivesync_engine::{CancelGoogleSignInRequest, EngineConfig};
+use std::path::PathBuf;
+/// Each installed profile has its own native application identity.
 pub(crate) const APP_ID: &str = match option_env!("DRIVESYNC_APP_ID") {
     Some(id) => id,
     None => "com.rtosta.DriveSync.Devel",
 };
-
-/// Launches the single-instance GTK application.
+fn config() -> EngineConfig {
+    let bundled = PathBuf::from("/app/share/drivesync/oauth.json");
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/oauth/development.json");
+    let google_oauth_file = std::env::var_os("DRIVESYNC_GOOGLE_OAUTH_FILE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            if bundled.is_file() {
+                Some(bundled)
+            } else if APP_ID.ends_with(".Devel") && development.is_file() {
+                Some(development)
+            } else {
+                None
+            }
+        });
+    EngineConfig {
+        data_directory: adw::gtk::glib::user_data_dir()
+            .join("drivesync")
+            .join("accounts"),
+        application_id: APP_ID.into(),
+        google_oauth_file,
+    }
+}
+/// Launches the account interface. All disk/network engine operations are async.
 pub(crate) fn run() -> adw::gtk::glib::ExitCode {
     i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
     background::configure_application(&app);
-    // Startup runs once for the primary application, even on repeated activation.
     app.connect_startup(|app| {
-        let engine = Arc::new(DriveSyncEngine::new());
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("DriveSync")
             .default_width(960)
-            .default_height(800)
+            .default_height(720)
             .width_request(360)
             .height_request(360)
             .build();
         let navigation = adw::NavigationView::new();
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&navigation));
-        let cancellation = Rc::new(RefCell::new(None::<drivesync_engine::Cancellation>));
-        let startup = restoration::build(engine, &navigation, &toasts, cancellation.clone());
-        navigation.add(&startup);
+        let context = Context::default();
+        navigation.add(&restoration::build(
+            config(),
+            &context,
+            &navigation,
+            &toasts,
+        ));
         window.set_content(Some(&toasts));
         app.connect_shutdown(move |_| {
-            crate::core::local_observation::stop_all();
-            if let Some(cancel) = cancellation.borrow().as_ref() {
-                cancel.cancel();
+            if let (Some(engine), Some(id)) = (
+                context.engine.borrow().as_ref(),
+                context.pending.borrow_mut().take(),
+            ) {
+                engine.cancel_google_sign_in(CancelGoogleSignInRequest { connection_id: id });
             }
         });
         let quit = adw::gtk::gio::SimpleAction::new("quit", None);
-        let weak_app = app.downgrade();
+        let weak = app.downgrade();
         quit.connect_activate(move |_, _| {
-            if let Some(app) = weak_app.upgrade() {
+            if let Some(app) = weak.upgrade() {
                 app.quit();
             }
         });

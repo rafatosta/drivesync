@@ -1,4 +1,2 @@
-//! Account authorization, folder selection and confirmed sign-out flows.
+//! Browser authorization presentation, using only the root engine API.
 pub(crate) mod connection;
-pub(crate) mod folder_picker;
-pub(crate) mod session;

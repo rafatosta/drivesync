@@ -39,22 +39,12 @@ pub(super) fn build() -> WelcomeView {
     content.set_margin_start(24);
     content.set_margin_end(24);
 
-    // Embed the existing artwork; uninstalled Builder runs use the Devel profile.
-    let bytes = gtk::glib::Bytes::from_static(include_bytes!(
-        "../../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"
-    ));
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
-    let image = match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, None::<&gtk::gio::Cancellable>)
-    {
-        Ok(pixbuf) => gtk::Image::from_paintable(Some(&gtk::gdk::Texture::for_pixbuf(&pixbuf))),
-        Err(error) => {
-            gtk::glib::g_warning!(
-                "drivesync",
-                "Could not load welcome SVG: {error}. Install the production Flatpak before \
-                 running it; use the Devel manifest for uninstalled Builder runs."
-            );
-            gtk::Image::from_icon_name("folder-download-symbolic")
-        }
+    // Embed a raster export of the existing SVG to avoid an external SVG loader
+    // when the app runs in an isolated SDK session or without installed icons.
+    let bytes = gtk::glib::Bytes::from_static(include_bytes!("../../../data/icons/welcome.png"));
+    let image = match gtk::gdk::Texture::from_bytes(&bytes) {
+        Ok(texture) => gtk::Image::from_paintable(Some(&texture)),
+        Err(_) => gtk::Image::from_icon_name("folder-download-symbolic"),
     };
     image.set_pixel_size(112);
     image.set_halign(gtk::Align::Center);

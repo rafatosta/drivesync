@@ -1,6 +1,4 @@
-//! Dashboard page, account views, components and explicit confirmation dialogs.
+//! Account-only dashboard and local identity editor.
 mod account_view;
-mod components;
 mod page;
-
-pub(crate) use page::{build, build_selected};
+pub(crate) use page::build;
