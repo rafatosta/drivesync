@@ -1,10 +1,11 @@
 # Arquitetura da interface gráfica — 2026-11-11
 
-## Organização e fronteiras
+## Janela única e áreas da interface
 
-A interface GTK4/Libadwaita possui duas áreas principais: o diálogo **Setup**,
-para a configuração inicial de uma conta, e a janela **Dashboard**. Preferências
-continuam sendo uma página auxiliar da janela principal.
+O aplicativo tem uma janela principal. Ela apresenta o **Setup** ou o
+**Dashboard**. O Setup ocupa essa própria janela: não abre outro diálogo de
+configuração por cima dela e não possui tela intermediária de contas pendentes.
+Preferências continuam sendo uma página auxiliar do Dashboard.
 
 > Componentes devem ser independentes em sua implementação, explícitos em suas
 > interfaces e limitados em suas responsabilidades. Páginas compõem componentes;
@@ -20,13 +21,9 @@ src/
 │   ├── navigation/
 │   └── background/
 ├── core/
-│   ├── build_info.rs
-│   ├── i18n.rs
-│   └── messages.rs
 ├── ui/
 │   ├── components/
 │   ├── setup/
-│   │   ├── landing.rs
 │   │   ├── dialog.rs
 │   │   ├── controller.rs
 │   │   ├── models.rs
@@ -46,149 +43,140 @@ src/
     └── background.rs
 ```
 
-`application.rs` organiza inicialização e ciclo de vida. Seus submódulos tratam
-roteamento e a reação da aplicação a permissões do desktop. `core` mantém os
-auxiliares existentes de tradução, versão e mensagens sanitizadas.
+`application.rs` organiza inicialização e ciclo de vida. A navegação central
+revalida as configurações; o controle de background apresenta a mesma janela
+quando o aplicativo é ativado. Inicialização oculta pode montar o Setup sem
+apresentar a janela. Não é criada uma janela adicional para esse caso.
 
-Os serviços não constroem widgets: executam integração com a API pública da engine,
-GIO, persistência de preferências e transporte do portal. Decisões de mostrar,
-ocultar ou fechar janelas pertencem à aplicação e à apresentação.
+`setup/dialog.rs` constrói conteúdo e controles do assistente, sem criar uma
+janela GTK. Seu controlador monta esse conteúdo no `ToastOverlay` existente e
+retém a navegação enquanto ela estiver fora da árvore visível. Durante o Setup,
+ações de preferências e recargas do Dashboard não modificam essa navegação oculta.
 
-## Contratos de componentes e redesenho
+Os serviços executam integração com a API pública da engine, GIO, preferências e
+transporte do portal, sem construir widgets. Credenciais permanecem na engine.
+
+## Componentes e redesenho
 
 Cada componente mantém privados seus widgets, imagens e detalhes de layout.
-Expõe sua raiz para composição, métodos de apresentação com significado e eventos
-com dados. Controladores não procuram widgets por nome nem dependem da estrutura
-de filhos. Identificadores de widgets usados nos testes não são contratos de
+Expõe somente sua raiz para composição, dados de apresentação e eventos com
+significado. Controladores não procuram widgets por nome nem manipulam a árvore
+de outro componente. Identificadores de widgets nos testes não são contratos de
 produção.
 
-Exemplos:
-
-- `ProviderChoice`: recebe metadados do catálogo e seleção; emite `ProviderId` e o estado marcado/desmarcado.
+- `ProviderChoice`: recebe metadados e seleção; emite identificador e estado
+  marcado/desmarcado. Atualizações de apresentação não emitem seleção do usuário.
 - `FolderChoice`: recebe caminho e disponibilidade; emite pedido de escolher pasta.
-- `Summary`: recebe provedor, identidade e pasta; apresenta um resumo somente leitura.
-- `AccountDetails`: emite editar, salvar nome, cancelar, reautorizar, configurar e desconectar;
-  recebe atualizações por um handle de apresentação com referências fracas.
-- `ConnectionView`: expõe ações de autenticação, cópia e fechamento, além de um
-  handle de apresentação; o controlador desconhece seus botões e rótulos.
+- `Summary`: apresenta provedor, identidade e pasta, sem executar verificações.
+- `AccountDetails`: emite editar, salvar, cancelar, reautorizar e desconectar; seu controlador recebe um handle de apresentação com referências fracas.
+- `ConnectionView`: apresenta a reautorização independente, por eventos e um
+  handle que não expõe seus botões e rótulos.
 
-As páginas do Setup compõem os componentes específicos de cada etapa. O diálogo
-compõe as páginas e apresenta `SetupState`; seu controlador coordena eventos e
-serviços. O controlador do Dashboard recebe um evento de atualização da conta e a
-página responsável pela sidebar atualiza sua própria apresentação.
+As páginas compõem os componentes de cada etapa. Um redesenho de layout, cores ou
+imagens que preserve esses contratos não exige alterar seus consumidores ou
+outros componentes. Estilos específicos permanecem no componente correspondente.
 
-Um redesenho de layout, cores ou imagens que preserve esses contratos não exige
-mudanças nos consumidores ou em outros componentes. Classes nativas de estilo são
-aplicadas aos widgets de cada componente; não foram introduzidos seletores globais
-que dependam da árvore interna de outro componente.
+## As quatro páginas
 
-## Setup
-
-| Página | Comportamento implementado |
+| Página | Comportamento |
 | --- | --- |
-| Escolher provedor | Consulta `services::setup::list_providers`, que delega ao cadastro público `providers::list_providers`. A UI não mantém outra lista. Lista vazia tem apresentação explícita. |
-| Conectar conta | Inicia autenticação Google pelo navegador, permite copiar o link, cancelar e tentar novamente. O sucesso permanece no Setup. |
-| Configurar sincronização | Permite escolher uma pasta local pelo seletor nativo e verificar que ela existe, é um diretório sem link simbólico final e informa permissão de escrita naquele momento. Salva a escolha como rascunho por conta. |
-| Iniciar sincronização (revisão) | Exibe conta, provedor e pasta escolhida. Informa que configuração remota e verificações de arquivos ainda não foram realizadas. |
+| Escolher provedor | Solicita ao cadastro público de Providers os provedores disponíveis. A UI não mantém uma lista alternativa. Desmarcar a seleção bloqueia Continuar. |
+| Conectar conta | Autoriza pelo navegador, permite copiar o link, cancelar e tentar novamente. A conta permanece provisória durante o Setup. |
+| Configurar sincronização | Escolhe a pasta local e verifica existência, tipo e permissão anunciada de escrita. As escolhas ficam apenas em memória. A seleção remota ainda está indisponível. |
+| Iniciar sincronização | Exibe o resumo. O botão Iniciar sincronização permanece bloqueado enquanto os requisitos não forem atendidos. Não há atalho para abrir o Dashboard. |
 
-A consulta de provedores é local e infalível no contrato atual; não há chamada de
-rede, autenticação nem catálogo alternativo na UI. O catálogo publica apenas
+A consulta de provedores é local e infalível no contrato atual. Publica somente
 implementações cadastradas, atualmente Google, com identificador, nome, ícone e
 capacidade de conexão. Operações específicas permanecem no módulo do provedor.
 
-### Navegação, cancelamento e retomada
+O seletor local não cria pastas nem altera arquivos. Sua consulta de permissão
+não demonstra acesso durável pelo portal nem substitui as verificações da futura
+engine de sincronização. Nenhuma mensagem afirma que arquivos ou conflitos foram
+analisados quando essa análise não existe.
 
-- Contas conectadas não equivalem a contas configuradas. O roteamento central
-  remove o conteúdo anterior e revalida a configuração antes de montar o Dashboard.
-  Exige autorização e validação dos diretórios local e remoto; retornos assíncronos
-  antigos são descartados por geração de navegação.
-- Sem contas prontas, a janela principal apresenta a entrada do Setup e as contas
-  com configuração pendente, com ações de continuar e desconectar. Na primeira
-  apresentação, abre a configuração nova ou retoma a primeira conta pendente.
-  Inicialização oculta em background não apresenta um diálogo por conta própria.
-- Adicionar conta abre ou focaliza a instância existente do Setup.
-- Voltar preserva escolhas compatíveis; trocar provedor invalida identidade e
-  rascunho dependentes na sessão, sem remover uma conta já persistida.
-- Operações em andamento bloqueiam avanço e retorno. Autenticação possui ação
-  específica de cancelamento e uma geração para invalidar retornos cancelados.
-- Fechar solicita cancelamento da autenticação. Uma persistência já iniciada pode
-  terminar e aparecer na lista de configurações pendentes; não existe promessa de
-  rollback. Fechar o diálogo nunca contorna a validação de configuração.
-- Conta autenticada já foi salva pela engine, mesmo sem concluir configuração.
-  **Continuar configuração** retoma seu rascunho sem liberar o Dashboard.
-  O atalho de revisão **Ver conta no painel** foi removido.
-- Contas que exigem reautorização retomam a página de conexão; a chamada passa o
-  `AccountId` existente e preserva a exigência da mesma identidade na engine.
-- A ação independente **Autenticar novamente** permanece disponível no Dashboard.
+## Descartar Setup incompleto
 
-### Persistência e limites atuais
+Não há retomada de configuração incompleta. O comportamento é:
 
-Rascunhos ficam em `$XDG_CONFIG_HOME/drivesync/setup/<id-codificado>.ini`.
-O identificador é codificado byte a byte para não formar caminhos arbitrários.
-A URI da pasta preserva nomes não UTF-8; não há tokens, senhas ou flags de
-configuração concluída nesse arquivo. Gravações são assíncronas, atômicas e
-privadas. Erros de leitura e gravação são apresentados e preservam a escolha
-editável; a ausência de arquivo representa um rascunho novo.
+1. Abrir o Setup, selecionar o provedor, conectar e escolher as pastas.
+2. Manter as escolhas apenas durante essa sessão do assistente.
+3. Ao fechar sem concluir, cancelar a autenticação em andamento e aguardar seu
+   resultado se uma persistência de credenciais já tiver começado.
+4. Remover credenciais locais e cadastro das contas provisórias e descartar seus
+   eventuais rascunhos antigos.
+5. Somente então fechar a janela e sair. Na próxima abertura, começar na primeira
+   página, sem provedor selecionado e sem conta conectada.
 
-**Esta entrega remodela a interface; não implementa a engine de sincronização.**
-A API pública atual de conexão oferece autenticação e cadastro de contas, sem
-contratos de configuração remota, reconciliação ou execução de sincronização.
-Os escopos atuais de conexão são de identidade. O seletor local não cria pastas,
-não altera arquivos e não demonstra permissão durável de escrita pelo portal.
+Fechar não solicita uma segunda confirmação de desconexão. A ação **Sair** e
+Ctrl+Q passam pelo mesmo fechamento do Setup. A política de manter o aplicativo
+em background não intercepta esse fechamento. O controlador mantém a aplicação
+ativa até terminar o cancelamento e a limpeza.
 
-Por isso, a seleção remota aparece como indisponível e **Iniciar sincronização**
-permanece desativado. A validação remota retorna indisponível, portanto a aplicação
-não permite entrar no Dashboard, inclusive ao reiniciar com contas conectadas e
-rascunhos locais existentes. Nenhuma mensagem afirma que arquivos foram verificados
-ou que conflitos estão ausentes.
+A API atual da engine persiste a autorização quando a autenticação termina.
+Durante o Setup esse cadastro é provisório: a UI acompanha as identidades e as
+remove ao abandonar o fluxo. Uma resposta de autenticação que chegar depois do
+pedido de fechamento também entra nessa limpeza. Antes de declarar o logoff
+concluído, o controlador consulta registros incompletos que uma falha de
+persistência possa ter deixado sem retornar seu identificador.
 
-A conclusão funcional das páginas 3 e 4 depende de contratos da engine para:
+Se a remoção ou a limpeza falhar, a janela permanece aberta com o erro e permite
+repetir o fechamento. Não informa que a conta foi desconectada sem confirmação da
+engine. Após encerramento abrupto, ou ao encontrar registros de versões antigas,
+a inicialização descarta as contas incompletas antes de montar um Setup novo;
+não apresenta uma lista para retomar esses registros.
 
-1. Enumerar e validar pastas remotas com autorização adequada.
-2. Validar e persistir a configuração completa e o acesso local necessário.
-3. Analisar os arquivos quando houver uma verificação anunciada na revisão.
-4. Aceitar uma solicitação de início e disponibilizar seu estado ao Dashboard.
+O código de produção não grava novos rascunhos. O leitor do formato legado em
+`$XDG_CONFIG_HOME/drivesync/setup/<id-codificado>.ini` existe somente para
+verificação e descarte desses arquivos antigos. O gravador fica restrito aos
+fixtures de teste de migração. A codificação do identificador impede formar
+caminhos arbitrários; a limpeza não percorre os diretórios pessoais escolhidos.
 
-## Desconectar conta
+## Desconexão e concorrência
 
-**Desconectar conta…** está disponível no Setup, na lista de configurações pendentes
-e no componente de detalhes do Dashboard. A confirmação identifica a conta e
-informa que os arquivos locais e na nuvem serão preservados. Cancelar mantém os
-dados e libera novamente os controles.
+**Desconectar conta…** continua disponível no Setup. A ação explícita solicita
+confirmação e, após sucesso, volta à primeira página na mesma janela. Não cria uma
+tela intermediária. O componente de detalhes do Dashboard também possui essa ação.
 
-O controlador compartilhado em `application/accounts.rs` coordena confirmação e
-serviço. `services/accounts.rs` chama `Engine::disconnect_account`, que reutiliza a
-transação existente de remoção de Accounts para apagar credenciais locais e
-metadados. A engine não apaga pastas pessoais nem revoga a autorização no Google.
-Após sucesso, o serviço remove somente o arquivo de rascunho daquela conta. Falha
-nessa limpeza é informada separadamente, sem afirmar que a conta continua conectada.
-Falhas na remoção preservam a interface para nova tentativa e apresentam erro
-sanitizado.
+`services/accounts.rs` chama `Engine::disconnect_account`, reutilizando a
+transação de Accounts para apagar credenciais locais e metadados. O serviço remove
+somente o rascunho da conta. Os arquivos locais e na nuvem são preservados; não há
+revogação global de autorização no Google.
 
-A engine de conexão possui exclusão compartilhada entre autenticações e remoção.
-Toda tentativa de autenticação mantém uma licença de leitura até concluir,
-cancelar ou expirar. A remoção requer exclusão de escrita e recusa a operação
-quando uma tentativa ativa ainda pode persistir a mesma identidade, inclusive
-uma adição cuja identidade ainda é desconhecida. Isso impede um callback tardio
-de restaurar a conta após uma remoção bem-sucedida. Chamadas repetidas para uma
-conta já ausente são idempotentes. A futura integração de sincronização deverá
-incluir suas associações no contrato de exclusão; a engine atual não possui
-configurações de sincronização executáveis.
+Tentativas de autenticação mantêm uma licença compartilhada de leitura; a remoção
+exige exclusão de escrita. A engine recusa remover uma conta enquanto uma tentativa
+ativa ainda pode persistir sua identidade, inclusive uma adição de identidade
+ainda desconhecida. O fechamento do Setup aguarda o término de sua própria
+tentativa antes de remover a conta. Remoção de cadastro já ausente é idempotente.
+
+## Dashboard e limites atuais
+
+A navegação exige autorização e validação dos dois diretórios para construir o
+Dashboard. Como a API de configuração remota ainda não existe, essa validação é
+indisponível e o botão final permanece desativado. A engine também ainda não
+oferece reconciliação nem execução de sincronização pela API pública de conexão.
+Os escopos de autenticação atuais são de identidade.
+
+A implementação futura precisará validar e persistir a configuração completa,
+aceitar o início da sincronização e finalizar a sessão provisória antes de
+apresentar o Dashboard. A engine atual não possui associações de sincronização
+executáveis; essas associações precisarão integrar o contrato de exclusão de
+remoção quando forem implementadas.
 
 ## Validação
 
-Há testes de estado para navegação, autorização e invalidação por provedor; testes
-de serialização e isolamento do caminho dos rascunhos; e teste visual isolado que
-percorre as quatro páginas, exercita seleção real, instância única, retomada de
-rascunho, revisão, conta que exige login e abertura após startup oculto. O teste
-visual também verifica o bloqueio do Dashboard com pasta local válida e validação
-remota ausente, cancelamento de desconexão e remoção idempotente de uma conta
-obsoleta da apresentação, sem keyring. Os testes da engine removem contas
-populadas usando vault isolado e verificam exclusão contra autenticação, repetição,
-preservação da outra conta e de um arquivo local. A tabela de roteamento cobre as
-combinações de autorização e validação das duas pastas.
+O teste visual isolado verifica as quatro páginas, tamanho reduzido, tema escuro,
+seleção e desmarcação, uma única janela visível, o botão final bloqueado, fechamento
+antes de conectar, descarte após conectar, desconexão explícita e retorno à primeira
+página. Também cobre erro de limpeza e nova tentativa, resultado tardio de
+autenticação simulado e descarte de dados legados em inicialização oculta.
 
-As capturas usam conta fictícia, diretórios XDG isolados e backend Broadway.
-Incluem uma janela reduzida e tema escuro. Não acessam Google real, keyring pessoal
-nem portais de autostart. O seletor real do desktop e acessibilidade assistiva
-exigem validação no aplicativo instalado. Veja [capturas](../data/screenshots/README.md).
+Os testes da engine usam vault e respostas HTTP isolados para verificar remoção de
+contas populadas, exclusão contra autenticação, idempotência e preservação de outra
+conta e de um arquivo local. A tabela de roteamento cobre as combinações de
+autorização e validação das duas pastas.
+
+As verificações Rust são executadas no SDK do manifesto Flatpak. Os fixtures
+visuais usam Broadway, conta fictícia e diretórios XDG isolados; não acessam Google,
+keyring pessoal ou portais de autostart. O seletor real do desktop e acessibilidade
+assistiva precisam de validação no aplicativo instalado. Veja
+[capturas](../data/screenshots/README.md).
