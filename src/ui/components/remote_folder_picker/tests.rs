@@ -201,13 +201,16 @@ fn native_picker_selection_cancel_and_preview() {
         let values = cancellations.clone();
         move |value| values.borrow_mut().push(value)
     });
+    parent.present();
     cancelled.present(&parent);
     let window = gtk::Window::list_toplevels()
         .into_iter()
         .filter_map(|w| w.downcast::<adw::Window>().ok())
         .find(|w| w.has_css_class("remote-folder-picker") && w.is_visible())
         .unwrap();
-    window.close();
+    assert!(window.is_visible());
+    parent.destroy();
+    assert!(!window.is_visible());
     assert_eq!(
         *cancellations.borrow(),
         vec![RemoteFolderPickerResult::Cancelled]

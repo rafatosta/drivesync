@@ -17,6 +17,7 @@ impl RemoteFolderPicker {
         let window = adw::Window::builder()
             .title(gettext("Select remote folder"))
             .modal(true)
+            .destroy_with_parent(true)
             .default_width(900)
             .default_height(600)
             .build();
@@ -174,9 +175,41 @@ impl RemoteFolderPicker {
         });
         Self { window, callbacks }
     }
-    /// Presents a single-use modal picker for the calling application window.
-    pub fn present(&self, parent: &adw::ApplicationWindow) {
+    /// Presents a single-use modal picker and cancels it when its owner hides.
+    pub fn present(&self, parent: &impl IsA<gtk::Window>) {
         self.window.set_transient_for(Some(parent));
+        // A setup owner may hide before GTK releases its final window reference.
+        let hidden = parent.as_ref().connect_hide({
+            let window = self.window.downgrade();
+            move |_| {
+                if let Some(window) = window.upgrade() {
+                    window.close();
+                }
+            }
+        });
+        let unrealized = parent.as_ref().connect_unrealize({
+            let window = self.window.downgrade();
+            move |_| {
+                if let Some(window) = window.upgrade() {
+                    window.close();
+                }
+            }
+        });
+        self.window.connect_hide({
+            let parent = parent.as_ref().downgrade();
+            let hidden = RefCell::new(Some(hidden));
+            let unrealized = RefCell::new(Some(unrealized));
+            move |_| {
+                if let (Some(parent), Some(handler)) =
+                    (parent.upgrade(), hidden.borrow_mut().take())
+                {
+                    parent.disconnect(handler);
+                    if let Some(handler) = unrealized.borrow_mut().take() {
+                        parent.disconnect(handler);
+                    }
+                }
+            }
+        });
         self.window.present();
     }
     pub fn connect_response<F: Fn(RemoteFolderPickerResult) + 'static>(&self, callback: F) {
