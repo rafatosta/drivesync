@@ -98,11 +98,6 @@ pub(super) fn bind_account(
                     }
                 }));
             }
-            AccountEvent::Configure => {
-                if let (Some(nav), Some(toasts)) = (nav.upgrade(), toasts.upgrade()) {
-                    crate::ui::setup::show(&context, &nav, &toasts, Some(current.borrow().clone()));
-                }
-            }
         }
     }));
 }

@@ -8,7 +8,6 @@ pub(in crate::ui::dashboard) enum AccountEvent {
     Cancel,
     Save(String),
     Authorize,
-    Configure,
     Disconnect,
 }
 /// Owns its complete layout; outside modules receive only its root and handle.
@@ -22,7 +21,6 @@ pub(in crate::ui::dashboard) struct AccountDetails {
     save: gtk::Button,
     cancel: gtk::Button,
     authorize: gtk::Button,
-    setup: gtk::Button,
     disconnect: gtk::Button,
 }
 impl AccountDetails {
@@ -94,9 +92,6 @@ impl AccountDetails {
         let authorize = gtk::Button::with_label(&gettextrs::gettext("Sign in again"));
         authorize.set_halign(gtk::Align::Center);
         content.append(&authorize);
-        let setup = gtk::Button::with_label(&gettextrs::gettext("Configure synchronization…"));
-        setup.set_halign(gtk::Align::Center);
-        content.append(&setup);
         let disconnect = gtk::Button::builder()
             .label(gettextrs::gettext("Disconnect account…"))
             .halign(gtk::Align::Center)
@@ -114,7 +109,6 @@ impl AccountDetails {
             save,
             cancel,
             authorize,
-            setup,
             disconnect,
         }
     }
@@ -137,9 +131,6 @@ impl AccountDetails {
         let cb = callback.clone();
         self.authorize
             .connect_clicked(move |_| cb(AccountEvent::Authorize));
-        let cb = callback.clone();
-        self.setup
-            .connect_clicked(move |_| cb(AccountEvent::Configure));
         self.disconnect
             .connect_clicked(move |_| callback(AccountEvent::Disconnect));
     }
@@ -153,7 +144,6 @@ impl AccountDetails {
             save: self.save.downgrade(),
             cancel: self.cancel.downgrade(),
             authorize: self.authorize.downgrade(),
-            setup: self.setup.downgrade(),
             disconnect: self.disconnect.downgrade(),
         }
     }
@@ -169,7 +159,6 @@ pub(in crate::ui::dashboard) struct AccountDetailsHandle {
     save: gtk::glib::WeakRef<gtk::Button>,
     cancel: gtk::glib::WeakRef<gtk::Button>,
     authorize: gtk::glib::WeakRef<gtk::Button>,
-    setup: gtk::glib::WeakRef<gtk::Button>,
     disconnect: gtk::glib::WeakRef<gtk::Button>,
 }
 impl AccountDetailsHandle {
@@ -191,13 +180,7 @@ impl AccountDetailsHandle {
         if let Some(entry) = self.entry.upgrade() {
             entry.set_sensitive(!saving);
         }
-        for button in [
-            &self.save,
-            &self.cancel,
-            &self.authorize,
-            &self.setup,
-            &self.disconnect,
-        ] {
+        for button in [&self.save, &self.cancel, &self.authorize, &self.disconnect] {
             if let Some(button) = button.upgrade() {
                 button.set_sensitive(!saving);
             }
