@@ -23,14 +23,28 @@ struct Inner {
     accounts: Accounts,
     client: GoogleDriveClient,
     oauth: Option<GoogleOAuthConfig>,
+    ownership: Arc<ConnectionOwnership>,
     attempts: Mutex<HashMap<GoogleSignInId, Arc<sign_in::Attempt>>>,
 }
-/// The connection-only API has no authoritative synchronization registry.
-/// Removal stays unexposed and fails closed if accidentally requested internally.
-struct UnknownAssociations;
-impl AccountAssociations for UnknownAssociations {
+/// This connection-only engine owns no synchronization associations. Every
+/// authorization attempt holds a read lease; local removal requires exclusion
+/// against all attempts, including additions whose identity is not yet known.
+#[derive(Default)]
+struct ConnectionOwnership {
+    gate: Arc<tokio::sync::RwLock<()>>,
+}
+struct ConnectionRemoval {
+    _lease: tokio::sync::OwnedRwLockWriteGuard<()>,
+}
+impl RemovalGuard for ConnectionRemoval {}
+impl AccountAssociations for ConnectionOwnership {
     fn lock_for_removal(&self, _: &AccountId) -> AccountsResult<Box<dyn RemovalGuard>> {
-        Err(AccountsFailure::new(AccountsError::AccountInUse))
+        let lease = self
+            .gate
+            .clone()
+            .try_write_owned()
+            .map_err(|_| AccountsFailure::new(AccountsError::AccountInUse))?;
+        Ok(Box::new(ConnectionRemoval { _lease: lease }))
     }
 }
 /// Shared application entry point. All public async requests run on a private
@@ -88,16 +102,17 @@ impl Engine {
                 } else {
                     None
                 };
+                let ownership = Arc::new(ConnectionOwnership::default());
                 let setup = AccountsConfig::new(
                     config.data_directory,
                     config.application_id,
-                    Arc::new(UnknownAssociations),
+                    ownership.clone(),
                 )
                 .with_google(client.clone(), oauth.clone().unwrap_or_default());
                 let accounts = tokio::task::spawn_blocking(move || Accounts::new(setup))
                     .await
                     .map_err(|_| EngineError::new(EngineErrorKind::Internal))??;
-                Ok::<_, EngineError>((accounts, client, oauth))
+                Ok::<_, EngineError>((accounts, client, oauth, ownership))
             })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))??;
@@ -107,6 +122,7 @@ impl Engine {
                 accounts: initialized.0,
                 client: initialized.1,
                 oauth: initialized.2,
+                ownership: initialized.3,
                 attempts: Mutex::new(HashMap::new()),
             }),
         })
@@ -126,6 +142,21 @@ impl Engine {
         let accounts = self.inner.accounts.clone();
         self.runtime()
             .spawn_blocking(move || accounts.list(request).map_err(EngineError::from))
+            .await
+            .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
+    }
+    /// Disconnects one account by deleting its local credentials and metadata.
+    /// No local/remote files are deleted and Google authorization is not revoked.
+    /// Active authorization attempts reject removal with AccountInUse, preventing
+    /// a late callback from republishing credentials after successful removal.
+    /// Dropping the future does not roll back a durable removal already started.
+    pub async fn disconnect_account(
+        &self,
+        request: RemoveAccountRequest,
+    ) -> EngineResult<RemoveAccountResult> {
+        let accounts = self.inner.accounts.clone();
+        self.runtime()
+            .spawn(async move { accounts.remove(request).await.map_err(EngineError::from) })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
     }

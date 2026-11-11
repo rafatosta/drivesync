@@ -21,6 +21,7 @@ enum Phase {
     Expired,
 }
 pub(super) struct Attempt {
+    _ownership: tokio::sync::OwnedRwLockReadGuard<()>,
     listener: tokio::sync::Mutex<Option<TcpListener>>,
     phase: Mutex<Phase>,
     cancelled: Notify,
@@ -62,6 +63,7 @@ impl Engine {
         let owner = self.clone();
         self.runtime()
             .spawn(async move {
+                let ownership = owner.inner.ownership.gate.clone().read_owned().await;
                 let config = owner
                     .inner
                     .oauth
@@ -126,6 +128,7 @@ impl Engine {
                     .map_err(provider_error)?;
                 let id = GoogleSignInId(random()?);
                 let attempt = Arc::new(Attempt {
+                    _ownership: ownership,
                     listener: tokio::sync::Mutex::new(Some(listener)),
                     phase: Mutex::new(Phase::Pending),
                     cancelled: Notify::new(),

@@ -426,3 +426,87 @@ async fn reauthorization_checks_identity_and_failed_exchange_is_not_retried() {
         .accounts
         .is_empty());
 }
+
+#[tokio::test]
+async fn disconnect_is_local_isolated_idempotent_and_excludes_authorization() {
+    let mut sequence = replies("first-user");
+    sequence.extend(replies("second-user"));
+    let f = Fixture::new(sequence).await;
+    let mut accounts = Vec::new();
+    for _ in 0..2 {
+        let begin = f.begin(None).await;
+        let engine = f.engine.clone();
+        let id = begin.connection_id.clone();
+        let finishing = tokio::spawn(async move {
+            engine
+                .finish_google_sign_in(FinishGoogleSignInRequest { connection_id: id })
+                .await
+        });
+        Fixture::callback(&begin, None).await;
+        accounts.push(finishing.await.unwrap().unwrap().account);
+    }
+    let user_file = f.directory.join("personal-document.txt");
+    std::fs::write(&user_file, b"preserved local content").unwrap();
+    // An addition may resolve to an existing account, so even its unknown
+    // identity must exclude removal until the attempt is cancelled/completed.
+    let pending = f.begin(None).await;
+    let failure = f
+        .engine
+        .disconnect_account(RemoveAccountRequest {
+            account_id: accounts[0].id.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        failure.kind,
+        EngineErrorKind::Accounts(AccountsError::AccountInUse)
+    );
+    assert!(
+        f.engine
+            .cancel_google_sign_in(CancelGoogleSignInRequest {
+                connection_id: pending.connection_id
+            })
+            .cancelled
+    );
+    assert!(
+        f.engine
+            .disconnect_account(RemoveAccountRequest {
+                account_id: accounts[0].id.clone()
+            })
+            .await
+            .unwrap()
+            .removed
+    );
+    assert!(
+        !f.engine
+            .disconnect_account(RemoveAccountRequest {
+                account_id: accounts[0].id.clone()
+            })
+            .await
+            .unwrap()
+            .removed
+    );
+    assert_eq!(
+        f.engine
+            .list_accounts(ListAccountsRequest { provider: None })
+            .await
+            .unwrap()
+            .accounts,
+        vec![accounts[1].clone()]
+    );
+    assert_eq!(
+        std::fs::read(&user_file).unwrap(),
+        b"preserved local content"
+    );
+    assert_eq!(f.server.requests.lock().unwrap().len(), 4);
+    assert_eq!(
+        f.engine
+            .begin_google_sign_in(BeginGoogleSignInRequest {
+                account_id: Some(accounts[0].id.clone())
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Accounts(AccountsError::NotFound)
+    );
+}
