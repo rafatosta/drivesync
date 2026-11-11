@@ -38,6 +38,7 @@ pub(super) struct SetupState {
     pub busy: bool,
     pub signing_in: bool,
     pub closed: bool,
+    pub closing: bool,
     pub attempt: Option<GoogleSignInId>,
     pub authorization_url: Option<String>,
     pub feedback: String,
@@ -64,6 +65,7 @@ impl SetupState {
     pub fn can_continue(&self) -> bool {
         !self.busy
             && !self.closed
+            && !self.closing
             && self.provider.is_some()
             && match self.step {
                 Step::Provider => self.provider.is_some(),

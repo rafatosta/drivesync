@@ -38,6 +38,11 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
 
     let pending = Rc::new(Cell::new(false));
     window.connect_close_request(move |window| {
+        // Setup owns asynchronous logout before exit; background policy must not
+        // intercept its close request or hide an unfinished account.
+        if window.widget_name() == "drivesync-account-setup" {
+            return glib::Propagation::Proceed;
+        }
         if !crate::services::preferences::Preferences::load().keep_running {
             if let Some(app) = window.application() {
                 app.quit();

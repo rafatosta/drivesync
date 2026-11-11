@@ -24,7 +24,7 @@ impl SynchronizationPage {
         root.append(&remote);
         let local = FolderChoice::new();
         root.append(local.widget());
-        root.append(&gtk::Label::builder().label(gettext("Your selection is saved as a draft. No folders are created and no files are changed.")).wrap(true).css_classes(["dim-label"]).build());
+        root.append(&gtk::Label::builder().label(gettext("Your choices are kept only while setup is open. Closing without completing setup disconnects the account.")).wrap(true).css_classes(["dim-label"]).build());
         Self { root, local }
     }
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {

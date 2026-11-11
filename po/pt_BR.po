@@ -699,3 +699,21 @@ msgstr "Não foi possível validar a configuração da conta."
 
 msgid "Try again"
 msgstr "Tentar novamente"
+
+msgid "Your choices are kept only while setup is open. Closing without completing setup disconnects the account."
+msgstr "Suas escolhas são mantidas apenas enquanto a configuração estiver aberta. Fechar sem concluir desconecta a conta."
+
+msgid "Review your connected account and selected folder."
+msgstr "Confira a conta conectada e a pasta selecionada."
+
+msgid "Signing out before closing…"
+msgstr "Desconectando a conta antes de fechar…"
+
+msgid "The saved setup could not be discarded. Try closing again."
+msgstr "Não foi possível descartar a configuração salva. Tente fechar novamente."
+
+msgid "The saved setup could not be discarded. Try again."
+msgstr "Não foi possível descartar a configuração salva. Tente novamente."
+
+msgid "Local folder selected. Nothing is saved until setup is completed."
+msgstr "Pasta local selecionada. Nada será salvo até a configuração ser concluída."

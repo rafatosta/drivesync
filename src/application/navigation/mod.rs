@@ -1,9 +1,8 @@
-//! Central routing admits only accounts with freshly validated configurations.
+//! Fresh configuration checks choose the one primary window's presentation.
 use super::Context;
 use crate::services::setup::{self, ConfigurationValidation};
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId, ListAccountsRequest};
-use std::rc::Rc;
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InitialDestination {
     Setup,
@@ -21,8 +20,8 @@ pub(crate) fn initial_destination(
         InitialDestination::Setup
     }
 }
-/// Clears stale content immediately and checks directory readiness asynchronously.
-/// No list of connected accounts, local draft or close event can bypass this gate.
+/// Removes abandoned incomplete accounts before starting a fresh setup. It never
+/// constructs a second setup window, resume screen or list of pending accounts.
 pub(crate) fn show_accounts(
     context: &Context,
     accounts: Vec<Account>,
@@ -31,17 +30,15 @@ pub(crate) fn show_accounts(
     selected: Option<&AccountId>,
     edit: bool,
 ) {
+    if nav.root().is_none() {
+        return;
+    }
     let generation = context.navigation_generation.get().wrapping_add(1);
     context.navigation_generation.set(generation);
-    let loading = adw::StatusPage::builder()
-        .title(gettextrs::gettext(
-            "Checking synchronization configuration…",
-        ))
-        .build();
-    nav.replace(&[adw::NavigationPage::new(&loading, "DriveSync")]);
+    checking(nav);
     let context = context.clone();
-    let weak_nav = nav.downgrade();
-    let weak_toasts = toasts.downgrade();
+    let navigation = nav.downgrade();
+    let overlay = toasts.downgrade();
     let selected = selected.cloned();
     gtk::glib::spawn_future_local(async move {
         let mut checked = Vec::new();
@@ -52,51 +49,44 @@ pub(crate) fn show_accounts(
         if context.navigation_generation.get() != generation {
             return;
         }
-        let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) else {
+        // A previous process may have stopped during consent or cleanup. Never
+        // resume its account or draft: remove only incomplete local registrations.
+        for (account, validation) in &checked {
+            if validation.is_complete() {
+                continue;
+            }
+            let engine = context.engine.borrow().clone();
+            let result = match engine {
+                Some(engine) => crate::services::accounts::disconnect(&engine, account.id.clone())
+                    .await
+                    .map_err(|error| crate::core::messages::engine_error(&error)),
+                None => Err(gettextrs::gettext(
+                    "The account service is unavailable. Try again.",
+                )),
+            };
+            let failure = match result {
+                Ok(true) => None,
+                Ok(false) => Some(gettextrs::gettext(
+                    "The saved setup could not be discarded. Try again.",
+                )),
+                Err(message) => Some(message),
+            };
+            if let Some(message) = failure {
+                if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
+                    show_error(&context, &nav, &toasts, &message);
+                }
+                return;
+            }
+        }
+        if context.navigation_generation.get() != generation {
+            return;
+        }
+        let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) else {
             return;
         };
         match initial_destination(&checked) {
             InitialDestination::Setup => {
-                let accounts: Vec<_> = checked.into_iter().map(|(account, _)| account).collect();
-                let view = crate::ui::setup::landing::PendingAccounts::new(&accounts);
-                let owner = context.clone();
-                let navigation = nav.downgrade();
-                let overlay = toasts.downgrade();
-                view.on_resume(Rc::new(move |account| {
-                    if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
-                        crate::ui::setup::show(&owner, &nav, &toasts, Some(account));
-                    }
-                }));
-                let owner = context.clone();
-                let navigation = nav.downgrade();
-                let overlay = toasts.downgrade();
-                let presentation = view.handle();
-                view.on_disconnect(Rc::new(move |account| {
-                    let Some(nav) = navigation.upgrade() else { return; };
-                    let Some(parent) = nav.root().and_downcast::<gtk::Window>() else { return; };
-                    let id = account.id.clone();
-                    presentation.set_busy(&id, true);
-                    let presentation = presentation.clone(); let context = owner.clone(); let navigation = navigation.clone(); let overlay = overlay.clone();
-                    super::accounts::disconnect(&owner, &parent, &account, Rc::new(move |event| {
-                        presentation.set_busy(&id, false);
-                        let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) else { return; };
-                        match event {
-                            super::accounts::DisconnectEvent::Cancelled => (),
-                            super::accounts::DisconnectEvent::Failed(message) => toasts.add_toast(adw::Toast::new(&message)),
-                            super::accounts::DisconnectEvent::Disconnected { draft_removed } => {
-                                if !draft_removed { toasts.add_toast(adw::Toast::new(&gettextrs::gettext("Account disconnected. The saved setup draft could not be removed."))); }
-                                reload_accounts(&context, &nav, &toasts, None);
-                            }
-                        }
-                    }));
-                }));
-                nav.replace(&[adw::NavigationPage::new(
-                    view.widget(),
-                    &gettextrs::gettext("Set up account"),
-                )]);
-                if selected.is_none() {
-                    offer_initial_setup(&context, &nav, &toasts, accounts.first().cloned());
-                }
+                crate::ui::setup::mount(&context, &nav, &toasts, None);
             }
             InitialDestination::Dashboard => {
                 let ready = checked
@@ -115,58 +105,55 @@ pub(crate) fn show_accounts(
         }
     });
 }
-/// Preserves hidden startup and offers an initial/resumed setup at most once.
-fn offer_initial_setup(
-    context: &Context,
-    nav: &adw::NavigationView,
-    toasts: &adw::ToastOverlay,
-    account: Option<Account>,
-) {
-    if context.setup_offered.get() {
-        return;
-    }
-    let Some(window) = nav.root().and_downcast::<gtk::Window>() else {
-        return;
-    };
-    let owner = context.clone();
-    let navigation = nav.downgrade();
-    let overlay = toasts.downgrade();
-    let offer = Rc::new(move || {
-        if owner.setup_offered.replace(true) {
-            return;
-        }
-        if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
-            crate::ui::setup::show(&owner, &nav, &toasts, account.clone());
-        }
-    });
-    if window.is_visible() {
-        offer();
-    } else {
-        window.connect_visible_notify(move |window| {
-            if window.is_visible() {
-                offer();
-            }
-        });
-    }
-}
-/// Reloads the authoritative list after removal, connection or cancellation.
-pub(crate) fn reload_accounts(
-    context: &Context,
-    nav: &adw::NavigationView,
-    toasts: &adw::ToastOverlay,
-    selected: Option<AccountId>,
-) {
-    let Some(engine) = context.engine.borrow().clone() else {
-        return;
-    };
-    let generation = context.navigation_generation.get().wrapping_add(1);
-    context.navigation_generation.set(generation);
+fn checking(nav: &adw::NavigationView) {
     let loading = adw::StatusPage::builder()
         .title(gettextrs::gettext(
             "Checking synchronization configuration…",
         ))
         .build();
     nav.replace(&[adw::NavigationPage::new(&loading, "DriveSync")]);
+}
+fn show_error(
+    context: &Context,
+    nav: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    message: &str,
+) {
+    let status = adw::StatusPage::builder()
+        .title(gettextrs::gettext(
+            "Could not validate account configuration.",
+        ))
+        .description(message)
+        .build();
+    let retry = gtk::Button::with_label(&gettextrs::gettext("Try again"));
+    let navigation = nav.downgrade();
+    let overlay = toasts.downgrade();
+    let owner = context.clone();
+    retry.connect_clicked(move |_| {
+        if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
+            reload_accounts(&owner, &nav, &toasts, None);
+        }
+    });
+    status.set_child(Some(&retry));
+    nav.replace(&[adw::NavigationPage::new(&status, "DriveSync")]);
+}
+/// Shared reload for completed dashboard account actions. Setup keeps its
+/// routing view detached and owns its own logout; it cannot navigate by closing.
+pub(crate) fn reload_accounts(
+    context: &Context,
+    nav: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    selected: Option<AccountId>,
+) {
+    if nav.root().is_none() {
+        return;
+    }
+    let Some(engine) = context.engine.borrow().clone() else {
+        return;
+    };
+    let generation = context.navigation_generation.get().wrapping_add(1);
+    context.navigation_generation.set(generation);
+    checking(nav);
     let navigation = nav.downgrade();
     let overlay = toasts.downgrade();
     let owner = context.clone();
@@ -189,28 +176,16 @@ pub(crate) fn reload_accounts(
                 selected.as_ref(),
                 false,
             ),
-            Err(error) => {
-                let status = adw::StatusPage::builder()
-                    .title(gettextrs::gettext(
-                        "Could not validate account configuration.",
-                    ))
-                    .description(crate::core::messages::engine_error(&error))
-                    .build();
-                let retry = gtk::Button::with_label(&gettextrs::gettext("Try again"));
-                let navigation = nav.downgrade();
-                let overlay = toasts.downgrade();
-                retry.connect_clicked(move |_| {
-                    if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
-                        reload_accounts(&owner, &nav, &toasts, None);
-                    }
-                });
-                status.set_child(Some(&retry));
-                nav.replace(&[adw::NavigationPage::new(&status, "DriveSync")]);
-            }
+            Err(error) => show_error(
+                &owner,
+                &nav,
+                &toasts,
+                &crate::core::messages::engine_error(&error),
+            ),
         }
     });
 }
-/// All post-authorization navigation must pass the same configuration gate.
+/// Reauthorization still uses the same fresh readiness gate.
 pub(crate) fn connected(
     context: &Context,
     id: AccountId,

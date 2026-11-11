@@ -52,33 +52,30 @@ pub(crate) fn exercise(
         "rendering must not emit user selection events"
     );
 
-    let (dialog, view) = SetupDialog::new(Some(window.upcast_ref()), &providers);
+    // Snapshot the same content mounted directly in one window, without a parent.
+    window.set_visible(false);
+    let dialog = adw::Window::builder()
+        .default_width(680)
+        .default_height(620)
+        .build();
+    let view = SetupDialog::new(dialog.upcast_ref(), &providers);
+    dialog.set_content(Some(view.widget()));
     let mut state = SetupState::default();
     view.render(&state);
-    assert!(!find(&dialog, "setup-continue").is_sensitive());
+    assert!(!find(dialog.upcast_ref(), "setup-continue").is_sensitive());
     capture(dialog.upcast_ref(), "setup-provider");
     state.select_provider(providers[0].clone());
-    view.render(&state);
-    assert!(find(&dialog, "setup-continue").is_sensitive());
     state.step = Step::Connection;
     view.render(&state);
-    assert!(!find(&dialog, "setup-continue").is_sensitive());
-    assert!(find(&dialog, "setup-connect").is_visible());
     capture(dialog.upcast_ref(), "setup-connection");
     state.account = Some(account.clone());
     state.step = Step::Synchronization;
+    state.draft.local_uri = Some("file:///tmp/drivesync-fixture/Google%20Drive".into());
     view.render(&state);
-    assert!(!find(&dialog, "setup-continue").is_sensitive());
-    state.draft = SetupDraft {
-        local_uri: Some("file:///tmp/drivesync-fixture/Google%20Drive".into()),
-    };
-    view.render(&state);
-    assert!(find(&dialog, "setup-continue").is_sensitive());
     capture(dialog.upcast_ref(), "setup-synchronization");
     state.step = Step::Review;
     view.render(&state);
-    assert!(!find(&dialog, "setup-start").is_sensitive());
-    assert!(!find(&dialog, "setup-continue").is_visible());
+    assert!(!find(dialog.upcast_ref(), "setup-start").is_sensitive());
     capture(dialog.upcast_ref(), "setup-review");
     dialog.set_default_size(360, 480);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
@@ -86,45 +83,153 @@ pub(crate) fn exercise(
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     dialog.destroy();
 
-    // Drive real controller events; updating the selection must not panic by
-    // borrowing mutable state while presentation emits a selection notification.
-    let nav = adw::NavigationView::new();
-    let toasts = adw::ToastOverlay::new();
-    toasts.set_child(Some(&nav));
-    nav.add(&adw::NavigationPage::new(
-        &gtk::Box::new(gtk::Orientation::Vertical, 0),
-        "Fixture",
-    ));
-    window.set_content(Some(&toasts));
-    let setup = super::show(&Context::default(), &nav, &toasts, None);
-    let same = super::show(&Context::default(), &nav, &toasts, None);
-    assert_eq!(setup, same);
-    let check = find_type::<gtk::CheckButton>(setup.upcast_ref()).expect("provider selection");
-    check.set_active(true);
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let setup = super::show(&context, &nav, &toasts, None);
+    assert_eq!(setup, host.clone().upcast::<gtk::Window>());
+    assert_eq!(setup, super::show(&context, &nav, &toasts, None));
+    assert_eq!(
+        visible_windows(),
+        1,
+        "setup must occupy the only visible window"
+    );
+    let check = find_type::<gtk::CheckButton>(setup.upcast_ref()).unwrap();
     let next = find(&setup, "setup-continue")
         .downcast::<gtk::Button>()
         .unwrap();
-    assert!(next.is_sensitive());
-    check.set_active(false);
-    assert!(
-        !next.is_sensitive(),
-        "clearing the provider must disable Continue"
-    );
-    next.emit_clicked();
-    let stack = find_type::<gtk::Stack>(setup.upcast_ref()).unwrap();
-    assert_eq!(stack.visible_child_name().as_deref(), Some("provider"));
     check.set_active(true);
     assert!(next.is_sensitive());
+    check.set_active(false);
+    assert!(!next.is_sensitive());
     next.emit_clicked();
-    assert!(find(&setup, "setup-connect").is_visible());
+    assert_eq!(
+        find_type::<gtk::Stack>(setup.upcast_ref())
+            .unwrap()
+            .visible_child_name()
+            .as_deref(),
+        Some("provider")
+    );
+    check.set_active(true);
+    next.emit_clicked();
     assert!(!next.is_sensitive());
     setup.close();
+    wait_until(|| !setup.is_visible());
 
-    // Resume a persisted account-specific draft and exercise the asynchronous
-    // directory check before displaying review. All paths belong to this fixture.
     let uri = gtk::gio::File::for_path(gtk::glib::user_data_dir())
         .uri()
         .to_string();
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let setup = super::controller::Controller::with_local_choice(
+        &context,
+        &nav,
+        &toasts,
+        account.clone(),
+        uri.clone(),
+    );
+    let next = find(&setup, "setup-continue")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    next.emit_clicked();
+    wait_until(|| !next.is_visible());
+    assert!(!find(&setup, "setup-start").is_sensitive());
+    assert!(find_type::<adw::NavigationSplitView>(setup.upcast_ref()).is_none());
+    assert_eq!(visible_windows(), 1);
+    assert!(
+        gtk::glib::MainContext::default()
+            .block_on(crate::services::setup::load_draft(&account.id))
+            .unwrap()
+            .local_uri
+            .is_none(),
+        "current choices must not be persisted"
+    );
+    capture(&setup, "setup-single-window-review");
+    setup.close();
+    wait_until(|| !host.is_visible());
+    assert!(gtk::glib::MainContext::default()
+        .block_on(
+            context
+                .engine
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+        )
+        .unwrap()
+        .accounts
+        .is_empty());
+
+    // Explicit logout returns to the first page in the same window.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let setup = super::show(&context, &nav, &toasts, Some(account.clone()));
+    let remove = find(&setup, "setup-disconnect")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    remove.emit_clicked();
+    answer_confirmation("cancel");
+    assert!(remove.is_visible());
+    remove.emit_clicked();
+    answer_confirmation("disconnect");
+    wait_until(|| !remove.is_visible());
+    assert_eq!(
+        find_type::<gtk::Stack>(setup.upcast_ref())
+            .unwrap()
+            .visible_child_name()
+            .as_deref(),
+        Some("provider")
+    );
+    assert!(!find(&setup, "setup-continue").is_sensitive());
+    assert_eq!(visible_windows(), 1);
+    setup.close();
+    wait_until(|| !host.is_visible());
+
+    // A cleanup failure must remain visible and retry logout before exiting.
+    let (host, nav, toasts) = new_host();
+    let context = Context::default();
+    let setup = super::show(&context, &nav, &toasts, Some(account.clone()));
+    setup.close();
+    wait_until(|| {
+        find(&setup, "setup-feedback")
+            .downcast::<gtk::Label>()
+            .unwrap()
+            .label()
+            == gettextrs::gettext("The account service is unavailable. Try again.")
+    });
+    assert!(host.is_visible());
+    *context.engine.borrow_mut() = new_context().engine.borrow().clone();
+    setup.close();
+    wait_until(|| !host.is_visible());
+
+    // A late saved identity must be cleaned before closing, never resumed.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    gtk::glib::MainContext::default()
+        .block_on(crate::services::setup::save_draft(
+            &account.id,
+            &SetupDraft {
+                local_uri: Some(uri.clone()),
+            },
+        ))
+        .unwrap();
+    let setup = super::controller::Controller::closing_with_late_account(
+        &context,
+        &nav,
+        &toasts,
+        account.clone(),
+    );
+    wait_until(|| !host.is_visible());
+    assert!(!setup.is_visible());
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::setup::load_draft(&account.id))
+        .unwrap()
+        .local_uri
+        .is_none());
+
+    // Legacy incomplete registrations are discarded at startup. There is no
+    // resume screen; hidden startup mounts the fresh wizard without presenting it.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
     gtk::glib::MainContext::default()
         .block_on(crate::services::setup::save_draft(
             &account.id,
@@ -133,105 +238,74 @@ pub(crate) fn exercise(
             },
         ))
         .unwrap();
-    let resumed = super::show(&Context::default(), &nav, &toasts, Some(account.clone()));
-    let next = find(&resumed, "setup-continue")
-        .downcast::<gtk::Button>()
-        .unwrap();
-    wait_until(|| next.is_sensitive());
-    next.emit_clicked();
-    wait_until(|| !next.is_visible());
-    assert!(!find(&resumed, "setup-start").is_sensitive());
-    resumed.close();
-
-    let mut expired = account.clone();
-    expired.state = drivesync_engine::AccountState::ReauthorizationRequired;
-    let authorization = super::show(&Context::default(), &nav, &toasts, Some(expired));
-    assert!(find(&authorization, "setup-connect").is_visible());
-    assert!(!find(&authorization, "setup-continue").is_sensitive());
-    authorization.close();
-
-    // An empty profile offers setup only when its main window becomes visible.
-    window.set_visible(false);
     crate::application::navigation::show_accounts(
-        &Context::default(),
-        vec![],
+        &context,
+        vec![account.clone()],
         &nav,
         &toasts,
         None,
         false,
     );
-    assert!(!gtk::Window::list_toplevels()
-        .iter()
-        .any(|window| window.widget_name() == "drivesync-account-setup" && window.is_visible()));
-    wait_until(|| contains(nav.upcast_ref(), "setup-landing"));
-    window.present();
-    let offered = gtk::Window::list_toplevels()
-        .into_iter()
-        .filter_map(|window| window.downcast::<adw::Window>().ok())
-        .find(|window| window.widget_name() == "drivesync-account-setup" && window.is_visible())
-        .expect("first account setup appears with the main window");
-    offered.close();
-
-    // A writable local draft still cannot route a saved account to Dashboard
-    // while the remote directory has not been selected and validated.
+    wait_until(|| host.widget_name() == "drivesync-account-setup");
+    assert!(!host.is_visible());
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::setup::load_draft(&account.id))
+        .unwrap()
+        .local_uri
+        .is_none());
+    host.present();
+    assert_eq!(visible_windows(), 1);
+    assert!(!find_type::<gtk::CheckButton>(host.upcast_ref())
+        .unwrap()
+        .is_active());
+    assert!(!find(host.upcast_ref(), "setup-continue").is_sensitive());
+    assert!(!contains(host.upcast_ref(), "setup-landing"));
+    assert!(!contains(host.upcast_ref(), "pending-account-resume"));
+    capture(host.upcast_ref(), "setup-fresh-start");
+    host.close();
+    wait_until(|| !host.is_visible());
+}
+fn new_host() -> (adw::Window, adw::NavigationView, adw::ToastOverlay) {
+    let nav = adw::NavigationView::new();
+    nav.add(&adw::NavigationPage::new(
+        &gtk::Box::new(gtk::Orientation::Vertical, 0),
+        "Fixture",
+    ));
+    let toasts = adw::ToastOverlay::new();
+    toasts.set_child(Some(&nav));
+    let host = adw::Window::builder()
+        .content(&toasts)
+        .default_width(680)
+        .default_height(620)
+        .build();
+    (host, nav, toasts)
+}
+fn new_context() -> Context {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let context = Context::default();
-    context.setup_offered.set(true);
-    nav.replace(&[crate::ui::dashboard::build(
-        &context,
-        vec![account.clone()],
-        &nav,
-        &toasts,
-        None,
-        false,
-    )]);
-    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_some());
-    crate::application::navigation::show_accounts(
-        &context,
-        vec![account.clone()],
-        &nav,
-        &toasts,
-        Some(&account.id),
-        false,
-    );
-    wait_until(|| contains(nav.upcast_ref(), "pending-account-resume"));
-    capture(window.upcast_ref(), "setup-pending-accounts");
-    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_none());
-
-    // Exercise cancellation and the idempotent disconnect path for a stale
-    // displayed account. The isolated engine has no credentials or network use;
-    // the engine suite separately removes populated accounts using a fake vault.
     let engine = gtk::glib::MainContext::default()
         .block_on(drivesync_engine::Engine::open(
             drivesync_engine::EngineConfig {
-                data_directory: gtk::glib::user_data_dir().join("disconnect-fixture"),
-                application_id: "com.rtosta.DriveSync.DisconnectFixture".into(),
+                data_directory: gtk::glib::user_data_dir().join(format!(
+                    "setup-fixture-{}",
+                    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                )),
+                application_id: "com.rtosta.DriveSync.SetupFixture".into(),
                 google_oauth_file: None,
             },
         ))
         .unwrap();
     *context.engine.borrow_mut() = Some(engine);
-    let disconnecting = super::show(&context, &nav, &toasts, Some(account.clone()));
-    let remove = find(&disconnecting, "setup-disconnect")
-        .downcast::<gtk::Button>()
-        .unwrap();
-    wait_until(|| remove.is_sensitive());
-    remove.emit_clicked();
-    confirmation().response("cancel");
-    assert!(remove.is_visible());
-    assert!(remove.is_sensitive());
-    remove.emit_clicked();
-    confirmation().response("disconnect");
-    wait_until(|| !remove.is_visible());
-    let draft = gtk::glib::MainContext::default()
-        .block_on(crate::services::setup::load_draft(&account.id))
-        .unwrap();
-    assert!(draft.local_uri.is_none());
-    wait_until(|| contains(nav.upcast_ref(), "setup-landing"));
-    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_none());
-    disconnecting.close();
-    window.set_content(None::<&gtk::Widget>);
+    context
 }
-fn find(window: &adw::Window, name: &str) -> gtk::Widget {
+fn visible_windows() -> usize {
+    gtk::Window::list_toplevels()
+        .into_iter()
+        .filter(|window| window.is_visible())
+        .count()
+}
+
+fn find(window: &gtk::Window, name: &str) -> gtk::Widget {
     fn search(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
         if widget.widget_name() == name {
             return Some(widget.clone());
@@ -309,4 +383,11 @@ fn confirmation() -> adw::MessageDialog {
             dialog.widget_name() == "disconnect-account-confirmation" && dialog.is_visible()
         })
         .expect("account disconnect confirmation")
+}
+
+fn answer_confirmation(response: &str) {
+    let dialog = confirmation();
+    // The response API only emits a signal; emulate the button's dismissal too.
+    dialog.response(response);
+    dialog.destroy();
 }

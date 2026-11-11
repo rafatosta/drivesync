@@ -7,25 +7,32 @@ mod pages;
 use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::Account;
-/// Presents or focuses the existing setup, preserving its in-progress choices.
+/// Mounts setup inside the existing application window, preserving startup visibility.
+pub(crate) fn mount(
+    context: &Context,
+    navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+    account: Option<Account>,
+) -> gtk::Window {
+    if let Some(window) = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|window| window.downcast::<gtk::Window>().ok())
+        .find(|window| window.widget_name() == "drivesync-account-setup")
+    {
+        return window;
+    }
+    controller::Controller::attach(context, navigation, toasts, account)
+}
+/// Presents the same setup window; there is no intermediate setup or parent dialog.
 pub(crate) fn show(
     context: &Context,
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
     account: Option<Account>,
-) -> adw::Window {
-    for window in gtk::Window::list_toplevels() {
-        if window.widget_name() == "drivesync-account-setup" {
-            if let Ok(window) = window.downcast::<adw::Window>() {
-                window.present();
-                return window;
-            }
-        }
-    }
-    let window = controller::Controller::attach(context, navigation, toasts, account);
+) -> gtk::Window {
+    let window = mount(context, navigation, toasts, account);
     window.present();
     window
 }
-pub(crate) mod landing;
 #[cfg(test)]
 pub(crate) mod tests;

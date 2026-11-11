@@ -13,15 +13,21 @@ use crate::{
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId, Engine};
 use gettextrs::gettext;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeSet,
+    rc::Rc,
+};
 
 pub(super) struct Controller {
     context: Context,
-    navigation: gtk::glib::WeakRef<adw::NavigationView>,
-    toasts: gtk::glib::WeakRef<adw::ToastOverlay>,
+    // Retain routing infrastructure while its view is detached from the overlay.
+    _navigation: adw::NavigationView,
     providers: Vec<RegisteredProvider>,
     state: RefCell<SetupState>,
-    persisted_account: RefCell<Option<AccountId>>,
+    provisional_accounts: RefCell<BTreeSet<AccountId>>,
+    cleanup_running: Cell<bool>,
+    hold: RefCell<Option<gtk::gio::ApplicationHoldGuard>>,
     view: SetupDialog,
 }
 impl Controller {
@@ -30,12 +36,28 @@ impl Controller {
         navigation: &adw::NavigationView,
         toasts: &adw::ToastOverlay,
         account: Option<Account>,
-    ) -> adw::Window {
-        context.setup_offered.set(true);
+    ) -> gtk::Window {
+        Self::build(context, navigation, toasts, account).0
+    }
+    fn build(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Option<Account>,
+    ) -> (gtk::Window, Rc<Self>) {
         let providers = setup::list_providers();
-        let parent = navigation.root().and_downcast::<gtk::Window>();
-        let (window, view) = SetupDialog::new(parent.as_ref(), &providers);
-        let persisted_account = RefCell::new(account.as_ref().map(|account| account.id.clone()));
+        let window = navigation
+            .root()
+            .and_downcast::<gtk::Window>()
+            .expect("setup mounts in the application window");
+        let view = SetupDialog::new(&window, &providers);
+        let provisional_accounts = RefCell::new(
+            account
+                .as_ref()
+                .map(|account| account.id.clone())
+                .into_iter()
+                .collect(),
+        );
         let mut state = SetupState::default();
         if let Some(account) = account {
             state.provider = providers.iter().find(|v| v.id == account.provider).cloned();
@@ -48,11 +70,12 @@ impl Controller {
         }
         let controller = Rc::new(Self {
             context: context.clone(),
-            navigation: navigation.downgrade(),
-            toasts: toasts.downgrade(),
+            _navigation: navigation.clone(),
             providers,
             state: RefCell::new(state),
-            persisted_account,
+            provisional_accounts,
+            cleanup_running: Cell::new(false),
+            hold: RefCell::new(None),
             view,
         });
         let weak = Rc::downgrade(&controller);
@@ -63,16 +86,15 @@ impl Controller {
         }));
         let closing = controller.clone();
         window.connect_close_request(move |_| {
-            closing.close();
-            gtk::glib::Propagation::Proceed
+            if closing.state.borrow().closed {
+                return gtk::glib::Propagation::Proceed;
+            }
+            closing.request_close();
+            gtk::glib::Propagation::Stop
         });
-        let destroyed = controller.clone();
-        window.connect_destroy(move |_| destroyed.close());
+        toasts.set_child(Some(controller.view.widget()));
         controller.render();
-        if controller.state.borrow().account.is_some() {
-            controller.load_draft();
-        }
-        window
+        (window, controller)
     }
     fn render(&self) {
         // Selection callbacks ignore notifications for the already selected provider.
@@ -83,7 +105,7 @@ impl Controller {
         self.context.engine.borrow().clone()
     }
     fn handle(self: &Rc<Self>, event: Event) {
-        if self.state.borrow().closed {
+        if self.state.borrow().closed || self.state.borrow().closing {
             return;
         }
         if matches!(event, Event::Connect) && self.state.borrow().signing_in {
@@ -176,18 +198,22 @@ impl Controller {
                 use crate::application::accounts::DisconnectEvent;
                 let mut state = owner.state.borrow_mut();
                 state.busy = false;
-                let disconnected = match event {
-                    DisconnectEvent::Cancelled => false,
-                    DisconnectEvent::Failed(message) => {
-                        state.feedback = message;
-                        false
-                    }
+                match event {
+                    DisconnectEvent::Cancelled => (),
+                    DisconnectEvent::Failed(message) => state.feedback = message,
                     DisconnectEvent::Disconnected { draft_removed } => {
-                        state.account = None;
-                        state.draft = setup::SetupDraft::default();
-                        state.step = Step::Connection;
-                        state.generation += 1;
-                        *owner.persisted_account.borrow_mut() = None;
+                        if let Some(account) = state.account.as_ref() {
+                            if draft_removed {
+                                owner.provisional_accounts.borrow_mut().remove(&account.id);
+                            }
+                        }
+                        if draft_removed {
+                            let closing = state.closing;
+                            *state = SetupState {
+                                closing,
+                                ..Default::default()
+                            };
+                        }
                         state.feedback = if draft_removed {
                             gettext("Account disconnected.")
                         } else {
@@ -195,23 +221,13 @@ impl Controller {
                                 "Account disconnected. The saved setup draft could not be removed.",
                             )
                         };
-                        true
-                    }
-                };
-                drop(state);
-                if disconnected {
-                    if let (Some(nav), Some(toasts)) =
-                        (owner.navigation.upgrade(), owner.toasts.upgrade())
-                    {
-                        crate::application::navigation::reload_accounts(
-                            &owner.context,
-                            &nav,
-                            &toasts,
-                            None,
-                        );
                     }
                 }
-                if !owner.state.borrow().closed {
+                let closing = state.closing;
+                drop(state);
+                if closing {
+                    owner.maybe_cleanup();
+                } else if !owner.state.borrow().closed {
                     owner.render();
                 }
             }),
@@ -237,28 +253,104 @@ impl Controller {
         drop(state);
         self.render();
     }
-    fn close(&self) {
+    /// Normal close and app Quit wait for cancellation and secure local logout.
+    fn request_close(self: &Rc<Self>) {
         {
             let mut state = self.state.borrow_mut();
-            if state.closed {
+            if state.closed || state.closing {
                 return;
             }
-            state.closed = true;
+            state.closing = true;
+            state.busy = true;
             state.generation += 1;
             state.authorization_url = None;
+            state.feedback = gettext("Signing out before closing…");
             if let (Some(engine), Some(id)) = (self.engine(), state.attempt.clone()) {
                 accounts::cancel(&engine, id);
             }
         }
-        self.refresh_accounts();
-    }
-    fn refresh_accounts(&self) {
-        let account = self.persisted_account.borrow().clone();
-        if let (Some(account), Some(nav), Some(toasts)) =
-            (account, self.navigation.upgrade(), self.toasts.upgrade())
-        {
-            crate::application::navigation::connected(&self.context, account, false, &nav, &toasts);
+        if self.hold.borrow().is_none() {
+            if let Some(app) = self.view.window().and_then(|window| window.application()) {
+                *self.hold.borrow_mut() = Some(app.hold());
+            }
         }
+        self.render();
+        self.maybe_cleanup();
+    }
+    fn cleanup_failed(&self, message: String) {
+        self.cleanup_running.set(false);
+        let mut state = self.state.borrow_mut();
+        state.closing = false;
+        state.busy = false;
+        state.feedback = message;
+        drop(state);
+        self.render();
+    }
+    fn maybe_cleanup(self: &Rc<Self>) {
+        if !self.state.borrow().closing
+            || self.state.borrow().signing_in
+            || self.cleanup_running.replace(true)
+        {
+            return;
+        }
+        let owner = self.clone();
+        gtk::glib::spawn_future_local(async move {
+            // A failed credential commit can leave a recoverable registration
+            // without returning its ID. Discover it before declaring logout done.
+            if let Some(engine) = owner.engine() {
+                match engine
+                    .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+                    .await
+                {
+                    Ok(result) => {
+                        for account in result.accounts {
+                            if !setup::validate_configuration(&account).await.is_complete() {
+                                owner.provisional_accounts.borrow_mut().insert(account.id);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        owner.cleanup_failed(crate::core::messages::engine_error(&error));
+                        return;
+                    }
+                }
+            }
+            let ids: Vec<_> = owner
+                .provisional_accounts
+                .borrow()
+                .iter()
+                .cloned()
+                .collect();
+            for id in ids {
+                let result = match owner.engine() {
+                    Some(engine) => match accounts::disconnect(&engine, id.clone()).await {
+                        Ok(true) => Ok(()),
+                        Ok(false) => Err(gettext(
+                            "The saved setup could not be discarded. Try closing again.",
+                        )),
+                        Err(error) => Err(crate::core::messages::engine_error(&error)),
+                    },
+                    None => Err(gettext("The account service is unavailable. Try again.")),
+                };
+                if let Err(message) = result {
+                    owner.cleanup_failed(message);
+                    return;
+                }
+                owner.provisional_accounts.borrow_mut().remove(&id);
+            }
+            *owner.state.borrow_mut() = SetupState {
+                closed: true,
+                ..Default::default()
+            };
+            if let Some(window) = owner.view.window() {
+                let app = window.application();
+                window.destroy();
+                if let Some(app) = app {
+                    app.quit();
+                }
+            }
+            owner.hold.borrow_mut().take();
+        });
     }
     fn connect(self: &Rc<Self>) {
         let Some(engine) = self.engine() else {
@@ -296,7 +388,7 @@ impl Controller {
                     let cancelled = {
                         let mut state = owner.state.borrow_mut();
                         state.attempt = Some(id.clone());
-                        state.closed || state.generation != generation
+                        state.closed || state.closing || state.generation != generation
                     };
                     if cancelled {
                         accounts::cancel(&engine, id.clone());
@@ -307,15 +399,21 @@ impl Controller {
                         owner.state.borrow_mut().feedback =
                             gettext("Complete authorization in your browser, then return here.");
                         owner.render();
-                        if accounts::open_authorization_url(&begin.authorization_url)
-                            .await
-                            .is_err()
-                            && !owner.state.borrow().closed
-                        {
-                            owner.state.borrow_mut().feedback =
-                                gettext("Could not open the browser. Copy the link to continue.");
-                            owner.render();
-                        }
+                        let launching = Rc::downgrade(&owner);
+                        gtk::glib::spawn_future_local(async move {
+                            if accounts::open_authorization_url(&begin.authorization_url)
+                                .await
+                                .is_err()
+                            {
+                                if let Some(owner) = launching.upgrade() {
+                                    if !owner.state.borrow().closed && !owner.state.borrow().closing
+                                    {
+                                        owner.state.borrow_mut().feedback = gettext("Could not open the browser. Copy the link to continue.");
+                                        owner.render();
+                                    }
+                                }
+                            }
+                        });
                     }
                     let result = accounts::finish(&engine, id.clone()).await;
                     if owner.context.pending.borrow().as_ref() == Some(&id) {
@@ -325,59 +423,81 @@ impl Controller {
                 }
                 Err(error) => Err(error),
             };
-            {
-                let mut state = owner.state.borrow_mut();
-                state.busy = false;
-                state.signing_in = false;
-                state.attempt = None;
-                state.authorization_url = None;
-                match result {
-                    Ok(result) => {
-                        // Persistence can win a cancellation race; retain the saved identity.
-                        *owner.persisted_account.borrow_mut() = Some(result.account.id.clone());
-                        state.account = Some(result.account);
-                        state.step = Step::Connection;
-                        state.feedback =
-                            gettext("Account connected. Continue to configure synchronization.");
-                    }
-                    Err(error) if state.generation == generation => {
-                        state.feedback = crate::core::messages::engine_error(&error)
-                    }
-                    Err(_) => state.feedback = gettext("Sign-in cancelled."),
-                }
-            }
-            if owner.state.borrow().closed {
-                owner.refresh_accounts();
-            } else if owner.state.borrow().account.is_some() {
-                owner.load_draft();
-            } else {
+            owner.finish_connection(result, generation);
+            if owner.state.borrow().closing {
+                owner.maybe_cleanup();
+            } else if !owner.state.borrow().closed {
                 owner.render();
             }
         });
     }
-    fn load_draft(self: &Rc<Self>) {
-        let Some(account) = self.state.borrow().account.clone() else {
-            return;
-        };
-        self.state.borrow_mut().busy = true;
-        self.render();
-        let owner = self.clone();
-        gtk::glib::spawn_future_local(async move {
-            let result = setup::load_draft(&account.id).await;
-            if owner.state.borrow().closed {
-                return;
+    /// Records even a late durable account before the close path performs logout.
+    fn finish_connection(
+        &self,
+        result: drivesync_engine::EngineResult<drivesync_engine::FinishGoogleSignInResult>,
+        generation: u64,
+    ) {
+        let mut state = self.state.borrow_mut();
+        state.busy = false;
+        state.signing_in = false;
+        state.attempt = None;
+        state.authorization_url = None;
+        match result {
+            Ok(result) => {
+                // A commit can win cancellation. Track it before close cleanup.
+                self.provisional_accounts
+                    .borrow_mut()
+                    .insert(result.account.id.clone());
+                state.account = Some(result.account);
+                state.step = Step::Connection;
+                state.feedback =
+                    gettext("Account connected. Continue to configure synchronization.");
             }
-            let mut state = owner.state.borrow_mut();
-            state.busy = false;
-            match result {
-                Ok(draft) => state.draft = draft,
-                Err(_) => state.feedback = gettext(
-                    "The saved setup draft could not be read. Choose a folder again to replace it.",
-                ),
+            Err(error) if state.generation == generation => {
+                state.feedback = crate::core::messages::engine_error(&error)
             }
-            drop(state);
-            owner.render();
-        });
+            Err(_) => state.feedback = gettext("Sign-in cancelled."),
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn with_local_choice(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Account,
+        uri: String,
+    ) -> gtk::Window {
+        let (window, owner) = Self::build(context, navigation, toasts, Some(account));
+        owner.state.borrow_mut().draft.local_uri = Some(uri);
+        owner.render();
+        window.present();
+        window
+    }
+    #[cfg(test)]
+    pub(super) fn closing_with_late_account(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Account,
+    ) -> gtk::Window {
+        let (window, owner) = Self::build(context, navigation, toasts, None);
+        window.present();
+        owner.state.borrow_mut().signing_in = true;
+        owner.request_close();
+        assert!(
+            window.is_visible(),
+            "close must wait for the authentication result"
+        );
+        assert!(!owner.cleanup_running.get());
+        owner.finish_connection(
+            Ok(drivesync_engine::FinishGoogleSignInResult {
+                account,
+                created: true,
+            }),
+            0,
+        );
+        owner.maybe_cleanup();
+        window
     }
     fn choose_local(self: &Rc<Self>) {
         let Some(window) = self.view.window() else {
@@ -400,7 +520,7 @@ impl Controller {
             };
             let result = picker.select_folder_future(Some(&window)).await;
             drop(window);
-            if owner.state.borrow().closed {
+            if owner.state.borrow().closed || owner.state.borrow().closing {
                 return;
             }
             match result {
@@ -411,7 +531,9 @@ impl Controller {
                             gettext("The selected folder is unavailable. Choose another folder.");
                     } else {
                         owner.state.borrow_mut().draft.local_uri = Some(uri);
-                        owner.save_choices().await;
+                        owner.state.borrow_mut().feedback = gettext(
+                            "Local folder selected. Nothing is saved until setup is completed.",
+                        );
                     }
                 }
                 Err(error)
@@ -423,26 +545,10 @@ impl Controller {
                 }
             }
             owner.state.borrow_mut().busy = false;
-            if !owner.state.borrow().closed {
+            if !owner.state.borrow().closed && !owner.state.borrow().closing {
                 owner.render();
             }
         });
-    }
-    async fn save_choices(&self) -> bool {
-        let (account, draft) = {
-            let state = self.state.borrow();
-            (state.account.clone(), state.draft.clone())
-        };
-        let Some(account) = account else {
-            return false;
-        };
-        let saved = setup::save_draft(&account.id, &draft).await.is_ok();
-        self.state.borrow_mut().feedback = if saved {
-            gettext("Folder choice saved as a draft.")
-        } else {
-            gettext("The setup draft could not be saved. Try again.")
-        };
-        saved
     }
     fn review(self: &Rc<Self>) {
         let Some(uri) = self.state.borrow().draft.local_uri.clone() else {
@@ -455,11 +561,11 @@ impl Controller {
             if setup::check_local_folder(&uri).await.is_err() {
                 owner.state.borrow_mut().feedback =
                     gettext("The selected folder is unavailable. Choose another folder.");
-            } else if !owner.state.borrow().closed && owner.save_choices().await {
+            } else if !owner.state.borrow().closed && !owner.state.borrow().closing {
                 owner.state.borrow_mut().step = Step::Review;
             }
             owner.state.borrow_mut().busy = false;
-            if !owner.state.borrow().closed {
+            if !owner.state.borrow().closed && !owner.state.borrow().closing {
                 owner.render();
             }
         });

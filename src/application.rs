@@ -16,7 +16,6 @@ use std::{
 pub(crate) struct Context {
     pub engine: Rc<RefCell<Option<Engine>>>,
     pub navigation_generation: Rc<Cell<u64>>,
-    pub setup_offered: Rc<Cell<bool>>,
     pub pending: Rc<RefCell<Option<GoogleSignInId>>>,
 }
 #[cfg(test)]

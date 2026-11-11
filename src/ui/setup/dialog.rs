@@ -20,7 +20,8 @@ pub(super) enum Event {
 /// Owns presentation widgets privately; the window is weak to permit dismissal
 /// while engine operations are still completing.
 pub(super) struct SetupDialog {
-    window: gtk::glib::WeakRef<adw::Window>,
+    window: gtk::glib::WeakRef<gtk::Window>,
+    root: adw::ToolbarView,
     stack: gtk::Stack,
     title: adw::WindowTitle,
     back: gtk::Button,
@@ -33,21 +34,10 @@ pub(super) struct SetupDialog {
     review: ReviewPage,
 }
 impl SetupDialog {
-    pub fn new(
-        parent: Option<&gtk::Window>,
-        providers: &[RegisteredProvider],
-    ) -> (adw::Window, Self) {
-        let window = adw::Window::builder()
-            .title(gettextrs::gettext("Set up account"))
-            .modal(true)
-            .default_width(680)
-            .default_height(620)
-            .width_request(320)
-            .height_request(360)
-            .destroy_with_parent(true)
-            .build();
+    pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
+        window.set_title(Some(&gettextrs::gettext("Set up account")));
+        window.set_default_size(680, 620);
         window.set_widget_name("drivesync-account-setup");
-        window.set_transient_for(parent);
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new("DriveSync", "");
@@ -100,8 +90,8 @@ impl SetupDialog {
         disconnect.set_widget_name("setup-disconnect");
         body.append(&disconnect);
         toolbar.set_content(Some(&body));
-        window.set_content(Some(&toolbar));
-        let view = Self {
+        Self {
+            root: toolbar,
             window: window.downgrade(),
             stack,
             title,
@@ -113,10 +103,12 @@ impl SetupDialog {
             connection,
             synchronization,
             review,
-        };
-        (window, view)
+        }
     }
-    pub fn window(&self) -> Option<adw::Window> {
+    pub fn widget(&self) -> &adw::ToolbarView {
+        &self.root
+    }
+    pub fn window(&self) -> Option<gtk::Window> {
         self.window.upgrade()
     }
     pub fn on_event(&self, callback: Rc<dyn Fn(Event)>) {
@@ -166,7 +158,7 @@ impl SetupDialog {
             provider,
             account.filter(|_| state.authorized()),
             state.busy,
-            state.signing_in,
+            state.signing_in && !state.closing,
             state.authorization_url.is_some(),
         );
         let path = state.draft.local_uri.as_deref().map(setup::display_path);

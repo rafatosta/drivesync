@@ -10,7 +10,7 @@ impl ReviewPage {
     pub fn new() -> Self {
         let root = super::content(
             &gettextrs::gettext("Start synchronization"),
-            &gettextrs::gettext("Review your connected account and saved folder choice."),
+            &gettextrs::gettext("Review your connected account and selected folder."),
             "dialog-information-symbolic",
         );
         let summary = Summary::new();

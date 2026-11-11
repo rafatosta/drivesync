@@ -58,7 +58,14 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
         });
         let quit = adw::gtk::gio::SimpleAction::new("quit", None);
         let weak = app.downgrade();
+        let weak_window = window.downgrade();
         quit.connect_activate(move |_, _| {
+            if let Some(window) = weak_window.upgrade() {
+                if window.widget_name() == "drivesync-account-setup" {
+                    window.close();
+                    return;
+                }
+            }
             if let Some(app) = weak.upgrade() {
                 app.quit();
             }

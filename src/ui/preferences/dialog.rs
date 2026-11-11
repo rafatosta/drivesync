@@ -18,7 +18,7 @@ pub(crate) fn install(
         let (Some(nav), Some(toasts)) = (weak_navigation.upgrade(), weak_toasts.upgrade()) else {
             return;
         };
-        if !nav.is_sensitive() {
+        if nav.root().is_none() || !nav.is_sensitive() {
             return;
         }
         if let Some(page) = nav.visible_page() {

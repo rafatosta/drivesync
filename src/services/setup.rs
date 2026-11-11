@@ -1,7 +1,5 @@
-//! Nonvisual setup integration. Drafts are not synchronization configurations.
-//!
-//! Until the engine exposes configuration and execution APIs, this service
-//! persists only account-scoped choices and never claims synchronization began.
+//! In-memory setup choices and cleanup of legacy persisted drafts.
+//! New setup does not persist incomplete choices or grant dashboard readiness.
 use adw::gtk::{gio, glib};
 use drivesync_engine::{providers, AccountId};
 use gio::prelude::*;
@@ -13,12 +11,13 @@ pub(crate) fn list_providers() -> Vec<RegisteredProvider> {
     providers::list_providers()
 }
 
-/// Recoverable user choices, containing no credentials or completion flag.
+/// Current-window choices, containing no credentials or completion flag.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SetupDraft {
     pub local_uri: Option<String>,
 }
 impl SetupDraft {
+    #[cfg(test)]
     fn encode(&self) -> glib::GString {
         let file = glib::KeyFile::new();
         if let Some(uri) = &self.local_uri {
@@ -57,7 +56,8 @@ pub(crate) async fn load_draft(id: &AccountId) -> Result<SetupDraft, glib::Error
         Err(error) => Err(error),
     }
 }
-/// Saves only draft choices, atomically and with private file permissions.
+/// Creates legacy fixtures; production setup never writes incomplete choices.
+#[cfg(test)]
 pub(crate) async fn save_draft(id: &AccountId, draft: &SetupDraft) -> Result<(), glib::Error> {
     let file = draft_file(id);
     if let Some(parent) = file.parent().and_then(|parent| parent.path()) {

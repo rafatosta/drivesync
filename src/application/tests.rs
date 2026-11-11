@@ -38,9 +38,6 @@ fn account_only_layout_and_initial_name_editor() {
     let context = Context::default();
     let nav = adw::NavigationView::new();
     let toasts = adw::ToastOverlay::new();
-    let welcome = crate::ui::setup::landing::build();
-    assert!(find(welcome.upcast_ref(), "dashboard-split").is_none());
-    capture(&window, &welcome, "welcome");
     let account = Account {
         id: AccountId("fixture".into()),
         provider: ProviderId("google".into()),
