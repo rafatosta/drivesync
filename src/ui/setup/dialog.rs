@@ -37,7 +37,7 @@ pub(super) struct SetupDialog {
 impl SetupDialog {
     pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
-        window.set_default_size(-1, -1);
+        window.set_default_size(680, 620);
         let css = gtk::CssProvider::new();
         css.load_from_data(".setup-provider-choice { border: 1px solid alpha(currentColor, 0.15); } .setup-provider-choice.selected { border-color: @accent_color; background-color: alpha(@accent_color, 0.10); }");
         gtk::style_context_add_provider_for_display(
@@ -53,6 +53,8 @@ impl SetupDialog {
         });
         window.set_widget_name("drivesync-account-setup");
         let toolbar = adw::ToolbarView::new();
+        // Keep the setup minimum local to its content when the main window is reused.
+        toolbar.set_size_request(680, 620);
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new("DriveSync", "");
         header.set_title_widget(Some(&title));
@@ -153,13 +155,6 @@ impl SetupDialog {
             .connect_clicked(move |_| callback(Event::Disconnect));
     }
     pub fn render(&self, state: &SetupState) {
-        if let Some(window) = self.window() {
-            if state.step == Step::Provider {
-                window.set_default_size(-1, -1);
-            } else {
-                window.set_default_size(680, 620);
-            }
-        }
         self.stack.set_visible_child_name(state.step.name());
         self.title.set_subtitle(&if state.step == Step::Provider {
             String::new()

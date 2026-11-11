@@ -78,6 +78,10 @@ outros componentes. Estilos específicos permanecem no componente correspondente
 
 ## As quatro páginas
 
+As etapas compartilham o tamanho mínimo de 680 × 620 pixels lógicos. A janela
+pode ser ampliada pelo usuário, e a navegação não redefine seu tamanho. Esse
+mínimo pertence ao conteúdo do Setup e deixa de valer quando ele é removido.
+
 | Página | Comportamento |
 | --- | --- |
 | Escolher provedor | Solicita ao cadastro público de Providers os provedores disponíveis. A UI não mantém uma lista alternativa. Desmarcar a seleção bloqueia Continuar. |
