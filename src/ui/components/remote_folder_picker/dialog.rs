@@ -212,6 +212,10 @@ impl RemoteFolderPicker {
         });
         self.window.present();
     }
+    /// Cancels an open picker so its owner can end pending read operations before logout.
+    pub fn cancel(&self) {
+        self.window.close();
+    }
     pub fn connect_response<F: Fn(RemoteFolderPickerResult) + 'static>(&self, callback: F) {
         self.callbacks.borrow_mut().push(Box::new(callback));
     }

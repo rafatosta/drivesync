@@ -19,7 +19,7 @@ impl SynchronizationPage {
             .title(gettext("Remote folder"))
             .build();
         let remote_location = crate::ui::row(
-            &gettext("Simulated remote folder"),
+            &gettext("Remote folder"),
             &gettext("Choose a folder"),
             "folder-remote-symbolic",
         );
@@ -33,7 +33,7 @@ impl SynchronizationPage {
         remote_location.set_activatable_widget(Some(&choose_remote));
         remote.add(&remote_location);
         remote.set_description(Some(&gettext(
-            "Folder browsing uses simulated data. Your remote files are not accessed.",
+            "Choose a folder from your connected account.",
         )));
         root.append(&remote);
         let local = FolderChoice::new();

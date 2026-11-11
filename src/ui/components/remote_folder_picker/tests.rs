@@ -215,4 +215,47 @@ fn native_picker_selection_cancel_and_preview() {
         *cancellations.borrow(),
         vec![RemoteFolderPickerResult::Cancelled]
     );
+    // Owner cancellation must drop a pending source future before logout begins.
+    struct Active(Rc<std::cell::Cell<bool>>);
+    impl Drop for Active {
+        fn drop(&mut self) {
+            self.0.set(false);
+        }
+    }
+    struct PendingSource(Rc<std::cell::Cell<bool>>);
+    impl RemoteFolderSource for PendingSource {
+        fn list_folders(
+            &self,
+            _: &RemoteFolderId,
+            _: Option<&str>,
+        ) -> FolderFuture<'_, Result<FolderPage, FolderSourceError>> {
+            Box::pin(async move {
+                self.0.set(true);
+                let _active = Active(self.0.clone());
+                std::future::pending::<()>().await;
+                unreachable!()
+            })
+        }
+    }
+    let active = Rc::new(std::cell::Cell::new(false));
+    let parent = adw::ApplicationWindow::new(&app);
+    parent.present();
+    let pending = RemoteFolderPicker::new(
+        RemoteFolderPickerConfig {
+            provider_name: "Fixture".into(),
+            provider_icon: "folder".into(),
+            account_label: "fixture".into(),
+            root,
+        },
+        PendingSource(active.clone()),
+    );
+    pending.present(&parent);
+    context.block_on(gtk::glib::timeout_future(Duration::from_millis(30)));
+    assert!(active.get());
+    pending.cancel();
+    assert!(
+        !active.get(),
+        "closing must drop the source future immediately"
+    );
+    parent.destroy();
 }

@@ -18,6 +18,7 @@ struct State {
     navigation: RefCell<Navigation>,
     selected: RefCell<RemoteFolderLocation>,
     generation: Cell<u64>,
+    query: RefCell<Option<gtk::glib::JoinHandle<()>>>,
     store: gtk::gio::ListStore,
     selection: gtk::glib::WeakRef<gtk::SingleSelection>,
     breadcrumbs: gtk::glib::WeakRef<gtk::Box>,
@@ -95,6 +96,7 @@ impl Browser {
             navigation: RefCell::new(navigation),
             selected: RefCell::new(location),
             generation: Cell::new(0),
+            query: RefCell::new(None),
             store,
             selection: selection.downgrade(),
             breadcrumbs: breadcrumbs.downgrade(),
@@ -149,6 +151,9 @@ impl Browser {
             let state = state.clone();
             move |_| {
                 state.generation.set(state.generation.get() + 1);
+                if let Some(query) = state.query.borrow_mut().take() {
+                    query.abort();
+                }
             }
         });
         state.load();
@@ -189,6 +194,9 @@ impl State {
         self.load();
     }
     fn load(self: &Rc<Self>) {
+        if let Some(query) = self.query.borrow_mut().take() {
+            query.abort();
+        }
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         self.store.remove_all();
@@ -246,7 +254,7 @@ impl State {
         let weak = Rc::downgrade(self);
         let source = self.source.clone();
         let parent = path.last().unwrap().id.clone();
-        gtk::glib::spawn_future_local(async move {
+        let query = gtk::glib::spawn_future_local(async move {
             let mut token: Option<String> = None;
             let mut seen = HashSet::new();
             let mut tokens = HashSet::new();
@@ -290,6 +298,7 @@ impl State {
                 }
             }
         });
+        *self.query.borrow_mut() = Some(query);
     }
     fn finish(&self, error: Option<FolderSourceError>) {
         if let Some(feedback) = self.feedback.upgrade() {
@@ -304,10 +313,11 @@ impl State {
         }
         if let Some(status) = self.status.upgrade() {
             status.set_label(&match error {
-                Some(FolderSourceError::Unauthorized) => {
-                    gettext("Access to this folder is not authorized.")
-                }
+                Some(FolderSourceError::Unauthorized) => gettext(
+                    "Access is not authorized. Close this dialog and reconnect your account.",
+                ),
                 Some(FolderSourceError::NotFound) => gettext("Folder not found."),
+                Some(FolderSourceError::Other(message)) => message,
                 Some(_) => gettext("Unable to load folders. Try again."),
                 None if self.store.n_items() == 0 => gettext("This folder has no subfolders."),
                 None => String::new(),

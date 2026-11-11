@@ -17,11 +17,7 @@ impl Summary {
         root.add(&provider);
         root.add(&account);
         root.add(&local);
-        let remote = crate::ui::row(
-            &gettext("Simulated remote folder"),
-            "",
-            "folder-remote-symbolic",
-        );
+        let remote = crate::ui::row(&gettext("Remote folder"), "", "folder-remote-symbolic");
         remote.set_widget_name("setup-review-remote");
         root.add(&remote);
         Self {

@@ -160,10 +160,11 @@ impl SetupDialog {
         });
         self.connection.update(
             provider,
-            account.filter(|_| state.authorized()),
+            account.filter(|_| state.authorized() || state.remote_authorization_required),
             state.busy,
             state.signing_in && !state.closing,
             state.authorization_url.is_some(),
+            state.remote_authorization_required,
         );
         let path = state.draft.local_uri.as_deref().map(setup::display_path);
         let remote = state.remote_path();

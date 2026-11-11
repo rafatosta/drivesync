@@ -69,6 +69,21 @@ pub(crate) fn exercise(
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-connection");
     state.account = Some(account.clone());
+    state.require_remote_authorization();
+    view.render(&state);
+    assert!(!find(dialog.upcast_ref(), "setup-continue").is_sensitive());
+    assert!(find(dialog.upcast_ref(), "setup-connect").is_visible());
+    assert_eq!(
+        find(dialog.upcast_ref(), "setup-connect")
+            .downcast::<gtk::Button>()
+            .unwrap()
+            .label()
+            .as_deref(),
+        Some(gettextrs::gettext("Authorize Drive access…").as_str())
+    );
+    capture(dialog.upcast_ref(), "setup-reauthorize-drive");
+    state.remote_authorization_required = false;
+    state.feedback.clear();
     state.step = Step::Synchronization;
     state.draft.local_uri = Some("file:///tmp/drivesync-fixture/Google%20Drive".into());
     let root = crate::ui::components::remote_folder_picker::MockFolderSource::default().root();
@@ -221,7 +236,13 @@ pub(crate) fn exercise(
     // Closing setup also destroys an outstanding modal picker without applying it.
     let (host, nav, toasts) = new_host();
     let context = new_context();
-    let setup = super::show(&context, &nav, &toasts, Some(account.clone()));
+    let setup = super::controller::Controller::with_local_choice(
+        &context,
+        &nav,
+        &toasts,
+        account.clone(),
+        uri.clone(),
+    );
     find(&setup, "setup-choose-remote")
         .downcast::<gtk::Button>()
         .unwrap()

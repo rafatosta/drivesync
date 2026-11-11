@@ -15,7 +15,7 @@ impl ReviewPage {
         );
         let summary = Summary::new();
         root.append(summary.widget());
-        root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. The remote folder is simulated and has not been verified.")).wrap(true).build());
+        root.append(&gtk::Label::builder().label(gettext("Synchronization is not available yet. Folder choices are kept only while setup is open.")).wrap(true).build());
         let start = gtk::Button::builder()
             .label(gettext("Start synchronization"))
             .sensitive(false)

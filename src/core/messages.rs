@@ -28,6 +28,16 @@ pub(crate) fn engine_error(error: &EngineError) -> String {
         EngineErrorKind::Accounts(AccountsError::InvalidRequest) => {
             "The account name could not be saved. Check the value and try again."
         }
+        EngineErrorKind::RemoteFolder(
+            drivesync_engine::RemoteFolderErrorKind::AuthorizationRequired,
+        ) => "Authorize Drive access again to browse your folders.",
+        EngineErrorKind::RemoteFolder(
+            drivesync_engine::RemoteFolderErrorKind::PermissionDenied,
+        ) => "You do not have permission to access this folder.",
+        EngineErrorKind::RemoteFolder(drivesync_engine::RemoteFolderErrorKind::NotFound) => {
+            "Folder not found."
+        }
+        EngineErrorKind::RemoteFolder(_) => "Unable to load folders. Try again.",
         _ => "The account request could not be completed. Please try again.",
     })
 }

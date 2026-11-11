@@ -771,3 +771,27 @@ msgstr "Pasta remota simulada selecionada. Nenhum arquivo remoto foi acessado."
 
 msgid "Synchronization is not available yet. The remote folder is simulated and has not been verified."
 msgstr "A sincronização ainda não está disponível. A pasta remota é simulada e não foi verificada."
+
+msgid "Loading remote folders…"
+msgstr "Carregando pastas remotas…"
+
+msgid "Choose a folder from your connected account."
+msgstr "Escolha uma pasta da sua conta conectada."
+
+msgid "Remote folder selected. Nothing is saved until setup is completed."
+msgstr "Pasta remota selecionada. Nada será salvo até a configuração ser concluída."
+
+msgid "Authorize Drive access again to browse your folders."
+msgstr "Autorize novamente o acesso ao Drive para navegar pelas suas pastas."
+
+msgid "Authorize Drive access…"
+msgstr "Autorizar acesso ao Drive…"
+
+msgid "Synchronization is not available yet. Folder choices are kept only while setup is open."
+msgstr "A sincronização ainda não está disponível. As pastas escolhidas são mantidas apenas enquanto a configuração está aberta."
+
+msgid "You do not have permission to access this folder."
+msgstr "Você não tem permissão para acessar esta pasta."
+
+msgid "Access is not authorized. Close this dialog and reconnect your account."
+msgstr "O acesso não foi autorizado. Feche esta janela e reconecte sua conta."

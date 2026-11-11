@@ -36,8 +36,9 @@ pub(super) struct SetupState {
     pub provider: Option<RegisteredProvider>,
     pub account: Option<Account>,
     pub draft: SetupDraft,
-    /// Current setup only; mock selections never establish remote validity.
+    /// Current setup only; a chosen folder does not establish sync readiness.
     pub remote_folder: Option<RemoteFolderLocation>,
+    pub remote_authorization_required: bool,
     pub busy: bool,
     pub signing_in: bool,
     pub closed: bool,
@@ -62,6 +63,7 @@ impl SetupState {
             self.account = None;
             self.draft = SetupDraft::default();
             self.remote_folder = None;
+            self.remote_authorization_required = false;
             self.generation += 1;
         }
         self.provider = Some(provider);
@@ -90,20 +92,33 @@ impl SetupState {
         account_id: &drivesync_engine::AccountId,
         result: RemoteFolderPickerResult,
     ) {
-        if self.closed
-            || self.closing
-            || self.generation != generation
-            || self.account.as_ref().map(|account| &account.id) != Some(account_id)
-        {
+        if !self.remote_response_is_current(generation, account_id) {
             return;
         }
         self.busy = false;
         if let RemoteFolderPickerResult::Selected(location) = result {
             self.remote_folder = Some(location);
             self.feedback = gettextrs::gettext(
-                "Simulated remote folder selected. No remote files were accessed.",
+                "Remote folder selected. Nothing is saved until setup is completed.",
             );
         }
+    }
+    pub fn remote_response_is_current(
+        &self,
+        generation: u64,
+        account_id: &drivesync_engine::AccountId,
+    ) -> bool {
+        !self.closed
+            && !self.closing
+            && self.generation == generation
+            && self.account.as_ref().map(|account| &account.id) == Some(account_id)
+    }
+    /// Existing identity-only registrations must explicitly grant Drive metadata access.
+    pub fn require_remote_authorization(&mut self) {
+        self.remote_authorization_required = true;
+        self.remote_folder = None;
+        self.step = Step::Connection;
+        self.feedback = gettextrs::gettext("Authorize Drive access again to browse your folders.");
     }
     pub fn remote_path(&self) -> Option<String> {
         self.remote_folder.as_ref().map(|location| {
@@ -116,13 +131,14 @@ impl SetupState {
         })
     }
     pub fn authorized(&self) -> bool {
-        self.account.as_ref().is_some_and(|account| {
-            account.state == AccountState::Connected
-                && self
-                    .provider
-                    .as_ref()
-                    .is_some_and(|provider| provider.id == account.provider)
-        })
+        !self.remote_authorization_required
+            && self.account.as_ref().is_some_and(|account| {
+                account.state == AccountState::Connected
+                    && self
+                        .provider
+                        .as_ref()
+                        .is_some_and(|provider| provider.id == account.provider)
+            })
     }
     pub fn back(&mut self) {
         if self.busy {
@@ -250,6 +266,14 @@ mod remote_choice_tests {
         );
         assert!(!state.busy);
         assert_eq!(state.remote_folder, Some(selected.clone()));
+        state.require_remote_authorization();
+        assert!(!state.can_continue());
+        assert!(!state.authorized());
+        assert_eq!(state.step, Step::Connection);
+        assert!(state.remote_folder.is_none());
+        state.remote_authorization_required = false;
+        assert!(state.authorized());
+        state.remote_folder = Some(selected.clone());
         state.busy = true;
         state.finish_remote_choice(3, &account.id, RemoteFolderPickerResult::Cancelled);
         assert!(!state.busy);

@@ -29,6 +29,10 @@ pub(super) struct Controller {
     cleanup_running: Cell<bool>,
     hold: RefCell<Option<gtk::gio::ApplicationHoldGuard>>,
     view: SetupDialog,
+    remote_open_task: RefCell<Option<gtk::glib::JoinHandle<()>>>,
+    remote_picker: RefCell<Option<crate::ui::components::remote_folder_picker::RemoteFolderPicker>>,
+    #[cfg(test)]
+    remote_fixture: Cell<bool>,
 }
 impl Controller {
     pub fn attach(
@@ -77,6 +81,10 @@ impl Controller {
             cleanup_running: Cell::new(false),
             hold: RefCell::new(None),
             view,
+            remote_open_task: RefCell::new(None),
+            remote_picker: RefCell::new(None),
+            #[cfg(test)]
+            remote_fixture: Cell::new(false),
         });
         let weak = Rc::downgrade(&controller);
         controller.view.on_event(Rc::new(move |event| {
@@ -273,6 +281,13 @@ impl Controller {
                 accounts::cancel(&engine, id);
             }
         }
+        if let Some(task) = self.remote_open_task.borrow_mut().take() {
+            task.abort();
+        }
+        let picker = self.remote_picker.borrow_mut().take();
+        if let Some(picker) = picker {
+            picker.cancel();
+        }
         if self.hold.borrow().is_none() {
             if let Some(app) = self.view.window().and_then(|window| window.application()) {
                 *self.hold.borrow_mut() = Some(app.hold());
@@ -460,6 +475,7 @@ impl Controller {
                     state.draft = setup::SetupDraft::default();
                     state.remote_folder = None;
                 }
+                state.remote_authorization_required = false;
                 state.account = Some(result.account);
                 state.step = Step::Connection;
                 state.feedback =
@@ -481,6 +497,7 @@ impl Controller {
     ) -> gtk::Window {
         let (window, owner) = Self::build(context, navigation, toasts, Some(account));
         owner.state.borrow_mut().draft.local_uri = Some(uri);
+        owner.remote_fixture.set(true);
         owner.render();
         window.present();
         window
@@ -511,14 +528,8 @@ impl Controller {
         owner.maybe_cleanup();
         window
     }
-    /// Adapts the setup identity to the reusable picker; only mock data is queried.
+    /// Resolves the selected account's real root without blocking GTK.
     fn choose_remote(self: &Rc<Self>) {
-        use crate::ui::components::remote_folder_picker::{
-            MockFolderSource, RemoteFolderPicker, RemoteFolderPickerConfig,
-        };
-        let Some(window) = self.view.window() else {
-            return;
-        };
         let (provider, account, generation) = {
             let mut state = self.state.borrow_mut();
             if state.step != Step::Synchronization || !state.authorized() {
@@ -527,11 +538,90 @@ impl Controller {
             let provider = state.provider.clone().unwrap();
             let account = state.account.clone().unwrap();
             state.busy = true;
+            state.feedback = gettext("Loading remote folders…");
             state.generation += 1;
             (provider, account, state.generation)
         };
         self.render();
-        let source = MockFolderSource::default();
+        #[cfg(test)]
+        if self.remote_fixture.get() {
+            let source = crate::ui::components::remote_folder_picker::MockFolderSource::default();
+            self.present_remote_picker(
+                provider,
+                account,
+                generation,
+                source.root(),
+                source,
+                Rc::default(),
+            );
+            return;
+        }
+        let Some(engine) = self.engine() else {
+            self.state.borrow_mut().busy = false;
+            self.state.borrow_mut().feedback =
+                gettext("The account service is unavailable. Try again.");
+            self.render();
+            return;
+        };
+        let owner = Rc::downgrade(self);
+        let task = gtk::glib::spawn_future_local(async move {
+            let result =
+                super::remote_folders::EngineFolderSource::open(engine, account.id.clone()).await;
+            let Some(owner) = owner.upgrade() else {
+                return;
+            };
+            if !owner
+                .state
+                .borrow()
+                .remote_response_is_current(generation, &account.id)
+            {
+                return;
+            }
+            match result {
+                Ok((root, source)) => {
+                    let needs_authorization = source.authorization_required();
+                    owner.present_remote_picker(
+                        provider,
+                        account,
+                        generation,
+                        root,
+                        source,
+                        needs_authorization,
+                    );
+                }
+                Err(error) => {
+                    let mut state = owner.state.borrow_mut();
+                    state.busy = false;
+                    if super::remote_folders::needs_authorization(&error) {
+                        state.require_remote_authorization();
+                    } else {
+                        state.feedback = crate::core::messages::engine_error(&error);
+                    }
+                    drop(state);
+                    owner.render();
+                }
+            }
+        });
+        *self.remote_open_task.borrow_mut() = Some(task);
+    }
+    /// Only this caller knows how remote data is obtained; the picker sees a source.
+    fn present_remote_picker(
+        self: &Rc<Self>,
+        provider: RegisteredProvider,
+        account: Account,
+        generation: u64,
+        root: crate::ui::components::remote_folder_picker::RemoteFolder,
+        source: impl crate::ui::components::remote_folder_picker::RemoteFolderSource + 'static,
+        needs_authorization: Rc<Cell<bool>>,
+    ) {
+        use crate::ui::components::remote_folder_picker::{
+            RemoteFolderPicker, RemoteFolderPickerConfig,
+        };
+        let Some(window) = self.view.window() else {
+            return;
+        };
+        self.state.borrow_mut().feedback.clear();
+        self.render();
         let picker = RemoteFolderPicker::new(
             RemoteFolderPickerConfig {
                 provider_name: provider.name,
@@ -542,23 +632,30 @@ impl Controller {
                     .or(account.display_name.as_deref())
                     .unwrap_or(&account.provider_user_id)
                     .into(),
-                root: source.root(),
+                root,
             },
             source,
         );
         let owner = Rc::downgrade(self);
         picker.connect_response(move |result| {
             if let Some(owner) = owner.upgrade() {
-                owner
-                    .state
-                    .borrow_mut()
-                    .finish_remote_choice(generation, &account.id, result);
-                if !owner.state.borrow().closed && !owner.state.borrow().closing {
-                    owner.render();
+                let mut state = owner.state.borrow_mut();
+                if !state.remote_response_is_current(generation, &account.id) {
+                    return;
                 }
+                if needs_authorization.get() {
+                    state.busy = false;
+                    state.require_remote_authorization();
+                } else {
+                    state.finish_remote_choice(generation, &account.id, result);
+                }
+                drop(state);
+                owner.remote_picker.borrow_mut().take();
+                owner.render();
             }
         });
         picker.present(&window);
+        *self.remote_picker.borrow_mut() = Some(picker);
     }
     fn choose_local(self: &Rc<Self>) {
         let Some(window) = self.view.window() else {

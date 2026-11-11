@@ -69,5 +69,29 @@ translation catalog into a locale directory and supply that directory using
 `DRIVESYNC_PICKER_LOCALE`, with `LANG=pt_BR.UTF-8 LANGUAGE=pt_BR`.
 
 Setup retains the selected location only in memory, displays it in review and
-requires both directory choices before continuing. The mock selection never
+requires both directory choices before continuing. The selected folder never
 grants synchronization readiness or dashboard access.
+
+## Real setup integration
+
+Setup uses `EngineFolderSource` and the engine's account-scoped
+`remote_folder_root` and `list_remote_folders` queries. The engine obtains
+Accounts-managed sessions, renews expired credentials, and calls existing
+Google Provider methods on its Tokio executor. Tokens never reach the picker.
+The root is resolved to its canonical remote ID before presentation.
+
+Consent requests `drive.metadata.readonly` for read-only metadata browsing.
+An explicit scope/authentication failure returns setup to its connection page
+and offers authorization for the same account. Folder permission errors remain
+separate from missing consent. Configure the required scope in the Google OAuth
+application as well; successful mock tests do not verify that external setup.
+
+Closing or navigating cancels outstanding folder queries. Setup calls the
+picker cancellation method before beginning account logout. Engine-side query
+cancellation releases the connection lease used to exclude concurrent logout.
+The reusable picker retains a request generation check as a second safeguard.
+Mock sources are used only by explicit test fixtures and the documented example;
+production setup does not fall back to simulated data on errors.
+
+The selected path remains an in-memory choice. No synchronization, remote
+modification or persistent synchronization configuration is implemented here.
