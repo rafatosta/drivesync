@@ -8,7 +8,7 @@ let source = MockFolderSource::default();
 let picker = RemoteFolderPicker::new(
     RemoteFolderPickerConfig {
         provider_name: "Google Drive".into(),
-        provider_icon: "google-drive".into(),
+        provider_icon_svg: provider.icon_svg.into(),
         account_label: "conta@example.com".into(),
         root: source.root(),
     },
@@ -24,9 +24,9 @@ picker.connect_response(|response| {
 picker.present(&parent);
 ```
 
-The caller supplies an icon name registered in its icon theme. The preview
-registers `data/icons` to use the supplied `google-drive.svg`; no provider name
-or icon is hardcoded in the picker. Folder artwork is embedded in the binary.
+The caller supplies SVG source in `provider_icon_svg`. The UI loads it as a
+scalable bytes icon without theme registration or temporary files. No provider
+name or icon is hardcoded in the picker. Folder artwork is embedded in the binary.
 The modal `adw::Window` and `ToolbarView` match the application's libadwaita 1.4
 baseline; `AdwDialog` would require raising that baseline.
 

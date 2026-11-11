@@ -83,15 +83,13 @@ fn native_picker_selection_cancel_and_preview() {
     gtk::Settings::default()
         .unwrap()
         .set_gtk_icon_theme_name(Some("Adwaita"));
-    gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap())
-        .add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
     gtk::glib::MainContext::default().block_on(super::browser::exercise_browser());
     let source = MockFolderSource::default();
     let root = source.root();
     let picker = RemoteFolderPicker::new(
         RemoteFolderPickerConfig {
             provider_name: "Google Drive".into(),
-            provider_icon: "google-drive".into(),
+            provider_icon_svg: crate::services::setup::list_providers()[0].icon_svg.into(),
             account_label: "conta@example.com".into(),
             root: root.clone(),
         },
@@ -190,7 +188,7 @@ fn native_picker_selection_cancel_and_preview() {
     let cancelled = RemoteFolderPicker::new(
         RemoteFolderPickerConfig {
             provider_name: "Mock".into(),
-            provider_icon: "folder".into(),
+            provider_icon_svg: crate::services::setup::list_providers()[0].icon_svg.into(),
             account_label: "mock".into(),
             root: source.root(),
         },
@@ -243,7 +241,7 @@ fn native_picker_selection_cancel_and_preview() {
     let pending = RemoteFolderPicker::new(
         RemoteFolderPickerConfig {
             provider_name: "Fixture".into(),
-            provider_icon: "folder".into(),
+            provider_icon_svg: crate::services::setup::list_providers()[0].icon_svg.into(),
             account_label: "fixture".into(),
             root,
         },

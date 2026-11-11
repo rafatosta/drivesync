@@ -38,3 +38,12 @@ pub fn content() -> gtk::Box {
     content.set_margin_bottom(24);
     content
 }
+
+/// Loads SVG source as a scalable icon, without temporary files or theme lookup.
+pub fn svg_icon(svg: &str, size: i32) -> gtk::Image {
+    let bytes = gtk::glib::Bytes::from_owned(svg.as_bytes().to_vec());
+    let icon = gtk::gio::BytesIcon::new(&bytes);
+    let image = gtk::Image::from_gicon(&icon);
+    image.set_pixel_size(size);
+    image
+}

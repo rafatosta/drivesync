@@ -69,8 +69,7 @@ impl RemoteFolderPicker {
         margins(&content, 24);
         content.set_margin_top(0);
         let account = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-        let provider = gtk::Image::from_icon_name(&config.provider_icon);
-        provider.set_pixel_size(40);
+        let provider = crate::ui::components::svg_icon(&config.provider_icon_svg, 40);
         account.append(&provider);
         let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
         identity.append(

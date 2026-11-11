@@ -87,7 +87,12 @@ outros componentes. Estilos específicos permanecem no componente correspondente
 
 A consulta de provedores é local e infalível no contrato atual. Publica somente
 implementações cadastradas, atualmente Google, com identificador, nome, ícone e
-capacidade de conexão. Operações específicas permanecem no módulo do provedor.
+capacidade de conexão. O campo `icon_svg: &'static str` contém o SVG incorporado
+por `include_str!`; o recurso Google fica em
+`engine/src/providers/google/assets/drive.svg`. A UI renderiza esse conteúdo como
+ícone escalável tanto na escolha do provedor quanto no seletor de pastas remotas,
+sem depender de caminhos instalados ou do tema de ícones. Operações específicas
+permanecem no módulo do provedor.
 
 O seletor local não cria pastas nem altera arquivos. Sua consulta de permissão
 não demonstra acesso durável pelo portal nem substitui as verificações da futura

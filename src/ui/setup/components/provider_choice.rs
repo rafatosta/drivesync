@@ -23,8 +23,7 @@ impl ProviderChoice {
         if let Some(group) = group {
             choice.set_group(Some(&group.choice));
         }
-        let image = gtk::Image::from_icon_name(&provider.icon_name);
-        image.set_pixel_size(32);
+        let image = crate::ui::components::svg_icon(provider.icon_svg, 32);
         image.set_margin_start(16);
         root.append(&image);
         let label = gtk::Label::builder()

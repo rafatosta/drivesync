@@ -16,8 +16,8 @@ pub enum ConnectionMethod {
 pub struct RegisteredProvider {
     pub id: ProviderId,
     pub name: String,
-    /// Freedesktop icon name; callers may supply their own visual fallback.
-    pub icon_name: String,
+    /// Bundled SVG source, independent of filesystem paths and UI toolkits.
+    pub icon_svg: &'static str,
     pub connection_method: ConnectionMethod,
 }
 
@@ -27,7 +27,7 @@ pub fn list_providers() -> Vec<RegisteredProvider> {
     vec![RegisteredProvider {
         id: ProviderId("google".into()),
         name: "Google Drive".into(),
-        icon_name: "folder-remote-symbolic".into(),
+        icon_svg: include_str!("google/assets/drive.svg"),
         connection_method: ConnectionMethod::Google,
     }]
 }
@@ -43,7 +43,8 @@ mod tests {
             assert!(!provider.id.0.trim().is_empty());
             assert!(ids.insert(&provider.id));
             assert!(!provider.name.trim().is_empty());
-            assert!(!provider.icon_name.trim().is_empty());
+            assert!(provider.icon_svg.contains("<svg"));
+            assert!(provider.icon_svg.contains("http://www.w3.org/2000/svg"));
         }
         let mut copy = list_providers();
         copy.clear();

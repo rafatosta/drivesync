@@ -19,7 +19,8 @@ pub struct RemoteFolderLocation {
 #[derive(Debug, Clone)]
 pub struct RemoteFolderPickerConfig {
     pub provider_name: String,
-    pub provider_icon: String,
+    /// SVG source supplied by the caller, rather than a theme icon name.
+    pub provider_icon_svg: String,
     pub account_label: String,
     pub root: RemoteFolder,
 }

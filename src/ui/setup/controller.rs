@@ -625,7 +625,7 @@ impl Controller {
         let picker = RemoteFolderPicker::new(
             RemoteFolderPickerConfig {
                 provider_name: provider.name,
-                provider_icon: provider.icon_name,
+                provider_icon_svg: provider.icon_svg.into(),
                 account_label: account
                     .email
                     .as_deref()
