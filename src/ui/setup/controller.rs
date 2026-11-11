@@ -169,6 +169,10 @@ impl Controller {
                     self.view.copy_authorization_url(url);
                 }
             }
+            Event::ChooseRemote => {
+                self.choose_remote();
+                return;
+            }
             Event::ChooseLocal => {
                 self.choose_local();
                 return;
@@ -448,6 +452,14 @@ impl Controller {
                 self.provisional_accounts
                     .borrow_mut()
                     .insert(result.account.id.clone());
+                if state
+                    .account
+                    .as_ref()
+                    .is_some_and(|account| account.id != result.account.id)
+                {
+                    state.draft = setup::SetupDraft::default();
+                    state.remote_folder = None;
+                }
                 state.account = Some(result.account);
                 state.step = Step::Connection;
                 state.feedback =
@@ -498,6 +510,55 @@ impl Controller {
         );
         owner.maybe_cleanup();
         window
+    }
+    /// Adapts the setup identity to the reusable picker; only mock data is queried.
+    fn choose_remote(self: &Rc<Self>) {
+        use crate::ui::components::remote_folder_picker::{
+            MockFolderSource, RemoteFolderPicker, RemoteFolderPickerConfig,
+        };
+        let Some(window) = self.view.window() else {
+            return;
+        };
+        let (provider, account, generation) = {
+            let mut state = self.state.borrow_mut();
+            if state.step != Step::Synchronization || !state.authorized() {
+                return;
+            }
+            let provider = state.provider.clone().unwrap();
+            let account = state.account.clone().unwrap();
+            state.busy = true;
+            state.generation += 1;
+            (provider, account, state.generation)
+        };
+        self.render();
+        let source = MockFolderSource::default();
+        let picker = RemoteFolderPicker::new(
+            RemoteFolderPickerConfig {
+                provider_name: provider.name,
+                provider_icon: provider.icon_name,
+                account_label: account
+                    .email
+                    .as_deref()
+                    .or(account.display_name.as_deref())
+                    .unwrap_or(&account.provider_user_id)
+                    .into(),
+                root: source.root(),
+            },
+            source,
+        );
+        let owner = Rc::downgrade(self);
+        picker.connect_response(move |result| {
+            if let Some(owner) = owner.upgrade() {
+                owner
+                    .state
+                    .borrow_mut()
+                    .finish_remote_choice(generation, &account.id, result);
+                if !owner.state.borrow().closed && !owner.state.borrow().closing {
+                    owner.render();
+                }
+            }
+        });
+        picker.present(&window);
     }
     fn choose_local(self: &Rc<Self>) {
         let Some(window) = self.view.window() else {

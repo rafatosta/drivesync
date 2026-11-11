@@ -1,6 +1,6 @@
 # Remote folder picker
 
-Reusable, single-use UI component. No engine, provider, authentication,
+Reusable, single-use UI component, opened from the setup remote-folder choice. No engine, provider, authentication,
 persistence or synchronization operations are performed here.
 
 ```rust,ignore
@@ -67,3 +67,7 @@ For a rendered preview, set `DRIVESYNC_PICKER_PREVIEW` to an absolute PNG output
 path. `DRIVESYNC_PICKER_DARK=1` selects the dark theme. Optionally compile the
 translation catalog into a locale directory and supply that directory using
 `DRIVESYNC_PICKER_LOCALE`, with `LANG=pt_BR.UTF-8 LANGUAGE=pt_BR`.
+
+Setup retains the selected location only in memory, displays it in review and
+requires both directory choices before continuing. The mock selection never
+grants synchronization readiness or dashboard access.

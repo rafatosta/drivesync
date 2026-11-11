@@ -759,3 +759,15 @@ msgstr "Avançar"
 
 msgid "Close"
 msgstr "Fechar"
+
+msgid "Simulated remote folder"
+msgstr "Pasta remota simulada"
+
+msgid "Folder browsing uses simulated data. Your remote files are not accessed."
+msgstr "A navegação usa dados simulados. Seus arquivos remotos não são acessados."
+
+msgid "Simulated remote folder selected. No remote files were accessed."
+msgstr "Pasta remota simulada selecionada. Nenhum arquivo remoto foi acessado."
+
+msgid "Synchronization is not available yet. The remote folder is simulated and has not been verified."
+msgstr "A sincronização ainda não está disponível. A pasta remota é simulada e não foi verificada."

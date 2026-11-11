@@ -1,5 +1,5 @@
 //! Provider-independent, asynchronous remote folder selection.
-#![allow(dead_code, unused_imports)] // Reusable component awaiting integration by a setup owner.
+#![allow(dead_code, unused_imports)] // The binary exposes a complete source boundary for future adapters.
 mod browser;
 mod dialog;
 mod folder_item;

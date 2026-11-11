@@ -71,6 +71,13 @@ pub(crate) fn exercise(
     state.account = Some(account.clone());
     state.step = Step::Synchronization;
     state.draft.local_uri = Some("file:///tmp/drivesync-fixture/Google%20Drive".into());
+    let root = crate::ui::components::remote_folder_picker::MockFolderSource::default().root();
+    state.remote_folder = Some(
+        crate::ui::components::remote_folder_picker::RemoteFolderLocation {
+            folder: root.clone(),
+            path: vec![root],
+        },
+    );
     view.render(&state);
     capture(dialog.upcast_ref(), "setup-synchronization");
     state.step = Step::Review;
@@ -130,8 +137,60 @@ pub(crate) fn exercise(
     let next = find(&setup, "setup-continue")
         .downcast::<gtk::Button>()
         .unwrap();
+    assert!(!next.is_sensitive(), "both folders are required");
+    let choose = find(&setup, "setup-choose-remote")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    choose.emit_clicked();
+    let picker = remote_picker();
+    assert_eq!(picker.transient_for().as_ref(), Some(&setup));
+    assert!(!choose.is_sensitive());
+    button_with_label(picker.upcast_ref(), &gettextrs::gettext("Cancel"))
+        .unwrap()
+        .emit_clicked();
+    assert!(choose.is_sensitive());
+    assert!(!next.is_sensitive());
+    choose.emit_clicked();
+    let picker = remote_picker();
+    let grid = find_type::<gtk::GridView>(picker.upcast_ref()).unwrap();
+    let selection = grid
+        .model()
+        .unwrap()
+        .downcast::<gtk::SingleSelection>()
+        .unwrap();
+    wait_until(|| selection.n_items() == 4);
+    selection.set_selected(1);
+    button_with_label(picker.upcast_ref(), &gettextrs::gettext("Select folder"))
+        .unwrap()
+        .emit_clicked();
+    assert!(next.is_sensitive());
+    let remote_row = find(&setup, "setup-remote-folder")
+        .downcast::<adw::ActionRow>()
+        .unwrap();
+    assert_eq!(
+        remote_row.subtitle().as_deref(),
+        Some("Meu Drive / Projetos")
+    );
+    choose.emit_clicked();
+    let picker = remote_picker();
+    button_with_label(picker.upcast_ref(), &gettextrs::gettext("Cancel"))
+        .unwrap()
+        .emit_clicked();
+    assert_eq!(
+        remote_row.subtitle().as_deref(),
+        Some("Meu Drive / Projetos")
+    );
+    assert!(next.is_sensitive());
     next.emit_clicked();
     wait_until(|| !next.is_visible());
+    assert_eq!(
+        find(&setup, "setup-review-remote")
+            .downcast::<adw::ActionRow>()
+            .unwrap()
+            .subtitle()
+            .as_deref(),
+        Some("Meu Drive / Projetos")
+    );
     assert!(!find(&setup, "setup-start").is_sensitive());
     assert!(find_type::<adw::NavigationSplitView>(setup.upcast_ref()).is_none());
     assert_eq!(visible_windows(), 1);
@@ -158,6 +217,19 @@ pub(crate) fn exercise(
         .unwrap()
         .accounts
         .is_empty());
+
+    // Closing setup also destroys an outstanding modal picker without applying it.
+    let (host, nav, toasts) = new_host();
+    let context = new_context();
+    let setup = super::show(&context, &nav, &toasts, Some(account.clone()));
+    find(&setup, "setup-choose-remote")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    let picker = remote_picker();
+    setup.close();
+    wait_until(|| !host.is_visible());
+    assert!(!picker.is_visible());
 
     // Explicit logout returns to the first page in the same window.
     let (host, nav, toasts) = new_host();
@@ -390,4 +462,27 @@ fn answer_confirmation(response: &str) {
     // The response API only emits a signal; emulate the button's dismissal too.
     dialog.response(response);
     dialog.destroy();
+}
+
+fn remote_picker() -> gtk::Window {
+    gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+        .find(|window| window.has_css_class("remote-folder-picker") && window.is_visible())
+        .expect("remote picker must be visible")
+}
+fn button_with_label(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+    if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+        if button.label().as_deref() == Some(label) {
+            return Some(button);
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        if let Some(button) = button_with_label(&widget, label) {
+            return Some(button);
+        }
+        child = widget.next_sibling();
+    }
+    None
 }
