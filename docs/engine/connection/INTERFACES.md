@@ -47,3 +47,11 @@ impl Engine {
 `EngineError { kind, retryable, message }` usa categorias sanitizadas: InvalidConfiguration, AuthorizationUnavailable, AttemptNotFound, AlreadyInProgress, Cancelled, TimedOut, AuthorizationDenied, InvalidCallback, ProviderUnavailable, Accounts(AccountsError), Internal. Não incorpora URL privada, código, token, corpo HTTP, arquivo de configuração nem erro textual de dependências.
 
 A URL pública contém os parâmetros de autorização necessários ao navegador, nunca access/refresh token ou verificador PKCE. Não registrar a URL nem o callback em logs. `GoogleSignInId` não oferece construtor público nem expõe seu conteúdo.
+
+## Final folder validation
+
+`Engine::remote_folder(account_id: AccountId, id: String) -> EngineResult<RemoteFolder>`
+rechecks one canonical folder ID with the selected account's current session. It
+rejects non-folders, trashed or inaccessible objects and mismatched IDs. This is
+a read-only call through the existing Provider `files_get` operation; it neither
+saves configuration nor starts synchronization.

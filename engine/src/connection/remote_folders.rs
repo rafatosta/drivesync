@@ -12,6 +12,38 @@ impl<T> Drop for QueryTask<T> {
     }
 }
 impl Engine {
+    /// Revalidates one canonical folder ID under this account without changing Drive.
+    /// Files, trashed folders, mismatched responses and inaccessible IDs are errors.
+    pub async fn remote_folder(
+        &self,
+        account_id: AccountId,
+        id: String,
+    ) -> EngineResult<RemoteFolder> {
+        if id.is_empty() {
+            return Err(remote_error(RemoteFolderErrorKind::InvalidRequest));
+        }
+        self.remote_query(account_id, move |client, session| async move {
+            let file = client
+                .files_get(
+                    &session,
+                    &FileId(id.clone()),
+                    FileGetOptions {
+                        fields: Some(FieldMask("id,name,mimeType,trashed".into())),
+                        supports_all_drives: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(provider_error)?;
+            let result = folder(file, None)?;
+            if result.id != id {
+                return Err(remote_error(RemoteFolderErrorKind::InvalidResponse));
+            }
+            Ok(result)
+        })
+        .await
+    }
+
     /// Resolves the canonical root ID using the selected account's credentials.
     /// Awaitable from GLib; never returns tokens or mutates remote files.
     pub async fn remote_folder_root(&self, account_id: AccountId) -> EngineResult<RemoteFolder> {

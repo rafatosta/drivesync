@@ -769,3 +769,41 @@ async fn remote_queries_renew_expired_credentials_through_accounts() {
         Some("Bearer renewed-secret")
     );
 }
+
+#[tokio::test]
+async fn final_folder_validation_checks_exact_id_and_rejects_files_and_missing_folders() {
+    let mut sequence = replies("setup-validation-user");
+    sequence.extend([
+        Reply::json(200, r#"{"id":"chosen-folder","name":"Chosen","mimeType":"application/vnd.google-apps.folder","trashed":false}"#),
+        Reply::json(200, r#"{"id":"file","name":"Document","mimeType":"text/plain","trashed":false}"#),
+        Reply::json(404, r#"{"error":{"code":404,"message":"missing"}}"#),
+    ]);
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    let folder = f
+        .engine
+        .remote_folder(account.id.clone(), "chosen-folder".into())
+        .await
+        .unwrap();
+    assert_eq!(folder.id, "chosen-folder");
+    assert_eq!(
+        f.engine
+            .remote_folder(account.id.clone(), "file".into())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::RemoteFolder(RemoteFolderErrorKind::InvalidResponse)
+    );
+    assert_eq!(
+        f.engine
+            .remote_folder(account.id, "gone".into())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::RemoteFolder(RemoteFolderErrorKind::NotFound)
+    );
+    assert_eq!(
+        f.server.requests.lock().unwrap()[2].path(),
+        "/drive/v3/files/chosen-folder"
+    );
+}
