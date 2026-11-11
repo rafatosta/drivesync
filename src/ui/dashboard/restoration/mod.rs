@@ -1,6 +1,6 @@
 //! Startup account loading; errors never masquerade as an empty account list.
 mod view;
-use crate::app::Context;
+use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Engine, EngineConfig, ListAccountsRequest};
 use std::{cell::Cell, rc::Rc};
@@ -14,7 +14,7 @@ pub(crate) fn build(
     let view = view::build();
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.pack_end(&crate::app::main_menu::button());
+    header.pack_end(&crate::ui::components::main_menu::button());
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&view.panel));
     let page = adw::NavigationPage::new(&toolbar, "DriveSync");
@@ -69,8 +69,8 @@ pub(crate) fn build(
             };
             match result {
                 Ok(result) => {
-                    crate::features::accounts::connection::install_action(&context, &nav, &toasts);
-                    crate::app::navigation::show_accounts(
+                    crate::ui::components::connection::install_action(&context, &nav, &toasts);
+                    crate::application::navigation::show_accounts(
                         &context,
                         result.accounts,
                         &nav,

@@ -1,7 +1,7 @@
 //! Shared sign-in window using only the root public engine API.
 mod controller;
 mod dialog;
-use crate::app::Context;
+use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::AccountId;
 /// Presents a single connection window. None adds; Some reauthorizes one account.

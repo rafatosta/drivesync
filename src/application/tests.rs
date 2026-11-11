@@ -32,13 +32,13 @@ fn account_only_layout_and_initial_name_editor() {
         .default_width(960)
         .default_height(720)
         .build();
-    crate::app::main_menu::install(&app, &window);
+    crate::ui::components::main_menu::install(&app, &window);
     assert!(app.lookup_action("about").is_some());
 
     let context = Context::default();
     let nav = adw::NavigationView::new();
     let toasts = adw::ToastOverlay::new();
-    let welcome = crate::features::welcome::build();
+    let welcome = crate::ui::dashboard::empty::build();
     assert!(find(welcome.upcast_ref(), "dashboard-split").is_none());
     capture(&window, &welcome, "welcome");
     let account = Account {
@@ -51,7 +51,7 @@ fn account_only_layout_and_initial_name_editor() {
         created_at: Timestamp { unix_millis: 0 },
         updated_at: Timestamp { unix_millis: 0 },
     };
-    let page = crate::features::dashboard::build(
+    let page = crate::ui::dashboard::build(
         &context,
         vec![account.clone()],
         &nav,
@@ -77,8 +77,7 @@ fn account_only_layout_and_initial_name_editor() {
     ] {
         assert!(find(page.upcast_ref(), removed).is_none());
     }
-    let page =
-        crate::features::dashboard::build(&context, vec![account], &nav, &toasts, None, false);
+    let page = crate::ui::dashboard::build(&context, vec![account], &nav, &toasts, None, false);
     assert!(!find(page.upcast_ref(), "account-name-editor")
         .unwrap()
         .is_visible());
@@ -93,7 +92,7 @@ fn account_only_layout_and_initial_name_editor() {
     assert!(find(page.upcast_ref(), "account-name-editor")
         .unwrap()
         .is_visible());
-    let preferences = crate::features::preferences::test_build(&nav, &toasts);
+    let preferences = crate::ui::preferences::test_build(&nav, &toasts);
     assert!(find(preferences.upcast_ref(), "preferences-theme").is_some());
     assert!(find(preferences.upcast_ref(), "preferences-keep-running").is_some());
     assert!(find(preferences.upcast_ref(), "preferences-interval").is_none());
@@ -102,7 +101,7 @@ fn account_only_layout_and_initial_name_editor() {
         .downcast::<adw::SwitchRow>()
         .unwrap();
     keep.set_active(false);
-    assert!(!crate::features::preferences::keep_running());
+    assert!(!crate::services::preferences::Preferences::load().keep_running);
     assert!(!find(preferences.upcast_ref(), "preferences-notify")
         .unwrap()
         .is_sensitive());

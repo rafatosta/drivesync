@@ -1,5 +1,5 @@
 //! Adaptive account navigation without synchronization-only destinations.
-use crate::app::Context;
+use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId};
 /// Builds one details page per account and selects the newly connected identity.
@@ -19,8 +19,8 @@ pub(crate) fn build(
     let sidebar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
-    header.pack_start(&crate::app::main_menu::add_account_button());
-    header.pack_end(&crate::app::main_menu::button());
+    header.pack_start(&crate::ui::components::main_menu::add_account_button());
+    header.pack_end(&crate::ui::components::main_menu::button());
     sidebar.add_top_bar(&header);
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -77,7 +77,7 @@ pub(crate) fn build(
             initial = index;
         }
         stack.add_named(
-            &super::account_view::build(account, context, &row, nav, toasts, chosen && edit),
+            &super::account::build(account, context, &row, nav, toasts, chosen && edit),
             Some(&index.to_string()),
         );
     }

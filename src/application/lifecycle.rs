@@ -1,9 +1,6 @@
 //! Native application startup and shutdown, independent of sync mechanisms.
 use super::{main_menu, restoration, Context};
-use crate::{
-    core::{background, i18n},
-    features::preferences,
-};
+use crate::{core::i18n, services::background, ui::preferences};
 use adw::prelude::*;
 use drivesync_engine::{CancelGoogleSignInRequest, EngineConfig};
 use std::path::PathBuf;

@@ -71,7 +71,7 @@ fn apply_grant(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay, gran
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::background::install;
+    use crate::services::background::install;
     use std::{cell::RefCell, time::Duration};
     /// Both denial paths must expose the window; successful late replies must
     /// never hide a window the user has already reopened.
@@ -123,7 +123,7 @@ mod tests {
             Ok("1")
         );
         let app = adw::Application::builder()
-            .application_id(crate::app::APP_ID)
+            .application_id(crate::application::APP_ID)
             .build();
         configure_application(&app);
         let observed = Rc::new(RefCell::new(None));

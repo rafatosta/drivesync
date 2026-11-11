@@ -1,6 +1,6 @@
 //! GTK opens the browser; the engine owns callback, exchange and persistence.
 use super::dialog::{self, ConnectionView};
-use crate::app::Context;
+use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
     AccountId, BeginGoogleSignInRequest, CancelGoogleSignInRequest, FinishGoogleSignInRequest,
@@ -162,7 +162,7 @@ pub(super) fn bind(
                     window.close();
                 }
                 if let (Some(nav), Some(toasts)) = (widgets.6.upgrade(), widgets.7.upgrade()) {
-                    crate::app::navigation::connected(
+                    crate::application::navigation::connected(
                         &context,
                         result.account.id,
                         result.created,

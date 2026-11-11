@@ -1,5 +1,5 @@
 //! Account metadata and explicit local-name editing through the public engine API.
-use crate::app::Context;
+use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountState, UpdateAccountRequest};
 use std::{cell::RefCell, rc::Rc};
@@ -186,7 +186,7 @@ pub(super) fn build(
     let weak_toasts = toasts.downgrade();
     authorize.connect_clicked(move |_| {
         if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
-            crate::features::accounts::connection::show(&context, &nav, &toasts, Some(id.clone()));
+            crate::ui::components::connection::show(&context, &nav, &toasts, Some(id.clone()));
         }
     });
     content.append(&authorize);

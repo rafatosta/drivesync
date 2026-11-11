@@ -42,7 +42,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
                 .transient_for(&window)
                 .modal(true)
                 .application_name("DriveSync")
-                .application_icon(crate::app::APP_ID)
+                .application_icon(crate::application::APP_ID)
                 .version(crate::core::build_info::VERSION)
                 .debug_info(format!(
                     "Source revision: {}",

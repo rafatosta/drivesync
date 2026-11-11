@@ -1,8 +1,8 @@
 //! Application composition; all engine requests use its public root API.
 mod lifecycle;
-pub(crate) mod main_menu;
+use crate::ui::components::main_menu;
 pub(crate) mod navigation;
-pub(crate) mod restoration;
+use crate::ui::dashboard::restoration;
 use drivesync_engine::{Engine, GoogleSignInId};
 pub(crate) use lifecycle::{run, APP_ID};
 use std::{cell::RefCell, rc::Rc};

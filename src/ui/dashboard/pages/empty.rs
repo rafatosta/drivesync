@@ -6,9 +6,9 @@ use adw::{gtk, prelude::*};
 use gettextrs::gettext;
 
 /// First-run content and the entry point to the shared connection window.
-pub(super) struct WelcomeView {
-    pub(super) toolbar: adw::ToolbarView,
-    pub(super) connect: gtk::Button,
+pub(crate) struct WelcomeView {
+    pub(crate) toolbar: adw::ToolbarView,
+    pub(crate) connect: gtk::Button,
 }
 
 /// Creates a centered, wrapping text label with the requested CSS class.
@@ -25,10 +25,10 @@ fn text(value: &str, class: &str) -> gtk::Label {
 /// Builds the welcome view without starting or completing Google OAuth.
 ///
 /// Account restoration and browser authorization have separate screens.
-pub(super) fn build() -> WelcomeView {
+pub(crate) fn build_view() -> WelcomeView {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.pack_end(&crate::app::main_menu::button());
+    header.pack_end(&crate::ui::components::main_menu::button());
     toolbar.add_top_bar(&header);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 24);
@@ -41,7 +41,7 @@ pub(super) fn build() -> WelcomeView {
 
     // Embed a raster export of the existing SVG to avoid an external SVG loader
     // when the app runs in an isolated SDK session or without installed icons.
-    let bytes = gtk::glib::Bytes::from_static(include_bytes!("../../../data/icons/welcome.png"));
+    let bytes = gtk::glib::Bytes::from_static(include_bytes!("../../../../data/icons/welcome.png"));
     let image = match gtk::gdk::Texture::from_bytes(&bytes) {
         Ok(texture) => gtk::Image::from_paintable(Some(&texture)),
         Err(_) => gtk::Image::from_icon_name("folder-download-symbolic"),
@@ -96,4 +96,11 @@ pub(super) fn build() -> WelcomeView {
     toolbar.set_content(Some(&scroll));
 
     WelcomeView { toolbar, connect }
+}
+
+/// Creates the empty dashboard with the add-account action.
+pub(crate) fn build() -> adw::ToolbarView {
+    let view = build_view();
+    view.connect.set_action_name(Some("connection.open"));
+    view.toolbar
 }

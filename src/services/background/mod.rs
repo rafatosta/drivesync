@@ -38,7 +38,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
 
     let pending = Rc::new(Cell::new(false));
     window.connect_close_request(move |window| {
-        if !crate::features::preferences::keep_running() {
+        if !crate::services::preferences::Preferences::load().keep_running {
             if let Some(app) = window.application() {
                 app.quit();
             }
@@ -58,7 +58,7 @@ pub(crate) fn install(app: &adw::Application, window: &adw::ApplicationWindow) {
             let Some(window) = weak_window.upgrade() else { return; };
             if allowed {
                 let Some(app) = window.application() else { return; };
-                if crate::features::preferences::notify_on_close() {
+                if crate::services::preferences::Preferences::load().notify_on_close {
                     let notice = gio::Notification::new("DriveSync continues running");
                     notice.set_body(Some("DriveSync is running in the background."));
                     notice.set_default_action("app.show");

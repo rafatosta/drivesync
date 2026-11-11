@@ -1,8 +1,8 @@
 //! Native account-management application entry point.
-mod app;
+mod application;
 mod core;
-mod features;
+mod services;
 mod ui;
 fn main() -> adw::gtk::glib::ExitCode {
-    app::run()
+    application::run()
 }

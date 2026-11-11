@@ -10,7 +10,7 @@ fn desktop_close_and_reopen() {
         Ok("1")
     );
     let app = adw::Application::builder()
-        .application_id(crate::app::APP_ID)
+        .application_id(crate::application::APP_ID)
         .build();
     let hidden = Rc::new(Cell::new(false));
     let reopened = Rc::new(Cell::new(false));

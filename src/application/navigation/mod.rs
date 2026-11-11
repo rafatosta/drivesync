@@ -25,11 +25,11 @@ pub(crate) fn show_accounts(
 ) {
     let page = match initial_destination(&accounts) {
         InitialDestination::Welcome => adw::NavigationPage::new(
-            &crate::features::welcome::build(),
+            &crate::ui::dashboard::empty::build(),
             &gettextrs::gettext("Welcome"),
         ),
         InitialDestination::Dashboard => {
-            crate::features::dashboard::build(context, accounts, nav, toasts, selected, edit)
+            crate::ui::dashboard::build(context, accounts, nav, toasts, selected, edit)
         }
     };
     nav.replace(&[page]);
