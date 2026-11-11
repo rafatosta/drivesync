@@ -19,7 +19,7 @@ impl ConnectionPage {
         root.set_spacing(12);
         root.set_valign(gtk::Align::Center);
         let icon = gtk::Image::builder()
-            .pixel_size(64)
+            .pixel_size(96)
             .halign(gtk::Align::Center)
             .build();
         let provider = gtk::Label::builder()
