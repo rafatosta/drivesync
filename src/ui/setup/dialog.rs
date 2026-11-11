@@ -9,7 +9,7 @@ use drivesync_engine::ProviderId;
 use std::rc::Rc;
 
 pub(super) enum Event {
-    Provider(ProviderId),
+    Provider(ProviderId, bool),
     Back,
     Continue,
     Connect,
@@ -111,8 +111,9 @@ impl SetupDialog {
     }
     pub fn on_event(&self, callback: Rc<dyn Fn(Event)>) {
         let cb = callback.clone();
-        self.provider
-            .on_selected(Rc::new(move |id| cb(Event::Provider(id))));
+        self.provider.on_selected(Rc::new(move |id, selected| {
+            cb(Event::Provider(id, selected))
+        }));
         let cb = callback.clone();
         self.back.connect_clicked(move |_| cb(Event::Back));
         let cb = callback.clone();

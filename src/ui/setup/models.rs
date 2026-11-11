@@ -50,6 +50,10 @@ impl SetupState {
             .provider
             .as_ref()
             .is_some_and(|old| old.id != provider.id)
+            || self
+                .account
+                .as_ref()
+                .is_some_and(|account| account.provider != provider.id)
         {
             self.account = None;
             self.draft = SetupDraft::default();

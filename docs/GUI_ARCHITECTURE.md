@@ -62,7 +62,7 @@ produção.
 
 Exemplos:
 
-- `ProviderChoice`: recebe metadados do catálogo e seleção; emite `ProviderId`.
+- `ProviderChoice`: recebe metadados do catálogo e seleção; emite `ProviderId` e o estado marcado/desmarcado.
 - `FolderChoice`: recebe caminho e disponibilidade; emite pedido de escolher pasta.
 - `Summary`: recebe provedor, identidade e pasta; apresenta um resumo somente leitura.
 - `AccountDetails`: emite editar, salvar nome, cancelar, reautorizar e configurar;

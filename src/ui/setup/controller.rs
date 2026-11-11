@@ -93,7 +93,20 @@ impl Controller {
             return;
         }
         match event {
-            Event::Provider(id) => {
+            Event::Provider(id, selected) => {
+                if !selected {
+                    let mut state = self.state.borrow_mut();
+                    if state
+                        .provider
+                        .as_ref()
+                        .is_some_and(|provider| provider.id == id)
+                    {
+                        state.provider = None;
+                    }
+                    drop(state);
+                    self.render();
+                    return;
+                }
                 // Ignore a selection notification caused by rendering the same value.
                 if self
                     .state

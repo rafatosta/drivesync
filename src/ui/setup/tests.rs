@@ -14,6 +14,44 @@ pub(crate) fn exercise(
     capture: impl Fn(&adw::Window, &str),
 ) {
     let providers = crate::services::setup::list_providers();
+    // A redraw triggered by either side of a GTK group transition must not
+    // interfere with the other button becoming active.
+    let mut other = providers[0].clone();
+    other.id = drivesync_engine::ProviderId("fixture-other".into());
+    let selector = std::rc::Rc::new(super::pages::ProviderPage::new(&[
+        providers[0].clone(),
+        other.clone(),
+    ]));
+    let selected = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let current = selected.clone();
+    let weak_selector = std::rc::Rc::downgrade(&selector);
+    selector.on_selected(std::rc::Rc::new(move |id, active| {
+        if active {
+            *current.borrow_mut() = Some(id);
+        } else if current.borrow().as_ref() == Some(&id) {
+            current.borrow_mut().take();
+        }
+        weak_selector
+            .upgrade()
+            .unwrap()
+            .set_selected(current.borrow().as_ref(), true);
+    }));
+    let mut checks = Vec::new();
+    collect_checks(selector.widget().upcast_ref(), &mut checks);
+    assert_eq!(checks.len(), 2);
+    checks[0].set_active(true);
+    checks[1].set_active(true);
+    assert!(!checks[0].is_active());
+    assert!(checks[1].is_active());
+    assert_eq!(*selected.borrow(), Some(other.id));
+    let previous = selected.borrow().clone();
+    selector.set_selected(None, true);
+    assert_eq!(
+        *selected.borrow(),
+        previous,
+        "rendering must not emit user selection events"
+    );
+
     let (dialog, view) = SetupDialog::new(Some(window.upcast_ref()), &providers);
     let mut state = SetupState::default();
     view.render(&state);
@@ -66,6 +104,16 @@ pub(crate) fn exercise(
     let next = find(&setup, "setup-continue")
         .downcast::<gtk::Button>()
         .unwrap();
+    assert!(next.is_sensitive());
+    check.set_active(false);
+    assert!(
+        !next.is_sensitive(),
+        "clearing the provider must disable Continue"
+    );
+    next.emit_clicked();
+    let stack = find_type::<gtk::Stack>(setup.upcast_ref()).unwrap();
+    assert_eq!(stack.visible_child_name().as_deref(), Some("provider"));
+    check.set_active(true);
     assert!(next.is_sensitive());
     next.emit_clicked();
     assert!(find(&setup, "setup-connect").is_visible());
@@ -167,5 +215,16 @@ fn wait_until(condition: impl Fn() -> bool) {
             finish.quit()
         });
         loop_.run();
+    }
+}
+
+fn collect_checks(widget: &gtk::Widget, result: &mut Vec<gtk::CheckButton>) {
+    if let Ok(check) = widget.clone().downcast::<gtk::CheckButton>() {
+        result.push(check);
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        collect_checks(&widget, result);
+        child = widget.next_sibling();
     }
 }

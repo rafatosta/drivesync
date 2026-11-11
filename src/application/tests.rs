@@ -167,9 +167,7 @@ fn capture(window: &adw::ApplicationWindow, child: &impl IsA<gtk::Widget>, name:
 
 /// Captures the real modal setup without accessing personal services.
 fn capture_dialog(window: &adw::Window, name: &str) {
-    let Ok(output) = std::env::var("DRIVESYNC_UI_PREVIEW_DIR") else {
-        return;
-    };
+    let output = std::env::var("DRIVESYNC_UI_PREVIEW_DIR").ok();
     window.present();
     let mut rendered = None;
     for _ in 0..20 {
@@ -208,6 +206,9 @@ fn capture_dialog(window: &adw::Window, name: &str) {
         window.snapshot_child(&child, &snapshot);
         snapshot.to_node().expect("setup renders")
     });
+    let Some(output) = output else {
+        return;
+    };
     std::fs::create_dir_all(&output).unwrap();
     window
         .renderer()

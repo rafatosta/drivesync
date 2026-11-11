@@ -39,12 +39,10 @@ impl ProviderChoice {
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {
         &self.root
     }
-    pub fn on_selected(&self, callback: impl Fn(ProviderId) + 'static) {
+    pub fn on_selected(&self, callback: impl Fn(ProviderId, bool) + 'static) {
         let id = self.id.clone();
         self.choice.connect_toggled(move |button| {
-            if button.is_active() {
-                callback(id.clone());
-            }
+            callback(id.clone(), button.is_active());
         });
     }
     pub fn set_selected(&self, id: Option<&ProviderId>) {
