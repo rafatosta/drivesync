@@ -26,7 +26,8 @@ picker.present(&parent);
 
 The caller supplies SVG source in `provider_icon_svg`. The UI loads it as a
 scalable bytes icon without theme registration or temporary files. No provider
-name or icon is hardcoded in the picker. Folder artwork is embedded in the binary.
+name or icon is hardcoded in the picker. Folder artwork is embedded from
+`data/icons/folder.png`; its editable SVG source is `data/icons/source/folder.svg`.
 The modal `adw::Window` and `ToolbarView` match the application's libadwaita 1.4
 baseline; `AdwDialog` would require raising that baseline.
 

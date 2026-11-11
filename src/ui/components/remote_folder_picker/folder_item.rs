@@ -53,7 +53,7 @@ pub(super) fn factory() -> gtk::SignalListItemFactory {
 
 /// Bundled artwork keeps folder tiles consistent across system icon themes.
 pub(super) fn folder_icon(size: i32) -> gtk::Image {
-    let bytes = gtk::glib::Bytes::from_static(include_bytes!("folder.png"));
+    let bytes = gtk::glib::Bytes::from_static(include_bytes!("../../../../data/icons/folder.png"));
     let texture =
         gtk::gdk::Texture::from_bytes(&bytes).expect("bundled folder artwork is valid PNG");
     let image = gtk::Image::from_paintable(Some(&texture));
