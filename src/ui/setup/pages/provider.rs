@@ -16,11 +16,20 @@ impl ProviderPage {
         root.set_margin_end(24);
         root.set_margin_top(16);
         root.set_margin_bottom(8);
-        let bytes =
-            gtk::glib::Bytes::from_static(include_bytes!("../../../../data/icons/welcome.png"));
-        let texture = gtk::gdk::Texture::from_bytes(&bytes).expect("bundled welcome image");
-        let image = gtk::Picture::for_paintable(&texture);
-        image.set_size_request(220, 220);
+        let bytes = gtk::glib::Bytes::from_static(include_bytes!(
+            "../../../../data/illustrations/drivesync-illustration.svg"
+        ));
+        let icon = gtk::gio::BytesIcon::new(&bytes);
+        let paintable = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap())
+            .lookup_by_gicon(
+                &icon,
+                288,
+                1,
+                gtk::TextDirection::None,
+                gtk::IconLookupFlags::empty(),
+            );
+        let image = gtk::Picture::for_paintable(&paintable);
+        image.set_size_request(220, 288);
         image.set_can_shrink(true);
         image.set_valign(gtk::Align::Center);
         image.set_hexpand(true);
