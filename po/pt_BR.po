@@ -657,3 +657,45 @@ msgstr "Conclua a autorização no navegador e volte para cá."
 
 msgid "4 of 4 · Start synchronization"
 msgstr "4 de 4 · Iniciar sincronização"
+
+msgid "Disconnect account?"
+msgstr "Desconectar conta?"
+
+msgid "This removes the account and its saved setup from DriveSync. Files on this computer and in the cloud are kept."
+msgstr "Isso remove a conta e seu rascunho de configuração do DriveSync. Os arquivos neste computador e na nuvem são preservados."
+
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgid "Disconnect account…"
+msgstr "Desconectar conta…"
+
+msgid "The account service is unavailable. Try again."
+msgstr "O serviço de contas está indisponível. Tente novamente."
+
+msgid "Account disconnected."
+msgstr "Conta desconectada."
+
+msgid "Account disconnected. The saved setup draft could not be removed."
+msgstr "Conta desconectada. Não foi possível remover o rascunho da configuração."
+
+msgid "Complete account setup and validate both folders before opening the dashboard."
+msgstr "Conclua a configuração da conta e valide as duas pastas antes de abrir o painel."
+
+msgid "Setup pending"
+msgstr "Configuração pendente"
+
+msgid "Continue setup"
+msgstr "Continuar configuração"
+
+msgid "Checking synchronization configuration…"
+msgstr "Verificando a configuração da sincronização…"
+
+msgid "Finish or cancel account authorization before disconnecting."
+msgstr "Conclua ou cancele a autenticação antes de desconectar a conta."
+
+msgid "Could not validate account configuration."
+msgstr "Não foi possível validar a configuração da conta."
+
+msgid "Try again"
+msgstr "Tentar novamente"

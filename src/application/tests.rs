@@ -38,7 +38,7 @@ fn account_only_layout_and_initial_name_editor() {
     let context = Context::default();
     let nav = adw::NavigationView::new();
     let toasts = adw::ToastOverlay::new();
-    let welcome = crate::ui::dashboard::empty::build();
+    let welcome = crate::ui::setup::landing::build();
     assert!(find(welcome.upcast_ref(), "dashboard-split").is_none());
     capture(&window, &welcome, "welcome");
     let account = Account {
@@ -166,7 +166,7 @@ fn capture(window: &adw::ApplicationWindow, child: &impl IsA<gtk::Widget>, name:
 }
 
 /// Captures the real modal setup without accessing personal services.
-fn capture_dialog(window: &adw::Window, name: &str) {
+fn capture_dialog(window: &gtk::Window, name: &str) {
     let output = std::env::var("DRIVESYNC_UI_PREVIEW_DIR").ok();
     window.present();
     let mut rendered = None;
@@ -206,6 +206,25 @@ fn capture_dialog(window: &adw::Window, name: &str) {
         window.snapshot_child(&child, &snapshot);
         snapshot.to_node().expect("setup renders")
     });
+    // Window paintables may omit the background on the headless backend.
+    // Unmapped application windows can still have allocated child render nodes.
+    let background = if adw::StyleManager::default().is_dark() {
+        gtk::gdk::RGBA::new(0.14, 0.14, 0.15, 1.0)
+    } else {
+        gtk::gdk::RGBA::new(0.98, 0.98, 0.98, 1.0)
+    };
+    let bounds = node.bounds();
+    let width = (window.width() as f32).max(bounds.x() + bounds.width());
+    let height = (window.height() as f32).max(bounds.y() + bounds.height());
+    let composed = gtk::Snapshot::new();
+    composed.append_color(
+        &background,
+        &gtk::graphene::Rect::new(0.0, 0.0, width, height),
+    );
+    composed.append_node(&node);
+    let node = composed
+        .to_node()
+        .expect("preview includes window background");
     let Some(output) = output else {
         return;
     };

@@ -46,3 +46,14 @@ pub(crate) async fn rename(
         .await
         .map(|result| result.account)
 }
+
+/// Removes credentials/metadata first; a draft cleanup failure cannot resurrect
+/// the account and is reported separately for accurate presentation.
+pub(crate) async fn disconnect(engine: &Engine, account_id: AccountId) -> EngineResult<bool> {
+    engine
+        .disconnect_account(RemoveAccountRequest {
+            account_id: account_id.clone(),
+        })
+        .await?;
+    Ok(super::setup::discard_draft(&account_id).await)
+}

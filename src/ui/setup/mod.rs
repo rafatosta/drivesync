@@ -26,5 +26,6 @@ pub(crate) fn show(
     window.present();
     window
 }
+pub(crate) mod landing;
 #[cfg(test)]
 pub(crate) mod tests;

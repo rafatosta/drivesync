@@ -31,6 +31,7 @@ impl Controller {
         toasts: &adw::ToastOverlay,
         account: Option<Account>,
     ) -> adw::Window {
+        context.setup_offered.set(true);
         let providers = setup::list_providers();
         let parent = navigation.root().and_downcast::<gtk::Window>();
         let (window, view) = SetupDialog::new(parent.as_ref(), &providers);
@@ -150,14 +151,71 @@ impl Controller {
                 self.choose_local();
                 return;
             }
-            Event::Dashboard => {
-                if let Some(window) = self.view.window() {
-                    window.close();
-                }
+            Event::Disconnect => {
+                self.disconnect();
                 return;
             }
         }
         self.render();
+    }
+    fn disconnect(self: &Rc<Self>) {
+        let Some(account) = self.state.borrow().account.clone() else {
+            return;
+        };
+        let Some(window) = self.view.window() else {
+            return;
+        };
+        self.state.borrow_mut().busy = true;
+        self.render();
+        let owner = self.clone();
+        crate::application::accounts::disconnect(
+            &self.context,
+            window.upcast_ref(),
+            &account,
+            Rc::new(move |event| {
+                use crate::application::accounts::DisconnectEvent;
+                let mut state = owner.state.borrow_mut();
+                state.busy = false;
+                let disconnected = match event {
+                    DisconnectEvent::Cancelled => false,
+                    DisconnectEvent::Failed(message) => {
+                        state.feedback = message;
+                        false
+                    }
+                    DisconnectEvent::Disconnected { draft_removed } => {
+                        state.account = None;
+                        state.draft = setup::SetupDraft::default();
+                        state.step = Step::Connection;
+                        state.generation += 1;
+                        *owner.persisted_account.borrow_mut() = None;
+                        state.feedback = if draft_removed {
+                            gettext("Account disconnected.")
+                        } else {
+                            gettext(
+                                "Account disconnected. The saved setup draft could not be removed.",
+                            )
+                        };
+                        true
+                    }
+                };
+                drop(state);
+                if disconnected {
+                    if let (Some(nav), Some(toasts)) =
+                        (owner.navigation.upgrade(), owner.toasts.upgrade())
+                    {
+                        crate::application::navigation::reload_accounts(
+                            &owner.context,
+                            &nav,
+                            &toasts,
+                            None,
+                        );
+                    }
+                }
+                if !owner.state.borrow().closed {
+                    owner.render();
+                }
+            }),
+        );
     }
     fn cancel_sign_in(&self) {
         let Some(engine) = self.engine() else {
@@ -192,9 +250,9 @@ impl Controller {
                 accounts::cancel(&engine, id);
             }
         }
-        self.refresh_dashboard();
+        self.refresh_accounts();
     }
-    fn refresh_dashboard(&self) {
+    fn refresh_accounts(&self) {
         let account = self.persisted_account.borrow().clone();
         if let (Some(account), Some(nav), Some(toasts)) =
             (account, self.navigation.upgrade(), self.toasts.upgrade())
@@ -289,7 +347,7 @@ impl Controller {
                 }
             }
             if owner.state.borrow().closed {
-                owner.refresh_dashboard();
+                owner.refresh_accounts();
             } else if owner.state.borrow().account.is_some() {
                 owner.load_draft();
             } else {

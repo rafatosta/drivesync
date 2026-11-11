@@ -11,7 +11,7 @@ use drivesync_engine::Account;
 pub(crate) fn exercise(
     window: &adw::ApplicationWindow,
     account: &Account,
-    capture: impl Fn(&adw::Window, &str),
+    capture: impl Fn(&gtk::Window, &str),
 ) {
     let providers = crate::services::setup::list_providers();
     // A redraw triggered by either side of a GTK group transition must not
@@ -56,7 +56,7 @@ pub(crate) fn exercise(
     let mut state = SetupState::default();
     view.render(&state);
     assert!(!find(&dialog, "setup-continue").is_sensitive());
-    capture(&dialog, "setup-provider");
+    capture(dialog.upcast_ref(), "setup-provider");
     state.select_provider(providers[0].clone());
     view.render(&state);
     assert!(find(&dialog, "setup-continue").is_sensitive());
@@ -64,7 +64,7 @@ pub(crate) fn exercise(
     view.render(&state);
     assert!(!find(&dialog, "setup-continue").is_sensitive());
     assert!(find(&dialog, "setup-connect").is_visible());
-    capture(&dialog, "setup-connection");
+    capture(dialog.upcast_ref(), "setup-connection");
     state.account = Some(account.clone());
     state.step = Step::Synchronization;
     view.render(&state);
@@ -74,15 +74,15 @@ pub(crate) fn exercise(
     };
     view.render(&state);
     assert!(find(&dialog, "setup-continue").is_sensitive());
-    capture(&dialog, "setup-synchronization");
+    capture(dialog.upcast_ref(), "setup-synchronization");
     state.step = Step::Review;
     view.render(&state);
     assert!(!find(&dialog, "setup-start").is_sensitive());
     assert!(!find(&dialog, "setup-continue").is_visible());
-    capture(&dialog, "setup-review");
+    capture(dialog.upcast_ref(), "setup-review");
     dialog.set_default_size(360, 480);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
-    capture(&dialog, "setup-review-small-dark");
+    capture(dialog.upcast_ref(), "setup-review-small-dark");
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     dialog.destroy();
 
@@ -163,6 +163,7 @@ pub(crate) fn exercise(
     assert!(!gtk::Window::list_toplevels()
         .iter()
         .any(|window| window.widget_name() == "drivesync-account-setup" && window.is_visible()));
+    wait_until(|| contains(nav.upcast_ref(), "setup-landing"));
     window.present();
     let offered = gtk::Window::list_toplevels()
         .into_iter()
@@ -170,6 +171,64 @@ pub(crate) fn exercise(
         .find(|window| window.widget_name() == "drivesync-account-setup" && window.is_visible())
         .expect("first account setup appears with the main window");
     offered.close();
+
+    // A writable local draft still cannot route a saved account to Dashboard
+    // while the remote directory has not been selected and validated.
+    let context = Context::default();
+    context.setup_offered.set(true);
+    nav.replace(&[crate::ui::dashboard::build(
+        &context,
+        vec![account.clone()],
+        &nav,
+        &toasts,
+        None,
+        false,
+    )]);
+    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_some());
+    crate::application::navigation::show_accounts(
+        &context,
+        vec![account.clone()],
+        &nav,
+        &toasts,
+        Some(&account.id),
+        false,
+    );
+    wait_until(|| contains(nav.upcast_ref(), "pending-account-resume"));
+    capture(window.upcast_ref(), "setup-pending-accounts");
+    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_none());
+
+    // Exercise cancellation and the idempotent disconnect path for a stale
+    // displayed account. The isolated engine has no credentials or network use;
+    // the engine suite separately removes populated accounts using a fake vault.
+    let engine = gtk::glib::MainContext::default()
+        .block_on(drivesync_engine::Engine::open(
+            drivesync_engine::EngineConfig {
+                data_directory: gtk::glib::user_data_dir().join("disconnect-fixture"),
+                application_id: "com.rtosta.DriveSync.DisconnectFixture".into(),
+                google_oauth_file: None,
+            },
+        ))
+        .unwrap();
+    *context.engine.borrow_mut() = Some(engine);
+    let disconnecting = super::show(&context, &nav, &toasts, Some(account.clone()));
+    let remove = find(&disconnecting, "setup-disconnect")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    wait_until(|| remove.is_sensitive());
+    remove.emit_clicked();
+    confirmation().response("cancel");
+    assert!(remove.is_visible());
+    assert!(remove.is_sensitive());
+    remove.emit_clicked();
+    confirmation().response("disconnect");
+    wait_until(|| !remove.is_visible());
+    let draft = gtk::glib::MainContext::default()
+        .block_on(crate::services::setup::load_draft(&account.id))
+        .unwrap();
+    assert!(draft.local_uri.is_none());
+    wait_until(|| contains(nav.upcast_ref(), "setup-landing"));
+    assert!(find_type::<adw::NavigationSplitView>(nav.upcast_ref()).is_none());
+    disconnecting.close();
     window.set_content(None::<&gtk::Widget>);
 }
 fn find(window: &adw::Window, name: &str) -> gtk::Widget {
@@ -227,4 +286,27 @@ fn collect_checks(widget: &gtk::Widget, result: &mut Vec<gtk::CheckButton>) {
         collect_checks(&widget, result);
         child = widget.next_sibling();
     }
+}
+
+fn contains(widget: &gtk::Widget, name: &str) -> bool {
+    if widget.widget_name() == name {
+        return true;
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        if contains(&widget, name) {
+            return true;
+        }
+        child = widget.next_sibling();
+    }
+    false
+}
+fn confirmation() -> adw::MessageDialog {
+    gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|window| window.downcast::<adw::MessageDialog>().ok())
+        .find(|dialog| {
+            dialog.widget_name() == "disconnect-account-confirmation" && dialog.is_visible()
+        })
+        .expect("account disconnect confirmation")
 }

@@ -77,6 +77,27 @@ pub(super) fn bind_account(
                     );
                 }
             }
+            AccountEvent::Disconnect => {
+                let Some(navigation) = nav.upgrade() else { return; };
+                let Some(parent) = navigation.root().and_downcast::<gtk::Window>() else { return; };
+                busy.set(true);
+                presentation.set_saving(true);
+                let owner = context.clone(); let nav = nav.clone(); let toasts = toasts.clone();
+                let busy = busy.clone(); let presentation = presentation.clone();
+                crate::application::accounts::disconnect(&context, &parent, &current.borrow(), Rc::new(move |event| {
+                    busy.set(false);
+                    presentation.set_saving(false);
+                    let (Some(nav), Some(toasts)) = (nav.upgrade(), toasts.upgrade()) else { return; };
+                    match event {
+                        crate::application::accounts::DisconnectEvent::Cancelled => (),
+                        crate::application::accounts::DisconnectEvent::Failed(message) => toasts.add_toast(adw::Toast::new(&message)),
+                        crate::application::accounts::DisconnectEvent::Disconnected { draft_removed } => {
+                            if !draft_removed { toasts.add_toast(adw::Toast::new(&gettextrs::gettext("Account disconnected. The saved setup draft could not be removed."))); }
+                            crate::application::navigation::reload_accounts(&owner, &nav, &toasts, None);
+                        }
+                    }
+                }));
+            }
             AccountEvent::Configure => {
                 if let (Some(nav), Some(toasts)) = (nav.upgrade(), toasts.upgrade()) {
                     crate::ui::setup::show(&context, &nav, &toasts, Some(current.borrow().clone()));

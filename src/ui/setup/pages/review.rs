@@ -5,7 +5,6 @@ use gettextrs::gettext;
 pub(in crate::ui::setup) struct ReviewPage {
     root: gtk::Box,
     summary: Summary,
-    dashboard: gtk::Button,
 }
 impl ReviewPage {
     pub fn new() -> Self {
@@ -25,21 +24,12 @@ impl ReviewPage {
             .build();
         start.set_widget_name("setup-start");
         root.append(&start);
-        let dashboard = gtk::Button::with_label(&gettext("View account in dashboard"));
-        root.append(&dashboard);
-        Self {
-            root,
-            summary,
-            dashboard,
-        }
+        Self { root, summary }
     }
     pub fn widget(&self) -> &impl IsA<gtk::Widget> {
         &self.root
     }
     pub fn update(&self, provider: &str, account: &str, local: &str) {
         self.summary.set_details(provider, account, local);
-    }
-    pub fn on_dashboard(&self, callback: impl Fn() + 'static) {
-        self.dashboard.connect_clicked(move |_| callback());
     }
 }

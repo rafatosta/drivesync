@@ -9,6 +9,7 @@ pub(in crate::ui::dashboard) enum AccountEvent {
     Save(String),
     Authorize,
     Configure,
+    Disconnect,
 }
 /// Owns its complete layout; outside modules receive only its root and handle.
 pub(in crate::ui::dashboard) struct AccountDetails {
@@ -22,6 +23,7 @@ pub(in crate::ui::dashboard) struct AccountDetails {
     cancel: gtk::Button,
     authorize: gtk::Button,
     setup: gtk::Button,
+    disconnect: gtk::Button,
 }
 impl AccountDetails {
     pub fn new(account: &Account, edit: bool) -> Self {
@@ -95,6 +97,13 @@ impl AccountDetails {
         let setup = gtk::Button::with_label(&gettextrs::gettext("Configure synchronization…"));
         setup.set_halign(gtk::Align::Center);
         content.append(&setup);
+        let disconnect = gtk::Button::builder()
+            .label(gettextrs::gettext("Disconnect account…"))
+            .halign(gtk::Align::Center)
+            .css_classes(["destructive-action"])
+            .build();
+        disconnect.set_widget_name("account-disconnect");
+        content.append(&disconnect);
         Self {
             root: crate::ui::scroll(&content, 700),
             heading,
@@ -106,6 +115,7 @@ impl AccountDetails {
             cancel,
             authorize,
             setup,
+            disconnect,
         }
     }
     pub fn widget(&self) -> &gtk::ScrolledWindow {
@@ -127,8 +137,11 @@ impl AccountDetails {
         let cb = callback.clone();
         self.authorize
             .connect_clicked(move |_| cb(AccountEvent::Authorize));
+        let cb = callback.clone();
         self.setup
-            .connect_clicked(move |_| callback(AccountEvent::Configure));
+            .connect_clicked(move |_| cb(AccountEvent::Configure));
+        self.disconnect
+            .connect_clicked(move |_| callback(AccountEvent::Disconnect));
     }
     pub fn handle(&self) -> AccountDetailsHandle {
         AccountDetailsHandle {
@@ -141,6 +154,7 @@ impl AccountDetails {
             cancel: self.cancel.downgrade(),
             authorize: self.authorize.downgrade(),
             setup: self.setup.downgrade(),
+            disconnect: self.disconnect.downgrade(),
         }
     }
 }
@@ -156,6 +170,7 @@ pub(in crate::ui::dashboard) struct AccountDetailsHandle {
     cancel: gtk::glib::WeakRef<gtk::Button>,
     authorize: gtk::glib::WeakRef<gtk::Button>,
     setup: gtk::glib::WeakRef<gtk::Button>,
+    disconnect: gtk::glib::WeakRef<gtk::Button>,
 }
 impl AccountDetailsHandle {
     pub fn set_editing(&self, editing: bool) {
@@ -176,7 +191,13 @@ impl AccountDetailsHandle {
         if let Some(entry) = self.entry.upgrade() {
             entry.set_sensitive(!saving);
         }
-        for button in [&self.save, &self.cancel, &self.authorize, &self.setup] {
+        for button in [
+            &self.save,
+            &self.cancel,
+            &self.authorize,
+            &self.setup,
+            &self.disconnect,
+        ] {
             if let Some(button) = button.upgrade() {
                 button.set_sensitive(!saving);
             }

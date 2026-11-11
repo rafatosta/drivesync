@@ -15,7 +15,7 @@ pub(super) enum Event {
     Connect,
     Copy,
     ChooseLocal,
-    Dashboard,
+    Disconnect,
 }
 /// Owns presentation widgets privately; the window is weak to permit dismissal
 /// while engine operations are still completing.
@@ -25,6 +25,7 @@ pub(super) struct SetupDialog {
     title: adw::WindowTitle,
     back: gtk::Button,
     next: gtk::Button,
+    disconnect: gtk::Button,
     feedback: gtk::Label,
     provider: ProviderPage,
     connection: ConnectionPage,
@@ -90,6 +91,14 @@ impl SetupDialog {
             .build();
         next.set_widget_name("setup-continue");
         body.append(&next);
+        let disconnect = gtk::Button::builder()
+            .label(gettextrs::gettext("Disconnect account…"))
+            .halign(gtk::Align::Center)
+            .margin_bottom(24)
+            .css_classes(["destructive-action"])
+            .build();
+        disconnect.set_widget_name("setup-disconnect");
+        body.append(&disconnect);
         toolbar.set_content(Some(&body));
         window.set_content(Some(&toolbar));
         let view = Self {
@@ -98,6 +107,7 @@ impl SetupDialog {
             title,
             back,
             next,
+            disconnect,
             feedback,
             provider,
             connection,
@@ -125,7 +135,8 @@ impl SetupDialog {
         let cb = callback.clone();
         self.synchronization
             .on_choose(move || cb(Event::ChooseLocal));
-        self.review.on_dashboard(move || callback(Event::Dashboard));
+        self.disconnect
+            .connect_clicked(move |_| callback(Event::Disconnect));
     }
     pub fn render(&self, state: &SetupState) {
         self.stack.set_visible_child_name(state.step.name());
@@ -134,6 +145,8 @@ impl SetupDialog {
         self.back.set_sensitive(!state.busy);
         self.next.set_visible(state.step != Step::Review);
         self.next.set_sensitive(state.can_continue());
+        self.disconnect.set_visible(state.account.is_some());
+        self.disconnect.set_sensitive(!state.busy);
         self.feedback.set_label(&state.feedback);
         self.feedback.set_visible(!state.feedback.is_empty());
         self.provider

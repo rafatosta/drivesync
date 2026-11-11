@@ -80,8 +80,8 @@ pub(crate) async fn save_draft(id: &AccountId, draft: &SetupDraft) -> Result<(),
     .map(|_| ())
     .map_err(|(_, error)| error)
 }
-/// Checks directory existence through GIO. This is not a write/portal durability
-/// check and must never be presented as a synchronization readiness result.
+/// Checks directory type and advertised write permission through GIO without
+/// modifying files. This does not prove durable portal access or sync readiness.
 pub(crate) async fn check_local_folder(uri: &str) -> Result<(), glib::Error> {
     let file = gio::File::for_uri(uri);
     if file.path().is_none() {
@@ -92,8 +92,8 @@ pub(crate) async fn check_local_folder(uri: &str) -> Result<(), glib::Error> {
     }
     let info = file
         .query_info_future(
-            "standard::type",
-            gio::FileQueryInfoFlags::NONE,
+            "standard::type,access::can-write",
+            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
             glib::Priority::DEFAULT,
         )
         .await?;
@@ -101,6 +101,12 @@ pub(crate) async fn check_local_folder(uri: &str) -> Result<(), glib::Error> {
         return Err(glib::Error::new(
             gio::IOErrorEnum::NotDirectory,
             "The selected location is not a folder",
+        ));
+    }
+    if !info.has_attribute("access::can-write") || !info.boolean("access::can-write") {
+        return Err(glib::Error::new(
+            gio::IOErrorEnum::PermissionDenied,
+            "The selected folder is not writable",
         ));
     }
     Ok(())
@@ -116,6 +122,46 @@ pub(crate) fn display_path(uri: &str) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn local_folder_validation_checks_directory_type_and_current_access() {
+        let path = std::env::temp_dir().join(format!(
+            "drivesync-configuration-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("document.txt");
+        std::fs::write(&file, b"preserved").unwrap();
+        let link = path.join("directory-link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        let context = glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                context.block_on(async {
+                    assert!(
+                        check_local_folder(gio::File::for_path(&path).uri().as_str())
+                            .await
+                            .is_ok()
+                    );
+                    for invalid in [&file, &link, &path.join("missing")] {
+                        assert!(
+                            check_local_folder(gio::File::for_path(invalid).uri().as_str())
+                                .await
+                                .is_err()
+                        );
+                    }
+                    assert!(check_local_folder("https://example.invalid/folder")
+                        .await
+                        .is_err());
+                })
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"preserved");
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
     fn draft_round_trip_preserves_uri_without_completing_setup() {
         let draft = SetupDraft {
             local_uri: Some("file:///tmp/with%20spaces/%FF".into()),
@@ -130,5 +176,64 @@ mod tests {
             file.parent().unwrap().path().unwrap(),
             glib::user_config_dir().join("drivesync/setup")
         );
+    }
+}
+
+/// Result of checking one directory; absent remote support never means valid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DirectoryCheck {
+    Missing,
+    Invalid,
+    Valid,
+    Unavailable,
+}
+/// Fresh checks, never a persisted or UI-provided completion flag.
+#[derive(Clone, Debug)]
+pub(crate) struct ConfigurationValidation {
+    pub authorized: bool,
+    pub local: DirectoryCheck,
+    pub remote: DirectoryCheck,
+}
+impl ConfigurationValidation {
+    /// Both directories must be verified before routing this account to Dashboard.
+    pub fn is_complete(&self) -> bool {
+        self.authorized
+            && self.local == DirectoryCheck::Valid
+            && self.remote == DirectoryCheck::Valid
+    }
+}
+/// Revalidates local drafts and fails closed for the unavailable remote contract.
+/// This must be replaced by real remote validation when the engine owns complete
+/// synchronization configurations. Draft files cannot grant dashboard access.
+pub(crate) async fn validate_configuration(
+    account: &drivesync_engine::Account,
+) -> ConfigurationValidation {
+    let local = match load_draft(&account.id).await {
+        Ok(draft) => match draft.local_uri {
+            Some(uri) => {
+                if check_local_folder(&uri).await.is_ok() {
+                    DirectoryCheck::Valid
+                } else {
+                    DirectoryCheck::Invalid
+                }
+            }
+            None => DirectoryCheck::Missing,
+        },
+        Err(_) => DirectoryCheck::Invalid,
+    };
+    ConfigurationValidation {
+        authorized: account.state == drivesync_engine::AccountState::Connected,
+        local,
+        remote: DirectoryCheck::Unavailable,
+    }
+}
+/// Removes only this account's setup draft, without traversing user directories.
+pub(crate) async fn discard_draft(account_id: &AccountId) -> bool {
+    match draft_file(account_id)
+        .delete_future(glib::Priority::DEFAULT)
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => error.matches(gio::IOErrorEnum::NotFound),
     }
 }
