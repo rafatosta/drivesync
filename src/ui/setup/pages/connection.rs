@@ -17,7 +17,7 @@ impl ConnectionPage {
     pub fn new() -> Self {
         let root = super::content();
         root.set_widget_name("setup-connection-page");
-        let icon = gtk::Image::builder().pixel_size(96).build();
+        let icon = gtk::Image::builder().pixel_size(176).build();
         let header = super::PageHeader::new("connection", &icon, "", &gettext(
             "Connect your Google account to allow DriveSync to access your files on Google Drive."));
         let provider = header.title().clone();
