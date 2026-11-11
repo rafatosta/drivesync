@@ -91,22 +91,22 @@ impl SetupDialog {
         let next = gtk::Button::builder()
             .label(gettextrs::gettext("Continue"))
             .width_request(100)
-            .halign(gtk::Align::End)
-            .margin_start(24)
-            .margin_end(24)
-            .margin_bottom(24)
             .css_classes(["suggested-action"])
             .build();
         next.set_widget_name("setup-continue");
-        body.append(&next);
         let disconnect = gtk::Button::builder()
-            .label(gettextrs::gettext("Disconnect account…"))
-            .halign(gtk::Align::Center)
-            .margin_bottom(24)
-            .css_classes(["destructive-action"])
+            .label(gettextrs::gettext("Cancel"))
+            .width_request(100)
             .build();
         disconnect.set_widget_name("setup-disconnect");
-        body.append(&disconnect);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        actions.set_halign(gtk::Align::End);
+        actions.set_margin_start(24);
+        actions.set_margin_end(24);
+        actions.set_margin_bottom(24);
+        actions.append(&disconnect);
+        actions.append(&next);
+        body.append(&actions);
         toolbar.set_content(Some(&body));
         Self {
             root: toolbar,

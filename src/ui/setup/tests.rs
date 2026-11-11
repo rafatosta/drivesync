@@ -89,6 +89,8 @@ pub(crate) fn exercise(
     state.busy = false;
     state.authorization_url = None;
     state.account = Some(account.clone());
+    view.render(&state);
+    capture(dialog.upcast_ref(), "setup-connection-authorized");
     state.require_remote_authorization();
     view.render(&state);
     assert!(!find(dialog.upcast_ref(), "setup-continue").is_sensitive());
