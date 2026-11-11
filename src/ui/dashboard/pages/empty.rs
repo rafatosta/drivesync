@@ -53,7 +53,7 @@ pub(crate) fn build_view() -> WelcomeView {
     ))]);
     content.append(&image);
     content.append(&text(&gettext("Welcome to DriveSync"), "title-1"));
-    let description = text(&gettext("Your Google Drive, a little closer."), "body");
+    let description = text(&gettext("Connect an account to get started."), "body");
     description.set_max_width_chars(48);
     description.set_halign(gtk::Align::Center);
     content.append(&description);
@@ -64,10 +64,12 @@ pub(crate) fn build_view() -> WelcomeView {
 
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
     actions.set_halign(gtk::Align::Center);
-    let connect = gtk::Button::with_label(&gettext("Connect Google Account"));
+    let connect = gtk::Button::with_label(&gettext("Set up account"));
     connect.add_css_class("suggested-action");
     connect.add_css_class("pill");
-    connect.set_tooltip_text(Some(&gettext("Sign in securely in your web browser")));
+    connect.set_tooltip_text(Some(&gettext(
+        "Choose a provider and configure your account",
+    )));
     actions.append(&connect);
     content.append(&actions);
 

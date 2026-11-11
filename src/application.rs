@@ -1,4 +1,5 @@
 //! Application composition; all engine requests use its public root API.
+mod background;
 mod lifecycle;
 use crate::ui::components::main_menu;
 pub(crate) mod navigation;

@@ -1,7 +1,9 @@
 //! Native Background portal transport shared by startup and close requests.
 //! Every request preserves automatic startup instead of silently removing its
 //! desktop registration when a window closes. Requests are coalesced in flight.
-use super::{INTERFACE, PATH, PORTAL};
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PATH: &str = "/org/freedesktop/portal/desktop";
+const INTERFACE: &str = "org.freedesktop.portal.Background";
 use adw::{
     gtk::{gio, glib},
     prelude::*,
@@ -14,14 +16,14 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Grant {
+pub(crate) struct Grant {
     pub background: bool,
     pub autostart: bool,
 }
 type Reply = Rc<Cell<Option<Grant>>>;
 thread_local! { static WAITERS: RefCell<Option<Vec<Reply>>> = const { RefCell::new(None) }; }
 
-pub(super) async fn request() -> Grant {
+pub(crate) async fn request() -> Grant {
     let reply = Rc::new(Cell::new(None));
     let leader = WAITERS.with(|waiters| {
         let mut waiters = waiters.borrow_mut();

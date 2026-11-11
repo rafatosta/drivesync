@@ -77,7 +77,8 @@ fn account_only_layout_and_initial_name_editor() {
     ] {
         assert!(find(page.upcast_ref(), removed).is_none());
     }
-    let page = crate::ui::dashboard::build(&context, vec![account], &nav, &toasts, None, false);
+    let page =
+        crate::ui::dashboard::build(&context, vec![account.clone()], &nav, &toasts, None, false);
     assert!(!find(page.upcast_ref(), "account-name-editor")
         .unwrap()
         .is_visible());
@@ -106,6 +107,7 @@ fn account_only_layout_and_initial_name_editor() {
         .unwrap()
         .is_sensitive());
     capture(&window, &preferences, "preferences");
+    crate::ui::setup::tests::exercise(&window, &account, capture_dialog);
     window.destroy();
 }
 
@@ -141,6 +143,15 @@ fn capture(window: &adw::ApplicationWindow, child: &impl IsA<gtk::Widget>, name:
         child.allocate(child.width(), child.height(), -1, None);
         child.queue_draw();
         let snapshot = gtk::Snapshot::new();
+        let background = if adw::StyleManager::default().is_dark() {
+            gtk::gdk::RGBA::new(0.14, 0.14, 0.15, 1.0)
+        } else {
+            gtk::gdk::RGBA::new(0.98, 0.98, 0.98, 1.0)
+        };
+        snapshot.append_color(
+            &background,
+            &gtk::graphene::Rect::new(0.0, 0.0, window.width() as f32, window.height() as f32),
+        );
         window.snapshot_child(&child, &snapshot);
         snapshot.to_node().expect("native content renders")
     });
@@ -152,4 +163,56 @@ fn capture(window: &adw::ApplicationWindow, child: &impl IsA<gtk::Widget>, name:
         .save_to_png(std::path::Path::new(&output).join(format!("{name}.png")))
         .unwrap();
     window.set_content(None::<&gtk::Widget>);
+}
+
+/// Captures the real modal setup without accessing personal services.
+fn capture_dialog(window: &adw::Window, name: &str) {
+    let Ok(output) = std::env::var("DRIVESYNC_UI_PREVIEW_DIR") else {
+        return;
+    };
+    window.present();
+    let mut rendered = None;
+    for _ in 0..20 {
+        window.queue_draw();
+        let loop_ = gtk::glib::MainLoop::new(None, false);
+        let finish = loop_.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(30), move || {
+            finish.quit()
+        });
+        loop_.run();
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(window)).snapshot(
+            &snapshot,
+            f64::from(window.width()),
+            f64::from(window.height()),
+        );
+        if let Some(node) = snapshot.to_node() {
+            rendered = Some(node);
+            break;
+        }
+    }
+    let node = rendered.unwrap_or_else(|| {
+        let child = window.child().expect("setup content exists");
+        child.allocate(child.width(), child.height(), -1, None);
+        child.queue_draw();
+        let snapshot = gtk::Snapshot::new();
+        let background = if adw::StyleManager::default().is_dark() {
+            gtk::gdk::RGBA::new(0.14, 0.14, 0.15, 1.0)
+        } else {
+            gtk::gdk::RGBA::new(0.98, 0.98, 0.98, 1.0)
+        };
+        snapshot.append_color(
+            &background,
+            &gtk::graphene::Rect::new(0.0, 0.0, window.width() as f32, window.height() as f32),
+        );
+        window.snapshot_child(&child, &snapshot);
+        snapshot.to_node().expect("setup renders")
+    });
+    std::fs::create_dir_all(&output).unwrap();
+    window
+        .renderer()
+        .unwrap()
+        .render_texture(&node, None)
+        .save_to_png(std::path::Path::new(&output).join(format!("{name}.png")))
+        .unwrap();
 }

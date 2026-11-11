@@ -1,14 +1,14 @@
-//! Application-wide preferences: persistence and the embedded preferences page.
-//!
-//! Global preferences use a key file.
-//! Unknown global values fall back to defaults without deleting the file.
-//!
-//! - [`model`]: typed values and their key-file representation.
-//! - [`window`]: the adaptive preferences page and the `app.preferences` action.
+//! Presentation and application action for global preferences.
 pub(crate) use crate::services::preferences::{ColorScheme, Preferences};
 mod dialog;
-
-pub(crate) use dialog::install;
-
 #[cfg(test)]
 pub(crate) use dialog::build as test_build;
+pub(crate) use dialog::install;
+/// Maps persisted appearance to the native presentation API.
+fn appearance(scheme: ColorScheme) -> adw::ColorScheme {
+    match scheme {
+        ColorScheme::System => adw::ColorScheme::Default,
+        ColorScheme::Light => adw::ColorScheme::ForceLight,
+        ColorScheme::Dark => adw::ColorScheme::ForceDark,
+    }
+}

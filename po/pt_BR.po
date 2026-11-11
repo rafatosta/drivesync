@@ -534,3 +534,126 @@ msgstr "Não foi possível salvar o nome da conta. Verifique o valor e tente nov
 
 msgid "The account request could not be completed. Please try again."
 msgstr "Não foi possível concluir a solicitação da conta. Tente novamente."
+
+msgid "Set up account"
+msgstr "Configurar conta"
+
+msgid "Connect an account to get started."
+msgstr "Conecte uma conta para começar."
+
+msgid "Choose a provider and configure your account"
+msgstr "Escolha um provedor e configure sua conta"
+
+msgid "Configure synchronization…"
+msgstr "Configurar sincronização…"
+
+msgid "1 of 4 · Choose provider"
+msgstr "1 de 4 · Escolher provedor"
+
+msgid "2 of 4 · Connect account"
+msgstr "2 de 4 · Conectar conta"
+
+msgid "3 of 4 · Configure synchronization"
+msgstr "3 de 4 · Configurar sincronização"
+
+msgid "4 of 4 · Review setup"
+msgstr "4 de 4 · Revisar configuração"
+
+msgid "Choose a provider to connect your account."
+msgstr "Escolha um provedor para conectar sua conta."
+
+msgid "No providers are registered."
+msgstr "Nenhum provedor cadastrado."
+
+msgid "Connect account"
+msgstr "Conectar conta"
+
+msgid "Authorize DriveSync in your browser. DriveSync does not store your password."
+msgstr "Autorize o DriveSync no navegador. O DriveSync não armazena sua senha."
+
+msgid "Cancel sign-in"
+msgstr "Cancelar autenticação"
+
+msgid "Configure synchronization"
+msgstr "Configurar sincronização"
+
+msgid "Choose where your files will be stored on this computer."
+msgstr "Escolha onde seus arquivos serão armazenados neste computador."
+
+msgid "Remote folder"
+msgstr "Pasta remota"
+
+msgid "Not configured"
+msgstr "Não configurada"
+
+msgid "Remote folder selection is not available yet."
+msgstr "A seleção de pasta remota ainda não está disponível."
+
+msgid "Your selection is saved as a draft. No folders are created and no files are changed."
+msgstr "Sua seleção é salva como rascunho. Nenhuma pasta é criada e nenhum arquivo é alterado."
+
+msgid "On this computer"
+msgstr "Neste computador"
+
+msgid "Choose a folder"
+msgstr "Escolha uma pasta"
+
+msgid "Choose…"
+msgstr "Escolher…"
+
+msgid "Provider"
+msgstr "Provedor"
+
+msgid "Connected account"
+msgstr "Conta conectada"
+
+msgid "Review setup"
+msgstr "Revisar configuração"
+
+msgid "Review your connected account and saved folder choice."
+msgstr "Confira a conta conectada e a pasta selecionada."
+
+msgid "Synchronization is not available yet. Remote folder configuration and file checks have not been performed."
+msgstr "A sincronização ainda não está disponível. A configuração de pasta remota e a verificação de arquivos não foram realizadas."
+
+msgid "Start synchronization"
+msgstr "Iniciar sincronização"
+
+msgid "Synchronization is not available yet."
+msgstr "A sincronização ainda não está disponível."
+
+msgid "View account in dashboard"
+msgstr "Ver conta no painel"
+
+msgid "Cancelling sign-in…"
+msgstr "Cancelando autenticação…"
+
+msgid "Account connected. Continue to configure synchronization."
+msgstr "Conta conectada. Continue para configurar a sincronização."
+
+msgid "Sign-in cancelled."
+msgstr "Autenticação cancelada."
+
+msgid "The saved setup draft could not be read. Choose a folder again to replace it."
+msgstr "Não foi possível ler o rascunho da configuração. Escolha novamente uma pasta para substituí-lo."
+
+msgid "Choose local folder"
+msgstr "Escolher pasta local"
+
+msgid "The selected folder is unavailable. Choose another folder."
+msgstr "A pasta selecionada está indisponível. Escolha outra pasta."
+
+msgid "The folder chooser could not be opened. Try again."
+msgstr "Não foi possível abrir o seletor de pastas. Tente novamente."
+
+msgid "Folder choice saved as a draft."
+msgstr "Seleção de pasta salva como rascunho."
+
+msgid "The setup draft could not be saved. Try again."
+msgstr "Não foi possível salvar o rascunho da configuração. Tente novamente."
+
+msgid "Complete authorization in your browser, then return here."
+msgstr "Conclua a autorização no navegador e volte para cá."
+
+msgid "4 of 4 · Start synchronization"
+msgstr "4 de 4 · Iniciar sincronização"

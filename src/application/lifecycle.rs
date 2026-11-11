@@ -1,6 +1,6 @@
 //! Native application startup and shutdown, independent of sync mechanisms.
-use super::{main_menu, restoration, Context};
-use crate::{core::i18n, services::background, ui::preferences};
+use super::{background, main_menu, restoration, Context};
+use crate::{core::i18n, ui::preferences};
 use adw::prelude::*;
 use drivesync_engine::{CancelGoogleSignInRequest, EngineConfig};
 use std::path::PathBuf;
@@ -37,14 +37,6 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
     background::configure_application(&app);
     app.connect_startup(|app| {
-        let window = adw::ApplicationWindow::builder()
-            .application(app)
-            .title("DriveSync")
-            .default_width(960)
-            .default_height(720)
-            .width_request(360)
-            .height_request(360)
-            .build();
         let navigation = adw::NavigationView::new();
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&navigation));
@@ -55,7 +47,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
             &navigation,
             &toasts,
         ));
-        window.set_content(Some(&toasts));
+        let window = crate::ui::dashboard::window::build(app, &toasts);
         app.connect_shutdown(move |_| {
             if let (Some(engine), Some(id)) = (
                 context.engine.borrow().as_ref(),

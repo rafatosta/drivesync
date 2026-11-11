@@ -9,7 +9,8 @@ pub(crate) fn install(
     navigation: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
 ) {
-    adw::StyleManager::default().set_color_scheme(Preferences::load().color_scheme.adw());
+    adw::StyleManager::default()
+        .set_color_scheme(super::appearance(Preferences::load().color_scheme));
     let action = gtk::gio::SimpleAction::new("preferences", None);
     let weak_navigation = navigation.downgrade();
     let weak_toasts = toasts.downgrade();
@@ -231,7 +232,7 @@ pub(crate) fn build(
             .get(row.selected() as usize)
             .copied()
             .unwrap_or_default();
-        adw::StyleManager::default().set_color_scheme(scheme.adw());
+        adw::StyleManager::default().set_color_scheme(super::appearance(scheme));
         let mut value = Preferences::load();
         value.color_scheme = scheme;
         save_theme(value.save());

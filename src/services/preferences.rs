@@ -38,14 +38,6 @@ impl ColorScheme {
             .find(|scheme| scheme.key() == key)
             .unwrap_or_default()
     }
-
-    pub(crate) fn adw(self) -> adw::ColorScheme {
-        match self {
-            Self::System => adw::ColorScheme::Default,
-            Self::Light => adw::ColorScheme::ForceLight,
-            Self::Dark => adw::ColorScheme::ForceDark,
-        }
-    }
 }
 
 /// Persisted application preferences.

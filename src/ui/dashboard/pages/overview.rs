@@ -2,6 +2,7 @@
 use crate::application::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId};
+use std::rc::Rc;
 /// Builds one details page per account and selects the newly connected identity.
 pub(crate) fn build(
     context: &Context,
@@ -76,8 +77,20 @@ pub(crate) fn build(
         if chosen {
             initial = index;
         }
+        let weak_row = row.downgrade();
+        let updated = Rc::new(move |account: Account| {
+            if let Some(row) = weak_row.upgrade() {
+                row.set_title(
+                    account
+                        .display_name
+                        .as_deref()
+                        .or(account.email.as_deref())
+                        .unwrap_or("Google Account"),
+                );
+            }
+        });
         stack.add_named(
-            &super::account::build(account, context, &row, nav, toasts, chosen && edit),
+            &super::account::build(account, context, updated, nav, toasts, chosen && edit),
             Some(&index.to_string()),
         );
     }

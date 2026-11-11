@@ -11,6 +11,9 @@ pub(crate) fn show(
     toasts: &adw::ToastOverlay,
     account_id: Option<AccountId>,
 ) -> adw::Window {
+    if account_id.is_none() {
+        return crate::ui::setup::show(context, navigation, toasts, None);
+    }
     for window in gtk::Window::list_toplevels() {
         if window.widget_name() == "google-account-connection" {
             if let Ok(window) = window.downcast::<adw::Window>() {
@@ -22,8 +25,8 @@ pub(crate) fn show(
     let parent = navigation.root().and_downcast::<gtk::Window>();
     let view = dialog::build(parent.as_ref());
     controller::bind(context, navigation, toasts, account_id, &view);
-    view.window.present();
-    view.window
+    view.window().present();
+    view.window().clone()
 }
 /// Registers account connection independently of the selected root page.
 pub(crate) fn install_action(

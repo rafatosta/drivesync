@@ -2,6 +2,7 @@
 use super::Context;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId, ListAccountsRequest};
+use std::{cell::Cell, rc::Rc};
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InitialDestination {
     Welcome,
@@ -23,6 +24,7 @@ pub(crate) fn show_accounts(
     selected: Option<&AccountId>,
     edit: bool,
 ) {
+    let first_account = accounts.is_empty();
     let page = match initial_destination(&accounts) {
         InitialDestination::Welcome => adw::NavigationPage::new(
             &crate::ui::dashboard::empty::build(),
@@ -33,6 +35,36 @@ pub(crate) fn show_accounts(
         }
     };
     nav.replace(&[page]);
+    if first_account {
+        offer_initial_setup(context, nav, toasts);
+    }
+}
+/// Offers setup once the main window is visible, preserving hidden startup.
+fn offer_initial_setup(context: &Context, nav: &adw::NavigationView, toasts: &adw::ToastOverlay) {
+    let Some(window) = nav.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let offered = Rc::new(Cell::new(false));
+    let owner = context.clone();
+    let weak_nav = nav.downgrade();
+    let weak_toasts = toasts.downgrade();
+    let offer = Rc::new(move || {
+        if offered.replace(true) {
+            return;
+        }
+        if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
+            crate::ui::setup::show(&owner, &nav, &toasts, None);
+        }
+    });
+    if window.is_visible() {
+        offer();
+    } else {
+        window.connect_visible_notify(move |window| {
+            if window.is_visible() {
+                offer();
+            }
+        });
+    }
 }
 /// Reloads the authoritative list after connection, selecting and editing a new account.
 pub(crate) fn connected(

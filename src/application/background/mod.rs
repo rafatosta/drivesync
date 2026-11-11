@@ -2,7 +2,7 @@
 //!
 //! A denied or unavailable portal never silently hides the application. Automatic
 //! startup is requested through the same portal and always uses a hidden mode.
-mod portal;
+use crate::services::background as portal;
 mod startup;
 pub(crate) use startup::{configure_application, install_startup};
 

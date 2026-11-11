@@ -4,15 +4,40 @@ use gettextrs::gettext;
 
 /// Controls owned by one browser authorization window.
 pub(super) struct ConnectionView {
-    pub(super) window: adw::Window,
-    pub(super) connect: gtk::Button,
-    pub(super) copy: gtk::Button,
-    pub(super) subtitle: gtk::Label,
-    pub(super) spinner: gtk::Spinner,
-    pub(super) feedback: gtk::Label,
+    window: adw::Window,
+    connect: gtk::Button,
+    copy: gtk::Button,
+    subtitle: gtk::Label,
+    spinner: gtk::Spinner,
+    feedback: gtk::Label,
 }
 
 impl ConnectionView {
+    pub(super) fn window(&self) -> &adw::Window {
+        &self.window
+    }
+    pub(super) fn on_connect(&self, callback: impl Fn() + 'static) {
+        self.connect.connect_clicked(move |_| callback());
+    }
+    pub(super) fn on_copy(&self, callback: impl Fn() + 'static) {
+        self.copy.connect_clicked(move |_| callback());
+    }
+    pub(super) fn on_close(&self, callback: impl Fn() + 'static) {
+        self.window.connect_close_request(move |_| {
+            callback();
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    pub(super) fn handle(&self) -> ConnectionHandle {
+        ConnectionHandle {
+            window: self.window.downgrade(),
+            connect: self.connect.downgrade(),
+            copy: self.copy.downgrade(),
+            subtitle: self.subtitle.downgrade(),
+            spinner: self.spinner.downgrade(),
+            feedback: self.feedback.downgrade(),
+        }
+    }
     /// Changes presentation only; the controller owns authorization/cancellation.
     pub(super) fn set_waiting(&self, waiting: bool) {
         set_waiting(
@@ -25,8 +50,58 @@ impl ConnectionView {
     }
 }
 
+/// Semantic presentation handle. Redesigns keep this contract and change only
+/// this module; controllers neither know nor retain the component's widgets.
+#[derive(Clone)]
+pub(super) struct ConnectionHandle {
+    window: gtk::glib::WeakRef<adw::Window>,
+    connect: gtk::glib::WeakRef<gtk::Button>,
+    copy: gtk::glib::WeakRef<gtk::Button>,
+    subtitle: gtk::glib::WeakRef<gtk::Label>,
+    spinner: gtk::glib::WeakRef<gtk::Spinner>,
+    feedback: gtk::glib::WeakRef<gtk::Label>,
+}
+impl ConnectionHandle {
+    pub fn set_waiting(&self, waiting: bool) {
+        if let (Some(connect), Some(subtitle), Some(spinner), Some(feedback)) = (
+            self.connect.upgrade(),
+            self.subtitle.upgrade(),
+            self.spinner.upgrade(),
+            self.feedback.upgrade(),
+        ) {
+            set_waiting(&connect, &subtitle, &spinner, &feedback, waiting);
+        }
+    }
+    pub fn set_connect_enabled(&self, enabled: bool) {
+        if let Some(button) = self.connect.upgrade() {
+            button.set_sensitive(enabled);
+        }
+    }
+    pub fn set_copy_enabled(&self, enabled: bool) {
+        if let Some(button) = self.copy.upgrade() {
+            button.set_sensitive(enabled);
+        }
+    }
+    pub fn show_feedback(&self, text: &str) {
+        if let Some(label) = self.feedback.upgrade() {
+            label.set_label(text);
+            label.set_visible(true);
+        }
+    }
+    pub fn copy_url(&self, url: &str) {
+        if let Some(window) = self.window.upgrade() {
+            window.clipboard().set_text(url);
+        }
+    }
+    pub fn close(&self) {
+        if let Some(window) = self.window.upgrade() {
+            window.close();
+        }
+    }
+}
+
 /// Updates shared labels and progress without retaining the dialog window.
-pub(super) fn set_waiting(
+fn set_waiting(
     connect: &gtk::Button,
     subtitle: &gtk::Label,
     spinner: &gtk::Spinner,
