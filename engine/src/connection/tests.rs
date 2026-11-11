@@ -59,9 +59,13 @@ impl Fixture {
         let file = directory.join("oauth.json");
         std::fs::write(&file, r#"{"installed":{"client_id":"synthetic-client","redirect_uris":["http://127.0.0.1/"]}}"#).unwrap();
         let server = Server::start(replies);
-        let client = GoogleDriveClient::new()
-            .with_oauth_base(&server.base)
-            .unwrap();
+        let client = GoogleDriveClient::with_base_urls(
+            format!("{}/drive/v3", server.base),
+            format!("{}/upload/drive/v3", server.base),
+        )
+        .unwrap()
+        .with_oauth_base(&server.base)
+        .unwrap();
         let mut engine = Engine::open_with_client(
             EngineConfig {
                 data_directory: directory.join("accounts"),
@@ -140,7 +144,10 @@ async fn valid_callback_persists_via_accounts_and_pkce_stays_internal() {
     let begin = f.begin(None).await;
     let url = reqwest::Url::parse(&begin.authorization_url).unwrap();
     let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
-    assert_eq!(params["scope"], "openid email profile");
+    assert_eq!(
+        params["scope"],
+        "openid email profile https://www.googleapis.com/auth/drive.metadata.readonly"
+    );
     assert_eq!(params["code_challenge_method"], "S256");
     assert!(!params.contains_key("code_verifier"));
     assert!(f.server.requests.lock().unwrap().is_empty());
@@ -352,6 +359,12 @@ fn boundary_can_be_awaited_without_a_tokio_context() {
             .accounts
             .is_empty()
     );
+    assert_eq!(
+        block_on(engine.remote_folder_root(AccountId("absent".into())))
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Accounts(AccountsError::NotFound)
+    );
     drop(engine);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -508,5 +521,251 @@ async fn disconnect_is_local_isolated_idempotent_and_excludes_authorization() {
             .unwrap_err()
             .kind,
         EngineErrorKind::Accounts(AccountsError::NotFound)
+    );
+}
+
+impl Fixture {
+    async fn sign_in(&self) -> Account {
+        let begin = self.begin(None).await;
+        let engine = self.engine.clone();
+        let id = begin.connection_id.clone();
+        let finish = tokio::spawn(async move {
+            engine
+                .finish_google_sign_in(FinishGoogleSignInRequest { connection_id: id })
+                .await
+        });
+        Self::callback(&begin, None).await;
+        finish.await.unwrap().unwrap().account
+    }
+}
+#[tokio::test]
+async fn remote_folders_use_account_session_canonical_root_and_page_tokens() {
+    let mut sequence = replies("folder-user");
+    sequence.extend([
+        Reply::json(200, r#"{"id":"canonical-root","name":"My Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#),
+        Reply::json(200, r#"{"files":[{"id":"child","name":"Folder","mimeType":"application/vnd.google-apps.folder","parents":["canonical-root"],"trashed":false}],"nextPageToken":"opaque+/page","incompleteSearch":false}"#),
+        Reply::json(200, r#"{"files":[],"incompleteSearch":false}"#),
+    ]);
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    let root = f
+        .engine
+        .remote_folder_root(account.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(root.id, "canonical-root");
+    assert_eq!(root.parent_id, None);
+    let first = f
+        .engine
+        .list_remote_folders(ListRemoteFoldersRequest {
+            account_id: account.id.clone(),
+            parent_id: root.id.clone(),
+            page_token: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        first.folders[0].parent_id.as_deref(),
+        Some("canonical-root")
+    );
+    let last = f
+        .engine
+        .list_remote_folders(ListRemoteFoldersRequest {
+            account_id: account.id.clone(),
+            parent_id: root.id,
+            page_token: first.next_page_token,
+        })
+        .await
+        .unwrap();
+    assert!(last.folders.is_empty());
+    assert!(last.next_page_token.is_none());
+    let error = f
+        .engine
+        .remote_folder_root(AccountId("unknown-account".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        EngineErrorKind::Accounts(AccountsError::NotFound)
+    );
+    let requests = f.server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 5);
+    assert_eq!(requests[2].path(), "/drive/v3/files/root");
+    for request in &requests[2..] {
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.header("authorization"),
+            Some("Bearer synthetic-access-secret")
+        );
+    }
+    let query: HashMap<_, _> = requests[3].decoded_query().into_iter().collect();
+    assert_eq!(query["q"], "'canonical-root' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false");
+    assert!(query["fields"].contains("parents"));
+    assert!(query["fields"].contains("nextPageToken"));
+    let query: HashMap<_, _> = requests[4].decoded_query().into_iter().collect();
+    assert_eq!(query["pageToken"], "opaque+/page");
+}
+#[tokio::test]
+async fn remote_errors_do_not_leak_provider_text_or_trigger_retries() {
+    let mut sequence = replies("folder-user");
+    sequence.extend([
+        Reply::json(403, r#"{"error":{"message":"private-secret","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#),
+        Reply::json(403, r#"{"error":{"message":"private-secret"}}"#),
+        Reply::json(404, "private-secret"),
+        Reply::json(503, "private-secret"),
+    ]);
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    for expected in [
+        RemoteFolderErrorKind::AuthorizationRequired,
+        RemoteFolderErrorKind::PermissionDenied,
+        RemoteFolderErrorKind::NotFound,
+        RemoteFolderErrorKind::Unavailable,
+    ] {
+        let error = f
+            .engine
+            .remote_folder_root(account.id.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, EngineErrorKind::RemoteFolder(expected));
+        assert!(!format!("{error:?}").contains("private-secret"));
+    }
+    assert_eq!(f.server.requests.lock().unwrap().len(), 6);
+}
+#[tokio::test]
+async fn malformed_and_incomplete_folder_pages_fail_closed_and_ids_are_escaped() {
+    let mut sequence = replies("folder-user");
+    for json in [
+        r#"{"files":[],"incompleteSearch":true}"#,
+        r#"{"files":[{"id":"child","name":"Folder","mimeType":"application/vnd.google-apps.folder","parents":["different"],"trashed":false}]}"#,
+        r#"{"files":[{"name":"Folder","mimeType":"application/vnd.google-apps.folder","parents":["x'\\"],"trashed":false}]}"#,
+        r#"{"files":[],"nextPageToken":""}"#,
+    ] {
+        sequence.push(Reply::json(200, json));
+    }
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    for _ in 0..4 {
+        let error = f
+            .engine
+            .list_remote_folders(ListRemoteFoldersRequest {
+                account_id: account.id.clone(),
+                parent_id: "x'\\".into(),
+                page_token: None,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.kind,
+            EngineErrorKind::RemoteFolder(RemoteFolderErrorKind::InvalidResponse)
+        );
+    }
+    let requests = f.server.requests.lock().unwrap();
+    let query: HashMap<_, _> = requests[2].decoded_query().into_iter().collect();
+    assert!(query["q"].starts_with("'x\\'\\\\' in parents"));
+}
+#[tokio::test]
+async fn cancelling_a_remote_query_releases_logout_exclusion() {
+    let mut sequence = replies("folder-user");
+    let mut reply = Reply::json(
+        200,
+        r#"{"id":"root","name":"Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#,
+    );
+    reply.delay = std::time::Duration::from_millis(300);
+    sequence.push(reply);
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    let engine = f.engine.clone();
+    let id = account.id.clone();
+    let query = tokio::spawn(async move { engine.remote_folder_root(id).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while f.server.requests.lock().unwrap().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let error = f
+        .engine
+        .disconnect_account(RemoveAccountRequest {
+            account_id: account.id.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        EngineErrorKind::Accounts(AccountsError::AccountInUse)
+    );
+    query.abort();
+    let _ = query.await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if f.engine.inner.ownership.gate.try_write().is_ok() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        f.engine
+            .disconnect_account(RemoveAccountRequest {
+                account_id: account.id
+            })
+            .await
+            .unwrap()
+            .removed
+    );
+}
+
+#[tokio::test]
+async fn remote_queries_keep_account_credentials_separate() {
+    let mut sequence = replies("first-user");
+    let mut second = replies("second-user");
+    second[0] = Reply::json(
+        200,
+        r#"{"access_token":"second-access-secret","token_type":"Bearer","expires_in":3600,"refresh_token":"second-refresh-secret"}"#,
+    );
+    sequence.extend(second);
+    for _ in 0..2 {
+        sequence.push(Reply::json(200, r#"{"id":"root","name":"Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#));
+    }
+    let f = Fixture::new(sequence).await;
+    let first = f.sign_in().await;
+    let second = f.sign_in().await;
+    f.engine.remote_folder_root(first.id).await.unwrap();
+    f.engine.remote_folder_root(second.id).await.unwrap();
+    let requests = f.server.requests.lock().unwrap();
+    assert_eq!(
+        requests[4].header("authorization"),
+        Some("Bearer synthetic-access-secret")
+    );
+    assert_eq!(
+        requests[5].header("authorization"),
+        Some("Bearer second-access-secret")
+    );
+}
+#[tokio::test]
+async fn remote_queries_renew_expired_credentials_through_accounts() {
+    let mut sequence = replies("folder-user");
+    sequence[0] = Reply::json(
+        200,
+        r#"{"access_token":"old-secret","token_type":"Bearer","expires_in":1,"refresh_token":"refresh-secret"}"#,
+    );
+    sequence.extend([
+        Reply::json(200, r#"{"access_token":"renewed-secret","token_type":"Bearer","expires_in":3600}"#),
+        Reply::json(200, r#"{"sub":"folder-user","email":"user@example.invalid"}"#),
+        Reply::json(200, r#"{"id":"root","name":"Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#),
+    ]);
+    let f = Fixture::new(sequence).await;
+    let account = f.sign_in().await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    f.engine.remote_folder_root(account.id).await.unwrap();
+    let requests = f.server.requests.lock().unwrap();
+    assert_eq!(requests[2].path(), "/token");
+    assert_eq!(
+        requests[4].header("authorization"),
+        Some("Bearer renewed-secret")
     );
 }
