@@ -6,6 +6,7 @@ use gettextrs::gettext;
 pub(crate) fn button() -> gtk::MenuButton {
     let model = gtk::gio::Menu::new();
     let application = gtk::gio::Menu::new();
+    application.append(Some(&gettext("Add Account")), Some("connection.open"));
     application.append(Some(&gettext("Preferences")), Some("app.preferences"));
     application.append(Some(&gettext("About DriveSync")), Some("app.about"));
     model.append_section(None, &application);

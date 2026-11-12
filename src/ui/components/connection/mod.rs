@@ -41,10 +41,7 @@ pub(crate) fn install_action(
     let weak_toasts = toasts.downgrade();
     action.connect_activate(move |_, _| {
         if let (Some(nav), Some(toasts)) = (weak_nav.upgrade(), weak_toasts.upgrade()) {
-            if nav
-                .visible_page()
-                .is_some_and(|page| page.widget_name() == "drivesync-preferences")
-            {
+            if nav.root().is_some() && nav.is_sensitive() {
                 show(&context, &nav, &toasts, None);
             }
         }
