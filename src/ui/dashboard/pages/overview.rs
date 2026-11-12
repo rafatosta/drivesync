@@ -43,6 +43,22 @@ fn build_with_accounts(
             .child(&body)
             .build(),
     ));
+    let version = gtk::Label::builder()
+        .label(crate::core::build_info::VERSION)
+        .tooltip_text(format!(
+            "Source revision: {}",
+            crate::core::build_info::REVISION
+        ))
+        .css_classes(["dim-label", "caption"])
+        .selectable(true)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    version.set_widget_name("dashboard-build-version");
+    toolbar.add_bottom_bar(&version);
     split.set_sidebar(Some(&adw::NavigationPage::new(
         &toolbar,
         &gettext("Accounts"),

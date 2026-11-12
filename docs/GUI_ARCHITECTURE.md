@@ -38,7 +38,9 @@ reautorização. Rascunhos legados não liberam acesso ao dashboard.
 
 O dashboard usa `AdwNavigationSplitView` com uma sidebar nativa de contas
 (`GtkListBox` com `navigation-sidebar`, `AdwActionRow` e `AdwAvatar`). Cada linha
-mostra o apelido e o e-mail. A seleção identifica a conta no cabeçalho; a área
+mostra o apelido e o e-mail. O rodapé fixo exibe a versão e o commit abreviado
+do mesmo identificador usado em Sobre; o tooltip contém a revisão completa.
+A seleção identifica a conta no cabeçalho; a área
 principal continua vazia. A seleção é preservada por ID ao atualizar a lista.
 Abaixo de 660 pixels lógicos, sidebar e conteúdo usam navegação adaptável com
 botão de retorno. A lista inclui apenas contas com configuração concluída,
