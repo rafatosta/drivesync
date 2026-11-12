@@ -70,7 +70,10 @@ fn build(parent: &adw::ApplicationWindow) -> adw::ApplicationWindow {
         ("Orchestrator", "applications-system-symbolic"),
         ("Logs", "text-x-generic-symbolic"),
     ] {
-        let row = adw::ActionRow::builder().title(title).build();
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .activatable(true)
+            .build();
         row.add_prefix(&gtk::Image::from_icon_name(icon));
         sidebar.append(&row);
     }
