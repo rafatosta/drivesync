@@ -39,7 +39,7 @@ pub(super) struct SetupDialog {
 impl SetupDialog {
     pub fn new(window: &gtk::Window, providers: &[RegisteredProvider]) -> Self {
         window.set_title(Some(&gettextrs::gettext("Set up account")));
-        window.set_default_size(760, 800);
+        window.set_default_size(1000, 720);
         let css = gtk::CssProvider::new();
         css.load_from_data(include_str!("style.css"));
         gtk::style_context_add_provider_for_display(
@@ -56,7 +56,7 @@ impl SetupDialog {
         window.set_widget_name("drivesync-account-setup");
         let toolbar = adw::ToolbarView::new();
         // Keep the setup minimum local to its content when the main window is reused.
-        toolbar.set_size_request(760, 800);
+        toolbar.set_size_request(900, 720);
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new("DriveSync", "");
         header.set_title_widget(Some(&title));

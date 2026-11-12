@@ -11,9 +11,9 @@ pub(super) use synchronization::SynchronizationPage;
 /// Shared content margins and rhythm for setup steps after provider selection.
 fn content() -> gtk::Box {
     let root = crate::ui::content();
-    root.set_spacing(12);
-    root.set_margin_top(16);
-    root.set_margin_bottom(16);
+    root.set_spacing(8);
+    root.set_margin_top(12);
+    root.set_margin_bottom(12);
     root
 }
 
@@ -24,11 +24,11 @@ struct PageHeader {
 }
 impl PageHeader {
     fn new(name: &str, artwork: &impl IsA<gtk::Widget>, title: &str, description: &str) -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let slot = gtk::Overlay::new();
         slot.set_widget_name(&format!("setup-{name}-artwork"));
         let space = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        space.set_height_request(184);
+        space.set_height_request(120);
         slot.set_child(Some(&space));
         artwork.set_halign(gtk::Align::Center);
         artwork.set_valign(gtk::Align::Center);
@@ -44,7 +44,7 @@ impl PageHeader {
         title.set_widget_name(&format!("setup-{name}-title"));
         root.append(&title);
         let description_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        description_slot.set_height_request(40);
+        description_slot.set_height_request(36);
         description_slot.append(
             &gtk::Label::builder()
                 .label(description)

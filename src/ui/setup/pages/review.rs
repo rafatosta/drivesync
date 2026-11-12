@@ -24,7 +24,7 @@ impl ReviewPage {
                 gtk::IconLookupFlags::empty(),
             );
         let illustration = gtk::Picture::for_paintable(&paintable);
-        illustration.set_size_request(340, 183);
+        illustration.set_size_request(224, 120);
         illustration.set_can_shrink(true);
         // Crop the square icon canvas to the artwork's native wide aspect ratio.
         illustration.set_content_fit(gtk::ContentFit::Cover);

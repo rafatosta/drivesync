@@ -17,7 +17,7 @@ impl SynchronizationPage {
         root.set_widget_name("setup-synchronization-page");
         let icon = crate::ui::components::svg_icon(
             include_str!("../../../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"),
-            176,
+            112,
         );
         let header = super::PageHeader::new(
             "synchronization",

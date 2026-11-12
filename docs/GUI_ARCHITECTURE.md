@@ -11,12 +11,12 @@ Sem contas configuradas, a janela principal apresenta seleção de provedor,
 conexão, pastas e revisão. Com uma conta configurada, adicionar outra abre uma
 janela de setup separada, sem ocultar ou substituir o dashboard. Fechar essa
 janela encerra somente o setup. A primeira página combina uma ilustração à esquerda com o catálogo de provedores à
-direita. As outras compartilham o mesmo cabeçalho vertical: área de arte de 184
+direita. As outras compartilham o mesmo cabeçalho vertical: área de arte de 120
 pixels lógicos, título centralizado, descrição e componentes da etapa. Os ícones
-Google Drive e DriveSync usam 176 pixels; a revisão usa a ilustração maior.
+Google Drive e DriveSync usam 112 pixels; a revisão usa uma ilustração horizontal de 224 × 120 pixels.
 
-Todas as etapas compartilham o mínimo de 760 × 800 pixels lógicos e podem ser
-ampliadas. O mínimo pertence ao conteúdo do setup. A navegação não redefine o
+O setup abre em 1000 × 720 pixels lógicos, em formato horizontal. Todas as etapas
+compartilham o mínimo de 900 × 720 pixels lógicos e podem ser ampliadas. O mínimo pertence ao conteúdo do setup. A navegação não redefine o
 tamanho escolhido pelo usuário e usa uma transição de 180 ms que respeita as
 preferências de animação do GTK. Os botões Cancelar e Continuar ficam no mesmo
 rodapé. A seleção remota usa um componente genérico com um adaptador da engine.
