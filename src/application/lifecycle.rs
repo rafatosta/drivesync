@@ -68,7 +68,21 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
                 }
             }
             if let Some(app) = weak.upgrade() {
-                app.quit();
+                if let Some(setup) = app
+                    .windows()
+                    .into_iter()
+                    .find(|window| window.widget_name() == "drivesync-account-setup")
+                {
+                    let weak = app.downgrade();
+                    setup.connect_destroy(move |_| {
+                        if let Some(app) = weak.upgrade() {
+                            app.quit();
+                        }
+                    });
+                    setup.close();
+                } else {
+                    app.quit();
+                }
             }
         });
         app.add_action(&quit);

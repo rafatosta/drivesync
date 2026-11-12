@@ -21,6 +21,7 @@ use std::{
 
 pub(super) struct Controller {
     context: Context,
+    separate_window: bool,
     // Retain routing infrastructure while its view is detached from the overlay.
     navigation: adw::NavigationView,
     toasts: adw::ToastOverlay,
@@ -51,11 +52,39 @@ impl Controller {
         toasts: &adw::ToastOverlay,
         account: Option<Account>,
     ) -> (gtk::Window, Rc<Self>) {
+        Self::build_mode(context, navigation, toasts, account, false)
+    }
+    /// Adds another account without replacing or hiding the primary window.
+    pub fn attach_additional(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Option<Account>,
+    ) -> gtk::Window {
+        Self::build_mode(context, navigation, toasts, account, true).0
+    }
+    fn build_mode(
+        context: &Context,
+        navigation: &adw::NavigationView,
+        toasts: &adw::ToastOverlay,
+        account: Option<Account>,
+        separate_window: bool,
+    ) -> (gtk::Window, Rc<Self>) {
         let providers = setup::list_providers();
-        let window = navigation
+        let parent = navigation
             .root()
             .and_downcast::<gtk::Window>()
             .expect("setup mounts in the application window");
+        let window = if separate_window {
+            let dialog = adw::Window::builder()
+                .transient_for(&parent)
+                .modal(false)
+                .build();
+            dialog.set_application(parent.application().as_ref());
+            dialog.upcast::<gtk::Window>()
+        } else {
+            parent
+        };
         let view = SetupDialog::new(&window, &providers);
         let provisional_accounts = RefCell::new(
             account
@@ -76,6 +105,7 @@ impl Controller {
         }
         let controller = Rc::new(Self {
             context: context.clone(),
+            separate_window,
             navigation: navigation.clone(),
             toasts: toasts.clone(),
             finishing: Cell::new(false),
@@ -104,7 +134,14 @@ impl Controller {
             closing.request_close();
             gtk::glib::Propagation::Stop
         });
-        toasts.set_child(Some(controller.view.widget()));
+        if separate_window {
+            window
+                .downcast_ref::<adw::Window>()
+                .unwrap()
+                .set_content(Some(controller.view.widget()));
+        } else {
+            toasts.set_child(Some(controller.view.widget()));
+        }
         controller.render();
         (window, controller)
     }
@@ -385,8 +422,10 @@ impl Controller {
             if let Some(window) = owner.view.window() {
                 let app = window.application();
                 window.destroy();
-                if let Some(app) = app {
-                    app.quit();
+                if !owner.separate_window {
+                    if let Some(app) = app {
+                        app.quit();
+                    }
                 }
             }
             owner.hold.borrow_mut().take();
@@ -518,7 +557,11 @@ impl Controller {
         account: Account,
         uri: String,
     ) -> gtk::Window {
-        let (window, owner) = Self::build(context, navigation, toasts, Some(account));
+        let separate = navigation
+            .root()
+            .is_some_and(|root| root.widget_name() == "drivesync-dashboard");
+        let (window, owner) =
+            Self::build_mode(context, navigation, toasts, Some(account), separate);
         owner.state.borrow_mut().draft.local_uri = Some(uri);
         owner.remote_fixture.set(true);
         owner.render();
@@ -767,11 +810,13 @@ impl Controller {
             .remove(&result.account.id);
         self.state.borrow_mut().closed = true;
         self.state.borrow_mut().signing_in = false;
-        crate::application::navigation::show_dashboard(
-            &self.context,
-            &self.navigation,
-            &self.toasts,
-        );
+        if !self.separate_window {
+            crate::application::navigation::show_dashboard(
+                &self.context,
+                &self.navigation,
+                &self.toasts,
+            );
+        }
         if saved.is_err() {
             crate::application::navigation::reload_accounts(
                 &self.context,
@@ -784,7 +829,7 @@ impl Controller {
                 "This account is already configured. Change its settings in Preferences.",
             )));
         }
-        if close {
+        if close || self.separate_window {
             if let Some(window) = self.view.window() {
                 window.close();
             }
@@ -903,12 +948,14 @@ impl Controller {
                         .context
                         .navigation_generation
                         .set(owner.context.navigation_generation.get().wrapping_add(1));
-                    crate::application::navigation::show_dashboard(
-                        &owner.context,
-                        &owner.navigation,
-                        &owner.toasts,
-                    );
-                    if close {
+                    if !owner.separate_window {
+                        crate::application::navigation::show_dashboard(
+                            &owner.context,
+                            &owner.navigation,
+                            &owner.toasts,
+                        );
+                    }
+                    if close || owner.separate_window {
                         if let Some(window) = owner.view.window() {
                             window.close();
                         }

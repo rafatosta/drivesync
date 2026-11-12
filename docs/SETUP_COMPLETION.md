@@ -34,10 +34,11 @@ escolhas e desconectando contas provisórias.
 
 ## Dashboard e inicialização
 
-Após o salvamento, o dashboard substitui o setup na mesma janela e sem uma entrada
-no histórico para voltar ao assistente. Seu conteúdo é vazio, com o menu do
-aplicativo no cabeçalho. Não contém editor de conta, configuração de pastas ou
-atalho de adicionar conta.
+No primeiro cadastro, após o salvamento, o dashboard substitui o setup na mesma
+janela e sem uma entrada no histórico para voltar ao assistente. Adicionar outra
+conta pelo menu abre uma janela separada, mantendo o dashboard visível. Fechar
+ou concluir esse setup fecha somente a janela adicional; contas já configuradas
+são preservadas. Seu conteúdo é vazio, com o menu do aplicativo no cabeçalho.
 
 Na inicialização, registros completos mantêm o destino no dashboard mesmo quando
 a conta exige reautorização ou uma pasta está temporariamente indisponível. Esses
@@ -50,10 +51,11 @@ abandonado já existente.
 
 ## Preferências
 
-- **Configuração** mostra as pastas por conta. Escolher novas pastas altera um
+- **Contas** mostra apelido e pastas por conta. Escolher novas pastas altera um
   rascunho local da página; **Salvar** executa a mesma validação final antes de
   substituir o registro. **Cancelar** restaura os valores anteriores.
-- **Contas** concentra nome, autorização, desconexão e adição de contas.
+- A mesma seção permite salvar o apelido separadamente, autorizar novamente,
+  desconectar e adicionar contas.
 - Aparência e execução em segundo plano continuam independentes.
 
 Desconectar uma conta remove suas credenciais/metadados pela engine e tenta

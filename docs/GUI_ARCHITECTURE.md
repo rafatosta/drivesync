@@ -7,8 +7,10 @@ com Google e as credenciais passam exclusivamente pela API pública da engine.
 
 ## Setup
 
-Uma única janela apresenta seleção de provedor, conexão, pastas e revisão. A
-primeira página combina uma ilustração à esquerda com o catálogo de provedores à
+Sem contas configuradas, a janela principal apresenta seleção de provedor,
+conexão, pastas e revisão. Com uma conta configurada, adicionar outra abre uma
+janela de setup separada, sem ocultar ou substituir o dashboard. Fechar essa
+janela encerra somente o setup. A primeira página combina uma ilustração à esquerda com o catálogo de provedores à
 direita. As outras compartilham o mesmo cabeçalho vertical: área de arte de 184
 pixels lógicos, título centralizado, descrição e componentes da etapa. Os ícones
 Google Drive e DriveSync usam 176 pixels; a revisão usa a ilustração maior.
@@ -20,7 +22,8 @@ preferências de animação do GTK. Os botões Cancelar e Continuar ficam no mes
 rodapé. A seleção remota usa um componente genérico com um adaptador da engine.
 
 As escolhas incompletas ficam somente em memória. Concluir executa validações
-frescas, salva as escolhas e abre o dashboard na mesma janela. Fechar ou cancelar
+frescas e salva as escolhas. No primeiro cadastro, abre o dashboard na mesma
+janela; nos seguintes, fecha somente a janela de setup. Fechar ou cancelar
 antes disso desconecta a conta provisória e descarta as escolhas. O fechamento
 aguarda uma conclusão já em andamento para evitar corrida com a gravação.
 
@@ -34,8 +37,8 @@ reautorização. Rascunhos legados não liberam acesso ao dashboard.
 ## Dashboard e Preferências
 
 O dashboard apresenta somente um cabeçalho com o menu do aplicativo e uma área de
-conteúdo vazia. Não permite voltar ao setup nem editar configurações. Em
-Preferências, Configuração edita as pastas com Salvar/Cancelar; Contas reúne nome,
+conteúdo vazia. O menu permite adicionar outra conta. Em
+Preferências, Contas reúne apelido, pastas com Salvar/Cancelar,
 autorização, desconexão e adição. Aparência, segundo plano e Sobre continuam
 separados desses fluxos. Não há processo de sincronização iniciado ao concluir.
 

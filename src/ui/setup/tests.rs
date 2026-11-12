@@ -500,9 +500,58 @@ pub(crate) fn exercise(
     });
     assert!(find(&setup, "dashboard-content").first_child().is_none());
     nav.activate_action("connection.open", None).unwrap();
-    wait_until(|| host.widget_name() == "drivesync-account-setup");
-    assert!(contains(setup.upcast_ref(), "setup-continue"));
+    let additional = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|window| window.downcast::<gtk::Window>().ok())
+        .find(|window| window.widget_name() == "drivesync-account-setup")
+        .unwrap();
+    assert_eq!(host.widget_name(), "drivesync-dashboard");
+    assert!(host.is_visible());
+    assert!(contains(additional.upcast_ref(), "setup-continue"));
+    assert_eq!(visible_windows(), 2);
+    nav.activate_action("connection.open", None).unwrap();
+    assert_eq!(visible_windows(), 2);
+    additional.close();
+    wait_until(|| !additional.is_visible());
+    assert!(host.is_visible());
+    assert_eq!(host.widget_name(), "drivesync-dashboard");
     assert_eq!(visible_windows(), 1);
+    let mut second = completed.clone();
+    second.id = drivesync_engine::AccountId("additional-completed-fixture".into());
+    let additional = super::controller::Controller::with_local_choice(
+        &context,
+        &nav,
+        &toasts,
+        second.clone(),
+        local_uri.clone(),
+    );
+    assert!(host.is_visible());
+    find(&additional, "setup-choose-remote")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    let picker = remote_picker();
+    let select =
+        button_with_label(picker.upcast_ref(), &gettextrs::gettext("Select folder")).unwrap();
+    wait_until(|| select.is_sensitive());
+    select.emit_clicked();
+    let next = find(&additional, "setup-continue")
+        .downcast::<gtk::Button>()
+        .unwrap();
+    wait_until(|| next.is_sensitive());
+    next.emit_clicked();
+    wait_until(|| !next.is_visible());
+    find(&additional, "setup-start")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    wait_until(|| !additional.is_visible());
+    assert!(host.is_visible());
+    assert_eq!(host.widget_name(), "drivesync-dashboard");
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&second.id))
+        .unwrap()
+        .is_some());
     assert!(gtk::glib::MainContext::default()
         .block_on(crate::services::configuration::load(&completed.id))
         .unwrap()
