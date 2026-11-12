@@ -15,6 +15,12 @@ antes de trocar o conteúdo da janela pelo dashboard. Não inicia sincronizaçã
    que chama o `files_get` existente de Providers.
 4. O registro foi substituído atomicamente com permissão privada.
 
+O apelido opcional da conta também fica em memória até a conclusão e aparece na
+revisão ao lado do e-mail. Após as verificações, é salvo como nome local pela API
+de Accounts, sem alterar o perfil Google. Se a gravação da configuração falhar,
+o nome anterior é restaurado; uma falha nessa restauração é informada. O nome
+continua editável na seção Contas de Preferências.
+
 As escolhas concluídas ficam em
 `$XDG_CONFIG_HOME/drivesync/connections/<account-id-em-hexadecimal>.ini`, com versão,
 identidade da conta, URI local, ID remoto e descrição da pasta. Não contêm tokens

@@ -13,6 +13,7 @@ impl Summary {
         let root = adw::PreferencesGroup::new();
         let provider = crate::ui::row(&gettext("Provider"), "", "folder-remote-symbolic");
         let account = crate::ui::row(&gettext("Connected account"), "", "avatar-default-symbolic");
+        account.set_widget_name("setup-review-account");
         let local = crate::ui::row(&gettext("Local folder"), "", "folder-symbolic");
         root.add(&provider);
         root.add(&account);

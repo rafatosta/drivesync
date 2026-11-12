@@ -107,12 +107,22 @@ pub(crate) async fn save_checked(
     value: Configuration,
 ) -> Result<Configuration, String> {
     let target = file(&value.account_id);
-    save_checked_to(engine, value, &target).await
+    save_checked_to(engine, value, &target, None).await
+}
+/// Final setup also applies an optional local nickname through the Accounts API.
+pub(crate) async fn save_checked_with_nickname(
+    engine: &Engine,
+    value: Configuration,
+    nickname: &str,
+) -> Result<Configuration, String> {
+    let target = file(&value.account_id);
+    save_checked_to(engine, value, &target, Some(nickname)).await
 }
 async fn save_checked_to(
     engine: &Engine,
     value: Configuration,
     target: &gio::File,
+    nickname: Option<&str>,
 ) -> Result<Configuration, String> {
     Configuration::decode(&value.account_id, &value.encode())
         .map_err(|_| gettext("The configuration is incomplete."))?;
@@ -120,13 +130,13 @@ async fn save_checked_to(
         .list_accounts(ListAccountsRequest { provider: None })
         .await
         .map_err(|e| crate::core::messages::engine_error(&e))?;
-    if !accounts
+    let Some(account) = accounts
         .accounts
         .iter()
-        .any(|a| a.id == value.account_id && a.state == AccountState::Connected)
-    {
+        .find(|a| a.id == value.account_id && a.state == AccountState::Connected)
+    else {
         return Err(gettext("Authorize your account before completing setup."));
-    }
+    };
     super::setup::check_local_folder(&value.local_uri)
         .await
         .map_err(|_| gettext("The selected folder is unavailable. Choose another folder."))?;
@@ -134,9 +144,27 @@ async fn save_checked_to(
         .remote_folder(value.account_id.clone(), value.remote_id.clone())
         .await
         .map_err(|e| crate::core::messages::engine_error(&e))?;
-    write(target, &value)
-        .await
-        .map_err(|_| gettext("The configuration could not be saved. Try again."))?;
+    let name = nickname.map(str::trim).filter(|name| !name.is_empty());
+    let changed = name.is_some() && name != account.display_name.as_deref();
+    if changed {
+        super::accounts::rename(engine, value.account_id.clone(), name.map(str::to_owned))
+            .await
+            .map_err(|e| crate::core::messages::engine_error(&e))?;
+    }
+    if write(target, &value).await.is_err() {
+        if changed
+            && super::accounts::rename(
+                engine,
+                value.account_id.clone(),
+                account.display_name.clone(),
+            )
+            .await
+            .is_err()
+        {
+            return Err(gettext("The configuration could not be saved or the previous account name restored. Try again."));
+        }
+        return Err(gettext("The configuration could not be saved. Try again."));
+    }
     Ok(value)
 }
 /// Called only after the owning account has been disconnected successfully.
@@ -262,7 +290,7 @@ mod tests {
                     write(&target, &original).await.unwrap();
                     let mut changed = original.clone();
                     changed.remote_id = "different-folder".into();
-                    let result = save_checked_to(&engine, changed, &target).await;
+                    let result = save_checked_to(&engine, changed, &target, Some("Work")).await;
                     assert_eq!(
                         result.unwrap_err(),
                         gettext("Authorize your account before completing setup.")

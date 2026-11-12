@@ -108,6 +108,7 @@ pub(crate) fn exercise(
     state.remote_authorization_required = false;
     state.feedback.clear();
     state.step = Step::Synchronization;
+    state.account_nickname = "Trabalho".into();
     state.draft.local_uri =
         Some("file:///run/user/1000/doc/fixture-portal-grant/Downloads/Google%20Drive".into());
     state.feedback =
@@ -433,6 +434,10 @@ pub(crate) fn exercise(
         completed.clone(),
         local_uri.clone(),
     );
+    let nickname = find(&setup, "setup-account-nickname")
+        .downcast::<adw::EntryRow>()
+        .unwrap();
+    nickname.set_text(" Trabalho ");
     find(&setup, "setup-choose-remote")
         .downcast::<gtk::Button>()
         .unwrap()
@@ -446,6 +451,19 @@ pub(crate) fn exercise(
         .downcast::<gtk::Button>()
         .unwrap();
     wait_until(|| next.is_sensitive());
+    next.emit_clicked();
+    wait_until(|| !next.is_visible());
+    assert!(find(&setup, "setup-review-account")
+        .downcast::<adw::ActionRow>()
+        .unwrap()
+        .subtitle()
+        .unwrap()
+        .contains("Trabalho"));
+    find(&setup, "setup-back")
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    assert_eq!(nickname.text().as_str(), " Trabalho ");
     next.emit_clicked();
     wait_until(|| !next.is_visible());
     let finish = find(&setup, "setup-start")

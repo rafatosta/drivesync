@@ -855,3 +855,12 @@ msgstr "Escolher uma pasta local"
 
 msgid "This account is already configured. Change its settings in Preferences."
 msgstr "Esta conta já está configurada. Altere suas configurações em Preferências."
+
+msgid "Account nickname (optional)"
+msgstr "Apelido da conta (opcional)"
+
+msgid "Used only in DriveSync. Your Google profile will not change."
+msgstr "Usado apenas no DriveSync. Seu perfil do Google não será alterado."
+
+msgid "The configuration could not be saved or the previous account name restored. Try again."
+msgstr "Não foi possível salvar a configuração nem restaurar o nome anterior da conta. Tente novamente."

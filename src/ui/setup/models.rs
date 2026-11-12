@@ -36,6 +36,8 @@ pub(super) struct SetupState {
     pub provider: Option<RegisteredProvider>,
     pub account: Option<Account>,
     pub draft: SetupDraft,
+    /// Empty keeps the current local display name; edits remain in memory until completion.
+    pub account_nickname: String,
     /// Current setup only; a chosen folder does not establish sync readiness.
     pub remote_folder: Option<RemoteFolderLocation>,
     pub remote_authorization_required: bool,
@@ -62,6 +64,7 @@ impl SetupState {
         {
             self.account = None;
             self.draft = SetupDraft::default();
+            self.account_nickname.clear();
             self.remote_folder = None;
             self.remote_authorization_required = false;
             self.generation += 1;
@@ -177,7 +180,9 @@ mod tests {
             folder: root.clone(),
             path: vec![root],
         });
+        state.account_nickname = "Work".into();
         state.select_provider(provider.clone());
+        assert_eq!(state.account_nickname, "Work");
         assert!(state.draft.local_uri.is_some());
         assert!(state.remote_folder.is_some());
         let mut other = provider;
@@ -185,6 +190,7 @@ mod tests {
         state.select_provider(other);
         assert!(state.draft.local_uri.is_none());
         assert!(state.remote_folder.is_none());
+        assert!(state.account_nickname.is_empty());
         assert_eq!(state.generation, 1);
     }
     #[test]

@@ -13,6 +13,7 @@ pub(super) enum Event {
     Back,
     Continue,
     Finish,
+    Nickname(String),
     Connect,
     Copy,
     ChooseLocal,
@@ -60,6 +61,7 @@ impl SetupDialog {
         let title = adw::WindowTitle::new("DriveSync", "");
         header.set_title_widget(Some(&title));
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.set_widget_name("setup-back");
         back.set_tooltip_text(Some(&gettextrs::gettext("Back")));
         header.pack_start(&back);
         toolbar.add_top_bar(&header);
@@ -143,6 +145,9 @@ impl SetupDialog {
             cb(Event::Provider(id, selected))
         }));
         let cb = callback.clone();
+        self.synchronization
+            .on_nickname(move |text| cb(Event::Nickname(text)));
+        let cb = callback.clone();
         self.review.on_finish(move || cb(Event::Finish));
         let cb = callback.clone();
         self.back.connect_clicked(move |_| cb(Event::Back));
@@ -206,11 +211,18 @@ impl SetupDialog {
         self.synchronization.update(
             path.as_deref(),
             remote.as_deref(),
+            &state.account_nickname,
             !state.busy && state.authorized(),
         );
+        let nickname = state.account_nickname.trim();
+        let review_account = if nickname.is_empty() {
+            account.unwrap_or("").to_owned()
+        } else {
+            format!("{nickname} · {}", account.unwrap_or(""))
+        };
         self.review.update(
             provider,
-            account.unwrap_or(""),
+            &review_account,
             path.as_deref().unwrap_or(""),
             remote.as_deref().unwrap_or(""),
             state.can_finish(),

@@ -156,6 +156,7 @@ impl Controller {
                     self.state.borrow_mut().select_provider(provider.clone());
                 }
             }
+            Event::Nickname(text) => self.state.borrow_mut().account_nickname = text,
             Event::Back => self.state.borrow_mut().back(),
             Event::Continue => {
                 if !self.state.borrow().can_continue() {
@@ -845,6 +846,7 @@ impl Controller {
                 remote_path: state.remote_path().unwrap(),
             }
         };
+        let nickname = self.state.borrow().account_nickname.clone();
         self.finishing.set(true);
         self.state.borrow_mut().busy = true;
         self.state.borrow_mut().feedback = gettext("Checking and saving configuration…");
@@ -878,10 +880,16 @@ impl Controller {
                     )),
                 }
             } else {
-                crate::services::configuration::save_checked(&engine, value).await
+                crate::services::configuration::save_checked_with_nickname(
+                    &engine, value, &nickname,
+                )
+                .await
             };
             #[cfg(not(test))]
-            let result = crate::services::configuration::save_checked(&engine, value).await;
+            let result = crate::services::configuration::save_checked_with_nickname(
+                &engine, value, &nickname,
+            )
+            .await;
             owner.finishing.set(false);
             match result {
                 Ok(value) => {
