@@ -14,5 +14,6 @@ pub(crate) fn build(
         .height_request(360)
         .build();
     window.set_content(Some(content));
+    crate::ui::developer::install(&window);
     window
 }

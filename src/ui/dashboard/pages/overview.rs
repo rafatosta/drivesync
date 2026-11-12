@@ -27,6 +27,12 @@ fn build_with_accounts(
     header.set_title_widget(Some(&adw::WindowTitle::new(&gettext("Accounts"), "")));
     header.pack_start(&crate::ui::components::main_menu::add_account_button());
     header.pack_end(&crate::ui::components::main_menu::button());
+    let developer_console = gtk::Button::builder()
+        .icon_name("utilities-terminal-symbolic")
+        .tooltip_text("Developer Console (F12)")
+        .action_name("win.developer-console")
+        .build();
+    header.pack_end(&developer_console);
     toolbar.add_top_bar(&header);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
     body.append(&sidebar.list);
