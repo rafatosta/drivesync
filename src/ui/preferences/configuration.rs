@@ -1,4 +1,4 @@
-//! Preferences-only editing of completed folder choices.
+//! Account preferences with local nicknames and completed folder choices.
 use crate::ui::components::remote_folder_picker::{
     engine_source::EngineFolderSource, RemoteFolderPicker, RemoteFolderPickerConfig,
     RemoteFolderPickerResult,
@@ -15,14 +15,21 @@ use std::{
     rc::Rc,
 };
 
-pub(super) fn build(context: &Context) -> adw::PreferencesPage {
+pub(super) fn build(
+    context: &Context,
+    navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::new();
-    page.set_widget_name("preferences-configuration");
+    page.set_widget_name("preferences-accounts");
     let status = adw::PreferencesGroup::builder()
-        .title(gettext("Configuration"))
+        .title(gettext("Accounts"))
         .description(gettext("Loading saved configuration…"))
         .build();
     page.add(&status);
+    let add = adw::PreferencesGroup::new();
+    add.set_header_suffix(Some(&crate::ui::components::main_menu::add_account_button()));
+    page.add(&add);
     let Some(engine) = context.engine.borrow().clone() else {
         status.set_description(Some(&gettext(
             "The account service is unavailable. Try again.",
@@ -30,6 +37,9 @@ pub(super) fn build(context: &Context) -> adw::PreferencesPage {
         return page;
     };
     let weak = page.downgrade();
+    let context = context.clone();
+    let navigation = navigation.downgrade();
+    let toasts = toasts.downgrade();
     gtk::glib::spawn_future_local(async move {
         let accounts = engine
             .list_accounts(ListAccountsRequest { provider: None })
@@ -44,6 +54,11 @@ pub(super) fn build(context: &Context) -> adw::PreferencesPage {
                     match configuration::load(&account.id).await {
                         Ok(Some(value)) => {
                             page.add(&editor(&engine, &account, value));
+                            if let (Some(nav), Some(toasts)) =
+                                (navigation.upgrade(), toasts.upgrade())
+                            {
+                                page.add(&account_actions(&context, &account, &nav, &toasts));
+                            }
                             found = true;
                         }
                         Ok(None) => (),
@@ -76,6 +91,7 @@ fn editor(engine: &Engine, account: &Account, value: Configuration) -> adw::Pref
         )
         .description(gettext("Changes are checked before they are saved."))
         .build();
+    group.add(&nickname_editor(engine, account));
     let current = Rc::new(RefCell::new(value.clone()));
     let saved = Rc::new(RefCell::new(value));
     let busy = Rc::new(Cell::new(false));
@@ -318,6 +334,121 @@ fn editor(engine: &Engine, account: &Account, value: Configuration) -> adw::Pref
                 }
             });
         }
+    });
+    group
+}
+
+/// Saves the local nickname independently of folder access or authorization checks.
+fn nickname_editor(engine: &Engine, account: &Account) -> adw::EntryRow {
+    let row = adw::EntryRow::builder()
+        .title(gettext("Account nickname (optional)"))
+        .text(account.display_name.as_deref().unwrap_or(""))
+        .show_apply_button(true)
+        .build();
+    row.set_widget_name("preferences-account-nickname");
+    let engine = engine.clone();
+    let id = account.id.clone();
+    row.connect_apply(move |row| {
+        let name = row.text().trim().to_owned();
+        let name = if name.is_empty() { None } else { Some(name) };
+        row.set_sensitive(false);
+        let weak = row.downgrade();
+        let engine = engine.clone();
+        let id = id.clone();
+        gtk::glib::spawn_future_local(async move {
+            let result = crate::services::accounts::rename(&engine, id, name).await;
+            let Some(row) = weak.upgrade() else {
+                return;
+            };
+            row.set_sensitive(true);
+            match result {
+                Ok(account) => {
+                    row.set_text(account.display_name.as_deref().unwrap_or(""));
+                    row.remove_css_class("error");
+                    row.set_tooltip_text(None);
+                }
+                Err(error) => {
+                    row.add_css_class("error");
+                    row.set_tooltip_text(Some(&crate::core::messages::engine_error(&error)));
+                }
+            }
+        });
+    });
+    row
+}
+
+/// Keeps authorization and local disconnection available beside each account.
+fn account_actions(
+    context: &Context,
+    account: &Account,
+    navigation: &adw::NavigationView,
+    toasts: &adw::ToastOverlay,
+) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::new();
+    let authorize = adw::ActionRow::builder()
+        .activatable(true)
+        .title(gettext("Sign in again"))
+        .build();
+    group.add(&authorize);
+    let disconnect = adw::ActionRow::builder()
+        .activatable(true)
+        .title(gettext("Disconnect account…"))
+        .build();
+    disconnect.add_css_class("destructive-action");
+    group.add(&disconnect);
+    let owner = context.clone();
+    let id = account.id.clone();
+    let nav = navigation.downgrade();
+    let overlay = toasts.downgrade();
+    authorize.connect_activated(move |_| {
+        if let (Some(nav), Some(toasts)) = (nav.upgrade(), overlay.upgrade()) {
+            crate::ui::components::connection::show(&owner, &nav, &toasts, Some(id.clone()));
+        }
+    });
+    let owner = context.clone();
+    let account = account.clone();
+    let nav = navigation.downgrade();
+    let overlay = toasts.downgrade();
+    disconnect.connect_activated(move |row| {
+        let Some(nav_widget) = nav.upgrade() else {
+            return;
+        };
+        let Some(parent) = nav_widget.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        row.set_sensitive(false);
+        let row = row.downgrade();
+        let nav = nav.clone();
+        let overlay = overlay.clone();
+        let context = owner.clone();
+        crate::application::accounts::disconnect(
+            &owner,
+            &parent,
+            &account,
+            Rc::new(move |event| {
+                if let Some(row) = row.upgrade() {
+                    row.set_sensitive(true);
+                }
+                let (Some(nav), Some(toasts)) = (nav.upgrade(), overlay.upgrade()) else {
+                    return;
+                };
+                use crate::application::accounts::DisconnectEvent;
+                match event {
+                    DisconnectEvent::Cancelled => (),
+                    DisconnectEvent::Failed(message) => toasts.add_toast(adw::Toast::new(&message)),
+                    DisconnectEvent::Disconnected { draft_removed } => {
+                        if !draft_removed {
+                            toasts.add_toast(adw::Toast::new(&gettext(
+                                "Account disconnected. The saved setup draft could not be removed.",
+                            )));
+                        }
+                        crate::application::navigation::reload_accounts(
+                            &context, &nav, &toasts, None,
+                        );
+                    }
+                }
+            }),
+        );
     });
     group
 }

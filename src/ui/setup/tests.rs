@@ -483,16 +483,13 @@ pub(crate) fn exercise(
     assert!(find(&setup, "dashboard-content").first_child().is_none());
     assert!(!contains(setup.upcast_ref(), "setup-continue"));
     assert_eq!(visible_windows(), 1);
-    nav.activate_action("connection.open", None).unwrap();
-    assert_eq!(host.widget_name(), "drivesync-dashboard");
-    assert!(!contains(setup.upcast_ref(), "setup-continue"));
     capture(&setup, "dashboard-completed");
     app.activate_action("preferences", None);
     wait_until(|| {
         nav.visible_page()
             .is_some_and(|p| p.widget_name() == "drivesync-preferences")
     });
-    assert!(contains(setup.upcast_ref(), "preferences-configuration"));
+    assert!(contains(setup.upcast_ref(), "preferences-accounts"));
     find(&setup, "preferences-back")
         .downcast::<gtk::Button>()
         .unwrap()
@@ -502,6 +499,14 @@ pub(crate) fn exercise(
             .is_some_and(|p| p.widget_name() == "drivesync-dashboard")
     });
     assert!(find(&setup, "dashboard-content").first_child().is_none());
+    nav.activate_action("connection.open", None).unwrap();
+    wait_until(|| host.widget_name() == "drivesync-account-setup");
+    assert!(contains(setup.upcast_ref(), "setup-continue"));
+    assert_eq!(visible_windows(), 1);
+    assert!(gtk::glib::MainContext::default()
+        .block_on(crate::services::configuration::load(&completed.id))
+        .unwrap()
+        .is_some());
     host.close();
     wait_until(|| !host.is_visible());
     let saved = gtk::glib::MainContext::default()

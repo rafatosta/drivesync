@@ -156,41 +156,12 @@ fn build_with_context(
     background_page.add(&background);
     pages.add_named(&background_page, Some("background"));
 
-    pages.add_named(&super::configuration::build(context), Some("configuration"));
-    let accounts_container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    accounts_container.set_widget_name("preferences-accounts");
-    pages.add_named(&accounts_container, Some("accounts"));
-    if let Some(engine) = context.engine.borrow().clone() {
-        let container = accounts_container.downgrade();
-        let owner = context.clone();
-        let nav = navigation.downgrade();
-        let overlay = toasts.downgrade();
-        gtk::glib::spawn_future_local(async move {
-            let result = engine
-                .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
-                .await;
-            if let (Some(container), Some(nav), Some(toasts)) =
-                (container.upgrade(), nav.upgrade(), overlay.upgrade())
-            {
-                match result {
-                    Ok(result) => container.append(&super::accounts::build(
-                        &owner,
-                        result.accounts,
-                        &nav,
-                        &toasts,
-                        None,
-                        false,
-                    )),
-                    Err(error) => container.append(&gtk::Label::new(Some(
-                        &crate::core::messages::engine_error(&error),
-                    ))),
-                }
-            }
-        });
-    }
+    pages.add_named(
+        &super::configuration::build(context, navigation, toasts),
+        Some("accounts"),
+    );
     let sections = [
-        ("configuration", "Configuration", "folder-symbolic", "account local remote folder configuration"),
-        ("accounts", "Accounts", "avatar-default-symbolic", "accounts name sign in authorization disconnect"),
+        ("accounts", "Accounts", "avatar-default-symbolic", "accounts nickname name local remote folder configuration"),
         ("appearance", "Appearance", "preferences-desktop-appearance-symbolic", "color scheme choose between the system setting follow system light or dark"),
         ("background", "Background", "application-x-executable-symbolic", "drivesync continues running after the window is closed notify when running in background show a notification when the window is closed "),
     ];

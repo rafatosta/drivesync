@@ -1,5 +1,4 @@
 //! Isolated visual contract: account-only routing, explicit editing and app settings.
-use super::*;
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId, AccountState, ProviderId, Timestamp};
 fn find(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
@@ -43,7 +42,6 @@ fn account_only_layout_and_initial_name_editor() {
     crate::ui::components::main_menu::install(&app, &window);
     assert!(app.lookup_action("about").is_some());
 
-    let context = Context::default();
     let nav = adw::NavigationView::new();
     let toasts = adw::ToastOverlay::new();
     let account = Account {
@@ -63,56 +61,16 @@ fn account_only_layout_and_initial_name_editor() {
         .is_none());
     assert!(find(dashboard.upcast_ref(), "account-name-editor").is_none());
     capture(&window, &dashboard, "dashboard-empty");
-    let page = crate::ui::preferences::accounts::build(
-        &context,
-        vec![account.clone()],
-        &nav,
-        &toasts,
-        Some(&account.id),
-        true,
-    );
-    assert!(find(page.upcast_ref(), "account-name-editor")
-        .unwrap()
-        .is_visible());
-    assert!(find(page.upcast_ref(), "account-save")
-        .unwrap()
-        .is_visible());
-    assert!(!find(page.upcast_ref(), "account-edit")
-        .unwrap()
-        .is_visible());
-    capture(&window, &page, "new-account");
-    for removed in [
-        "sidebar-activities",
-        "sidebar-transfers",
-        "sync-account-now",
-        "account-settings-editor",
-    ] {
-        assert!(find(page.upcast_ref(), removed).is_none());
-    }
-    let page = crate::ui::preferences::accounts::build(
-        &context,
-        vec![account.clone()],
-        &nav,
-        &toasts,
-        None,
-        false,
-    );
-    assert!(!find(page.upcast_ref(), "account-name-editor")
-        .unwrap()
-        .is_visible());
-    assert!(find(page.upcast_ref(), "account-edit")
-        .unwrap()
-        .is_visible());
-    let button = find(page.upcast_ref(), "account-edit")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap();
-    button.emit_clicked();
-    assert!(find(page.upcast_ref(), "account-name-editor")
-        .unwrap()
-        .is_visible());
     let preferences = crate::ui::preferences::test_build(&nav, &toasts);
     assert!(find(preferences.upcast_ref(), "preferences-theme").is_some());
+    assert!(find(preferences.upcast_ref(), "preferences-accounts").is_some());
+    assert!(find(preferences.upcast_ref(), "preferences-configuration").is_none());
+    let sections = find(preferences.upcast_ref(), "preferences-list")
+        .unwrap()
+        .downcast::<gtk::ListBox>()
+        .unwrap();
+    assert!(sections.row_at_index(2).is_some());
+    assert!(sections.row_at_index(3).is_none());
     assert!(find(preferences.upcast_ref(), "preferences-keep-running").is_some());
     assert!(find(preferences.upcast_ref(), "preferences-interval").is_none());
     let keep = find(preferences.upcast_ref(), "preferences-keep-running")

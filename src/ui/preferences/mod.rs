@@ -13,5 +13,4 @@ fn appearance(scheme: ColorScheme) -> adw::ColorScheme {
     }
 }
 
-pub(crate) mod accounts;
 mod configuration;
