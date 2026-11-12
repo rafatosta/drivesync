@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="420" viewBox="0 0 390 210" role="img" aria-label="Notebook com marca de verificação verde e nuvem azul">
+<defs>
+ <linearGradient id="cloud" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#e0eeff"/><stop offset="1" stop-color="#7fb6f7"/></linearGradient>
+ <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e9f3ff"/><stop offset="1" stop-color="#c0dcfa"/></linearGradient>
+ <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#819fca"/><stop offset="1" stop-color="#496b99"/></linearGradient>
+ <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#62d484"/><stop offset="1" stop-color="#27a958"/></linearGradient>
+ <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feGaussianBlur stdDeviation="2.3"/></filter>
+</defs>
+<ellipse cx="155" cy="197" rx="151" ry="7" fill="#a7c4e8" opacity=".28"/>
+<!-- cloud -->
+<path d="M189 112 C177 102 177 84 186 69 C194 56 209 49 227 50 C230 27 248 8 269 8 C291 8 308 24 310 46 C333 43 352 60 352 81 C352 98 340 112 321 112 Z" fill="url(#cloud)" stroke="#348bfa" stroke-width="5" stroke-linejoin="round"/>
+<path d="M191 105 H320 C336 105 346 94 346 81" fill="none" stroke="#e5f2ff" stroke-width="2.5" opacity=".75"/>
+<!-- laptop shadow -->
+<rect x="52" y="65" width="193" height="128" rx="10" fill="#45668f" opacity=".2" filter="url(#shadow)"/>
+<!-- laptop screen bezel -->
+<rect x="54" y="64" width="191" height="122" rx="9" fill="url(#metal)" stroke="#42618c" stroke-width="2"/>
+<rect x="60" y="70" width="179" height="112" rx="4" fill="#314d73"/>
+<rect x="65" y="76" width="169" height="101" fill="url(#screen)" stroke="#a8c9ed" stroke-width="1.5"/>
+<path d="M67 78 H233 V82 H67Z" fill="#fff" opacity=".42"/>
+<!-- success circle -->
+<circle cx="150" cy="124" r="36" fill="#278d4c" opacity=".2" filter="url(#shadow)"/>
+<circle cx="150" cy="124" r="35" fill="url(#green)" stroke="#c8f2d6" stroke-width="2"/>
+<path d="M134 125 L145 136 L168 112" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+<!-- base -->
+<path d="M36 180 H264 Q267 180 267 184 V187 Q267 194 257 195 H44 Q35 194 35 187 V184 Q35 180 36 180Z" fill="url(#metal)" stroke="#4a6a96" stroke-width="1.5"/>
+<path d="M36 181 H265 V185 H36Z" fill="#adc3df" opacity=".65"/>
+<path d="M128 181 H173 L170 187 H131Z" fill="#496a97" opacity=".7"/>
+<path d="M46 193 H256" stroke="#c2d4eb" stroke-width="1.5" opacity=".65"/>
+</svg>

@@ -468,3 +468,399 @@ msgstr "Conectar"
 
 msgid "My Drive"
 msgstr "Meu Drive"
+
+msgid "Connect and manage your Google accounts securely."
+msgstr "Conecte e gerencie suas contas do Google com segurança."
+
+msgid "Account name"
+msgstr "Nome da conta"
+
+msgid "Account status"
+msgstr "Estado da conta"
+
+msgid "Authorized"
+msgstr "Autorizada"
+
+msgid "Sign-in required"
+msgstr "Autenticação necessária"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Edit account"
+msgstr "Editar conta"
+
+msgid "Sign in again"
+msgstr "Autenticar novamente"
+
+msgid "Choose a local name for this account. Your Google profile will not change."
+msgstr "Escolha um nome local para esta conta. Seu perfil do Google não será alterado."
+
+msgid "Your account is being saved. Please wait."
+msgstr "Sua conta está sendo salva. Aguarde."
+
+msgid "Could not open the browser. Copy the link to continue."
+msgstr "Não foi possível abrir o navegador. Copie o link para continuar."
+
+msgid "Google sign-in is not configured for this installation."
+msgstr "A autenticação do Google não está configurada nesta instalação."
+
+msgid "Sign-in was cancelled."
+msgstr "A autenticação foi cancelada."
+
+msgid "Sign-in expired. Please try again."
+msgstr "A autenticação expirou. Tente novamente."
+
+msgid "Google authorization was not completed. Please try again."
+msgstr "A autorização do Google não foi concluída. Tente novamente."
+
+msgid "Google could not be reached. Check your connection and try again."
+msgstr "Não foi possível acessar o Google. Verifique sua conexão e tente novamente."
+
+msgid "Sign in with the Google account selected in DriveSync."
+msgstr "Autentique-se com a conta do Google selecionada no DriveSync."
+
+msgid "Secure credential storage is unavailable. Unlock your keyring and try again."
+msgstr "O armazenamento seguro de credenciais está indisponível. Desbloqueie seu chaveiro e tente novamente."
+
+msgid "Saved accounts could not be accessed. Your data has been kept."
+msgstr "Não foi possível acessar as contas salvas. Seus dados foram preservados."
+
+msgid "The account name could not be saved. Check the value and try again."
+msgstr "Não foi possível salvar o nome da conta. Verifique o valor e tente novamente."
+
+msgid "The account request could not be completed. Please try again."
+msgstr "Não foi possível concluir a solicitação da conta. Tente novamente."
+
+msgid "Set up account"
+msgstr "Configurar conta"
+
+msgid "Connect an account to get started."
+msgstr "Conecte uma conta para começar."
+
+msgid "Choose a provider and configure your account"
+msgstr "Escolha um provedor e configure sua conta"
+
+msgid "Configure synchronization…"
+msgstr "Configurar sincronização…"
+
+msgid "1 of 4 · Choose provider"
+msgstr "1 de 4 · Escolher provedor"
+
+msgid "2 of 4 · Connect account"
+msgstr "2 de 4 · Conectar conta"
+
+msgid "3 of 4 · Configure synchronization"
+msgstr "3 de 4 · Configurar sincronização"
+
+msgid "4 of 4 · Review setup"
+msgstr "4 de 4 · Revisar configuração"
+
+msgid "Choose a provider to connect your account."
+msgstr "Escolha um provedor para conectar sua conta."
+
+msgid "No providers are registered."
+msgstr "Nenhum provedor cadastrado."
+
+msgid "Connect account"
+msgstr "Conectar conta"
+
+msgid "Authorize DriveSync in your browser. DriveSync does not store your password."
+msgstr "Autorize o DriveSync no navegador. O DriveSync não armazena sua senha."
+
+msgid "Cancel sign-in"
+msgstr "Cancelar autenticação"
+
+msgid "Configure synchronization"
+msgstr "Configurar sincronização"
+
+msgid "Choose where your files will be stored on this computer."
+msgstr "Escolha onde seus arquivos serão armazenados neste computador."
+
+msgid "Remote folder"
+msgstr "Pasta remota"
+
+msgid "Not configured"
+msgstr "Não configurada"
+
+msgid "Remote folder selection is not available yet."
+msgstr "A seleção de pasta remota ainda não está disponível."
+
+msgid "Your selection is saved as a draft. No folders are created and no files are changed."
+msgstr "Sua seleção é salva como rascunho. Nenhuma pasta é criada e nenhum arquivo é alterado."
+
+msgid "On this computer"
+msgstr "Neste computador"
+
+msgid "Choose a folder"
+msgstr "Escolha uma pasta"
+
+msgid "Choose…"
+msgstr "Escolher…"
+
+msgid "Provider"
+msgstr "Provedor"
+
+msgid "Connected account"
+msgstr "Conta conectada"
+
+msgid "Review setup"
+msgstr "Revisar configuração"
+
+msgid "Review your connected account and saved folder choice."
+msgstr "Confira a conta conectada e a pasta selecionada."
+
+msgid "Synchronization is not available yet. Remote folder configuration and file checks have not been performed."
+msgstr "A sincronização ainda não está disponível. A configuração de pasta remota e a verificação de arquivos não foram realizadas."
+
+msgid "Start synchronization"
+msgstr "Iniciar sincronização"
+
+msgid "Synchronization is not available yet."
+msgstr "A sincronização ainda não está disponível."
+
+msgid "View account in dashboard"
+msgstr "Ver conta no painel"
+
+msgid "Cancelling sign-in…"
+msgstr "Cancelando autenticação…"
+
+msgid "Account connected. Continue to configure synchronization."
+msgstr "Conta conectada. Continue para configurar a sincronização."
+
+msgid "Sign-in cancelled."
+msgstr "Autenticação cancelada."
+
+msgid "The saved setup draft could not be read. Choose a folder again to replace it."
+msgstr "Não foi possível ler o rascunho da configuração. Escolha novamente uma pasta para substituí-lo."
+
+msgid "Choose local folder"
+msgstr "Escolher pasta local"
+
+msgid "The selected folder is unavailable. Choose another folder."
+msgstr "A pasta selecionada está indisponível. Escolha outra pasta."
+
+msgid "The folder chooser could not be opened. Try again."
+msgstr "Não foi possível abrir o seletor de pastas. Tente novamente."
+
+msgid "Folder choice saved as a draft."
+msgstr "Seleção de pasta salva como rascunho."
+
+msgid "The setup draft could not be saved. Try again."
+msgstr "Não foi possível salvar o rascunho da configuração. Tente novamente."
+
+msgid "4 of 4 · Start synchronization"
+msgstr "4 de 4 · Iniciar sincronização"
+
+msgid "Disconnect account?"
+msgstr "Desconectar conta?"
+
+msgid "This removes the account and its saved setup from DriveSync. Files on this computer and in the cloud are kept."
+msgstr "Isso remove a conta e seu rascunho de configuração do DriveSync. Os arquivos neste computador e na nuvem são preservados."
+
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgid "Disconnect account…"
+msgstr "Desconectar conta…"
+
+msgid "The account service is unavailable. Try again."
+msgstr "O serviço de contas está indisponível. Tente novamente."
+
+msgid "Account disconnected."
+msgstr "Conta desconectada."
+
+msgid "Account disconnected. The saved setup draft could not be removed."
+msgstr "Conta desconectada. Não foi possível remover o rascunho da configuração."
+
+msgid "Complete account setup and validate both folders before opening the dashboard."
+msgstr "Conclua a configuração da conta e valide as duas pastas antes de abrir o painel."
+
+msgid "Setup pending"
+msgstr "Configuração pendente"
+
+msgid "Continue setup"
+msgstr "Continuar configuração"
+
+msgid "Checking synchronization configuration…"
+msgstr "Verificando a configuração da sincronização…"
+
+msgid "Finish or cancel account authorization before disconnecting."
+msgstr "Conclua ou cancele a autenticação antes de desconectar a conta."
+
+msgid "Could not validate account configuration."
+msgstr "Não foi possível validar a configuração da conta."
+
+msgid "Try again"
+msgstr "Tentar novamente"
+
+msgid "Your choices are kept only while setup is open. Closing without completing setup disconnects the account."
+msgstr "Suas escolhas são mantidas apenas enquanto a configuração estiver aberta. Fechar sem concluir desconecta a conta."
+
+msgid "Review your connected account and selected folder."
+msgstr "Confira a conta conectada e a pasta selecionada."
+
+msgid "Signing out before closing…"
+msgstr "Desconectando a conta antes de fechar…"
+
+msgid "The saved setup could not be discarded. Try closing again."
+msgstr "Não foi possível descartar a configuração salva. Tente fechar novamente."
+
+msgid "The saved setup could not be discarded. Try again."
+msgstr "Não foi possível descartar a configuração salva. Tente novamente."
+
+msgid "Local folder selected. Nothing is saved until setup is completed."
+msgstr "Pasta local selecionada. Nada será salvo até a configuração ser concluída."
+
+msgid "Select remote folder"
+msgstr "Selecionar pasta remota"
+
+msgid "Choose a remote folder to synchronize"
+msgstr "Escolha a pasta remota para sincronizar"
+
+msgid "Selected folder"
+msgstr "Pasta selecionada"
+
+msgid "Select folder"
+msgstr "Selecionar pasta"
+
+msgid "Select current folder using the last breadcrumb"
+msgstr "Selecione a pasta atual pelo último item do caminho"
+
+msgid "Loading folders…"
+msgstr "Carregando pastas…"
+
+msgid "Access to this folder is not authorized."
+msgstr "O acesso a esta pasta não foi autorizado."
+
+msgid "Folder not found."
+msgstr "Pasta não encontrada."
+
+msgid "Unable to load folders. Try again."
+msgstr "Não foi possível carregar as pastas. Tente novamente."
+
+msgid "This folder has no subfolders."
+msgstr "Esta pasta não contém subpastas."
+
+msgid "Repeated page token"
+msgstr "Token de paginação repetido"
+
+msgid "Refresh"
+msgstr "Atualizar"
+
+msgid "Forward"
+msgstr "Avançar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Simulated remote folder"
+msgstr "Pasta remota simulada"
+
+msgid "Folder browsing uses simulated data. Your remote files are not accessed."
+msgstr "A navegação usa dados simulados. Seus arquivos remotos não são acessados."
+
+msgid "Simulated remote folder selected. No remote files were accessed."
+msgstr "Pasta remota simulada selecionada. Nenhum arquivo remoto foi acessado."
+
+msgid "Synchronization is not available yet. The remote folder is simulated and has not been verified."
+msgstr "A sincronização ainda não está disponível. A pasta remota é simulada e não foi verificada."
+
+msgid "Loading remote folders…"
+msgstr "Carregando pastas remotas…"
+
+msgid "Choose a folder from your connected account."
+msgstr "Escolha uma pasta da sua conta conectada."
+
+msgid "Remote folder selected. Nothing is saved until setup is completed."
+msgstr "Pasta remota selecionada. Nada será salvo até a configuração ser concluída."
+
+msgid "Authorize Drive access again to browse your folders."
+msgstr "Autorize novamente o acesso ao Drive para navegar pelas suas pastas."
+
+msgid "Authorize Drive access…"
+msgstr "Autorizar acesso ao Drive…"
+
+msgid "Synchronization is not available yet. Folder choices are kept only while setup is open."
+msgstr "A sincronização ainda não está disponível. As pastas escolhidas são mantidas apenas enquanto a configuração está aberta."
+
+msgid "You do not have permission to access this folder."
+msgstr "Você não tem permissão para acessar esta pasta."
+
+msgid "Access is not authorized. Close this dialog and reconnect your account."
+msgstr "O acesso não foi autorizado. Feche esta janela e reconecte sua conta."
+
+msgid "Connect your cloud storage accounts and keep your files synchronized on your computer."
+msgstr "Conecte suas contas de armazenamento em nuvem e mantenha seus arquivos sincronizados no seu computador."
+
+msgid "Choose a provider to get started:"
+msgstr "Escolha um provedor para começar:"
+
+msgid "Sign in with Google"
+msgstr "Entrar com Google"
+
+msgid "Connect your Google account to allow DriveSync to access your files on Google Drive."
+msgstr "Conecte sua conta do Google para permitir que o DriveSync acesse seus arquivos no Google Drive."
+
+msgid "You will be redirected to Google to authorize access.\nDriveSync does not store your password."
+msgstr "Você será redirecionado ao Google para autorizar o acesso.\nO DriveSync não armazena sua senha."
+
+msgid "Configuration"
+msgstr "Configuração"
+
+msgid "The configuration is incomplete."
+msgstr "A configuração está incompleta."
+
+msgid "Authorize your account before completing setup."
+msgstr "Autorize sua conta antes de concluir a configuração."
+
+msgid "The configuration could not be saved. Try again."
+msgstr "Não foi possível salvar a configuração. Tente novamente."
+
+msgid "Saved configuration could not be read. Your account has been preserved."
+msgstr "Não foi possível ler a configuração salva. Sua conta foi preservada."
+
+msgid "4 of 4 · Review configuration"
+msgstr "4 de 4 · Revisar configuração"
+
+msgid "Review configuration"
+msgstr "Revisar configuração"
+
+msgid "Finish setup"
+msgstr "Concluir configuração"
+
+msgid "Your configuration will be checked and saved. You can change it later in Preferences."
+msgstr "Sua configuração será verificada e salva. Você poderá alterá-la depois em Preferências."
+
+msgid "Checking and saving configuration…"
+msgstr "Verificando e salvando a configuração…"
+
+msgid "Loading saved configuration…"
+msgstr "Carregando a configuração salva…"
+
+msgid "No completed configuration."
+msgstr "Nenhuma configuração concluída."
+
+msgid "Changes are checked before they are saved."
+msgstr "As alterações são verificadas antes de serem salvas."
+
+msgid "Configuration saved."
+msgstr "Configuração salva."
+
+msgid "Choose a local folder"
+msgstr "Escolher uma pasta local"
+
+msgid "This account is already configured. Change its settings in Preferences."
+msgstr "Esta conta já está configurada. Altere suas configurações em Preferências."
+
+msgid "Account nickname (optional)"
+msgstr "Apelido da conta (opcional)"
+
+msgid "Used only in DriveSync. Your Google profile will not change."
+msgstr "Usado apenas no DriveSync. Seu perfil do Google não será alterado."
+
+msgid "The configuration could not be saved or the previous account name restored. Try again."
+msgstr "Não foi possível salvar a configuração nem restaurar o nome anterior da conta. Tente novamente."

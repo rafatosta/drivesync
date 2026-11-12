@@ -4,3 +4,6 @@
 //! universal provider contract.
 
 pub mod google;
+
+mod registry;
+pub use registry::{list_providers, ConnectionMethod, RegisteredProvider};

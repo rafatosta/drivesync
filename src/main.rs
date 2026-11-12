@@ -1,11 +1,8 @@
-//! DriveSync binary entry point.
-//! GUI temporarily disabled during engine reconstruction.
-
-// mod app;
-// mod core;
-// mod features;
-// mod ui;
-
+//! Native account-management application entry point.
+mod application;
+mod core;
+mod services;
+mod ui;
 fn main() -> adw::gtk::glib::ExitCode {
-    adw::gtk::glib::ExitCode::SUCCESS
+    application::run()
 }

@@ -16,6 +16,7 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 
 ## Fonte de verdade e documentação
 
+A documentação em `docs/architecture/` não deve ser consultada e nem editada.
 
 ## Convenção de organização dos módulos Rust
 
