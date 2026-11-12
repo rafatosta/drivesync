@@ -3,3 +3,6 @@ mod pages;
 pub(crate) mod restoration;
 pub(crate) use pages::overview::build;
 pub(crate) mod window;
+
+#[cfg(test)]
+pub(crate) use pages::overview::fixture;

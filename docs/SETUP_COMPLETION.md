@@ -38,7 +38,9 @@ No primeiro cadastro, após o salvamento, o dashboard substitui o setup na mesma
 janela e sem uma entrada no histórico para voltar ao assistente. Adicionar outra
 conta pelo menu abre uma janela separada, mantendo o dashboard visível. Fechar
 ou concluir esse setup fecha somente a janela adicional; contas já configuradas
-são preservadas. Seu conteúdo é vazio, com o menu do aplicativo no cabeçalho.
+são preservadas. O dashboard apresenta uma sidebar adaptável com as contas
+configuradas, apelido e e-mail. A área principal continua vazia, com a conta
+selecionada identificada no cabeçalho.
 
 Na inicialização, registros completos mantêm o destino no dashboard mesmo quando
 a conta exige reautorização ou uma pasta está temporariamente indisponível. Esses

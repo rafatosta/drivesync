@@ -948,7 +948,9 @@ impl Controller {
                         .context
                         .navigation_generation
                         .set(owner.context.navigation_generation.get().wrapping_add(1));
-                    if !owner.separate_window {
+                    if owner.separate_window {
+                        let _ = owner.navigation.activate_action("dashboard.refresh", None);
+                    } else {
                         crate::application::navigation::show_dashboard(
                             &owner.context,
                             &owner.navigation,

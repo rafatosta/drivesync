@@ -196,7 +196,7 @@ mod tests;
 /// Mounts the completed destination in the same primary window, without a setup
 /// history entry. Saved configuration is editable only through Preferences.
 pub(crate) fn show_dashboard(
-    _context: &Context,
+    context: &Context,
     nav: &adw::NavigationView,
     toasts: &adw::ToastOverlay,
 ) {
@@ -205,5 +205,5 @@ pub(crate) fn show_dashboard(
         window.set_widget_name("drivesync-dashboard");
         window.set_title(Some("DriveSync"));
     }
-    nav.replace(&[crate::ui::dashboard::build()]);
+    nav.replace(&[crate::ui::dashboard::build(context, nav)]);
 }

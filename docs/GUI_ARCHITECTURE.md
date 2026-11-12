@@ -1,6 +1,6 @@
 # Interface do DriveSync
 
-O aplicativo tem um setup inicial, um dashboard vazio e Preferências. Os widgets
+O aplicativo tem um setup inicial, um dashboard com navegação de contas e Preferências. Os widgets
 ficam em `src/ui`; a coordenação da aplicação fica em `src/application`, e os
 serviços de desktop e persistência de escolhas em `src/services`. A comunicação
 com Google e as credenciais passam exclusivamente pela API pública da engine.
@@ -36,8 +36,15 @@ reautorização. Rascunhos legados não liberam acesso ao dashboard.
 
 ## Dashboard e Preferências
 
-O dashboard apresenta somente um cabeçalho com o menu do aplicativo e uma área de
-conteúdo vazia. O menu permite adicionar outra conta. Em
+O dashboard usa `AdwNavigationSplitView` com uma sidebar nativa de contas
+(`GtkListBox` com `navigation-sidebar`, `AdwActionRow` e `AdwAvatar`). Cada linha
+mostra o apelido e o e-mail. A seleção identifica a conta no cabeçalho; a área
+principal continua vazia. A seleção é preservada por ID ao atualizar a lista.
+Abaixo de 660 pixels lógicos, sidebar e conteúdo usam navegação adaptável com
+botão de retorno. A lista inclui apenas contas com configuração concluída,
+preservando também as que precisam de reautorização. Ela é recarregada ao
+aparecer e após concluir a adição de outra conta. Falhas de leitura são exibidas
+sem apagar a lista anterior. O cabeçalho permite adicionar outra conta. Em
 Preferências, Contas reúne apelido, pastas com Salvar/Cancelar,
 autorização, desconexão e adição. Aparência, segundo plano e Sobre continuam
 separados desses fluxos. Não há processo de sincronização iniciado ao concluir.
@@ -51,6 +58,6 @@ Google permanece em `engine/src/providers/google/assets/drive.svg`, fornecido em
 
 Os fixtures usam conta fictícia, respostas HTTP sintéticas e perfis XDG isolados.
 Conferem alinhamento, ausência de cortes no mínimo comum, limpeza de setup
-incompleto, persistência da conclusão e dashboard vazio. As capturas desativam
+incompleto, persistência da conclusão, seleção de contas e navegação compacta. As capturas desativam
 animações apenas no processo de teste para registrar o estado final. Ver
 [data/screenshots/README.md](../data/screenshots/README.md).

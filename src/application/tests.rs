@@ -54,13 +54,35 @@ fn account_only_layout_and_initial_name_editor() {
         created_at: Timestamp { unix_millis: 0 },
         updated_at: Timestamp { unix_millis: 0 },
     };
-    let dashboard = crate::ui::dashboard::build();
+    let dashboard = crate::ui::dashboard::build(&crate::application::Context::default(), &nav);
     assert!(find(dashboard.upcast_ref(), "dashboard-content")
         .unwrap()
         .first_child()
         .is_none());
     assert!(find(dashboard.upcast_ref(), "account-name-editor").is_none());
     capture(&window, &dashboard, "dashboard-empty");
+    let dashboard = crate::ui::dashboard::fixture(&nav, &account);
+    let accounts = find(dashboard.upcast_ref(), "dashboard-accounts")
+        .unwrap()
+        .downcast::<gtk::ListBox>()
+        .unwrap();
+    let title = find(dashboard.upcast_ref(), "dashboard-account-title")
+        .unwrap()
+        .downcast::<adw::WindowTitle>()
+        .unwrap();
+    accounts.select_row(accounts.row_at_index(1).as_ref());
+    assert_eq!(title.title(), "Work");
+    assert_eq!(title.subtitle(), "work@example.invalid");
+    capture(&window, &dashboard, "dashboard-accounts");
+    let split = find(dashboard.upcast_ref(), "dashboard-split")
+        .unwrap()
+        .downcast::<adw::NavigationSplitView>()
+        .unwrap();
+    split.set_collapsed(true);
+    accounts.row_at_index(0).unwrap().activate();
+    assert!(split.shows_content());
+    split.set_show_content(false);
+    assert!(!split.shows_content());
     let preferences = crate::ui::preferences::test_build(&nav, &toasts);
     assert!(find(preferences.upcast_ref(), "preferences-theme").is_some());
     assert!(find(preferences.upcast_ref(), "preferences-accounts").is_some());
