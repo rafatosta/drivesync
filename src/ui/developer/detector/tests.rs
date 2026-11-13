@@ -204,6 +204,20 @@ fn live_account_selection_and_detector_layout() {
         after_gio_save.events.last().unwrap().event.kind,
         drivesync_engine::models::FileEventKind::Modified
     );
+    std::fs::create_dir(base.join("personal@example.invalid/new-folder")).unwrap();
+    settle();
+    let typed = session.diagnostics();
+    assert!(typed
+        .events
+        .iter()
+        .any(|event| event.entry_kind == Some(drivesync_engine::models::LocalEntryKind::Regular)));
+    assert!(
+        typed
+            .events
+            .iter()
+            .any(|event| event.entry_kind
+                == Some(drivesync_engine::models::LocalEntryKind::Directory))
+    );
     capture(&window, "detector-local-personal");
     selector.set_selected(1);
     settle();

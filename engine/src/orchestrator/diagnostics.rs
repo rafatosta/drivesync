@@ -12,6 +12,8 @@ pub struct DetectorEventSummary {
     pub observed_at: Timestamp,
     pub event: FileEvent,
     pub scope: FileScope,
+    /// Observed type only; absent metadata never implies a regular file.
+    pub entry_kind: Option<LocalEntryKind>,
 }
 /// Per-instance diagnostics. Pending durable work is unknown until queue integration.
 #[derive(Clone, Debug)]
@@ -74,6 +76,14 @@ impl LocalNotificationSink for RecordingSink {
                     observed_at: file.observed_at,
                     event: file.event.clone(),
                     scope: file.scope.clone(),
+                    entry_kind: match &file.data {
+                        Some(FileData::Local(local)) => match local.kind {
+                            MetadataValue::Known(kind) => Some(kind),
+                            _ => None,
+                        },
+                        None => None,
+                        Some(FileData::Remote(impossible)) => match *impossible {},
+                    },
                 });
             }
         }

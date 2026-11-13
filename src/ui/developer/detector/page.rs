@@ -196,6 +196,27 @@ impl View {
             kind.set_wrap(false);
             kind.set_tooltip_text(Some("Event kind reported by the engine; native hints are not treated as proven operations."));
             row.append(&kind);
+            use drivesync_engine::models::LocalEntryKind;
+            let (icon, title) = if event.scope == FileScope::WholeSync {
+                ("folder-saved-search-symbolic", "Monitored scope")
+            } else {
+                match event.entry_kind {
+                    Some(LocalEntryKind::Directory) => ("folder-symbolic", "Folder"),
+                    Some(LocalEntryKind::Regular) => ("text-x-generic-symbolic", "File"),
+                    Some(LocalEntryKind::Symlink) => {
+                        ("emblem-symbolic-link-symbolic", "Symbolic link")
+                    }
+                    Some(LocalEntryKind::Unknown) | None => {
+                        ("dialog-question-symbolic", "Unknown type")
+                    }
+                    Some(_) => ("drive-harddisk-symbolic", "Special filesystem entry"),
+                }
+            };
+            let entry_type = gtk::Image::from_icon_name(icon);
+            entry_type.set_tooltip_text(Some(title));
+            entry_type.set_valign(gtk::Align::Center);
+            entry_type.update_property(&[gtk::accessible::Property::Label(title)]);
+            row.append(&entry_type);
             let path = label(&description(&event), "body");
             path.set_hexpand(true);
             path.set_selectable(true);

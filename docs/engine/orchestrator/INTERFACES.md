@@ -180,3 +180,5 @@ As restrições anteriores contra API pública nova ou acesso direto a Local ref
 
 
 Os File locais chegam normalizados por ciclos de escrita antes do sink. FileEvent.uncertainty é obrigatório para RecheckRequired e é preservado nos resumos/diagnósticos; o Orchestrator não precisa inferir a causa pela ausência de dados. O teste de composição confirma a substituição por origem provisória como um único Modified do destino. As limitações de janela e cobertura estão em Local INTERFACES § 14.
+
+DetectorEventSummary.entry_kind: Option<LocalEntryKind> preserva o tipo conhecido do payload local para apresentação. Ausência de metadados não é convertida em Regular; não há cache histórico de tipo para exclusões nem inferência por extensão.
