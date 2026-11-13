@@ -258,3 +258,63 @@ async fn orchestrator_observes_normalized_save_and_explicit_startup_uncertainty(
     }
     stop(&orchestrator);
 }
+
+#[tokio::test]
+async fn persistent_diagnostic_delivery_pause_survives_restart_and_resumes_pending_events() {
+    let tree = Tree::new();
+    let connector = tree.connector().await;
+    let root = tree.0.join("durable-root");
+    fs::create_dir(&root).unwrap();
+    let (request, _) = tree.request(root.clone());
+    let scope = request.scope;
+    let open = || {
+        Orchestrator::observe_persistent(
+            connector.clone(),
+            scope.clone(),
+            LocalDetectorSettings::default(),
+            tree.0.join("queue"),
+            DeliveryState::Enabled,
+        )
+        .unwrap()
+    };
+    let first = open();
+    start(&first).unwrap();
+    let wait_for =
+        |orchestrator: &Orchestrator,
+         condition: &dyn Fn(&drivesync_engine::orchestrator::DetectorDiagnostics) -> bool| {
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let snapshot = orchestrator.diagnostics();
+                if condition(&snapshot) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < until,
+                    "queue status: {snapshot:?}"
+                );
+                std::thread::yield_now();
+            }
+        };
+    wait_for(&first, &|s| s.confirmed_events == Some(1));
+    first.pause_delivery().unwrap();
+    fs::write(root.join("while-paused"), b"retained").unwrap();
+    wait_for(&first, &|s| s.pending_events == Some(1));
+    let saved_id = first.diagnostics().events.last().unwrap().id.clone();
+    drop(first);
+    let reopened = open();
+    assert_eq!(reopened.diagnostics().delivery, Some(DeliveryState::Paused));
+    assert_eq!(reopened.diagnostics().pending_events, Some(1));
+    assert!(reopened
+        .diagnostics()
+        .events
+        .iter()
+        .any(|event| event.id == saved_id));
+    start(&reopened).unwrap();
+    wait_for(&reopened, &|s| s.pending_events == Some(2));
+    reopened.resume_delivery().unwrap();
+    wait_for(&reopened, &|s| {
+        s.pending_events == Some(0) && s.confirmed_events == Some(3)
+    });
+    assert_eq!(reopened.diagnostics().events_detected, 3);
+    stop(&reopened);
+}

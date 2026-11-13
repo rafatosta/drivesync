@@ -695,3 +695,6 @@ O perfil básico local tem um helper puro interno compartilhado entre validaçã
 ## Motivo explícito de reavaliação no envelope compilado
 
 A normalização local acrescenta `FileEvent.uncertainty: Option<ObservationUncertainty>` ao contexto do evento, preservando os sete campos de File e o payload LocalFile integral. RecheckRequired exige Some; todos os demais tipos exigem None. O enum puro contém CaptureStarted, CaptureRebuilt, CoverageIncomplete, NativeOverflow, ResourceLimit, UnpairedMove, UnclassifiedSignal, ObservationUnstable, WriteInProgress e ConflictingSequence. A validação só verifica coerência estrutural, sem I/O, relógio ou inferência. Não há alteração do catálogo remoto.
+
+
+Persistência local: os valores concretos locais e de contexto oferecem serde Serialize/Deserialize sem I/O. LocalRelativePath deserializa pela mesma validação lexical de new, e os structs locais/contextuais recusam campos desconhecidos. O codec versionado de File pertence ao Detector Storage; não foram adicionadas serialização ou estruturas fictícias para o payload remoto genérico.

@@ -390,7 +390,7 @@ Cada aviso transporta o mesmo `File` compartilhado. Sem evidência suficiente pa
 
 Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. O intervalo padrão de quietude é 80 ms, com teto de 500 ms desde a primeira pista; ver § 14 para a normalização por fechamento de escrita. A espera cancelável não produz varreduras periódicas.
 
-O sink recebe um File por chamada; Ok transfere responsabilidade de persistência ao consumidor. Erro retryable retém o mesmo evento, ID e horário para nova tentativa na próxima atividade relevante, sem loop ocupado; erro permanente torna o produtor Failed. Não existe fila durável nesta entrega. Os testes usam sinks em memória e não comprovam persistência após crash. O Orquestrador ainda não está conectado e o remoto permanece fora do escopo.
+O sink recebe um File por chamada; Ok transfere responsabilidade de persistência ao consumidor. Erro retryable retém o mesmo evento, ID e horário, com novas tentativas automáticas e backoff de 250 ms até 30 s, sem loop ocupado; erro permanente torna o produtor Failed. A composição PersistentDetector agora oferece fila durável; o coletor/LocalDetector isolado não mantém persistência. Os testes usam sinks em memória e não comprovam persistência após crash. O Orquestrador ainda não está conectado e o remoto permanece fora do escopo.
 
 ## 13. Classificação compilada dos eventos locais
 
@@ -416,3 +416,6 @@ Uma origem criada durante a janela, ainda sem entrega, pode ser correlacionada p
 A fila em memória de ciclos normalizados, movimentos, escritas abertas e aliases compartilha os limites existentes; excesso invalida a evidência e exige recheck do escopo. Não há segunda fila durável. O File é construído somente na entrega da rodada e, depois de construído, continua imutável durante rejeição/retry. Os metadados pertencem à observação realizada na entrega, não a snapshots históricos de cada syscall intermediária.
 
 Todo RecheckRequired exige `File.event.uncertainty: Some(ObservationUncertainty)` de Models; eventos classificados e ScopeUnavailable exigem None. Há motivos explícitos para início/reconstrução, cobertura incompleta, perda nativa, recursos, movimento sem par, sinal desconhecido, leitura instável, escrita em andamento e sequência conflitante. O Orchestrator recebe esses mesmos File, sem deduzir ações. ScopeUnavailable mantém seu erro operacional separado.
+
+
+A entrega retryable agora também acorda por backoff, sem depender de outra alteração na pasta. Isso permite recuperar SQLITE_BUSY e outras recusas transitórias da fila preservando o File já construído. Trabalho ainda não aceito pelo SQLite continua volátil; não é declarado persistido antes do commit.

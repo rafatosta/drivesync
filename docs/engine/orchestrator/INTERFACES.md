@@ -182,3 +182,10 @@ As restrições anteriores contra API pública nova ou acesso direto a Local ref
 Os File locais chegam normalizados por ciclos de escrita antes do sink. FileEvent.uncertainty é obrigatório para RecheckRequired e é preservado nos resumos/diagnósticos; o Orchestrator não precisa inferir a causa pela ausência de dados. O teste de composição confirma a substituição por origem provisória como um único Modified do destino. As limitações de janela e cobertura estão em Local INTERFACES § 14.
 
 DetectorEventSummary.entry_kind: Option<LocalEntryKind> preserva o tipo conhecido do payload local para apresentação. Ausência de metadados não é convertida em Regular; não há cache histórico de tipo para exclusões nem inferência por extensão.
+
+
+### Observação diagnóstica persistente
+
+observe_persistent(connector, scope, settings, data_directory, delivery) compõe PersistentDetector. O argumento delivery vale na criação de fila nova; reabrir respeita a política armazenada, inclusive Paused. Recupera os últimos 100 File para o histórico antes de iniciar a captura. pause_delivery/resume_delivery persistem a política sem parar o watcher.
+
+O worker terminal diagnóstico reserva/valida/confirma lotes; isso permite testar a entrega, não substitui ingestão no Inventory nem é sucesso de sincronização. O modo PersistentDetector público, por si só, não consome nem confirma eventos automaticamente. Diagnósticos expõem pendentes+reservados, reservados separadamente, confirmados, estado de entrega e erro da fila por conta/raiz. A interface lê só snapshots; SQLite e o consumidor trabalham fora da thread gráfica.

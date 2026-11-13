@@ -23,7 +23,7 @@ O armazenamento deve preservar a integridade dos registros, tratar falhas explic
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; não comprova implementação Rust.
+**Estado:** fila persistente local implementada e testada; ver INTERFACES § 7. Backup/restauração central e payload remoto permanecem futuros.
 
 ## Proteção e recuperação
 

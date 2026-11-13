@@ -482,6 +482,7 @@ fn run(
     let mut deadline = Some(Instant::now());
     let mut first_hint: Option<Instant> = None;
     let mut error = coverage_error.as_ref().map(|e| e.kind);
+    let mut retry_delay = Duration::from_millis(250);
     loop {
         cancel.check()?;
         changes.expire(Instant::now());
@@ -593,6 +594,10 @@ fn run(
                 });
                 match sink.notify(file.clone()) {
                     Ok(()) => {
+                        retry_delay = Duration::from_millis(250);
+                        if error == Some(LocalDetectorError::NotificationFailed) {
+                            error = coverage_error.as_ref().map(|e| e.kind);
+                        }
                         if file.coverage != ObservationCoverage::Complete {
                             round_coverage = LocalScanCoverage::Partial;
                         }
@@ -623,7 +628,14 @@ fn run(
                 s.observed_in_current_round = 0;
                 s.emitted_in_current_round = 0;
             });
-            deadline = None;
+            deadline = if failed {
+                Some(Instant::now() + retry_delay)
+            } else {
+                None
+            };
+            if failed {
+                retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
+            }
             first_hint = None;
             if !failed && round_coverage == LocalScanCoverage::Complete {
                 error = None;

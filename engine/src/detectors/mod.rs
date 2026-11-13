@@ -1,7 +1,7 @@
 //! Public local metadata collection and native event production.
 //!
-//! This namespace does not yet provide the unified detector, event queue,
-//! or remote observation API. Collector construction and collection
+//! PersistentDetector provides a local durable queue; a unified detector and
+//! remote observation API remain future work. Collector construction and collection
 //! perform synchronous filesystem I/O and should run off the UI thread.
 //!
 //! ```
@@ -51,3 +51,11 @@ pub use local::{
     LocalStartRequest, LocalStartResult, LocalStatusRequest, LocalStatusResult, LocalStopReason,
     LocalStopRequest, LocalStopResult,
 };
+
+mod storage;
+pub use storage::{
+    BatchId, DeliveryState, EventDisposition, FileBatch, QueueError, QueueFailure, QueueResult,
+    QueueStats, TakeEventsRequest,
+};
+mod persistent;
+pub use persistent::{PersistentDetector, PersistentDetectorRequest};

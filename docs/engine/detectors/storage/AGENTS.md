@@ -20,3 +20,7 @@ Implementar armazenamento durável de eventos detectados, com reservas, confirma
 ## Validação
 
 Executar [TESTS.md](TESTS.md) usando armazenamento real temporário, com reinício, concorrência, falhas e recuperação. Seguir as instruções gerais do [AGENTS.md da raiz](../../../../AGENTS.md).
+
+## Estado compilado e limite desta entrega
+
+A fila local agora está implementada com codec completo, SQLite privado, leases e política de entrega persistida; ver INTERFACES § 7 para os nomes concretos. A infraestrutura SQLite/backup de Configuration permanece conceitual: não criar stubs de registro ou declarar backup/restore implementados. Corrupção e schema incompatível falham sem apagar ou recriar a fila. A etapa atual não autoriza fingir suporte remoto nem confirmação de sincronização pelo consumidor diagnóstico.

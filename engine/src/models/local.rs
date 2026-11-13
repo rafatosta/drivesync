@@ -1,5 +1,6 @@
 //! Selected local observation data and structural validation, without I/O.
 use super::{LocalFileId, MetadataValue, ModelError, ModelResult};
+use serde::{Deserialize, Serialize};
 
 /// Nonempty Unix path bytes below a synchronization root.
 ///
@@ -13,8 +14,14 @@ use super::{LocalFileId, MetadataValue, ModelError, ModelResult};
 /// assert_eq!(path.as_bytes(), b"folder/non-utf8-\xff");
 /// # Ok::<(), drivesync_engine::models::ModelError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct LocalRelativePath(Vec<u8>);
+
+impl<'de> Deserialize<'de> for LocalRelativePath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(Vec::<u8>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 impl LocalRelativePath {
     /// Preserves Unix bytes, rejecting root, NUL and ambiguous/escaping components.
@@ -44,7 +51,8 @@ impl LocalRelativePath {
 /// `ctime` uses this representation but is not a creation timestamp. Public
 /// fields allow collector assembly; enclosing metadata validation also checks
 /// the fraction so struct literals cannot bypass that validation boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalTimestamp {
     pub unix_seconds: i64,
     pub nanoseconds: u32,
@@ -67,7 +75,7 @@ impl LocalTimestamp {
 }
 
 /// Observed entry type; `Unknown` is retained uncertainty, not a regular file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalEntryKind {
     Regular,
     Directory,
@@ -81,21 +89,24 @@ pub enum LocalEntryKind {
 }
 
 /// Filesystem device numbers, sampled evidence rather than a stable identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeviceNumber {
     pub major: u32,
     pub minor: u32,
 }
 
 /// Raw Linux mode and its explicit rwx/setuid/setgid/sticky permission bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalFileMode {
     pub raw_mode: u32,
     pub permission_bits: u16,
 }
 
 /// Numeric ownership evidence; these values never authorize an operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalOwner {
     pub uid: MetadataValue<u32>,
     pub gid: MetadataValue<u32>,
@@ -103,7 +114,8 @@ pub struct LocalOwner {
 
 /// Modification/status-change times and optional birth time; excludes atime.
 /// No relationship between these timestamps establishes version precedence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalTimes {
     pub modified_at: MetadataValue<LocalTimestamp>,
     pub changed_at: MetadataValue<LocalTimestamp>,
@@ -112,7 +124,8 @@ pub struct LocalTimes {
 
 /// Sampled size, alias and device/inode evidence, without content hashes.
 /// Size has the meaning reported for the entry type, not necessarily file bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalStorage {
     pub size_bytes: MetadataValue<u64>,
     pub hard_link_count: MetadataValue<u64>,
@@ -122,7 +135,8 @@ pub struct LocalStorage {
 
 /// Optional raw statx attributes and the corresponding support mask.
 /// Only bits covered by the mask have supported semantics; raw bits are retained.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalFileFlags {
     pub statx_attributes: MetadataValue<u64>,
     pub statx_attributes_mask: MetadataValue<u64>,
@@ -130,7 +144,8 @@ pub struct LocalFileFlags {
 
 /// Literal symlink target bytes; never interpreted as a confined entry path.
 /// Known non-symlink entries use `MetadataValue::NotApplicable`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalSymlink {
     pub target: MetadataValue<Vec<u8>>,
 }
@@ -140,7 +155,8 @@ pub struct LocalSymlink {
 /// This record can be partial. It neither performs collection nor determines
 /// physical coverage, persistent identity, content equality or deletion policy.
 /// New local records intentionally have no persistence format in this stage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalFile {
     pub local_id: Option<LocalFileId>,
     pub relative_path: LocalRelativePath,

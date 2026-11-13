@@ -1,18 +1,21 @@
 //! Shared event envelope; local implementation does not invent a remote resource model.
 use super::*;
+use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 
 /// Provider resource identity, always qualified by its owning account.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RemoteFileId(pub String);
 /// Remote identity context only, without remote attributes or provider access.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RemoteFileRef {
     pub account_id: AccountId,
     pub file_id: RemoteFileId,
 }
 /// Classification of an observation, never a synchronization command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileEventKind {
     Created,
     Modified,
@@ -24,7 +27,7 @@ pub enum FileEventKind {
     ScopeUnavailable,
 }
 /// Known location evidence, separate from metadata snapshots.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileLocation {
     Local(LocalRelativePath),
     Remote {
@@ -34,7 +37,7 @@ pub enum FileLocation {
     },
 }
 /// Why a producer cannot deliver a fully classified occurrence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObservationUncertainty {
     CaptureStarted,
     CaptureRebuilt,
@@ -48,7 +51,8 @@ pub enum ObservationUncertainty {
     ConflictingSequence,
 }
 /// Location context before and after an observed occurrence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileEvent {
     pub kind: FileEventKind,
     /// Required for RecheckRequired; absent for classified or unavailable events.
@@ -57,14 +61,14 @@ pub struct FileEvent {
     pub current: Option<FileLocation>,
 }
 /// Read coverage of the declared scope, not proof of deletion or content integrity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObservationCoverage {
     Complete,
     Partial,
     Unavailable,
 }
 /// Resource or scope requiring re-evaluation, including an unavailable whole root.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileScope {
     Local(LocalRelativePath),
     Remote(RemoteFileRef),

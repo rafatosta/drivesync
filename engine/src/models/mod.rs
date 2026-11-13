@@ -16,19 +16,19 @@ pub struct Timestamp {
 }
 
 /// Identity of a configured synchronization root, not a filesystem path.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SyncId(pub String);
 
 /// Identity of one observation; retries preserve it and new observations do not.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FileId(pub String);
 
 /// Optional logical local identity, never inferred from an inode or path.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LocalFileId(pub String);
 
 /// Evidence state for one attribute, keeping absence distinct from known zero.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MetadataValue<T> {
     /// A value actually observed, including zero or an empty collection.
     Known(T),

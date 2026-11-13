@@ -23,6 +23,10 @@ pub struct DetectorDiagnostics {
     pub events_detected: u64,
     pub last_event_at: Option<Timestamp>,
     pub pending_events: Option<u64>,
+    pub leased_events: Option<u64>,
+    pub confirmed_events: Option<u64>,
+    pub delivery: Option<DeliveryState>,
+    pub queue_error: Option<QueueError>,
     pub events: Vec<DetectorEventSummary>,
 }
 pub(super) struct History {
@@ -51,6 +55,10 @@ impl History {
             events_detected: self.detected,
             last_event_at: self.last_time,
             pending_events: None,
+            leased_events: None,
+            confirmed_events: None,
+            delivery: None,
+            queue_error: None,
             events: self.events.iter().cloned().collect(),
         }
     }
