@@ -87,3 +87,11 @@ O serviço local_folder consulta o atributo documentado `user.document-portal.ho
 Validação da correção do portal: 589 testes e 4 doctests passaram no SDK Flatpak, além de fmt, Clippy e rustdoc. O teste opt-in `portal_display_and_native_watch_permission` foi executado em duas instâncias isoladas do SDK com uma exportação temporária: sem acesso direto, confirmou erro e caminho legível; com `--filesystem=~/GoogleDrive`, confirmou que uma criação pelo host chegou ao detector real. A pasta temporária e sua exportação foram removidas, sem alterar arquivos das contas. O teste gráfico por conta também passou novamente via Broadway. O Builder real ainda precisa recriar o ambiente para incorporar os novos finish-args.
 
 Referência para resolver o caminho sem modificar a URI: [Document Portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Documents.html).
+
+### Ações classificadas no Detector
+
+O produtor local agora fornece Created/Modified/Deleted/MetadataChanged e movimentos correlacionados. A página os apresenta como CREATE (verde), MODIFY (cor de destaque), DELETE (erro), METADATA, RENAME e MOVE (neutros); movimentos preservam a origem e o destino com seta. RECHECK continua visível para evidência insuficiente, com o escopo geral descrito como “Verify monitored folder”, em vez de apresentá-lo como arquivo. A página não infere o tipo da ação nem elimina eventos temporários pelo nome.
+
+Alterações de arquivos comuns não reconstruem todos os watches e não geram recheck geral sistemático. A coleta inconclusiva de um temporário que já desapareceu também não sinaliza, sozinha, falha da cobertura do watcher. Problemas reais de cobertura, permissão e recursos continuam sendo relatados pela engine. Os testes gráficos usam criação, edição e rename reais para conferir os rótulos, a seta e o isolamento entre contas.
+
+Validação da classificação: fmt, Clippy com warnings negados, testes do workspace (595 aprovados, 8 ambientais ignorados), rustdoc e 4 doctests passaram no SDK Flatpak. O fixture gráfico foi executado separadamente via Broadway com duas contas, criação/edição/rename reais e janela de 360 pixels; passou e as capturas foram inspecionadas em `_build/detector-classified-preview/`. Não foram testados overflow real do kernel, todos os editores, todos os interleavings nem sincronização com Google.

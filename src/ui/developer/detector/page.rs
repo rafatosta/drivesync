@@ -41,6 +41,19 @@ fn location(location: &FileLocation) -> String {
         FileLocation::Remote { name, .. } => name.clone().unwrap_or_else(|| "Remote item".into()),
     }
 }
+fn event_label(kind: drivesync_engine::models::FileEventKind) -> (&'static str, &'static str) {
+    use drivesync_engine::models::FileEventKind::*;
+    match kind {
+        Created => ("CREATE", "detector-event-created"),
+        Modified => ("MODIFY", "detector-event-modified"),
+        Renamed => ("RENAME", "detector-event-location"),
+        Moved => ("MOVE", "detector-event-location"),
+        Deleted => ("DELETE", "detector-event-deleted"),
+        MetadataChanged => ("METADATA", "detector-event-modified"),
+        RecheckRequired => ("RECHECK", "detector-event-recheck"),
+        ScopeUnavailable => ("UNAVAILABLE", "detector-event-deleted"),
+    }
+}
 fn description(event: &DetectorEventSummary) -> String {
     match (&event.event.previous, &event.event.current) {
         (Some(previous), Some(current)) if previous != current => {
@@ -50,7 +63,7 @@ fn description(event: &DetectorEventSummary) -> String {
         (Some(previous), _) => location(previous),
         _ => match &event.scope {
             FileScope::Local(path) => String::from_utf8_lossy(path.as_bytes()).into_owned(),
-            FileScope::WholeSync => "Whole local scope".into(),
+            FileScope::WholeSync => "Verify monitored folder".into(),
             FileScope::Remote(_) => "Remote scope".into(),
         },
     }
@@ -156,7 +169,12 @@ impl View {
             let timestamp = label(&time(event.observed_at), "caption");
             timestamp.set_width_chars(8);
             row.append(&timestamp);
-            let kind = label(&format!("{:?}", event.event.kind), "caption-heading");
+            let (title, class) = event_label(event.event.kind);
+            let kind = label(title, "caption-heading");
+            kind.add_css_class("detector-event");
+            kind.add_css_class(class);
+            kind.set_valign(gtk::Align::Center);
+            kind.set_wrap(false);
             kind.set_tooltip_text(Some("Event kind reported by the engine; native hints are not treated as proven operations."));
             row.append(&kind);
             let path = label(&description(&event), "body");
@@ -171,6 +189,16 @@ pub(in crate::ui::developer) fn build(context: &Context) -> gtk::Box {
     build_inner(context, true)
 }
 fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
+    thread_local! {
+        static STYLE: gtk::CssProvider = {
+            let css = gtk::CssProvider::new();
+            css.load_from_data(include_str!("style.css"));
+            gtk::style_context_add_provider_for_display(&gtk::gdk::Display::default().expect("GTK display"), &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            css
+        };
+    }
+    STYLE.with(|_| {});
+
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 24);
     for edge in [

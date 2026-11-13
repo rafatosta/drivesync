@@ -127,9 +127,19 @@ fn live_account_selection_and_detector_layout() {
         .downcast::<gtk::DropDown>()
         .unwrap();
     assert_eq!(selector.selected(), 0);
+    let file =
+        std::fs::File::create(base.join("personal@example.invalid/personal-only.txt")).unwrap();
+    settle();
+    drop(file);
     std::fs::write(
         base.join("personal@example.invalid/personal-only.txt"),
         b"one",
+    )
+    .unwrap();
+    settle();
+    std::fs::rename(
+        base.join("personal@example.invalid/personal-only.txt"),
+        base.join("personal@example.invalid/renamed.txt"),
     )
     .unwrap();
     settle();
@@ -137,7 +147,12 @@ fn live_account_selection_and_detector_layout() {
     assert!(personal.contains("Monitoring"));
     assert!(personal.contains("personal-only.txt"));
     assert!(personal.contains("Unavailable"));
-    assert!(personal.contains("RecheckRequired"));
+    assert!(personal.contains("CREATE"));
+    assert!(personal.contains("MODIFY"));
+    assert!(personal.contains("RENAME"));
+    assert!(personal.contains("personal-only.txt → renamed.txt"));
+    assert!(personal.contains("Verify monitored folder"));
+    assert!(personal.contains("RECHECK"));
     capture(&window, "detector-local-personal");
     selector.set_selected(1);
     settle();
