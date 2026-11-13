@@ -2,7 +2,7 @@
 
 ## 1. Escopo e visibilidade
 
-Contrato **interno de `detectors/local/`** consumido somente pelo Detector pai. O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
+Contrato de composição **interno de `detectors/local/`**. A trait e os módulos de implementação permanecem privados; a coleta concreta também está disponível pela API pública do módulo pai, conforme [Detector § 8](../INTERFACES.md#8-api-pública-compilada--coleta-local). O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
 
 As portas scope/collect, cancelamento e o adaptador físico da seção 11 estão implementados. Os cinco métodos de controle e os exemplos de eventos continuam esboços contratuais, sem fachada ou watcher compilados. A coleta é testada isoladamente, sem sink/Storage/RemoteFile.
 
@@ -326,7 +326,7 @@ As portas das seções 2 e 3 são os únicos contratos de dependência de negóc
 
 Este documento define controle, portas e regras de observação. Somente o coletor físico e seus contratos auxiliares possuem código e testes nesta etapa; não há watcher ou métodos de controle implementados. Os atributos de LocalFile e os invariantes locais estão selecionados em [Models](../../models/INTERFACES.md#2-localfile--seleção-para-observação-local). A implementação futura deve seguir essa seleção; o envelope completo ainda depende da revisão remota. Não implementar versões paralelas para contornar dependências.
 
-Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza implementar RemoteFile, Remoto, Storage, Scanner ou fachada pública do Detector. A eventual necessidade de ajustar um contrato vizinho deve ser registrada antes da implementação, sem mudar seu escopo silenciosamente.
+Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza implementar RemoteFile, Remoto, Storage, Scanner ou fachada unificada do Detector. A eventual necessidade de ajustar um contrato vizinho deve ser registrada antes da implementação, sem mudar seu escopo silenciosamente.
 
 
 ## 11. Adaptador físico de coleta — etapa de implementação
@@ -348,7 +348,7 @@ Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelat
 ### Detalhes do contrato físico de `collect`
 
 - Cada coleta reabre a cadeia absoluta sem seguir symlinks, compara a raiz com o descritor original e percorre ancestrais relativos por descritores. O último componente pode ser um symlink, observado sem seguir seu destino. Arquivo regular, diretório, FIFO, socket ou device não é aberto para leitura/escrita de conteúdo.
-- Cancelamento é consultado antes de cada nova operação de I/O e depois das etapas de coleta. Um clone do token observa o cancelamento; tokens de outra geração são independentes. A construção/cancelamento dos tokens é controle interno do futuro detector, não API pública do aplicativo.
+- Cancelamento é consultado antes de cada nova operação de I/O e depois das etapas de coleta. Um clone do token observa o cancelamento; tokens de outra geração são independentes. Na porta interna, os tokens são controlados pelo detector; na API pública de coleta, o consumidor cria/cancela os próprios tokens, sem efeito sobre outras instâncias.
 - A coleta revalida vínculos de ancestrais, o último componente e a evidência relevante antes/depois da leitura. Mudança observada não é fotografia completa: devolve file=None/Partial para alvo desaparecido/substituído ou modificado durante coleta; falha estrutural da raiz é RootUnavailable, e ancestral relativo inseguro é PartialObservation. Revalidação não impede mudança após o retorno.
 - ENOENT em entrada relativa resulta em file=None/Partial, nunca exclusão confirmada. PermissionDenied é erro tipado sem metadados inventados. `.drivesync` em qualquer componente relativo é InvalidScope antes de consultar o filesystem; essa proteção é do adaptador, não da validação lexical de Models.
 - O perfil básico usa metadados reais de descritor. O enriquecimento usa statx por descritor quando disponível, respeitando máscaras, com fallback seguro para fstat. Não consultar ACL/xattr/conteúdo. A primeira unidade implementou fstat; o enriquecimento agora usa statx sem modificar as assinaturas scope/collect ou acessar campos de LocalFile no núcleo de coordenação. A montagem dos campos permanece isolada em metadata.rs.

@@ -1,4 +1,4 @@
-//! Private collector contracts, without the unimplemented event envelope.
+//! Collector contracts exported through the parent detector namespace.
 use crate::models::{AccountId, LocalFile, LocalRelativePath, SyncId};
 use std::{
     path::PathBuf,
@@ -10,7 +10,7 @@ use std::{
 
 /// Immutable operational binding; not a filesystem or logical item identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LocalDetectorScope {
+pub struct LocalDetectorScope {
     pub sync_id: SyncId,
     pub account_id: AccountId,
     pub local_root: PathBuf,
@@ -18,7 +18,7 @@ pub(crate) struct LocalDetectorScope {
 
 /// Read coverage, never proof of absence, identity or content integrity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalScanCoverage {
+pub enum LocalScanCoverage {
     Complete,
     Partial,
     Unavailable,
@@ -26,7 +26,7 @@ pub(crate) enum LocalScanCoverage {
 
 /// Shared detector errors; only collector-relevant variants are exercised here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalDetectorError {
+pub enum LocalDetectorError {
     InvalidScope,
     InvalidState,
     RootUnavailable,
@@ -44,7 +44,7 @@ pub(crate) enum LocalDetectorError {
 
 /// Planned scan counters, without implementing or scheduling a scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LocalScanResult {
+pub struct LocalScanResult {
     pub coverage: LocalScanCoverage,
     pub observed_count: u64,
     pub emitted_count: u64,
@@ -52,7 +52,7 @@ pub(crate) struct LocalScanResult {
 
 /// Sanitized failure; a single metadata collection has no scan progress.
 #[derive(Debug, Clone)]
-pub(crate) struct LocalDetectorFailure {
+pub struct LocalDetectorFailure {
     pub kind: LocalDetectorError,
     pub message: String,
     pub retryable: bool,
@@ -88,22 +88,22 @@ impl std::fmt::Display for LocalDetectorFailure {
 impl std::error::Error for LocalDetectorFailure {}
 
 /// Result of internal local observation operations.
-pub(crate) type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
+pub type LocalDetectorResult<T> = Result<T, LocalDetectorFailure>;
 
-/// Cloneable generation token; only detector control should call `cancel`.
+/// Cloneable token for caller-controlled cooperative collection cancellation.
 #[derive(Debug, Clone)]
-pub(crate) struct LocalCancellation(Arc<AtomicBool>);
+pub struct LocalCancellation(Arc<AtomicBool>);
 impl LocalCancellation {
     /// Creates an independent, uncancelled generation.
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self(Arc::new(AtomicBool::new(false)))
     }
     /// Cancels this generation irreversibly, including every existing clone.
-    pub(super) fn cancel(&self) {
+    pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
     /// Reads the cancellation flag without I/O or side effects.
-    pub(crate) fn is_cancelled(&self) -> bool {
+    pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
     /// Checks cancellation before starting another I/O operation.
@@ -117,17 +117,27 @@ impl LocalCancellation {
 }
 
 /// One validated entry path and its cooperative cancellation generation.
-pub(crate) struct LocalMetadataRequest {
+pub struct LocalMetadataRequest {
     pub relative_path: LocalRelativePath,
     pub cancellation: LocalCancellation,
 }
 /// Complete selected metadata, or explicit uncertainty; no parallel event list.
 #[derive(Debug)]
-pub(crate) struct LocalMetadataResult {
+pub struct LocalMetadataResult {
     pub file: Option<LocalFile>,
     pub coverage: LocalScanCoverage,
 }
-/// Stable collection boundary independent of LocalFile's field layout.
+impl Default for LocalCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Stable internal collection boundary independent of LocalFile's field layout.
+#[allow(
+    dead_code,
+    reason = "The internal port is retained for future detector composition"
+)]
 pub(crate) trait LocalMetadataCollector: Send + Sync {
     /// Returns the original configuration without accessing the filesystem.
     fn scope(&self) -> LocalDetectorScope;

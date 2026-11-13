@@ -13,4 +13,4 @@ pub use accounts::{
 };
 pub use connection::*;
 
-mod detectors;
+pub mod detectors;

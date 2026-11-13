@@ -203,3 +203,29 @@ Testar `batch_id=None` somente para lote vazio, intervalos opcionais vazios em l
 | DET-M-08 | Falha após commit antes de ack | Mesmo `File.id`, evento e payload ao reentregar |
 
 O coordenador usa apenas Model `File`/`FileBatch` e portas internas dos filhos. Nenhum teste pressupõe `SyncItemId` para notificar alterações.
+
+
+## Publicação da coleta local — suíte de consumidor externo
+
+Escopo distinto dos testes planejados DET-01 a DET-10: esta etapa só publica as operações reais do coletor. Testes em `engine/tests/local_collection.rs` compilam como crate consumidora, importando exclusivamente `drivesync_engine::detectors` e Models.
+
+| ID | Método/contrato | Sucesso, negativos e evidência |
+| --- | --- | --- |
+| DET-PUB-01 | LocalMetadataCollector::new/scope/collect | Consumidor sem trait interna constrói escopo, consulta configuração e coleta metadados reais completos preservando LocalFile |
+| DET-PUB-02 | new/collect e tipos de erro | Identidade inválida gera erro público sanitizado; entrada ausente retorna None/Partial, sem inferir exclusão |
+| DET-PUB-03 | LocalCancellation::new/default/clone/cancel/is_cancelled | Token clonado cancela a requisição; token default novo é independente e permite outra coleta |
+| DET-PUB-04 | scope/collect, Send+Sync | Substituir raiz produz RootUnavailable; consulta de escopo continua sem I/O; tipos compartilháveis entre threads |
+| DET-PUB-05 | Visibilidade de implementação | Doctest compile_fail impede acesso externo a detectors::local e a collect_with; nenhum hook/backend é API pública |
+
+RED: o teste externo falhou antes dos exports porque o módulo detectors era privado. GREEN inicial: os quatro testes externos passaram com a API pública e Clippy sem warnings no SDK do projeto. A regressão física de 25 casos continua pertencendo ao coletor; os métodos da fachada unificada não são declarados implementados por esta suíte.
+
+
+Validação final desta publicação em org.gnome.Sdk//50 com rust-stable e CARGO_HOME=/home/tosta/.cargo exposto ao SDK:
+
+- `cargo fmt --all --check`: PASS.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`: PASS.
+- `cargo test --offline --locked --workspace`: 565 testes PASS e 4 doctests PASS; 6 testes ignorados, dependentes de desktop/portal e Secret Service isolado.
+- `cargo doc --offline --locked --workspace --no-deps --document-private-items`: PASS, sem warnings.
+- `cargo test --offline --locked --workspace --doc`: 4 doctests PASS, incluindo duas recusas de compilação para os caminhos/hooks privados.
+
+Não houve teste de integração com GUI, conta Google, instalação Flatpak ou observação contínua. A publicação permite chamadas explícitas à coleta; não altera sua implementação física.

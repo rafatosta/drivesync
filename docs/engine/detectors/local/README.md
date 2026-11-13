@@ -44,4 +44,9 @@ A implementação atual cobre o adaptador físico, suas portas e o cancelamento,
 
 FilesystemMetadataCollector vincula a configuração a um descritor da raiz, reabre e revalida os ancestrais de cada entrada e devolve LocalFile pelo contrato estável. Usa apenas descritores O_PATH para metadados e readlinkat para alvos literais, sem abrir conteúdo ou seguir symlinks. Resultados inconclusivos não equivalem a ausência comprovada.
 
-A coleta usa statx com máscaras de preenchimento e fallback para fstat, preservando btime/flags quando disponíveis e seus estados de ausência quando não. O controle de coleta não enumera campos do modelo; a montagem fica isolada em metadata.rs. Não há locks de sincronização, banco, File/RemoteFile, percurso recursivo, watcher ou API pública nova. O módulo privado possui uma permissão localizada de dead_code enquanto não existir composição pelo Detector, sem suprimir Clippy ou outras verificações.
+A coleta usa statx com máscaras de preenchimento e fallback para fstat, preservando btime/flags quando disponíveis e seus estados de ausência quando não. O controle de coleta não enumera campos do modelo; a montagem fica isolada em metadata.rs. Não há locks de sincronização, banco, File/RemoteFile, percurso recursivo ou watcher. Os submódulos continuam privados, mas o coletor é publicado como detectors::LocalMetadataCollector. A permissão geral de dead_code foi removida; somente a trait interna de composição ainda tem uma permissão localizada enquanto a fachada não existe.
+
+
+## Acesso público pelo módulo pai
+
+O aplicativo ou outra crate pode usar `drivesync_engine::detectors::LocalMetadataCollector`, com new/scope/collect inerentes e os tipos necessários reexportados. O consumidor pode criar/cancelar tokens; não precisa importar a trait interna. A implementação física e as portas de injeção de testes continuam privadas. Essa publicação foi restrita à coleta existente; não implementa os cinco métodos de controle do Detector Local.

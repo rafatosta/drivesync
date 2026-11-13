@@ -27,3 +27,12 @@ Implementar a detecção unificada de alterações locais e remotas com armazena
 ## Validação
 
 Executar os cenários de [TESTS.md](TESTS.md), incluindo eventos locais e remotos simultâneos, durabilidade, idempotência, falhas e recuperação. Utilizar dependências simuladas e dados isolados. Seguir as instruções gerais do [AGENTS.md da raiz](../../../AGENTS.md).
+
+
+## Publicação parcial autorizada — coleta local
+
+- O usuário solicitou acesso público somente à coleta local já implementada. A API atual é `drivesync_engine::detectors::LocalMetadataCollector` (new/scope/collect) e os tipos relacionados, conforme INTERFACES § 8.
+- Preservar os submódulos, a trait de composição e hooks/backend como privados. Não expor injeção de syscall, descritores ou start somente local.
+- A implementação é reexportada com nome público e métodos inerentes; a trait interna permanece para composição futura. Não duplicar DTOs ou reimplementar coleta no módulo pai.
+- Testes de consumidor externo devem importar somente detectors/models e exercitar a API pública; doctests compile_fail verificam os limites de visibilidade.
+- Esta publicação não autoriza implementar métodos provisórios da fachada unificada, modelos remotos ou fila. A API de controle documentada anteriormente continua pendente.

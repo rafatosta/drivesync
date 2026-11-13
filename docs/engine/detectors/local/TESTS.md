@@ -271,7 +271,7 @@ Unidade de enriquecimento: 25 testes totais do coletor, incluindo LOC-FS-14/15. 
 
 Os testes de permissões foram executados com UID não privilegiado e comprovaram EACCES pelo kernel, sem inferir apenas por bits. FIFO e socket reais foram observados sem abrir conteúdo. Não foi criado device node (exige capacidades não necessárias ao teste); tipos de device permanecem cobertos no modelo puro, sem reivindicar teste físico desses nós.
 
-A compilação/Clippy verificam o módulo privado em produção, mas ele ainda não é chamado pela aplicação: a composição com Detector, sincronização real e UI não foi implementada. Os métodos new/scope/collect do coletor não comprovam new/start/scan_once/stop/status da fachada.
+O coletor já possui acesso público pelo módulo pai e testes de consumidor externo, mas ainda não é chamado automaticamente pela aplicação: a composição com Detector, sincronização real e UI não foi implementada. Os métodos new/scope/collect do coletor não comprovam new/start/scan_once/stop/status da fachada.
 
 
 Validação final no mesmo ambiente Flatpak/cache, em 2026-11-13:

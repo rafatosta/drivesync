@@ -7,7 +7,7 @@ use super::{
 use std::{fs::File, os::unix::ffi::OsStrExt, path::Component};
 
 /// A root-bound collector retaining only a root descriptor between requests.
-pub(crate) struct FilesystemMetadataCollector {
+pub struct FilesystemMetadataCollector {
     scope: LocalDetectorScope,
     root: File,
 }
@@ -22,7 +22,7 @@ pub(super) enum CollectionStage {
 impl FilesystemMetadataCollector {
     /// Opens a configured root without following links or creating anything.
     /// Errors are sanitized InvalidScope, RootUnavailable, PermissionDenied or ResourceLimit.
-    pub(crate) fn new(scope: LocalDetectorScope) -> LocalDetectorResult<Self> {
+    pub fn new(scope: LocalDetectorScope) -> LocalDetectorResult<Self> {
         if scope.account_id.0.trim().is_empty()
             || scope.sync_id.0.trim().is_empty()
             || !scope.local_root.is_absolute()
@@ -40,6 +40,26 @@ impl FilesystemMetadataCollector {
             .try_clone()
             .map_err(|e| filesystem::failure(e, true))?;
         Ok(Self { scope, root })
+    }
+
+    /// Returns the original account/synchronization/root binding without disk I/O.
+    /// This remains available when the root is inaccessible or has been replaced.
+    pub fn scope(&self) -> LocalDetectorScope {
+        self.scope.clone()
+    }
+
+    /// Collects the selected metadata for one entry without reading file contents.
+    ///
+    /// This synchronous operation must run off the UI thread. It checks the
+    /// caller's cancellation token, refuses symbolic ancestors/reserved paths,
+    /// and revalidates the held root and entry. A missing entry yields no file
+    /// with Partial coverage, never confirmed deletion. Typed failures contain
+    /// sanitized diagnostics; cancellation does not undo earlier observations.
+    pub fn collect(
+        &self,
+        request: LocalMetadataRequest,
+    ) -> LocalDetectorResult<LocalMetadataResult> {
+        self.collect_with(request, |_| {})
     }
 
     /// Runs real collection with hooks at safe observation boundaries for deterministic tests.
@@ -123,10 +143,10 @@ impl FilesystemMetadataCollector {
 }
 impl LocalMetadataCollector for FilesystemMetadataCollector {
     fn scope(&self) -> LocalDetectorScope {
-        self.scope.clone()
+        Self::scope(self)
     }
     fn collect(&self, request: LocalMetadataRequest) -> LocalDetectorResult<LocalMetadataResult> {
-        self.collect_with(request, |_| {})
+        Self::collect(self, request)
     }
 }
 

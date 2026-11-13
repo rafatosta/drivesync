@@ -5,5 +5,12 @@ mod filesystem;
 mod metadata;
 mod models;
 
+pub use collector::FilesystemMetadataCollector;
+pub use models::{
+    LocalCancellation, LocalDetectorError, LocalDetectorFailure, LocalDetectorResult,
+    LocalDetectorScope, LocalMetadataRequest, LocalMetadataResult, LocalScanCoverage,
+    LocalScanResult,
+};
+
 #[cfg(test)]
 mod tests;
