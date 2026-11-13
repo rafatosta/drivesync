@@ -153,6 +153,57 @@ fn live_account_selection_and_detector_layout() {
     assert!(personal.contains("personal-only.txt → renamed.txt"));
     assert!(personal.contains("Verify monitored folder"));
     assert!(personal.contains("RECHECK"));
+    assert!(personal.contains("Capture started; initial verification required"));
+    let session = context
+        .detectors
+        .borrow()
+        .get("personal@example.invalid")
+        .unwrap()
+        .orchestrator
+        .clone();
+    let before_save = session.diagnostics().events_detected;
+    std::fs::write(
+        base.join("personal@example.invalid/ordinary-source"),
+        b"atomic replacement",
+    )
+    .unwrap();
+    std::fs::rename(
+        base.join("personal@example.invalid/ordinary-source"),
+        base.join("personal@example.invalid/renamed.txt"),
+    )
+    .unwrap();
+    settle();
+    let after_save = session.diagnostics();
+    assert_eq!(after_save.events_detected, before_save + 1);
+    assert_eq!(
+        after_save.events.last().unwrap().event.kind,
+        drivesync_engine::models::FileEventKind::Modified
+    );
+    assert!(!texts(page.upcast_ref()).contains("ordinary-source"));
+    let before_gio_save = session.diagnostics().events_detected;
+    gtk::glib::MainContext::default().block_on(async {
+        gtk::gio::File::for_path(base.join("personal@example.invalid/renamed.txt"))
+            .replace_contents_future(
+                b"saved through GIO".to_vec(),
+                None,
+                false,
+                gtk::gio::FileCreateFlags::NONE,
+            )
+            .await
+            .unwrap();
+    });
+    settle();
+    let after_gio_save = session.diagnostics();
+    assert_eq!(
+        after_gio_save.events_detected,
+        before_gio_save + 1,
+        "GIO replacement must produce one normalized action: {:?}",
+        after_gio_save.events
+    );
+    assert_eq!(
+        after_gio_save.events.last().unwrap().event.kind,
+        drivesync_engine::models::FileEventKind::Modified
+    );
     capture(&window, "detector-local-personal");
     selector.set_selected(1);
     settle();

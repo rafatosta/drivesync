@@ -54,8 +54,23 @@ fn event_label(kind: drivesync_engine::models::FileEventKind) -> (&'static str, 
         ScopeUnavailable => ("UNAVAILABLE", "detector-event-deleted"),
     }
 }
+fn uncertainty_message(reason: drivesync_engine::models::ObservationUncertainty) -> &'static str {
+    use drivesync_engine::models::ObservationUncertainty::*;
+    match reason {
+        CaptureStarted => "Capture started; initial verification required",
+        CaptureRebuilt => "Directory capture was rebuilt",
+        CoverageIncomplete => "Observation coverage is incomplete",
+        NativeOverflow => "Filesystem notifications were lost",
+        ResourceLimit => "Observation resource limit reached",
+        UnpairedMove => "Move could not be correlated",
+        UnclassifiedSignal => "Filesystem signal could not be classified",
+        ObservationUnstable => "Entry changed or disappeared during observation",
+        WriteInProgress => "Write did not close before the normalization deadline",
+        ConflictingSequence => "Overlapping operations require verification",
+    }
+}
 fn description(event: &DetectorEventSummary) -> String {
-    match (&event.event.previous, &event.event.current) {
+    let location = match (&event.event.previous, &event.event.current) {
         (Some(previous), Some(current)) if previous != current => {
             format!("{} → {}", location(previous), location(current))
         }
@@ -66,6 +81,10 @@ fn description(event: &DetectorEventSummary) -> String {
             FileScope::WholeSync => "Verify monitored folder".into(),
             FileScope::Remote(_) => "Remote scope".into(),
         },
+    };
+    match event.event.uncertainty {
+        Some(reason) => format!("{location} — {}", uncertainty_message(reason)),
+        None => location,
     }
 }
 #[derive(Clone)]
