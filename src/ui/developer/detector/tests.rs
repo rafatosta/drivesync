@@ -124,6 +124,22 @@ fn live_account_selection_and_detector_layout() {
         .build();
     window.present();
     settle();
+    let metrics = find(page.upcast_ref(), "detector-metrics")
+        .unwrap()
+        .downcast::<gtk::FlowBox>()
+        .unwrap();
+    let first = metrics.child_at_index(0).unwrap();
+    let last_metric = metrics.child_at_index(3).unwrap();
+    assert_eq!(
+        first.allocation().y(),
+        last_metric.allocation().y(),
+        "wide layout uses one metric row"
+    );
+    let event_scroll = find(page.upcast_ref(), "detector-event-scroll").unwrap();
+    assert!(
+        event_scroll.height() > 360,
+        "most height is available for events"
+    );
     let selector = find(page.upcast_ref(), "detector-account")
         .unwrap()
         .downcast::<gtk::DropDown>()
@@ -232,8 +248,8 @@ fn live_account_selection_and_detector_layout() {
         .downcast::<gtk::Button>()
         .unwrap();
     assert_eq!(
-        delivery_button.label().as_deref(),
-        Some("Interrupt delivery")
+        delivery_button.icon_name().as_deref(),
+        Some("media-playback-pause-symbolic")
     );
     delivery_button.emit_clicked();
     settle();
@@ -245,13 +261,16 @@ fn live_account_selection_and_detector_layout() {
     .unwrap();
     settle();
     assert_eq!(session.diagnostics().pending_events, Some(1));
-    assert_eq!(delivery_button.label().as_deref(), Some("Resume delivery"));
+    assert_eq!(
+        delivery_button.icon_name().as_deref(),
+        Some("media-playback-start-symbolic")
+    );
     capture(&window, "detector-delivery-paused");
     selector.set_selected(1);
     settle();
     assert_eq!(
-        delivery_button.label().as_deref(),
-        Some("Interrupt delivery")
+        delivery_button.icon_name().as_deref(),
+        Some("media-playback-pause-symbolic")
     );
     assert_eq!(
         context
@@ -290,6 +309,15 @@ fn live_account_selection_and_detector_layout() {
     narrow.present();
     settle();
     capture(&narrow, "detector-local-narrow");
+    assert!(
+        metrics.child_at_index(3).unwrap().allocation().y()
+            > metrics.child_at_index(0).unwrap().allocation().y(),
+        "narrow layout wraps metrics"
+    );
+    assert!(
+        event_scroll.height() > 180,
+        "narrow layout retains event space"
+    );
     assert!(
         page.width() <= 360,
         "page fits narrow window: actual width {}",

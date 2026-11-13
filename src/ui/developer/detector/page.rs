@@ -20,13 +20,14 @@ fn label(text: &str, class: &str) -> gtk::Label {
         .css_classes([class])
         .build()
 }
-fn metric(grid: &gtk::Grid, title: &str, column: i32, row: i32) -> gtk::Label {
-    let block = gtk::Box::new(gtk::Orientation::Vertical, 8);
+fn metric(metrics: &gtk::FlowBox, title: &str) -> gtk::Label {
+    let block = gtk::Box::new(gtk::Orientation::Vertical, 4);
     block.set_hexpand(true);
+    block.set_size_request(140, -1);
     block.append(&label(title, "dim-label"));
     let value = label("—", "title-2");
     block.append(&value);
-    grid.attach(&block, column, row, 1, 1);
+    metrics.insert(&block, -1);
     value
 }
 fn time(timestamp: Timestamp) -> String {
@@ -137,11 +138,22 @@ impl View {
         let snapshot = session.orchestrator.diagnostics();
         if let Some(button) = self.delivery_toggle.upgrade() {
             use drivesync_engine::detectors::DeliveryState;
-            button.set_label(if snapshot.delivery == Some(DeliveryState::Paused) {
+            let paused = snapshot.delivery == Some(DeliveryState::Paused);
+            button.set_icon_name(if paused {
+                "media-playback-start-symbolic"
+            } else {
+                "media-playback-pause-symbolic"
+            });
+            button.set_tooltip_text(Some(if paused {
+                "Resume delivery"
+            } else {
+                "Interrupt delivery · Continue detecting and persisting changes"
+            }));
+            button.update_property(&[gtk::accessible::Property::Label(if paused {
                 "Resume delivery"
             } else {
                 "Interrupt delivery"
-            });
+            })]);
             button.set_sensitive(snapshot.delivery.is_some() && !self.control_busy.get());
         }
 
@@ -268,7 +280,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     STYLE.with(|_| {});
 
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 24);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
     for edge in [
         gtk::PositionType::Left,
         gtk::PositionType::Right,
@@ -276,16 +288,41 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         gtk::PositionType::Bottom,
     ] {
         match edge {
-            gtk::PositionType::Left => body.set_margin_start(24),
-            gtk::PositionType::Right => body.set_margin_end(24),
-            gtk::PositionType::Top => body.set_margin_top(24),
-            _ => body.set_margin_bottom(24),
+            gtk::PositionType::Left => body.set_margin_start(20),
+            gtk::PositionType::Right => body.set_margin_end(20),
+            gtk::PositionType::Top => body.set_margin_top(16),
+            _ => body.set_margin_bottom(0),
         }
     }
-    body.append(&label("Developer / Detector", "title-1"));
     let account_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let accounts = gtk::DropDown::from_strings(&[]);
     accounts.set_hexpand(true);
+    let selected_account = gtk::SignalListItemFactory::new();
+    selected_account.connect_setup(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("dropdown item");
+        item.set_child(Some(
+            &gtk::Label::builder()
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .width_chars(1)
+                .max_width_chars(28)
+                .build(),
+        ));
+    });
+    selected_account.connect_bind(|_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().expect("dropdown item");
+        let text = item
+            .item()
+            .and_downcast::<gtk::StringObject>()
+            .expect("account text");
+        let label = item
+            .child()
+            .and_downcast::<gtk::Label>()
+            .expect("account label");
+        label.set_label(&text.string());
+        label.set_tooltip_text(Some(&text.string()));
+    });
+    accounts.set_factory(Some(&selected_account));
     accounts.set_tooltip_text(Some("Account whose detector is being inspected"));
     accounts.set_widget_name("detector-account");
     let refresh_button = gtk::Button::builder()
@@ -295,16 +332,18 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     account_row.append(&accounts);
     account_row.append(&refresh_button);
     body.append(&account_row);
-    let delivery_toggle = gtk::Button::with_label("Interrupt delivery");
+    let delivery_toggle = gtk::Button::from_icon_name("media-playback-pause-symbolic");
     delivery_toggle.set_widget_name("detector-delivery-toggle");
     delivery_toggle.set_tooltip_text(Some(
         "Pause delivery for this account. Continue detecting and persisting changes.",
     ));
     delivery_toggle.set_halign(gtk::Align::Start);
     delivery_toggle.set_sensitive(false);
-    body.append(&delivery_toggle);
+    account_row.append(&delivery_toggle);
     let control_busy = Rc::new(Cell::new(false));
     let feedback = label("", "error");
+    feedback.set_visible(false);
+    feedback.connect_label_notify(|label| label.set_visible(!label.text().is_empty()));
     body.append(&feedback);
     let tabs = gtk::Stack::new();
     tabs.add_titled(
@@ -322,18 +361,21 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         .halign(gtk::Align::Center)
         .build();
     body.append(&switcher);
-    body.append(&tabs);
-    let grid = gtk::Grid::builder()
-        .column_homogeneous(true)
-        .column_spacing(24)
-        .row_spacing(28)
+    let metrics = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .homogeneous(true)
+        .min_children_per_line(1)
+        .max_children_per_line(4)
+        .column_spacing(12)
+        .row_spacing(8)
         .build();
-    let status = metric(&grid, "Detector status", 0, 0);
-    let last = metric(&grid, "Last event", 1, 0);
-    let detected = metric(&grid, "Events detected", 0, 1);
-    let pending = metric(&grid, "Pending events", 1, 1);
+    metrics.set_widget_name("detector-metrics");
+    let status = metric(&metrics, "Detector status");
+    let last = metric(&metrics, "Last event");
+    let detected = metric(&metrics, "Events detected");
+    let pending = metric(&metrics, "Pending events");
     pending.set_widget_name("detector-pending");
-    body.append(&grid);
+    body.append(&metrics);
     let detail = label("Loading configured accounts…", "dim-label");
     body.append(&detail);
     body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -351,13 +393,21 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         .selection_mode(gtk::SelectionMode::None)
         .css_classes(["boxed-list"])
         .build();
-    body.append(&stream);
-    body.append(&label("Diagnostic delivery only · Last 100 durable events per account and folder · No file synchronization is performed.", "dim-label"));
+    stream.set_widget_name("detector-event-stream");
+    let events = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    events.set_margin_start(20);
+    events.set_margin_end(20);
+    events.set_margin_bottom(16);
+    events.append(&stream);
+    events.append(&label("Diagnostic delivery only · Last 100 durable events per account and folder · No file synchronization is performed.", "dim-label"));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .child(&body)
+        .child(&events)
         .build();
+    scroller.set_widget_name("detector-event-scroll");
+    scroller.set_margin_top(12);
+    outer.append(&body);
     outer.append(&scroller);
     let view = View {
         status,
