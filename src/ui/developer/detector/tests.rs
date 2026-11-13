@@ -163,9 +163,16 @@ fn live_account_selection_and_detector_layout() {
     selector.set_selected(0);
     settle();
     assert!(!texts(page.upcast_ref()).contains("work-only.txt"));
-    window.set_default_size(360, 640);
+    // A mapped window may keep its compositor-chosen size despite a new default.
+    window.set_content(None::<&gtk::Widget>);
+    let narrow = adw::Window::builder()
+        .default_width(360)
+        .default_height(640)
+        .content(&page)
+        .build();
+    narrow.present();
     settle();
-    capture(&window, "detector-local-narrow");
+    capture(&narrow, "detector-local-narrow");
     assert!(
         page.width() <= 360,
         "page fits narrow window: actual width {}",
@@ -198,6 +205,7 @@ fn live_account_selection_and_detector_layout() {
             .state,
         LocalDetectorState::Running
     );
+    narrow.destroy();
     window.destroy();
     gtk::glib::MainContext::default().block_on(detectors::remove(
         &context,
