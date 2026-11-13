@@ -1,12 +1,14 @@
-# Models — TESTS: matriz baseada nos atributos propostos
+# Models — TESTS: fluxo local selecionado e catálogo remoto
 
 ## Estado
 
-O escopo é **conceitual** e a especificação de atributos em [INTERFACES.md](INTERFACES.md) **aguarda aprovação**. Os cenários abaixo são a tradução verificável **dos campos efetivamente documentados**, não testes implementados nem executados. Não criar métodos extras, regras adicionais ou formatos definitivos fora do contrato.
+O fluxo local tem seleção documental definida em [INTERFACES.md](INTERFACES.md), seções 1/2/5. Os campos remotos continuam catálogo sem seleção e não bloqueiam a revisão dos tipos locais, mas bloqueiam a implementação integral do envelope compartilhado. Estes são cenários para implementação posterior, não testes executáveis ou executados. Não inferir aprovação remota a partir da seleção local.
 
 Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, serviços Google, InventoryManager, Orquestrador ou operação de sincronização.
 
 ## 1. Identidades e tipos auxiliares
+
+Casos de FileHash/FieldValue/FileKind e referências remotas permanecem catálogo futuro; não são requisitos de implementação do LocalFile selecionado. Identidades locais, caminhos e Timestamp existente pertencem ao fluxo desta revisão.
 
 | Caso | Atributos/objeto | Sucesso esperado | Rejeição/invariante |
 | --- | --- | --- | --- |
@@ -15,35 +17,30 @@ Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, servi�
 | MOD-ID-03 | `AccountId`, `SyncId`, `LocalFileId` | Um único tipo proprietário, reutilizado/reexportado | Nenhum tipo homônimo incompatível |
 | MOD-ID-04 | `Timestamp.unix_millis` | Preserva valor em UTC e precisão expressa em ms | Não converter `None` de mtime em relógio atual |
 | MOD-ID-05 | `FileHash` | Retém algoritmo + digest hexadecimal válido | Não declarar equivalência entre algoritmos distintos |
-| MOD-ID-06 | `LocalRelativePath` | Raiz `[]`; nomes Unix não UTF-8 preservados byte a byte | Rejeitar NUL, caminho absoluto, `.` e `..` |
+| MOD-ID-06 | `LocalRelativePath` | Entrada abaixo da raiz; nomes Unix não UTF-8 preservados byte a byte | Rejeitar vazio, NUL, absoluto, barra final, separador repetido, `.` e `..`; raiz usa WholeSync |
 | MOD-ID-07 | `FieldValue<T>` | `Unknown`, `Known([])` e `Known([id])` mantêm significados distintos | Não transformar `Unknown` em `Known([])` |
 | MOD-ID-08 | `FileKind` | Cada variante mantém significado, incluindo `Unknown` | Não adivinhar `Regular` pelo nome/extensão |
 
-## 2. LocalFile — cenários para metadados reais Linux
+## 2. LocalFile — cenários do contrato selecionado
 
 | Caso | Campo/grupo | Critério verificável |
 | --- | --- | --- |
-| MOD-LOC-01 | `local_id`, `relative_path` | Caminho byte-exato, sem escapes; ID opcional não vira inode |
-| MOD-LOC-02 | `kind` | Regular, diretório, symlink, FIFO, socket, devices, outro, desconhecido |
-| MOD-LOC-03 | `mode` | Bits brutos, rwx, setuid, setgid e sticky preservados |
-| MOD-LOC-04 | `owner` | UID e GID reais, inclusive zero, sem resolver nomes |
-| MOD-LOC-05 | `times` | atime, mtime, ctime, btime; nanossegundos e ausência diferenciados; ctime não é criação |
-| MOD-LOC-06 | `storage` | Tamanho lógico, blocos 512 B, bloco preferido, nlink, inode, dev e rdev independentes |
-| MOD-LOC-07 | `mount_id`, `subvolume_id` | Ausência ou suporte explícito, sem valor fabricado |
-| MOD-LOC-08 | `flags` | Preservar statx_attributes, máscara e flags filesystem sem misturá-las |
-| MOD-LOC-09 | `direct_io`, `atomic_write` | Todos os limites/alinhamentos preservados ou identificados como não suportados |
-| MOD-LOC-10 | `xattrs.entries` | Nomes e bytes de valores preservados; Known([]) somente após enumeração vazia |
-| MOD-LOC-11 | `LocalXattr.value` | Falha de leitura de um xattr preserva nome e motivo |
-| MOD-LOC-12 | `acl` | ACL acesso/padrão com tags e máscara, conforme suporte e aplicabilidade |
-| MOD-LOC-13 | `symlink.target` | Bytes do link preservados, sem seguir alvo |
-| MOD-LOC-14 | `extra_metadata` | Nome, namespace/driver e bytes mantidos sem reinterpretar |
-| MOD-LOC-15 | `MetadataValue<T>` | Distingue Known(0), Known([]), NotCollected, Unsupported, PermissionDenied, Unavailable |
-| MOD-LOC-16 | modelo puro | Nenhum acesso ao filesystem, SQLite, API ou conteúdo para construir/validar objeto |
-| MOD-LOC-17 | consistência | Coletas parciais e concorrentes não são declaradas fotografias atômicas completas |
-| MOD-LOC-18 | confidencialidade | Xattrs/ACL/labels sensíveis não são automaticamente enviados a logs ou nuvem |
-| MOD-LOC-19 | metadados derivados | Não incluir hash de conteúdo nem MIME inferido como dado nativo de statx |
+| MOD-LOC-01 | local_id/relative_path | None não gera ID; ID presente inválido é rejeitado; path permanece byte-exato |
+| MOD-LOC-02 | kind | Preservar cada variante; Known(Unknown) não vira Regular nem suporta Complete |
+| MOD-LOC-03 | mode | raw_mode e permission_bits coerentes; divergência com tipo concreto é rejeitada |
+| MOD-LOC-04 | owner | UID/GID inclusive zero, sem resolução de nomes ou inferência de autorização |
+| MOD-LOC-05 | times | mtime/ctime/btime conhecidos ou com estado explícito; nanos inválidos rejeitados; segundos negativos preservados, sem impor ordem entre datas |
+| MOD-LOC-06 | storage | size/nlink/inode/device independentes, inclusive zero; device/inode não são LocalFileId |
+| MOD-LOC-08 | flags | Par valor/máscara preservado; Known sem máscara Known é inválido; estados não Known devem coincidir; bits fora da máscara não ganham semântica inferida |
+| MOD-LOC-13 | symlink.target | Symlink conhecido aceita bytes literais inclusive absoluto/.., sem converter a LocalRelativePath; não-symlink conhecido exige NotApplicable; kind desconhecido não admite NotApplicable |
+| MOD-LOC-15 | MetadataValue | Distinguir Known(0)/Known([]), NotCollected, NotApplicable, Unsupported, PermissionDenied e Unavailable; não trocar um pelo outro |
+| MOD-LOC-16 | modelo puro | Construção/validação só com valores sintéticos; nenhuma dependência de arquivo, credencial, banco, detector ou provedor |
+| MOD-LOC-17 | cobertura | LocalFile parcial coerente passa validate; File Complete com básico incompleto falha. Opcionais btime/flags indisponíveis não impedem Complete do básico |
+| MOD-LOC-19 | limite do esquema | Revisão estrutural garante ausência de hash, atime, conteúdo, ACL, xattrs e blobs abertos; não confundir revisão do esquema com teste de coleta física |
 
-A suíte **Models** valida os tipos e invariantes, sem executar syscalls. A suíte **Detector Local** deve validar a coleta física com `statx`, APIs de xattr/ACL e `readlink` em filesystem temporário, respeitando as permissões da execução Flatpak. Casos de recursos não suportados devem ser tratados como resultados explícitos, não falhas do teste.
+Os antigos casos MOD-LOC-07, 09, 10, 11, 12, 14 e 18 cobriam categorias do catálogo abrangente agora excluídas do envelope. Não exigir execução de consultas de montagem, Direct I/O, AtomicWrite, xattrs, ACL ou blobs para concluir o modelo local. Se forem especificadas sob demanda no futuro, seus testes pertencem à consulta correspondente. Nenhum dado remoto é selecionado por essa retirada.
+
+A suíte Models usa dados sintéticos. A suíte do **coletor local** valida as fontes reais e as máscaras do sistema, inclusive readlink e fallback de statx; não exigir xattrs/ACL só para provar o perfil básico. Coverage é calculada pelo coletor e pelo percurso, com invariantes estruturais verificadas por Models.
 
 ## 3. RemoteFile — identidade, metadados e vínculo com provedor
 
@@ -120,4 +117,67 @@ A suíte **Models** valida os tipos e invariantes, sem executar syscalls. A suí
 
 **Esses quatro casos são pontos de integração, não testes unitários do módulo Models.**
 
-A implementação futura exige: aprovação dos atributos; resolução das pendências declaradas em INTERFACES; testes de entrada/saída, opcionais e invariantes; relatório PASS/FAIL/BLOCKED e execução no ambiente Flatpak. **Nenhum teste foi executado nesta alteração documental.**
+A implementação futura exige seguir a seleção local desta revisão e resolver as dependências remotas antes do envelope completo. Executar testes de entrada/saída, opcionais e invariantes; registrar PASS/FAIL/BLOCKED no ambiente Flatpak. **Nenhum teste executável foi criado ou executado nesta alteração documental.**
+
+
+## 6. Índice por método puro do fluxo local
+
+| Método especificado | Casos | Fonte contratual |
+| --- | --- | --- |
+| LocalRelativePath::new | MOD-PTH-01 a MOD-PTH-03 | INTERFACES §§ 2.5/2.8 |
+| LocalRelativePath::as_bytes | MOD-PTH-04 | INTERFACES § 2.8 |
+| LocalTimestamp::new | MOD-TIM-01 a MOD-TIM-02 | INTERFACES § 2.8 |
+| LocalFile::validate | MOD-VAL-01 a MOD-VAL-04 | INTERFACES §§ 2.4/2.8 |
+| File::validate (combinações locais) | MOD-VAL-05 a MOD-VAL-09 | INTERFACES §§ 5.4–5.6 |
+
+### LocalRelativePath::new e as_bytes
+
+**Contrato:** assinaturas e validação lexical de INTERFACES § 2.8. Fixtures como vetores explícitos de bytes, não produzidos pelo mesmo normalizador do código sob teste.
+
+**Sucesso:** MOD-PTH-01 aceita `dir/file`, `.hidden`, `..backup`, `a..b`, espaços/quebra de linha, barra invertida literal e componente com byte 0xff. Confirmar os bytes esperados sem UTF-8 com perda.
+
+**Negativos/opcionais:** MOD-PTH-02 rejeita vazio, `/`, `/file`, `a/`, `a//b`, `.`, `..`, `a/./b`, `a/../b` e NUL em qualquer componente. MOD-PTH-03 aceita `.drivesync/file` lexicalmente; nenhum teste de existência, symlink ou política é executado pelo modelo.
+
+**Retorno/invariantes e verificação:** InvalidRelativePath nas entradas inválidas; MOD-PTH-04 as_bytes devolve os mesmos bytes por empréstimo imutável sem normalização. Confinamento físico é testado fora de Models. Se houver desserialização futura, repetir os negativos por essa entrada, sem permitir construção inválida.
+
+### LocalTimestamp::new
+
+**Contrato:** segundos i64 e nanos u32, conforme INTERFACES § 2.8.
+
+**Sucesso:** MOD-TIM-01 preserva segundos -1/0/positivos e nanos 0/999_999_999. Epoch zero é valor real, não estado de ausência.
+
+**Negativos/opcionais:** MOD-TIM-02 rejeita 1_000_000_000 e u32::MAX com InvalidTimestamp, sem carry automático para segundos. Ausência usa MetadataValue e não chama o relógio.
+
+**Retorno/invariantes e verificação:** comparação campo a campo dos valores preservados, sem conversão de timezone, truncamento ou resolução de ordem temporal.
+
+### LocalFile::validate
+
+**Contrato:** consistência estrutural de INTERFACES §§ 2.4/2.8.
+
+**Sucesso:** MOD-VAL-01 valida cada tipo de entrada, básicos completos e objetos parciais coerentes; local_id=None preservado. Fixtures distintas de zero para evitar sucesso acidental por defaults.
+
+**Negativos/opcionais:** MOD-VAL-02 rejeita LocalFileId vazio/whitespace, timestamp inválido, modo incoerente, tipo/mode divergentes, máscara ausente e NotApplicable em campo local não autorizado; asserts de erros tipados sem incluir caminho na mensagem.
+
+**Retorno/invariantes:** MOD-VAL-03 cobre btime e flags opcionais, cada estado de falha, par de flags coerente e target aplicável/não aplicável. Não usar model.validate para exigir que todo atributo seja Known.
+
+**Verificação:** MOD-VAL-04 compara o objeto antes/depois de validação válida e inválida; nada é preenchido, apagado ou resolvido. Device/inode iguais em duas fixtures não criam LocalFileId. Datas em ordem inesperada não são rejeitadas só pela ordem.
+
+### File::validate — fluxo local
+
+**Contrato:** INTERFACES §§ 5.4–5.6 e os oito eventos já descritos em MOD-EVT-01 a MOD-EVT-14. Um teste puro verifica os dados apresentados, não a veracidade de um sinal de watcher.
+
+**Sucesso:** MOD-VAL-05 parametriza as oito variantes com fixtures locais explicitamente compatíveis com a tabela da seção 5.5. Created/Modified/MetadataChanged têm current/data; Rename/Move têm origem/destino diferentes; Deleted tem previous sem dados atuais; Recheck e ScopeUnavailable admitem as ausências documentadas.
+
+**Negativos/opcionais:** MOD-VAL-06 remove cada campo obrigatório e troca isoladamente sync_id/FileId por vazio/whitespace, path de scope/current/data, origem local por remota e coverage por Unavailable em evento específico; esperar erro tipado correspondente. MOD-VAL-07 aceita WholeSync apenas em RecheckRequired/ScopeUnavailable sem dados/localizações; rejeita path vazio e WholeSync com Created, Deleted ou dados.
+
+**Retorno/invariantes:** MOD-VAL-08 aceita opcionais de btime/flags sem degradar perfil básico; rejeita Complete quando falta obrigatório ou kind é Unknown; aceita a observação parcial com coverage Partial. O validador não muda Partial para Complete nem infere exclusão de None.
+
+**Verificação:** MOD-VAL-09 clona uma ocorrência, valida as cópias e confirma preservação integral de FileId, observed_at, contexto e LocalFile; uma nova fixture pode ter outro FileId para o mesmo caminho. Teste de geração de IDs e retry real fica no produtor/Storage. Ausência de APIs operacionais é verificada por revisão de dependências, não afirmada por um mock de I/O.
+
+## 7. Critério de aceite desta revisão
+
+- A matriz de decisão cobre todos os grupos e campos do catálogo local; o código futuro só pode incluir os campos selecionados.
+- Cada método puro tem sucesso, negativos/opcionais, retorno/invariantes e evidência independente; estados de ausência e bytes Unix estão explícitos.
+- A matriz de eventos locais fecha combinações de data, scope, previous/current e coverage sem transformar observação em comando.
+- Testes remotos e de FileData::Remote continuam documentais e dependentes da revisão remota; não fabricar um RemoteFile para declarar o envelope completo implementável.
+- Não criar arquivo Rust, teste executável, migração de Inventário ou implementação de detector nesta etapa. Testes físicos e durabilidade não são comprovados por esta matriz.

@@ -2,7 +2,7 @@
 
 ## 0. Escopo e interpretação
 
-Esta é a **proposta fechada de atributos** para `LocalFile`, `RemoteFile`, `FileData` e `File`, sujeita à revisão do responsável pelo projeto **antes de ser considerada aprovada para implementação**. O código Rust abaixo é **especificação conceitual tipada**: nomes, variantes, relações, presença e semântica são deliberados. Não descreve código compilado.
+Esta revisão define a **seleção documental para o fluxo local**: `LocalFile`, seus auxiliares e as regras locais de `FileData`/`File`. A matriz da seção 2 registra as decisões por atributo. A implementação Rust será uma etapa separada; esta revisão não afirma aprovação dos campos remotos. `RemoteFile` e `ProviderFileData` continuam catálogo proposto, com revisão própria pendente. As assinaturas são especificações, não código compilado.
 
 `models/` **não expõe uma interface operacional**. Não criar `ModelManager`, serviços de consulta, trait de persistência ou métodos de I/O. Validação pura de valores pode ser acrescentada **somente** para preservar os invariantes explicitamente definidos aqui.
 
@@ -16,7 +16,7 @@ pub struct AccountId(pub String);
 pub struct SyncId(pub String);
 pub struct RemoteFileId(pub String);
 pub struct LocalFileId(pub String);
-pub struct FileId(pub String); // identidade única da OBSERVAÇÃO, não do arquivo físico
+pub struct FileId(pub String); // Observation identity, not physical file identity.
 
 pub struct RemoteFileRef {
     pub account_id: AccountId,
@@ -24,7 +24,7 @@ pub struct RemoteFileRef {
 }
 
 pub struct Timestamp {
-    pub unix_millis: i64, // instante UTC, milissegundos desde Unix epoch
+    pub unix_millis: i64, // UTC milliseconds since Unix epoch.
 }
 
 pub enum FileKind {
@@ -42,14 +42,12 @@ pub struct FileHash {
     pub hex_digest: String,
 }
 
-// Caminho relativo à raiz local, preservado sem conversão UTF-8 com perda.
-// A codificação de transporte é Vec<u8> com separadores Unix '/'.
-// Jamais armazena um caminho absoluto ou segmentos "." / "..".
-pub struct LocalRelativePath(pub Vec<u8>);
+// Unix path bytes; construction validates a nonempty relative path.
+pub struct LocalRelativePath(Vec<u8>);
 
 pub enum FieldValue<T> {
-    Unknown,   // não observado / resposta parcial / não suportado
-    Known(T),  // observado; para listas, Known([]) é lista comprovadamente vazia
+    Unknown,   // Unobserved, partial or unsupported.
+    Known(T),  // Observed; Known([]) is an observed empty collection.
 }
 ```
 
@@ -68,34 +66,64 @@ pub enum FieldValue<T> {
 
 `FileId` deve ser preservado **idêntico durante retries da mesma ocorrência**. Reobservação posterior é nova ocorrência, salvo deduplicação explícita da origem comprovando ser a mesma. `AccountId`/ `SyncId`/ `LocalFileId` não são reimplementados para satisfazer este documento: ao integrar, manter apenas um proprietário e reexportar o tipo existente quando necessário.
 
-### Aviso pré-implementação: inventariar tudo, selecionar depois
+Os tipos remotos/comuns do catálogo (`RemoteFileRef`, `RemoteFileId`, `FileHash`, `HashAlgorithm`, `FieldValue` e `FileKind`) não são selecionados para implementação por esta revisão local. `LocalEntryKind` e MetadataValue são os tipos efetivos do perfil local; não criar um segundo tipo de kind/estado para satisfazer o catálogo.
 
-**BLOQUEIO DE IMPLEMENTAÇÃO:** os campos abaixo constituem um **inventário abrangente dos metadados conhecidos**, não uma ordem para coletar e persistir todos eles.
+### Identidades no fluxo local
 
-A estratégia acordada é **considerar primeiro todos os dados disponíveis** e, depois de analisar necessidades reais da engine, **descartar deliberadamente os que não agregam valor**. Antes de iniciar a implementação de `LocalFile`, revisar **campo por campo**:
+`AccountId`, `ProviderId` e `Timestamp` já existem em `engine/src/models.rs` e serão reutilizados sem alterar suas representações. `SyncId`, `FileId` e `LocalFileId` terão um único proprietário em Models, com strings opacas não vazias (strings só com whitespace também são inválidas); não normalizar, gerar ou converter identidades dentro do modelo. `File::validate` verifica `FileId` e `SyncId`; o escopo operacional do Detector verifica `AccountId`. `LocalFile::validate` verifica `LocalFileId` quando presente.
 
-1. Para qual decisão ou operação concreta do DriveSync o dado será necessário?
-2. O dado existe no filesystem/plataforma usada? Qual é a fonte e o custo de obtê-lo?
-3. Há risco de privacidade, segurança, tamanho, desempenho ou incompatibilidade?
-4. Deve ser coletado sempre, somente sob demanda, ou excluído do contrato final?
-5. Se necessário, precisa seguir dentro de `File` até o Analisador, ser persistido pelo Inventário, ou apenas consultado temporariamente?
+O coletor local desta primeira versão produz `local_id=None`: não há mecanismo aprovado de identidade lógica persistente. Device/inode são evidências amostradas, não IDs da engine. Gerar `FileId` único por nova ocorrência é obrigação do produtor; a mesma ocorrência repetida conserva ID, horário e payload. Models não consulta banco nem gera aleatoriedade para provar unicidade.
 
-Registrar **manter / sob demanda / descartar**, com justificativa. Somente após essa revisão aprovar a **estrutura final implementável**, atualizar testes e alinhar os contratos consumidores. **Não interpretar a documentação detalhada a seguir como autorização para implementá-la literalmente antes da revisão.**
+## 2. LocalFile — seleção para observação local
 
-## 2. LocalFile — metadados reais completos do Linux
+### 2.1. Critério e destino dos dados
 
-### 2.1. Escopo
+A seleção cobre as necessidades documentadas de observação, diagnóstico de acesso, revalidação e comparação posterior de estados. Consumidores futuros citados abaixo são responsabilidades previstas, não integração já implementada. **Manter** significa incluir no contrato local e transportar o valor ou o estado de coleta; **sob demanda** significa consulta específica futura, fora do `LocalFile` desta versão; **descartar** significa excluir do contrato local por não haver finalidade demonstrada.
 
-`LocalFile` representa **os metadados reais da entrada do filesystem, com a maior fidelidade que o Linux permite**, e não apenas os campos mínimos necessários à sincronização. O tipo é **somente dados**: o Detector Local executa consultas e preenche o modelo; Models não faz I/O.
+Todos os campos mantidos seguem integralmente em `FileData::Local`. Sua persistência eventual continua sendo decisão dos proprietários Detector Storage/Inventário; a presença no modelo não autoriza logs, envio ao Google, restauração de permissões ou retenção indefinida. Dados descartados e sob demanda não ganham placeholders, blobs ou structs vazias no envelope.
 
-Não existe uma syscall que entregue tudo: `statx` cobre o núcleo; `readlink`, `listxattr/getxattr`, APIs POSIX ACL e consultas específicas do filesystem cobrem outras categorias. Alguns atributos podem ser inacessíveis, não suportados ou ainda não consultados. Portanto, **um objeto completo contém os campos e os respectivos estados de coleta, não necessariamente um valor para cada campo**.
+### 2.2. Matriz de revisão do catálogo local
 
-### 2.2. Contrato conceitual tipado
+| Atributo do catálogo | Decisão e destino | Finalidade/consumidor | Fonte, custo e exposição |
+| --- | --- | --- | --- |
+| `local_id` | Manter opcional; None no coletor inicial | Preservar possibilidade de associação comprovada sem inventá-la | Identidade de domínio, não fornecida por stat; nenhuma geração nesta etapa |
+| `relative_path` | Manter em LocalFile | Localizar entrada no escopo; consumidor do evento | Enumeração/solicitação; bytes do nome, potencialmente pessoais; sem caminho absoluto |
+| `kind` | Manter | Distinguir arquivo, diretório, link e especiais antes de futuras operações | stat/statx sem seguir link; consulta básica |
+| `mode.raw_mode` | Manter | Evidência de tipo e permissões para diagnóstico/revalidação | stat/statx; numérico, não comprova acesso efetivo |
+| `mode.permission_bits` | Manter, consistente com raw_mode | Leitura explícita de rwx e bits especiais por consumidores | Mesma consulta; nenhuma syscall extra |
+| `owner.uid`, `owner.gid` | Manter | Diagnóstico de propriedade e mudança de metadados | stat/statx; IDs numéricos locais, sem resolução de nomes ou upload |
+| `times.accessed_at` | Descartar | Nenhuma decisão de sync depende de acesso; leitura pode gerar ruído | atime não participa de comparação nem de precedência |
+| `times.modified_at` | Manter | Pista de alteração; comparação posterior, nunca prova de igualdade | stat/statx; segundos e nanossegundos |
+| `times.changed_at` | Manter | Mudanças de status e revalidação de evidência | stat/statx; ctime não é criação |
+| `times.created_at` | Manter opcional à cobertura | Preservar btime quando reportado, sem substituir por ctime | statx quando disponível; não fazer consulta cara alternativa só para preencher |
+| `storage.size_bytes` | Manter | Tamanho observado e triagem posterior de alteração | stat/statx; significado depende do tipo, não tratar tamanho de diretório como conteúdo |
+| `storage.allocated_blocks_512b` | Sob demanda, fora do envelope | Diagnóstico futuro de alocação/arquivos esparsos | stat/statx, baixo custo; sem consumidor de detecção que justifique retenção por evento |
+| `storage.preferred_block_size` | Sob demanda, fora do envelope | Eventual ajuste de I/O no operador | Dica do filesystem, não é mudança do item a sincronizar |
+| `storage.hard_link_count` | Manter | Evidência de aliases; não autorizar associação ou upload automático | stat/statx; consulta básica |
+| `storage.inode` | Manter | Revalidação amostrada junto ao device | stat/statx; pode ser reutilizado, não é identidade persistente |
+| `storage.filesystem_device` | Manter | Distinguir evidências de inodes em filesystems distintos | stat/statx; major/minor locais, sem significado entre máquinas |
+| `storage.represented_device` | Descartar | Não se pretende materializar nem sincronizar devices | rdev não é necessário para observar a existência/tipo da entrada |
+| `storage.mount_id` | Sob demanda, fora do envelope | Verificação física de montagem pelo adaptador, se necessária | Dado operacional do ambiente; a segurança do percurso não depende de o incluir em File |
+| `storage.subvolume_id` | Sob demanda, fora do envelope | Diagnóstico específico de filesystem | Depende de suporte; sem regra atual de sync que o consuma |
+| `flags.statx_attributes`, `flags.statx_attributes_mask` | Manter opcionais à cobertura, sempre em par | Preservar flags e evidência de suporte que a consulta básica retornar | statx; sem consulta adicional obrigatória, sem inferir acesso a partir de bits |
+| `flags.filesystem_flags` | Sob demanda, fora do envelope | Diagnóstico pontual de restrição de escrita pelo operador | Consulta específica; não antecipar política de operações no detector |
+| `direct_io.memory_alignment`, `offset_alignment`, `read_offset_alignment` | Sob demanda, fora do envelope | Capacidade de I/O de futura implementação do operador | Dados operacionais, sem consumidor do evento; não habilitar Direct I/O por esta revisão |
+| `atomic_write.unit_min`, `unit_max`, `segments_max`, `unit_max_opt` | Sob demanda, fora do envelope | Capacidade de escrita do operador | Não demonstra que uma edição observada foi atômica |
+| `xattrs.entries`, `LocalXattr.name`, `LocalXattr.value` | Sob demanda, fora do envelope | Diagnóstico específico futuro, com política própria | Enumeração/leitura adicional; namespaces podem conter dados sensíveis; sem coleta automática |
+| `acl.access`, `acl.default` e suas tags/permissões | Sob demanda, fora do envelope | Diagnóstico de autorização quando uma operação falhar | Consulta adicional e dados de terceiros; o kernel já aplica o acesso, sem precisar serializar ACL |
+| `symlink.target` | Manter para symlink; NotApplicable nos demais | Observar link literal sem acessar destino | readlink no adaptador seguro; bytes podem revelar caminhos externos, sem resolução ou log automático |
+| `extra_metadata` e `FilesystemMetadata.{namespace,name,value}` | Descartar | Blob aberto não tem consumidor ou limite definido | Evitar transporte arbitrário de dados privados/específicos do filesystem |
+| Hash, MIME inferido, previews, tags de mídia, conteúdo | Descartar deste modelo | Dados derivados/transferência pertencem a outras responsabilidades | Leitura de conteúdo não é requisito da observação de metadados |
+
+**Sob demanda não é uma API implementada ou autorizada de coleta.** Uma necessidade concreta deve definir consulta, limites, sanitização e testes no componente proprietário antes de adicionar campos ou ler esses dados. Não criar `LocalXattr`, ACLs, Direct I/O, AtomicWrite ou `extra_metadata` em Rust apenas por constarem no catálogo anterior.
+
+### 2.3. Contrato local selecionado
 
 ```rust
 pub enum MetadataValue<T> {
     Known(T),
     NotCollected,
+    NotApplicable,
     Unsupported,
     PermissionDenied,
     Unavailable,
@@ -113,73 +141,30 @@ pub struct LocalTimestamp {
 pub struct DeviceNumber { pub major: u32, pub minor: u32 }
 
 pub struct LocalFileMode {
-    pub raw_mode: u32, // tipo + bits reportados, sem perdas
-    pub permission_bits: u16, // rwx, setuid, setgid, sticky
+    pub raw_mode: u32,
+    pub permission_bits: u16, // rwx, setuid, setgid and sticky bits.
 }
 pub struct LocalOwner {
     pub uid: MetadataValue<u32>,
     pub gid: MetadataValue<u32>,
 }
 pub struct LocalTimes {
-    pub accessed_at: MetadataValue<LocalTimestamp>, // atime
-    pub modified_at: MetadataValue<LocalTimestamp>, // mtime
-    pub changed_at: MetadataValue<LocalTimestamp>,  // ctime: mudança de status, NÃO criação
-    pub created_at: MetadataValue<LocalTimestamp>,  // btime, se disponível
+    pub modified_at: MetadataValue<LocalTimestamp>,
+    pub changed_at: MetadataValue<LocalTimestamp>,
+    pub created_at: MetadataValue<LocalTimestamp>,
 }
 pub struct LocalStorage {
-    pub size_bytes: MetadataValue<u64>,             // tamanho lógico
-    pub allocated_blocks_512b: MetadataValue<u64>,  // blocos de 512 bytes
-    pub preferred_block_size: MetadataValue<u32>,
+    pub size_bytes: MetadataValue<u64>,
     pub hard_link_count: MetadataValue<u64>,
     pub inode: MetadataValue<u64>,
     pub filesystem_device: MetadataValue<DeviceNumber>,
-    pub represented_device: MetadataValue<DeviceNumber>, // rdev em device nodes
-    pub mount_id: MetadataValue<u64>,
-    pub subvolume_id: MetadataValue<u64>,
 }
 pub struct LocalFileFlags {
     pub statx_attributes: MetadataValue<u64>,
     pub statx_attributes_mask: MetadataValue<u64>,
-    pub filesystem_flags: MetadataValue<u64>, // consulta específica quando disponível
-}
-pub struct LocalDirectIo {
-    pub memory_alignment: MetadataValue<u32>,
-    pub offset_alignment: MetadataValue<u32>,
-    pub read_offset_alignment: MetadataValue<u32>,
-}
-pub struct LocalAtomicWrite {
-    pub unit_min: MetadataValue<u32>,
-    pub unit_max: MetadataValue<u32>,
-    pub segments_max: MetadataValue<u32>,
-    pub unit_max_opt: MetadataValue<u32>,
-}
-pub struct LocalXattr {
-    pub name: Vec<u8>, // namespace e nome completos, sem transformação com perda
-    pub value: MetadataValue<Vec<u8>>,
-}
-pub struct LocalXattrs {
-    pub entries: MetadataValue<Vec<LocalXattr>>,
-}
-pub enum LocalAclTag {
-    OwnerUser, NamedUser(u32), OwnerGroup, NamedGroup(u32),
-    Mask, Other,
-}
-pub struct LocalAclEntry {
-    pub tag: LocalAclTag,
-    pub permission_bits: u8,
-}
-pub struct LocalAcl { pub entries: Vec<LocalAclEntry> }
-pub struct LocalAcls {
-    pub access: MetadataValue<LocalAcl>,
-    pub default: MetadataValue<LocalAcl>, // aplicável a diretórios
 }
 pub struct LocalSymlink {
-    pub target: MetadataValue<Vec<u8>>, // readlink, sem seguir o alvo
-}
-pub struct FilesystemMetadata {
-    pub namespace: String,  // FS/driver/família de atributo
-    pub name: String,
-    pub value: Vec<u8>,
+    pub target: MetadataValue<Vec<u8>>,
 }
 pub struct LocalFile {
     pub local_id: Option<LocalFileId>,
@@ -190,67 +175,118 @@ pub struct LocalFile {
     pub times: LocalTimes,
     pub storage: LocalStorage,
     pub flags: LocalFileFlags,
-    pub direct_io: LocalDirectIo,
-    pub atomic_write: LocalAtomicWrite,
-    pub xattrs: LocalXattrs,
-    pub acl: LocalAcls,
     pub symlink: LocalSymlink,
-    pub extra_metadata: MetadataValue<Vec<FilesystemMetadata>>,
 }
 ```
 
-### Regra estrutural de evolução — independência do Detector
+`MetadataValue` é dado comum. A adição de `NotApplicable` fecha a semântica local; não aprova automaticamente seu uso em campos remotos, que ainda dependem de revisão.
 
-**Um novo campo em `LocalFile` não autoriza alterar o Detector Local.** O Detector utiliza apenas um contrato de coleta estável: entrega referência/escopo do arquivo e recebe `LocalFile` preenchido conforme os metadados disponíveis. Não deve usar inicialização literal de structs, copiar atributos individualmente, depender de sua lista de campos ou chamar diretamente rotinas de `statx`, ACL ou xattr.
+### 2.4. Ausência, aplicabilidade e cobertura da coleta
 
-O componente **coletor de metadados locais**, externo ao núcleo puro Models e isolado da lógica do Detector, será o responsável por criar/preencher `LocalFile`. Suas **funções auxiliares** poderão coletar categorias adicionais em etapas, sob demanda e com estado explícito (`Known`, `NotCollected`, etc.). Adicionar ou remover campos afeta esse coletor e os contratos de dados correspondentes, **não** o mecanismo de detecção, acompanhamento e emissão de notificações.
+- `Known(0)`, `Known(false)` e `Known([])` são valores observados. `NotCollected` significa não consultado; `Unsupported`, não oferecido pelo backend/FS; `PermissionDenied`, consulta efetivamente negada; `Unavailable`, tentativa inconclusiva/falha transitória; `NotApplicable`, conceito que não se aplica à entrada. Nenhum desses estados autoriza inferir exclusão.
+- Neste contrato local, `NotApplicable` é admitido apenas em `symlink.target` quando `kind` é conhecido e não é Symlink. Para Symlink, target é `Known(bytes)` ou estado de coleta/falha, nunca NotApplicable. Com kind desconhecido, não presumir que o alvo não se aplica.
+- O perfil básico obrigatório compreende tipo concreto, mode, UID/GID, mtime/ctime, size, nlink, inode e device; em symlink inclui leitura literal do alvo. `Known(Unknown)` não é tipo concreto. Se qualquer dado obrigatório não for Known, a coleta tem cobertura Partial (ou Unavailable se não houver observação confiável). O objeto parcial pode ser transportado sem preencher os demais por suposição.
+- btime e o par de flags são opcionais à cobertura: NotCollected/Unsupported/PermissionDenied/Unavailable nesses campos não impedem Complete do perfil básico. Complete não significa todos os metadados possíveis do Linux, integridade do conteúdo nem uma fotografia atômica. O adaptador decide a cobertura considerando também corridas; Models valida consistência estrutural, não prova ausência de corrida.
+- Sem acesso aos grupos básicos, o coletor preserva estados reais e devolve cobertura apropriada. Um `LocalFile` com algum dado comprovado pode acompanhar RecheckRequired/Partial; se nenhum metadado confiável foi obtido, devolve `file=None`. Não produzir entrada conhecida apenas para satisfazer um evento específico.
+- A ausência de um bit de preenchimento de statx não é valor zero nem prova automática de Unsupported: o adaptador precisa distinguir falta de coleta, suporte e falha pelo resultado efetivo. Para flags, interpretar somente bits cobertos por `statx_attributes_mask`; a máscara é preservada junto do valor. Na falta de par confiável, ambos recebem o mesmo estado não Known.
+- O coletor pode usar stat sem seguir links quando statx não estiver disponível; preenche os dados efetivamente fornecidos e marca os opcionais indisponíveis, sem alterar o detector. Não executar I/O em Models.
+- Timestamps locais preservam segundos assinados e nanossegundos. Não converter datas desconhecidas em relógio atual; não impor mtime <= ctime ou criação <= modificação. `Timestamp` do evento continua UTC em milissegundos e não substitui a precisão local.
+- `mode.permission_bits` corresponde exatamente a `(raw_mode & 0o7777) as u16` (rwx/setuid/setgid/sticky). Tipo concreto em kind deve ser consistente com tipo reconhecido em raw_mode; números de proprietário/device e modos não são decisões de autorização. Não rejeitar nlink/inode/size zero apenas por convenção de filesystem.
+- A lista selecionada não inclui conteúdo, hash, atime, xattrs ou ACL. Isso evita que o custo/privacidade dessas consultas se torne dependência de cada evento. A ausência desses campos não é coleta Partial do perfil selecionado.
 
-A assinatura interna de coleta ficará definida em [Detector Local — INTERFACES](../detectors/local/INTERFACES.md). Essa separação não dispensa a **revisão de utilidade dos metadados antes de implementar**.
+### 2.5. Caminho, raiz e symlink
 
-### 2.3. Relação entre atributos e fontes
+`LocalRelativePath` contém bytes Unix não vazios, com separador `/`, preservados sem normalização Unicode, percent encoding, conversão com perda ou resolução física. Rejeitar NUL, barra inicial/final, separadores repetidos e componentes exatamente `.`/`..`; aceitar nomes ocultos, espaços, quebras de linha, bytes não UTF-8 e nomes como `a..b` ou `..backup`. Barras invertidas são bytes de nome, não separadores Unix.
 
-| Grupo | Dados reais | Fonte e observação |
-| --- | --- | --- |
-| Entrada/identidade | `local_id`, `relative_path`, `kind` | Detector, `lstat/statx`; o ID de domínio não é inode |
-| Modo | tipo, permissões rwx e setuid/setgid/sticky | `stat/statx`; ACL não é substituída pelo mode |
-| Proprietário | UID, GID numéricos | `stat/statx`; nomes de usuários/grupos dependem do ambiente, não são intrínsecos |
-| Datas | atime, mtime, ctime, btime | `statx`; segundos e nanos; btime nem sempre disponível |
-| Armazenamento | tamanho lógico, blocos alocados, bloco preferido | `statx`; blocos alocados em unidades de 512 B |
-| Inode/links | inode, hard links, device do filesystem | `statx`; não implicam identidade estável global |
-| Dispositivos especiais | represented device major/minor | `statx`/rdev; não confundir com device do filesystem |
-| Montagem/subvolume | mount ID, subvolume ID | `statx`; dependem de kernel/FS |
-| Flags | atributos e máscara de suporte; flags especiais | `statx` e APIs específicas; a máscara deve ser preservada |
-| Direct I/O | alinhamentos de memória, offset e leitura | `statx` quando disponível |
-| Escrita atômica | unidades e segmentos permitidos | `statx` quando disponível |
-| Xattrs | pares nome/valor em bytes; namespaces `user.*`, `security.*`, `system.*`, `trusted.*` etc. | `listxattr/getxattr` com semântica de no-follow em symlinks |
-| ACLs POSIX | entradas completas de acesso e ACL padrão | APIs ACL; ACL padrão apenas em diretórios |
-| Symlink | bytes literais do destino | `readlink`; nunca seguir para fora da raiz |
-| Complementos | metadados adicionais identificados por família/driver | consultas específicas; não substituir campos conhecidos por blob genérico |
+Raiz não é `LocalRelativePath([])`, `.` ou `/`: representa-se por `FileScope::WholeSync` com `data=None` e localizações ausentes. Para pedir varredura da raiz, o Detector usa Full. `.drivesync` é um caminho lexicalmente válido em Models; ignorá-lo é política do observador, não do validador puro.
 
-**Não são metadados intrínsecos do inode:** hash de conteúdo, MIME inferido, imagens em miniatura, tags de mídia e conteúdo do arquivo. A antiga propriedade `LocalFile.hash` é removida deste contrato de **metadados reais**; qualquer análise derivada deve ser especificada separadamente.
+O alvo de symlink é um valor literal distinto de `LocalRelativePath`: pode ser absoluto ou conter `..`, pois não é resolvido. Validar um caminho lexicalmente não prova confinamento contra symlinks, troca de inode, montagem ou corridas; essas provas pertencem ao adaptador físico.
 
-### 2.4. Invariantes e limites
+### 2.6. Evolução e fronteira com o detector
 
-1. Em `MetadataValue<T>`, `Known(0)`, `Known(false)` e `Known([])` são valores comprovados; diferem de `NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable`.
-2. `LocalFile` mantém seus campos mesmo quando algum grupo está indisponível. `NotCollected` indica coleta incompleta, **não** representa leitura completa.
-3. `statx` usa `stx_mask` para informar quais campos foram preenchidos e `stx_attributes_mask` para suporte das flags. Não considerar valores numéricos sem a respectiva evidência.
-4. Se o nome do xattr foi enumerado mas seu valor não pôde ser lido, manter o nome e `value=PermissionDenied` ou `Unavailable`, não `Known([])`.
-5. `acl.default` em arquivo não diretório é não aplicável; essa distinção será normalizada sem inventar entradas. `MetadataValue::Unsupported` pode representar esse caso no contrato proposto.
-6. A observação pode ocorrer durante mutações concorrentes: consultas múltiplas **não** produzem uma fotografia atômica garantida. O Detector deve sinalizar inconsistência e solicitar reobservação quando necessário.
-7. `LocalRelativePath` preserva bytes Unix, não aceita NUL, caminho absoluto, `.` ou `..`; nunca seguir symlink externo.
-8. Xattrs, ACLs e labels de segurança podem conter dados sensíveis. Ter esses campos em Models **não autoriza enviá-los ao Google Drive, registrar valores em log ou sincronizar permissões automaticamente**. Persistência/retensão e limite de payload exigem revisão de segurança.
-9. `LocalFile` pode registrar todos os metadados disponíveis ao processo, mas **não promete acessar metadados privados do kernel, exclusivos de outro filesystem, bloqueados pelo Flatpak, ou ainda não enumerados**.
-10. Consultas caras e opcionais (por exemplo, extents/FIEMAP) e análise do conteúdo não são obrigatórias para produzir cada notificação. Se forem incorporadas, devem ganhar campos/famílias e políticas próprias, não inferências silenciosas.
-11. `FileData::Local(LocalFile)` continua com a mesma relação de encapsulamento; `SyncItem` permanece fora da revisão.
+O Detector solicita coleta por caminho e recebe `LocalFile` pronto. Não faz struct literal, enumera grupos, calcula completude por campo nem chama statx/ACL/xattr. Adicionar/remover campo muda coletor, testes e consumidores interessados; watcher, varredura e emissão transportam o objeto integral sem edição. As assinaturas da [porta local](../detectors/local/INTERFACES.md) permanecem as mesmas.
 
-### 2.5. Pendências de implementação
+Models pode validar invariantes puras do objeto; isso não faz do detector um consumidor do esquema. A classificação de evento e a prova física de identidade continuam fora de Models. Não introduzir SyncItem, fila, baseline ou serviço de consulta.
 
-- Padrão para `MetadataValue` por campos não aplicáveis, além de `Unsupported`, se for necessário distinguir `NotApplicable`.
-- Limites de tamanho e retenção de Xattrs e `extra_metadata`, que podem carregar informações sensíveis.
-- Política de coleta: básica/expandida/completa, sem declarar `Complete` quando houver categorias obrigatórias não consultadas.
-- Compatibilização com assinaturas já documentadas do Detector Local (modelo anterior de seis atributos).
+### 2.7. Estado e referências técnicas
 
-**Estado: proposta formal de atributos, ainda não implementada nem aprovada como contrato Rust final.**
+**Seleção local definida para revisão nesta etapa, sem implementação Rust.** Campos remotos e payload de provedor não foram selecionados. Antes de implementar o envelope compartilhado completo, resolver a dependência de `FileData::Remote(RemoteFile)` sem criar um RemoteFile fictício, remover variantes ou implementar automaticamente o catálogo remoto. A implementação isolada dos tipos locais não depende de I/O remoto; o envelope completo ainda depende da revisão remota.
+
+As fontes técnicas sustentam a semântica das consultas, não as decisões de seleção do produto: [statx(2)](https://man7.org/linux/man-pages/man2/statx.2.html) documenta timestamps, máscaras e campos; [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) documenta resolução física de caminhos; [xattr(7)](https://man7.org/linux/man-pages/man7/xattr.7.html) documenta atributos e namespaces. As decisões manter/sob demanda/descartar são deste contrato.
+
+### 2.8. Validação pura e assinaturas locais
+
+```rust
+pub enum ModelError {
+    EmptyIdentity,
+    InvalidRelativePath,
+    InvalidTimestamp,
+    InconsistentMetadata,
+    InconsistentEvent,
+}
+pub type ModelResult<T> = Result<T, ModelError>;
+
+impl LocalRelativePath {
+    pub fn new(bytes: Vec<u8>) -> ModelResult<Self>;
+    pub fn as_bytes(&self) -> &[u8];
+}
+impl LocalTimestamp {
+    pub fn new(unix_seconds: i64, nanoseconds: u32) -> ModelResult<Self>;
+}
+impl LocalFile {
+    pub fn validate(&self) -> ModelResult<()>;
+}
+```
+
+`ModelError` é tipado e não carrega nomes/caminhos, payloads ou mensagens do SO. Não criar repositório ou serviço de validação. A futura desserialização deve usar a mesma validação e não contornar o campo privado de LocalRelativePath; esta revisão não define formato de persistência.
+
+#### `LocalRelativePath::new`
+
+**Assinatura:** `fn new(bytes: Vec<u8>) -> ModelResult<Self>`.
+
+**Finalidade:** construir caminho de uma entrada abaixo da raiz.
+
+**Parâmetros:** bytes Unix integrais, segundo a seção 2.5, sem decodificar como UTF-8.
+
+**Retorno:** caminho validado que preserva exatamente os bytes de entrada.
+
+**Limites e erros:** InvalidRelativePath para vazio/NUL/absoluto/componentes proibidos. Nenhum acesso a disco, normalização ou teste de existência. Não rejeita nomes reservados por política do detector.
+
+#### `LocalRelativePath::as_bytes`
+
+**Assinatura:** `fn as_bytes(&self) -> &[u8]`.
+
+**Finalidade:** consultar a representação sem perda.
+
+**Parâmetros:** nenhum.
+
+**Retorno:** empréstimo imutável dos bytes validados, sem cópia ou conversão.
+
+**Limites e erros:** sem erro, mutação, resolução física ou efeitos externos.
+
+#### `LocalTimestamp::new`
+
+**Assinatura:** `fn new(unix_seconds: i64, nanoseconds: u32) -> ModelResult<Self>`.
+
+**Finalidade:** representar timestamp local com precisão de nanossegundos.
+
+**Parâmetros:** segundos assinados desde Unix epoch e fração de 0 a 999_999_999.
+
+**Retorno:** valores preservados, inclusive segundos anteriores à epoch.
+
+**Limites e erros:** InvalidTimestamp para nanoseconds >= 1_000_000_000. Não consultar relógio, ajustar fuso ou arredondar silenciosamente. Ausência de timestamp é representada por MetadataValue, não por timestamp zero.
+
+#### `LocalFile::validate`
+
+**Assinatura:** `fn validate(&self) -> ModelResult<()>`.
+
+**Finalidade:** verificar consistência estrutural da observação local.
+
+**Parâmetros:** o próprio objeto, inclusive os valores Known dos grupos selecionados.
+
+**Retorno:** sucesso para objeto completo ou parcial coerente. Não determina cobertura física nem valida existência.
+
+**Limites e erros:** EmptyIdentity para local_id presente e vazio; InvalidTimestamp para fração inválida em timestamp Known; InconsistentMetadata para mode/permission_bits/tipo incompatíveis, par de flags com apenas um Known ou estados não Known diferentes, uso local proibido de NotApplicable e alvo de symlink incompatível com kind. Não comparar datas para estabelecer ordem de versões; não rejeitar IDs desconhecidos, zeros reais ou estados parciais. Não resolver usuários, links ou paths no filesystem.
 
 ## 3. RemoteFile — metadados remotos e associação ao provedor
 
@@ -511,7 +547,7 @@ Renomear e mover podem ocorrer juntos; **a classificação de um único evento n
 pub enum FileLocation {
     Local(LocalRelativePath),
     Remote {
-        reference: RemoteFileRef,      // identidade do arquivo, não localização por si só
+        reference: RemoteFileRef,      // Resource identity, not a complete location.
         parent_id: Option<RemoteFileId>,
         name: Option<String>,
     },
@@ -575,7 +611,36 @@ pub struct File {
 9. Não executar decisões destrutivas diretamente com base no `FileEventKind`. O Analisador compara observações e estados confiáveis antes de decidir.
 10. `File` preserva todos os metadados **efetivamente coletados** sem garantir que o estado físico permaneça igual na hora do processamento.
 
-**Estado:** especificação conceitual para revisão, não implementação Rust. A atribuição exata dos eventos pelos detectores e a integração com Storage/Orquestrador serão detalhadas nos respectivos contratos, sem ampliar o papel de `models/`.
+**Estado:** regras locais selecionadas nesta revisão documental, sem implementação Rust. Prova física e classificação continuam nos detectores; dados remotos permanecem pendentes de revisão própria.
+
+### 5.5. Combinações locais e raiz
+
+As regras abaixo fecham o fluxo local; não selecionam campos nem política de dados remotos.
+
+| Evento local | Dados/localização exigidos | Cobertura e escopo |
+| --- | --- | --- |
+| Created, Modified, MetadataChanged | Some(Local), current=Local do mesmo relative_path | Local do mesmo path; Complete ou Partial, nunca Unavailable |
+| Renamed, Moved | Some(Local), previous=Local confiável e distinto de current; current=path do objeto | Local do destino; Complete ou Partial. Sem prova física da correlação, produtor usa RecheckRequired |
+| Deleted | data=None, previous=Local do path conhecido, current=None | Local do mesmo path; Complete ou Partial; indício de remoção, sem confirmação para apagar |
+| RecheckRequired com dados | Some(Local), current=Local do mesmo path; previous opcional local | Local do mesmo path; Complete ou Partial |
+| RecheckRequired sem dados | current/previous opcionais locais e coerentes com o escopo atual | Local(path) ou WholeSync; WholeSync exige ambos ausentes; Complete/Partial/Unavailable não comprovam exclusão |
+| ScopeUnavailable | data=None, current=None; previous local opcional em escopo Local | coverage=Unavailable; Local(path) ou WholeSync; WholeSync exige previous=None |
+
+Se scope é Local e current está presente, current deve coincidir com scope. Sem current, previous presente deve coincidir com scope. Nenhuma localização remota é aceita em um File de escopo Local. WholeSync só admite RecheckRequired ou ScopeUnavailable sem dados/localizações. Eventos locais específicos não são usados para a própria raiz.
+
+`coverage=Complete` com dados locais exige que os campos obrigatórios do perfil básico sejam Known e kind concreto; em não-symlink, o alvo é NotApplicable. Ainda assim, o validador não prova que a enumeração ocorreu ou que o filesystem permaneceu estável. Eventos parciais são válidos e não são completados com valores fabricados.
+
+### 5.6. `File::validate`
+
+**Assinatura:** `fn validate(&self) -> ModelResult<()>`.
+
+**Finalidade:** preservar os sete campos e as relações entre evento, escopo, localizações e dados.
+
+**Parâmetros:** o próprio File, sem dependências operacionais. A assinatura futura fica em `impl File`.
+
+**Retorno:** sucesso quando identidades, dados locais e combinações das seções 5.4/5.5 são coerentes. Propaga erros puros de LocalFile quando presente.
+
+**Limites e erros:** EmptyIdentity para FileId/SyncId inválidos; InconsistentEvent para combinação inválida, origem misturada, escopo incompatível, WholeSync específico ou Complete com perfil local obrigatório incompleto. Não gera ID, consulta relógio/banco, verifica ordem causal ou comprova correlação de rename. Compara valores, não executa classificação de watcher. Não deduplica nem transforma eventos. A validação remota só poderá ser implementada integralmente após sua revisão; não aceitar objetos remotos sem revisão por conveniência.
 
 ## 6. FileBatch — fronteira externa, propriedade do Detector
 
@@ -600,9 +665,9 @@ ID do lote, tamanho máximo, lease, reserva e ack pertencem a [`detectors/INTERF
 ## 8. Limites e pontos de integração
 
 1. **Identidades já existentes:** reutilizar/migrar explicitamente os tipos do código real; não produzir tipos incompatíveis duplicados.
-2. **Detector Local:** seu `LocalNotice` atual é um contrato anterior e precisará se adaptar a `File`; isso **não** foi alterado aqui.
+2. **Detector Local:** usa a porta de coleta estável e transporta File integral, conforme [seu contrato interno](../detectors/local/INTERFACES.md). A revisão local alinha escopo, cobertura e ausência sem implementar coleta.
 3. **Detector Remoto:** deverá produzir `RemoteFile` e `File` sem importar detalhes Google para a fachada.
-4. **Detector pai e Storage:** precisarão transportar/persistir `File` completo (por `FileBatch`) e reconhecer entrega segura; seus contratos anteriores ainda não foram revisados.
+4. **Detector pai e Storage:** seus contratos documentais já preveem File completo e aceite durável; implementação e integração continuam separadas desta revisão.
 5. **Inventário:** o contrato anterior ainda utiliza `GoogleFile` e será revisto em etapa própria; **`SyncItem` permanece fora desta revisão**.
 6. **Tipos especializados:** ProviderFileData não cria dependência de Models para Google API.
 7. **Código:** nenhuma estrutura aqui é afirmada como implementada. Não alterar Rust nesta fase.

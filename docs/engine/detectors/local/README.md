@@ -33,7 +33,7 @@ A pausa de **entrega ao Orquestrador** não pausa o observador Local: as altera�
 
 O Local não possui banco, fila durável ou baseline. A saída única é o sink individual do pai; a confirmação desse sink representa aceite, não sincronização concluída. Somente a pendência de entrega em trânsito e as pistas de observação são mantidas em memória, de forma limitada.
 
-A coleta de metadados é injetada por uma porta estável e recebe cancelamento cooperativo. O detector transporta `LocalFile` integralmente, sem conhecer sua lista de atributos. Os tipos e campos compartilhados continuam pertencendo a Models e dependem da revisão documentada naquele módulo.
+A coleta de metadados é injetada por uma porta estável e recebe cancelamento cooperativo. O detector transporta `LocalFile` integralmente, sem conhecer sua lista de atributos. Os tipos e campos compartilhados pertencem a Models. O perfil local foi selecionado naquele módulo; sua implementação continua posterior. A revisão remota ainda é dependência do envelope compartilhado completo.
 
 `scan_once` é a varredura de verificação que **emite eventos**. Não é o Scanner independente, que registra observações no Inventário. O scan de cobertura programado por `start` verifica a captura atual; não promete compensar o período parado ou reconstruir histórico.
 

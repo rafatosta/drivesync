@@ -4,7 +4,7 @@
 
 `models/` representa os dados compartilhados do DriveSync. Os módulos funcionais observam, armazenam, analisam ou executam operações a partir desses dados; **Models não realiza I/O**, não sincroniza, não decide conflitos, não persiste e não expõe uma trait de serviço.
 
-Os campos e invariantes estão **especificados em [INTERFACES.md](INTERFACES.md)** como proposta documental para revisão. A implementação futura deve seguir **literalmente o contrato que for aprovado**, e não completar lacunas por inferência.
+Os campos e invariantes estão em [INTERFACES.md](INTERFACES.md). O fluxo local tem seleção documental por atributo e testes definidos nesta revisão; a implementação será uma etapa separada. RemoteFile e ProviderFileData continuam catálogo proposto, aguardando revisão específica. Não completar lacunas por inferência.
 
 ## Hierarquia e propriedade
 
@@ -32,24 +32,23 @@ FileBatch                         detectors/ — agrupamento e confirmação
 
 ### LocalFile
 
-`LocalFile` representa **todos os grupos conhecidos de metadados reais da entrada Linux**, e não somente tamanho/data/hash. A estrutura completa, os tipos e os estados de coleta estão em [INTERFACES.md, seção 2](INTERFACES.md#2-localfile--metadados-reais-completos-do-linux).
+`LocalFile` contém o perfil selecionado para observar uma entrada abaixo da raiz, incluindo estados explícitos de coleta. A [matriz de seleção](INTERFACES.md#22-matriz-de-revisão-do-catálogo-local) justifica cada campo mantido, sob demanda ou descartado.
 
-| Campo em LocalFile | Metadados reais |
+| Campo em LocalFile | Finalidade |
 | --- | --- |
-| `local_id`, `relative_path` | Identidade lógica opcional e caminho relativo em bytes |
-| `kind` | Tipo de entrada: arquivo, diretório, symlink, FIFO, socket, dispositivo etc. |
-| `mode`, `owner` | Bits de modo/permissões, UID/GID |
-| `times` | atime, mtime, ctime, btime com nanossegundos |
-| `storage` | Tamanho, blocos alocados, inode, links, dispositivos, montagem, subvolume |
-| `flags` | Atributos statx/máscara de suporte e flags do filesystem |
-| `direct_io`, `atomic_write` | Restrições e capacidades relatadas pelo filesystem |
-| `xattrs`, `acl` | Atributos estendidos binários e ACLs POSIX |
-| `symlink` | Alvo literal do symlink, sem seguir |
-| `extra_metadata` | Complementos identificados por família/driver |
+| local_id, relative_path | ID lógico opcional (None no coletor inicial) e caminho Unix não vazio |
+| kind | Arquivo, diretório, link, especial ou tipo desconhecido |
+| mode, owner | Bits de tipo/permissão e UID/GID numéricos; não comprovam acesso efetivo |
+| times | mtime/ctime e btime quando disponível, com nanossegundos; sem atime |
+| storage | Tamanho lógico, quantidade de hardlinks, inode e device amostrados |
+| flags | Atributos statx e máscara de suporte, preservados em par quando disponíveis |
+| symlink | Alvo literal somente em link simbólico; NotApplicable nos demais tipos conhecidos |
 
-Cada metadado consultável distingue `Known(valor)`, `NotCollected`, `Unsupported`, `PermissionDenied` e `Unavailable`. **Completo significa que o modelo representa os campos e a situação real da coleta; não significa que o Linux forneça cada valor.**
+Os estados são Known, NotCollected, NotApplicable, Unsupported, PermissionDenied e Unavailable. O perfil básico obrigatório determina completude da coleta; btime e flags são opcionais à cobertura. Um objeto pode representar observação parcial coerente. Nenhum timestamp ou inode prova precedência, igualdade de conteúdo ou identidade persistente.
 
-`statx` não devolve sozinho ACLs, xattrs e todos os dados específicos do filesystem. Consultas adicionais são responsabilidade do Detector Local. **Hash de conteúdo e MIME inferido são dados derivados, não metadados intrínsecos do filesystem; o campo antigo `LocalFile.hash` foi removido.**
+ACLs, xattrs, alocação, montagem/subvolume, flags específicas, Direct I/O e AtomicWrite ficam **sob demanda fora do envelope atual**, sujeitos à definição de consulta e limites no componente interessado. atime, rdev, blobs arbitrários e dados derivados não integram o modelo local. Esta seleção não autoriza copiar permissões ou metadados privados para a nuvem.
+
+A raiz usa WholeSync com data=None; LocalRelativePath não admite vazio, absoluto, NUL ou componentes de escape. Validação lexical não substitui proteção física no adaptador. A coleta real é responsabilidade do coletor local, sem I/O em Models.
 
 ### RemoteFile — metadados reais e associação ao provedor
 
@@ -166,9 +165,9 @@ FileBatch                           [detectors/]
 
 **Obrigatório:** incluir, remover ou reorganizar atributos de `LocalFile` **não pode exigir mudanças no código de observação, watcher, varredura ou notificações do Detector Local**. O Detector chama uma **interface estável de coleta**, recebendo um `LocalFile` pronto; não constrói o objeto campo a campo e não acessa seus atributos para decidir sua entrega.
 
-A lógica de montagem dos campos fica em um **componente de coleta/adaptação de metadados locais**, com funções auxiliares para campos que exigem novas consultas (`statx`, ACL, xattrs, symlink etc.). Este componente pode evoluir junto com Models sem modificar o Detector. A interface estável é documentada na [integração do Detector Local](../detectors/local/INTERFACES.md); os modelos permanecem **puros, sem I/O**.
+A lógica de montagem dos campos fica em um **componente de coleta/adaptação de metadados locais**, com funções auxiliares para campos que exigem novas consultas (`statx`, symlink e extensões futuras com contrato próprio). Este componente pode evoluir junto com Models sem modificar o Detector. A interface estável é documentada na [integração do Detector Local](../detectors/local/INTERFACES.md); os modelos permanecem **puros, sem I/O**.
 
-A regra é de isolamento do Detector: mudanças de esquema podem exigir ajustes no **coletor, nos testes e em consumidores que realmente usam o atributo**. Não pressupõe ausência absoluta de impacto em toda a engine. A seleção final dos metadados ainda exige a revisão obrigatória anterior à implementação.
+A regra é de isolamento do Detector: mudanças de esquema podem exigir ajustes no **coletor, nos testes e em consumidores que realmente usam o atributo**. Não pressupõe ausência absoluta de impacto em toda a engine. A seleção local está registrada nesta revisão; mudanças futuras devem atualizar matriz, contrato e testes antes de codificar.
 
 ## Fluxo de responsabilidades
 
@@ -197,15 +196,11 @@ A entrega normal pode transportar apenas uma ocorrência e ser imediata. O Stora
 - IDs do código atual devem ser reutilizados ou migrados explicitamente; não duplicar tipos existentes.
 - `LocalRelativePath` preserva bytes Unix relativos à raiz sem normalização com perda.
 
-## Aviso obrigatório antes de implementar — revisão de necessidade dos dados
+## Etapas posteriores à seleção local
 
-**NÃO IMPLEMENTAR DIRETAMENTE O ESQUEMA COMPLETO SEM ESTA REVISÃO.**
+O contrato selecionado inclui validação pura de caminhos, timestamps, LocalFile e combinações locais de File. A implementação dos tipos locais pode ser planejada a partir desses casos, sem executar coleta ou alterar outros módulos.
 
-A abordagem de documentação é **levantamento abrangente primeiro, seleção depois**: mapear todos os metadados reais conhecidos e potencialmente disponíveis, compreender a origem e a semântica de cada campo e **somente então decidir quais serão coletados, transportados, persistidos e efetivamente utilizados** pelo DriveSync.
-
-Antes de escrever código, revisar cada grupo/atributo com base em requisitos concretos dos consumidores (Detector, Inventário, Analisador, Operações e UI). Registrar a decisão **manter, coletar sob demanda ou descartar** e a justificativa; distinguir dados baratos de obter de dados caros, sensíveis ou não suportados. Não presumir que estar documentado significa coleta obrigatória em toda varredura, nem que um campo deve ser armazenado ou sincronizado na nuvem.
-
-**Até a revisão ser concluída, a listagem completa permanece um catálogo conceitual, não um contrato de implementação integral aprovado.**
+O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dependência precisa de revisão própria antes da implementação integral do envelope: não criar um modelo remoto fictício, remover sua variante ou implementar todos os campos remotos por inferência. A seleção local não aprova codificação, limite ou retenção de ProviderFileData.
 
 ## Documentação e estado
 
@@ -213,4 +208,4 @@ Antes de escrever código, revisar cada grupo/atributo com base em requisitos co
 - [TESTS.md](TESTS.md): testes propostos diretamente derivados desses contratos.
 - [AGENTS.md](AGENTS.md): critérios para implementação literal futura.
 
-**Esta etapa é somente documental.** Não altera código Rust nem aprova implicitamente refatorações dos consumidores. Os contratos atuais de Detector Local, Detector pai, Storage e Inventário precisarão ser alinhados em revisões próprias.
+**Esta etapa é somente documental.** O Detector Local é alinhado às regras de caminho, cobertura e aplicabilidade sem mudar suas assinaturas. Não altera Rust, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; não comprova coleta física nem durabilidade.

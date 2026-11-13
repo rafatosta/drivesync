@@ -90,7 +90,7 @@ Cenário de falha entre observação e aceite durável deve preservar possibilid
 
 **5/5 métodos internos** e cenários de Models aplicáveis passam independentemente, com resultados PASS/FAIL/BLOCKED e evidências de comandos executados no Flatpak. **Não** exigir testes Google/Inventory/Storage para concluir o Local.
 
-Dependência para testes executáveis: revisão e implementação dos tipos compartilhados de Models. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. Nenhum teste foi executado nesta atualização documental.
+Dependência para testes executáveis: implementação dos tipos locais selecionados em Models; revisão remota ainda necessária antes do envelope completo. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. Nenhum teste foi executado nesta atualização documental.
 
 ## 7. Regressão obrigatória — independência do esquema de LocalFile
 
@@ -99,7 +99,7 @@ Dependência para testes executáveis: revisão e implementação dos tipos comp
 | LOC-COL-01 | Coletor fake devolve LocalFile, independentemente de seus campos | Detector encaminha o objeto integral ao sink sem inspeção/projeção de atributos |
 | LOC-COL-02 | Acrescentar campo a LocalFile e atualizar somente coletor/fixture | Código de watcher, scanner e notificação do Detector permanece **inalterado** |
 | LOC-COL-03 | Remover campo de LocalFile e adaptar o coletor | Detector continua compilável/funcional, sem acesso ao campo removido |
-| LOC-COL-04 | Coleta auxiliar de ACL/xattr falha | Coletor indica indisponibilidade sem impedir evento de reavaliação; Detector não interpreta o atributo |
+| LOC-COL-04 | Coleta opcional de btime/flags indisponível | Coletor preserva o estado e a cobertura do perfil básico; Detector não interpreta o atributo |
 | LOC-COL-05 | Coleta parcial por custo/limite | Coletor preserva estados de coleta; Detector repassa o LocalFile sem atribuir valores padrões |
 | LOC-COL-06 | Coletor devolve file=None | Detector emite reavaliação segundo cobertura, sem inventar exclusão |
 
@@ -216,7 +216,20 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 3. Testes de permissões devem comprovar negação pelo kernel. Se o ambiente ignorar a restrição, registrar BLOCKED/skip justificado; um mock não comprova proteção física.
 4. Testes reais do watcher aguardam condições com timeout limitado e sincronização de prontidão, sem assumir ordenação ou cardinalidade de callbacks. Regras de debounce e corrida usam relógio controlado/barreiras, sem depender de execução rápida.
 5. Rodar os comandos Rust exigidos pelo AGENTS da raiz exclusivamente no Flatpak do manifesto; registrar comando, resultado e casos bloqueados. Não usar dados pessoais ou credenciais.
-6. Revisar alterações de esquema em checkout/fixture temporário para LOC-COL-02/03; não alterar Models de produção apenas para provar independência. Enquanto o esquema não estiver aprovado, marcar os casos dependentes como BLOCKED.
+6. Revisar alterações de esquema em checkout/fixture temporário para LOC-COL-02/03; não alterar Models de produção apenas para provar independência. Enquanto os tipos não estiverem implementados, registrar os casos executáveis como pendentes, sem alegar PASS.
 7. Comprovar ausência de mutações comparando conteúdo e estrutura das sentinelas antes/depois, considerando que leituras podem atualizar atime. Não usar o próprio normalizador para fabricar o resultado esperado.
 
 **Aceite desta etapa documental:** cinco métodos de controle e quatro métodos auxiliares rastreados; decisões de ciclo de vida, escopo e falhas explicitadas; dependências de Models identificadas. **Testes executáveis e implementação permanecem para a próxima etapa.** A durabilidade real do sink, leases e agregação Local/Remoto são validações futuras dos componentes proprietários.
+
+
+## 14. Alinhamento com a seleção local de Models
+
+| Caso | Fixture | Oráculo |
+| --- | --- | --- |
+| LOC-MOD-01 | Coletor devolve perfil básico completo e btime/flags opcionais indisponíveis | Complete permitido; File integral, sem o detector inspecionar atributos |
+| LOC-MOD-02 | Coletor devolve campo básico não Known | Partial e estado de coleta preservados; não completar com zero |
+| LOC-MOD-03 | Entrada não-symlink com alvo NotApplicable; link com alvo literal externo | Ambos preservados conforme Models; não seguir alvo nem degradar apenas por NotApplicable válido |
+| LOC-MOD-04 | Aviso sobre raiz inacessível | WholeSync, ScopeUnavailable, Unavailable, data=None e localizações ausentes; nenhum path vazio |
+| LOC-MOD-05 | Metadados de ACL/xattr/Direct I/O não fazem parte do esquema selecionado | Coletor básico não exige consultas extras; nenhuma mudança nas portas ou lógica do detector |
+
+Estes casos complementam o perfil selecionado em Models, não implementam seus validadores. Leitura física continua testada no coletor; validação lexical e combinações puras ficam na suíte Models.

@@ -30,6 +30,6 @@ Seguir [TESTS.md](TESTS.md), com diretórios temporários isolados, alterações
 - Ler INTERFACES → README → TESTS e o AGENTS da raiz antes de codificar. Esta entrega é documental: não criar stubs Rust, testes executáveis ou dependências do watcher.
 - Na etapa de implementação, seguir RED → GREEN → REFACTOR por contrato e registrar os IDs dos cenários exercitados. Não substituir testes do filesystem por fakes do próprio detector.
 - Preservar a separação entre verificação de cobertura do watcher e reconciliação de períodos interrompidos. Não iniciar Scanner ou acessar Inventário.
-- Não implementar atributos de LocalFile nem tipos compartilhados alternativos para contornar a revisão pendente de Models. O coletor concentra o conhecimento do esquema.
+- Seguir o perfil local selecionado em Models e não implementar tipos compartilhados alternativos para contornar a dependência remota do envelope. O coletor concentra o conhecimento do esquema.
 - Usar a branch arquivada apenas como referência: adaptar segurança por descritores e seus testes; não importar filtros que descartam nomes não UTF-8, hashing ou políticas de upload.
 - Aplicar as regras da seção 8 de INTERFACES para estados, cancelamento, retry e memória limitada; não declarar entrega durável com sink fake nem prometer recuperação de pendência volátil após stop/crash.

@@ -1,4 +1,4 @@
-# Agentes — Models (contratos de dados propostos)
+# Agentes — Models (seleção local e catálogo remoto)
 
 ## Situação e fonte de verdade
 
@@ -6,7 +6,7 @@
 
 As definições de atributos, tipos, variantes, ausência e invariantes estão em [INTERFACES.md](INTERFACES.md). O [README.md](README.md) apresenta responsabilidades e uma tabela resumida; [TESTS.md](TESTS.md) traduz essas regras em casos verificáveis. A implementação futura deverá ser **reflexo literal da especificação após aprovação do responsável**, sem acrescentar ou alterar campos por preferência do agente.
 
-**Atributos documentados agora são PROPOSTOS, não aprovados para implementação automaticamente.**
+**Esta etapa define documentalmente o fluxo local; não implementar Rust nesta demanda.** RemoteFile e ProviderFileData permanecem propostas sem seleção. A execução futura não pode tratar a revisão local como aprovação do catálogo remoto.
 
 ## Proprietários
 
@@ -20,7 +20,7 @@ As definições de atributos, tipos, variantes, ausência e invariantes estão e
 1. `FileData` tem somente `Local(LocalFile)` e `Remote(RemoteFile)`. Não inventar `Both`, `Google`, `Unknown` ou lógica operacional.
 2. `File` encapsula os **sete campos propostos**: `id`, `sync_id`, `event`, `observed_at`, `coverage`, `scope`, `data`; não misturar com `SyncItem`.
 3. `File.id` identifica **a ocorrência**, não o arquivo físico; replay da mesma ocorrência preserva ID e payload.
-4. `LocalFile` registra todos os grupos conhecidos de metadados reais Linux e seus estados de coleta; `RemoteFile` armazena os valores efetivamente observados. `None` não significa zero, ausência física ou comando de exclusão.
+4. `LocalFile` contém somente o perfil selecionado em INTERFACES § 2.3 e seus estados de coleta. Não restaurar o catálogo completo como campos ou blobs. `None` não significa zero, ausência física ou comando de exclusão.
 5. `FieldValue::Unknown` e `FieldValue::Known([])` são semanticamente diferentes; não simplificar ambos para lista vazia.
 6. `ProviderFileData` contém somente metadados opacos, nunca tokens, credenciais, respostas completas não filtradas ou conteúdo do arquivo.
 7. Não construir I/O de arquivo, rede, SQLite, fila, autenticação, operações, detector ou analisador dentro de Models.
@@ -30,35 +30,32 @@ As definições de atributos, tipos, variantes, ausência e invariantes estão e
 11. A construção de `File` deve respeitar as relações entre `event`, `scope`, `data` e `coverage` definidas no contrato; não fabricar dados para contornar validação.
 12. Não alterar `detectors/`, `detectors/storage/`, `inventory/` ou `operations/` para fazer compilar um exemplo conceitual de Models.
 
-## Metadados completos de LocalFile
+## Contrato local selecionado
 
-`LocalFile` não é mais o registro de seis campos. A proposta formal em [INTERFACES.md, seção 2](INTERFACES.md#2-localfile--metadados-reais-completos-do-linux) determina **todos os campos e subestruturas** de `kind`, `mode`, `owner`, `times`, `storage`, `flags`, `direct_io`, `atomic_write`, `xattrs`, `acl`, `symlink` e `extra_metadata`.
+Seguir a matriz manter/sob demanda/descartar de INTERFACES § 2.2 e os tipos de § 2.3. A seleção desta revisão cobre os atributos locais e suas regras de ausência; não é implementação Rust nem seleção remota.
 
-- Usar `MetadataValue<T>` para distinguir valor conhecido, não consultado, não suportado, acesso negado e indisponível.
-- Preservar timestamps com nanossegundos; `ctime` não significa criação.
-- Preservar nomes e valores binários de xattrs e destino de symlinks, sem conversão com perda.
-- Não confundir `stx_attributes` com máscara de suporte, nem `dev` com `rdev`, nem tamanho lógico com espaço alocado.
-- Não declarar coleta completa quando houver grupos `NotCollected`. Múltiplas consultas não fornecem um snapshot transacional.
-- `LocalFile` não executa `statx`, xattr, ACL ou `readlink`: tais operações pertencem ao Detector Local.
-- Metadados sensíveis como ACL, capabilities e `security.*` não autorizam log, transmissão, restauração automática ou upload.
-- Hash de conteúdo/MIME inferido não são metadados intrínsecos: **não restaurar o antigo campo `LocalFile.hash`**.
-- Não inventar formatos, valores substitutos, limites de leitura, permissões ou política de coleta ainda pendentes.
-- **O contrato é conceitual e depende de aprovação antes da implementação Rust.**
+- Manter paths Unix em bytes não vazios, kind, mode, owner, mtime/ctime/btime, size/nlink/inode/device, par de flags statx/máscara e alvo literal de symlink.
+- LocalFileId é opcional; o coletor inicial usa None. Não inventar ID com inode, device ou caminho.
+- Não adicionar atime, hash, conteúdo, ACL, xattrs, rdev, montagem/subvolume, Direct I/O, AtomicWrite ou extra_metadata ao envelope local desta versão. Consultas sob demanda exigem contrato próprio posterior; não implementar suas estruturas antecipadamente.
+- Distinguir NotApplicable de Unsupported e NotCollected. No fluxo local, NotApplicable só é permitido no alvo quando o tipo conhecido não é symlink.
+- Complete refere-se ao perfil básico, com btime e flags opcionais. Models verifica coerência; a cobertura física é responsabilidade do coletor/percurso. Não declarar snapshot transacional.
+- Preservar nanossegundos e segundos assinados; ctime não é criação. Timestamps não estabelecem precedência entre versões.
+- A raiz é WholeSync sem dados/localizações; não aceitar LocalRelativePath vazio, `.` ou `/`. `.drivesync` é lexicalmente válido, mas filtrado pelo observador.
+- Validadores puros são somente os especificados em INTERFACES §§ 2.8 e 5.6. Não usar validação para gerar identidade, completar metadados, resolver links ou abrir arquivos.
+- Reutilizar AccountId, ProviderId e Timestamp existentes. Não migrar identidades ou SyncItem sem escopo explícito.
 
-## Bloqueio obrigatório antes de implementar LocalFile
+## Revisões ainda necessárias
 
-**Não iniciar a implementação da estrutura completa descrita atualmente.** Primeiro executar uma **revisão de necessidade de todos os metadados** com o responsável pelo projeto.
+A lista local foi selecionada e justificada documentalmente. Alterações futuras devem atualizar matriz, contrato e testes antes da implementação correspondente. Uma solicitação de implementar os modelos locais não autoriza o catálogo remoto.
 
-O contrato atual é um catálogo deliberadamente abrangente: **levantar todos os dados disponíveis primeiro; identificar e descartar os desnecessários depois**. Criar uma matriz por campo/grupo contendo finalidade, consumidor, disponibilidade/fonte, custo, exposição de dados sensíveis e decisão fundamentada (`manter`, `sob demanda` ou `descartar`). Não eliminar atributos antecipadamente por conveniência do agente e tampouco implementá-los todos só porque foram enumerados.
-
-Somente depois de a seleção ser explicitamente aprovada, consolidar os atributos implementáveis em `INTERFACES.md`, ajustar `TESTS.md` e implementar **literalmente o contrato final aprovado**. Essa etapa de revisão é um **pré-requisito**, não uma sugestão facultativa.
+O envelope FileData depende de RemoteFile. Antes de implementar o envelope completo, concluir a revisão remota ou obter decisão explícita sobre essa fronteira; não criar placeholders remotos, payload livre ou variante especial local para contornar o contrato. É possível implementar e validar isoladamente os tipos locais aprovados sem tocar nos campos remotos.
 
 ## Isolamento obrigatório do Detector frente ao esquema
 
 **Aceite arquitetural:** adicionar, remover ou renomear campos de `LocalFile` não pode exigir edição da lógica do Detector Local. O Detector consome uma **interface de coleta estável**, não a representação campo a campo do modelo.
 
 - Não construir `LocalFile` com struct literal no Detector nem usar os campos como condição para entregar uma notificação.
-- O coletor/adaptador específico de metadados locais faz a construção e pode usar funções auxiliares independentes para `statx`, ACL, xattrs e outras fontes.
+- O coletor/adaptador específico de metadados locais faz a construção e pode usar funções auxiliares independentes para `statx` e leitura literal de symlinks; novas fontes exigem contrato próprio antes de coleta.
 - O coletor executa I/O; `models/` **não** executa I/O. O coletor pode mudar quando campos mudam, mas o Detector deve permanecer intacto.
 - O contrato de retorno deve preservar `LocalFile` integralmente, sem reduzir o modelo a um subconjunto manual.
 - Acrescentar testes de regressão que verifiquem evolução do esquema com o Detector não modificado.
@@ -74,7 +71,7 @@ Somente depois de a seleção ser explicitamente aprovada, consolidar os atribut
 - Orquestrador apenas transporta `File`; **Analisador** interpreta origem e evento.
 - Nenhuma alteração deste contrato autoriza acoplar o Detector aos campos internos de `LocalFile`; manter a porta estável do coletor.
 - O desenho completo de `FileBatch` e do protocolo de ack é propriedade do Detector. Não migrar `SyncItem`.
-- Não implementar até a aprovação da especificação e da revisão de metadados anteriores ao código.
+- Nesta demanda, apenas revisar contratos e testes. Código será uma etapa separada; a implementação do envelope completo depende também da revisão remota.
 
 ## Metadados completos e associação de RemoteFile ao provedor
 
