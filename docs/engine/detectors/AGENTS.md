@@ -32,7 +32,7 @@ Executar os cenários de [TESTS.md](TESTS.md), incluindo eventos locais e remoto
 ## Publicação parcial autorizada — coleta local
 
 - O usuário solicitou acesso público somente à coleta local já implementada. A API atual é `drivesync_engine::detectors::LocalMetadataCollector` (new/scope/collect) e os tipos relacionados, conforme INTERFACES § 8.
-- Preservar os submódulos, a trait de composição e hooks/backend como privados. Não expor injeção de syscall, descritores ou start somente local.
+- Preservar os submódulos, a trait de composição e hooks/backend como privados. Não expor injeção de syscall ou descritores. O controle local foi autorizado posteriormente, conforme INTERFACES § 9.
 - A implementação é reexportada com nome público e métodos inerentes; a trait interna permanece para composição futura. Não duplicar DTOs ou reimplementar coleta no módulo pai.
 - Testes de consumidor externo devem importar somente detectors/models e exercitar a API pública; doctests compile_fail verificam os limites de visibilidade.
-- Esta publicação não autoriza implementar métodos provisórios da fachada unificada, modelos remotos ou fila. A API de controle documentada anteriormente continua pendente.
+- Esta publicação não autoriza implementar métodos provisórios da fachada unificada, modelos remotos ou fila. A fachada unificada continua pendente; LocalDetector::new/start/stop/status foram autorizados posteriormente e estão implementados.

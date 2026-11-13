@@ -111,6 +111,12 @@ impl DirectoryChain {
         });
         Ok(())
     }
+    /// Parent/name bindings used to watch changes to absolute ancestry.
+    pub(super) fn ancestor_guards(&self) -> impl Iterator<Item = (&File, &CStr)> {
+        self.bindings
+            .windows(2)
+            .map(|pair| (&pair[0].file, pair[1].name.as_c_str()))
+    }
     /// Borrows the final anchored directory; the chain always contains `/`.
     pub(super) fn last(&self) -> &File {
         &self.bindings.last().unwrap().file

@@ -62,6 +62,30 @@ impl FilesystemMetadataCollector {
         self.collect_with(request, |_| {})
     }
 
+    /// Revalidates the configured path against the root pinned by this instance.
+    pub(super) fn root_chain(
+        &self,
+        cancel: &LocalCancellation,
+    ) -> LocalDetectorResult<DirectoryChain> {
+        let chain = DirectoryChain::open_root(&self.scope.local_root, cancel)?;
+        cancel.check()?;
+        let actual = chain
+            .last()
+            .metadata()
+            .map_err(|e| filesystem::failure(e, true))?;
+        cancel.check()?;
+        let original = self
+            .root
+            .metadata()
+            .map_err(|e| filesystem::failure(e, true))?;
+        if !filesystem::same_entry(&actual, &original) {
+            return Err(LocalDetectorFailure::new(
+                LocalDetectorError::RootUnavailable,
+            ));
+        }
+        Ok(chain)
+    }
+
     /// Runs real collection with hooks at safe observation boundaries for deterministic tests.
     /// Production supplies a no-op hook; the collector itself and filesystem are never mocked.
     pub(super) fn collect_with(
@@ -89,22 +113,7 @@ impl FilesystemMetadataCollector {
         {
             return Err(LocalDetectorFailure::new(LocalDetectorError::InvalidScope));
         }
-        let mut chain = DirectoryChain::open_root(&self.scope.local_root, cancel)?;
-        cancel.check()?;
-        let actual = chain
-            .last()
-            .metadata()
-            .map_err(|e| filesystem::failure(e, true))?;
-        cancel.check()?;
-        let original = self
-            .root
-            .metadata()
-            .map_err(|e| filesystem::failure(e, true))?;
-        if !filesystem::same_entry(&actual, &original) {
-            return Err(LocalDetectorFailure::new(
-                LocalDetectorError::RootUnavailable,
-            ));
-        }
+        let mut chain = self.root_chain(cancel)?;
         let Some((entry, name)) = chain.open_entry(&request.relative_path, cancel)? else {
             return Ok(inconclusive());
         };

@@ -41,7 +41,7 @@ Durante `pause`, as origens continuam registrando na fila persistente própria d
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** API de coleta local publicada e testada; a fachada unificada, entrega durável e observadores continuam contratos futuros.
+**Estado:** API de coleta local publicada e testada; LocalDetector::new/start/stop/status e observação nativa local implementados; fachada unificada, entrega durável e observador remoto continuam futuros.
 
 ## Persistência recuperável
 
@@ -54,4 +54,4 @@ Corrupção comprovada não pode apagar silenciosamente eventos. Se a restauraç
 
 Usar `drivesync_engine::detectors::LocalMetadataCollector` com `LocalDetectorScope` para construir o coletor, `scope()` para consultar a configuração e `collect(LocalMetadataRequest)` para obter uma entrada. Cancelamento, erros, cobertura e resultados necessários são reexportados pelo mesmo módulo; LocalFile e caminhos permanecem em Models.
 
-A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. A publicação não adiciona watcher, eventos, fila, métodos provisórios do Detector ou integração automática com a aplicação. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).
+A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. A publicação inicial do coletor foi ampliada posteriormente com LocalDetector::new/start/stop/status e eventos File, conforme Local INTERFACES § 12. Fila e integração automática com a aplicação permanecem futuras. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).

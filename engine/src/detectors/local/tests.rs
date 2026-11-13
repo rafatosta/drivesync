@@ -714,3 +714,38 @@ fn invalid_known_native_metadata_is_typed_but_unavailable_masked_fields_are_not_
         MetadataValue::Unavailable
     );
 }
+
+#[test]
+fn native_discovery_reports_each_exhausted_coverage_budget() {
+    use super::watcher::{Limits, Watches};
+    use std::sync::Arc;
+    let tree = Tree::new();
+    fs::create_dir(tree.0.join("nested")).unwrap();
+    let collector = Arc::new(tree.collector());
+    let cancel = LocalCancellation::new();
+    for limits in [
+        Limits {
+            directories: 1,
+            entries: 100,
+            path_bytes: 100,
+        },
+        Limits {
+            directories: 100,
+            entries: 0,
+            path_bytes: 100,
+        },
+        Limits {
+            directories: 100,
+            entries: 100,
+            path_bytes: 0,
+        },
+    ] {
+        let mut watches = Watches::root(collector.clone(), &cancel).unwrap();
+        assert_eq!(
+            watches.discover(&cancel, limits).unwrap_err().kind,
+            LocalDetectorError::ResourceLimit
+        );
+    }
+    let mut watches = Watches::root(collector, &cancel).unwrap();
+    watches.discover(&cancel, Limits::default()).unwrap();
+}

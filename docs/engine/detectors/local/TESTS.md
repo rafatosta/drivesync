@@ -283,3 +283,22 @@ Validação final no mesmo ambiente Flatpak/cache, em 2026-11-13:
 - `cargo test --offline --locked --workspace --doc`: 1 doctest PASS.
 
 Não foram exercitados Google real, aplicativo instalado, portal, watcher, varredura recursiva, fila ou entrega de File. A cobertura atual é do coletor e dos componentes já existentes; nenhum método de controle do Detector é declarado implementado por esses resultados.
+
+## 17. Controle e captura nativa implementados
+
+A etapa posterior acrescenta `engine/tests/local_detector.rs`, consumidor externo da API pública, com 12 testes reais no filesystem isolado. O RED inicial falhou por ausência do runtime; GREEN exercita:
+
+- criação e edição, renomeação e remoção como RecheckRequired; metadados completos preservados;
+- instalação de watches para subpastas recém-criadas, sem polling de conteúdo;
+- exclusão de `.drivesync` e de alterações em alvos externos de symlink;
+- configuração sem I/O, falha de start e controle após Failed;
+- substituição da raiz e de ancestral sem atividade adicional; raiz original preservada entre stop/start;
+- retomada após período parado sem inventar histórico;
+- rejeição temporária com reentrega do mesmo File e rejeição permanente observável;
+- status durante callback bloqueado e stop aguardando a conclusão; parada repetida;
+- start concorrente idempotente, Drop e ausência de emissões após stop;
+- preservação de nomes não UTF-8.
+
+Cobertura parcial dos cenários LOC-S-02/04/05, LOC-D-01/05/06/11/12/14/16 e LOC-A-06; não declarar concluídas as matrizes inteiras. O teste privado native_discovery_reports_each_exhausted_coverage_budget verifica limites de diretórios, entradas e bytes com filesystem real e orçamentos reduzidos. Não foram exercitados overflow real do kernel, todos os limites de hints, todas as corridas ou scan_once manual. LOC-S-01 e agregação remota dependem da futura composição do pai. Sinks de teste em memória não comprovam aceite durável. A validação anterior da seção 16 descreve somente a etapa do coletor; a captura e emissão de File foram acrescentadas agora.
+
+Validação integrada desta etapa no org.gnome.Sdk//50, rust-stable, com cache exposto, `--offline --locked`: fmt --all --check, clippy --workspace --all-targets -- -D warnings, test --workspace, doc --workspace --no-deps --document-private-items e test --workspace --doc passaram. Resultado: 582 testes e 4 doctests aprovados; 6 testes de ambiente ignorados. Inclui 12 testes públicos de ciclo de vida e um teste privado dos três orçamentos de descoberta. Não houve teste de Google real, aplicativo instalado ou persistência de fila.

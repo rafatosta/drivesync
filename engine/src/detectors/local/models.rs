@@ -70,6 +70,9 @@ impl LocalDetectorFailure {
             ResourceLimit => ("local observation resource limit", true),
             ModelInvalid => ("invalid local metadata", false),
             Cancelled => ("local observation cancelled", false),
+            InvalidState => ("invalid local detector state", false),
+            WatcherUnavailable => ("local watcher unavailable", true),
+            NotificationFailed => ("local event delivery failed", true),
             _ => ("local detector failure", false),
         };
         Self {
@@ -136,11 +139,109 @@ impl Default for LocalCancellation {
 /// Stable internal collection boundary independent of LocalFile's field layout.
 #[allow(
     dead_code,
-    reason = "The internal port is retained for future detector composition"
+    reason = "The scope getter is retained for internal composition; production currently uses collect"
 )]
 pub(crate) trait LocalMetadataCollector: Send + Sync {
     /// Returns the original configuration without accessing the filesystem.
     fn scope(&self) -> LocalDetectorScope;
     /// Observes one entry without following symlinks or reading file contents.
     fn collect(&self, request: LocalMetadataRequest) -> LocalDetectorResult<LocalMetadataResult>;
+}
+
+/// Lifecycle of the local event producer, independent of remote observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalDetectorState {
+    Stopped,
+    Starting,
+    Running,
+    Degraded,
+    Stopping,
+    Failed,
+}
+/// Current activity; status reads this snapshot without filesystem access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalActivity {
+    Inactive,
+    Watching,
+    Scanning,
+    Recovering,
+    Unavailable,
+}
+/// Start intent, without any promise of reconstructing the interval while stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalStartMode {
+    Initial,
+    Resume,
+}
+/// Reason for ending observation, not permission to discard accepted events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalStopReason {
+    UserRequest,
+    Shutdown,
+    Unavailable,
+}
+/// Bounded hint coalescing policy. None/zero debounce adds no intentional wait.
+#[derive(Debug, Clone)]
+pub struct LocalDetectorSettings {
+    pub debounce_ms: Option<u64>,
+    pub max_pending_paths: u32,
+}
+impl Default for LocalDetectorSettings {
+    fn default() -> Self {
+        Self {
+            debounce_ms: None,
+            max_pending_paths: 4096,
+        }
+    }
+}
+/// Single-event acceptance boundary; Ok means the receiver assumed durable responsibility.
+/// Do not reenter blocking methods of the same detector from this callback.
+pub trait LocalNotificationSink: Send + Sync {
+    fn notify(&self, file: crate::models::File) -> LocalDetectorResult<()>;
+}
+/// Public local construction; physical collector composition remains private.
+pub struct LocalDetectorCreateRequest {
+    pub scope: LocalDetectorScope,
+    pub notifications: Arc<dyn LocalNotificationSink>,
+    pub settings: LocalDetectorSettings,
+}
+/// Created producer, with no watcher or disk traversal started.
+pub struct LocalDetectorCreateResult {
+    pub detector: super::runtime::LocalDetector,
+    pub state: LocalDetectorState,
+}
+/// Start request timestamp is caller context, not a replacement for observation time.
+pub struct LocalStartRequest {
+    pub mode: LocalStartMode,
+    pub requested_at: crate::models::Timestamp,
+}
+/// Accepted start; coverage verification may still be running.
+#[derive(Debug)]
+pub struct LocalStartResult {
+    pub state: LocalDetectorState,
+    pub scheduled_scan: bool,
+}
+/// Stop request; no event acknowledgement or queue deletion is performed.
+pub struct LocalStopRequest {
+    pub reason: LocalStopReason,
+    pub requested_at: crate::models::Timestamp,
+}
+/// Successful stop guarantees zero in-flight callbacks from the stopped generation.
+#[derive(Debug)]
+pub struct LocalStopResult {
+    pub state: LocalDetectorState,
+    pub in_flight: u32,
+}
+/// Snapshot query without I/O.
+pub struct LocalStatusRequest {}
+/// Operational snapshot. Counters describe the active observation round only.
+#[derive(Debug, Clone)]
+pub struct LocalStatusResult {
+    pub state: LocalDetectorState,
+    pub activity: LocalActivity,
+    pub observed_in_current_round: u64,
+    pub emitted_in_current_round: u64,
+    pub last_observation_at: Option<crate::models::Timestamp>,
+    pub last_coverage: Option<LocalScanCoverage>,
+    pub last_error: Option<LocalDetectorError>,
 }

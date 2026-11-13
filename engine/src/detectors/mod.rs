@@ -1,7 +1,7 @@
-//! Public access to the implemented local metadata collector.
+//! Public local metadata collection and native event production.
 //!
 //! This namespace does not yet provide the unified detector, event queue,
-//! watcher lifecycle or remote observation API. Construction and collection
+//! or remote observation API. Collector construction and collection
 //! perform synchronous filesystem I/O and should run off the UI thread.
 //!
 //! ```
@@ -43,4 +43,11 @@ pub use local::{
     FilesystemMetadataCollector as LocalMetadataCollector, LocalCancellation, LocalDetectorError,
     LocalDetectorFailure, LocalDetectorResult, LocalDetectorScope, LocalMetadataRequest,
     LocalMetadataResult, LocalScanCoverage, LocalScanResult,
+};
+
+pub use local::{
+    LocalActivity, LocalDetector, LocalDetectorCreateRequest, LocalDetectorCreateResult,
+    LocalDetectorSettings, LocalDetectorState, LocalNotificationSink, LocalStartMode,
+    LocalStartRequest, LocalStartResult, LocalStatusRequest, LocalStatusResult, LocalStopReason,
+    LocalStopRequest, LocalStopResult,
 };

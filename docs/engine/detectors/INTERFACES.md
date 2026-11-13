@@ -292,4 +292,9 @@ LocalFile, LocalRelativePath, AccountId e SyncId continuam em `drivesync_engine:
 
 Não são públicos `detectors::local`, seus módulos collector/filesystem/metadata/models, a trait interna de composição, MetadataReader, os descritores, hooks de corrida ou injeção de syscalls. O escopo externo escolhe somente raiz e requisições da coleta real; não injeta backend nem eventos.
 
-Não existem Detector::new/start/pause/resume/stop/request_scan/status/take_events/acknowledge/release_events públicos nesta entrega. Isso evita expor métodos que apenas falham ou tipos remotos fictícios. Não há integração nova com a aplicação. A interface futura unificada continua sendo o contrato das seções anteriores, sem concessão de start somente local.
+Não existem Detector::new/start/pause/resume/stop/request_scan/status/take_events/acknowledge/release_events públicos nesta entrega. Isso evita expor métodos que apenas falham ou tipos remotos fictícios. Não há integração nova com a aplicação. A interface futura unificada continua sendo o contrato das seções anteriores, com controle local autorizado posteriormente, descrito abaixo.
+
+
+## 9. Controle local público autorizado posteriormente
+
+Além do coletor da seção 8, o módulo detectors reexporta LocalDetector e os tipos LocalDetectorCreateRequest/Result, LocalDetectorSettings, LocalDetectorState, LocalActivity, LocalNotificationSink, LocalStartMode/Request/Result, LocalStopReason/Request/Result e LocalStatusRequest/Result. Contratos, concorrência e limites estão em [Local § 12](local/INTERFACES.md#12-controle-local-compilado). Não se trata da fachada unificada Detector: não oferece fila, polling remoto ou integração automática com Orquestrador. Os submódulos e o backend nativo permanecem privados.

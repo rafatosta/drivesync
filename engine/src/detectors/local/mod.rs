@@ -1,9 +1,11 @@
-//! Root-bound local metadata collection, independent of event delivery and watchers.
+//! Root-bound metadata collection and native local event production.
 
 mod collector;
 mod filesystem;
 mod metadata;
 mod models;
+mod runtime;
+mod watcher;
 
 pub use collector::FilesystemMetadataCollector;
 pub use models::{
@@ -14,3 +16,10 @@ pub use models::{
 
 #[cfg(test)]
 mod tests;
+
+pub use models::{
+    LocalActivity, LocalDetectorCreateRequest, LocalDetectorCreateResult, LocalDetectorSettings,
+    LocalDetectorState, LocalNotificationSink, LocalStartMode, LocalStartRequest, LocalStartResult,
+    LocalStatusRequest, LocalStatusResult, LocalStopReason, LocalStopRequest, LocalStopResult,
+};
+pub use runtime::LocalDetector;

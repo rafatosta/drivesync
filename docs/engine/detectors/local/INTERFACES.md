@@ -4,7 +4,7 @@
 
 Contrato de composição **interno de `detectors/local/`**. A trait e os módulos de implementação permanecem privados; a coleta concreta também está disponível pela API pública do módulo pai, conforme [Detector § 8](../INTERFACES.md#8-api-pública-compilada--coleta-local). O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
 
-As portas scope/collect, cancelamento e o adaptador físico da seção 11 estão implementados. Os cinco métodos de controle e os exemplos de eventos continuam esboços contratuais, sem fachada ou watcher compilados. A coleta é testada isoladamente, sem sink/Storage/RemoteFile.
+As portas scope/collect, cancelamento e o adaptador físico da seção 11 estão implementados. `LocalDetector::new/start/stop/status` e o watcher nativo estão compilados; `scan_once` permanece contratual. Storage e observação remota não estão implementados nesta etapa.
 
 ## 2. Tipos internos e modelo compartilhado
 
@@ -41,7 +41,7 @@ pub(super) struct LocalDetectorFailure {
 }
 ```
 
-`AccountId`, `SyncId` e `Timestamp` pertencem a `crate::models` no código atual. Os contratos operacionais reutilizam os tipos existentes, sem identidades paralelas. File e seus eventos ainda dependem do envelope compartilhado.
+`AccountId`, `SyncId` e `Timestamp` pertencem a `crate::models` no código atual. Os contratos operacionais reutilizam os tipos existentes, sem identidades paralelas. File e seus eventos usam o envelope compartilhado de Models, com payload remoto ainda não habitável.
 
 ### Aviso individual
 
@@ -85,7 +85,7 @@ pub(super) trait LocalMetadataCollector: Send + Sync {
 
 O coletor implementa internamente as chamadas de sistema e **pode delegar a funções auxiliares** a aquisição de grupos mais caros ou específicos (ACLs, xattrs, flags, dados de symlink). O código do Detector Local não conhece nem enumera esses grupos e não constrói `LocalFile` por struct literal. Sua única função é solicitar a coleta e transportar **o objeto devolvido sem projetar/reduzir seus campos**.
 
-**Separação:** a definição `LocalFile` pertence a `models/`; a coleta com I/O pertence ao adaptador local; watcher, varredura e avisos pertencem ao Detector Local. Nenhuma modificação de `LocalFile` deve exigir mudança na lógica do Detector. A porta de coleta e o adaptador físico estão implementados; a fachada de controle ainda não.
+**Separação:** a definição `LocalFile` pertence a `models/`; a coleta com I/O pertence ao adaptador local; watcher, varredura e avisos pertencem ao Detector Local. Nenhuma modificação de `LocalFile` deve exigir mudança na lógica do Detector. A porta de coleta e o adaptador físico estão implementados; o controle local também está implementado conforme a seção 12.
 
 ## 3. Objetos internos de requisição e resultado
 
@@ -370,3 +370,24 @@ A fronteira de syscalls é privada ao adaptador, permitindo injetar falhas de st
 
 
 Para uma entrada que é diretório, collect=Complete descreve somente seus metadados selecionados; não percorre filhos nem comprova cobertura recursiva. Essa agregação pertence à futura varredura do Detector. A leitura pode atualizar atime conforme o filesystem, especialmente em symlink; não altera conteúdo, nomes, permissões ou links, e atime não compõe a evidência de estabilidade.
+
+
+## 12. Controle local compilado
+
+A solicitação posterior do usuário autoriza disponibilizar `LocalDetector::new/start/stop/status` no módulo público `detectors`. Isso substitui a restrição da publicação anterior apenas à coleta; a fachada unificada `Detector` continua futura.
+
+`new(LocalDetectorCreateRequest) -> LocalDetectorResult<LocalDetectorCreateResult>` valida em memória e retorna `Stopped`, sem I/O. O request público contém `scope`, `notifications: Arc<dyn LocalNotificationSink>` e `settings`; o coletor físico é composto privadamente no primeiro start, sem expor a trait ou permitir injeção de syscalls. Diferentemente do esboço interno anterior, não se exige coletor injetado do consumidor público.
+
+`start(LocalStartRequest) -> LocalDetectorResult<LocalStartResult>` instala captura da raiz e inicia worker e verificação de cobertura das subpastas. Retorna `Starting/scheduled_scan=true` após aceitar a captura, sem aguardar toda a descoberta. Repetições em Starting/Running/Degraded não duplicam workers; Stopping/Failed rejeitam com InvalidState. Failed requer stop antes de tentar novamente. Initial e Resume iniciam verificação atual, sem reconstruir histórico offline; requested_at é contexto do chamador, não horário da observação.
+
+`stop(LocalStopRequest) -> LocalDetectorResult<LocalStopResult>` sinaliza cancelamento e aguarda worker e callback em curso. O sucesso retorna Stopped/in_flight=0 e impede novas emissões daquela geração. É idempotente, preserva eventos aceitos pelo sink e descarta trabalho volátil ainda não aceito. Drop encerra a captura. Não chamar start/stop do próprio callback; status pode ser consultado sem aguardar o sink.
+
+`status(LocalStatusRequest {}) -> LocalDetectorResult<LocalStatusResult>` copia somente estado em memória, atividade, contadores da rodada atual, última observação, cobertura e erro. Não acessa filesystem, sink, fila ou serviços externos. Os contadores zeram ao encerrar uma rodada/parar; não são histórico acumulado.
+
+O backend privado usa inotify e eventfd. Mudanças disparam coleta de metadados, sem polling de conteúdo, hashing ou uploads. Descoberta recursiva instala watches apenas em diretórios; não segue symlinks e ignora `.drivesync`. Descritores e guards dos ancestrais preservam a raiz original, inclusive entre stop/start. Substituição da raiz/ancestral gera ScopeUnavailable e falha; não vincula silenciosamente outra pasta.
+
+Cada aviso transporta o mesmo `File` compartilhado. Sem evidência suficiente para classificar a operação, usa RecheckRequired, inclusive em remoções. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura não é Scanner nem reconciliação. `scan_once` manual não faz parte desta implementação.
+
+Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. Debounce é opcional e usa prazo fixo da primeira alteração, sem adiar indefinidamente com novas alterações. A espera cancelável não produz varreduras periódicas.
+
+O sink recebe um File por chamada; Ok transfere responsabilidade de persistência ao consumidor. Erro retryable retém o mesmo evento, ID e horário para nova tentativa na próxima atividade relevante, sem loop ocupado; erro permanente torna o produtor Failed. Não existe fila durável nesta entrega. Os testes usam sinks em memória e não comprovam persistência após crash. O Orquestrador ainda não está conectado e o remoto permanece fora do escopo.
