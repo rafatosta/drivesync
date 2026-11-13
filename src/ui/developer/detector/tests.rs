@@ -37,9 +37,7 @@ fn texts(widget: &gtk::Widget) -> String {
     output
 }
 fn capture(window: &adw::Window, name: &str) {
-    let Ok(output) = std::env::var("DRIVESYNC_UI_PREVIEW_DIR") else {
-        return;
-    };
+    let output = std::env::var("DRIVESYNC_UI_PREVIEW_DIR").ok();
     let snapshot = gtk::Snapshot::new();
     gtk::WidgetPaintable::new(Some(window)).snapshot(
         &snapshot,
@@ -57,13 +55,15 @@ fn capture(window: &adw::Window, name: &str) {
         window.snapshot_child(&child, &snapshot);
         snapshot.to_node().expect("native detector content renders")
     });
-    std::fs::create_dir_all(&output).unwrap();
-    window
-        .renderer()
-        .unwrap()
-        .render_texture(&node, None)
-        .save_to_png(std::path::Path::new(&output).join(format!("{name}.png")))
-        .unwrap();
+    if let Some(output) = output {
+        std::fs::create_dir_all(&output).unwrap();
+        window
+            .renderer()
+            .unwrap()
+            .render_texture(&node, None)
+            .save_to_png(std::path::Path::new(&output).join(format!("{name}.png")))
+            .unwrap();
+    }
 }
 #[test]
 #[ignore = "requires an isolated display and XDG profile"]
@@ -151,7 +151,11 @@ fn live_account_selection_and_detector_layout() {
     window.set_default_size(360, 640);
     settle();
     capture(&window, "detector-local-narrow");
-    assert!(page.width() <= 360, "page fits narrow window");
+    assert!(
+        page.width() <= 360,
+        "page fits narrow window: actual width {}",
+        page.width()
+    );
     let first = context
         .detectors
         .borrow()
