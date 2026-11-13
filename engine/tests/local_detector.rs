@@ -127,18 +127,27 @@ fn starts_real_capture_and_delivers_create_edit_rename_remove_as_shared_events()
     ready(&rx);
     assert_eq!(status(&detector).state, LocalDetectorState::Running);
     assert!(!start(&detector).scheduled_scan);
-    fs::write(tree.0.join("file"), b"one").unwrap();
-    let created = receive(&rx, |f| path(f, b"file") && size(f, 3));
+    let file = fs::File::create(tree.0.join("file")).unwrap();
+    let created = receive(&rx, |f| path(f, b"file") && f.data.is_some());
+    drop(file);
     assert_eq!(created.sync_id, tree.scope().sync_id);
-    assert_eq!(created.event.kind, FileEventKind::RecheckRequired);
+    assert_eq!(created.event.kind, FileEventKind::Created);
     fs::write(tree.0.join("file"), b"four").unwrap();
     let edited = receive(&rx, |f| path(f, b"file") && size(f, 4));
     assert_ne!(created.id, edited.id);
+    assert_eq!(edited.event.kind, FileEventKind::Modified);
     fs::rename(tree.0.join("file"), tree.0.join("renamed")).unwrap();
-    receive(&rx, |f| path(f, b"renamed") && size(f, 4));
+    let renamed = receive(&rx, |f| path(f, b"renamed") && size(f, 4));
+    assert_eq!(renamed.event.kind, FileEventKind::Renamed);
+    assert_eq!(
+        renamed.event.previous,
+        Some(drivesync_engine::models::FileLocation::Local(
+            LocalRelativePath::new(b"file".to_vec()).unwrap()
+        ))
+    );
     fs::remove_file(tree.0.join("renamed")).unwrap();
     let removed = receive(&rx, |f| path(f, b"renamed") && f.data.is_none());
-    assert_eq!(removed.event.kind, FileEventKind::RecheckRequired);
+    assert_eq!(removed.event.kind, FileEventKind::Deleted);
     assert_eq!(stop(&detector).in_flight, 0);
     assert_eq!(stop(&detector).state, LocalDetectorState::Stopped);
     while rx.try_recv().is_ok() {}
@@ -410,9 +419,10 @@ fn native_events_preserve_non_utf8_names() {
     start(&detector);
     ready(&rx);
     let name = b"raw-\xff";
-    fs::write(tree.0.join(std::ffi::OsStr::from_bytes(name)), b"bytes").unwrap();
-    let event = receive(&rx, |f| path(f, name) && size(f, 5));
-    assert_eq!(event.event.kind, FileEventKind::RecheckRequired);
+    let file = fs::File::create(tree.0.join(std::ffi::OsStr::from_bytes(name))).unwrap();
+    let event = receive(&rx, |f| path(f, name) && f.data.is_some());
+    drop(file);
+    assert_eq!(event.event.kind, FileEventKind::Created);
     stop(&detector);
 }
 
@@ -468,4 +478,61 @@ fn permanent_sink_failure_is_observable_and_stoppable() {
         Some(LocalDetectorError::NotificationFailed)
     );
     assert_eq!(stop(&detector).in_flight, 0);
+}
+
+#[test]
+fn classifies_cross_directory_move_and_atomic_replacement_without_global_rechecks() {
+    let tree = Tree::new();
+    fs::create_dir(tree.0.join("sub")).unwrap();
+    fs::write(tree.0.join("original"), b"before").unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    fs::rename(tree.0.join("original"), tree.0.join("sub/moved")).unwrap();
+    let moved = receive(&rx, |f| path(f, b"sub/moved"));
+    assert_eq!(moved.event.kind, FileEventKind::Moved);
+    fs::write(tree.0.join("temporary"), b"replacement").unwrap();
+    receive(&rx, |f| path(f, b"temporary") && f.data.is_some());
+    fs::rename(tree.0.join("temporary"), tree.0.join("sub/moved")).unwrap();
+    let saved = receive(&rx, |f| path(f, b"sub/moved") && size(f, 11));
+    assert_eq!(saved.event.kind, FileEventKind::Modified);
+    assert_eq!(saved.event.previous, None);
+    wait_state(&detector, LocalDetectorState::Running);
+    assert_eq!(status(&detector).last_error, None);
+    stop(&detector);
+    assert!(!rx.try_iter().any(|f| f.scope == FileScope::WholeSync));
+}
+
+#[test]
+fn metadata_changes_and_moves_outside_scope_do_not_invent_deletions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let outside = Tree::new();
+    fs::write(tree.0.join("file"), b"content").unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    fs::set_permissions(tree.0.join("file"), fs::Permissions::from_mode(0o400)).unwrap();
+    let metadata = receive(&rx, |f| path(f, b"file"));
+    assert_eq!(metadata.event.kind, FileEventKind::MetadataChanged);
+    fs::rename(tree.0.join("file"), outside.0.join("file")).unwrap();
+    let moved_out = receive(&rx, |f| path(f, b"file") && f.data.is_none());
+    assert_eq!(moved_out.event.kind, FileEventKind::RecheckRequired);
+    wait_state(&detector, LocalDetectorState::Running);
+    stop(&detector);
+}
+
+#[test]
+fn directory_rename_rebinds_capture_to_the_new_location() {
+    let tree = Tree::new();
+    fs::create_dir(tree.0.join("before")).unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    fs::rename(tree.0.join("before"), tree.0.join("after")).unwrap();
+    let renamed = receive(&rx, |f| path(f, b"after") && f.data.is_some());
+    assert_eq!(renamed.event.kind, FileEventKind::Renamed);
+    fs::write(tree.0.join("after/file"), b"after").unwrap();
+    receive(&rx, |f| path(f, b"after/file") && f.data.is_some());
+    stop(&detector);
 }

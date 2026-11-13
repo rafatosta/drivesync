@@ -1,5 +1,6 @@
 //! Root-bound metadata collection and native local event production.
 
+mod changes;
 mod collector;
 mod filesystem;
 mod metadata;

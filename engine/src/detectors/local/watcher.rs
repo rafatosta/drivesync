@@ -1,5 +1,5 @@
 //! Private Linux notifications. Raw hints never escape to the orchestrator.
-use super::{collector::FilesystemMetadataCollector, filesystem, models::*};
+use super::{changes::Hint, collector::FilesystemMetadataCollector, filesystem, models::*};
 use crate::models::LocalRelativePath;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -73,14 +73,14 @@ struct Node {
 /// Kernel hints, bounded by a native read and later coalesced before constructing File.
 #[derive(Default)]
 pub(super) struct Hints {
-    pub paths: BTreeSet<LocalRelativePath>,
+    pub events: Vec<Hint>,
     pub structural: bool,
     pub recheck: bool,
     pub overflow: bool,
 }
 impl Hints {
     pub(super) fn any(&self) -> bool {
-        !self.paths.is_empty() || self.structural || self.recheck
+        !self.events.is_empty() || self.structural || self.recheck
     }
 }
 /// Owned kernel watches, directory anchors and original root identity.
@@ -90,6 +90,7 @@ pub(super) struct Watches {
     root: Arc<FilesystemMetadataCollector>,
     directories: usize,
     path_bytes: usize,
+    pub entries: BTreeSet<LocalRelativePath>,
 }
 impl Watches {
     /// Captures root and ancestry before asynchronous recursive coverage verification.
@@ -110,6 +111,7 @@ impl Watches {
             root,
             directories: 0,
             path_bytes: 0,
+            entries: BTreeSet::new(),
         };
         let chain = this.root.root_chain(cancel)?;
         for (parent, name) in chain.ancestor_guards() {
@@ -222,6 +224,7 @@ impl Watches {
             None,
         ));
         let mut entries = 0;
+        let mut entry_bytes = 0usize;
         while let Some((directory, path)) = pending.pop_front() {
             cancel.check()?;
             self.validate_directory(&directory, path.as_ref(), cancel)?;
@@ -244,13 +247,6 @@ impl Watches {
                 let child = filesystem::open_at(&directory, &name_c, false)
                     .map_err(|e| filesystem::failure(e, false))?;
                 cancel.check()?;
-                if !child
-                    .metadata()
-                    .map_err(|e| filesystem::failure(e, false))?
-                    .is_dir()
-                {
-                    continue;
-                }
                 let mut bytes = path
                     .as_ref()
                     .map_or_else(Vec::new, |p: &LocalRelativePath| p.as_bytes().to_vec());
@@ -258,13 +254,25 @@ impl Watches {
                     bytes.push(b'/');
                 }
                 bytes.extend_from_slice(name.as_bytes());
+                let relative = LocalRelativePath::new(bytes.clone())
+                    .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::InvalidScope))?;
+                self.entries.insert(relative.clone());
+                entry_bytes = entry_bytes.saturating_add(relative.as_bytes().len());
+                if entry_bytes > limits.path_bytes {
+                    return Err(LocalDetectorFailure::new(LocalDetectorError::ResourceLimit));
+                }
+                if !child
+                    .metadata()
+                    .map_err(|e| filesystem::failure(e, false))?
+                    .is_dir()
+                {
+                    continue;
+                }
                 if self.directories >= limits.directories
                     || self.path_bytes.saturating_add(bytes.len()) > limits.path_bytes
                 {
                     return Err(LocalDetectorFailure::new(LocalDetectorError::ResourceLimit));
                 }
-                let relative = LocalRelativePath::new(bytes)
-                    .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::InvalidScope))?;
                 self.validate_directory(&child, Some(&relative), cancel)?;
                 self.add(&child, Some(relative.clone()), true, None, cancel)?;
                 pending.push_back((child, Some(relative)));
@@ -391,22 +399,30 @@ impl Watches {
             if path.is_empty() {
                 hints.recheck = true;
             } else {
-                hints
-                    .paths
-                    .insert(LocalRelativePath::new(path).map_err(|_| {
-                        LocalDetectorFailure::new(LocalDetectorError::InvalidScope)
-                    })?);
+                hints.events.push(Hint {
+                    path: LocalRelativePath::new(path)
+                        .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::InvalidScope))?,
+                    mask: event.mask,
+                    cookie: event.cookie,
+                });
             }
-            if event.mask
-                & (libc::IN_CREATE
-                    | libc::IN_DELETE
-                    | libc::IN_MOVED_FROM
-                    | libc::IN_MOVED_TO
-                    | libc::IN_DELETE_SELF
-                    | libc::IN_MOVE_SELF
-                    | libc::IN_UNMOUNT
-                    | libc::IN_IGNORED)
-                != 0
+            if ((event.mask & libc::IN_ISDIR != 0)
+                && event.mask
+                    & (libc::IN_CREATE
+                        | libc::IN_DELETE
+                        | libc::IN_MOVED_FROM
+                        | libc::IN_MOVED_TO
+                        | libc::IN_DELETE_SELF
+                        | libc::IN_MOVE_SELF
+                        | libc::IN_UNMOUNT
+                        | libc::IN_IGNORED)
+                    != 0)
+                || event.mask
+                    & (libc::IN_DELETE_SELF
+                        | libc::IN_MOVE_SELF
+                        | libc::IN_UNMOUNT
+                        | libc::IN_IGNORED)
+                    != 0
                 || (event.mask & libc::IN_ISDIR != 0 && event.mask & libc::IN_ATTRIB != 0)
             {
                 hints.structural = true;

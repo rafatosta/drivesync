@@ -53,3 +53,5 @@ O aplicativo ou outra crate pode usar `drivesync_engine::detectors::LocalMetadat
 
 
 Controle público e limites operacionais: [INTERFACES § 12](INTERFACES.md#12-controle-local-compilado). O consumidor recebe File sem conhecer o mecanismo de captura; a integração com Orquestrador, Storage e remoto permanece futura.
+
+A etapa de classificação agora produz os tipos reais de criação, edição, metadados, remoção e movimentos correlacionados. Salvamento por substituição atômica de um destino conhecido é Modified; ambiguidades permanecem RecheckRequired. Ver [INTERFACES § 13](INTERFACES.md#13-classificação-compilada-dos-eventos-locais), que substitui a limitação anterior de emitir apenas rechecks. A captura não reconstrói watches por alterações de arquivos comuns.
