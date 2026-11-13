@@ -131,7 +131,7 @@ fn local_envelope_rejects_missing_evidence_wrong_scope_or_claimed_complete_parti
     assert_eq!(file.validate(), Ok(()));
 }
 #[test]
-fn unreviewed_remote_data_is_not_fabricated_to_support_local_events() {
+fn remote_locations_cannot_be_inserted_into_local_scopes() {
     let mut file = event(FileEventKind::RecheckRequired);
     file.event.current = Some(FileLocation::Remote {
         reference: RemoteFileRef {
@@ -142,8 +142,8 @@ fn unreviewed_remote_data_is_not_fabricated_to_support_local_events() {
         name: None,
     });
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
-    // The generic remote variant exists, but Infallible supplies no fake value.
-    fn local_only(data: FileData) {
+    // Consumers can still select an uninhabited remote parameter for local-only data.
+    fn local_only(data: FileData<std::convert::Infallible>) {
         match data {
             FileData::Local(_) => {}
             FileData::Remote(impossible) => match impossible {},

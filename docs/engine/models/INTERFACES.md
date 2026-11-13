@@ -698,3 +698,9 @@ A normalização local acrescenta `FileEvent.uncertainty: Option<ObservationUnce
 
 
 Persistência local: os valores concretos locais e de contexto oferecem serde Serialize/Deserialize sem I/O. LocalRelativePath deserializa pela mesma validação lexical de new, e os structs locais/contextuais recusam campos desconhecidos. O codec versionado de File pertence ao Detector Storage; não foram adicionadas serialização ou estruturas fictícias para o payload remoto genérico.
+
+## 9. Perfil remoto selecionado e compilado
+
+A implementação do Detector Remoto selecionou o perfil em [remote/IMPLEMENTATION.md](../detectors/remote/IMPLEMENTATION.md). `RemoteFile`, `ProviderFileData` e `RemoteEntryKind` são dados puros em `engine/src/models/remote.rs`; Models não importa GoogleFile nem executa I/O. A seleção substitui a pendência remota das etapas locais anteriores, sem implementar o catálogo completo da seção 3.
+
+`File` e `FileData` preservam o parâmetro genérico, agora com `RemoteFile` como padrão. `File::validate()` verifica as duas origens, incluindo conta/recurso/localização e payload versionado/limitado; consumidores exclusivamente locais podem continuar usando explicitamente `Infallible`. O adaptador Google retém somente a projeção aprovada e preserva ausência com `NotCollected`, inclusive tamanho e hashes ausentes de documentos nativos.

@@ -1,4 +1,4 @@
-//! Local capture backed by a durable queue. Remote observation remains unimplemented.
+//! Local capture backed by a durable queue; remote production has its own scoped backend.
 use super::{storage::Store, *};
 use crate::models::File;
 use std::{path::PathBuf, sync::Arc};

@@ -100,3 +100,9 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 | REM-S-05 | `start()` depois de período sem observação | Não executa reconciliação/Scanner por iniciativa própria; decisão é do Orquestrador |
 
 **Estado:** cenários documentais, ainda não executados.
+
+## Evidência da implementação
+
+Os testes em `engine/src/detectors/remote/` exercitam o produtor e scheduler reais com portas falsas e SQLite temporário: paginação da árvore/Changes, cursor anterior à árvore, emissão individual, falhas de sink/checkpoint e replay idempotente, expiração/Recovery, campos parciais e filtragem, remoção/perda de acesso conservadoras, pertencimento por ancestralidade, horários e Retry-After, cancelamento de worker e poll explícito, retomada, leases/ack, corrupção e isolamento por conta/raiz. Models testa validação pura e associação do envelope; Orchestrator rejeita anexar uma origem de outra conta antes de criar armazenamento.
+
+O fixture gráfico do aplicativo usa duas contas sintéticas e falha de autorização real de Accounts, sem credenciais, para verificar a apresentação de erros/horários, troca de abas e pause/play independente. A integração com a conta de testes autorizada foi executada separadamente e está registrada em [IMPLEMENTATION.md](IMPLEMENTATION.md).

@@ -1,4 +1,5 @@
 //! Application connection lifecycle, independent of GTK and synchronization.
+mod detector;
 mod models;
 mod remote_folders;
 mod sign_in;

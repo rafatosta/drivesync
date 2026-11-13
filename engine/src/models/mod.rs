@@ -1,7 +1,7 @@
 //! Shared identities and pure observation models. This module performs no I/O.
 //!
 //! Local metadata records evidence, never authorization to synchronize or delete.
-//! File envelopes and remote observation models remain a separate implementation.
+//! Local and remote envelopes carry evidence without authorization to synchronize.
 use serde::{Deserialize, Serialize};
 /// Stable application account identity, independent of presentation fields.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -78,6 +78,8 @@ pub type ModelResult<T> = Result<T, ModelError>;
 
 mod local;
 pub use local::*;
+mod remote;
+pub use remote::*;
 mod events;
 pub use events::*;
 

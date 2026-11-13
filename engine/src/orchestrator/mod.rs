@@ -1,9 +1,9 @@
 //! Minimal composition of the connection API and one local detector.
 //!
-//! This is not the full synchronization coordinator: no inventory, scanner,
-//! remote detector or analysis is created. Persistent observation owns a local
-//! queue and an explicit diagnostic consumer. The caller supplies an
-//! existing connection handle and a local scope with its notification sink.
+//! This is not the full synchronization coordinator: no Inventory, Scanner or
+//! Analyzer is created. Local capture and optional remote capture have independent
+//! durable queues and explicit terminal diagnostic consumers. Source health remains
+//! separate; connection services are shared without exposing credentials.
 mod delivery;
 mod diagnostics;
 use crate::{detectors::*, Engine};
@@ -22,6 +22,8 @@ pub struct Orchestrator {
     connector: Engine,
     detector: Capture,
     delivery_worker: Option<DiagnosticDelivery>,
+    remote: Option<Arc<RemoteDetector>>,
+    remote_delivery_worker: Option<DiagnosticDelivery>,
     history: Arc<Mutex<History>>,
 }
 enum Capture {
@@ -47,6 +49,8 @@ impl Orchestrator {
             connector,
             detector: Capture::Local(detector),
             delivery_worker: None,
+            remote: None,
+            remote_delivery_worker: None,
             history,
         })
     }
@@ -105,8 +109,56 @@ impl Orchestrator {
             connector,
             detector: Capture::Persistent(detector),
             delivery_worker,
+            remote: None,
+            remote_delivery_worker: None,
             history,
         })
+    }
+    /// Attaches a stopped remote producer for Developer diagnostics. No HTTP runs here.
+    /// Queues stay separate by origin; this is not the full synchronization coordinator.
+    pub fn attach_remote(&mut self, request: RemoteDetectorCreateRequest) -> RemoteResult<()> {
+        if self.remote.is_some() {
+            return Err(RemoteFailure::new(RemoteError::InvalidState));
+        }
+        if request.scope.account_id
+            != self
+                .history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .account
+        {
+            return Err(RemoteFailure::new(RemoteError::InvalidScope));
+        }
+        let remote = Arc::new(RemoteDetector::new(request)?);
+        if remote.queue_is_new() {
+            remote
+                .resume()
+                .map_err(|_| RemoteFailure::new(RemoteError::SinkUnavailable))?;
+        }
+        let delivery = DiagnosticDelivery::new(remote.clone())
+            .map_err(|_| RemoteFailure::new(RemoteError::SinkUnavailable))?;
+        self.remote = Some(remote);
+        self.remote_delivery_worker = Some(delivery);
+        Ok(())
+    }
+    pub fn remote_diagnostics(&self) -> Option<RemoteDiagnostics> {
+        self.remote.as_ref().map(|remote| remote.diagnostics())
+    }
+    pub fn pause_remote_delivery(&self) -> QueueResult<()> {
+        self.remote
+            .as_ref()
+            .ok_or_else(|| QueueFailure::new(QueueError::InvalidRequest))?
+            .pause()
+    }
+    pub fn resume_remote_delivery(&self) -> QueueResult<()> {
+        self.remote
+            .as_ref()
+            .ok_or_else(|| QueueFailure::new(QueueError::InvalidRequest))?
+            .resume()?;
+        if let Some(worker) = &self.remote_delivery_worker {
+            worker.wake();
+        }
+        Ok(())
     }
     /// Pauses only new delivery reservations. Existing accepted events remain durable.
     pub fn pause_delivery(&self) -> QueueResult<()> {
@@ -155,20 +207,28 @@ impl Orchestrator {
         &self.connector
     }
 
-    /// Starts local capture; repeated operational starts are idempotent.
+    /// Starts the configured producers; local operational starts remain idempotent.
     /// This synchronous setup must run off the UI thread. Returns the actual
     /// detector result; acceptance does not mean coverage verification finished.
     pub fn start(&self, request: LocalStartRequest) -> LocalDetectorResult<LocalStartResult> {
+        if let Some(remote) = &self.remote {
+            let _ = remote.start(RemoteStartRequest {
+                mode: RemotePollMode::Incremental,
+            });
+        }
         match &self.detector {
             Capture::Local(d) => d.start(request),
             Capture::Persistent(d) => d.start(request),
         }
     }
 
-    /// Stops capture and waits for in-flight callbacks; run off the UI thread.
+    /// Stops both configured producers and waits for in-flight callbacks; run off the UI thread.
     /// Accepted sink events and the connector are preserved. Do not call this
     /// from the detector's own notification callback.
     pub fn stop(&self, request: LocalStopRequest) -> LocalDetectorResult<LocalStopResult> {
+        if let Some(remote) = &self.remote {
+            let _ = remote.stop(RemoteStopRequest {});
+        }
         match &self.detector {
             Capture::Local(d) => d.stop(request),
             Capture::Persistent(d) => d.stop(request),

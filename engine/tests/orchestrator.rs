@@ -318,3 +318,26 @@ async fn persistent_diagnostic_delivery_pause_survives_restart_and_resumes_pendi
     assert_eq!(reopened.diagnostics().events_detected, 3);
     stop(&reopened);
 }
+
+#[tokio::test]
+async fn remote_attachment_cannot_cross_the_local_sessions_account() {
+    let tree = Tree::new();
+    let connector = tree.connector().await;
+    let (request, _) = tree.request(tree.0.join("local"));
+    let mut orchestrator = Orchestrator::new(connector.clone(), request).unwrap();
+    let error = orchestrator
+        .attach_remote(RemoteDetectorCreateRequest {
+            connector,
+            scope: RemoteDetectorScope {
+                account_id: AccountId("another-account".into()),
+                sync_id: SyncId("remote".into()),
+                remote_root_id: "folder".into(),
+            },
+            settings: RemoteDetectorSettings::default(),
+            data_directory: tree.0.join("remote-queue"),
+        })
+        .unwrap_err();
+    assert_eq!(error.kind, RemoteError::InvalidScope);
+    assert!(orchestrator.remote_diagnostics().is_none());
+    assert!(!tree.0.join("remote-queue").exists());
+}

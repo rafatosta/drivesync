@@ -1,4 +1,4 @@
-//! Versioned, local-only transport codec; never reduces the LocalFile payload.
+//! Versioned transport codec preserving complete local and remote metadata.
 use super::models::*;
 use crate::models::*;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ struct Wire {
 #[derive(Serialize, Deserialize)]
 enum Data {
     Local(LocalFile),
+    Remote(RemoteFile),
 }
 pub(super) fn encode(file: &File) -> QueueResult<Vec<u8>> {
     file.validate()
@@ -33,7 +34,7 @@ pub(super) fn encode(file: &File) -> QueueResult<Vec<u8>> {
         data: match &file.data {
             Some(FileData::Local(data)) => Some(Data::Local(data.clone())),
             None => None,
-            Some(FileData::Remote(value)) => match *value {},
+            Some(FileData::Remote(value)) => Some(Data::Remote(value.clone())),
         },
     };
     let bytes =
@@ -61,6 +62,7 @@ pub(super) fn decode(bytes: &[u8]) -> QueueResult<File> {
         scope: value.scope,
         data: value.data.map(|data| match data {
             Data::Local(local) => FileData::Local(local),
+            Data::Remote(remote) => FileData::Remote(remote),
         }),
     };
     file.validate()

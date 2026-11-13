@@ -1,7 +1,6 @@
-//! Shared event envelope; local implementation does not invent a remote resource model.
+//! Shared local and remote observation envelopes with pure validation.
 use super::*;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 
 /// Provider resource identity, always qualified by its owning account.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,24 +73,21 @@ pub enum FileScope {
     Remote(RemoteFileRef),
     WholeSync,
 }
-/// One complete metadata object. R is supplied only after its remote model is reviewed.
-/// The default Infallible makes remote data unconstructible in this local-only stage.
+/// One complete metadata object, with the reviewed remote observation profile.
 #[allow(
     clippy::large_enum_variant,
     reason = "Preserve the documented by-value LocalFile payload without projecting its fields"
 )]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FileData<R = Infallible> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileData<R = RemoteFile> {
     Local(LocalFile),
     Remote(R),
 }
 /// Self-contained occurrence, keeping identity and payload unchanged during retry.
 ///
-/// The seven fields and two data variants are shared with the documented remote
-/// flow. A generic remote payload avoids a fictitious RemoteFile or an alternate
-/// local event representation. No persistence format or remote validator is implied.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct File<R = Infallible> {
+/// Local and remote producers share identity, context and complete metadata payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct File<R = RemoteFile> {
     pub id: FileId,
     pub sync_id: SyncId,
     pub event: FileEvent,
@@ -101,8 +97,7 @@ pub struct File<R = Infallible> {
     pub data: Option<FileData<R>>,
 }
 impl File {
-    /// Validates the local envelope without I/O, inference, mutation or ID generation.
-    /// A future reviewed remote payload requires its own typed validation.
+    /// Validates identities and observation evidence without I/O or inferred attributes.
     pub fn validate(&self) -> ModelResult<()> {
         if self.id.0.trim().is_empty() || self.sync_id.0.trim().is_empty() {
             return Err(ModelError::EmptyIdentity);
@@ -116,7 +111,10 @@ impl File {
                 file.validate()?;
                 Some(file)
             }
-            Some(FileData::Remote(value)) => match *value {},
+            Some(FileData::Remote(remote)) => {
+                remote.validate()?;
+                return self.validate_remote(remote);
+            }
             None => None,
         };
         match &self.scope {
@@ -132,7 +130,20 @@ impl File {
                     return invalid();
                 }
             }
-            FileScope::Remote(_) => return invalid(),
+            FileScope::Remote(reference) => {
+                if reference.account_id.0.trim().is_empty()
+                    || reference.file_id.0.trim().is_empty()
+                    || self.data.is_some()
+                    || !matches!(
+                        self.event.kind,
+                        FileEventKind::RecheckRequired | FileEventKind::ScopeUnavailable
+                    )
+                    || self.event.current.is_some()
+                    || self.event.previous.is_some()
+                {
+                    return invalid();
+                }
+            }
             FileScope::Local(path) => {
                 if data.is_some_and(|f| &f.relative_path != path) {
                     return invalid();
@@ -204,6 +215,59 @@ impl File {
         }
         if self.coverage == ObservationCoverage::Complete
             && data.is_some_and(|f| !f.basic_profile_complete())
+        {
+            return invalid();
+        }
+        Ok(())
+    }
+}
+
+impl File {
+    fn validate_remote(&self, remote: &RemoteFile) -> ModelResult<()> {
+        let invalid = || Err(ModelError::InconsistentEvent);
+        if self.scope != FileScope::Remote(remote.reference.clone())
+            || self.coverage == ObservationCoverage::Unavailable
+            || matches!(
+                self.event.kind,
+                FileEventKind::Deleted | FileEventKind::ScopeUnavailable
+            )
+        {
+            return invalid();
+        }
+        for location in [&self.event.previous, &self.event.current]
+            .into_iter()
+            .flatten()
+        {
+            match location {
+                FileLocation::Remote {
+                    reference,
+                    parent_id,
+                    ..
+                } if reference == &remote.reference
+                    && parent_id.as_ref().is_none_or(|id| !id.0.trim().is_empty()) => {}
+                _ => return invalid(),
+            }
+        }
+        let Some(FileLocation::Remote {
+            name, parent_id, ..
+        }) = &self.event.current
+        else {
+            return invalid();
+        };
+        if let MetadataValue::Known(expected) = &remote.name {
+            if name.as_ref() != Some(expected) {
+                return invalid();
+            }
+        }
+        if let (Some(parent), MetadataValue::Known(parents)) = (parent_id, &remote.parent_ids) {
+            if !parents.contains(parent) {
+                return invalid();
+            }
+        }
+        if matches!(
+            self.event.kind,
+            FileEventKind::Renamed | FileEventKind::Moved
+        ) && (self.event.previous.is_none() || self.event.previous == self.event.current)
         {
             return invalid();
         }

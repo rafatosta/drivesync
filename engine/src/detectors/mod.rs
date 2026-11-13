@@ -1,7 +1,7 @@
-//! Public local metadata collection and native event production.
+//! Local and remote observation with durable, confirmable event queues.
 //!
-//! PersistentDetector provides a local durable queue; a unified detector and
-//! remote observation API remain future work. Collector construction and collection
+//! PersistentDetector and RemoteDetector provide scoped durable queues.
+//! The unified detector facade remains future work. Collector construction and collection
 //! perform synchronous filesystem I/O and should run off the UI thread.
 //!
 //! ```
@@ -59,3 +59,12 @@ pub use storage::{
 };
 mod persistent;
 pub use persistent::{PersistentDetector, PersistentDetectorRequest};
+
+pub(crate) mod remote;
+pub use remote::{
+    RemoteActivity, RemoteCoverage, RemoteDetector, RemoteDetectorCreateRequest,
+    RemoteDetectorScope, RemoteDetectorSettings, RemoteDiagnostics, RemoteError,
+    RemoteEventSummary, RemoteFailure, RemotePollMode, RemotePollRequest, RemotePollResult,
+    RemoteResult, RemoteStartRequest, RemoteStartResult, RemoteState, RemoteStatusRequest,
+    RemoteStatusResult, RemoteStopRequest, RemoteStopResult,
+};

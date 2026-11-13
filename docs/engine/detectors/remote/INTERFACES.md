@@ -182,3 +182,17 @@ A confirmação do checkpoint de leitura remota é independente da confirmação
 ## Integração com controle de entrega
 
 O Remoto **não possui `pause()` de entrega**: continua consultando e emitindo eventos pelo sink enquanto o Detector pai estiver com entrega externa suspensa. O sink deve persistir `File` antes de confirmar recebimento, e o checkpoint remoto só avança após aceite durável. `stop` interrompe efetivamente polling, mas preserva checkpoint e eventos aceitos. **O Orquestrador decide** se e quando solicitar varredura ou recuperação de cobertura depois de um período sem detecção; o Remoto não coordena Scanner/Analisador nem decide consequências da interrupção. `status` deve ser rápido e não disparar HTTP.
+
+## 8. API compilada
+
+O acesso autorizado é reexportado exclusivamente por `drivesync_engine::detectors`:
+
+- `RemoteDetector::new(RemoteDetectorCreateRequest) -> RemoteResult<RemoteDetector>` abre armazenamento privado e retorna a instância parada, sem HTTP. O request contém `connector: Engine`, `scope: RemoteDetectorScope`, `settings: RemoteDetectorSettings` e `data_directory: PathBuf`.
+- Scope contém conta, SyncId e ID **canônico** da raiz remota; settings usa intervalo padrão de 30 segundos e orçamento padrão de 20 páginas. Orçamento/intervalo inválidos são rejeitados.
+- `start(RemoteStartRequest)`, `poll_once(RemotePollRequest)`, `stop(RemoteStopRequest)` e `status(RemoteStatusRequest)` implementam o ciclo descrito acima. `poll_once` é síncrono: usar worker de bloqueio fora de executores async/GTK. Start agenda sem HTTP na thread chamadora; stop cancela inclusive HTTP em andamento e aguarda os workers.
+- `RemotePollResult` acrescenta `observed`; `RemoteStatusResult` informa cobertura, intervalo, horários de consulta/próxima consulta, duração, contadores ativos, falhas consecutivas e tentativas de recuperação. `checkpoint_confirmed`/`cursor` são fingerprints SHA-256 truncados de diagnóstico; tokens reais permanecem privados. Falhas são tipadas e sanitizadas, sem mensagens externas.
+- `pause/resume`, `take_events`, `acknowledge`, `release_events` e `refresh_queue` compõem a fila durável da instância publicada. Estes comandos pertencem à composição de captura + fila, sem pausar o especialista Google/scheduler. Diagnósticos usam apenas snapshots e eventos resumidos, sem payload do provedor.
+
+O especialista recebe portas internas de Provider e persistência. Não conhece EventStore, SQLite ou Orquestrador. O backend armazena página preparada, snapshots e cursor com compare-and-swap; a emissão individual precede a confirmação de progresso. A fila é segregada por conta/SyncId/raiz/origem. Initial retoma checkpoint existente; Recovery emite reavaliação e obtém nova leitura sem concluir remoções por ausência. Ancestralidade é limitada a 64 níveis; estado a 16 MiB e árvore a 100.000 entradas. Limites atingidos geram falha/cobertura parcial, sem completar cursor fictício.
+
+O Google Changes fornece o estado atual, podendo reunir alterações entre consultas: não se promete reconstrução de todas as ações transitórias. CREATE exige createdTime normalizado posterior ao início da observação; entradas antigas/sem evidência geram RECHECK. Rename/Move exigem snapshot correlacionado; alterações compostas, perda de projeção, remoção e perda de acesso permanecem conservadoras. MODIFY exige evidência de hash diferente. Consultas usam somente Providers; nenhuma mutação remota é executada pelo detector.

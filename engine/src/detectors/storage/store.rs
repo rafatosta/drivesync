@@ -20,12 +20,20 @@ CREATE TABLE leases(id TEXT PRIMARY KEY, expires INTEGER NOT NULL, state INTEGER
 CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, payload BLOB NOT NULL, digest BLOB NOT NULL, state INTEGER NOT NULL DEFAULT 0 CHECK(state BETWEEN 0 AND 2), lease TEXT REFERENCES leases(id));
 CREATE INDEX delivery_order ON events(state,seq);
 PRAGMA user_version=1;";
+struct Identity<'a> {
+    account: &'a str,
+    sync: &'a str,
+    root: &'a [u8],
+    local: Option<&'a Path>,
+}
 /// Retains private directory descriptors for the lifetime of SQLite's file names.
 pub(crate) struct Store {
     connection: Mutex<Connection>,
     pub(crate) created: bool,
     _directory: FsFile,
     sync: String,
+    account: String,
+    remote: bool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     cached: Mutex<QueueStats>,
 }
@@ -92,21 +100,57 @@ impl Store {
         scope: &LocalDetectorScope,
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     ) -> QueueResult<Self> {
-        if scope.account_id.0.trim().is_empty()
-            || scope.sync_id.0.trim().is_empty()
-            || !scope.local_root.is_absolute()
-        {
+        if !scope.local_root.is_absolute() {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
-        let identity = serde_json::to_vec(&(
-            &scope.account_id.0,
-            &scope.sync_id.0,
-            scope.local_root.as_os_str().as_bytes(),
-        ))
-        .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        Self::open_identity(
+            base,
+            Identity {
+                account: &scope.account_id.0,
+                sync: &scope.sync_id.0,
+                root: scope.local_root.as_os_str().as_bytes(),
+                local: Some(&scope.local_root),
+            },
+            clock,
+        )
+    }
+    pub(crate) fn open_remote(
+        base: &Path,
+        account: &str,
+        sync: &str,
+        root: &str,
+    ) -> QueueResult<Self> {
+        if root.trim().is_empty() {
+            return Err(QueueFailure::new(QueueError::InvalidRequest));
+        }
+        let root = format!("remote:google:{root}");
+        Self::open_identity(
+            base,
+            Identity {
+                account,
+                sync,
+                root: root.as_bytes(),
+                local: None,
+            },
+            Arc::new(clock),
+        )
+    }
+    fn open_identity(
+        base: &Path,
+        scope: Identity<'_>,
+        clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    ) -> QueueResult<Self> {
+        if scope.account.trim().is_empty() || scope.sync.trim().is_empty() {
+            return Err(QueueFailure::new(QueueError::InvalidRequest));
+        }
+        let identity = serde_json::to_vec(&(scope.account, scope.sync, scope.root))
+            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
         let key = format!("{:x}", Sha256::digest(&identity));
         let location = base.join(&key);
-        if location.starts_with(&scope.local_root) || scope.local_root.starts_with(&location) {
+        if scope
+            .local
+            .is_some_and(|root| location.starts_with(root) || root.starts_with(&location))
+        {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
         // Validate the supplied app-private base before creating its identity directory.
@@ -137,7 +181,7 @@ impl Store {
             .pragma_update(None, "synchronous", "EXTRA")
             .map_err(sql)?;
         if !created {
-            verify(&connection, scope)?;
+            verify(&connection, &scope)?;
         }
         // Rollback journal avoids WAL sidecar/backup assumptions; transactions still sync before acceptance.
         let mode: String = connection
@@ -162,15 +206,11 @@ impl Store {
             tx.execute_batch(SCHEMA).map_err(sql)?;
             tx.execute(
                 "INSERT INTO identity VALUES(?1,?2,?3)",
-                params![
-                    scope.account_id.0,
-                    scope.sync_id.0,
-                    scope.local_root.as_os_str().as_bytes()
-                ],
+                params![scope.account, scope.sync, scope.root],
             )
             .map_err(sql)?;
         }
-        verify(&tx, scope)?;
+        verify(&tx, &scope)?;
         reap(&tx, clock())?;
         tx.commit().map_err(sql)?;
         // SAFETY: release the initialization lock before descriptor destruction.
@@ -182,7 +222,9 @@ impl Store {
             connection: Mutex::new(connection),
             created,
             _directory: directory,
-            sync: scope.sync_id.0.clone(),
+            sync: scope.sync.to_owned(),
+            account: scope.account.to_owned(),
+            remote: scope.local.is_none(),
             clock,
             cached: Mutex::new(QueueStats::default()),
         };
@@ -240,7 +282,7 @@ impl Store {
         self.run(false, |_, _| Ok(()))
     }
     pub(crate) fn enqueue(&self, file: &File) -> QueueResult<bool> {
-        if file.sync_id.0 != self.sync {
+        if !self.matches_scope(file) {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
         let payload = codec::encode(file)?;
@@ -277,6 +319,30 @@ impl Store {
             .map_err(sql)?;
             tx.commit().map_err(sql)?;
             Ok(true)
+        })
+    }
+    /// Stores observation progress independently of delivery acknowledgements.
+    /// The producer owns serialization; compare-and-swap rejects concurrent producers.
+    pub(crate) fn remote_state(&self) -> QueueResult<Option<Vec<u8>>> {
+        self.run(false, |connection, _| {
+            connection.execute_batch("CREATE TABLE IF NOT EXISTS remote_progress(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)").map_err(sql)?;
+            connection.query_row("SELECT payload FROM remote_progress WHERE id=1", [], |row| row.get(0)).optional().map_err(sql)
+        })
+    }
+    pub(crate) fn save_remote_state(
+        &self,
+        previous: Option<&[u8]>,
+        value: &[u8],
+    ) -> QueueResult<()> {
+        if value.len() > 16 * 1024 * 1024 {
+            return Err(QueueFailure::new(QueueError::CapacityExceeded));
+        }
+        self.run(true, |connection, _| {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+            let stored: Option<Vec<u8>> = tx.query_row("SELECT payload FROM remote_progress WHERE id=1", [], |row| row.get(0)).optional().map_err(sql)?;
+            if stored.as_deref() != previous { return Err(QueueFailure::new(QueueError::Conflict)); }
+            tx.execute("INSERT INTO remote_progress VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [value]).map_err(sql)?;
+            tx.commit().map_err(sql)
         })
     }
     pub(crate) fn set_delivery(&self, state: DeliveryState) -> QueueResult<()> {
@@ -464,12 +530,32 @@ impl Store {
             Ok(count)
         })
     }
+    fn matches_scope(&self, file: &File) -> bool {
+        use crate::models::{FileData, FileScope};
+        file.sync_id.0 == self.sync
+            && match (&file.scope, &file.data) {
+                (FileScope::Remote(reference), data) => {
+                    self.remote
+                        && reference.account_id.0 == self.account
+                        && match data {
+                            Some(FileData::Remote(remote)) => {
+                                remote.reference.account_id.0 == self.account
+                            }
+                            None => true,
+                            _ => false,
+                        }
+                }
+                (FileScope::WholeSync, None) => true,
+                (FileScope::Local(_), _) => !self.remote,
+                _ => false,
+            }
+    }
     fn decode(&self, id: String, payload: &[u8], digest: Vec<u8>) -> QueueResult<File> {
         if Sha256::digest(payload).as_slice() != digest {
             return Err(QueueFailure::new(QueueError::Corrupt));
         }
         let file = codec::decode(payload)?;
-        if file.id.0 != id || file.sync_id.0 != self.sync {
+        if file.id.0 != id || !self.matches_scope(&file) {
             return Err(QueueFailure::new(QueueError::Corrupt));
         }
         Ok(file)
@@ -501,7 +587,7 @@ fn stats(connection: &Connection, now: i64) -> QueueResult<QueueStats> {
     connection.query_row("SELECT (SELECT count(*) FROM events WHERE state=0) + (SELECT count(*) FROM events e JOIN leases l ON e.lease=l.id WHERE e.state=1 AND l.expires<=?1), (SELECT count(*) FROM events e JOIN leases l ON e.lease=l.id WHERE e.state=1 AND l.expires>?1), (SELECT count(*) FROM events WHERE state=2), (SELECT count(*) FROM events)", [now], |r| Ok(QueueStats { pending: r.get(0)?, leased: r.get(1)?, confirmed: r.get(2)?, detected: r.get(3)?, last_error: None, delivery: if enabled { DeliveryState::Enabled } else { DeliveryState::Paused } })).map_err(sql)
 }
 
-fn verify(connection: &Connection, scope: &LocalDetectorScope) -> QueueResult<()> {
+fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
@@ -515,9 +601,9 @@ fn verify(connection: &Connection, scope: &LocalDetectorScope) -> QueueResult<()
         .map_err(sql)?;
     if stored
         != (
-            scope.account_id.0.clone(),
-            scope.sync_id.0.clone(),
-            scope.local_root.as_os_str().as_bytes().to_vec(),
+            scope.account.to_owned(),
+            scope.sync.to_owned(),
+            scope.root.to_vec(),
         )
     {
         return Err(QueueFailure::new(QueueError::IdentityMismatch));

@@ -90,7 +90,18 @@ impl LocalNotificationSink for RecordingSink {
                             _ => None,
                         },
                         None => None,
-                        Some(FileData::Remote(impossible)) => match *impossible {},
+                        Some(FileData::Remote(remote)) => match remote.kind {
+                            MetadataValue::Known(RemoteEntryKind::Directory) => {
+                                Some(LocalEntryKind::Directory)
+                            }
+                            MetadataValue::Known(RemoteEntryKind::File) => {
+                                Some(LocalEntryKind::Regular)
+                            }
+                            MetadataValue::Known(RemoteEntryKind::Shortcut) => {
+                                Some(LocalEntryKind::Symlink)
+                            }
+                            _ => None,
+                        },
                     },
                 });
             }

@@ -26,7 +26,7 @@ O checkpoint avança somente depois que os eventos correspondentes têm entrega 
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; não comprova implementação Rust.
+**Estado:** implementado em Rust, com fila/checkpoint duráveis e scheduler por conta. Ver [perfil selecionado e validação](IMPLEMENTATION.md).
 
 ## Controle pelo Detector pai
 
