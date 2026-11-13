@@ -3,7 +3,11 @@
 //! This is not the full synchronization coordinator: no inventory, scanner,
 //! remote detector, event queue or analysis is created. The caller supplies an
 //! existing connection handle and a local scope with its notification sink.
+mod diagnostics;
 use crate::{detectors::*, Engine};
+pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
+use diagnostics::{History, ObservationOnly, RecordingSink};
+use std::sync::{Arc, Mutex};
 
 /// Owns one local producer and exposes the existing connector to an external UI.
 ///
@@ -13,18 +17,56 @@ use crate::{detectors::*, Engine};
 pub struct Orchestrator {
     connector: Engine,
     detector: LocalDetector,
+    history: Arc<Mutex<History>>,
 }
 impl Orchestrator {
     /// Composes an existing connector and creates a stopped local detector.
     /// Performs only the detector's in-memory configuration validation. No
     /// authentication, filesystem scan, event delivery or worker is started.
     /// Invalid scope/settings preserve the detector's typed error.
-    pub fn new(connector: Engine, local: LocalDetectorCreateRequest) -> LocalDetectorResult<Self> {
+    pub fn new(
+        connector: Engine,
+        mut local: LocalDetectorCreateRequest,
+    ) -> LocalDetectorResult<Self> {
+        let history = Arc::new(Mutex::new(History::new(&local.scope)));
+        local.notifications = Arc::new(RecordingSink {
+            history: history.clone(),
+            receiver: local.notifications,
+        });
         let detector = LocalDetector::new(local)?.detector;
         Ok(Self {
             connector,
             detector,
+            history,
         })
+    }
+
+    /// Creates an explicitly observation-only session for developer inspection.
+    /// Events are terminal diagnostic observations, not synchronization work.
+    /// History is bounded and volatile; no durable queue or replay is promised.
+    pub fn observe(
+        connector: Engine,
+        scope: LocalDetectorScope,
+        settings: LocalDetectorSettings,
+    ) -> LocalDetectorResult<Self> {
+        Self::new(
+            connector,
+            LocalDetectorCreateRequest {
+                scope,
+                settings,
+                notifications: Arc::new(ObservationOnly),
+            },
+        )
+    }
+
+    /// Returns per-account event context and counters without I/O. Retries of the
+    /// current occurrence do not inflate the count. At most 100 events survive;
+    /// pending_events is None because durable queue telemetry is not available.
+    pub fn diagnostics(&self) -> DetectorDiagnostics {
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .snapshot()
     }
 
     /// Borrows the same connection service supplied at construction.

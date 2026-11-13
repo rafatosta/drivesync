@@ -160,3 +160,59 @@ async fn detector_failure_remains_typed_and_does_not_disable_connector() {
         .is_empty());
     stop(&orchestrator);
 }
+
+#[tokio::test]
+async fn observation_sessions_keep_history_and_stop_isolated_by_account() {
+    let tree = Tree::new();
+    let connector = tree.connector().await;
+    let mut sessions = Vec::new();
+    for name in ["first", "second"] {
+        let root = tree.0.join(name);
+        fs::create_dir(&root).unwrap();
+        let session = Orchestrator::observe(
+            connector.clone(),
+            LocalDetectorScope {
+                account_id: AccountId(name.into()),
+                sync_id: SyncId(format!("sync-{name}")),
+                local_root: root,
+            },
+            LocalDetectorSettings::default(),
+        )
+        .unwrap();
+        start(&session).unwrap();
+        sessions.push(session);
+    }
+    let wait = |session: &Orchestrator, count: u64| {
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while session.diagnostics().events_detected < count {
+            assert!(std::time::Instant::now() < until);
+            std::thread::yield_now();
+        }
+    };
+    for session in &sessions {
+        wait(session, 1);
+    }
+    stop(&sessions[0]);
+    let first = sessions[0].diagnostics();
+    fs::write(tree.0.join("second/only-second"), b"observed").unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = sessions[1].diagnostics();
+        assert_eq!(snapshot.account_id, AccountId("second".into()));
+        assert_eq!(snapshot.pending_events, None);
+        if snapshot.events.iter().any(|event| {
+            event.scope
+                == FileScope::Local(LocalRelativePath::new(b"only-second".to_vec()).unwrap())
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        sessions[0].diagnostics().events_detected,
+        first.events_detected
+    );
+    assert_eq!(first.account_id, AccountId("first".into()));
+    stop(&sessions[1]);
+}
