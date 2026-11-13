@@ -233,3 +233,35 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 | LOC-MOD-05 | Metadados de ACL/xattr/Direct I/O não fazem parte do esquema selecionado | Coletor básico não exige consultas extras; nenhuma mudança nas portas ou lógica do detector |
 
 Estes casos complementam o perfil selecionado em Models, não implementam seus validadores. Leitura física continua testada no coletor; validação lexical e combinações puras ficam na suíte Models.
+
+
+## 15. Matriz do coletor físico isolado
+
+| ID | Operação/cenário | Evidência de aceite |
+| --- | --- | --- |
+| LOC-FS-01 | new/scope, duas raízes | Scope exato sem I/O na consulta; conta/sync/raiz não se cruzam |
+| LOC-FS-02 | new com configuração inválida ou raiz ausente/simbólica | Erro tipado; nenhuma criação ou normalização com perda |
+| LOC-FS-03 | Arquivo regular e diretório reais | Kind, caminho, modo, owner, tamanho, timestamps, inode/device/nlink verificáveis; local_id=None |
+| LOC-FS-04 | Nome/alvo não UTF-8 e symlink externo/quebrado | Bytes preservados; tipo Symlink e alvo literal, sem observar destino |
+| LOC-FS-05 | FIFO/socket/hardlink | Só metadados sem bloqueio; nlink observado não gera identidade |
+| LOC-FS-06 | Arquivo sem leitura e diretório sem busca | O primeiro ainda permite metadata por O_PATH; o segundo produz PermissionDenied comprovado pelo kernel |
+| LOC-FS-07 | Entrada ausente e pasta interna reservada | Ausente=None/Partial; reservada=InvalidScope; sem tratar falha como ausência confirmada |
+| LOC-FS-08 | Cancelamento antes/depois de abrir entrada | Cancelled e nenhuma observação publicada; clone cancelado e nova geração independente |
+| LOC-FS-09 | Trocar raiz/ancestral absoluto | RootUnavailable; coletor não adota silenciosamente nova árvore |
+| LOC-FS-10 | Trocar ancestral relativo por symlink ou mover para fora | PartialObservation ou None/Partial, sem metadados externos ou leitura de conteúdo |
+| LOC-FS-11 | Substituir alvo/editar durante coleta | None/Partial, sem fotografia completa inventada |
+| LOC-FS-12 | Alvo maior que buffer inicial | Bytes integrais, sem truncamento considerado Known |
+| LOC-FS-13 | Chamadas concorrentes ao mesmo coletor | Resultados de requisições independentes, sem estado de evento ou banco |
+| LOC-FS-14 | statx com máscaras parciais ou sem suporte | Respeitar bits; básico fallback real, btime/flags com estados explícitos |
+| LOC-FS-15 | Erro/limite na leitura literal | Campo de alvo mantém estado de falha e Partial; cancelamento é propagado |
+
+Usar fixtures reais temporárias com RAII e testes de corrida por barreiras/hooks nos pontos de abertura e observação, sem sleeps. Injeção de falha deve afetar somente a fronteira de syscall necessária (por exemplo, statx), não substituir o coletor ou a árvore física. Os casos são planejados; registrar separadamente os resultados efetivamente executados nas unidades abaixo.
+
+
+## 16. Evidência incremental do coletor
+
+Unidade básica: 16 testes físicos em `engine/src/detectors/local/tests.rs`. Cobrem LOC-FS-01 a 13, incluindo new/scope/collect, cancelamento compartilhado, alvo longo/não UTF-8, diretório/FIFO/socket/hardlink, permissão realmente negada ao usuário não privilegiado e corridas determinísticas antes/depois da observação. LOC-FS-14/15 ficam para o enriquecimento e injeção de falhas nas syscalls.
+
+RED executado antes dos módulos do coletor existirem. GREEN: `cargo test --offline --locked -p drivesync-engine --lib detectors::local::` com 16 PASS no org.gnome.Sdk//50, rust-stable, CARGO_HOME=/home/tosta/.cargo exposto ao SDK. A primeira execução do Clippy encontrou literais de permissão sem base octal nos testes; foram corrigidos para 0o0, sem alteração do contrato.
+
+Nenhum desses testes implementa File, sink, start/stop/status do Detector, scan_once ou watcher. Os testes de scoped identity incorreta no futuro LocalDetector::new continuam pendentes: scope do coletor é apenas a vinculação original, não consulta Accounts.

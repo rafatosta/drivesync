@@ -27,7 +27,7 @@ Seguir [TESTS.md](TESTS.md), com diretórios temporários isolados, alterações
 
 ## Preparação e implementação posterior
 
-- Ler INTERFACES → README → TESTS e o AGENTS da raiz antes de codificar. Esta entrega é documental: não criar stubs Rust, testes executáveis ou dependências do watcher.
+- Ler INTERFACES → README → TESTS e o AGENTS da raiz antes de codificar. A etapa atual autoriza implementar e testar o coletor físico; não criar stubs da fachada, File/RemoteFile, varredura ou dependências do watcher.
 - Na etapa de implementação, seguir RED → GREEN → REFACTOR por contrato e registrar os IDs dos cenários exercitados. Não substituir testes do filesystem por fakes do próprio detector.
 - Preservar a separação entre verificação de cobertura do watcher e reconciliação de períodos interrompidos. Não iniciar Scanner ou acessar Inventário.
 - Seguir o perfil local selecionado em Models e não implementar tipos compartilhados alternativos para contornar a dependência remota do envelope. O coletor concentra o conhecimento do esquema.

@@ -327,3 +327,32 @@ As portas das seções 2 e 3 são os únicos contratos de dependência de negóc
 Este documento define controle, portas e regras de observação. Não cria Rust, watcher, coletor ou testes executáveis nesta etapa. Os atributos de LocalFile e os invariantes locais estão selecionados em [Models](../../models/INTERFACES.md#2-localfile--seleção-para-observação-local). A implementação futura deve seguir essa seleção; o envelope completo ainda depende da revisão remota. Não implementar versões paralelas para contornar dependências.
 
 Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza implementar RemoteFile, Remoto, Storage, Scanner ou fachada pública do Detector. A eventual necessidade de ajustar um contrato vizinho deve ser registrada antes da implementação, sem mudar seu escopo silenciosamente.
+
+
+## 11. Adaptador físico de coleta — etapa de implementação
+
+`FilesystemMetadataCollector` implementa somente a porta de coleta, sem fachada pública ou dependência de File/RemoteFile. Tipos operacionais e cancelamento ficam nos módulos privados da engine, disponíveis para a futura composição do Detector. A construção do adaptador é separada de LocalDetector::new; esta última continua sem implementação.
+
+### `FilesystemMetadataCollector::new`
+
+**Assinatura interna:** `fn new(scope: LocalDetectorScope) -> LocalDetectorResult<Self>`.
+
+**Finalidade:** vincular conta/sincronização/raiz e manter um descritor da raiz autorizada para revalidação de identidade nas coletas posteriores.
+
+**Parâmetros:** escopo imutável, IDs não vazios nem whitespace, raiz absoluta, sem componentes ParentDir ou `.drivesync` e sem NUL. A API não resolve symlinks na raiz nem nos ancestrais. Não consulta Accounts ou cria diretórios.
+
+**Retorno:** adaptador vinculado à configuração original; scope() continua sendo apenas cópia em memória, mesmo se a raiz desaparecer.
+
+**Limites e erros:** InvalidScope para configuração lexical inválida; RootUnavailable para raiz ausente, substituída, não diretório ou ancestral simbólico; PermissionDenied para negação real do kernel; ResourceLimit para esgotamento de descritores/memória. Construção abre apenas descritores de navegação, sem ler conteúdo ou obter exclusividade da raiz.
+
+### Detalhes do contrato físico de `collect`
+
+- Cada coleta reabre a cadeia absoluta sem seguir symlinks, compara a raiz com o descritor original e percorre ancestrais relativos por descritores. O último componente pode ser um symlink, observado sem seguir seu destino. Arquivo regular, diretório, FIFO, socket ou device não é aberto para leitura/escrita de conteúdo.
+- Cancelamento é consultado antes de cada nova operação de I/O e depois das etapas de coleta. Um clone do token observa o cancelamento; tokens de outra geração são independentes. A construção/cancelamento dos tokens é controle interno do futuro detector, não API pública do aplicativo.
+- A coleta revalida vínculos de ancestrais, o último componente e a evidência relevante antes/depois da leitura. Mudança observada não é fotografia completa: devolve file=None/Partial para alvo desaparecido/substituído ou modificado durante coleta; falha estrutural da raiz é RootUnavailable, e ancestral relativo inseguro é PartialObservation. Revalidação não impede mudança após o retorno.
+- ENOENT em entrada relativa resulta em file=None/Partial, nunca exclusão confirmada. PermissionDenied é erro tipado sem metadados inventados. `.drivesync` em qualquer componente relativo é InvalidScope antes de consultar o filesystem; essa proteção é do adaptador, não da validação lexical de Models.
+- O perfil básico usa metadados reais de descritor. O enriquecimento usa statx por descritor quando disponível, respeitando máscaras, com fallback seguro para fstat. Não consultar ACL/xattr/conteúdo. Na primeira unidade, fstat fornece o básico e btime/flags permanecem NotCollected; statx será uma unidade subsequente.
+- A leitura do alvo literal usa o descritor do próprio symlink, com buffer crescente e limite operacional de 64 KiB por alvo. Não retornar Known de resultado possivelmente truncado; falha/limite do alvo preserva metadados confiáveis com target=Unavailable/PermissionDenied e cobertura Partial. Esse limite evita alocação sem controle e não limita nomes/tamanhos dos arquivos do usuário.
+- Erros têm mensagens estáticas sanitizadas e progress=None: uma coleta individual não é uma rodada scan_once. LocalScanResult é apenas o tipo de contagens previsto para essa integração, sem implementar varredura.
+
+Fontes técnicas: [open(2)](https://man7.org/linux/man-pages/man2/open.2.html) para O_PATH/O_NOFOLLOW; [readlink(2)](https://man7.org/linux/man-pages/man2/readlink.2.html) para leitura literal por descritor e truncamento; [statx(2)](https://man7.org/linux/man-pages/man2/statx.2.html) para máscaras e metadados. A estratégia de revalidação adapta os testes de descritores da branch arquivada sem importar Download, locks de sincronização, hashing ou filtros antigos.
