@@ -2,7 +2,7 @@
 
 ## Natureza
 
-Contrato **interno, conceitual e não implementado**. Não é a API pública de `facade/`; todas as integrações usam APENAS interfaces públicas dos módulos, mesmo que a implementação do Orchestrator possua funções privadas de coordenação. A API `facade/` não está documentada na branch atual (README vazio); portanto as assinaturas abaixo não são apresentadas como fachada externa validada.
+O coordenador completo abaixo é um contrato **interno, conceitual e não implementado**; a API mínima compilada está na seção final. Não é a API pública de `facade/`; todas as integrações usam APENAS interfaces públicas dos módulos, mesmo que a implementação do Orchestrator possua funções privadas de coordenação. A API `facade/` não está documentada na branch atual (README vazio); portanto as assinaturas abaixo não são apresentadas como fachada externa validada.
 
 O âmbito lógico de uma execução é um `SyncId`, associado a identidade de conta, raiz local e raiz remota validadas por seus proprietários. Não fixar instância por conta, instância global ou scheduler neste documento.
 
@@ -154,3 +154,20 @@ Apenas erros de coordenação devem ser próprios (`InvalidSyncScope`, `Dependen
 **Lacunas bloqueadoras:** (i) deduplicação durável por `File.id`, marcação durável dos itens que precisam de análise e contrato de ack entre bancos, (ii) persistência/consulta de `PendingAction`/resoluções, (iii) diagnóstico de cobertura de Scanner no Inventory, (iv) evidência de cobertura remota inicial, (v) cadastro de conexão, (vi) recuperação de planos persistidos da fila. Não criar assinaturas fictícias de módulos proprietários para contornar essas lacunas.
 
 **Estado:** contrato interno proposto para TDD; nenhum Rust compilado.
+
+
+## Etapa mínima compilada — inicialização local e conector
+
+A solicitação posterior do usuário autoriza uma composição pública mínima, distinta do coordenador completo descrito acima. `drivesync_engine::Orchestrator` (também em `orchestrator::Orchestrator`) recebe `Engine` e `LocalDetectorCreateRequest` por `new`, instancia o detector em Stopped e mantém o mesmo conector. Não muda a API Engine existente nem migra a UI atual.
+
+- `new(connector: Engine, local: LocalDetectorCreateRequest) -> LocalDetectorResult<Self>` valida a configuração local sem I/O. A abertura do conector continua por `Engine::open(EngineConfig)`; pode ser feita pela futura composição externa antes de criar o Orchestrator.
+- `connector(&self) -> &Engine` disponibiliza contas, autenticação e navegação remota já existentes para a futura interface. Clones compartilham o serviço; continuam utilizáveis após a destruição do Orchestrator.
+- `start(LocalStartRequest) -> LocalDetectorResult<LocalStartResult>` inicia a captura local real; repetição operacional é idempotente. O retorno não promete verificação inicial concluída.
+- `stop(LocalStopRequest) -> LocalDetectorResult<LocalStopResult>` aguarda a parada e callbacks em curso; Drop também encerra o detector. Não chamar do próprio callback.
+- `status(LocalStatusRequest) -> LocalDetectorResult<LocalStatusResult>` apresenta o snapshot local, sem I/O ou estado global fictício.
+
+start/stop são síncronos e devem rodar fora da thread de UI. Os erros são os tipos reais do detector, preservados sem tradução. O sink fornecido recebe os eventos File; o Orchestrator não os descarta, não cria fila paralela e não alega persistência própria. Apenas o detector local está disponível; não simular origem remota nem iniciar Scanner, Inventory, Analyzer ou sincronização.
+
+O escopo e sua associação à conta são fornecidos pelo consumidor. Esta composição não cadastra sincronizações, não verifica associação consultando Accounts e não altera o bloqueio de remoção de contas do conector. Essas integrações permanecem para a etapa de cadastro/ownership. Cada instância possui um detector; nenhum registro global, scheduler ou novo runtime foi introduzido.
+
+As restrições anteriores contra API pública nova ou acesso direto a Local referem-se ao coordenador completo; para esta etapa, o usuário autorizou explicitamente a composição do LocalDetector público já implementado. Permanecem válidas para o futuro fluxo durável as regras de ingestão/ack e a ordem Detector/Scanner.

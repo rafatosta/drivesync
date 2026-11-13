@@ -14,3 +14,6 @@ pub use accounts::{
 pub use connection::*;
 
 pub mod detectors;
+
+pub mod orchestrator;
+pub use orchestrator::Orchestrator;
