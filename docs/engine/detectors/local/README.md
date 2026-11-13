@@ -22,7 +22,7 @@ As ocorrências são emitidas individualmente em objetos `File`, com dados locai
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** coletor básico implementado com testes físicos; os cinco métodos do Detector e o watcher continuam documentais.
+**Estado:** coletor físico implementado, com statx/fstat e testes isolados; os cinco métodos do Detector e o watcher continuam documentais.
 
 ## Controle pelo Detector pai
 
@@ -33,15 +33,15 @@ A pausa de **entrega ao Orquestrador** não pausa o observador Local: as altera�
 
 O Local não possui banco, fila durável ou baseline. A saída única é o sink individual do pai; a confirmação desse sink representa aceite, não sincronização concluída. Somente a pendência de entrega em trânsito e as pistas de observação são mantidas em memória, de forma limitada.
 
-A coleta de metadados é injetada por uma porta estável e recebe cancelamento cooperativo. O detector transporta `LocalFile` integralmente, sem conhecer sua lista de atributos. Os tipos e campos compartilhados pertencem a Models. O perfil local e sua validação pura já foram implementados naquele módulo; coleta básica já implementada; observação contínua e eventos ainda não. A revisão remota ainda é dependência do envelope compartilhado completo.
+A coleta de metadados é injetada por uma porta estável e recebe cancelamento cooperativo. O detector transporta `LocalFile` integralmente, sem conhecer sua lista de atributos. Os tipos e campos compartilhados pertencem a Models. O perfil local e sua validação pura já foram implementados naquele módulo; a coleta física também está implementada; observação contínua e eventos ainda não. A revisão remota ainda é dependência do envelope compartilhado completo.
 
 `scan_once` é a varredura de verificação que **emite eventos**. Não é o Scanner independente, que registra observações no Inventário. O scan de cobertura programado por `start` verifica a captura atual; não promete compensar o período parado ou reconstruir histórico.
 
-A implementação atual cobre o adaptador físico de coleta básica, as portas e o cancelamento, com testes reais em diretórios temporários. As regras operacionais estão na seção 8 de INTERFACES e a rastreabilidade por método/porta está nas seções 9–13 de TESTS.
+A implementação atual cobre o adaptador físico, suas portas e o cancelamento, com testes reais em diretórios temporários e falhas de syscall controladas. As regras operacionais estão na seção 8 de INTERFACES e a rastreabilidade por método/porta está nas seções 9–13 de TESTS.
 
 
 ## Coleta física implementada
 
 FilesystemMetadataCollector vincula a configuração a um descritor da raiz, reabre e revalida os ancestrais de cada entrada e devolve LocalFile pelo contrato estável. Usa apenas descritores O_PATH para metadados e readlinkat para alvos literais, sem abrir conteúdo ou seguir symlinks. Resultados inconclusivos não equivalem a ausência comprovada.
 
-A primeira unidade usa fstat para o perfil básico; btime/flags ficam NotCollected. Não há locks de sincronização, banco, File/RemoteFile, percurso recursivo, watcher ou API pública nova. O módulo privado possui uma permissão localizada de dead_code enquanto não existir composição pelo Detector, sem suprimir Clippy ou outras verificações.
+A coleta usa statx com máscaras de preenchimento e fallback para fstat, preservando btime/flags quando disponíveis e seus estados de ausência quando não. O controle de coleta não enumera campos do modelo; a montagem fica isolada em metadata.rs. Não há locks de sincronização, banco, File/RemoteFile, percurso recursivo, watcher ou API pública nova. O módulo privado possui uma permissão localizada de dead_code enquanto não existir composição pelo Detector, sem suprimir Clippy ou outras verificações.

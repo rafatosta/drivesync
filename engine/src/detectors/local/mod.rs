@@ -2,6 +2,7 @@
 
 mod collector;
 mod filesystem;
+mod metadata;
 mod models;
 
 #[cfg(test)]

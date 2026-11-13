@@ -433,3 +433,284 @@ fn replacing_an_absolute_ancestor_during_collection_does_not_adopt_a_new_root() 
         LocalDetectorError::RootUnavailable
     );
 }
+
+#[test]
+fn native_statx_preserves_supported_flags_and_birth_time_without_inference() {
+    // LOC-FS-14: native values are obtained separately from model normalization.
+    use super::metadata::{LinuxMetadataReader, MetadataReader};
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"actual metadata").unwrap();
+    let descriptor = fs::File::open(tree.0.join("file")).unwrap();
+    let native = LinuxMetadataReader.statx(&descriptor).unwrap();
+    let result = tree.collector().collect(request(b"file")).unwrap();
+    let file = result.file.unwrap();
+    assert_eq!(
+        file.flags.statx_attributes,
+        MetadataValue::Known(native.stx_attributes)
+    );
+    assert_eq!(
+        file.flags.statx_attributes_mask,
+        MetadataValue::Known(native.stx_attributes_mask)
+    );
+    if native.stx_mask & libc::STATX_BTIME != 0 {
+        assert_eq!(
+            file.times.created_at,
+            MetadataValue::Known(crate::models::LocalTimestamp {
+                unix_seconds: native.stx_btime.tv_sec,
+                nanoseconds: native.stx_btime.tv_nsec
+            })
+        );
+    } else {
+        assert_eq!(file.times.created_at, MetadataValue::Unavailable);
+    }
+}
+
+struct FailedStatx(i32);
+impl super::metadata::MetadataReader for FailedStatx {
+    fn statx(&self, _: &fs::File) -> std::io::Result<libc::statx> {
+        Err(std::io::Error::from_raw_os_error(self.0))
+    }
+}
+
+#[test]
+fn failed_statx_falls_back_to_real_descriptor_metadata_with_explicit_optional_states() {
+    // LOC-FS-14: only statx fails; navigation/fstat and symlink handling remain real.
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"fallback").unwrap();
+    let collector = tree.collector();
+    for (errno, state) in [
+        (libc::ENOSYS, MetadataValue::Unsupported),
+        (libc::EOPNOTSUPP, MetadataValue::Unsupported),
+        (libc::EPERM, MetadataValue::PermissionDenied),
+        (libc::EIO, MetadataValue::Unavailable),
+    ] {
+        let result = collector
+            .collect_using(request(b"file"), |_| {}, &FailedStatx(errno))
+            .unwrap();
+        assert_eq!(result.coverage, LocalScanCoverage::Complete);
+        let file = result.file.unwrap();
+        assert_eq!(file.kind, MetadataValue::Known(LocalEntryKind::Regular));
+        assert_eq!(file.storage.size_bytes, MetadataValue::Known(8));
+        assert_eq!(file.flags.statx_attributes, state);
+        assert_eq!(
+            file.flags.statx_attributes_mask,
+            file.flags.statx_attributes
+        );
+        assert!(matches!(
+            (errno, file.times.created_at),
+            (libc::ENOSYS | libc::EOPNOTSUPP, MetadataValue::Unsupported)
+                | (libc::EPERM, MetadataValue::PermissionDenied)
+                | (libc::EIO, MetadataValue::Unavailable)
+        ));
+    }
+}
+
+struct MissingStatxBit(u32);
+impl super::metadata::MetadataReader for MissingStatxBit {
+    fn statx(&self, file: &fs::File) -> std::io::Result<libc::statx> {
+        let mut stat = super::metadata::LinuxMetadataReader.statx(file)?;
+        stat.stx_mask &= !self.0;
+        // Deliberately nonzero: missing-mask data must not be treated as evidence.
+        stat.stx_uid = 7654;
+        Ok(stat)
+    }
+}
+
+#[test]
+fn missing_statx_basic_mask_bits_produce_partial_metadata_instead_of_invented_values() {
+    // LOC-FS-14 / LOC-MOD-02.
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"x").unwrap();
+    let collector = tree.collector();
+    for bit in [
+        libc::STATX_TYPE,
+        libc::STATX_MODE,
+        libc::STATX_UID,
+        libc::STATX_GID,
+        libc::STATX_MTIME,
+        libc::STATX_CTIME,
+        libc::STATX_SIZE,
+        libc::STATX_INO,
+        libc::STATX_NLINK,
+    ] {
+        let result = collector
+            .collect_using(request(b"file"), |_| {}, &MissingStatxBit(bit))
+            .unwrap();
+        assert_eq!(result.coverage, LocalScanCoverage::Partial);
+        let file = result.file.unwrap();
+        assert_eq!(file.validate(), Ok(()));
+        match bit {
+            libc::STATX_TYPE => {
+                assert_eq!(file.kind, MetadataValue::Unavailable);
+                assert_eq!(file.mode, MetadataValue::Unavailable);
+                assert_eq!(file.symlink.target, MetadataValue::NotCollected);
+            }
+            libc::STATX_MODE => assert_eq!(file.mode, MetadataValue::Unavailable),
+            libc::STATX_UID => assert_eq!(file.owner.uid, MetadataValue::Unavailable),
+            libc::STATX_GID => assert_eq!(file.owner.gid, MetadataValue::Unavailable),
+            libc::STATX_MTIME => assert_eq!(file.times.modified_at, MetadataValue::Unavailable),
+            libc::STATX_CTIME => assert_eq!(file.times.changed_at, MetadataValue::Unavailable),
+            libc::STATX_SIZE => assert_eq!(file.storage.size_bytes, MetadataValue::Unavailable),
+            libc::STATX_INO => assert_eq!(file.storage.inode, MetadataValue::Unavailable),
+            libc::STATX_NLINK => {
+                assert_eq!(file.storage.hard_link_count, MetadataValue::Unavailable)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn missing_optional_birth_time_does_not_degrade_complete_basic_collection() {
+    // LOC-MOD-01: NotCollected/Unsupported are not invented from a missing mask bit.
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"x").unwrap();
+    let result = tree
+        .collector()
+        .collect_using(
+            request(b"file"),
+            |_| {},
+            &MissingStatxBit(libc::STATX_BTIME),
+        )
+        .unwrap();
+    assert_eq!(result.coverage, LocalScanCoverage::Complete);
+    assert_eq!(
+        result.file.unwrap().times.created_at,
+        MetadataValue::Unavailable
+    );
+}
+
+struct FailedLink(i32);
+impl super::metadata::MetadataReader for FailedLink {
+    fn statx(&self, file: &fs::File) -> std::io::Result<libc::statx> {
+        super::metadata::LinuxMetadataReader.statx(file)
+    }
+    fn read_link(
+        &self,
+        _: &fs::File,
+        _: &LocalCancellation,
+    ) -> LocalDetectorResult<std::io::Result<Vec<u8>>> {
+        Ok(Err(std::io::Error::from_raw_os_error(self.0)))
+    }
+}
+
+#[test]
+fn failed_literal_target_read_keeps_partial_symlink_metadata_without_fabricating_target() {
+    // LOC-FS-15: syscall failure at the target boundary, not a fake collector.
+    let tree = Tree::new();
+    symlink("../outside", tree.0.join("link")).unwrap();
+    let collector = tree.collector();
+    for (errno, expected) in [
+        (libc::EACCES, MetadataValue::PermissionDenied),
+        (libc::ENOSYS, MetadataValue::Unsupported),
+        (libc::EOVERFLOW, MetadataValue::Unavailable),
+        (libc::EIO, MetadataValue::Unavailable),
+    ] {
+        let result = collector
+            .collect_using(request(b"link"), |_| {}, &FailedLink(errno))
+            .unwrap();
+        assert_eq!(result.coverage, LocalScanCoverage::Partial);
+        let file = result.file.unwrap();
+        assert_eq!(file.kind, MetadataValue::Known(LocalEntryKind::Symlink));
+        assert_eq!(file.symlink.target, expected);
+        assert_eq!(file.validate(), Ok(()));
+    }
+}
+
+struct CancelAfterStatx(LocalCancellation);
+impl super::metadata::MetadataReader for CancelAfterStatx {
+    fn statx(&self, file: &fs::File) -> std::io::Result<libc::statx> {
+        let result = super::metadata::LinuxMetadataReader.statx(file);
+        self.0.cancel();
+        result
+    }
+    fn read_link(
+        &self,
+        _: &fs::File,
+        _: &LocalCancellation,
+    ) -> LocalDetectorResult<std::io::Result<Vec<u8>>> {
+        panic!("cancelled collection must not perform the next I/O operation");
+    }
+}
+
+#[test]
+fn cancellation_between_statx_and_readlink_prevents_the_next_io_operation() {
+    // LOC-A-03 / LOC-FS-08.
+    let tree = Tree::new();
+    symlink("../outside", tree.0.join("link")).unwrap();
+    let req = request(b"link");
+    let backend = CancelAfterStatx(req.cancellation.clone());
+    assert_eq!(
+        tree.collector()
+            .collect_using(req, |_| {}, &backend)
+            .unwrap_err()
+            .kind,
+        LocalDetectorError::Cancelled
+    );
+}
+
+#[test]
+fn possibly_truncated_readlink_is_bounded_and_never_claimed_known() {
+    // LOC-FS-15: emulate only the readlink count, including an always-full buffer.
+    let mut capacities = Vec::new();
+    let result = super::filesystem::read_link_with(&LocalCancellation::new(), |bytes| {
+        capacities.push(bytes.len());
+        Ok(bytes.len())
+    })
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(result.raw_os_error(), Some(libc::EOVERFLOW));
+    assert_eq!(
+        capacities,
+        [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+    );
+}
+
+#[test]
+fn cancellation_during_link_read_does_not_trigger_a_buffer_retry() {
+    // LOC-FS-08/15.
+    let cancel = LocalCancellation::new();
+    let mut calls = 0;
+    let result = super::filesystem::read_link_with(&cancel, |bytes| {
+        calls += 1;
+        cancel.cancel();
+        Ok(bytes.len())
+    });
+    assert_eq!(result.unwrap_err().kind, LocalDetectorError::Cancelled);
+    assert_eq!(calls, 1);
+}
+
+struct InvalidNativeTime(bool);
+impl super::metadata::MetadataReader for InvalidNativeTime {
+    fn statx(&self, file: &fs::File) -> std::io::Result<libc::statx> {
+        let mut native = super::metadata::LinuxMetadataReader.statx(file)?;
+        native.stx_mtime.tv_nsec = u32::MAX;
+        if self.0 {
+            native.stx_mask &= !libc::STATX_MTIME;
+        }
+        Ok(native)
+    }
+}
+
+#[test]
+fn invalid_known_native_metadata_is_typed_but_unavailable_masked_fields_are_not_used() {
+    // LOC-FS-14: masked bytes cannot cause a false known value or invalid timestamp.
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"x").unwrap();
+    let collector = tree.collector();
+    assert_eq!(
+        collector
+            .collect_using(request(b"file"), |_| {}, &InvalidNativeTime(false))
+            .unwrap_err()
+            .kind,
+        LocalDetectorError::ModelInvalid
+    );
+    let result = collector
+        .collect_using(request(b"file"), |_| {}, &InvalidNativeTime(true))
+        .unwrap();
+    assert_eq!(result.coverage, LocalScanCoverage::Partial);
+    assert_eq!(
+        result.file.unwrap().times.modified_at,
+        MetadataValue::Unavailable
+    );
+}

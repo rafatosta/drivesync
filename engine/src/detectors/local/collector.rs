@@ -1,14 +1,10 @@
 //! Physical collector behind the stable local metadata port, without events or scans.
 use super::{
     filesystem::{self, DirectoryChain, Stamp},
+    metadata::{self, LinuxMetadataReader, MetadataReader},
     models::*,
 };
-use crate::models::*;
-use std::{
-    fs::{File, Metadata},
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
-    path::Component,
-};
+use std::{fs::File, os::unix::ffi::OsStrExt, path::Component};
 
 /// A root-bound collector retaining only a root descriptor between requests.
 pub(crate) struct FilesystemMetadataCollector {
@@ -51,7 +47,17 @@ impl FilesystemMetadataCollector {
     pub(super) fn collect_with(
         &self,
         request: LocalMetadataRequest,
+        stage: impl FnMut(CollectionStage),
+    ) -> LocalDetectorResult<LocalMetadataResult> {
+        self.collect_using(request, stage, &LinuxMetadataReader)
+    }
+
+    /// Keeps syscall fault injection private to the physical adapter boundary.
+    pub(super) fn collect_using(
+        &self,
+        request: LocalMetadataRequest,
         mut stage: impl FnMut(CollectionStage),
+        reader: &impl MetadataReader,
     ) -> LocalDetectorResult<LocalMetadataResult> {
         let cancel = &request.cancellation;
         cancel.check()?;
@@ -92,7 +98,8 @@ impl FilesystemMetadataCollector {
             return Ok(inconclusive());
         }
         cancel.check()?;
-        let (file, coverage) = basic_metadata(&entry, &before, request.relative_path, cancel)?;
+        let (file, coverage) =
+            metadata::collect(&entry, &before, request.relative_path, cancel, reader)?;
         stage(CollectionStage::Observed);
         chain.validate(cancel)?;
         if !filesystem::entry_still_bound(&chain, &name, &before, cancel)? {
@@ -127,83 +134,5 @@ fn inconclusive() -> LocalMetadataResult {
     LocalMetadataResult {
         file: None,
         coverage: LocalScanCoverage::Partial,
-    }
-}
-
-/// Maps only the fields approved in Models; no content, ACL or xattr queries occur.
-fn basic_metadata(
-    entry: &File,
-    m: &Metadata,
-    path: LocalRelativePath,
-    cancel: &LocalCancellation,
-) -> LocalDetectorResult<(LocalFile, LocalScanCoverage)> {
-    use MetadataValue::{Known, NotApplicable, NotCollected};
-    let kind = entry_kind(m.mode());
-    let mut coverage = LocalScanCoverage::Complete;
-    let target = if kind == LocalEntryKind::Symlink {
-        match filesystem::read_link(entry, cancel)? {
-            Ok(bytes) => Known(bytes),
-            Err(error) => {
-                coverage = LocalScanCoverage::Partial;
-                if error.kind() == std::io::ErrorKind::PermissionDenied {
-                    MetadataValue::PermissionDenied
-                } else {
-                    MetadataValue::Unavailable
-                }
-            }
-        }
-    } else {
-        NotApplicable
-    };
-    let file = LocalFile {
-        local_id: None,
-        relative_path: path,
-        kind: Known(kind),
-        mode: Known(LocalFileMode {
-            raw_mode: m.mode(),
-            permission_bits: (m.mode() & 0o7777) as u16,
-        }),
-        owner: LocalOwner {
-            uid: Known(m.uid()),
-            gid: Known(m.gid()),
-        },
-        times: LocalTimes {
-            modified_at: Known(timestamp(m.mtime(), m.mtime_nsec())?),
-            changed_at: Known(timestamp(m.ctime(), m.ctime_nsec())?),
-            created_at: NotCollected,
-        },
-        storage: LocalStorage {
-            size_bytes: Known(m.size()),
-            hard_link_count: Known(m.nlink()),
-            inode: Known(m.ino()),
-            filesystem_device: Known(DeviceNumber {
-                major: libc::major(m.dev()),
-                minor: libc::minor(m.dev()),
-            }),
-        },
-        flags: LocalFileFlags {
-            statx_attributes: NotCollected,
-            statx_attributes_mask: NotCollected,
-        },
-        symlink: LocalSymlink { target },
-    };
-    Ok((file, coverage))
-}
-fn timestamp(seconds: i64, nanos: i64) -> LocalDetectorResult<LocalTimestamp> {
-    let nanos = u32::try_from(nanos)
-        .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::ModelInvalid))?;
-    LocalTimestamp::new(seconds, nanos)
-        .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::ModelInvalid))
-}
-fn entry_kind(mode: u32) -> LocalEntryKind {
-    match mode & libc::S_IFMT {
-        libc::S_IFREG => LocalEntryKind::Regular,
-        libc::S_IFDIR => LocalEntryKind::Directory,
-        libc::S_IFLNK => LocalEntryKind::Symlink,
-        libc::S_IFIFO => LocalEntryKind::Fifo,
-        libc::S_IFSOCK => LocalEntryKind::Socket,
-        libc::S_IFBLK => LocalEntryKind::BlockDevice,
-        libc::S_IFCHR => LocalEntryKind::CharacterDevice,
-        _ => LocalEntryKind::Other,
     }
 }

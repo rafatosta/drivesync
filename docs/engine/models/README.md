@@ -208,11 +208,11 @@ O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dep
 - [TESTS.md](TESTS.md): testes propostos diretamente derivados desses contratos.
 - [AGENTS.md](AGENTS.md): critérios para implementação literal futura.
 
-**Estado atual:** os modelos locais e seus validadores puros foram implementados. O Detector Local mantém as interfaces documentadas, mas não ganhou watcher ou coletor. Não foram implementados File/FileData, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; os testes de modelos não comprovam coleta física ou durabilidade.
+**Estado atual:** os modelos locais e seus validadores puros foram implementados. O Detector Local mantém as interfaces documentadas; o coletor físico já foi implementado em seu módulo, mas não a fachada ou o watcher. Não foram implementados File/FileData, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; os testes de modelos não comprovam coleta física ou durabilidade.
 
 
 ## Implementação incremental atual
 
 A fundação local está implementada: LocalRelativePath, LocalTimestamp, SyncId/FileId/LocalFileId, MetadataValue e ModelError. O arquivo antigo models.rs foi organizado em models/mod.rs com reexportações, preservando AccountId/ProviderId/Timestamp e sua serialização. Tipos locais novos não definem formato de persistência nesta etapa.
 
-LocalFile e validate também estão implementados, com grupos selecionados de permissões/proprietário, timestamps, armazenamento, flags e symlink. Os quatro métodos puros locais e os estados de coleta possuem 18 testes; File::validate continua pendente com o envelope. File/FileData, campos remotos, coleta física, watcher e persistência ficam fora desta entrega.
+LocalFile e validate também estão implementados, com grupos selecionados de permissões/proprietário, timestamps, armazenamento, flags e symlink. Os quatro métodos puros locais e os estados de coleta possuem 18 testes; File::validate continua pendente com o envelope. File/FileData, campos remotos, watcher e persistência continuam pendentes. A coleta física usa os modelos por uma porta interna no módulo Local, sem I/O em Models.

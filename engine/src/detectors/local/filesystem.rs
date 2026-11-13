@@ -226,10 +226,7 @@ pub(super) fn read_link(
     file: &File,
     cancel: &LocalCancellation,
 ) -> LocalDetectorResult<io::Result<Vec<u8>>> {
-    const MAX_TARGET_BYTES: usize = 64 * 1024;
-    let mut bytes = vec![0u8; 128];
-    loop {
-        cancel.check()?;
+    read_link_with(cancel, |bytes| {
         // SAFETY: file is live; the initialized buffer is writable for its full length.
         // Empty path names the held symlink itself with Linux readlinkat semantics.
         let count = unsafe {
@@ -241,9 +238,27 @@ pub(super) fn read_link(
             )
         };
         if count < 0 {
-            return Ok(Err(io::Error::last_os_error()));
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(count as usize)
         }
-        let count = count as usize;
+    })
+}
+
+/// Bounded buffer growth isolated from the syscall for deterministic truncation tests.
+pub(super) fn read_link_with(
+    cancel: &LocalCancellation,
+    mut read: impl FnMut(&mut [u8]) -> io::Result<usize>,
+) -> LocalDetectorResult<io::Result<Vec<u8>>> {
+    const MAX_TARGET_BYTES: usize = 64 * 1024;
+    let mut bytes = vec![0u8; 128];
+    loop {
+        cancel.check()?;
+        let count = match read(&mut bytes) {
+            Ok(count) => count,
+            Err(error) => return Ok(Err(error)),
+        };
+        cancel.check()?;
         if count < bytes.len() {
             bytes.truncate(count);
             return Ok(Ok(bytes));

@@ -90,7 +90,7 @@ Cenário de falha entre observação e aceite durável deve preservar possibilid
 
 **5/5 métodos internos** e cenários de Models aplicáveis passam independentemente, com resultados PASS/FAIL/BLOCKED e evidências de comandos executados no Flatpak. **Não** exigir testes Google/Inventory/Storage para concluir o Local.
 
-Os tipos locais selecionados em Models já possuem implementação e testes puros; os testes do Detector continuam não implementados, e o envelope completo ainda depende de revisão remota. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. Nenhum teste foi executado nesta atualização documental.
+Os tipos locais selecionados em Models já possuem implementação e testes puros; os testes do Detector continuam não implementados, e o envelope completo ainda depende de revisão remota. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. A execução atual dos testes físicos está descrita na seção 16; os casos de controle/eventos continuam pendentes.
 
 ## 7. Regressão obrigatória — independência do esquema de LocalFile
 
@@ -219,7 +219,7 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 6. Revisar alterações de esquema em checkout/fixture temporário para LOC-COL-02/03; não alterar Models de produção apenas para provar independência. Enquanto os tipos não estiverem implementados, registrar os casos executáveis como pendentes, sem alegar PASS.
 7. Comprovar ausência de mutações comparando conteúdo e estrutura das sentinelas antes/depois, considerando que leituras podem atualizar atime. Não usar o próprio normalizador para fabricar o resultado esperado.
 
-**Aceite desta etapa documental:** cinco métodos de controle e quatro métodos auxiliares rastreados; decisões de ciclo de vida, escopo e falhas explicitadas; dependências de Models identificadas. **Testes executáveis e implementação permanecem para a próxima etapa.** A durabilidade real do sink, leases e agregação Local/Remoto são validações futuras dos componentes proprietários.
+**Aceite desta etapa documental:** cinco métodos de controle e quatro métodos auxiliares rastreados; decisões de ciclo de vida, escopo e falhas explicitadas; dependências de Models identificadas. **Somente os testes executáveis do coletor/cancelamento foram implementados nesta etapa; os métodos de controle e entrega continuam pendentes.** A durabilidade real do sink, leases e agregação Local/Remoto são validações futuras dos componentes proprietários.
 
 
 ## 14. Alinhamento com a seleção local de Models
@@ -265,3 +265,21 @@ Unidade básica: 16 testes físicos em `engine/src/detectors/local/tests.rs`. Co
 RED executado antes dos módulos do coletor existirem. GREEN: `cargo test --offline --locked -p drivesync-engine --lib detectors::local::` com 16 PASS no org.gnome.Sdk//50, rust-stable, CARGO_HOME=/home/tosta/.cargo exposto ao SDK. A primeira execução do Clippy encontrou literais de permissão sem base octal nos testes; foram corrigidos para 0o0, sem alteração do contrato.
 
 Nenhum desses testes implementa File, sink, start/stop/status do Detector, scan_once ou watcher. Os testes de scoped identity incorreta no futuro LocalDetector::new continuam pendentes: scope do coletor é apenas a vinculação original, não consulta Accounts.
+
+
+Unidade de enriquecimento: 25 testes totais do coletor, incluindo LOC-FS-14/15. Validam statx real, remoção de cada bit básico, ausência opcional de btime, erros ENOSYS/EOPNOTSUPP/EPERM/EIO, fallback fstat real, fração Known inválida, falha/truncamento de readlink e cancelamento entre queries. O teste do limite de 64 KiB simula somente o tamanho retornado pela syscall, sem alegar suporte do filesystem a links desse tamanho.
+
+Os testes de permissões foram executados com UID não privilegiado e comprovaram EACCES pelo kernel, sem inferir apenas por bits. FIFO e socket reais foram observados sem abrir conteúdo. Não foi criado device node (exige capacidades não necessárias ao teste); tipos de device permanecem cobertos no modelo puro, sem reivindicar teste físico desses nós.
+
+A compilação/Clippy verificam o módulo privado em produção, mas ele ainda não é chamado pela aplicação: a composição com Detector, sincronização real e UI não foi implementada. Os métodos new/scope/collect do coletor não comprovam new/start/scan_once/stop/status da fachada.
+
+
+Validação final no mesmo ambiente Flatpak/cache, em 2026-11-13:
+
+- `cargo fmt --all --check`: PASS.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`: PASS.
+- `cargo test --offline --locked --workspace`: 561 testes PASS e 1 doctest PASS; 6 testes ignorados (desktop/portal e Secret Service isolado).
+- `cargo doc --offline --locked --workspace --no-deps --document-private-items`: PASS, sem warnings.
+- `cargo test --offline --locked --workspace --doc`: 1 doctest PASS.
+
+Não foram exercitados Google real, aplicativo instalado, portal, watcher, varredura recursiva, fila ou entrega de File. A cobertura atual é do coletor e dos componentes já existentes; nenhum método de controle do Detector é declarado implementado por esses resultados.

@@ -4,7 +4,7 @@
 
 Contrato **interno de `detectors/local/`** consumido somente pelo Detector pai. O módulo Local implementa **observação física do filesystem** e produz **`LocalFile` definido por [Models](../../models/INTERFACES.md)**. Models não é uma dependência operacional: apenas structs/enums e invariantes comuns.
 
-As assinaturas abaixo são **esboços contratuais de Rust**, não código compilado. O Local pode ser testado com sink simulado e dependências isoladas.
+As portas scope/collect, cancelamento e o adaptador físico da seção 11 estão implementados. Os cinco métodos de controle e os exemplos de eventos continuam esboços contratuais, sem fachada ou watcher compilados. A coleta é testada isoladamente, sem sink/Storage/RemoteFile.
 
 ## 2. Tipos internos e modelo compartilhado
 
@@ -41,7 +41,7 @@ pub(super) struct LocalDetectorFailure {
 }
 ```
 
-`AccountId`, `SyncId` e `Timestamp` serão importados de seus **proprietários efetivos**, eventualmente reexportados por Models. Sua localização em `crate::models` é ilustrativa até unificação dos tipos existentes. **Não criar definições novas para fazer o exemplo compilar.**
+`AccountId`, `SyncId` e `Timestamp` pertencem a `crate::models` no código atual. Os contratos operacionais reutilizam os tipos existentes, sem identidades paralelas. File e seus eventos ainda dependem do envelope compartilhado.
 
 ### Aviso individual
 
@@ -85,7 +85,7 @@ pub(super) trait LocalMetadataCollector: Send + Sync {
 
 O coletor implementa internamente as chamadas de sistema e **pode delegar a funções auxiliares** a aquisição de grupos mais caros ou específicos (ACLs, xattrs, flags, dados de symlink). O código do Detector Local não conhece nem enumera esses grupos e não constrói `LocalFile` por struct literal. Sua única função é solicitar a coleta e transportar **o objeto devolvido sem projetar/reduzir seus campos**.
 
-**Separação:** a definição `LocalFile` pertence a `models/`; a coleta com I/O pertence ao adaptador local; watcher, varredura e avisos pertencem ao Detector Local. Nenhuma modificação de `LocalFile` deve exigir mudança na lógica do Detector. A porta está descrita conceitualmente, sem implementação nesta etapa.
+**Separação:** a definição `LocalFile` pertence a `models/`; a coleta com I/O pertence ao adaptador local; watcher, varredura e avisos pertencem ao Detector Local. Nenhuma modificação de `LocalFile` deve exigir mudança na lógica do Detector. A porta de coleta e o adaptador físico estão implementados; a fachada de controle ainda não.
 
 ## 3. Objetos internos de requisição e resultado
 
@@ -221,9 +221,9 @@ impl LocalDetector {
 
 O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. O Detector pai persiste o `File` completo sem remontar metadados.
 
-A revisão de Models já seleciona o perfil local e define os invariantes de caminho, raiz e ausência. LocalFile e os tipos locais já estão implementados; a compilação do envelope completo ainda depende da revisão de RemoteFile, sem autorizar implementação remota nesta demanda. Reutilizar `AccountId` e `Timestamp` existentes; `SyncId` e `FileId` pertencem a Models. A escolha da biblioteca concreta do watcher e das syscalls do coletor é posterior, preservando os contratos deste documento. Detector pai e Storage recebem `File` integral, sem exigir sua implementação nesta etapa.
+A revisão de Models já seleciona o perfil local e define os invariantes de caminho, raiz e ausência. LocalFile e os tipos locais já estão implementados; a compilação do envelope completo ainda depende da revisão de RemoteFile, sem autorizar implementação remota nesta demanda. Reutilizar `AccountId` e `Timestamp` existentes; `SyncId` e `FileId` pertencem a Models. A biblioteca concreta do watcher continua posterior. O coletor usa O_PATH/fstat/statx/readlinkat, sem mudar as portas documentadas. Detector pai e Storage recebem `File` integral, sem exigir sua implementação nesta etapa.
 
-**Estado:** contrato de projeto não compilado, sem testes executados.
+**Estado:** implementação parcial por responsabilidade: somente coleta física, tipos operacionais e cancelamento. Métodos de controle, eventos e watcher continuam documentais; os testes físicos executados estão registrados em TESTS § 16.
 
 ## Integração com controle de entrega
 
@@ -324,7 +324,7 @@ As portas das seções 2 e 3 são os únicos contratos de dependência de negóc
 
 ## 10. Dependências documentais e limite desta entrega
 
-Este documento define controle, portas e regras de observação. Não cria Rust, watcher, coletor ou testes executáveis nesta etapa. Os atributos de LocalFile e os invariantes locais estão selecionados em [Models](../../models/INTERFACES.md#2-localfile--seleção-para-observação-local). A implementação futura deve seguir essa seleção; o envelope completo ainda depende da revisão remota. Não implementar versões paralelas para contornar dependências.
+Este documento define controle, portas e regras de observação. Somente o coletor físico e seus contratos auxiliares possuem código e testes nesta etapa; não há watcher ou métodos de controle implementados. Os atributos de LocalFile e os invariantes locais estão selecionados em [Models](../../models/INTERFACES.md#2-localfile--seleção-para-observação-local). A implementação futura deve seguir essa seleção; o envelope completo ainda depende da revisão remota. Não implementar versões paralelas para contornar dependências.
 
 Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza implementar RemoteFile, Remoto, Storage, Scanner ou fachada pública do Detector. A eventual necessidade de ajustar um contrato vizinho deve ser registrada antes da implementação, sem mudar seu escopo silenciosamente.
 
@@ -351,8 +351,22 @@ Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelat
 - Cancelamento é consultado antes de cada nova operação de I/O e depois das etapas de coleta. Um clone do token observa o cancelamento; tokens de outra geração são independentes. A construção/cancelamento dos tokens é controle interno do futuro detector, não API pública do aplicativo.
 - A coleta revalida vínculos de ancestrais, o último componente e a evidência relevante antes/depois da leitura. Mudança observada não é fotografia completa: devolve file=None/Partial para alvo desaparecido/substituído ou modificado durante coleta; falha estrutural da raiz é RootUnavailable, e ancestral relativo inseguro é PartialObservation. Revalidação não impede mudança após o retorno.
 - ENOENT em entrada relativa resulta em file=None/Partial, nunca exclusão confirmada. PermissionDenied é erro tipado sem metadados inventados. `.drivesync` em qualquer componente relativo é InvalidScope antes de consultar o filesystem; essa proteção é do adaptador, não da validação lexical de Models.
-- O perfil básico usa metadados reais de descritor. O enriquecimento usa statx por descritor quando disponível, respeitando máscaras, com fallback seguro para fstat. Não consultar ACL/xattr/conteúdo. Na primeira unidade, fstat fornece o básico e btime/flags permanecem NotCollected; statx será uma unidade subsequente.
-- A leitura do alvo literal usa o descritor do próprio symlink, com buffer crescente e limite operacional de 64 KiB por alvo. Não retornar Known de resultado possivelmente truncado; falha/limite do alvo preserva metadados confiáveis com target=Unavailable/PermissionDenied e cobertura Partial. Esse limite evita alocação sem controle e não limita nomes/tamanhos dos arquivos do usuário.
+- O perfil básico usa metadados reais de descritor. O enriquecimento usa statx por descritor quando disponível, respeitando máscaras, com fallback seguro para fstat. Não consultar ACL/xattr/conteúdo. A primeira unidade implementou fstat; o enriquecimento agora usa statx sem modificar as assinaturas scope/collect ou acessar campos de LocalFile no núcleo de coordenação. A montagem dos campos permanece isolada em metadata.rs.
+- A leitura do alvo literal usa o descritor do próprio symlink, com buffer crescente e limite operacional de 64 KiB por alvo. Não retornar Known de resultado possivelmente truncado; falha/limite do alvo preserva metadados confiáveis com target=Unavailable/PermissionDenied/Unsupported e cobertura Partial. Esse limite evita alocação sem controle e não limita nomes/tamanhos dos arquivos do usuário.
 - Erros têm mensagens estáticas sanitizadas e progress=None: uma coleta individual não é uma rodada scan_once. LocalScanResult é apenas o tipo de contagens previsto para essa integração, sem implementar varredura.
 
 Fontes técnicas: [open(2)](https://man7.org/linux/man-pages/man2/open.2.html) para O_PATH/O_NOFOLLOW; [readlink(2)](https://man7.org/linux/man-pages/man2/readlink.2.html) para leitura literal por descritor e truncamento; [statx(2)](https://man7.org/linux/man-pages/man2/statx.2.html) para máscaras e metadados. A estratégia de revalidação adapta os testes de descritores da branch arquivada sem importar Download, locks de sincronização, hashing ou filtros antigos.
+
+
+### Máscaras e fallback implementados
+
+Uma resposta statx bem-sucedida só produz Known para campos cujo bit de preenchimento esteja presente; mode requer TYPE e MODE. Campo solicitado ausente na máscara é Unavailable, sem inventar zero ou alegar suporte inexistente. Se faltar um campo básico obrigatório, a cobertura é Partial. Btime e flags opcionais não degradam, por si, o perfil básico.
+
+O par statx_attributes/statx_attributes_mask é preservado integralmente, sem interpretar bits fora da máscara. O device é obtido do fstat do mesmo descritor, cuja identidade/evidência é revalidada ao final. Não projetar inode/device como ID lógico.
+
+Falha global de statx usa os valores reais já amostrados por fstat no descritor: ENOSYS/EOPNOTSUPP deixam btime/flags Unsupported, EACCES/EPERM deixam PermissionDenied, e outras falhas deixam Unavailable. Não executar fallback por pathname absoluto ou seguir alvo. Fração temporal Known inválida é ModelInvalid; dados cujo bit não está presente não são validados como se fossem conhecidos.
+
+A fronteira de syscalls é privada ao adaptador, permitindo injetar falhas de statx/readlink sem substituir o coletor ou a árvore física. O cancelamento é consultado depois da query e antes de qualquer leitura adicional; uma query cancelada não inicia readlink ou retry de buffer.
+
+
+Para uma entrada que é diretório, collect=Complete descreve somente seus metadados selecionados; não percorre filhos nem comprova cobertura recursiva. Essa agregação pertence à futura varredura do Detector. A leitura pode atualizar atime conforme o filesystem, especialmente em symlink; não altera conteúdo, nomes, permissões ou links, e atime não compõe a evidência de estabilidade.

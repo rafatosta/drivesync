@@ -665,12 +665,12 @@ ID do lote, tamanho máximo, lease, reserva e ack pertencem a [`detectors/INTERF
 ## 8. Limites e pontos de integração
 
 1. **Identidades já existentes:** reutilizar/migrar explicitamente os tipos do código real; não produzir tipos incompatíveis duplicados.
-2. **Detector Local:** usa a porta de coleta estável e transporta File integral, conforme [seu contrato interno](../detectors/local/INTERFACES.md). A revisão local alinha escopo, cobertura e ausência sem implementar coleta.
+2. **Detector Local:** usa a porta de coleta estável e transporta File integral, conforme [seu contrato interno](../detectors/local/INTERFACES.md). Os modelos permanecem puros; a coleta física está implementada separadamente no módulo Local, sem eventos ou watcher.
 3. **Detector Remoto:** deverá produzir `RemoteFile` e `File` sem importar detalhes Google para a fachada.
 4. **Detector pai e Storage:** seus contratos documentais já preveem File completo e aceite durável; implementação e integração continuam separadas desta revisão.
 5. **Inventário:** o contrato anterior ainda utiliza `GoogleFile` e será revisto em etapa própria; **`SyncItem` permanece fora desta revisão**.
 6. **Tipos especializados:** ProviderFileData não cria dependência de Models para Google API.
-7. **Código:** nenhuma estrutura aqui é afirmada como implementada. Não alterar Rust nesta fase.
+7. **Código:** somente os tipos locais e seus validadores estão implementados; consultar a seção 9. Exemplos remotos e envelope não são código compilado.
 
 
 ## 9. Estado incremental do código
@@ -679,4 +679,4 @@ Implementados em `engine/src/models/`: LocalRelativePath (new/as_bytes), LocalTi
 
 LocalFile::validate verifica atributos conhecidos, coerência de modo/tipo, par de flags, aplicabilidade e identidade local presente sem consultar filesystem ou completar campos. Libc é usado somente para constantes de tipo de arquivo Linux; não há syscall em Models. Tipos locais novos não possuem serialização/desserialização enquanto o formato de transporte/persistência não for definido.
 
-File, FileData, File::validate, modelos remotos, gerador de IDs, coletor, watcher e persistência permanecem não implementados por esta entrega. As regras de envelope das seções 5.4–5.6 continuam especificação futura; os 18 testes atuais não validam essas regras nem a cobertura física. SyncId e FileId são valores opacos, sem geração ou validação de ocorrência nesta etapa.
+File, FileData, File::validate, modelos remotos, gerador de IDs, watcher e persistência permanecem não implementados. O coletor físico agora existe separadamente em `engine/src/detectors/local/`, preservando a pureza de Models. As regras de envelope das seções 5.4–5.6 continuam especificação futura; os 18 testes atuais não validam essas regras nem a cobertura física. SyncId e FileId são valores opacos, sem geração ou validação de ocorrência nesta etapa.
