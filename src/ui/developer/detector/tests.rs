@@ -89,7 +89,7 @@ fn live_account_selection_and_detector_layout() {
         let root = base.join(account);
         std::fs::create_dir(&root).unwrap();
         let session = Arc::new(
-            Orchestrator::observe(
+            Orchestrator::observe_persistent(
                 engine.clone(),
                 LocalDetectorScope {
                     account_id: AccountId(account.into()),
@@ -97,6 +97,8 @@ fn live_account_selection_and_detector_layout() {
                     local_root: root.clone(),
                 },
                 LocalDetectorSettings::default(),
+                base.join("queues"),
+                DeliveryState::Enabled,
             )
             .unwrap(),
         );
@@ -146,7 +148,14 @@ fn live_account_selection_and_detector_layout() {
     let personal = texts(page.upcast_ref());
     assert!(personal.contains("Monitoring"));
     assert!(personal.contains("personal-only.txt"));
-    assert!(personal.contains("Unavailable"));
+    assert_eq!(
+        find(page.upcast_ref(), "detector-pending")
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap()
+            .text(),
+        "0"
+    );
     assert!(personal.contains("CREATE"));
     assert!(personal.contains("MODIFY"));
     assert!(personal.contains("RENAME"));
@@ -218,6 +227,49 @@ fn live_account_selection_and_detector_layout() {
             .any(|event| event.entry_kind
                 == Some(drivesync_engine::models::LocalEntryKind::Directory))
     );
+    let delivery_button = find(page.upcast_ref(), "detector-delivery-toggle")
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap();
+    assert_eq!(
+        delivery_button.label().as_deref(),
+        Some("Interrupt delivery")
+    );
+    delivery_button.emit_clicked();
+    settle();
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
+    std::fs::write(
+        base.join("personal@example.invalid/queued-while-paused"),
+        b"durable",
+    )
+    .unwrap();
+    settle();
+    assert_eq!(session.diagnostics().pending_events, Some(1));
+    assert_eq!(delivery_button.label().as_deref(), Some("Resume delivery"));
+    capture(&window, "detector-delivery-paused");
+    selector.set_selected(1);
+    settle();
+    assert_eq!(
+        delivery_button.label().as_deref(),
+        Some("Interrupt delivery")
+    );
+    assert_eq!(
+        context
+            .detectors
+            .borrow()
+            .get("work@example.invalid")
+            .unwrap()
+            .orchestrator
+            .diagnostics()
+            .delivery,
+        Some(DeliveryState::Enabled)
+    );
+    selector.set_selected(0);
+    settle();
+    delivery_button.emit_clicked();
+    settle();
+    assert_eq!(session.diagnostics().pending_events, Some(0));
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
     capture(&window, "detector-local-personal");
     selector.set_selected(1);
     settle();

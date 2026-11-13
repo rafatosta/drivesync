@@ -62,6 +62,7 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
         remove(context, &AccountId(id)).await;
     }
     let mut result = Vec::new();
+    let queue_directory = adw::gtk::glib::user_data_dir().join("drivesync/detector-queues");
     for (account, root) in configured {
         let root = match root {
             Ok(root) => root,
@@ -82,6 +83,7 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
         } else {
             remove(context, &account.id).await;
             let connector = engine.clone();
+            let queue_directory = queue_directory.clone();
             let scope = LocalDetectorScope {
                 account_id: account.id.clone(),
                 // A diagnostic session identity, not a persisted synchronization registration.
@@ -89,17 +91,19 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
                 local_root: root.clone(),
             };
             let created = gio::spawn_blocking(move || {
-                let orchestrator = Arc::new(Orchestrator::observe(
+                let orchestrator = Arc::new(Orchestrator::observe_persistent(
                     connector,
                     scope,
                     LocalDetectorSettings::default(),
+                    queue_directory,
+                    DeliveryState::Enabled,
                 )?);
                 // Preserve Failed status and diagnostics if root capture cannot start.
                 let _ = orchestrator.start(LocalStartRequest {
                     mode: LocalStartMode::Initial,
                     requested_at: Timestamp { unix_millis: 0 },
                 });
-                Ok::<_, LocalDetectorFailure>(orchestrator)
+                Ok::<_, QueueFailure>(orchestrator)
             })
             .await
             .map_err(|_| "Could not create observation worker".to_owned())?;

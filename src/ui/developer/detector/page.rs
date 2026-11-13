@@ -96,9 +96,14 @@ struct View {
     count: gtk::Label,
     stream: gtk::ListBox,
     detail: gtk::Label,
+    delivery_toggle: gtk::glib::WeakRef<gtk::Button>,
+    control_busy: Rc<Cell<bool>>,
 }
 impl View {
     fn clear(&self) {
+        if let Some(button) = self.delivery_toggle.upgrade() {
+            button.set_sensitive(false);
+        }
         self.status.remove_css_class("success");
         self.status.remove_css_class("error");
         for value in [&self.last, &self.detected, &self.pending] {
@@ -130,6 +135,16 @@ impl View {
             return;
         };
         let snapshot = session.orchestrator.diagnostics();
+        if let Some(button) = self.delivery_toggle.upgrade() {
+            use drivesync_engine::detectors::DeliveryState;
+            button.set_label(if snapshot.delivery == Some(DeliveryState::Paused) {
+                "Resume delivery"
+            } else {
+                "Interrupt delivery"
+            });
+            button.set_sensitive(snapshot.delivery.is_some() && !self.control_busy.get());
+        }
+
         if let Ok(status) = session
             .orchestrator
             .status(drivesync_engine::detectors::LocalStatusRequest {})
@@ -162,6 +177,19 @@ impl View {
                     .unwrap_or_default()
             ));
         }
+        if let Some(delivery) = snapshot.delivery {
+            self.detail.set_label(&format!(
+                "{}
+Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
+                self.detail.text(),
+                snapshot.leased_events.unwrap_or(0),
+                snapshot.confirmed_events.unwrap_or(0),
+                snapshot
+                    .queue_error
+                    .map(|e| format!(" · Last queue error: {e:?}"))
+                    .unwrap_or_default()
+            ));
+        }
         self.last.set_label(
             &snapshot
                 .last_event_at
@@ -176,7 +204,7 @@ impl View {
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "Unavailable".into()),
         );
-        self.pending.set_tooltip_text(Some("The durable event queue is not implemented. Diagnostic history is not a pending-work queue."));
+        self.pending.set_tooltip_text(Some(if snapshot.pending_events.is_some() { "Unconfirmed durable events, including reservations. Pausing delivery keeps filesystem capture and persistence active." } else { "This observation-only session has no durable queue." }));
         self.count
             .set_label(&format!("{} events", snapshot.events.len()));
         for event in snapshot.events {
@@ -267,6 +295,15 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     account_row.append(&accounts);
     account_row.append(&refresh_button);
     body.append(&account_row);
+    let delivery_toggle = gtk::Button::with_label("Interrupt delivery");
+    delivery_toggle.set_widget_name("detector-delivery-toggle");
+    delivery_toggle.set_tooltip_text(Some(
+        "Pause delivery for this account. Continue detecting and persisting changes.",
+    ));
+    delivery_toggle.set_halign(gtk::Align::Start);
+    delivery_toggle.set_sensitive(false);
+    body.append(&delivery_toggle);
+    let control_busy = Rc::new(Cell::new(false));
     let feedback = label("", "error");
     body.append(&feedback);
     let tabs = gtk::Stack::new();
@@ -295,6 +332,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     let last = metric(&grid, "Last event", 1, 0);
     let detected = metric(&grid, "Events detected", 0, 1);
     let pending = metric(&grid, "Pending events", 1, 1);
+    pending.set_widget_name("detector-pending");
     body.append(&grid);
     let detail = label("Loading configured accounts…", "dim-label");
     body.append(&detail);
@@ -302,6 +340,9 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let title = label("Event stream", "title-2");
     title.set_hexpand(true);
+    title.set_tooltip_text(Some(
+        "Durably captured observations. Pausing delivery keeps this stream and capture active.",
+    ));
     heading.append(&title);
     let count = label("0 events", "dim-label");
     heading.append(&count);
@@ -311,7 +352,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         .css_classes(["boxed-list"])
         .build();
     body.append(&stream);
-    body.append(&label("Observation only · Last 100 events per account · History resets when its session is replaced or the app exits. No file synchronization is performed.", "dim-label"));
+    body.append(&label("Diagnostic delivery only · Last 100 durable events per account and folder · No file synchronization is performed.", "dim-label"));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -326,6 +367,8 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         count,
         stream,
         detail,
+        delivery_toggle: delivery_toggle.downgrade(),
+        control_busy: control_busy.clone(),
     };
     let ids = Rc::new(RefCell::new(Vec::<String>::new()));
     let errors = Rc::new(RefCell::new(
@@ -443,6 +486,69 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
             );
         }
     });
+    delivery_toggle.connect_clicked({
+        let context = context.clone();
+        let ids = ids.clone();
+        let accounts = accounts.downgrade();
+        let render = render_selection.clone();
+        let feedback = feedback.downgrade();
+        move |button| {
+            if control_busy.replace(true) {
+                return;
+            }
+            let id = accounts
+                .upgrade()
+                .and_then(|accounts| ids.borrow().get(accounts.selected() as usize).cloned());
+            let session = id.as_ref().and_then(|id| {
+                context
+                    .detectors
+                    .borrow()
+                    .get(id)
+                    .map(|session| session.orchestrator.clone())
+            });
+            let Some(session) = session else {
+                control_busy.set(false);
+                return;
+            };
+            button.set_sensitive(false);
+            let action_id = id.clone();
+            let selected_accounts = accounts.clone();
+            let selected_ids = ids.clone();
+            let control_busy = control_busy.clone();
+            let render = render.clone();
+            let feedback = feedback.clone();
+            if let Some(feedback) = feedback.upgrade() {
+                feedback.set_label("");
+            }
+            gtk::glib::spawn_future_local(async move {
+                let result = gtk::gio::spawn_blocking(move || {
+                    if session.diagnostics().delivery
+                        == Some(drivesync_engine::detectors::DeliveryState::Paused)
+                    {
+                        session.resume_delivery()
+                    } else {
+                        session.pause_delivery()
+                    }
+                })
+                .await;
+                control_busy.set(false);
+                let selected = selected_accounts.upgrade().and_then(|accounts| {
+                    selected_ids
+                        .borrow()
+                        .get(accounts.selected() as usize)
+                        .cloned()
+                });
+                if let Some(feedback) = feedback.upgrade().filter(|_| selected == action_id) {
+                    match result {
+                        Ok(Ok(())) => (),
+                        Ok(Err(error)) => feedback.set_label(&error.to_string()),
+                        Err(_) => feedback.set_label("Could not change detector delivery"),
+                    }
+                }
+                render();
+            });
+        }
+    });
     accounts.connect_selected_notify({
         let render = render_selection.clone();
         move |_| render()
@@ -465,7 +571,16 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                 let session = id.as_ref().and_then(|id| sessions.get(id));
                 format!(
                     "{id:?}/{remote}/{error:?}/{:?}/{:?}",
-                    session.map(|s| s.orchestrator.diagnostics().events_detected),
+                    session.map(|s| {
+                        let snapshot = s.orchestrator.diagnostics();
+                        (
+                            snapshot.events_detected,
+                            snapshot.pending_events,
+                            snapshot.confirmed_events,
+                            snapshot.delivery,
+                            snapshot.queue_error,
+                        )
+                    }),
                     session.map(|s| s
                         .orchestrator
                         .status(drivesync_engine::detectors::LocalStatusRequest {}))
