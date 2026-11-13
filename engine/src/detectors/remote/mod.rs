@@ -1,47 +1,42 @@
 //! Periodic remote observation; scheduling is independent of external event delivery.
 mod models;
 pub use models::*;
-pub(crate) mod google;
+mod google;
+mod interfaces;
+pub(crate) use interfaces::{Cancellation, RemoteSessionContext};
+use interfaces::{ObserverFactory, RemoteBackend, RemoteObserver};
 mod runtime;
-mod timestamp;
+use runtime::now;
 pub use runtime::RemoteDetector;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
-#[derive(Clone, Default)]
-pub(crate) struct Cancellation {
-    stopped: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
-}
-impl Cancellation {
-    pub fn cancel(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        self.notify.notify_one();
-    }
-    pub fn check(&self) -> RemoteResult<()> {
-        if self.stopped.load(Ordering::SeqCst) {
-            Err(RemoteFailure::new(RemoteError::Cancelled))
-        } else {
-            Ok(())
-        }
-    }
-    pub async fn cancelled(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.stopped.load(Ordering::SeqCst) {
-                return;
-            }
-            notified.await;
-        }
+
+impl RemoteDetector {
+    /// Resolves the persisted account provider before opening any producer storage.
+    /// Unsupported providers fail explicitly; no implementation is inferred from paths.
+    pub fn new(request: RemoteDetectorCreateRequest) -> RemoteResult<Self> {
+        runtime::validate(&request.scope, &request.settings)?;
+        let session = request
+            .connector
+            .remote_session_context(&request.scope.account_id)?;
+        let factory = implementation_for(&session.provider)?;
+        let provider = session.provider.clone();
+        let scope = request.scope.clone();
+        Self::open(
+            request.scope,
+            request.settings,
+            request.data_directory,
+            provider,
+            move |backend| factory(request.connector, session, scope, backend),
+        )
     }
 }
-pub(crate) fn now() -> crate::Timestamp {
-    crate::Timestamp {
-        unix_millis: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .min(i64::MAX as u128) as i64,
+
+/// The only common-module registry that knows the concrete provider implementations.
+fn implementation_for(provider: &crate::ProviderId) -> RemoteResult<ObserverFactory> {
+    match provider.0.as_str() {
+        "google" => Ok(google::create),
+        _ => Err(RemoteFailure::new(RemoteError::UnsupportedProvider)),
     }
 }
+
+#[cfg(test)]
+mod dispatch_tests;

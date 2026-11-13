@@ -31,3 +31,22 @@ O checkpoint avança somente depois que os eventos correspondentes têm entrega 
 ## Controle pelo Detector pai
 
 A pausa de **entrega ao Orquestrador** não pausa o polling remoto: eventos continuam sendo emitidos ao sink persistente do Detector e o checkpoint só avança após persistência durável. Apenas `stop` interrompe a observação de fato, preservando o checkpoint. O Orquestrador decide eventuais verificações após intervalo sem detecção; o Remoto não assume reconciliação ou execução de Scanner. O pai deve expor a condição remota separadamente da local.
+
+
+## Organização por provedor
+
+```text
+remote/
+  mod.rs                 # Module declarations and account-provider dispatch
+  interfaces.rs          # Shared observation and persistence contracts
+  models.rs              # Public requests, results and diagnostics
+  runtime.rs             # Shared lifecycle, scheduler and queue composition
+  google/
+    mod.rs               # GoogleRemoteDetector implementation
+    api.rs               # Existing Google Provider operations
+    metadata.rs          # Mapping and conservative event classification
+    timestamp.rs         # Google timestamp evidence
+    tests.rs             # Specialist tests
+```
+
+Cada implementação satisfaz `RemoteObserver`; o runtime conhece somente esse contrato. O módulo principal resolve o provedor a partir de Accounts e seleciona a factory registrada. Adicionar outro serviço exige seu especialista, suporte de sessão/Provider correspondente e registro em `remote/mod.rs`; não exige alterar o scheduler. Provedores sem implementação retornam erro tipado antes de abrir a fila.

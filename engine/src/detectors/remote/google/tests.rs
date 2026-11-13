@@ -40,7 +40,7 @@ struct Memory {
     fail_save: AtomicUsize,
     saves: AtomicUsize,
 }
-impl Backend for Memory {
+impl RemoteBackend for Memory {
     fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
         Ok(self.progress.lock().unwrap().clone())
     }
@@ -102,11 +102,13 @@ fn changes(
         new_start_page_token: terminal.map(str::to_owned),
     }))
 }
-fn fixture(replies: Vec<RemoteResult<Response>>) -> (Source, Arc<FakeApi>, Arc<Memory>) {
+fn fixture(
+    replies: Vec<RemoteResult<Response>>,
+) -> (GoogleRemoteDetector, Arc<FakeApi>, Arc<Memory>) {
     let api = FakeApi::new(replies);
     let backend = Arc::new(Memory::default());
     (
-        Source {
+        GoogleRemoteDetector {
             scope: RemoteDetectorScope {
                 account_id: AccountId("account".into()),
                 sync_id: SyncId("sync".into()),

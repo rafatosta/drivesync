@@ -1,22 +1,7 @@
 //! Filtered Google metadata adaptation and conservative classification, independent of polling.
-use super::{incomplete, now, valid, RemoteEventSummary, RemoteResult};
+use super::{incomplete, now, valid, RemoteResult};
 use crate::{models::*, providers::google::GoogleFile};
 
-pub(in crate::detectors::remote) fn summarize(file: File) -> RemoteEventSummary {
-    RemoteEventSummary {
-        id: file.id,
-        observed_at: file.observed_at,
-        event: file.event,
-        scope: file.scope,
-        entry_kind: match file.data {
-            Some(FileData::Remote(remote)) => match remote.kind {
-                MetadataValue::Known(kind) => Some(kind),
-                _ => None,
-            },
-            _ => None,
-        },
-    }
-}
 pub(super) fn is_folder(file: &GoogleFile) -> bool {
     file.mime_type.as_ref().map(|m| m.0.as_str()) == Some("application/vnd.google-apps.folder")
 }
@@ -65,7 +50,7 @@ pub(super) fn classify(
                 .zip(
                     raw.created_time
                         .as_deref()
-                        .and_then(crate::detectors::remote::timestamp::utc_millis),
+                        .and_then(super::timestamp::utc_millis),
                 )
                 .is_some_and(|(started, created)| {
                     created >= started && created <= now().unix_millis

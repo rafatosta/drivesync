@@ -1,7 +1,7 @@
 //! Real SQLite and real scheduler checks with an isolated Provider port.
 use super::*;
 use crate::{
-    detectors::remote::google::{Request, Response},
+    detectors::remote::google::{Api, GoogleRemoteDetector, Request, Response},
     models::*,
     providers::google::*,
 };
@@ -26,6 +26,27 @@ impl Api for ApiFixture {
             Request::Changes(_) => Response::Changes(GoogleChangeList { new_start_page_token: Some("end".into()), ..Default::default() }),
         })
     }
+}
+fn open_google(
+    scope: RemoteDetectorScope,
+    settings: RemoteDetectorSettings,
+    directory: std::path::PathBuf,
+    api: Arc<dyn Api>,
+) -> RemoteResult<RemoteDetector> {
+    let source_scope = scope.clone();
+    RemoteDetector::open(
+        scope,
+        settings,
+        directory,
+        ProviderId("google".into()),
+        move |backend| {
+            Ok(Box::new(GoogleRemoteDetector {
+                scope: source_scope,
+                api,
+                backend,
+            }))
+        },
+    )
 }
 fn base() -> std::path::PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -67,7 +88,7 @@ fn stopped_constructor_and_status_never_request_network() {
         slow: false,
     });
     let detector =
-        RemoteDetector::open(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
+        open_google(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
     assert_eq!(
         detector.status(RemoteStatusRequest {}).unwrap().state,
         RemoteState::Stopped
@@ -85,7 +106,7 @@ fn scheduler_polls_while_delivery_is_paused_and_stop_cancels_wait() {
         slow: false,
     });
     let detector =
-        RemoteDetector::open(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
+        open_google(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
     detector
         .start(RemoteStartRequest {
             mode: RemotePollMode::Initial,
@@ -131,7 +152,7 @@ fn in_flight_request_is_cancelled_and_drop_joins_it() {
         slow: true,
     });
     let detector =
-        RemoteDetector::open(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
+        open_google(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
     detector
         .start(RemoteStartRequest {
             mode: RemotePollMode::Initial,
@@ -151,7 +172,7 @@ fn real_storage_reopens_cursor_and_complete_payload_without_duplicate_initial_ev
         slow: false,
     });
     let detector =
-        RemoteDetector::open(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
+        open_google(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
     detector
         .poll_once(RemotePollRequest {
             mode: RemotePollMode::Initial,
@@ -162,7 +183,7 @@ fn real_storage_reopens_cursor_and_complete_payload_without_duplicate_initial_ev
     assert!(matches!(original.data, Some(FileData::Remote(_))));
     drop(detector);
     let reopened =
-        RemoteDetector::open(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
+        open_google(scope("a", "root-a"), settings(), base.clone(), api.clone()).unwrap();
     assert_eq!(reopened.shared.store.recent().unwrap()[0], original);
     reopened
         .poll_once(RemotePollRequest {
@@ -206,11 +227,9 @@ fn accounts_and_remote_roots_do_not_share_progress_or_queues() {
         calls: AtomicUsize::new(0),
         slow: false,
     });
-    let first =
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
-    let second =
-        RemoteDetector::open(scope("b", "root"), settings(), base.clone(), api.clone()).unwrap();
-    let replaced = RemoteDetector::open(
+    let first = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    let second = open_google(scope("b", "root"), settings(), base.clone(), api.clone()).unwrap();
+    let replaced = open_google(
         scope("a", "another-root"),
         settings(),
         base.clone(),
@@ -236,11 +255,8 @@ fn invalid_scope_or_budget_is_rejected_before_side_effects() {
         calls: AtomicUsize::new(0),
         slow: false,
     });
-    assert!(
-        RemoteDetector::open(scope("", "root"), settings(), base.clone(), api.clone()).is_err()
-    );
-    let detector =
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    assert!(open_google(scope("", "root"), settings(), base.clone(), api.clone()).is_err());
+    let detector = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
     assert_eq!(
         detector
             .poll_once(RemotePollRequest {
@@ -263,17 +279,14 @@ fn corrupted_progress_is_rejected_without_network_or_silent_recreation() {
         calls: AtomicUsize::new(0),
         slow: false,
     });
-    let detector =
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    let detector = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
     detector
         .shared
         .store
         .save_remote_state(None, b"invalid checkpoint")
         .unwrap();
     drop(detector);
-    assert!(
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).is_err()
-    );
+    assert!(open_google(scope("a", "root"), settings(), base.clone(), api.clone()).is_err());
     assert_eq!(api.calls.load(Ordering::SeqCst), 0);
     std::fs::remove_dir_all(base).unwrap();
 }
@@ -284,8 +297,7 @@ fn a_remote_queue_refuses_another_accounts_payload_even_with_the_same_sync_id() 
         calls: AtomicUsize::new(0),
         slow: false,
     });
-    let detector =
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    let detector = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
     detector
         .poll_once(RemotePollRequest {
             mode: RemotePollMode::Initial,
@@ -312,9 +324,8 @@ fn stop_also_cancels_an_explicit_poll_round() {
         calls: AtomicUsize::new(0),
         slow: true,
     });
-    let detector = Arc::new(
-        RemoteDetector::open(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap(),
-    );
+    let detector =
+        Arc::new(open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap());
     let polling = detector.clone();
     let worker = std::thread::spawn(move || {
         polling.poll_once(RemotePollRequest {
@@ -347,7 +358,7 @@ fn provider_retry_after_is_owned_by_the_scheduler_and_wait_is_interruptible() {
         }
     }
     let base = base();
-    let detector = RemoteDetector::open(
+    let detector = open_google(
         scope("a", "root"),
         settings(),
         base.clone(),
@@ -371,5 +382,135 @@ fn provider_retry_after_is_owned_by_the_scheduler_and_wait_is_interruptible() {
     detector.stop(RemoteStopRequest {}).unwrap();
     assert!(start.elapsed() < Duration::from_secs(1));
     drop(detector);
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn scheduler_and_queue_accept_a_provider_independent_observer() {
+    struct Independent {
+        backend: Arc<dyn RemoteBackend>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl RemoteObserver for Independent {
+        fn validate_progress(&self) -> RemoteResult<()> {
+            self.backend.load().map(|_| ())
+        }
+        fn poll_once(
+            &self,
+            request: RemotePollRequest,
+            cancel: &Cancellation,
+            progress: &dyn Fn(u64, u64),
+        ) -> RemoteResult<RemotePollResult> {
+            cancel.check()?;
+            assert!(request.page_budget.is_some_and(|budget| budget > 0));
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let emitted = u64::from(self.backend.emit(&File {
+                id: crate::models::FileId("independent-occurrence".into()),
+                sync_id: SyncId("sync-a".into()),
+                event: FileEvent {
+                    kind: FileEventKind::RecheckRequired,
+                    uncertainty: Some(ObservationUncertainty::CaptureStarted),
+                    previous: None,
+                    current: None,
+                },
+                observed_at: Timestamp { unix_millis: 1 },
+                coverage: ObservationCoverage::Partial,
+                scope: FileScope::WholeSync,
+                data: None,
+            })?);
+            progress(1, emitted);
+            Ok(RemotePollResult {
+                coverage: RemoteCoverage::Complete,
+                observed: 1,
+                emitted,
+                has_more: false,
+                checkpoint_confirmed: Some("independent-checkpoint".into()),
+            })
+        }
+    }
+    let base = base();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let detector = RemoteDetector::open(
+        scope("a", "root"),
+        settings(),
+        base.clone(),
+        ProviderId("independent".into()),
+        move |backend| {
+            Ok(Box::new(Independent {
+                backend,
+                calls: observed,
+            }))
+        },
+    )
+    .unwrap();
+    detector
+        .start(RemoteStartRequest {
+            mode: RemotePollMode::Incremental,
+        })
+        .unwrap();
+    wait_until(|| calls.load(Ordering::SeqCst) >= 2);
+    detector.stop(RemoteStopRequest {}).unwrap();
+    assert_eq!(detector.diagnostics().queue.detected, 1);
+    assert_eq!(
+        detector.diagnostics().status.cursor.as_deref(),
+        Some("independent-checkpoint")
+    );
+    let google = open_google(
+        scope("a", "root"),
+        settings(),
+        base.clone(),
+        Arc::new(ApiFixture {
+            calls: AtomicUsize::new(0),
+            slow: false,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        google.diagnostics().queue.detected,
+        0,
+        "provider identity isolates otherwise identical scopes"
+    );
+    drop((detector, google));
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn google_provider_identity_keeps_existing_database_paths_and_rejects_foreign_payloads() {
+    use sha2::{Digest, Sha256};
+    let base = base();
+    let api = Arc::new(ApiFixture {
+        calls: AtomicUsize::new(0),
+        slow: false,
+    });
+    let detector = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    let previous_identity =
+        serde_json::to_vec(&("a", "sync-a", b"remote:google:root".as_slice())).unwrap();
+    let existing_path = base
+        .join(format!("{:x}", Sha256::digest(previous_identity)))
+        .join("events.sqlite3");
+    assert!(
+        existing_path.is_file(),
+        "Google keeps the namespace from the prior implementation"
+    );
+    detector
+        .poll_once(RemotePollRequest {
+            mode: RemotePollMode::Initial,
+            page_budget: None,
+        })
+        .unwrap();
+    let mut foreign = detector.shared.store.recent().unwrap()[0].clone();
+    let Some(FileData::Remote(remote)) = &mut foreign.data else {
+        panic!()
+    };
+    remote.provider = ProviderId("another-provider".into());
+    assert_eq!(
+        detector.shared.store.enqueue(&foreign).unwrap_err().kind,
+        QueueError::IdentityMismatch
+    );
+    drop(detector);
+    let reopened = open_google(scope("a", "root"), settings(), base.clone(), api).unwrap();
+    assert_eq!(reopened.diagnostics().queue.detected, 1);
+    drop(reopened);
     std::fs::remove_dir_all(base).unwrap();
 }

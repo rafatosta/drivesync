@@ -78,6 +78,30 @@ fn live_account_selection_and_detector_layout() {
     let base = std::path::PathBuf::from(profile).join("detector-fixture");
     std::fs::create_dir_all(&base).unwrap();
     let context = Context::default();
+    // Independently synthetic account metadata; no real profile or keyring is consulted.
+    use std::os::unix::fs::PermissionsExt;
+    let account_directory = base.join("accounts");
+    std::fs::create_dir(&account_directory).unwrap();
+    std::fs::set_permissions(&account_directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut records = serde_json::Map::new();
+    for id in ["personal@example.invalid", "work@example.invalid"] {
+        records.insert(id.into(), serde_json::json!({
+            "account": { "id":id, "provider":"google", "provider_user_id":format!("subject-{id}"),
+                "email":id, "display_name":id, "state":"ReauthorizationRequired",
+                "created_at":{"unix_millis":0}, "updated_at":{"unix_millis":0} },
+            "key":format!("google:{id}:synthetic")
+        }));
+    }
+    let account_file = account_directory.join("accounts.json");
+    std::fs::write(
+        &account_file,
+        serde_json::to_vec(&serde_json::json!({
+            "version":1, "application":"org.example.DetectorUI", "records":records, "intent":null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&account_file, std::fs::Permissions::from_mode(0o600)).unwrap();
     let engine = gtk::glib::MainContext::default()
         .block_on(Engine::open(EngineConfig {
             data_directory: base.join("accounts"),

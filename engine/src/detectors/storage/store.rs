@@ -25,6 +25,7 @@ struct Identity<'a> {
     sync: &'a str,
     root: &'a [u8],
     local: Option<&'a Path>,
+    provider: Option<&'a str>,
 }
 /// Retains private directory descriptors for the lifetime of SQLite's file names.
 pub(crate) struct Store {
@@ -34,6 +35,7 @@ pub(crate) struct Store {
     sync: String,
     account: String,
     remote: bool,
+    provider: Option<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     cached: Mutex<QueueStats>,
 }
@@ -110,20 +112,27 @@ impl Store {
                 sync: &scope.sync_id.0,
                 root: scope.local_root.as_os_str().as_bytes(),
                 local: Some(&scope.local_root),
+                provider: None,
             },
             clock,
         )
     }
     pub(crate) fn open_remote(
         base: &Path,
+        provider: &str,
         account: &str,
         sync: &str,
         root: &str,
     ) -> QueueResult<Self> {
-        if root.trim().is_empty() {
+        if provider.is_empty()
+            || !provider
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || root.trim().is_empty()
+        {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
-        let root = format!("remote:google:{root}");
+        let root = format!("remote:{provider}:{root}");
         Self::open_identity(
             base,
             Identity {
@@ -131,6 +140,7 @@ impl Store {
                 sync,
                 root: root.as_bytes(),
                 local: None,
+                provider: Some(provider),
             },
             Arc::new(clock),
         )
@@ -225,6 +235,7 @@ impl Store {
             sync: scope.sync.to_owned(),
             account: scope.account.to_owned(),
             remote: scope.local.is_none(),
+            provider: scope.provider.map(str::to_owned),
             clock,
             cached: Mutex::new(QueueStats::default()),
         };
@@ -540,6 +551,7 @@ impl Store {
                         && match data {
                             Some(FileData::Remote(remote)) => {
                                 remote.reference.account_id.0 == self.account
+                                    && self.provider.as_deref() == Some(remote.provider.0.as_str())
                             }
                             None => true,
                             _ => false,

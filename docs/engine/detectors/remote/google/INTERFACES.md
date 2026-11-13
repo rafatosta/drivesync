@@ -50,3 +50,8 @@ Rotinas auxiliares do especialista podem consultar detalhes adicionais (permiss�
 `RemoteEventSink.emit(file: File)` recebe **uma observação completa**. Quando `GoogleFile.id` existe, o adaptador fornece `File.data=Some(FileData::Remote(remote_file))` e contexto `FileEvent`/`FileScope` de Models. Sem identidade confiável ou diante de `GoogleChange.removed` sem objeto, emitir `RecheckRequired` ou `ScopeUnavailable` com `data=None`; não gerar `RemoteFile` falso.
 
 As propriedades detalhadas do provedor permanecem no `ProviderFileData` quando autorizadas, inclusive estados de coleta parciais. Para `Renamed/Moved`, `previous/current` só são preenchidos com localização correlacionada; nunca por comparação superficial de nomes. A emissão não modifica checkpoint até aceite durável do `File` integral. Evolução do modelo remoto não altera polling/scan, apenas o adaptador especializado e seus testes.
+
+
+## Organização compilada
+
+O registro em `remote/mod.rs` seleciona a factory Google a partir da conta validada. `google/mod.rs` implementa `RemoteObserver` em `GoogleRemoteDetector`; a fachada comum oferece o ciclo de vida e o scheduler. `api.rs` usa apenas Providers Google e sessões obtidas por Connection/Accounts. `metadata.rs`, `timestamp.rs` e `tests.rs` mantêm os detalhes específicos do Google dentro deste diretório. Os métodos públicos de ciclo de vida são os da fachada `RemoteDetector`, compartilhados por todos os especialistas; a implementação concreta não é exposta ao consumidor externo.

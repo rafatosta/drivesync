@@ -1,8 +1,5 @@
 //! One interruptible scheduler per remote scope; delivery never controls polling.
-use super::{
-    google::{Api, Backend, Source},
-    *,
-};
+use super::*;
 use crate::{
     detectors::{storage::Store, *},
     models::{File, Timestamp},
@@ -13,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 struct Shared {
-    source: Source,
+    source: Box<dyn RemoteObserver>,
     store: Arc<Store>,
     settings: RemoteDetectorSettings,
     status: Mutex<RemoteStatusResult>,
@@ -35,7 +32,7 @@ pub struct RemoteDetector {
     manual_cancel: Mutex<Option<Cancellation>>,
 }
 struct DurableBackend(Arc<Store>);
-impl Backend for DurableBackend {
+impl RemoteBackend for DurableBackend {
     fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
         self.0
             .remote_state()
@@ -59,44 +56,25 @@ impl Backend for DurableBackend {
     }
 }
 impl RemoteDetector {
-    pub fn new(request: RemoteDetectorCreateRequest) -> RemoteResult<Self> {
-        let api = request
-            .connector
-            .remote_detector_api(request.scope.account_id.clone());
-        Self::open(request.scope, request.settings, request.data_directory, api)
-    }
     pub(super) fn open(
         scope: RemoteDetectorScope,
         settings: RemoteDetectorSettings,
         directory: std::path::PathBuf,
-        api: Arc<dyn Api>,
+        provider: crate::ProviderId,
+        create: impl FnOnce(Arc<dyn RemoteBackend>) -> RemoteResult<Box<dyn RemoteObserver>>,
     ) -> RemoteResult<Self> {
-        if scope.account_id.0.trim().is_empty()
-            || scope.sync_id.0.trim().is_empty()
-            || scope.remote_root_id.trim().is_empty()
-            || scope.remote_root_id.len() > 4096
-            || scope.remote_root_id.chars().any(char::is_control)
-            || settings.polling_interval.is_zero()
-            || settings.polling_interval > Duration::from_secs(86400)
-            || settings.page_budget == 0
-            || settings.page_budget > 1000
-        {
-            return Err(RemoteFailure::new(RemoteError::InvalidScope));
-        }
+        validate(&scope, &settings)?;
         let store = Arc::new(
             Store::open_remote(
                 &directory,
+                &provider.0,
                 &scope.account_id.0,
                 &scope.sync_id.0,
                 &scope.remote_root_id,
             )
             .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?,
         );
-        let source = Source {
-            scope,
-            api,
-            backend: Arc::new(DurableBackend(store.clone())),
-        };
+        let source = create(Arc::new(DurableBackend(store.clone())))?;
         source.validate_progress()?;
         let events = store
             .recent()
@@ -122,7 +100,12 @@ impl RemoteDetector {
                     last_error: None,
                 }),
                 settings,
-                events: Mutex::new(events.into_iter().map(super::google::summarize).collect()),
+                events: Mutex::new(
+                    events
+                        .into_iter()
+                        .map(RemoteEventSummary::from_file)
+                        .collect(),
+                ),
                 poll: Mutex::new(()),
             }),
             worker: Mutex::new(None),
@@ -356,7 +339,7 @@ impl RemoteDetector {
             .store
             .recent()?
             .into_iter()
-            .map(super::google::summarize)
+            .map(RemoteEventSummary::from_file)
             .collect();
         Ok(())
     }
@@ -407,16 +390,23 @@ impl Shared {
                 status.recovery_attempts += 1;
             }
         }
-        let result = self
-            .source
-            .poll_with_progress(mode, budget, cancel, &|observed, emitted| {
+        let result = self.source.poll_once(
+            RemotePollRequest {
+                mode,
+                page_budget: Some(budget),
+            },
+            cancel,
+            &|observed, emitted| {
                 let mut status = self.status.lock().unwrap_or_else(|e| e.into_inner());
                 status.observed_in_current_round = observed;
                 status.emitted_in_current_round = emitted;
-            });
+            },
+        );
         if let Ok(events) = self.store.recent() {
-            *self.events.lock().unwrap_or_else(|e| e.into_inner()) =
-                events.into_iter().map(super::google::summarize).collect();
+            *self.events.lock().unwrap_or_else(|e| e.into_inner()) = events
+                .into_iter()
+                .map(RemoteEventSummary::from_file)
+                .collect();
         }
         let mut status = self.status.lock().unwrap_or_else(|e| e.into_inner());
         status.last_poll_duration = Some(started.elapsed());
@@ -452,3 +442,33 @@ impl Drop for RemoteDetector {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+/// Pure validation shared by dispatch and the scheduler constructor.
+pub(super) fn validate(
+    scope: &RemoteDetectorScope,
+    settings: &RemoteDetectorSettings,
+) -> RemoteResult<()> {
+    if scope.account_id.0.trim().is_empty()
+        || scope.sync_id.0.trim().is_empty()
+        || scope.remote_root_id.trim().is_empty()
+        || scope.remote_root_id.len() > 4096
+        || scope.remote_root_id.chars().any(char::is_control)
+        || settings.polling_interval.is_zero()
+        || settings.polling_interval > Duration::from_secs(86400)
+        || settings.page_budget == 0
+        || settings.page_budget > 1000
+    {
+        return Err(RemoteFailure::new(RemoteError::InvalidScope));
+    }
+    Ok(())
+}
+
+pub(super) fn now() -> crate::Timestamp {
+    crate::Timestamp {
+        unix_millis: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(i64::MAX as u128) as i64,
+    }
+}

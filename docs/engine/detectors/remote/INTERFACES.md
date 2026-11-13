@@ -196,3 +196,14 @@ O acesso autorizado é reexportado exclusivamente por `drivesync_engine::detecto
 O especialista recebe portas internas de Provider e persistência. Não conhece EventStore, SQLite ou Orquestrador. O backend armazena página preparada, snapshots e cursor com compare-and-swap; a emissão individual precede a confirmação de progresso. A fila é segregada por conta/SyncId/raiz/origem. Initial retoma checkpoint existente; Recovery emite reavaliação e obtém nova leitura sem concluir remoções por ausência. Ancestralidade é limitada a 64 níveis; estado a 16 MiB e árvore a 100.000 entradas. Limites atingidos geram falha/cobertura parcial, sem completar cursor fictício.
 
 O Google Changes fornece o estado atual, podendo reunir alterações entre consultas: não se promete reconstrução de todas as ações transitórias. CREATE exige createdTime normalizado posterior ao início da observação; entradas antigas/sem evidência geram RECHECK. Rename/Move exigem snapshot correlacionado; alterações compostas, perda de projeção, remoção e perda de acesso permanecem conservadoras. MODIFY exige evidência de hash diferente. Consultas usam somente Providers; nenhuma mutação remota é executada pelo detector.
+
+
+## 9. Seleção por provedor e contrato dos especialistas
+
+`remote/mod.rs` declara os especialistas e resolve `AccountId → ProviderId → factory` a partir dos metadados persistidos de Accounts. O request público não aceita um provedor informado pela interface. Conta inexistente falha antes de abrir a fila; provedor sem registro retorna `UnsupportedProvider`, sem fallback para Google.
+
+`remote/interfaces.rs` define a porta interna `RemoteObserver` (`validate_progress` e `poll_once`) e a persistência opaca `RemoteBackend`. Cada especialista implementa a observação pelo contrato comum; `RemoteDetector` oferece `new/start/poll_once/stop/status` e compartilha agendamento, cancelamento, entrega e diagnóstico entre implementações. Não há scheduler duplicado por provedor nem dependência do runtime genérico em tipos Google.
+
+A implementação concreta `google::GoogleRemoteDetector` fica em `google/mod.rs`, com chamadas Google em `google/api.rs` e adaptação/classificação em `google/metadata.rs`. `Connection` fornece contexto validado e execução com sessão renovada, sem interpretar endpoints ou alterações Google. Antes de cada consulta, a conta/provedor são revalidados. A sessão Google existente em Accounts continua sendo obtida somente pelo especialista selecionado; novos provedores exigirão o respectivo suporte real em Accounts/Providers e registro no módulo remoto.
+
+A identidade da fila inclui o ProviderId validado. O namespace Google permanece exatamente `remote:google:<raiz>`, preservando os bancos, IDs e checkpoints anteriores; outros provedores usam namespaces próprios. O armazenamento também rejeita payload cujo provedor não corresponda à fila.

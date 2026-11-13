@@ -1,11 +1,12 @@
 //! Google interpretation, scoped traversal and crash-safe page replay through Provider.
 use super::*;
+mod api;
 mod metadata;
+mod timestamp;
 use crate::{
     models::*,
     providers::google::{GoogleChangeList, GoogleFile, GoogleFileList},
 };
-pub(super) use metadata::summarize;
 use metadata::{adapt, classify, filtered, is_folder, location};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -14,7 +15,7 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) enum Request {
+pub(super) enum Request {
     Start,
     Get(String),
     List {
@@ -23,21 +24,15 @@ pub(crate) enum Request {
     },
     Changes(String),
 }
-pub(crate) enum Response {
+pub(super) enum Response {
     Start(String),
     File(Box<GoogleFile>),
     List(GoogleFileList),
     Changes(GoogleChangeList),
 }
 /// Provider seam: typed requests only; no HTTP endpoints are built by the detector.
-pub(crate) trait Api: Send + Sync {
+pub(super) trait Api: Send + Sync {
     fn call(&self, request: Request, cancellation: &Cancellation) -> RemoteResult<Response>;
-}
-/// Durable ports are opaque to Google interpretation. Save uses compare-and-swap.
-pub(crate) trait Backend: Send + Sync {
-    fn load(&self) -> RemoteResult<Option<Vec<u8>>>;
-    fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()>;
-    fn emit(&self, file: &File) -> RemoteResult<bool>;
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,10 +83,10 @@ impl State {
         })
     }
 }
-pub(crate) struct Source {
-    pub scope: RemoteDetectorScope,
-    pub api: Arc<dyn Api>,
-    pub backend: Arc<dyn Backend>,
+pub(super) struct GoogleRemoteDetector {
+    pub(super) scope: RemoteDetectorScope,
+    pub(super) api: Arc<dyn Api>,
+    pub(super) backend: Arc<dyn RemoteBackend>,
 }
 fn incomplete() -> RemoteFailure {
     RemoteFailure::new(RemoteError::PageIncomplete)
@@ -102,7 +97,7 @@ fn valid(value: &str) -> bool {
 fn fingerprint(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))[..12].to_owned()
 }
-impl Source {
+impl GoogleRemoteDetector {
     fn save(&self, old: &mut Option<Vec<u8>>, state: &State) -> RemoteResult<()> {
         let value = serde_json::to_vec(state).map_err(|_| incomplete())?;
         self.backend.save(old.as_deref(), &value)?;
@@ -186,7 +181,7 @@ impl Source {
         event.validate().map_err(|_| incomplete())?;
         Ok(event)
     }
-    pub fn validate_progress(&self) -> RemoteResult<()> {
+    fn validate_checkpoint(&self) -> RemoteResult<()> {
         if let Some(bytes) = self.backend.load()? {
             let state: State = serde_json::from_slice(&bytes)
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
@@ -221,9 +216,9 @@ impl Source {
         budget: u32,
         cancel: &Cancellation,
     ) -> RemoteResult<RemotePollResult> {
-        self.poll_with_progress(mode, budget, cancel, &|_, _| {})
+        self.observe_round(mode, budget, cancel, &|_, _| {})
     }
-    pub fn poll_with_progress(
+    fn observe_round(
         &self,
         mode: RemotePollMode,
         budget: u32,
@@ -641,3 +636,36 @@ impl Source {
 }
 #[cfg(test)]
 mod tests;
+
+/// Creates Google's implementation after the common facade has selected this provider.
+pub(super) fn create(
+    connector: crate::Engine,
+    session: RemoteSessionContext,
+    scope: RemoteDetectorScope,
+    backend: Arc<dyn RemoteBackend>,
+) -> RemoteResult<Box<dyn RemoteObserver>> {
+    if session.provider.0 != "google" || session.account_id != scope.account_id {
+        return Err(RemoteFailure::new(RemoteError::InvalidScope));
+    }
+    Ok(Box::new(GoogleRemoteDetector {
+        scope,
+        api: Arc::new(api::Access::new(connector, session)),
+        backend,
+    }))
+}
+impl RemoteObserver for GoogleRemoteDetector {
+    fn validate_progress(&self) -> RemoteResult<()> {
+        self.validate_checkpoint()
+    }
+    fn poll_once(
+        &self,
+        request: RemotePollRequest,
+        cancel: &Cancellation,
+        progress: &dyn Fn(u64, u64),
+    ) -> RemoteResult<RemotePollResult> {
+        let budget = request
+            .page_budget
+            .ok_or_else(|| RemoteFailure::new(RemoteError::InvalidScope))?;
+        self.observe_round(request.mode, budget, cancel, progress)
+    }
+}

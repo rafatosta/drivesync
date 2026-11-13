@@ -164,3 +164,6 @@ Retenção nesta versão: registros completos, inclusive confirmados, são manti
 O codec versão 1 admite agora `Remote(RemoteFile)` além de Local, mantendo a codificação dos registros locais existentes. Filas remotas têm identidade de raiz com namespace próprio; não reinterpretam caminhos locais nem misturam contas/origens. Enqueue e leitura validam a conta do payload remoto e o SyncId da fila.
 
 O backend remoto usa uma extensão privada `remote_progress` no mesmo armazenamento privado. O especialista acessa apenas portas de carregar/salvar/emitir. Página preparada contém os File completos, com IDs e horários estáveis; após falha entre enqueue e checkpoint, o replay é idempotente pela identidade/payload. Compare-and-swap impede sobrescrever progresso concorrente. Checkpoint ilegível falha sem descarte ou reconstrução silenciosa. A confirmação de progresso remoto não depende de ack externo nem da política de entrega.
+
+
+A abertura remota recebe explicitamente o provedor selecionado pela fachada. O prefixo é `remote:<provider>:<root>`, com validação do identificador do provedor para evitar ambiguidades. Para Google, a identidade e o caminho resultantes permanecem iguais aos anteriores. Enqueue/leitura rejeitam payload remoto de outro provedor, mesmo com conta e SyncId iguais.

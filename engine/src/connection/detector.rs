@@ -1,88 +1,101 @@
-//! Accounts-managed sessions for the remote detector, using existing Provider calls only.
+//! Validated account context and Accounts-owned sessions for remote observation.
 use super::*;
 use crate::detectors::remote::{
-    google::{Api, Request, Response},
-    Cancellation, RemoteError, RemoteFailure, RemoteResult,
+    Cancellation, RemoteError, RemoteFailure, RemoteResult, RemoteSessionContext,
 };
-struct Access {
-    engine: Engine,
-    account: AccountId,
-}
-impl Engine {
-    pub(crate) fn remote_detector_api(&self, account: AccountId) -> Arc<dyn Api> {
-        Arc::new(Access {
-            engine: self.clone(),
-            account,
-        })
-    }
-}
-fn failure(error: GoogleApiFailure) -> RemoteFailure {
-    use GoogleApiError::*;
+use std::future::Future;
+
+fn account_failure(error: AccountsFailure) -> RemoteFailure {
     let kind = match error.kind {
-        ExpiredCursor => RemoteError::CursorExpired,
-        AuthenticationRequired | ReauthorizationRequired | InvalidGrant | InsufficientScope => {
-            RemoteError::AuthorizationRequired
-        }
-        PermissionDenied | NotFoundOrInaccessible => RemoteError::PermissionDenied,
-        InvalidResponse | InvalidArgument => RemoteError::PageIncomplete,
-        Cancelled => RemoteError::Cancelled,
+        AccountsError::NotFound
+        | AccountsError::AuthorizationFailed
+        | AccountsError::CredentialMissing => RemoteError::AuthorizationRequired,
+        AccountsError::IdentityMismatch => RemoteError::InvalidScope,
+        AccountsError::UnsupportedProvider => RemoteError::UnsupportedProvider,
         _ => RemoteError::RemoteUnavailable,
     };
-    RemoteFailure {
-        kind,
-        retryable: error.retryable,
-        retry_after: error
-            .retry_after_seconds
-            .map(std::time::Duration::from_secs),
-    }
+    let mut failure = RemoteFailure::new(kind);
+    failure.retryable = error.retryable;
+    failure
 }
-const FIELDS: &str = "id,name,mimeType,parents,trashed,version,createdTime,modifiedTime,size,md5Checksum,sha256Checksum";
-impl Api for Access {
-    fn call(&self, request: Request, cancellation: &Cancellation) -> RemoteResult<Response> {
+impl Engine {
+    /// Reads local Accounts metadata only; this does not acquire credentials or perform HTTP.
+    pub(crate) fn remote_session_context(
+        &self,
+        account: &AccountId,
+    ) -> RemoteResult<RemoteSessionContext> {
+        let account = self
+            .inner
+            .accounts
+            .get(GetAccountRequest {
+                account_id: account.clone(),
+            })
+            .map_err(account_failure)?
+            .account;
+        Ok(RemoteSessionContext {
+            account_id: account.id,
+            provider: account.provider,
+        })
+    }
+
+    /// Provider-specific clients are obtained only by the selected specialist.
+    pub(crate) fn google_drive_client(&self) -> GoogleDriveClient {
+        self.inner.client.clone()
+    }
+
+    /// Runs a specialist query with a fresh, identity-checked Accounts session.
+    /// Called only on a blocking detector worker. Cancellation drops HTTP work;
+    /// credential transactions already in progress remain owned by Accounts.
+    pub(crate) fn with_remote_session<T, F, Q>(
+        &self,
+        context: &RemoteSessionContext,
+        cancellation: &Cancellation,
+        query: F,
+    ) -> RemoteResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(ProviderSessionHandle) -> Q + Send + 'static,
+        Q: Future<Output = RemoteResult<T>> + Send + 'static,
+    {
         cancellation.check()?;
-        let inner = self.engine.inner.clone();
-        let account = self.account.clone();
+        let inner = self.inner.clone();
+        let context = context.clone();
         let cancel = cancellation.clone();
-        // Only the detector's worker blocks here; HTTP and Accounts run on the owned executor.
-        self.engine.runtime().block_on(async {
-            let task = self.engine.runtime().spawn(async move {
-                let operation = async {
-                    let _lease = inner.ownership.gate.clone().read_owned().await;
-                    let session = inner.accounts.acquire_session(AcquireSessionRequest { account_id: account.clone() }).await.map_err(|error| {
-                        let kind = match error.kind {
-                            AccountsError::NotFound | AccountsError::AuthorizationFailed | AccountsError::CredentialMissing => RemoteError::AuthorizationRequired,
-                            _ => RemoteError::RemoteUnavailable,
-                        };
-                        RemoteFailure::new(kind)
-                    })?;
-                    let session = session.session.google();
-                    if session.account_id != account.0 { return Err(RemoteFailure::new(RemoteError::InvalidScope)); }
-                    let client = &inner.client;
-                    Ok(match request {
-                        Request::Start => Response::Start(client.changes_get_start_page_token(session, ChangeScopeOptions { supports_all_drives: Some(true), ..Default::default() }).await.map_err(failure)?.start_page_token),
-                        Request::Get(id) => Response::File(Box::new(client.files_get(session, &FileId(id), FileGetOptions { fields: Some(FieldMask(FIELDS.into())), supports_all_drives: Some(true), ..Default::default() }).await.map_err(failure)?)),
-                        Request::List { parent, token } => {
-                            let quoted = parent.replace('\\', "\\\\").replace('\'', "\\'");
-                            Response::List(client.files_list(session, FileListOptions {
-                                q: Some(format!("'{quoted}' in parents and trashed = false")),
-                                spaces: Some("drive".into()), page_size: Some(200), page_token: token,
-                                supports_all_drives: Some(true), include_items_from_all_drives: Some(true),
-                                fields: Some(FieldMask(format!("nextPageToken,incompleteSearch,files({FIELDS})"))), ..Default::default()
-                            }).await.map_err(failure)?)
+        self.runtime().block_on(async {
+            self.runtime()
+                .spawn(async move {
+                    let operation = async {
+                        let _lease = inner.ownership.gate.clone().read_owned().await;
+                        let account = inner
+                            .accounts
+                            .get(GetAccountRequest {
+                                account_id: context.account_id.clone(),
+                            })
+                            .map_err(account_failure)?
+                            .account;
+                        if account.provider != context.provider || account.id != context.account_id
+                        {
+                            return Err(RemoteFailure::new(RemoteError::InvalidScope));
                         }
-                        Request::Changes(token) => Response::Changes(client.changes_list(session, ChangeListOptions {
-                            page_token: token, page_size: Some(200), include_removed: Some(true), spaces: Some("drive".into()),
-                            supports_all_drives: Some(true), include_items_from_all_drives: Some(true),
-                            fields: Some(FieldMask(format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FIELDS}))"))), ..Default::default()
-                        }).await.map_err(failure)?),
-                    })
-                };
-                tokio::select! { biased;
-                    _ = cancel.cancelled() => Err(RemoteFailure::new(RemoteError::Cancelled)),
-                    result = operation => result,
-                }
-            });
-            task.await.map_err(|_| RemoteFailure::new(RemoteError::Internal))?
+                        if account.state == AccountState::ReauthorizationRequired {
+                            return Err(RemoteFailure::new(RemoteError::AuthorizationRequired));
+                        }
+                        let session = inner
+                            .accounts
+                            .acquire_session(AcquireSessionRequest {
+                                account_id: context.account_id,
+                            })
+                            .await
+                            .map_err(account_failure)?;
+                        query(session.session).await
+                    };
+                    tokio::select! { biased;
+                        _ = cancel.cancelled() => Err(RemoteFailure::new(RemoteError::Cancelled)),
+                        result = operation => result,
+                    }
+                })
+                .await
+                .map_err(|_| RemoteFailure::new(RemoteError::Internal))?
         })
     }
 }

@@ -60,6 +60,7 @@ pub enum RemoteCoverage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RemoteError {
     InvalidScope,
+    UnsupportedProvider,
     InvalidState,
     RemoteUnavailable,
     PermissionDenied,
@@ -157,4 +158,23 @@ pub struct RemoteDiagnostics {
     pub status: RemoteStatusResult,
     pub queue: QueueStats,
     pub events: Vec<RemoteEventSummary>,
+}
+
+impl RemoteEventSummary {
+    /// Projects shared model evidence without retaining provider-specific payloads.
+    pub(super) fn from_file(file: File) -> Self {
+        Self {
+            id: file.id,
+            observed_at: file.observed_at,
+            event: file.event,
+            scope: file.scope,
+            entry_kind: match file.data {
+                Some(FileData::Remote(remote)) => match remote.kind {
+                    MetadataValue::Known(kind) => Some(kind),
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
+    }
 }
