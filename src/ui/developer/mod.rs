@@ -1,4 +1,4 @@
-//! Empty developer console destinations for future engine inspection.
+//! Developer console destinations for engine inspection.
 mod analyzer;
 mod detector;
 mod inventory;

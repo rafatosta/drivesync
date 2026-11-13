@@ -48,8 +48,10 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
             &toasts,
         ));
         let window = crate::ui::dashboard::window::build(app, &toasts);
+        crate::ui::developer::install(&window, &context);
         let shutdown_context = context.clone();
         app.connect_shutdown(move |_| {
+            super::detectors::shutdown(&shutdown_context);
             if let (Some(engine), Some(id)) = (
                 shutdown_context.engine.borrow().as_ref(),
                 shutdown_context.pending.borrow_mut().take(),

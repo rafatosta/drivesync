@@ -63,3 +63,15 @@ Conferem alinhamento, ausência de cortes no mínimo comum, limpeza de setup
 incompleto, persistência da conclusão, seleção de contas e navegação compacta. As capturas desativam
 animações apenas no processo de teste para registrar o estado final. Ver
 [data/screenshots/README.md](../data/screenshots/README.md).
+
+## Developer / Detector
+
+A página Detector tem seleção por AccountId e abas Local/Remote. Ao abrir a página, a aplicação carrega as contas com setup concluído e cria sessões reais de observação local pelo Orchestrator. Cada conta possui seu próprio escopo, status, contagem e histórico; trocar a seleção troca imediatamente a origem exibida. As sessões pertencem ao Context da aplicação e continuam ativas quando a console é fechada, sem iniciar sincronização de arquivos.
+
+O botão de recarregar relê contas/pastas, encerra escopos removidos ou alterados e cria os novos. Uma falha de leitura preserva as sessões existentes. A desconexão encerra a observação da conta antes de remover sua configuração; gerações impedem que uma inicialização concorrente antiga a reinsira. Se a desconexão falhar, recarregar permite iniciar novamente o diagnóstico. Mudanças de pasta em Preferências são aplicadas à inspeção ao recarregar/reabrir a página. O encerramento da aplicação libera as sessões fora da thread GTK.
+
+A engine fornece o status, o total de ocorrências desde o início da sessão, o horário da última e até 100 resumos de evento. Não há números de demonstração. A interface preserva os tipos reais, incluindo RecheckRequired: não transforma pistas nativas em CREATE/MODIFY/RENAME comprovados. Pending events aparece como indisponível enquanto não existe telemetria de fila persistente; o histórico volátil não é fila de trabalho. Resumos não incluem conteúdo nem payload de metadados. Reiniciar/trocar a sessão zera seu diagnóstico.
+
+A atualização visual a cada 500 ms lê snapshots em memória e só redesenha dados alterados; não agenda observação nem consulta remota. Remote informa que não está implementado. Quando existir, intervalo, última/próxima consulta, duração, alterações retornadas, cursor, eventos e recuperação deverão vir da engine por conta. Um eventual temporizador apenas apresenta o próximo ciclo informado pela engine, sem manter um agendador independente na interface.
+
+Validação desta entrega: fmt, Clippy com warnings negados, testes do workspace (587 aprovados, 7 ignorados por ambiente), rustdoc e 4 doctests passaram no org.gnome.Sdk//50. O fixture gráfico foi depois executado separadamente via Broadway/D-Bus, com perfil XDG isolado: 1 aprovado, incluindo seleção entre duas contas, eventos reais, parada isolada e layout de 360 pixels; restam 6 testes ambientais não exercitados nesta entrega. Capturas foram inspecionadas em `_build/detector-preview/`. Não houve teste com contas reais Google, aplicação instalada ou fila persistente.

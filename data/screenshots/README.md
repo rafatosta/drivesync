@@ -41,3 +41,5 @@ O teste cria arquivos legados somente no perfil temporário para verificar sua
 limpeza. As capturas não comprovam integração Google, portais ou funcionamento do
 aplicativo instalado. A arquitetura atual está em
 [docs/GUI_ARCHITECTURE.md](../../docs/GUI_ARCHITECTURE.md).
+
+O fixture `live_account_selection_and_detector_layout` usa duas sessões reais do detector com pastas temporárias e identidades fictícias. No mesmo ambiente isolado, gera `detector-local-personal.png` e `detector-local-narrow.png` quando DRIVESYNC_UI_PREVIEW_DIR estiver definido. Verifica criação de eventos, troca de conta sem mistura de histórico e parada isolada; não usa Google, keyring ou fila persistente.
