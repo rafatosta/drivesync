@@ -2,7 +2,7 @@
 
 ## 0. Escopo e interpretação
 
-Esta revisão define a **seleção documental para o fluxo local**: `LocalFile`, seus auxiliares e as regras locais de `FileData`/`File`. A matriz da seção 2 registra as decisões por atributo. A implementação Rust será uma etapa separada; esta revisão não afirma aprovação dos campos remotos. `RemoteFile` e `ProviderFileData` continuam catálogo proposto, com revisão própria pendente. As assinaturas são especificações, não código compilado.
+Esta revisão define a **seleção documental para o fluxo local**: `LocalFile`, seus auxiliares e as regras locais de `FileData`/`File`. A matriz da seção 2 registra as decisões por atributo. A implementação Rust será uma etapa separada; esta revisão não afirma aprovação dos campos remotos. `RemoteFile` e `ProviderFileData` continuam catálogo proposto, com revisão própria pendente. As assinaturas locais são implementadas por etapas; consultar o estado incremental abaixo. Os exemplos remotos continuam especificações não compiladas.
 
 `models/` **não expõe uma interface operacional**. Não criar `ModelManager`, serviços de consulta, trait de persistência ou métodos de I/O. Validação pura de valores pode ser acrescentada **somente** para preservar os invariantes explicitamente definidos aqui.
 
@@ -671,3 +671,10 @@ ID do lote, tamanho máximo, lease, reserva e ack pertencem a [`detectors/INTERF
 5. **Inventário:** o contrato anterior ainda utiliza `GoogleFile` e será revisto em etapa própria; **`SyncItem` permanece fora desta revisão**.
 6. **Tipos especializados:** ProviderFileData não cria dependência de Models para Google API.
 7. **Código:** nenhuma estrutura aqui é afirmada como implementada. Não alterar Rust nesta fase.
+
+
+## 9. Estado incremental do código
+
+Fundação implementada em `engine/src/models/`: caminhos Unix validados, timestamps locais, identidades selecionadas e estados/erros puros. Reutilizados AccountId, ProviderId e Timestamp existentes, sem mudança de representação. A validação de identidades presentes em LocalFile será exercida na unidade seguinte; IDs de ocorrência/raiz não são gerados ou validados operacionalmente por esta fundação.
+
+LocalFile/validate, File/FileData e toda coleta/operação física ainda não são afirmados como implementados nesta unidade. A organização Rust usa mod.rs para reexportação e mantém a API existente de `drivesync_engine::models`.

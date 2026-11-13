@@ -4,7 +4,7 @@
 
 `models/` representa os dados compartilhados do DriveSync. Os módulos funcionais observam, armazenam, analisam ou executam operações a partir desses dados; **Models não realiza I/O**, não sincroniza, não decide conflitos, não persiste e não expõe uma trait de serviço.
 
-Os campos e invariantes estão em [INTERFACES.md](INTERFACES.md). O fluxo local tem seleção documental por atributo e testes definidos nesta revisão; a implementação será uma etapa separada. RemoteFile e ProviderFileData continuam catálogo proposto, aguardando revisão específica. Não completar lacunas por inferência.
+Os campos e invariantes estão em [INTERFACES.md](INTERFACES.md). O fluxo local tem seleção documental por atributo e testes definidos nesta revisão; a implementação ocorre incrementalmente em `engine/src/models/`. RemoteFile e ProviderFileData continuam catálogo proposto, aguardando revisão específica. Não completar lacunas por inferência.
 
 ## Hierarquia e propriedade
 
@@ -209,3 +209,10 @@ O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dep
 - [AGENTS.md](AGENTS.md): critérios para implementação literal futura.
 
 **Esta etapa é somente documental.** O Detector Local é alinhado às regras de caminho, cobertura e aplicabilidade sem mudar suas assinaturas. Não altera Rust, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; não comprova coleta física nem durabilidade.
+
+
+## Implementação incremental atual
+
+A fundação local está implementada: LocalRelativePath, LocalTimestamp, SyncId/FileId/LocalFileId, MetadataValue e ModelError. O arquivo antigo models.rs foi organizado em models/mod.rs com reexportações, preservando AccountId/ProviderId/Timestamp e sua serialização. Tipos locais novos não definem formato de persistência nesta etapa.
+
+LocalFile e sua validação são a próxima unidade desta implementação. File/FileData, campos remotos, coleta física, watcher e persistência continuam fora desta entrega de fundação.

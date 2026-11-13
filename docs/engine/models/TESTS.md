@@ -181,3 +181,10 @@ A implementação futura exige seguir a seleção local desta revisão e resolve
 - A matriz de eventos locais fecha combinações de data, scope, previous/current e coverage sem transformar observação em comando.
 - Testes remotos e de FileData::Remote continuam documentais e dependentes da revisão remota; não fabricar um RemoteFile para declarar o envelope completo implementável.
 - Não criar arquivo Rust, teste executável, migração de Inventário ou implementação de detector nesta etapa. Testes físicos e durabilidade não são comprovados por esta matriz.
+
+
+## 8. Evidências da implementação incremental
+
+Fundação local: seis testes executáveis em `engine/src/models/tests.rs`, cobrindo MOD-PTH-01 a 04, MOD-TIM-01/02, MOD-LOC-15 e regressão MOD-ID-03/04. RED observado por ausência dos novos tipos; GREEN com `cargo test --offline --locked -p drivesync-engine --lib models::` (6 PASS), no org.gnome.Sdk//50 com rust-stable e CARGO_HOME explicitamente ligado ao cache disponível. `cargo fmt --all` executado no mesmo SDK.
+
+O cache anterior estava invisível ao SDK; expor `/home/tosta/.cargo` como CARGO_HOME permitiu resolver as dependências offline sem instalar SDKs ou bibliotecas. Os demais casos locais e do envelope não são declarados executados por esta evidência de fundação.

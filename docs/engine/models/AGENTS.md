@@ -2,11 +2,11 @@
 
 ## Situação e fonte de verdade
 
-**Documentação conceitual; NÃO implementar código Rust nesta etapa.**
+**Implementação incremental dos modelos locais autorizada na etapa atual.** Seguir os tipos selecionados e os testes puros; não ampliar para o envelope compartilhado ou catálogo remoto.
 
 As definições de atributos, tipos, variantes, ausência e invariantes estão em [INTERFACES.md](INTERFACES.md). O [README.md](README.md) apresenta responsabilidades e uma tabela resumida; [TESTS.md](TESTS.md) traduz essas regras em casos verificáveis. A implementação futura deverá ser **reflexo literal da especificação após aprovação do responsável**, sem acrescentar ou alterar campos por preferência do agente.
 
-**Esta etapa define documentalmente o fluxo local; não implementar Rust nesta demanda.** RemoteFile e ProviderFileData permanecem propostas sem seleção. A execução futura não pode tratar a revisão local como aprovação do catálogo remoto.
+A fundação local (caminhos, timestamps, identidades e estados) passa a ter código em `engine/src/models/`. Implementar LocalFile em unidade funcional própria. RemoteFile e ProviderFileData permanecem propostas sem seleção; não interpretar a implementação local como aprovação remota.
 
 ## Proprietários
 
@@ -71,7 +71,7 @@ O envelope FileData depende de RemoteFile. Antes de implementar o envelope compl
 - Orquestrador apenas transporta `File`; **Analisador** interpreta origem e evento.
 - Nenhuma alteração deste contrato autoriza acoplar o Detector aos campos internos de `LocalFile`; manter a porta estável do coletor.
 - O desenho completo de `FileBatch` e do protocolo de ack é propriedade do Detector. Não migrar `SyncItem`.
-- Nesta demanda, apenas revisar contratos e testes. Código será uma etapa separada; a implementação do envelope completo depende também da revisão remota.
+- A etapa atual implementa tipos locais e validação pura. File/FileData e a validação do envelope permanecem pendentes da revisão remota.
 
 ## Metadados completos e associação de RemoteFile ao provedor
 
