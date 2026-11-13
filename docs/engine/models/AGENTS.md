@@ -6,7 +6,7 @@
 
 As definições de atributos, tipos, variantes, ausência e invariantes estão em [INTERFACES.md](INTERFACES.md). O [README.md](README.md) apresenta responsabilidades e uma tabela resumida; [TESTS.md](TESTS.md) traduz essas regras em casos verificáveis. A implementação futura deverá ser **reflexo literal da especificação após aprovação do responsável**, sem acrescentar ou alterar campos por preferência do agente.
 
-A fundação local (caminhos, timestamps, identidades e estados) passa a ter código em `engine/src/models/`. Implementar LocalFile em unidade funcional própria. RemoteFile e ProviderFileData permanecem propostas sem seleção; não interpretar a implementação local como aprovação remota.
+A fundação local e LocalFile/validate estão implementados em `engine/src/models/`, com testes puros. Preservar esse escopo na manutenção. RemoteFile e ProviderFileData permanecem propostas sem seleção; não interpretar a implementação local como aprovação remota.
 
 ## Proprietários
 
@@ -32,7 +32,7 @@ A fundação local (caminhos, timestamps, identidades e estados) passa a ter có
 
 ## Contrato local selecionado
 
-Seguir a matriz manter/sob demanda/descartar de INTERFACES § 2.2 e os tipos de § 2.3. A seleção desta revisão cobre os atributos locais e suas regras de ausência; não é implementação Rust nem seleção remota.
+Seguir a matriz manter/sob demanda/descartar de INTERFACES § 2.2 e os tipos de § 2.3. A seleção cobre os atributos locais e suas regras de ausência; sua implementação local não aprova seleção remota.
 
 - Manter paths Unix em bytes não vazios, kind, mode, owner, mtime/ctime/btime, size/nlink/inode/device, par de flags statx/máscara e alvo literal de symlink.
 - LocalFileId é opcional; o coletor inicial usa None. Não inventar ID com inode, device ou caminho.

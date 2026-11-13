@@ -2,7 +2,7 @@
 
 ## Estado
 
-O fluxo local tem seleção documental definida em [INTERFACES.md](INTERFACES.md), seções 1/2/5. Os campos remotos continuam catálogo sem seleção e não bloqueiam a revisão dos tipos locais, mas bloqueiam a implementação integral do envelope compartilhado. Estes são cenários para implementação posterior, não testes executáveis ou executados. Não inferir aprovação remota a partir da seleção local.
+O fluxo local tem seleção documental definida em [INTERFACES.md](INTERFACES.md), seções 1/2/5. Os campos remotos continuam catálogo sem seleção e não bloqueiam a revisão dos tipos locais, mas bloqueiam a implementação integral do envelope compartilhado. Os testes locais implementados e sua evidência estão na seção 8; os cenários de envelope e remoto continuam especificação futura. Não inferir aprovação remota a partir da seleção local.
 
 Os testes de `models/` são **puros**: sem rede, filesystem real, SQLite, serviços Google, InventoryManager, Orquestrador ou operação de sincronização.
 
@@ -117,7 +117,7 @@ A suíte Models usa dados sintéticos. A suíte do **coletor local** valida as f
 
 **Esses quatro casos são pontos de integração, não testes unitários do módulo Models.**
 
-A implementação futura exige seguir a seleção local desta revisão e resolver as dependências remotas antes do envelope completo. Executar testes de entrada/saída, opcionais e invariantes; registrar PASS/FAIL/BLOCKED no ambiente Flatpak. **Nenhum teste executável foi criado ou executado nesta alteração documental.**
+A implementação futura exige seguir a seleção local desta revisão e resolver as dependências remotas antes do envelope completo. Executar testes de entrada/saída, opcionais e invariantes; registrar PASS/FAIL/BLOCKED no ambiente Flatpak. O estado dos testes executáveis locais está na seção 8; nenhum caso remoto/envelope é declarado executado.
 
 
 ## 6. Índice por método puro do fluxo local
@@ -174,17 +174,41 @@ A implementação futura exige seguir a seleção local desta revisão e resolve
 
 **Verificação:** MOD-VAL-09 clona uma ocorrência, valida as cópias e confirma preservação integral de FileId, observed_at, contexto e LocalFile; uma nova fixture pode ter outro FileId para o mesmo caminho. Teste de geração de IDs e retry real fica no produtor/Storage. Ausência de APIs operacionais é verificada por revisão de dependências, não afirmada por um mock de I/O.
 
-## 7. Critério de aceite desta revisão
+## 7. Critérios de escopo e evolução
 
 - A matriz de decisão cobre todos os grupos e campos do catálogo local; o código futuro só pode incluir os campos selecionados.
 - Cada método puro tem sucesso, negativos/opcionais, retorno/invariantes e evidência independente; estados de ausência e bytes Unix estão explícitos.
 - A matriz de eventos locais fecha combinações de data, scope, previous/current e coverage sem transformar observação em comando.
 - Testes remotos e de FileData::Remote continuam documentais e dependentes da revisão remota; não fabricar um RemoteFile para declarar o envelope completo implementável.
-- Não criar arquivo Rust, teste executável, migração de Inventário ou implementação de detector nesta etapa. Testes físicos e durabilidade não são comprovados por esta matriz.
+- A implementação atual fica nos modelos locais e testes puros. Não implementar migração de Inventário, envelope remoto ou detector por consequência. Testes físicos e durabilidade não são comprovados por esta suíte.
 
 
 ## 8. Evidências da implementação incremental
 
-Fundação local: seis testes executáveis em `engine/src/models/tests.rs`, cobrindo MOD-PTH-01 a 04, MOD-TIM-01/02, MOD-LOC-15 e regressão MOD-ID-03/04. RED observado por ausência dos novos tipos; GREEN com `cargo test --offline --locked -p drivesync-engine --lib models::` (6 PASS), no org.gnome.Sdk//50 com rust-stable e CARGO_HOME explicitamente ligado ao cache disponível. `cargo fmt --all` executado no mesmo SDK.
+Foram implementados 18 testes puros em `engine/src/models/tests.rs`, cobrindo quatro métodos locais (`LocalRelativePath::new/as_bytes`, `LocalTimestamp::new`, `LocalFile::validate`). Nenhum teste usa filesystem, rede, relógio ou credencial para exercer os modelos. Os testes de regressão de AccountId/ProviderId/Timestamp usam JSON em memória.
 
-O cache anterior estava invisível ao SDK; expor `/home/tosta/.cargo` como CARGO_HOME permitiu resolver as dependências offline sem instalar SDKs ou bibliotecas. Os demais casos locais e do envelope não são declarados executados por esta evidência de fundação.
+| Contrato | Evidência executável |
+| --- | --- |
+| MOD-PTH-01 a 04 | Preservação de bytes não UTF-8, nomes especiais/reservados, empréstimo imutável e rejeição dos caminhos inválidos |
+| MOD-TIM-01/02 | Segundos assinados/extremos e frações válidas/inválidas, sem carry |
+| MOD-ID-03/04 | Compatibilidade dos tipos reexportados e JSON das identidades existentes |
+| MOD-LOC-01/02/03/04/05/06/08/13/15 | Tipos, modos/permissões, owner, datas, zeros, device/inode, flags, alvos e estados distintos |
+| MOD-VAL-01 a 04 | Observação completa/parcial; identidade fornecida; timestamps Known inválidos; NotApplicable em cada atributo; flags coerentes/incoerentes; ausência de mutação e mensagens de erro sem payload |
+| MOD-LOC-16/19 | Revisão do código confirma pureza e exclusão das categorias descartadas/sob demanda; não são provas de coleta física |
+
+RED foi observado em duas unidades: ausência dos tipos primitivos e ausência de LocalFile/grupos (logs de compilação). GREEN: `cargo test --offline --locked -p drivesync-engine --lib models::` passou com 6 testes na fundação e com 18 após LocalFile/validate.
+
+Ambiente: `org.gnome.Sdk//50` e a extensão rust-stable do manifesto, com `CARGO_HOME=/home/tosta/.cargo` explicitamente exposto ao SDK. Isso resolveu o cache anteriormente invisível, sem instalar SDK ou extensão. Novos modelos não definem serialização; testar desserialização fica pendente de um contrato de formato posterior.
+
+Casos MOD-VAL-05 a 09, MOD-EVT/MOD-FIL/MOD-DAT e remotos permanecem pendentes de implementação do envelope/revisão remota. Cobertura Complete/Partial física, construção do File, IDs/retry de eventos e estabilidade diante de corridas não são demonstrados por LocalFile::validate. A coleta permanece em outro componente.
+
+
+Validação final executada no mesmo SDK, com cache exposto, em 2026-11-13:
+
+- `cargo fmt --all --check`: PASS.
+- `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`: PASS.
+- `cargo test --offline --locked --workspace`: 536 testes PASS e 1 doctest PASS, 6 testes ignorados (5 de desktop/portal e 1 de Secret Service isolado).
+- `cargo doc --offline --locked --workspace --no-deps --document-private-items`: PASS, sem warnings.
+- `cargo test --offline --locked --workspace --doc`: 1 doctest PASS.
+
+A execução inclui testes de providers contra servidores locais simulados; não comprova conta Google real, uso instalado do Flatpak, portal ou observação de filesystem pelo detector.

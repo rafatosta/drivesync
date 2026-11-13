@@ -198,7 +198,7 @@ A entrega normal pode transportar apenas uma ocorrência e ser imediata. O Stora
 
 ## Etapas posteriores à seleção local
 
-O contrato selecionado inclui validação pura de caminhos, timestamps, LocalFile e combinações locais de File. A implementação dos tipos locais pode ser planejada a partir desses casos, sem executar coleta ou alterar outros módulos.
+Caminhos, timestamps e LocalFile já possuem implementação e validação pura. A validação do envelope File continua especificada, mas não implementada. A coleta deve usar esses tipos sem transferir I/O para Models.
 
 O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dependência precisa de revisão própria antes da implementação integral do envelope: não criar um modelo remoto fictício, remover sua variante ou implementar todos os campos remotos por inferência. A seleção local não aprova codificação, limite ou retenção de ProviderFileData.
 
@@ -208,11 +208,11 @@ O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dep
 - [TESTS.md](TESTS.md): testes propostos diretamente derivados desses contratos.
 - [AGENTS.md](AGENTS.md): critérios para implementação literal futura.
 
-**Esta etapa é somente documental.** O Detector Local é alinhado às regras de caminho, cobertura e aplicabilidade sem mudar suas assinaturas. Não altera Rust, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; não comprova coleta física nem durabilidade.
+**Estado atual:** os modelos locais e seus validadores puros foram implementados. O Detector Local mantém as interfaces documentadas, mas não ganhou watcher ou coletor. Não foram implementados File/FileData, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; os testes de modelos não comprovam coleta física ou durabilidade.
 
 
 ## Implementação incremental atual
 
 A fundação local está implementada: LocalRelativePath, LocalTimestamp, SyncId/FileId/LocalFileId, MetadataValue e ModelError. O arquivo antigo models.rs foi organizado em models/mod.rs com reexportações, preservando AccountId/ProviderId/Timestamp e sua serialização. Tipos locais novos não definem formato de persistência nesta etapa.
 
-LocalFile e sua validação são a próxima unidade desta implementação. File/FileData, campos remotos, coleta física, watcher e persistência continuam fora desta entrega de fundação.
+LocalFile e validate também estão implementados, com grupos selecionados de permissões/proprietário, timestamps, armazenamento, flags e symlink. Os quatro métodos puros locais e os estados de coleta possuem 18 testes; File::validate continua pendente com o envelope. File/FileData, campos remotos, coleta física, watcher e persistência ficam fora desta entrega.

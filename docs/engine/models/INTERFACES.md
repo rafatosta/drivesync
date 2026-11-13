@@ -2,7 +2,7 @@
 
 ## 0. Escopo e interpretação
 
-Esta revisão define a **seleção documental para o fluxo local**: `LocalFile`, seus auxiliares e as regras locais de `FileData`/`File`. A matriz da seção 2 registra as decisões por atributo. A implementação Rust será uma etapa separada; esta revisão não afirma aprovação dos campos remotos. `RemoteFile` e `ProviderFileData` continuam catálogo proposto, com revisão própria pendente. As assinaturas locais são implementadas por etapas; consultar o estado incremental abaixo. Os exemplos remotos continuam especificações não compiladas.
+Esta revisão define a **seleção documental para o fluxo local**: `LocalFile`, seus auxiliares e as regras locais de `FileData`/`File`. A matriz da seção 2 registra as decisões por atributo. Os tipos locais e seus quatro métodos puros estão implementados; esta entrega não afirma aprovação dos campos remotos. `RemoteFile` e `ProviderFileData` continuam catálogo proposto, com revisão própria pendente. As assinaturas locais são implementadas por etapas; consultar o estado incremental abaixo. Os exemplos remotos continuam especificações não compiladas.
 
 `models/` **não expõe uma interface operacional**. Não criar `ModelManager`, serviços de consulta, trait de persistência ou métodos de I/O. Validação pura de valores pode ser acrescentada **somente** para preservar os invariantes explicitamente definidos aqui.
 
@@ -210,7 +210,7 @@ Models pode validar invariantes puras do objeto; isso não faz do detector um co
 
 ### 2.7. Estado e referências técnicas
 
-**Seleção local definida para revisão nesta etapa, sem implementação Rust.** Campos remotos e payload de provedor não foram selecionados. Antes de implementar o envelope compartilhado completo, resolver a dependência de `FileData::Remote(RemoteFile)` sem criar um RemoteFile fictício, remover variantes ou implementar automaticamente o catálogo remoto. A implementação isolada dos tipos locais não depende de I/O remoto; o envelope completo ainda depende da revisão remota.
+**Seleção local implementada em `engine/src/models/`, incluindo LocalFile/validate; envelope ainda documental.** Campos remotos e payload de provedor não foram selecionados. Antes de implementar o envelope compartilhado completo, resolver a dependência de `FileData::Remote(RemoteFile)` sem criar um RemoteFile fictício, remover variantes ou implementar automaticamente o catálogo remoto. A implementação isolada dos tipos locais não depende de I/O remoto; o envelope completo ainda depende da revisão remota.
 
 As fontes técnicas sustentam a semântica das consultas, não as decisões de seleção do produto: [statx(2)](https://man7.org/linux/man-pages/man2/statx.2.html) documenta timestamps, máscaras e campos; [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) documenta resolução física de caminhos; [xattr(7)](https://man7.org/linux/man-pages/man7/xattr.7.html) documenta atributos e namespaces. As decisões manter/sob demanda/descartar são deste contrato.
 
@@ -675,6 +675,8 @@ ID do lote, tamanho máximo, lease, reserva e ack pertencem a [`detectors/INTERF
 
 ## 9. Estado incremental do código
 
-Fundação implementada em `engine/src/models/`: caminhos Unix validados, timestamps locais, identidades selecionadas e estados/erros puros. Reutilizados AccountId, ProviderId e Timestamp existentes, sem mudança de representação. A validação de identidades presentes em LocalFile será exercida na unidade seguinte; IDs de ocorrência/raiz não são gerados ou validados operacionalmente por esta fundação.
+Implementados em `engine/src/models/`: LocalRelativePath (new/as_bytes), LocalTimestamp (new), LocalFile (validate), seus grupos selecionados, MetadataValue, ModelError/ModelResult e os wrappers SyncId/FileId/LocalFileId. AccountId/ProviderId/Timestamp existentes foram preservados com a serialização anterior.
 
-LocalFile/validate, File/FileData e toda coleta/operação física ainda não são afirmados como implementados nesta unidade. A organização Rust usa mod.rs para reexportação e mantém a API existente de `drivesync_engine::models`.
+LocalFile::validate verifica atributos conhecidos, coerência de modo/tipo, par de flags, aplicabilidade e identidade local presente sem consultar filesystem ou completar campos. Libc é usado somente para constantes de tipo de arquivo Linux; não há syscall em Models. Tipos locais novos não possuem serialização/desserialização enquanto o formato de transporte/persistência não for definido.
+
+File, FileData, File::validate, modelos remotos, gerador de IDs, coletor, watcher e persistência permanecem não implementados por esta entrega. As regras de envelope das seções 5.4–5.6 continuam especificação futura; os 18 testes atuais não validam essas regras nem a cobertura física. SyncId e FileId são valores opacos, sem geração ou validação de ocorrência nesta etapa.

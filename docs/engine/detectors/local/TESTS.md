@@ -90,7 +90,7 @@ Cenário de falha entre observação e aceite durável deve preservar possibilid
 
 **5/5 métodos internos** e cenários de Models aplicáveis passam independentemente, com resultados PASS/FAIL/BLOCKED e evidências de comandos executados no Flatpak. **Não** exigir testes Google/Inventory/Storage para concluir o Local.
 
-Dependência para testes executáveis: implementação dos tipos locais selecionados em Models; revisão remota ainda necessária antes do envelope completo. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. Nenhum teste foi executado nesta atualização documental.
+Os tipos locais selecionados em Models já possuem implementação e testes puros; os testes do Detector continuam não implementados, e o envelope completo ainda depende de revisão remota. As decisões operacionais estão na seção 8 de INTERFACES. A escolha do watcher concreto não permite relaxar esses oráculos. Nenhum teste foi executado nesta atualização documental.
 
 ## 7. Regressão obrigatória — independência do esquema de LocalFile
 

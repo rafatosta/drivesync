@@ -221,7 +221,7 @@ impl LocalDetector {
 
 O Local **não importa `SyncItem` ou `SyncItemId`** nesta etapa. Não depende da implementação de Storage; o sink fake é suficiente para testes locais. O Detector pai persiste o `File` completo sem remontar metadados.
 
-A revisão de Models já seleciona o perfil local e define os invariantes de caminho, raiz e ausência. A implementação dos tipos Rust compartilhados continua posterior; a compilação do envelope completo também depende da revisão de RemoteFile, sem autorizar implementação remota nesta demanda. Reutilizar `AccountId` e `Timestamp` existentes; `SyncId` e `FileId` pertencem a Models. A escolha da biblioteca concreta do watcher e das syscalls do coletor é posterior, preservando os contratos deste documento. Detector pai e Storage recebem `File` integral, sem exigir sua implementação nesta etapa.
+A revisão de Models já seleciona o perfil local e define os invariantes de caminho, raiz e ausência. LocalFile e os tipos locais já estão implementados; a compilação do envelope completo ainda depende da revisão de RemoteFile, sem autorizar implementação remota nesta demanda. Reutilizar `AccountId` e `Timestamp` existentes; `SyncId` e `FileId` pertencem a Models. A escolha da biblioteca concreta do watcher e das syscalls do coletor é posterior, preservando os contratos deste documento. Detector pai e Storage recebem `File` integral, sem exigir sua implementação nesta etapa.
 
 **Estado:** contrato de projeto não compilado, sem testes executados.
 
