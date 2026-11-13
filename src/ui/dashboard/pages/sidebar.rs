@@ -3,21 +3,26 @@ use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId};
 use std::{cell::RefCell, rc::Rc};
 
+type MenuFactory = Rc<dyn Fn(&Account) -> gtk::MenuButton>;
+
 #[derive(Clone)]
 pub(super) struct AccountSidebar {
     pub list: gtk::ListBox,
     accounts: Rc<RefCell<Vec<Account>>>,
+    menu: Option<MenuFactory>,
 }
 #[derive(Clone)]
 pub(super) struct SidebarHandle {
     list: gtk::glib::WeakRef<gtk::ListBox>,
     accounts: Rc<RefCell<Vec<Account>>>,
+    menu: Option<MenuFactory>,
 }
 impl SidebarHandle {
     pub fn upgrade(&self) -> Option<AccountSidebar> {
         Some(AccountSidebar {
             list: self.list.upgrade()?,
             accounts: self.accounts.clone(),
+            menu: self.menu.clone(),
         })
     }
 }
@@ -26,6 +31,7 @@ impl AccountSidebar {
         SidebarHandle {
             list: self.list.downgrade(),
             accounts: self.accounts.clone(),
+            menu: self.menu.clone(),
         }
     }
     pub fn new() -> Self {
@@ -38,7 +44,12 @@ impl AccountSidebar {
         Self {
             list,
             accounts: Rc::default(),
+            menu: None,
         }
+    }
+    pub fn with_menu(mut self, factory: impl Fn(&Account) -> gtk::MenuButton + 'static) -> Self {
+        self.menu = Some(Rc::new(factory));
+        self
     }
     pub fn selected(&self) -> Option<Account> {
         let index = self.list.selected_row()?.index() as usize;
@@ -67,6 +78,9 @@ impl AccountSidebar {
             row.set_title_lines(1);
             row.set_subtitle_lines(1);
             row.add_prefix(&adw::Avatar::new(32, Some(name), true));
+            if let Some(menu) = &self.menu {
+                row.add_suffix(&menu(account));
+            }
             if selected.as_ref() == Some(&account.id) {
                 chosen = index;
             }

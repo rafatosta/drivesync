@@ -20,7 +20,18 @@ fn build_with_accounts(
         .sidebar_width_fraction(0.3)
         .build();
     split.set_widget_name("dashboard-split");
-    let sidebar = AccountSidebar::new();
+    let feedback = gtk::Label::builder()
+        .wrap(true)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    feedback.set_widget_name("dashboard-accounts-feedback");
+    let sidebar = AccountSidebar::new().with_menu({
+        let context = context.clone();
+        let navigation = navigation.downgrade();
+        let feedback = feedback.downgrade();
+        move |account| super::account_menu::build(&context, &navigation, &feedback, account)
+    });
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_back_button(false);
@@ -36,12 +47,6 @@ fn build_with_accounts(
     toolbar.add_top_bar(&header);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
     body.append(&sidebar.list);
-    let feedback = gtk::Label::builder()
-        .wrap(true)
-        .margin_start(12)
-        .margin_end(12)
-        .build();
-    feedback.set_widget_name("dashboard-accounts-feedback");
     body.append(&feedback);
     toolbar.set_content(Some(
         &gtk::ScrolledWindow::builder()

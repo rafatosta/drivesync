@@ -74,6 +74,51 @@ fn account_only_layout_and_initial_name_editor() {
     assert_eq!(title.title(), "Work");
     assert_eq!(title.subtitle(), "work@example.invalid");
     capture(&window, &dashboard, "dashboard-accounts");
+    // Actions belong to their row even while another account is selected.
+    window.set_content(Some(&dashboard));
+    window.present();
+    accounts.select_row(accounts.row_at_index(0).as_ref());
+    let second_menu = find(
+        accounts.row_at_index(1).unwrap().upcast_ref(),
+        "sidebar-account-menu",
+    )
+    .unwrap()
+    .downcast::<gtk::MenuButton>()
+    .unwrap();
+    let model = second_menu.menu_model().unwrap();
+    assert_eq!(model.n_items(), 3);
+    for (index, action) in ["local", "remote", "sign-out"].iter().enumerate() {
+        assert_eq!(
+            model
+                .item_attribute_value(index as i32, "action", None)
+                .unwrap()
+                .get::<String>()
+                .unwrap(),
+            format!("account-menu.{action}")
+        );
+    }
+    second_menu
+        .activate_action("account-menu.sign-out", None)
+        .unwrap();
+    let dialog = gtk::Window::list_toplevels()
+        .into_iter()
+        .find(|widget| widget.widget_name() == "disconnect-account-confirmation")
+        .unwrap()
+        .downcast::<adw::MessageDialog>()
+        .unwrap();
+    assert_eq!(
+        dialog
+            .extra_child()
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap()
+            .text(),
+        "work@example.invalid"
+    );
+    dialog.response("cancel");
+    dialog.close();
+    assert!(second_menu.is_sensitive());
+    assert_eq!(title.subtitle(), "fixture@example.invalid");
     let split = find(dashboard.upcast_ref(), "dashboard-split")
         .unwrap()
         .downcast::<adw::NavigationSplitView>()
