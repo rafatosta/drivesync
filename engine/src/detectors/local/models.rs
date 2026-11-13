@@ -180,7 +180,8 @@ pub enum LocalStopReason {
     Shutdown,
     Unavailable,
 }
-/// Bounded hint coalescing policy. None/zero debounce adds no intentional wait.
+/// Quiet interval for normalization: None uses 80 ms; zero disables settling.
+/// The default maximum window is 500 ms, including ongoing writes as typed rechecks.
 #[derive(Debug, Clone)]
 pub struct LocalDetectorSettings {
     pub debounce_ms: Option<u64>,

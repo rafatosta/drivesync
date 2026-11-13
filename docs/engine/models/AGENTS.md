@@ -100,3 +100,6 @@ Para regras não especificadas, registrar como pendência e **solicitar revisão
 ## Etapa do watcher local — envelope comum
 
 A emissão local passa a usar o único envelope File, com FileData<R> e parâmetro remoto Infallible nesta etapa. Não há valor remoto fabricado nem variante especial local; os mesmos sete campos e as duas variantes documentadas são preservados. RemoteFile/ProviderFileData continuam sem implementação/seleção. A implementação de File::validate aplica-se ao envelope local; coleta/validação remota exigem a revisão correspondente.
+
+
+A normalização autorizada acrescentou FileEvent.uncertainty: Option<ObservationUncertainty>. Todo RecheckRequired deve explicar a incerteza com Some; tipos classificados e ScopeUnavailable usam None. Preservar esse motivo em clones, diagnóstico e reentrega.

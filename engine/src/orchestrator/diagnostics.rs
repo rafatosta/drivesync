@@ -118,6 +118,7 @@ mod tests {
             sync_id: SyncId("sync".into()),
             event: FileEvent {
                 kind: FileEventKind::RecheckRequired,
+                uncertainty: Some(ObservationUncertainty::CaptureStarted),
                 previous: None,
                 current: None,
             },

@@ -216,3 +216,45 @@ async fn observation_sessions_keep_history_and_stop_isolated_by_account() {
     assert_eq!(first.account_id, AccountId("first".into()));
     stop(&sessions[1]);
 }
+
+#[tokio::test]
+async fn orchestrator_observes_normalized_save_and_explicit_startup_uncertainty() {
+    use drivesync_engine::models::{FileEventKind, ObservationUncertainty};
+    let tree = Tree::new();
+    let root = tree.0.join("local");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("document"), b"before").unwrap();
+    let (request, _) = tree.request(root.clone());
+    let orchestrator =
+        Orchestrator::observe(tree.connector().await, request.scope, request.settings).unwrap();
+    start(&orchestrator).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while orchestrator.diagnostics().events_detected == 0 {
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        orchestrator.diagnostics().events[0].event.uncertainty,
+        Some(ObservationUncertainty::CaptureStarted)
+    );
+    fs::write(root.join("not-a-special-filename"), b"after").unwrap();
+    fs::rename(root.join("not-a-special-filename"), root.join("document")).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = orchestrator.diagnostics();
+        if snapshot.events_detected > 1 {
+            assert_eq!(snapshot.events_detected, 2);
+            let saved = &snapshot.events[1];
+            assert_eq!(
+                saved.scope,
+                FileScope::Local(LocalRelativePath::new(b"document".to_vec()).unwrap())
+            );
+            assert_eq!(saved.event.kind, FileEventKind::Modified);
+            assert_eq!(saved.event.uncertainty, None);
+            break;
+        }
+        assert!(std::time::Instant::now() < until);
+        std::thread::yield_now();
+    }
+    stop(&orchestrator);
+}

@@ -308,3 +308,12 @@ Validação integrada desta etapa no org.gnome.Sdk//50, rust-stable, com cache e
 RED: o teste físico atualizado exigindo Created falhou, recebendo RecheckRequired. GREEN: os 15 testes públicos de Local passaram, incluindo Created/Modified/Renamed/Deleted, movimento entre diretórios, substituição atômica sobre destino preexistente, chmod/MetadataChanged, saída do escopo sem falsa exclusão e rename de diretório seguido de captura no novo caminho. O teste de substituição também verifica ausência de rechecks globais de arquivos e estado Running sem erro espúrio.
 
 Três testes privados da correlação cobrem metades de movimento recebidas em leituras separadas, expiração sem sleeps, movimento de entrada sem par, coalescência de salvamento temporário, catálogo incompleto e orçamento de pistas. Esses testes não simulam o detector inteiro. Overflow real do kernel, todas as estratégias de editores e todas as corridas de filesystem não foram exercitados.
+
+
+## Normalização antes do Orchestrator
+
+Os testes físicos agora verificam um único Modified na primeira entrega após criação/escrita/close/move de uma origem provisória, sem consumir silenciosamente notificações do temporário. Duas escritas com closes distintos geram duas ocorrências com IDs diferentes. Uma escrita ainda aberta gera WriteInProgress no teto e, após fechar, gera o evento concluído. Tráfego de escrita contínuo também respeita o teto.
+
+Os testes privados preservam delete/recreate, ciclos separados, overwrite com origem preexistente como movimentação, nomes `.goutputstream-*` persistentes, transferência de escrita durante correlação e notificações tardias no nome anterior. O teste público do Orchestrator confirma um único Modified no histórico para a substituição e o motivo CaptureStarted no aviso inicial. Modelos rejeitam rechecks sem motivo e ações classificadas com incerteza.
+
+A semântica padrão de debounce anterior (None sem espera) foi substituída pela janela normalizadora em INTERFACES § 14. Não se promete reconstruir transações arbitrariamente longas ou interpretar intenção do editor por nome de arquivo. Nenhum teste com Google, fila durável ou todos os editores foi realizado.

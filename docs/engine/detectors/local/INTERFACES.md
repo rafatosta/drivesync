@@ -176,7 +176,7 @@ impl LocalDetector {
 ### LOC-01 — `new`
 
 **Finalidade:** configurar observador local isolado para `sync_id`, conta e raiz, com sink de saída.
-**Parâmetros:** `scope`, `notifications`, `collector` e `settings` obrigatórios; `debounce_ms=None` ou `Some(0)` desativa espera intencional. `max_pending_paths` deve ser positivo.
+**Parâmetros:** `scope`, `notifications`, `collector` e `settings` obrigatórios; `debounce_ms=None` seleciona 80 ms de quietude; `Some(0)` desativa apenas a espera de quietude, preservando as regras de escrita/correlação. `max_pending_paths` deve ser positivo.
 **Retorno:** instância `Stopped`, sem watcher ativo.
 **Erros/limites:** `InvalidScope` para identidade vazia, raiz relativa/reservada ou limite zero; não consultar Accounts para validar associação. Não fabricar `LocalFile`. A validação física ocorre em `start`/`scan_once`.
 
@@ -262,7 +262,7 @@ Estas regras complementam as assinaturas da seção 4. São definição document
 
 - O callback do watcher só registra pistas e sinaliza trabalho. Não faz coleta, percurso, banco, hashing, rede ou entrega bloqueante. Callbacks de gerações encerradas são descartados antes de qualquer efeito.
 - A captura deve cobrir subdiretórios novos/movidos e verificar a janela entre enumeração e instalação. Overflow, limite do backend ou cobertura incerta causam `Degraded` e reavaliação do escopo afetado. Reparo da captura não chama Scanner, Inventário ou Analisador.
-- `debounce_ms=Some(n)` positivo define janela fixa desde a primeira pista pendente, em relógio monotônico; pistas posteriores não adiam seu vencimento. Não é uma promessa de latência quando há trabalho em curso. Só pistas ainda não convertidas em `File` podem ser agrupadas por caminho; eventos já construídos não são fundidos nem alterados.
+- `debounce_ms=Some(n)` positivo define quietude após a última pista, limitada a `max(n, 500)` ms desde a primeira pista da rodada, em relógio monotônico. Não é uma promessa de latência quando há trabalho em curso. Só pistas ainda não convertidas em `File` podem ser agrupadas por caminho; eventos já construídos não são fundidos nem alterados.
 - `max_pending_paths` limita caminhos de pistas, não a fila persistente do pai. Ao exceder o limite, substituir pistas por uma necessidade de reavaliação de toda a raiz, marcar cobertura degradada e não alegar histórico completo. Também limitar o trabalho em trânsito: não acumular uma segunda fila ilimitada de `File`.
 - A primeira observação de um item em scan é `RecheckRequired`, não `Created` por ausência de histórico. Tipos específicos exigem evidência do watcher e coleta atual; renomear/mover exige correlação confiável fornecida pelo backend. Inode ou semelhança de nome não bastam. Em dúvida, reavaliar os caminhos afetados.
 - `notify` recebe um `File` por chamada e retorna somente após aceitar ou rejeitar. `Ok` significa aceite durável no pai; erro, inclusive resultado incerto após gravação, não autoriza contar entrega. Testes locais simulam esse contrato e não comprovam durabilidade.
@@ -388,7 +388,7 @@ O backend privado usa inotify e eventfd. Mudanças disparam coleta de metadados,
 
 Cada aviso transporta o mesmo `File` compartilhado. Sem evidência suficiente para classificar a operação, usa RecheckRequired, inclusive em remoções. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura não é Scanner nem reconciliação. `scan_once` manual não faz parte desta implementação.
 
-Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. Debounce é opcional e usa prazo fixo da primeira alteração, sem adiar indefinidamente com novas alterações. A espera cancelável não produz varreduras periódicas.
+Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. O intervalo padrão de quietude é 80 ms, com teto de 500 ms desde a primeira pista; ver § 14 para a normalização por fechamento de escrita. A espera cancelável não produz varreduras periódicas.
 
 O sink recebe um File por chamada; Ok transfere responsabilidade de persistência ao consumidor. Erro retryable retém o mesmo evento, ID e horário para nova tentativa na próxima atividade relevante, sem loop ocupado; erro permanente torna o produtor Failed. Não existe fila durável nesta entrega. Os testes usam sinks em memória e não comprovam persistência após crash. O Orquestrador ainda não está conectado e o remoto permanece fora do escopo.
 
@@ -403,3 +403,16 @@ A coalescência conserva criação/movimento durante escritas subsequentes na me
 Watches não são reconstruídos por criar/remover/mover arquivos comuns. Mudanças estruturais de diretórios ainda exigem restabelecimento de cobertura e aviso WholeSync. WholeSync também permanece no start e na recuperação de overflow; não é um evento de arquivo. Overflow invalida pistas pendentes e produz recheck conservador, sem classificar a parte possivelmente incompleta. Limites de hints, cookies e catálogo são finitos (catálogo até 100000 entradas; orçamento total de caminhos 8 MiB); excedê-los descarta evidência de classificação e solicita recheck.
 
 A implementação não promete sequência exata de operações intermediárias do usuário, persistência de histórico, correlação entre reinícios ou deduplicação entre contas. IDs e reentrega ao sink continuam preservados. A UI apenas mapeia o tipo recebido para rótulos e cores; não deduz ações de caminhos ou nomes.
+
+
+## 14. Normalização antes do sink/Orchestrator
+
+O produtor mantém ciclos de escrita distintos, delimitados por IN_CLOSE_WRITE. Pistas de um mesmo ciclo não se tornam vários File. Uma nova escrita após o fechamento anterior preserva outro ciclo, mesmo se chegar dentro da mesma janela temporal; remover/recriar e renomear um recurso preexistente também não são fundidos apenas pelo tempo.
+
+A janela padrão aguarda 80 ms de quietude e no máximo 500 ms desde a primeira pista. Uma escrita sem fechamento aguarda o teto e produz RecheckRequired/WriteInProgress, sem declarar conclusão. Seu contexto limitado permanece para emitir o evento concluído quando chegar o fechamento. Tráfego contínuo não adia o teto. Esses prazos limitam o agrupamento quando o worker/sink estão disponíveis, não são garantia de tempo real nem interrompem uma syscall/callback bloqueado.
+
+Uma origem criada durante a janela, ainda sem entrega, pode ser correlacionada por cookie ao destino: se o destino existia, a normalização produz Modified somente no destino; caso contrário, Created no destino. Notificações tardias no nome anterior são associadas pela movimentação comprovada. Nenhum nome `.goutputstream-*` é descartado por prefixo. Se a criação já foi entregue, não é retraída; uma operação posterior é preservada. O agrupamento não promete identificar transações de qualquer editor separadas por pausas arbitrariamente maiores que a janela.
+
+A fila em memória de ciclos normalizados, movimentos, escritas abertas e aliases compartilha os limites existentes; excesso invalida a evidência e exige recheck do escopo. Não há segunda fila durável. O File é construído somente na entrega da rodada e, depois de construído, continua imutável durante rejeição/retry. Os metadados pertencem à observação realizada na entrega, não a snapshots históricos de cada syscall intermediária.
+
+Todo RecheckRequired exige `File.event.uncertainty: Some(ObservationUncertainty)` de Models; eventos classificados e ScopeUnavailable exigem None. Há motivos explícitos para início/reconstrução, cobertura incompleta, perda nativa, recursos, movimento sem par, sinal desconhecido, leitura instável, escrita em andamento e sequência conflitante. O Orchestrator recebe esses mesmos File, sem deduzir ações. ScopeUnavailable mantém seu erro operacional separado.

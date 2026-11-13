@@ -43,6 +43,8 @@ fn event(kind: FileEventKind) -> File {
         scope: FileScope::Local(path.clone()),
         event: FileEvent {
             kind,
+            uncertainty: (kind == FileEventKind::RecheckRequired)
+                .then_some(ObservationUncertainty::ObservationUnstable),
             previous: None,
             current: Some(FileLocation::Local(path)),
         },
@@ -148,4 +150,14 @@ fn unreviewed_remote_data_is_not_fabricated_to_support_local_events() {
         }
     }
     local_only(FileData::Local(local_file()));
+}
+
+#[test]
+fn rechecks_require_a_reason_and_classified_events_cannot_carry_uncertainty() {
+    let mut file = event(FileEventKind::RecheckRequired);
+    file.event.uncertainty = None;
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
+    let mut file = event(FileEventKind::Created);
+    file.event.uncertainty = Some(ObservationUncertainty::ObservationUnstable);
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }

@@ -492,7 +492,6 @@ fn classifies_cross_directory_move_and_atomic_replacement_without_global_recheck
     let moved = receive(&rx, |f| path(f, b"sub/moved"));
     assert_eq!(moved.event.kind, FileEventKind::Moved);
     fs::write(tree.0.join("temporary"), b"replacement").unwrap();
-    receive(&rx, |f| path(f, b"temporary") && f.data.is_some());
     fs::rename(tree.0.join("temporary"), tree.0.join("sub/moved")).unwrap();
     let saved = receive(&rx, |f| path(f, b"sub/moved") && size(f, 11));
     assert_eq!(saved.event.kind, FileEventKind::Modified);
@@ -534,5 +533,107 @@ fn directory_rename_rebinds_capture_to_the_new_location() {
     assert_eq!(renamed.event.kind, FileEventKind::Renamed);
     fs::write(tree.0.join("after/file"), b"after").unwrap();
     receive(&rx, |f| path(f, b"after/file") && f.data.is_some());
+    stop(&detector);
+}
+
+#[test]
+fn atomic_save_is_normalized_before_the_sink_and_distinct_saves_are_preserved() {
+    use std::io::Write;
+    let tree = Tree::new();
+    fs::write(tree.0.join("document"), b"before").unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    // A newly created source, not its name, proves the replacement candidate.
+    let mut temporary = fs::File::create(tree.0.join("unremarkable-name")).unwrap();
+    temporary.write_all(b"after").unwrap();
+    std::thread::sleep(Duration::from_millis(10));
+    drop(temporary);
+    fs::rename(tree.0.join("unremarkable-name"), tree.0.join("document")).unwrap();
+    let saved = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        path(&saved, b"document"),
+        "temporary must not reach the sink: {saved:?}"
+    );
+    assert_eq!(saved.validate(), Ok(()));
+    assert_eq!(saved.event.kind, FileEventKind::Modified);
+    assert!(
+        matches!(
+            rx.recv_timeout(Duration::from_millis(120)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "duplicate notifications must not reach the sink"
+    );
+    fs::write(tree.0.join("document"), b"second").unwrap();
+    fs::write(tree.0.join("document"), b"third").unwrap();
+    let first = receive(&rx, |f| path(f, b"document"));
+    let second = receive(&rx, |f| path(f, b"document"));
+    assert_eq!(first.event.kind, FileEventKind::Modified);
+    assert_eq!(second.event.kind, FileEventKind::Modified);
+    assert_ne!(first.id, second.id);
+    stop(&detector);
+}
+
+#[test]
+fn open_write_has_bounded_latency_and_explicit_uncertainty_then_finishes() {
+    use drivesync_engine::models::ObservationUncertainty;
+    use std::io::Write;
+    let tree = Tree::new();
+    fs::write(tree.0.join("document"), b"before").unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .open(tree.0.join("document"))
+        .unwrap();
+    writer.write_all(b"after!").unwrap();
+    let event = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(path(&event, b"document"));
+    assert_eq!(event.event.kind, FileEventKind::RecheckRequired);
+    assert_eq!(
+        event.event.uncertainty,
+        Some(ObservationUncertainty::WriteInProgress)
+    );
+    assert_eq!(event.validate(), Ok(()));
+    drop(writer);
+    let finished = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(path(&finished, b"document"));
+    assert_eq!(finished.event.kind, FileEventKind::Modified);
+    assert_eq!(finished.event.uncertainty, None);
+    stop(&detector);
+}
+
+#[test]
+fn continuous_write_notifications_cannot_postpone_the_maximum_window() {
+    use drivesync_engine::models::ObservationUncertainty;
+    use std::io::Write;
+    let tree = Tree::new();
+    fs::write(tree.0.join("document"), b"before").unwrap();
+    let (detector, rx) = producer(&tree);
+    start(&detector);
+    ready(&rx);
+    let path_to_write = tree.0.join("document");
+    let writer = std::thread::spawn(move || {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .open(path_to_write)
+            .unwrap();
+        let until = Instant::now() + Duration::from_millis(750);
+        while Instant::now() < until {
+            file.write_all(b"x").unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    let event = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_eq!(event.event.kind, FileEventKind::RecheckRequired);
+    assert_eq!(
+        event.event.uncertainty,
+        Some(ObservationUncertainty::WriteInProgress)
+    );
+    writer.join().unwrap();
+    let finished = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_eq!(finished.event.kind, FileEventKind::Modified);
+    assert_eq!(finished.event.uncertainty, None);
     stop(&detector);
 }

@@ -177,3 +177,6 @@ As restrições anteriores contra API pública nova ou acesso direto a Local ref
 `Orchestrator::diagnostics() -> DetectorDiagnostics` fornece AccountId/SyncId, total de ocorrências, último horário e os últimos 100 resumos (ID, horário, FileEvent e FileScope), sem conteúdo/metadados privados ou I/O. Repetir a ocorrência corrente rejeitada não incrementa o total. `pending_events: Option<u64>` é None até existir telemetria da fila; histórico não é fila.
 
 `Orchestrator::observe(Engine, LocalDetectorScope, LocalDetectorSettings)` cria uma sessão explicitamente diagnóstica. O consumidor terminal apenas observa; não assume trabalho de sincronização, persistência ou replay. A aceitação termina o processamento diagnóstico, não declara gravação numa fila durável. As sessões normais de `new` continuam encaminhando o File integral ao sink fornecido, com seu resultado intacto. A captura de resumos não muda o aceite do sink.
+
+
+Os File locais chegam normalizados por ciclos de escrita antes do sink. FileEvent.uncertainty é obrigatório para RecheckRequired e é preservado nos resumos/diagnósticos; o Orchestrator não precisa inferir a causa pela ausência de dados. O teste de composição confirma a substituição por origem provisória como um único Modified do destino. As limitações de janela e cobertura estão em Local INTERFACES § 14.

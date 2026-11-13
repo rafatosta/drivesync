@@ -33,10 +33,26 @@ pub enum FileLocation {
         name: Option<String>,
     },
 }
+/// Why a producer cannot deliver a fully classified occurrence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationUncertainty {
+    CaptureStarted,
+    CaptureRebuilt,
+    CoverageIncomplete,
+    NativeOverflow,
+    ResourceLimit,
+    UnpairedMove,
+    UnclassifiedSignal,
+    ObservationUnstable,
+    WriteInProgress,
+    ConflictingSequence,
+}
 /// Location context before and after an observed occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEvent {
     pub kind: FileEventKind,
+    /// Required for RecheckRequired; absent for classified or unavailable events.
+    pub uncertainty: Option<ObservationUncertainty>,
     pub previous: Option<FileLocation>,
     pub current: Option<FileLocation>,
 }
@@ -88,6 +104,9 @@ impl File {
             return Err(ModelError::EmptyIdentity);
         }
         let invalid = || Err(ModelError::InconsistentEvent);
+        if (self.event.kind == FileEventKind::RecheckRequired) != self.event.uncertainty.is_some() {
+            return invalid();
+        }
         let data = match &self.data {
             Some(FileData::Local(file)) => {
                 file.validate()?;

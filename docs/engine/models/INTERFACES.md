@@ -555,6 +555,7 @@ pub enum FileLocation {
 
 pub struct FileEvent {
     pub kind: FileEventKind,
+    pub uncertainty: Option<ObservationUncertainty>,
     pub previous: Option<FileLocation>,
     pub current: Option<FileLocation>,
 }
@@ -689,3 +690,8 @@ A implementação de eventos locais usa `File<R = std::convert::Infallible>` e `
 `File::validate` nesta fase valida File<Infallible> segundo as regras locais. FileEventKind, FileLocation, FileScope, ObservationCoverage e os identificadores RemoteFileId/RemoteFileRef são dados puros de contexto; não implementam atributos ou coleta remota. O validador remoto e eventual conversão tipada para o envelope com payload remoto ficam para sua revisão específica. Não interpretar o parâmetro genérico como aprovação do catálogo RemoteFile.
 
 O perfil básico local tem um helper puro interno compartilhado entre validação do envelope e adaptador de metadados; isso não transfere a coleta nem a decisão de cobertura física para Models. Nenhum formato de serialização foi introduzido.
+
+
+## Motivo explícito de reavaliação no envelope compilado
+
+A normalização local acrescenta `FileEvent.uncertainty: Option<ObservationUncertainty>` ao contexto do evento, preservando os sete campos de File e o payload LocalFile integral. RecheckRequired exige Some; todos os demais tipos exigem None. O enum puro contém CaptureStarted, CaptureRebuilt, CoverageIncomplete, NativeOverflow, ResourceLimit, UnpairedMove, UnclassifiedSignal, ObservationUnstable, WriteInProgress e ConflictingSequence. A validação só verifica coerência estrutural, sem I/O, relógio ou inferência. Não há alteração do catálogo remoto.

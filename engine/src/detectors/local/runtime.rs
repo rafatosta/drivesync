@@ -7,7 +7,7 @@ use super::{
 };
 use crate::models::{
     File, FileData, FileEvent, FileEventKind, FileId, FileLocation, FileScope, LocalRelativePath,
-    ObservationCoverage, Timestamp,
+    ObservationCoverage, ObservationUncertainty, Timestamp,
 };
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
@@ -385,6 +385,7 @@ fn envelope(
             } else {
                 FileEventKind::RecheckRequired
             },
+            uncertainty: (!unavailable).then_some(ObservationUncertainty::ObservationUnstable),
             previous: None,
             current: None,
         },
@@ -469,16 +470,33 @@ fn run(
             LocalScanCoverage::Complete
         });
     });
-    let mut pending = Some(envelope(&mut ids, &scope.sync_id, None, None, false)?);
+    let mut initial = envelope(&mut ids, &scope.sync_id, None, None, false)?;
+    initial.event.uncertainty = Some(if coverage_error.is_some() {
+        ObservationUncertainty::CoverageIncomplete
+    } else {
+        ObservationUncertainty::CaptureStarted
+    });
+    let mut pending = Some(initial);
     let mut changes = Changes::new(watches.entries.clone(), coverage_error.is_none());
-    let mut recheck = false;
+    let mut recheck: Option<ObservationUncertainty> = None;
     let mut deadline = Some(Instant::now());
+    let mut first_hint: Option<Instant> = None;
     let mut error = coverage_error.as_ref().map(|e| e.kind);
     loop {
         cancel.check()?;
         changes.expire(Instant::now());
-        if !changes.pending.is_empty() && deadline.is_none() {
+        if changes.has_pending() && deadline.is_none() {
             deadline = Some(Instant::now());
+        }
+        if changes.has_open_write() && deadline.is_some_and(|at| Instant::now() >= at) {
+            if let Some(first) = first_hint {
+                let bound = first
+                    + Duration::from_millis(settings.debounce_ms.unwrap_or(80))
+                        .max(Duration::from_millis(500));
+                if Instant::now() < bound {
+                    deadline = Some(bound);
+                }
+            }
         }
         if deadline.is_some_and(|at| Instant::now() >= at) {
             shared.change(generation, |s| {
@@ -495,10 +513,11 @@ fn run(
             loop {
                 cancel.check()?;
                 if pending.is_none() {
-                    if recheck {
-                        pending = Some(envelope(&mut ids, &scope.sync_id, None, None, false)?);
-                        recheck = false;
-                    } else if let Some((path, change)) = changes.pending.pop_first() {
+                    if let Some(reason) = recheck.take() {
+                        let mut event = envelope(&mut ids, &scope.sync_id, None, None, false)?;
+                        event.event.uncertainty = Some(reason);
+                        pending = Some(event);
+                    } else if let Some((path, change)) = changes.pop() {
                         if change.kind == FileEventKind::Deleted {
                             let mut event = envelope(
                                 &mut ids,
@@ -508,6 +527,7 @@ fn run(
                                 false,
                             )?;
                             event.event.kind = FileEventKind::Deleted;
+                            event.event.uncertainty = None;
                             event.event.previous = Some(FileLocation::Local(path));
                             event.validate().map_err(|_| {
                                 LocalDetectorFailure::new(LocalDetectorError::ModelInvalid)
@@ -538,8 +558,15 @@ fn run(
                                     Some(result),
                                     false,
                                 )?;
+                                if event.data.is_none() {
+                                    event.event.uncertainty =
+                                        Some(change.uncertainty.unwrap_or(
+                                            ObservationUncertainty::ObservationUnstable,
+                                        ));
+                                }
                                 if event.data.is_some() {
                                     event.event.kind = change.kind;
+                                    event.event.uncertainty = change.uncertainty;
                                     event.event.previous = change.previous.map(FileLocation::Local);
                                     event.validate().map_err(|_| {
                                         LocalDetectorFailure::new(LocalDetectorError::ModelInvalid)
@@ -597,6 +624,7 @@ fn run(
                 s.emitted_in_current_round = 0;
             });
             deadline = None;
+            first_hint = None;
             if !failed && round_coverage == LocalScanCoverage::Complete {
                 error = None;
                 shared.change(generation, |s| {
@@ -643,7 +671,7 @@ fn run(
             changes.push(hint);
             if changes.over_budget(settings.max_pending_paths as usize) {
                 changes.reset(Default::default());
-                recheck = true;
+                recheck = Some(ObservationUncertainty::ResourceLimit);
                 error = Some(LocalDetectorError::ResourceLimit);
                 break;
             }
@@ -663,17 +691,28 @@ fn run(
             error = coverage_error.as_ref().map(|e| e.kind).or(error);
             changes.replace_known(next.entries.clone(), coverage_error.is_none());
             watches = next;
-            recheck = true;
+            recheck = Some(if overflow {
+                ObservationUncertainty::NativeOverflow
+            } else if recheck == Some(ObservationUncertainty::ResourceLimit) {
+                ObservationUncertainty::ResourceLimit
+            } else if coverage_error.is_some() {
+                ObservationUncertainty::CoverageIncomplete
+            } else {
+                ObservationUncertainty::CaptureRebuilt
+            });
         }
-        recheck |= required;
+        if required && recheck.is_none() {
+            recheck = Some(ObservationUncertainty::UnclassifiedSignal);
+        }
         if changes.over_budget(settings.max_pending_paths as usize) {
             changes.reset(Default::default());
-            recheck = true;
+            recheck = Some(ObservationUncertainty::ResourceLimit);
             error = Some(LocalDetectorError::ResourceLimit);
         }
-        if deadline.is_none() {
-            deadline =
-                Some(Instant::now() + Duration::from_millis(settings.debounce_ms.unwrap_or(0)));
-        }
+        let now = Instant::now();
+        let first = *first_hint.get_or_insert(now);
+        let quiet = Duration::from_millis(settings.debounce_ms.unwrap_or(80));
+        let maximum = quiet.max(Duration::from_millis(500));
+        deadline = Some((now + quiet).min(first + maximum));
     }
 }
