@@ -78,6 +78,11 @@ pub type ModelResult<T> = Result<T, ModelError>;
 
 mod local;
 pub use local::*;
+mod events;
+pub use events::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod event_tests;

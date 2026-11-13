@@ -73,7 +73,7 @@ pub(super) fn collect(
         };
         cancel.check()?;
     }
-    let coverage = if basic_complete(&file) {
+    let coverage = if file.basic_profile_complete() {
         LocalScanCoverage::Complete
     } else {
         LocalScanCoverage::Partial
@@ -211,29 +211,6 @@ fn absence<T>(error: &io::Error) -> MetadataValue<T> {
         Some(libc::EPERM | libc::EACCES) => MetadataValue::PermissionDenied,
         _ => MetadataValue::Unavailable,
     }
-}
-fn known<T>(value: &MetadataValue<T>) -> bool {
-    matches!(value, MetadataValue::Known(_))
-}
-/// Completeness of this selected profile, not of all Linux metadata or a tree.
-fn basic_complete(f: &LocalFile) -> bool {
-    use MetadataValue::Known;
-    let target_complete = match f.kind {
-        Known(LocalEntryKind::Symlink) => known(&f.symlink.target),
-        Known(LocalEntryKind::Unknown) => false,
-        Known(_) => matches!(f.symlink.target, MetadataValue::NotApplicable),
-        _ => false,
-    };
-    target_complete
-        && known(&f.mode)
-        && known(&f.owner.uid)
-        && known(&f.owner.gid)
-        && known(&f.times.modified_at)
-        && known(&f.times.changed_at)
-        && known(&f.storage.size_bytes)
-        && known(&f.storage.hard_link_count)
-        && known(&f.storage.inode)
-        && known(&f.storage.filesystem_device)
 }
 fn entry_kind(mode: u32) -> LocalEntryKind {
     match mode & libc::S_IFMT {

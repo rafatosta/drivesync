@@ -212,3 +212,8 @@ Validação final executada no mesmo SDK, com cache exposto, em 2026-11-13:
 - `cargo test --offline --locked --workspace --doc`: 1 doctest PASS.
 
 A execução inclui testes de providers contra servidores locais simulados; não comprova conta Google real, uso instalado do Flatpak, portal ou observação de filesystem pelo detector.
+
+
+## 9. Eventos locais para o watcher
+
+Testes puros de `engine/src/models/event_tests.rs` cobrem os oito tipos de evento local, WholeSync sem dados/localizações, rejeição de identidade/escopo/dados incoerentes e Complete com perfil obrigatório incompleto. O payload local é preservado integralmente em clones/retries. A impossibilidade de construir Remote(Infallible) fecha o escopo local sem criar um RemoteFile provisório. Esses testes não comprovam persistência nem revisão dos atributos remotos.

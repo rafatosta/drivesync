@@ -251,3 +251,29 @@ fn mode_kind(raw_mode: u32) -> LocalEntryKind {
         _ => LocalEntryKind::Other,
     }
 }
+
+impl LocalFile {
+    /// Checks presence of the selected basic fields, without proving physical coverage.
+    pub(crate) fn basic_profile_complete(&self) -> bool {
+        use MetadataValue::Known;
+        fn known<T>(value: &MetadataValue<T>) -> bool {
+            matches!(value, Known(_))
+        }
+        let target = match self.kind {
+            Known(LocalEntryKind::Symlink) => known(&self.symlink.target),
+            Known(LocalEntryKind::Unknown) => false,
+            Known(_) => matches!(self.symlink.target, MetadataValue::NotApplicable),
+            _ => false,
+        };
+        target
+            && known(&self.mode)
+            && known(&self.owner.uid)
+            && known(&self.owner.gid)
+            && known(&self.times.modified_at)
+            && known(&self.times.changed_at)
+            && known(&self.storage.size_bytes)
+            && known(&self.storage.hard_link_count)
+            && known(&self.storage.inode)
+            && known(&self.storage.filesystem_device)
+    }
+}

@@ -680,3 +680,12 @@ Implementados em `engine/src/models/`: LocalRelativePath (new/as_bytes), LocalTi
 LocalFile::validate verifica atributos conhecidos, coerência de modo/tipo, par de flags, aplicabilidade e identidade local presente sem consultar filesystem ou completar campos. Libc é usado somente para constantes de tipo de arquivo Linux; não há syscall em Models. Tipos locais novos não possuem serialização/desserialização enquanto o formato de transporte/persistência não for definido.
 
 File, FileData, File::validate, modelos remotos, gerador de IDs, watcher e persistência permanecem não implementados. O coletor físico agora existe separadamente em `engine/src/detectors/local/`, preservando a pureza de Models. As regras de envelope das seções 5.4–5.6 continuam especificação futura; os 18 testes atuais não validam essas regras nem a cobertura física. SyncId e FileId são valores opacos, sem geração ou validação de ocorrência nesta etapa.
+
+
+## 10. Envelope local compilado — parametrização do payload remoto
+
+A implementação de eventos locais usa `File<R = std::convert::Infallible>` e `FileData<R = std::convert::Infallible>`. Os sete campos do envelope e as variantes Local/Remote permanecem os mesmos; `Remote(R)` recebe o tipo do payload somente quando sua revisão for concluída. Infallible não tem valores, portanto esta fase não constrói um RemoteFile fictício, não remove a variante remota e não cria uma representação paralela de evento local.
+
+`File::validate` nesta fase valida File<Infallible> segundo as regras locais. FileEventKind, FileLocation, FileScope, ObservationCoverage e os identificadores RemoteFileId/RemoteFileRef são dados puros de contexto; não implementam atributos ou coleta remota. O validador remoto e eventual conversão tipada para o envelope com payload remoto ficam para sua revisão específica. Não interpretar o parâmetro genérico como aprovação do catálogo RemoteFile.
+
+O perfil básico local tem um helper puro interno compartilhado entre validação do envelope e adaptador de metadados; isso não transfere a coleta nem a decisão de cobertura física para Models. Nenhum formato de serialização foi introduzido.

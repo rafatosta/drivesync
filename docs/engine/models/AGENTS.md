@@ -95,3 +95,8 @@ Após aprovação: validar tipo a tipo, criar testes unitários puros RED → GR
 Para regras não especificadas, registrar como pendência e **solicitar revisão do contrato antes de codificar**. Não converter comentários de exemplos anteriores em requisitos não aprovados.
 
 [MODULE_STANDARD](../MODULE_STANDARD.md) · [AGENTS raiz](../../../AGENTS.md).
+
+
+## Etapa do watcher local — envelope comum
+
+A emissão local passa a usar o único envelope File, com FileData<R> e parâmetro remoto Infallible nesta etapa. Não há valor remoto fabricado nem variante especial local; os mesmos sete campos e as duas variantes documentadas são preservados. RemoteFile/ProviderFileData continuam sem implementação/seleção. A implementação de File::validate aplica-se ao envelope local; coleta/validação remota exigem a revisão correspondente.
