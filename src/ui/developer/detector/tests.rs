@@ -88,20 +88,31 @@ fn live_account_selection_and_detector_layout() {
     for account in ["personal@example.invalid", "work@example.invalid"] {
         let root = base.join(account);
         std::fs::create_dir(&root).unwrap();
-        let session = Arc::new(
-            Orchestrator::observe_persistent(
-                engine.clone(),
-                LocalDetectorScope {
+        let mut session = Orchestrator::observe_persistent(
+            engine.clone(),
+            LocalDetectorScope {
+                account_id: AccountId(account.into()),
+                sync_id: SyncId(format!("test-{account}")),
+                local_root: root.clone(),
+            },
+            LocalDetectorSettings::default(),
+            base.join("queues"),
+            DeliveryState::Enabled,
+        )
+        .unwrap();
+        session
+            .attach_remote(RemoteDetectorCreateRequest {
+                connector: engine.clone(),
+                scope: RemoteDetectorScope {
                     account_id: AccountId(account.into()),
-                    sync_id: SyncId(format!("test-{account}")),
-                    local_root: root.clone(),
+                    sync_id: SyncId(format!("remote-test-{account}")),
+                    remote_root_id: "fixture-root".into(),
                 },
-                LocalDetectorSettings::default(),
-                base.join("queues"),
-                DeliveryState::Enabled,
-            )
-            .unwrap(),
-        );
+                settings: RemoteDetectorSettings::default(),
+                data_directory: base.join("remote-queues"),
+            })
+            .unwrap();
+        let session = Arc::new(session);
         session
             .start(LocalStartRequest {
                 mode: LocalStartMode::Initial,
@@ -113,6 +124,8 @@ fn live_account_selection_and_detector_layout() {
             detectors::Session {
                 root,
                 orchestrator: session,
+                remote_root_id: "fixture-root".into(),
+                remote_error: None,
             },
         );
     }
@@ -290,6 +303,43 @@ fn live_account_selection_and_detector_layout() {
     assert_eq!(session.diagnostics().pending_events, Some(0));
     assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
     capture(&window, "detector-local-personal");
+    let tabs = find(page.upcast_ref(), "detector-tabs")
+        .unwrap()
+        .downcast::<gtk::StackSwitcher>()
+        .unwrap()
+        .stack()
+        .unwrap();
+    tabs.set_visible_child_name("remote");
+    settle();
+    let remote = texts(page.upcast_ref());
+    assert!(remote.contains("AuthorizationRequired"));
+    assert!(remote.contains("Next poll:"));
+    assert!(remote.contains("Interval:"));
+    assert!(delivery_button.is_sensitive());
+    delivery_button.emit_clicked();
+    settle();
+    assert_eq!(
+        session.remote_diagnostics().unwrap().queue.delivery,
+        DeliveryState::Paused
+    );
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
+    capture(&window, "detector-remote-paused");
+    selector.set_selected(1);
+    settle();
+    assert_eq!(
+        delivery_button.icon_name().as_deref(),
+        Some("media-playback-pause-symbolic")
+    );
+    selector.set_selected(0);
+    settle();
+    delivery_button.emit_clicked();
+    settle();
+    assert_eq!(
+        session.remote_diagnostics().unwrap().queue.delivery,
+        DeliveryState::Enabled
+    );
+    tabs.set_visible_child_name("local");
+    settle();
     selector.set_selected(1);
     settle();
     assert!(!texts(page.upcast_ref()).contains("personal-only.txt"));
@@ -323,6 +373,24 @@ fn live_account_selection_and_detector_layout() {
         "page fits narrow window: actual width {}",
         page.width()
     );
+    tabs.set_visible_child_name("remote");
+    settle();
+    assert!(page.width() <= 360);
+    assert!(
+        event_scroll.height() > 180,
+        "remote diagnostics remain compact when collapsed"
+    );
+    capture(&narrow, "detector-remote-narrow");
+    let details = find(page.upcast_ref(), "detector-polling-diagnostics")
+        .unwrap()
+        .downcast::<gtk::Expander>()
+        .unwrap();
+    assert!(!details.is_expanded());
+    details.set_expanded(true);
+    settle();
+    assert!(texts(page.upcast_ref()).contains("Duration:"));
+    details.set_expanded(false);
+    tabs.set_visible_child_name("local");
     let first = context
         .detectors
         .borrow()

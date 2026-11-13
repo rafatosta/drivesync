@@ -97,11 +97,14 @@ struct View {
     count: gtk::Label,
     stream: gtk::ListBox,
     detail: gtk::Label,
+    extra_detail: gtk::Label,
+    extra: gtk::Expander,
     delivery_toggle: gtk::glib::WeakRef<gtk::Button>,
     control_busy: Rc<Cell<bool>>,
 }
 impl View {
     fn clear(&self) {
+        self.extra.set_visible(false);
         if let Some(button) = self.delivery_toggle.upgrade() {
             button.set_sensitive(false);
         }
@@ -118,8 +121,7 @@ impl View {
     fn render(&self, context: &Context, id: Option<&str>, remote: bool, error: Option<&str>) {
         self.clear();
         if remote {
-            self.status.set_label("Not implemented");
-            self.detail.set_label("Remote scheduling and polling diagnostics will be provided by the engine. No remote detector is running.");
+            self.render_remote(context, id);
             return;
         }
         if let Some(error) = error {
@@ -219,7 +221,128 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
         self.pending.set_tooltip_text(Some(if snapshot.pending_events.is_some() { "Unconfirmed durable events, including reservations. Pausing delivery keeps filesystem capture and persistence active." } else { "This observation-only session has no durable queue." }));
         self.count
             .set_label(&format!("{} events", snapshot.events.len()));
-        for event in snapshot.events {
+        self.render_events(snapshot.events, false);
+    }
+    fn render_remote(&self, context: &Context, id: Option<&str>) {
+        use drivesync_engine::{detectors::*, models::*};
+        let sessions = context.detectors.borrow();
+        let Some(session) = id.and_then(|id| sessions.get(id)) else {
+            self.status.set_label("Unavailable");
+            self.detail
+                .set_label("Select a configured account to inspect its remote detector.");
+            return;
+        };
+        let Some(snapshot) = session.orchestrator.remote_diagnostics() else {
+            self.status.set_label("Unavailable");
+            self.detail.set_label(
+                session
+                    .remote_error
+                    .as_deref()
+                    .unwrap_or("Remote detector unavailable"),
+            );
+            return;
+        };
+        let status = snapshot.status;
+        self.status.set_label(match status.state {
+            RemoteState::Stopped => "Stopped",
+            RemoteState::Starting => "Starting",
+            RemoteState::Running => "Monitoring",
+            RemoteState::Degraded => "Degraded",
+            RemoteState::Stopping => "Stopping",
+            RemoteState::Failed => "Failed",
+        });
+        if status.state == RemoteState::Running {
+            self.status.add_css_class("success");
+        }
+        if matches!(status.state, RemoteState::Failed | RemoteState::Degraded) {
+            self.status.add_css_class("error");
+        }
+        if let Some(button) = self.delivery_toggle.upgrade() {
+            let paused = snapshot.queue.delivery == DeliveryState::Paused;
+            button.set_icon_name(if paused {
+                "media-playback-start-symbolic"
+            } else {
+                "media-playback-pause-symbolic"
+            });
+            button.set_tooltip_text(Some(if paused {
+                "Resume delivery"
+            } else {
+                "Interrupt delivery · Continue polling and persisting changes"
+            }));
+            button.update_property(&[gtk::accessible::Property::Label(if paused {
+                "Resume delivery"
+            } else {
+                "Interrupt delivery"
+            })]);
+            button.set_sensitive(!self.control_busy.get());
+        }
+        let last = snapshot
+            .events
+            .last()
+            .map(|file| time(file.observed_at))
+            .unwrap_or_else(|| "—".into());
+        self.last.set_label(&last);
+        self.detected
+            .set_label(&snapshot.queue.detected.to_string());
+        self.pending.set_label(
+            &snapshot
+                .queue
+                .pending
+                .saturating_add(snapshot.queue.leased)
+                .to_string(),
+        );
+        self.pending.set_tooltip_text(Some("Unconfirmed durable remote events. Pausing delivery keeps polling and persistence active."));
+        self.count
+            .set_label(&format!("{} events", snapshot.events.len()));
+        self.extra.set_visible(true);
+        self.detail.set_label(&format!(
+            "Interval: {:.1}s · Last poll: {} · Next poll: {}{}",
+            status.polling_interval.as_secs_f64(),
+            status
+                .last_poll_started_at
+                .map(time)
+                .unwrap_or_else(|| "—".into()),
+            status.next_poll_at.map(time).unwrap_or_else(|| "—".into()),
+            status
+                .last_error
+                .map(|error| format!("\nError: {error:?}"))
+                .unwrap_or_default(),
+        ));
+        self.extra_detail.set_label(&format!(
+            "Folder: {}\nInterval: {:.1}s · Last poll: {} · Next poll: {} · Duration: {}\nActivity: {:?} · Coverage: {:?} · Cursor: {} · Returned: {} · Produced: {}\nDelivery: {:?} · Leased: {} · Confirmed: {} · Failures: {} · Recoveries: {}{}{}",
+            session.remote_root_id, status.polling_interval.as_secs_f64(),
+            status.last_poll_started_at.map(time).unwrap_or_else(|| "—".into()),
+            status.next_poll_at.map(time).unwrap_or_else(|| "—".into()),
+            status.last_poll_duration.map(|duration| format!("{}ms", duration.as_millis())).unwrap_or_else(|| "—".into()),
+            status.activity, status.coverage, status.cursor.as_deref().unwrap_or("—"),
+            status.observed_in_current_round, status.emitted_in_current_round,
+            snapshot.queue.delivery, snapshot.queue.leased, snapshot.queue.confirmed,
+            status.consecutive_failures, status.recovery_attempts,
+            status.last_error.map(|error| format!(" · Error: {error:?}")).unwrap_or_default(),
+            snapshot.queue.last_error.map(|error| format!(" · Queue: {error:?}")).unwrap_or_default(),
+        ));
+        self.render_events(
+            snapshot
+                .events
+                .into_iter()
+                .map(|file| DetectorEventSummary {
+                    id: file.id,
+                    observed_at: file.observed_at,
+                    event: file.event,
+                    scope: file.scope,
+                    entry_kind: match file.entry_kind {
+                        Some(RemoteEntryKind::Directory) => Some(LocalEntryKind::Directory),
+                        Some(RemoteEntryKind::File) => Some(LocalEntryKind::Regular),
+                        Some(RemoteEntryKind::Shortcut) => Some(LocalEntryKind::Symlink),
+                        None => None,
+                    },
+                })
+                .collect(),
+            true,
+        );
+    }
+    fn render_events(&self, events: Vec<DetectorEventSummary>, remote: bool) {
+        for event in events {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
             row.set_margin_top(10);
             row.set_margin_bottom(10);
@@ -243,6 +366,9 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
                 match event.entry_kind {
                     Some(LocalEntryKind::Directory) => ("folder-symbolic", "Folder"),
                     Some(LocalEntryKind::Regular) => ("text-x-generic-symbolic", "File"),
+                    Some(LocalEntryKind::Symlink) if remote => {
+                        ("emblem-symbolic-link-symbolic", "Google Drive shortcut")
+                    }
                     Some(LocalEntryKind::Symlink) => {
                         ("emblem-symbolic-link-symbolic", "Symbolic link")
                     }
@@ -360,6 +486,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         .stack(&tabs)
         .halign(gtk::Align::Center)
         .build();
+    switcher.set_widget_name("detector-tabs");
     body.append(&switcher);
     let metrics = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
@@ -378,6 +505,15 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     body.append(&metrics);
     let detail = label("Loading configured accounts…", "dim-label");
     body.append(&detail);
+    let extra_detail = label("", "dim-label");
+    extra_detail.set_selectable(true);
+    let extra = gtk::Expander::builder()
+        .label("Polling diagnostics")
+        .child(&extra_detail)
+        .visible(false)
+        .build();
+    extra.set_widget_name("detector-polling-diagnostics");
+    body.append(&extra);
     body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let title = label("Event stream", "title-2");
@@ -417,6 +553,8 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         count,
         stream,
         detail,
+        extra_detail,
+        extra,
         delivery_toggle: delivery_toggle.downgrade(),
         control_busy: control_busy.clone(),
     };
@@ -542,6 +680,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         let accounts = accounts.downgrade();
         let render = render_selection.clone();
         let feedback = feedback.downgrade();
+        let selected_tabs = tabs.downgrade();
         move |button| {
             if control_busy.replace(true) {
                 return;
@@ -561,8 +700,12 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                 return;
             };
             button.set_sensitive(false);
+            let remote = selected_tabs
+                .upgrade()
+                .is_some_and(|tabs| tabs.visible_child_name().as_deref() == Some("remote"));
             let action_id = id.clone();
             let selected_accounts = accounts.clone();
+            let selected_tabs = selected_tabs.clone();
             let selected_ids = ids.clone();
             let control_busy = control_busy.clone();
             let render = render.clone();
@@ -572,7 +715,16 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
             }
             gtk::glib::spawn_future_local(async move {
                 let result = gtk::gio::spawn_blocking(move || {
-                    if session.diagnostics().delivery
+                    if remote {
+                        if session.remote_diagnostics().is_some_and(|snapshot| {
+                            snapshot.queue.delivery
+                                == drivesync_engine::detectors::DeliveryState::Paused
+                        }) {
+                            session.resume_remote_delivery()
+                        } else {
+                            session.pause_remote_delivery()
+                        }
+                    } else if session.diagnostics().delivery
                         == Some(drivesync_engine::detectors::DeliveryState::Paused)
                     {
                         session.resume_delivery()
@@ -588,7 +740,13 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                         .get(accounts.selected() as usize)
                         .cloned()
                 });
-                if let Some(feedback) = feedback.upgrade().filter(|_| selected == action_id) {
+                let same_source = selected_tabs.upgrade().is_some_and(|tabs| {
+                    (tabs.visible_child_name().as_deref() == Some("remote")) == remote
+                });
+                if let Some(feedback) = feedback
+                    .upgrade()
+                    .filter(|_| selected == action_id && same_source)
+                {
                     match result {
                         Ok(Ok(())) => (),
                         Ok(Err(error)) => feedback.set_label(&error.to_string()),
@@ -601,9 +759,23 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     });
     accounts.connect_selected_notify({
         let render = render_selection.clone();
-        move |_| render()
+        let feedback = feedback.downgrade();
+        move |_| {
+            if let Some(feedback) = feedback.upgrade() {
+                feedback.set_label("");
+            }
+            render();
+        }
     });
-    tabs.connect_visible_child_name_notify(move |_| render_selection());
+    tabs.connect_visible_child_name_notify({
+        let feedback = feedback.downgrade();
+        move |_| {
+            if let Some(feedback) = feedback.upgrade() {
+                feedback.set_label("");
+            }
+            render_selection();
+        }
+    });
     // UI refresh reads snapshots only; it never schedules detector scans or remote polling.
     let mut previous = String::new();
     let weak = outer.downgrade();
@@ -620,7 +792,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                 let sessions = context.detectors.borrow();
                 let session = id.as_ref().and_then(|id| sessions.get(id));
                 format!(
-                    "{id:?}/{remote}/{error:?}/{:?}/{:?}",
+                    "{id:?}/{remote}/{error:?}/{:?}/{:?}/{:?}",
                     session.map(|s| {
                         let snapshot = s.orchestrator.diagnostics();
                         (
@@ -633,7 +805,16 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                     }),
                     session.map(|s| s
                         .orchestrator
-                        .status(drivesync_engine::detectors::LocalStatusRequest {}))
+                        .status(drivesync_engine::detectors::LocalStatusRequest {})),
+                    session.map(|s| s.orchestrator.remote_diagnostics().map(|snapshot| (
+                        snapshot.status,
+                        snapshot.queue.detected,
+                        snapshot.queue.pending,
+                        snapshot.queue.leased,
+                        snapshot.queue.confirmed,
+                        snapshot.queue.delivery,
+                        snapshot.queue.last_error
+                    )))
                 )
             };
             if key != previous {
