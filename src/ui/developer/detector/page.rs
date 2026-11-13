@@ -77,11 +77,17 @@ impl View {
             self.stream.remove(&child);
         }
     }
-    fn render(&self, context: &Context, id: Option<&str>, remote: bool) {
+    fn render(&self, context: &Context, id: Option<&str>, remote: bool, error: Option<&str>) {
         self.clear();
         if remote {
             self.status.set_label("Not implemented");
             self.detail.set_label("Remote scheduling and polling diagnostics will be provided by the engine. No remote detector is running.");
+            return;
+        }
+        if let Some(error) = error {
+            self.status.set_label("Unavailable");
+            self.status.add_css_class("error");
+            self.detail.set_label(error);
             return;
         }
         let sessions = context.detectors.borrow();
@@ -254,11 +260,15 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         detail,
     };
     let ids = Rc::new(RefCell::new(Vec::<String>::new()));
+    let errors = Rc::new(RefCell::new(
+        std::collections::HashMap::<String, String>::new(),
+    ));
     let busy = Rc::new(Cell::new(false));
     let refresh: Rc<dyn Fn()> = Rc::new({
         let context = context.clone();
         let accounts = accounts.downgrade();
         let ids = ids.clone();
+        let errors = errors.clone();
         let view = view.clone();
         let busy = busy.clone();
         let feedback = feedback.clone();
@@ -269,6 +279,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
             let context = context.clone();
             let accounts = accounts.clone();
             let ids = ids.clone();
+            let errors = errors.clone();
             let view = view.clone();
             let busy = busy.clone();
             let feedback = feedback.clone();
@@ -291,9 +302,15 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                                 )
                             })
                             .collect();
-                        let errors: Vec<_> =
-                            values.iter().filter_map(|(_, e)| e.as_deref()).collect();
-                        feedback.set_label(&errors.join("\n"));
+                        *errors.borrow_mut() = values
+                            .iter()
+                            .filter_map(|(account, error)| {
+                                error
+                                    .as_ref()
+                                    .map(|error| (account.id.0.clone(), error.clone()))
+                            })
+                            .collect();
+                        feedback.set_label("");
                         *ids.borrow_mut() = values.iter().map(|(a, _)| a.id.0.clone()).collect();
                         let strings: Vec<_> = names.iter().map(String::as_str).collect();
                         accounts.set_model(Some(&gtk::StringList::new(&strings)));
@@ -339,6 +356,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     let render_selection: Rc<dyn Fn()> = Rc::new({
         let context = context.clone();
         let ids = ids.clone();
+        let errors = errors.clone();
         let accounts = accounts.downgrade();
         let tabs = tabs.downgrade();
         let view = view.clone();
@@ -351,6 +369,9 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                 &context,
                 id.as_deref(),
                 tabs.visible_child_name().as_deref() == Some("remote"),
+                id.as_ref()
+                    .and_then(|id| errors.borrow().get(id).cloned())
+                    .as_deref(),
             );
         }
     });
@@ -370,11 +391,12 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         if widget.is_mapped() && !busy.get() {
             let id = ids.borrow().get(accounts.selected() as usize).cloned();
             let remote = tabs.visible_child_name().as_deref() == Some("remote");
+            let error = id.as_ref().and_then(|id| errors.borrow().get(id).cloned());
             let key = {
                 let sessions = context.detectors.borrow();
                 let session = id.as_ref().and_then(|id| sessions.get(id));
                 format!(
-                    "{id:?}/{remote}/{:?}/{:?}",
+                    "{id:?}/{remote}/{error:?}/{:?}/{:?}",
                     session.map(|s| s.orchestrator.diagnostics().events_detected),
                     session.map(|s| s
                         .orchestrator
@@ -382,7 +404,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                 )
             };
             if key != previous {
-                view.render(&context, id.as_deref(), remote);
+                view.render(&context, id.as_deref(), remote, error.as_deref());
                 previous = key;
             }
         }

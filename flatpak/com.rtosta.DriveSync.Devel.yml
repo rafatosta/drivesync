@@ -12,6 +12,9 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
+  # Native inotify monitoring cannot observe external changes through document FUSE.
+  # Development sync roots only; do not grant the entire home directory.
+  - --filesystem=~/GoogleDrive
   # Per-account OAuth credentials in the desktop Secret Service.
   - --talk-name=org.freedesktop.secrets
 build-options:

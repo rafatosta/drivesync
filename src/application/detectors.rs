@@ -4,7 +4,6 @@ use adw::gtk::gio;
 use drivesync_engine::{
     detectors::*, models::SyncId, Account, AccountId, ListAccountsRequest, Orchestrator, Timestamp,
 };
-use gio::prelude::*;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 pub(crate) struct Session {
@@ -45,9 +44,7 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
             .await
             .map_err(|_| "Saved account configuration could not be read".to_owned())?
         {
-            let root = gio::File::for_uri(&config.local_uri)
-                .path()
-                .ok_or("Local folder unavailable")?;
+            let root = crate::services::local_folder::watch_root(&config.local_uri).await;
             configured.push((account, root));
         }
     }
@@ -66,6 +63,14 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
     }
     let mut result = Vec::new();
     for (account, root) in configured {
+        let root = match root {
+            Ok(root) => root,
+            Err(error) => {
+                remove(context, &account.id).await;
+                result.push((account, Some(error)));
+                continue;
+            }
+        };
         let existing = context
             .detectors
             .borrow()
