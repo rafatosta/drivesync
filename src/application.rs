@@ -2,6 +2,7 @@
 pub(crate) mod accounts;
 mod background;
 pub(crate) mod detectors;
+pub(crate) mod inventory;
 mod lifecycle;
 use crate::ui::components::main_menu;
 pub(crate) mod navigation;

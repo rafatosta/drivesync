@@ -134,3 +134,32 @@ O Developer passa a usar `Orchestrator::observe_detector`, adaptador da fachada 
 A interface continua consumindo apenas diagnósticos reais. Nenhuma operação de sincronização é executada e o Scanner Local não foi incorporado ao Detector. Ver `docs/engine/detectors/CLOSURE.md` para a superfície pública e os limites de validação.
 
 A localização do banco é derivada pela engine. A UI não fornece diretório de fila nem usa fallback XDG. Inventário e Detector ficam no mesmo diretório oculto reservado, com bancos separados; a implementação do Inventário permanece futura.
+
+## Developer / Inventory
+
+F12 → Inventory abre uma consulta somente leitura do banco da pasta configurada.
+A página oferece seletor de conta, seletor das 11 tabelas do inventário, botão de
+recarregar e paginação de até 100 registros. As colunas acompanham a tabela
+selecionada, com rolagem horizontal e largura ajustável. A seção “Selected record”
+mostra valores, tipos e tamanho dos campos da linha selecionada; ativar a linha
+abre essa seção. Textos longos e BLOBs têm prévia limitada, com truncamento
+explícito. Bytes não UTF-8 aparecem em hexadecimal; NULL é distinto de texto vazio.
+
+A aplicação lê as configurações concluídas sem iniciar o Detector. Consultas
+SQLite são executadas fora da thread GTK, pela API pública
+`inventory::inspection`, sem SQL nos widgets. Cada mudança de seleção invalida
+respostas antigas para não misturar contas/tabelas. Recarregar lê novamente as
+configurações e a primeira página. Não há polling de tabelas em segundo plano.
+
+A inspeção não cria inventário, não gera exemplos em contas reais e não alimenta
+itens com eventos. Banco inexistente, tabela vazia, identidade incompatível,
+esquema não suportado e indisponibilidade são apresentados explicitamente.
+O arquivo existente é preservado. A alimentação pelo Analisador permanece uma
+integração separada.
+
+O teste gráfico `inventory_table_selection_pagination_and_account_isolation`
+usa duas pastas sintéticas, SQLite real e uma sessão Wayland/perfil XDG isolados.
+Valida paginação, troca de tabela/conta, resposta atrasada, detalhe, ausência sem
+criação e janela estreita; não acessa credenciais nem contas reais. A inspeção
+SQLite possui testes próprios no engine, incluindo leitura de arquivo 0400 e
+comparação byte a byte antes/depois.

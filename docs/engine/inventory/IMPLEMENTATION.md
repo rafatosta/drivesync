@@ -139,3 +139,26 @@ substitui API de domínio nem restauração de banco incompatível.
 Validação no SDK: fmt, clippy do workspace e 21 testes públicos de inventário,
 incluindo três testes novos para consulta sem escrita (banco com permissão 0400),
 ausência sem criação, identidade/esquema, paginação e prévias binárias/UTF-8.
+
+## Developer Console — consulta conectada
+
+F12 → Inventory agora usa a inspeção somente leitura. Contas vêm das configurações
+concluídas, sem iniciar Detector; trocar conta/tabela descarta respostas antigas.
+Há seletor das 11 tabelas, colunas redimensionáveis, paginação de 100 registros,
+detalhe da linha, tipos SQL, prévias longas/binárias e estados de vazio, banco
+inexistente e acesso negado. Consultas executam fora da thread GTK. Não existe
+alimentação automática pelo Analisador ou criação do banco ao abrir essa página.
+
+Validação final no org.gnome.Sdk//50 com rust-stable: fmt --all --check, clippy
+--workspace --all-targets -- -D warnings, test --workspace, doc --workspace
+--no-deps --document-private-items, test --workspace --doc e build --workspace.
+Todos passaram. O workspace aprovou 697 testes (incluindo 6 doctests), com 9
+testes de ambiente ignorados; os 6 doctests também passaram na execução separada.
+
+O novo teste gráfico ignorado na execução padrão foi executado explicitamente
+e passou em Mutter/Wayland isolado, com perfil XDG temporário e duas contas
+sintéticas. Conferidas capturas de tabela, metadados com detalhe, banco ausente
+e janela de 520 pixels. Foram validados Next/Previous, troca rápida de escopo,
+truncamento, seleção e liberação da página. Não foram usadas contas reais.
+A inspeção tem quatro testes públicos; os 22 testes públicos de Inventory
+foram reexecutados após corrigir a distinção entre permissão e inexistência.

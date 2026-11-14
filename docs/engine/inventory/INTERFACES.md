@@ -12,7 +12,7 @@
 
 **Dados do inventário:** `SyncItem`, baseline, fila de operações e histórico são persistidos nas estruturas definidas neste contrato.
 
-**Estado:** as 17 operações públicas estão implementadas em `engine/src/inventory/`. Os exemplos abaixo resumem os tipos; o código Rust e [IMPLEMENTATION.md](IMPLEMENTATION.md) registram o contrato executável e seus limites. A integração com Analisador/GUI e o mecanismo comum de backup/restauração continuam fora desta entrega.
+**Estado:** as 17 operações públicas estão implementadas em `engine/src/inventory/`. Os exemplos abaixo resumem os tipos; o código Rust e [IMPLEMENTATION.md](IMPLEMENTATION.md) registram o contrato executável e seus limites. A alimentação pelo Analisador e o mecanismo comum de backup/restauração continuam fora desta entrega. A consulta de tabelas no Developer Console usa a API separada de diagnóstico `inventory::inspection`, sem ampliar os métodos da fachada de domínio.
 
 ## 1. Objetivo e princípio das interfaces
 

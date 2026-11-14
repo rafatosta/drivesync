@@ -35,7 +35,7 @@ Transações continuam síncronas e atômicas; chamadas potencialmente bloqueant
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** as 17 operações Rust estão implementadas, incluindo itens, observações, baseline, fila e histórico. Não há ainda conexão com Analisador/GUI nem backup/restauração comum. Ver [IMPLEMENTATION](IMPLEMENTATION.md).
+**Estado:** as 17 operações Rust estão implementadas, incluindo itens, observações, baseline, fila e histórico. O Developer Console oferece consulta somente leitura das tabelas. A alimentação pelo Analisador e o backup/restauração comum ainda não estão integrados. Ver [IMPLEMENTATION](IMPLEMENTATION.md).
 
 ## Recuperação do Inventário
 
