@@ -607,3 +607,155 @@ fn traversal_delta_and_checkpoint_are_atomic_ordered_and_reopenable() {
         "child"
     );
 }
+
+#[test]
+fn large_traversal_updates_only_affected_rows_and_rolls_back_on_checkpoint_failure() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(None, b"seed", &RemoteScanUpdate::default())
+        .unwrap();
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute_batch("BEGIN;
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20000)
+        INSERT INTO remote_scan(folder,done) SELECT 'folder-'||x,0 FROM n;
+        UPDATE remote_scan_control SET total=20000,pending=20000;
+        CREATE TABLE audit(n INTEGER NOT NULL);
+        INSERT INTO audit VALUES(0);
+        CREATE TRIGGER audit_work_update AFTER UPDATE ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        CREATE TRIGGER audit_work_insert AFTER INSERT ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        CREATE TRIGGER audit_work_delete AFTER DELETE ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        COMMIT;").unwrap();
+    drop(store);
+    let store = tree.store(&clock);
+    let head = store.next_remote_scan().unwrap().unwrap();
+    store
+        .save_remote_page(
+            Some(b"seed"),
+            b"page",
+            &RemoteScanUpdate {
+                finished: Some(head),
+                discovered: vec!["new-child".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        db.query_row("SELECT n FROM audit", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    let plan: String = db.query_row("EXPLAIN QUERY PLAN SELECT folder,token FROM remote_scan WHERE done=0 ORDER BY seq LIMIT 1", [], |row| row.get(3)).unwrap();
+    assert!(plan.contains("remote_scan_pending"), "{plan}");
+    db.execute_batch("CREATE TRIGGER reject_checkpoint BEFORE UPDATE ON remote_progress BEGIN SELECT RAISE(ABORT,'fault'); END;").unwrap();
+    let head = store.next_remote_scan().unwrap().unwrap();
+    assert!(store
+        .save_remote_page(
+            Some(b"page"),
+            b"must-rollback",
+            &RemoteScanUpdate {
+                finished: Some(head.clone()),
+                discovered: vec!["must-not-exist".into()],
+                ..Default::default()
+            }
+        )
+        .is_err());
+    assert_eq!(store.remote_state().unwrap(), Some(b"page".to_vec()));
+    assert_eq!(store.next_remote_scan().unwrap(), Some(head));
+    assert_eq!(
+        db.query_row("SELECT n FROM audit", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM remote_scan WHERE folder='must-not-exist'",
+            [],
+            |row| row.get::<_, u64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn traversal_capacity_failure_preserves_checkpoint_and_all_pending_work() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(None, b"seed", &RemoteScanUpdate::default())
+        .unwrap();
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute_batch(
+        "BEGIN;
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000)
+        INSERT INTO remote_scan(folder,done) SELECT 'folder-'||x,0 FROM n;
+        UPDATE remote_scan_control SET total=100000,pending=100000;
+        COMMIT;",
+    )
+    .unwrap();
+    let head = store.next_remote_scan().unwrap();
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"seed"),
+                b"too-large",
+                &RemoteScanUpdate {
+                    discovered: vec!["extra".into()],
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::CapacityExceeded
+    );
+    assert_eq!(store.remote_state().unwrap(), Some(b"seed".to_vec()));
+    assert_eq!(store.next_remote_scan().unwrap(), head);
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM remote_scan", [], |row| row
+            .get::<_, u64>(0))
+            .unwrap(),
+        100000
+    );
+}
+
+#[test]
+fn traversal_is_isolated_by_account_and_provider_and_corrupt_counters_fail_without_repair() {
+    let tree = Tree::new();
+    let base = tree.0.join("isolated-work");
+    let first = Store::open_remote(&base, "google", "a", "sync", "root").unwrap();
+    let second = Store::open_remote(&base, "google", "b", "sync", "root").unwrap();
+    let other = Store::open_remote(&base, "other", "a", "sync", "root").unwrap();
+    first
+        .save_remote_page(
+            None,
+            b"a",
+            &RemoteScanUpdate {
+                discovered: vec!["only-a".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(second.next_remote_scan().unwrap().is_none());
+    assert!(other.next_remote_scan().unwrap().is_none());
+    assert_eq!(first.next_remote_scan().unwrap().unwrap().folder, "only-a");
+    drop((first, second, other));
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    drop(store);
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute("UPDATE remote_scan_control SET total=1,pending=0", [])
+        .unwrap();
+    drop(db);
+    let before = fs::read(tree.db()).unwrap();
+    assert_eq!(
+        Store::open(&tree.0.join("state"), &tree.scope())
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::Corrupt
+    );
+    assert_eq!(fs::read(tree.db()).unwrap(), before);
+}

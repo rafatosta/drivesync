@@ -1,5 +1,6 @@
 //! Deterministic provider, sink and checkpoint faults exercise the real Google producer.
 use super::*;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
@@ -35,6 +36,8 @@ impl Api for FakeApi {
 #[derive(Default)]
 struct Memory {
     progress: Mutex<Option<Vec<u8>>>,
+    work: Mutex<VecDeque<RemoteScan>>,
+    visited: Mutex<BTreeSet<String>>,
     files: Mutex<Vec<File>>,
     fail_emit: AtomicUsize,
     fail_save: AtomicUsize,
@@ -44,15 +47,45 @@ impl RemoteBackend for Memory {
     fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
         Ok(self.progress.lock().unwrap().clone())
     }
-    fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+    fn save(
+        &self,
+        previous: Option<&[u8]>,
+        value: &[u8],
+        traversal: &RemoteScanUpdate,
+    ) -> RemoteResult<()> {
         let call = self.saves.fetch_add(1, Ordering::SeqCst) + 1;
         if self.fail_save.load(Ordering::SeqCst) == call {
             return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
         }
         let mut progress = self.progress.lock().unwrap();
         assert_eq!(progress.as_deref(), previous);
+        let mut work = self.work.lock().unwrap();
+        let mut visited = self.visited.lock().unwrap();
+        if traversal.reset {
+            work.clear();
+            visited.clear();
+        }
+        if let Some(finished) = &traversal.finished {
+            assert_eq!(work.front(), Some(finished));
+            if let Some(token) = &traversal.continuation {
+                work.front_mut().unwrap().token = Some(token.clone());
+            } else {
+                work.pop_front();
+            }
+        }
+        for folder in &traversal.discovered {
+            if visited.insert(folder.clone()) {
+                work.push_back(RemoteScan {
+                    folder: folder.clone(),
+                    token: None,
+                });
+            }
+        }
         *progress = Some(value.to_vec());
         Ok(())
+    }
+    fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
+        Ok(self.work.lock().unwrap().front().cloned())
     }
     fn emit(&self, file: &File) -> RemoteResult<bool> {
         if self.fail_emit.load(Ordering::SeqCst) > 0 {
@@ -171,7 +204,7 @@ fn sink_failure_and_checkpoint_failure_replay_identical_objects() {
     );
     let staged: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
     let original = staged.pending.unwrap().files[0].clone();
-    assert!(staged.progress.cursor.is_none());
+    assert!(staged.cursor.is_none());
     // The next save fails after the staged occurrence has been accepted.
     sink.fail_save.store(2, Ordering::SeqCst);
     assert_eq!(
@@ -280,7 +313,7 @@ fn malformed_page_never_commits_its_cursor_and_expiry_requires_explicit_recovery
         RemoteError::CursorExpired
     );
     let after: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
-    assert_eq!(before.progress.cursor, after.progress.cursor);
+    assert_eq!(before.cursor, after.cursor);
     source
         .poll(RemotePollMode::Recovery, 10, &Cancellation::default())
         .unwrap();
@@ -402,7 +435,7 @@ fn inaccessible_scope_emits_one_durable_warning_without_advancing_progress() {
     assert_eq!(files[0].event.kind, FileEventKind::ScopeUnavailable);
     assert_eq!(files[0].coverage, ObservationCoverage::Unavailable);
     let progress: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
-    assert!(progress.progress.cursor.is_none());
+    assert!(progress.cursor.is_none());
 }
 #[test]
 fn incomplete_changes_page_preserves_cursor_and_requests_recheck() {
@@ -420,7 +453,7 @@ fn incomplete_changes_page_preserves_cursor_and_requests_recheck() {
         RemoteError::PageIncomplete
     );
     let progress: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
-    assert_eq!(progress.progress.cursor.as_deref(), Some("cursor1"));
+    assert_eq!(progress.cursor.as_deref(), Some("cursor1"));
     assert_eq!(
         sink.files.lock().unwrap().last().unwrap().event.uncertainty,
         Some(ObservationUncertainty::CoverageIncomplete)
@@ -463,10 +496,18 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
         fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
             self.checkpoint.load()
         }
-        fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+        fn save(
+            &self,
+            previous: Option<&[u8]>,
+            value: &[u8],
+            traversal: &RemoteScanUpdate,
+        ) -> RemoteResult<()> {
             self.largest_checkpoint
                 .fetch_max(value.len(), Ordering::SeqCst);
-            self.checkpoint.save(previous, value)
+            self.checkpoint.save(previous, value, traversal)
+        }
+        fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
+            self.checkpoint.next_scan()
         }
         fn emit(&self, file: &File) -> RemoteResult<bool> {
             file.validate().unwrap();
@@ -493,15 +534,14 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
     let checkpoint = backend.load().unwrap().unwrap();
     assert!(checkpoint.len() < 512);
     let state: State = serde_json::from_slice(&checkpoint).unwrap();
-    assert!(state.progress.scan.is_empty());
-    assert!(state.progress.scanned.is_empty());
+    assert!(backend.next_scan().unwrap().is_none());
     assert!(state.pending.is_none());
 }
 
 #[test]
 fn incompatible_checkpoint_versions_and_old_catalog_fail_without_mutation_or_network() {
     let mut payloads = Vec::new();
-    for version in [0, 1, 3, 900] {
+    for version in [0, 1, 2, 4, 900] {
         let mut state = State::fresh().unwrap();
         state.version = version;
         payloads.push(serde_json::to_vec(&state).unwrap());
@@ -520,4 +560,124 @@ fn incompatible_checkpoint_versions_and_old_catalog_fail_without_mutation_or_net
         assert!(api.calls.lock().unwrap().is_empty());
         assert!(sink.files.lock().unwrap().is_empty());
     }
+}
+
+#[test]
+fn cancellation_after_acceptance_preserves_pending_page_and_replays_identical_events() {
+    struct CancelAfterEmit {
+        backend: Arc<Memory>,
+        cancel: Cancellation,
+    }
+    impl RemoteBackend for CancelAfterEmit {
+        fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
+            self.backend.load()
+        }
+        fn save(
+            &self,
+            previous: Option<&[u8]>,
+            value: &[u8],
+            delta: &RemoteScanUpdate,
+        ) -> RemoteResult<()> {
+            self.backend.save(previous, value, delta)
+        }
+        fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
+            self.backend.next_scan()
+        }
+        fn emit(&self, file: &File) -> RemoteResult<bool> {
+            let accepted = self.backend.emit(file)?;
+            self.cancel.cancel();
+            Ok(accepted)
+        }
+    }
+    let (mut source, api, sink) = fixture(initial());
+    let cancel = Cancellation::default();
+    source.backend = Arc::new(CancelAfterEmit {
+        backend: sink.clone(),
+        cancel: cancel.clone(),
+    });
+    assert_eq!(
+        source
+            .poll(RemotePollMode::Initial, 10, &cancel)
+            .unwrap_err()
+            .kind,
+        RemoteError::Cancelled
+    );
+    let state: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
+    let original = state.pending.unwrap().files[0].clone();
+    assert!(state.cursor.is_none());
+    assert!(sink.next_scan().unwrap().is_none());
+    source.backend = sink.clone();
+    source
+        .poll(RemotePollMode::Incremental, 10, &Cancellation::default())
+        .unwrap();
+    assert_eq!(
+        sink.files
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|file| file.id == original.id)
+            .count(),
+        1
+    );
+    assert_eq!(sink.files.lock().unwrap()[0], original);
+    assert_eq!(
+        api.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| *call == "start")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn wide_capture_keeps_checkpoint_small_and_deduplicates_traversal_without_suppressing_events() {
+    let mut directories: Vec<_> = (0..198)
+        .map(|i| raw(&format!("directory-{i}"), "Directory", "root-id", true))
+        .collect();
+    directories.push(root());
+    directories.push(raw("directory-0", "Directory", "root-id", true));
+    let mut replies = vec![
+        Ok(Response::Start("cursor0".into())),
+        Ok(Response::File(Box::new(root()))),
+        list(directories, None),
+    ];
+    replies.extend((0..198).map(|_| list(vec![], None)));
+    replies.push(changes(vec![], None, Some("end")));
+    let (source, api, backend) = fixture(replies);
+    let result = source
+        .poll(RemotePollMode::Initial, 2, &Cancellation::default())
+        .unwrap();
+    assert!(result.has_more);
+    assert_eq!(backend.work.lock().unwrap().len(), 198);
+    assert!(backend.load().unwrap().unwrap().len() < 512);
+    assert_eq!(
+        backend.files.lock().unwrap().len(),
+        201,
+        "duplicate observations remain deliverable"
+    );
+    let result = source
+        .poll(RemotePollMode::Incremental, 199, &Cancellation::default())
+        .unwrap();
+    assert!(!result.has_more);
+    assert!(backend.next_scan().unwrap().is_none());
+    assert_eq!(
+        api.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| *call == "list:directory-0:None")
+            .count(),
+        1
+    );
+    assert_eq!(
+        api.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| *call == "list:root-id:None")
+            .count(),
+        1
+    );
 }

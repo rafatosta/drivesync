@@ -39,14 +39,26 @@ impl RemoteBackend for DurableBackend {
             .remote_state()
             .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))
     }
-    fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+    fn save(
+        &self,
+        previous: Option<&[u8]>,
+        value: &[u8],
+        traversal: &RemoteScanUpdate,
+    ) -> RemoteResult<()> {
         self.0
-            .save_remote_state(previous, value)
+            .save_remote_page(previous, value, traversal)
             .map_err(|error| RemoteFailure {
                 kind: RemoteError::CheckpointUnavailable,
                 retryable: error.retryable,
                 retry_after: None,
             })
+    }
+    fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
+        self.0.next_remote_scan().map_err(|error| RemoteFailure {
+            kind: RemoteError::CheckpointUnavailable,
+            retryable: error.retryable,
+            retry_after: None,
+        })
     }
     fn emit(&self, file: &File) -> RemoteResult<bool> {
         self.0

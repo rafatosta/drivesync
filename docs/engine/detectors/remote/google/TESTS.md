@@ -54,3 +54,11 @@ consultas de ancestralidade, campos opcionais do Change sem metadados,
 checkpoint sem catálogo e liberação do controle de percurso após a captura.
 Falha após enqueue e antes de confirmar cursor deve preservar a observação
 integral após fechar e reabrir SQLite, sem duplicar o evento.
+
+## Issue 94
+
+Verificar fila incremental com muitas pastas, paginação da pasta mantida na
+cabeça, descoberta de pastas sem repetição/ciclos, retomada de trabalho após
+reabertura, CAS concorrente e rollback entre alteração do percurso e gravação
+do checkpoint. Cancelamento após aceite do evento mantém preparação para replay
+idêntico. O teste de capacidade não pode avançar cursor nem perder pastas.

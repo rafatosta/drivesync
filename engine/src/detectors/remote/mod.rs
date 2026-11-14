@@ -3,6 +3,7 @@ mod models;
 pub use models::*;
 mod google;
 mod interfaces;
+use crate::detectors::storage::{RemoteScan, RemoteScanUpdate};
 pub(crate) use interfaces::{Cancellation, RemoteSessionContext};
 use interfaces::{ObserverFactory, RemoteBackend, RemoteObserver};
 mod runtime;

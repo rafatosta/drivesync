@@ -28,7 +28,7 @@ O índice durável registra a origem real de emissão, inclusive avisos sem payl
 
 A localização é derivada da raiz local pelo Storage; não há parâmetro público de diretório de dados nem fallback para XDG. A raiz precisa existir e estar acessível. O diretório reservado usa 0700 e o banco 0600. Links simbólicos no caminho, hardlinks do banco e identidades divergentes são rejeitados. O banco do Inventário é independente, no mesmo diretório: `inventory.sqlite3`, ainda documental. Escritas internas não geram eventos de usuário.
 
-Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 4); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
+Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 5); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
 
 `PersistentDetector` e os caminhos antigos de composição do Orquestrador foram removidos. Os especialistas Local/Remoto mantêm testes independentes, mas a aplicação compõe apenas a fachada `Detector`.
 
@@ -56,18 +56,28 @@ Não mantém caminhos conhecidos nem correlaciona rename/move, escritas abertas 
 substituições atômicas. Mantém somente watches de diretórios e FIFO limitada de
 notificações. Metadados vêm do coletor sem inspeção dos seus atributos. Avisos
 operacionais permanecem; classificação e tratamento pertencem ao futuro
-Analisador/Inventory. O codec atual é File v3, com SQLite v4; bancos anteriores
+Analisador/Inventory. O codec atual é File v3, com SQLite v5; bancos anteriores
 falham explicitamente, sem migração nem exclusão automática.
 
 ## Auditoria de ausência de retrocompatibilidade
 
-A verificação posterior confirmou um único esquema SQLite aceito (4), um único
-codec File (3) e um único checkpoint Google (2). Não há migração, importação,
+A verificação posterior confirmou um único esquema SQLite aceito (5), um único
+codec File (3) e um único checkpoint Google (3). Não há migração, importação,
 backfill, leitura dupla ou conversor para formatos anteriores. Os números de
 versão identificam e rejeitam formatos incompatíveis; não implicam suporte legado.
 
-Os testes rejeitam esquemas 0/1/2/3/900 preservando o arquivo byte a byte, codecs
-0/1/2/900 e checkpoints 0/1/3/900. Um checkpoint contendo o catálogo antigo known
+Os testes rejeitam esquemas 0/1/2/3/4/900 preservando o arquivo byte a byte, codecs
+0/1/2/900 e checkpoints 0/1/2/4/900. Um checkpoint contendo o catálogo antigo known
 também é recusado sem mutação ou chamada ao Provider. Reabertura e replay no
 formato atual continuam sendo recuperação de falha, não retrocompatibilidade.
 Nenhum banco do usuário foi removido ou convertido durante a auditoria.
+
+## Issue 94
+
+O controle do percurso remoto agora é relacional e incremental. O produtor não
+clona mais Progress ou serializa a fila de diretórios a cada página. O checkpoint
+Google 3 contém uma única página preparada e seu delta; a confirmação do cursor
+e do trabalho do percurso é atômica no Storage, depois da persistência dos File.
+O protocolo de replay preserva identidade/horário/payload após falha ou cancelamento.
+Nenhum índice de arquivos conhecidos foi reintroduzido. SQLite 5 rejeita versões
+anteriores sem migração, remoção ou adaptação. O codec File permanece 3.

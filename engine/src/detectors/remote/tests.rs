@@ -298,7 +298,7 @@ fn corrupted_progress_is_rejected_without_network_or_silent_recreation() {
     detector
         .shared
         .store
-        .save_remote_state(None, b"invalid checkpoint")
+        .save_remote_page(None, b"invalid checkpoint", &RemoteScanUpdate::default())
         .unwrap();
     drop(detector);
     assert!(open_google(scope("a", "root"), settings(), base.clone(), api.clone()).is_err());
@@ -583,82 +583,102 @@ fn drain_finishes_the_current_round_without_cancelling_or_starting_another() {
 }
 
 #[test]
-fn sqlite_restart_replays_prepared_observation_after_acceptance_before_cursor_commit() {
+fn sqlite_restart_preserves_observations_after_failures_before_and_after_cursor_commit() {
     struct FailCommit {
         backend: Arc<dyn RemoteBackend>,
         saves: AtomicUsize,
+        after_commit: bool,
     }
     impl RemoteBackend for FailCommit {
         fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
             self.backend.load()
         }
-        fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+        fn save(
+            &self,
+            previous: Option<&[u8]>,
+            value: &[u8],
+            traversal: &RemoteScanUpdate,
+        ) -> RemoteResult<()> {
             if self.saves.fetch_add(1, Ordering::SeqCst) == 1 {
+                if self.after_commit {
+                    self.backend.save(previous, value, traversal)?;
+                }
                 return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
             }
-            self.backend.save(previous, value)
+            self.backend.save(previous, value, traversal)
+        }
+        fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
+            self.backend.next_scan()
         }
         fn emit(&self, file: &File) -> RemoteResult<bool> {
             self.backend.emit(file)
         }
     }
-    let base = base();
-    let api = Arc::new(ApiFixture {
-        calls: AtomicUsize::new(0),
-        slow: false,
-    });
-    let source_scope = scope("a", "root");
-    let source_api = api.clone();
-    let detector = RemoteDetector::open(
-        source_scope.clone(),
-        settings(),
-        base.clone(),
-        ProviderId("google".into()),
-        move |backend| {
-            Ok(Box::new(GoogleRemoteDetector {
-                scope: source_scope,
-                api: source_api,
-                backend: Arc::new(FailCommit {
-                    backend,
-                    saves: AtomicUsize::new(0),
-                }),
-            }))
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        detector
+    for after_commit in [false, true] {
+        let base = base();
+        let api = Arc::new(ApiFixture {
+            calls: AtomicUsize::new(0),
+            slow: false,
+        });
+        let source_scope = scope("a", "root");
+        let source_api = api.clone();
+        let detector = RemoteDetector::open(
+            source_scope.clone(),
+            settings(),
+            base.clone(),
+            ProviderId("google".into()),
+            move |backend| {
+                Ok(Box::new(GoogleRemoteDetector {
+                    scope: source_scope,
+                    api: source_api,
+                    backend: Arc::new(FailCommit {
+                        backend,
+                        saves: AtomicUsize::new(0),
+                        after_commit,
+                    }),
+                }))
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            detector
+                .poll_once(RemotePollRequest {
+                    mode: RemotePollMode::Initial,
+                    page_budget: None,
+                })
+                .unwrap_err()
+                .kind,
+            RemoteError::CheckpointUnavailable
+        );
+        let original = detector.shared.store.recent().unwrap()[0].clone();
+        assert_eq!(original.event.kind, FileEventKind::Observed);
+        assert_eq!(
+            original.event.remote.as_ref().unwrap().source,
+            RemoteObservationSource::Capture
+        );
+        assert_eq!(
+            detector.shared.store.next_remote_scan().unwrap().is_some(),
+            after_commit
+        );
+        drop(detector);
+        let reopened =
+            open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+        reopened
             .poll_once(RemotePollRequest {
-                mode: RemotePollMode::Initial,
+                mode: RemotePollMode::Incremental,
                 page_budget: None,
             })
-            .unwrap_err()
-            .kind,
-        RemoteError::CheckpointUnavailable
-    );
-    let original = detector.shared.store.recent().unwrap()[0].clone();
-    assert_eq!(original.event.kind, FileEventKind::Observed);
-    assert_eq!(
-        original.event.remote.as_ref().unwrap().source,
-        RemoteObservationSource::Capture
-    );
-    drop(detector);
-    let reopened = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
-    reopened
-        .poll_once(RemotePollRequest {
-            mode: RemotePollMode::Incremental,
-            page_budget: None,
-        })
-        .unwrap();
-    assert_eq!(reopened.shared.store.recent().unwrap(), vec![original]);
-    assert_eq!(reopened.diagnostics().queue.detected, 1);
-    assert_eq!(
-        api.calls.load(Ordering::SeqCst),
-        4,
-        "replay must not query the root again"
-    );
-    drop(reopened);
-    std::fs::remove_dir_all(base).unwrap();
+            .unwrap();
+        assert_eq!(reopened.shared.store.recent().unwrap(), vec![original]);
+        assert_eq!(reopened.diagnostics().queue.detected, 1);
+        assert_eq!(
+            api.calls.load(Ordering::SeqCst),
+            4,
+            "replay must not query the root again"
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }
 
 #[test]

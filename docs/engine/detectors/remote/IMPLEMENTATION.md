@@ -13,7 +13,7 @@ Operations. A validação real anterior abaixo não homologa esta revisão.
 | Sob demanda | permissões, capabilities, atalhos, labels, descrição, links de apresentação, proprietários, demais hashes | Não necessários à captura; não solicitados pelo detector |
 | Descartar | tokens, resource keys, sessões, conteúdo, pessoas e campos desconhecidos | Não pertencem ao snapshot de observação |
 
-RemoteFile guarda somente esse perfil. ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. Não transportar GoogleFile bruto. A fila admite payload remoto com validação integral e usa o codec File versão 3 no esquema SQLite versão 4.
+RemoteFile guarda somente esse perfil. ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. Não transportar GoogleFile bruto. A fila admite payload remoto com validação integral e usa o codec File versão 3 no esquema SQLite versão 5.
 
 ## Progresso e falhas
 
@@ -31,20 +31,31 @@ driveId opcionais. Removed sem File mantém a identidade em File.scope e data=No
 Ausência de metadados não é substituída por um objeto fictício. Página com ID
 inválido ou identidades contraditórias falha sem avanço do cursor.
 
-O checkpoint versão 2 contém cursor, fila e conjunto de controle do percurso
-inicial, época/sequência e no máximo uma página pendente de eventos completos.
-O conjunto de diretórios visitados é liberado ao terminar a captura. Não contém
-catálogo nem snapshots anteriores dos arquivos. Durante o percurso, fila e
-conjunto de diretórios ainda são clonados/serializados como estado técnico;
-esta revisão não implementa DAOs relacionais para esse trabalho pendente.
-O limite de checkpoint permanece 16 MiB e o percurso admite até 100.000
-diretórios marcados/trabalhos pendentes. Falhas são explícitas.
+O checkpoint versão 3 contém somente cursor, época/sequência, aviso técnico e
+no máximo uma página preparada. Essa página contém File completos, próximo
+cursor e um delta de percurso (até 200 pastas descobertas, pasta processada e
+token de continuação). Não existe Progress nem clonagem de fila/conjunto global.
+
+O percurso fica nas tabelas privadas remote_scan e remote_scan_control do
+Storage (SQLite 5). Cada pasta tem uma linha; o índice (done,seq) permite ler
+somente a cabeça da fila. A atualização é incremental, com deduplicação de
+pastas por identidade e contadores mantidos por delta. Linhas concluídas ficam
+em disco para impedir ciclos; não são carregadas como coleção nem contêm
+metadados de arquivos. Recovery limpa esse trabalho técnico explicitamente e
+inicia nova captura; não apaga eventos nem conclui ausência/exclusão.
+
+O checkpoint mantém o limite de 16 MiB; o percurso admite até 100.000 diretórios
+por captura. A contagem/integridade é verificada na abertura; páginas normais
+não contam nem percorrem toda a fila. O reset de recuperação é uma operação
+sobre a captura inteira, não um custo repetido em cada página.
 
 Uma página preparada é persistida antes da emissão individual; falhas entre
 emissão e checkpoint reutilizam os mesmos objetos, IDs e horários. O avanço do
 cursor acontece após aceite durável dos eventos e independe do ack externo.
-Não se afirma uma única transação de página: o protocolo durável de preparação
-e replay continua vigente e é testado após reabertura de SQLite real.
+A confirmação final do cursor e do delta de percurso é uma única transação
+IMMEDIATE com compare-and-swap. A aceitação dos eventos precede essa transação;
+a preparação durável permite reentrega idempotente se houver interrupção.
+Não se promete uma única transação abrangendo todos os enqueues da página.
 Recovery reinicia a captura com aviso de cobertura incompleta, sem inferir
 exclusão por ausência. Falhas de coleta continuam produzindo avisos técnicos;
 não são classificações de ações sobre arquivos. Só stop encerra polling;
@@ -71,7 +82,7 @@ A seleção agora ocorre em `remote/mod.rs`, a partir de Accounts, por uma facto
 
 A validação da seleção usa perfis sintéticos próprios, incluindo conta em reautorização, sem copiar perfis reais ou consultar o chaveiro. Um observador falso independente do Google exercita o scheduler real, e um teste rejeita payload de outro provedor. Provedor desconhecido e conta ausente são rejeitados antes da criação de armazenamento. Esta refatoração não repetiu mutações no Drive real.
 
-## Validação da revisão em 14/11/2026
+## Validação da revisão de observações em 14/11/2026 — anterior à issue 94
 
 Executados no org.gnome.Sdk//50 com a extensão rust-stable do manifesto:
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`,
@@ -92,3 +103,31 @@ metadados com identidade e horário preservados após reabertura, consumo e ack;
 e rejeição do esquema anterior sem migração. As suítes existentes verificam
 filas mistas, leases, pausa, cancelamento e isolamento. Não houve consulta ou
 mutação no Google real, teste gráfico ou validação do aplicativo instalado.
+
+## Validação da issue 94 em 14/11/2026
+
+Executados no org.gnome.Sdk//50 com rust-stable do manifesto:
+`cargo fmt --all --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`,
+`cargo test --workspace --offline`, `cargo doc --workspace --no-deps --document-private-items --offline`
+e `cargo test --workspace --doc --offline`. A suíte integrada passou com 669
+execuções aprovadas (incluindo 6 doctests) e 8 testes de ambiente ignorados.
+
+SQLite real: fila com 20.000 pastas altera somente duas linhas de percurso ao
+concluir uma pasta e descobrir outra; EXPLAIN confirma o índice da cabeça. Uma
+falha injetada no checkpoint faz rollback do delta e mantém o trabalho anterior.
+O limite de 100.000 diretórios falha sem alterar cursor ou fila. Reabertura
+verifica counters, CAS, continuação de página e isolamento entre contas/provedores.
+Contadores inconsistentes falham sem reparo ou sobrescrita automática.
+
+O produtor testa captura ampla com 198 pastas pendentes e checkpoint confirmado
+menor que 512 bytes, duplicatas/ciclos sem repetição do percurso e sem supressão
+das observações. Permanece o teste de 80.000 arquivos por páginas de 200, sem
+catálogo no checkpoint. Falhas antes e depois do commit final são exercitadas
+com SQLite real e reabertura, preservando o evento integral sem repetição de
+consulta inicial. Cancelamento após aceite mantém a página preparada e produz
+replay idempotente. Paginação, erros do provedor e recuperação continuam cobertos.
+
+Não foram executados Google real, aplicativo instalado, fixture gráfica ou
+perfil de heap/RSS. Os limites medidos de checkpoint pertencem às fixtures,
+não representam metas gerais de memória do processo. O protocolo não mantém
+transação SQLite aberta durante consultas de rede nem durante enqueues separados.

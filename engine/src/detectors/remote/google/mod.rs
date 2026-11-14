@@ -9,10 +9,7 @@ use crate::{
 use metadata::{adapt, filtered, is_folder, location};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::{BTreeSet, VecDeque},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 pub(super) enum Request {
     Start,
@@ -33,24 +30,12 @@ pub(super) enum Response {
 pub(super) trait Api: Send + Sync {
     fn call(&self, request: Request, cancellation: &Cancellation) -> RemoteResult<Response>;
 }
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Scan {
-    folder: String,
-    token: Option<String>,
-}
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Progress {
-    cursor: Option<String>,
-    scan: VecDeque<Scan>,
-    scanned: BTreeSet<String>,
-}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pending {
     files: Vec<File>,
-    next: Progress,
+    cursor: Option<String>,
+    traversal: RemoteScanUpdate,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,9 +43,8 @@ struct State {
     version: u32,
     epoch: String,
     sequence: u64,
-    progress: Progress,
+    cursor: Option<String>,
     pending: Option<Pending>,
-    #[serde(default)]
     warning: Option<RemoteError>,
 }
 impl State {
@@ -71,10 +55,10 @@ impl State {
             .and_then(|mut file| file.read_exact(&mut seed))
             .map_err(|_| RemoteFailure::new(RemoteError::Internal))?;
         Ok(Self {
-            version: 2,
+            version: 3,
             epoch: format!("{:x}", Sha256::digest(seed)),
             sequence: 0,
-            progress: Progress::default(),
+            cursor: None,
             pending: None,
             warning: None,
         })
@@ -95,9 +79,14 @@ fn fingerprint(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))[..12].to_owned()
 }
 impl GoogleRemoteDetector {
-    fn save(&self, old: &mut Option<Vec<u8>>, state: &State) -> RemoteResult<()> {
+    fn save(
+        &self,
+        old: &mut Option<Vec<u8>>,
+        state: &State,
+        traversal: &RemoteScanUpdate,
+    ) -> RemoteResult<()> {
         let value = serde_json::to_vec(state).map_err(|_| incomplete())?;
-        self.backend.save(old.as_deref(), &value)?;
+        self.backend.save(old.as_deref(), &value, traversal)?;
         *old = Some(value);
         Ok(())
     }
@@ -110,6 +99,7 @@ impl GoogleRemoteDetector {
         let Some(pending) = &state.pending else {
             return Ok(0);
         };
+        cancel.check()?;
         let mut count = 0;
         for file in &pending.files {
             cancel.check()?;
@@ -121,8 +111,10 @@ impl GoogleRemoteDetector {
                 count += 1;
             }
         }
-        state.progress = state.pending.take().unwrap().next;
-        self.save(old, state)?;
+        cancel.check()?;
+        let pending = state.pending.take().unwrap();
+        state.cursor = pending.cursor;
+        self.save(old, state, &pending.traversal)?;
         Ok(count)
     }
     fn stage(
@@ -130,11 +122,16 @@ impl GoogleRemoteDetector {
         old: &mut Option<Vec<u8>>,
         state: &mut State,
         files: Vec<File>,
-        next: Progress,
+        cursor: Option<String>,
+        traversal: RemoteScanUpdate,
         cancel: &Cancellation,
     ) -> RemoteResult<u64> {
-        state.pending = Some(Pending { files, next });
-        self.save(old, state)?;
+        state.pending = Some(Pending {
+            files,
+            cursor,
+            traversal,
+        });
+        self.save(old, state, &RemoteScanUpdate::default())?;
         self.flush(old, state, cancel)
     }
     /// Reports collection failures, independently of resource change interpretation.
@@ -208,18 +205,20 @@ impl GoogleRemoteDetector {
         if let Some(bytes) = self.backend.load()? {
             let state: State = serde_json::from_slice(&bytes)
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
-            if state.version != 2
+            if state.version != 3
                 || state.epoch.len() != 64
                 || !state.epoch.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || state
-                    .progress
-                    .cursor
-                    .as_deref()
-                    .is_some_and(|token| !valid(token))
+                || state.cursor.as_deref().is_some_and(|token| !valid(token))
             {
                 return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
             }
             if let Some(pending) = state.pending {
+                if pending.files.len() > 200
+                    || pending.cursor.as_deref().is_some_and(|token| !valid(token))
+                    || pending.traversal.validate().is_err()
+                {
+                    return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
+                }
                 for file in pending.files {
                     file.validate()
                         .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
@@ -279,7 +278,10 @@ impl GoogleRemoteDetector {
         if state.pending.is_some() || state.warning == Some(error) {
             return Ok(0);
         }
-        state.sequence += 1;
+        state.sequence = state
+            .sequence
+            .checked_add(1)
+            .ok_or_else(|| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
         state.warning = Some(error);
         let inaccessible = matches!(
             error,
@@ -298,8 +300,15 @@ impl GoogleRemoteDetector {
                 Some(ObservationUncertainty::CoverageIncomplete)
             },
         )?;
-        let next = state.progress.clone();
-        self.stage(&mut old, &mut state, vec![event], next, cancel)
+        let cursor = state.cursor.clone();
+        self.stage(
+            &mut old,
+            &mut state,
+            vec![event],
+            cursor,
+            RemoteScanUpdate::default(),
+            cancel,
+        )
     }
     /// Page preparation is durable before first emission; replay cannot regenerate IDs/times.
     fn poll_round(
@@ -316,14 +325,17 @@ impl GoogleRemoteDetector {
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?,
             None => State::fresh()?,
         };
-        if state.version != 2 {
+        if state.version != 3 {
             return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
         }
         let mut emitted = self.flush(&mut old, &mut state, cancel)?;
         let mut observed = 0;
         progress(observed, emitted);
-        if mode == RemotePollMode::Recovery && state.progress.cursor.is_some() {
-            state.sequence += 1;
+        if mode == RemotePollMode::Recovery && state.cursor.is_some() {
+            state.sequence = state
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
             let event = self.warning_event(
                 &state,
                 FileEventKind::RecheckRequired,
@@ -334,7 +346,11 @@ impl GoogleRemoteDetector {
                 &mut old,
                 &mut state,
                 vec![event],
-                Progress::default(),
+                None,
+                RemoteScanUpdate {
+                    reset: true,
+                    ..Default::default()
+                },
                 cancel,
             )?;
         }
@@ -342,14 +358,18 @@ impl GoogleRemoteDetector {
         let mut completed = false;
         while pages < budget {
             cancel.check()?;
-            let mut next = state.progress.clone();
+            let mut cursor = state.cursor.clone();
+            let mut traversal = RemoteScanUpdate::default();
             let mut files = Vec::new();
-            state.sequence += 1;
-            if next.cursor.is_none() {
-                let Response::Start(cursor) = self.api.call(Request::Start, cancel)? else {
+            state.sequence = state
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
+            if cursor.is_none() {
+                let Response::Start(start_cursor) = self.api.call(Request::Start, cancel)? else {
                     return Err(incomplete());
                 };
-                if !valid(&cursor) {
+                if !valid(&start_cursor) {
                     return Err(incomplete());
                 }
                 let Response::File(root) = self
@@ -373,15 +393,13 @@ impl GoogleRemoteDetector {
                     Some(&root),
                     capture(),
                 )?);
-                next.cursor = Some(cursor);
-                next.scanned.insert(self.scope.remote_root_id.clone());
-                next.scan.push_back(Scan {
-                    folder: self.scope.remote_root_id.clone(),
-                    token: None,
-                });
+                // Initial capture starts an empty traversal generation.
+                traversal.reset = true;
+                traversal.discovered.push(self.scope.remote_root_id.clone());
+                cursor = Some(start_cursor);
                 observed += 1;
                 progress(observed, emitted);
-            } else if let Some(scan) = next.scan.front().cloned() {
+            } else if let Some(scan) = self.backend.next_scan()? {
                 let Response::List(page) = self.api.call(
                     Request::List {
                         parent: scan.folder.clone(),
@@ -401,13 +419,8 @@ impl GoogleRemoteDetector {
                 {
                     return Err(incomplete());
                 }
-                next.scan.pop_front();
-                if let Some(token) = page.next_page_token {
-                    next.scan.push_front(Scan {
-                        folder: scan.folder.clone(),
-                        token: Some(token),
-                    });
-                }
+                traversal.finished = Some(scan);
+                traversal.continuation = page.next_page_token;
                 for raw in page.files {
                     observed += 1;
                     progress(observed, emitted);
@@ -425,20 +438,15 @@ impl GoogleRemoteDetector {
                         Some(&raw),
                         capture(),
                     )?);
-                    if is_folder(&raw) && next.scanned.insert(id.clone()) {
-                        next.scan.push_back(Scan {
-                            folder: id.clone(),
-                            token: None,
-                        });
+                    if is_folder(&raw) {
+                        traversal.discovered.push(id);
                     }
                 }
-                if next.scan.is_empty() {
-                    next.scanned.clear();
-                }
             } else {
-                let cursor = next.cursor.clone().unwrap();
-                let Response::Changes(page) =
-                    self.api.call(Request::Changes(cursor.clone()), cancel)?
+                let current_cursor = cursor.as_ref().unwrap();
+                let Response::Changes(page) = self
+                    .api
+                    .call(Request::Changes(current_cursor.clone()), cancel)?
                 else {
                     return Err(incomplete());
                 };
@@ -452,7 +460,7 @@ impl GoogleRemoteDetector {
                     .next_page_token
                     .or(page.new_start_page_token)
                     .ok_or_else(incomplete)?;
-                if !valid(&token) || (!completed && token == cursor) {
+                if !valid(&token) || (!completed && token == *current_cursor) {
                     return Err(incomplete());
                 }
                 for change in page.changes {
@@ -485,20 +493,17 @@ impl GoogleRemoteDetector {
                         },
                     )?);
                 }
-                next.cursor = Some(token);
-            }
-            if next.scanned.len() > 100_000 || next.scan.len() > 100_000 {
-                return Err(incomplete());
+                cursor = Some(token);
             }
             state.warning = None;
-            emitted += self.stage(&mut old, &mut state, files, next, cancel)?;
+            emitted += self.stage(&mut old, &mut state, files, cursor, traversal, cancel)?;
             progress(observed, emitted);
             pages += 1;
             if completed {
                 break;
             }
         }
-        let has_more = !completed || !state.progress.scan.is_empty();
+        let has_more = !completed || self.backend.next_scan()?.is_some();
         Ok(RemotePollResult {
             coverage: if has_more {
                 RemoteCoverage::Partial
@@ -508,7 +513,7 @@ impl GoogleRemoteDetector {
             observed,
             emitted,
             has_more,
-            checkpoint_confirmed: state.progress.cursor.as_deref().map(fingerprint),
+            checkpoint_confirmed: state.cursor.as_deref().map(fingerprint),
         })
     }
 }

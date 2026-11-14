@@ -1,5 +1,5 @@
 //! Incremental traversal DAO. The Store owns the enclosing checkpoint transaction.
-use super::models::*;
+use super::{models::*, store::sql};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -19,14 +19,30 @@ pub(crate) struct RemoteScanUpdate {
     pub continuation: Option<String>,
     pub discovered: Vec<String>,
 }
-fn sql(_: rusqlite::Error) -> QueueFailure {
-    QueueFailure::new(QueueError::Unavailable)
+impl RemoteScanUpdate {
+    /// Validates bounded traversal instructions without accessing SQLite.
+    pub(crate) fn validate(&self) -> QueueResult<()> {
+        if self.finished.as_ref().is_some_and(|scan| {
+            !valid(&scan.folder) || scan.token.as_deref().is_some_and(|token| !valid(token))
+        }) || self.discovered.len() > 200
+            || self.discovered.iter().any(|id| !valid(id))
+            || self
+                .continuation
+                .as_deref()
+                .is_some_and(|token| !valid(token))
+            || (self.continuation.is_some() && self.finished.is_none())
+            || (self.reset && self.finished.is_some())
+        {
+            return Err(QueueFailure::new(QueueError::InvalidRequest));
+        }
+        Ok(())
+    }
 }
 fn valid(value: &str) -> bool {
     !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
 }
 pub(super) fn next(connection: &Connection) -> QueueResult<Option<RemoteScan>> {
-    connection
+    let scan = connection
         .query_row(
             "SELECT folder,token FROM remote_scan WHERE done=0 ORDER BY seq LIMIT 1",
             [],
@@ -38,9 +54,15 @@ pub(super) fn next(connection: &Connection) -> QueueResult<Option<RemoteScan>> {
             },
         )
         .optional()
-        .map_err(sql)
+        .map_err(sql)?;
+    if scan.as_ref().is_some_and(|scan| {
+        !valid(&scan.folder) || scan.token.as_deref().is_some_and(|token| !valid(token))
+    }) {
+        return Err(QueueFailure::new(QueueError::Corrupt));
+    }
+    Ok(scan)
 }
-/// Checks counters once at open; normal page writes never count or scan the whole queue.
+/// Checks counters during open; normal page writes never count or scan the whole queue.
 pub(super) fn validate(connection: &Connection) -> QueueResult<()> {
     let valid: bool = connection.query_row(
         "SELECT total=(SELECT COUNT(*) FROM remote_scan) AND pending=(SELECT COUNT(*) FROM remote_scan WHERE done=0) FROM remote_scan_control WHERE id=1", [], |row| row.get(0),
@@ -51,17 +73,7 @@ pub(super) fn validate(connection: &Connection) -> QueueResult<()> {
     Ok(())
 }
 pub(super) fn apply(tx: &Transaction<'_>, update: &RemoteScanUpdate) -> QueueResult<()> {
-    if update.discovered.len() > 200
-        || update.discovered.iter().any(|id| !valid(id))
-        || update
-            .continuation
-            .as_deref()
-            .is_some_and(|token| !valid(token))
-        || (update.continuation.is_some() && update.finished.is_none())
-        || (update.reset && update.finished.is_some())
-    {
-        return Err(QueueFailure::new(QueueError::InvalidRequest));
-    }
+    update.validate()?;
     if update.reset {
         tx.execute("DELETE FROM remote_scan", []).map_err(sql)?;
         tx.execute(

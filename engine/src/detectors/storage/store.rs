@@ -50,7 +50,7 @@ pub(crate) struct Store {
     cached_sources: Mutex<[QueueStats; 2]>,
     notification: Mutex<Option<ObservationCallback>>,
 }
-fn sql(error: rusqlite::Error) -> QueueFailure {
+pub(super) fn sql(error: rusqlite::Error) -> QueueFailure {
     use rusqlite::ErrorCode::*;
     let kind = match error.sqlite_error_code() {
         Some(DatabaseCorrupt | NotADatabase) => QueueError::Corrupt,
@@ -481,17 +481,8 @@ impl Store {
                 .map_err(sql)
         })
     }
-    #[cfg(test)]
     pub(crate) fn next_remote_scan(&self) -> QueueResult<Option<super::RemoteScan>> {
         self.run(false, |connection, _| remote_work::next(connection))
-    }
-    /// Transitional code port, removed when the producer switches to page deltas.
-    pub(crate) fn save_remote_state(
-        &self,
-        previous: Option<&[u8]>,
-        value: &[u8],
-    ) -> QueueResult<()> {
-        self.save_remote_page(previous, value, &RemoteScanUpdate::default())
     }
     /// Commits a bounded traversal delta and checkpoint with one compare-and-swap.
     pub(crate) fn save_remote_page(

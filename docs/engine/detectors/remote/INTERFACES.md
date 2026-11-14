@@ -195,7 +195,7 @@ A aplicação acessa somente a fachada `drivesync_engine::detectors::Detector`. 
 
 O especialista recebe portas internas de Provider e persistência. Não conhece
 SQLite, Inventory ou Orquestrador. O backend armazena uma página preparada e
-progresso técnico com compare-and-swap; a emissão individual precede a
+cursor pequeno e delta de percurso com compare-and-swap; a emissão individual precede a
 confirmação do cursor. Não mantém snapshots anteriores nem índice de arquivos
 conhecidos. Initial retoma a coleta existente; Recovery reinicia a captura sem
 concluir remoções por ausência. O estado é limitado a 16 MiB e o trabalho de
@@ -217,3 +217,22 @@ Consultas usam somente Providers; nenhuma mutação remota é executada aqui.
 A implementação concreta `google::GoogleRemoteDetector` fica em `google/mod.rs`, com chamadas Google em `google/api.rs` e adaptação dos metadados em `google/metadata.rs`. `Connection` fornece contexto validado e execução com sessão renovada, sem interpretar endpoints ou alterações Google. Antes de cada consulta, a conta/provedor são revalidados. A sessão Google existente em Accounts continua sendo obtida somente pelo especialista selecionado; novos provedores exigirão o respectivo suporte real em Accounts/Providers e registro no módulo remoto.
 
 A identidade da fila inclui o ProviderId validado. A localização é sempre `.drivesync/detector.sqlite3` na raiz local; não há preservação de namespaces ou migração de versões antigas. O armazenamento também rejeita payload cujo provedor não corresponda à fila.
+
+## Issue 94 — percurso incremental e confirmação de página
+
+A interface privada de persistência fornece load/save de checkpoint limitado à
+página e next_scan para a única pasta na cabeça. save recebe um delta tipado de
+percurso; SQL e transações permanecem exclusivos do Storage. Não há load/save
+de uma coleção de pastas nem adaptador que reconstrua o antigo Progress.
+
+Preparação persistida precede qualquer enqueue. Após todos os eventos aceitos,
+a confirmação grava cursor e delta de percurso atomicamente; conflito ou erro
+faz rollback de ambos. Cancelamento antes da confirmação conserva a página
+preparada. Replay reutiliza IDs, horários e payloads inclusive quando parte dos
+eventos já está confirmada pelo consumidor externo. A confirmação de coleta
+continua independente de ack, pausa ou decisão de sincronização.
+
+Checkpoint Google 3 e esquema SQLite 5 são os únicos formatos aceitos, sem
+migração ou conversão. A interface pública do Detector e o formato File não
+mudam nesta etapa. O conjunto de pastas visitadas é controle de percurso em
+disco; não é inventário nem histórico de metadados.

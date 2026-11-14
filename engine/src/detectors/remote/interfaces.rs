@@ -1,7 +1,7 @@
 //! Provider-independent contracts used by remote dispatch, scheduling and persistence.
 use super::{
     RemoteDetectorScope, RemoteError, RemoteFailure, RemotePollRequest, RemotePollResult,
-    RemoteResult,
+    RemoteResult, RemoteScan, RemoteScanUpdate,
 };
 use crate::{models::File, AccountId, Engine, ProviderId};
 use std::sync::{
@@ -36,7 +36,14 @@ pub(super) trait RemoteObserver: Send + Sync {
 pub(super) trait RemoteBackend: Send + Sync {
     fn load(&self) -> RemoteResult<Option<Vec<u8>>>;
     /// Compare-and-swap progress after durable acceptance; stale writers must fail.
-    fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()>;
+    fn save(
+        &self,
+        previous: Option<&[u8]>,
+        value: &[u8],
+        traversal: &RemoteScanUpdate,
+    ) -> RemoteResult<()>;
+    /// Reads only the indexed head directory; never materializes the traversal queue.
+    fn next_scan(&self) -> RemoteResult<Option<RemoteScan>>;
     /// Accepts one complete occurrence; false denotes an identical durable replay.
     fn emit(&self, file: &File) -> RemoteResult<bool>;
 }

@@ -5,7 +5,6 @@ pub(crate) mod models;
 mod remote_work;
 mod store;
 pub use models::*;
-#[cfg(test)]
 pub(crate) use remote_work::RemoteScan;
 pub(crate) use remote_work::RemoteScanUpdate;
 pub(crate) use store::Store;
