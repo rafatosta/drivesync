@@ -733,3 +733,11 @@ previous=None e cobertura Partial. Metadados locais são opcionais e refletem
 somente o resultado da coleta posterior à notificação. Ausência de metadados
 não elimina o sinal nativo nem comprova exclusão. Avisos técnicos continuam
 RecheckRequired/ScopeUnavailable, sem evidência de recurso fabricada.
+
+## Extração posterior à persistência do original
+
+O envelope público File permanece com os mesmos campos. Sua desserialização
+recusa campos adicionais no envelope comum. O original de cada item remoto é
+um registro privado do Detector, fora de Models. Esse registro só é adaptado
+para File/RemoteFile na entrega ou diagnóstico depois do commit; Models não
+passa a conhecer JSON Google, HTTP, SQL ou rotinas de extração.

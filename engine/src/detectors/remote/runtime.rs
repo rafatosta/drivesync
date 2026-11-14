@@ -69,6 +69,16 @@ impl RemoteBackend for DurableBackend {
                 retry_after: None,
             })
     }
+    fn emit_original(
+        &self,
+        raw: &crate::detectors::record::RawRemoteObservation,
+    ) -> RemoteResult<bool> {
+        self.0.enqueue_original(raw).map_err(|error| RemoteFailure {
+            kind: RemoteError::SinkUnavailable,
+            retryable: error.retryable,
+            retry_after: None,
+        })
+    }
 }
 impl RemoteDetector {
     #[cfg(test)]

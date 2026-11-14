@@ -5,7 +5,7 @@ A solicitação de implementar o Detector Remoto inclui a seleção do modelo ne
 A revisão atual altera o Detector remoto; não implementa Analisador, Inventory ou
 Operations. A validação real anterior abaixo não homologa esta revisão.
 
-## Seleção de metadados
+## Perfil de entrega após extração
 
 | Decisão | Campos Google | Motivo |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ Operations. A validação real anterior abaixo não homologa esta revisão.
 | Sob demanda | permissões, capabilities, atalhos, labels, descrição, links de apresentação, proprietários, demais hashes | Não necessários à captura; não solicitados pelo detector |
 | Descartar | tokens, resource keys, sessões, conteúdo, pessoas e campos desconhecidos | Não pertencem ao snapshot de observação |
 
-RemoteFile guarda somente esse perfil. ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. Não transportar GoogleFile bruto. A fila admite payload remoto com validação integral e usa o codec File versão 3 no esquema SQLite versão 5.
+RemoteFile guarda somente esse perfil. Na entrega, ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. A captura persiste o item JSON original; esse perfil é montado somente na extração para entrega/diagnóstico. A fila admite payload remoto com validação integral e usa o codec de registros versão 4 no esquema SQLite versão 6.
 
 ## Progresso e falhas
 
@@ -31,13 +31,13 @@ driveId opcionais. Removed sem File mantém a identidade em File.scope e data=No
 Ausência de metadados não é substituída por um objeto fictício. Página com ID
 inválido ou identidades contraditórias falha sem avanço do cursor.
 
-O checkpoint versão 3 contém somente cursor, época/sequência, aviso técnico e
-no máximo uma página preparada. Essa página contém File completos, próximo
+O checkpoint versão 4 contém somente cursor, época/sequência, aviso técnico e
+no máximo uma página preparada. Essa página contém registros originais ou avisos técnicos, próximo
 cursor e um delta de percurso (até 200 pastas descobertas, pasta processada e
 token de continuação). Não existe Progress nem clonagem de fila/conjunto global.
 
 O percurso fica nas tabelas privadas remote_scan e remote_scan_control do
-Storage (SQLite 5). Cada pasta tem uma linha; o índice (done,seq) permite ler
+Storage (SQLite 6). Cada pasta tem uma linha; o índice (done,seq) permite ler
 somente a cabeça da fila. A atualização é incremental, com deduplicação de
 pastas por identidade e contadores mantidos por delta. Linhas concluídas ficam
 em disco para impedir ciclos; não são carregadas como coleção nem contêm
@@ -131,3 +131,47 @@ Não foram executados Google real, aplicativo instalado, fixture gráfica ou
 perfil de heap/RSS. Os limites medidos de checkpoint pertencem às fixtures,
 não representam metas gerais de memória do processo. O protocolo não mantém
 transação SQLite aberta durante consultas de rede nem durante enqueues separados.
+
+## JSON original antes da extração
+
+O Provider oferece files_get_json/files_list_json/changes_list_json, preservando
+os valores JSON recebidos antes da conversão tipada. A seleção de campos das
+requisições permanece a mesma; não se pede o catálogo completo de atributos.
+Cada item de files.list/get ou changes.list é guardado individualmente com ID da
+ocorrência, conta, provedor, sincronização, ID remoto, origem e horário de coleta.
+O original inclui campos desconhecidos, nulls explícitos e valores aninhados.
+Não se promete identidade byte a byte de espaços, ordem das chaves ou escapes do
+HTTP; o conteúdo JSON é preservado sem normalização de metadados.
+
+O checkpoint preparado conserva esses mesmos registros originais. Não contém
+RemoteFile montado durante captura. O Storage grava o original e seu digest;
+a leitura para claim/histórico invoca o extrator Google para construir File e
+RemoteFile. A adaptação do diagnóstico em memória ocorre após o commit; falha
+não desfaz o registro ou fabrica metadados. O aviso de disponibilidade ainda é
+emitido se a projeção de diagnóstico não puder ser construída.
+
+Um original não adaptável permanece pendente: claim falha explicitamente sem
+reservar, descartar ou marcar como consumido. Ack/release conferem identidade e
+integridade do registro sem reescrever/adaptar o original. Alterações em campos
+que o extrator ignora também participam do digest e da detecção de conflito.
+
+O caminho local não muda de responsabilidade. O contrato público continua
+entregando FileBatch de File comuns. Nenhum Analisador/Inventory é implementado.
+Esquema SQLite 6, codec de registros 4 e checkpoint Google 4 recusam versões
+anteriores sem migração, conversão ou exclusão automática.
+
+Validação desta revisão em 14/11/2026: fmt --all --check, clippy --workspace
+--all-targets --offline -- -D warnings, test --workspace --offline,
+doc --workspace --no-deps --document-private-items --offline e test --workspace
+--doc --offline passaram no org.gnome.Sdk//50 com rust-stable. A suíte integrada
+teve 674 execuções aprovadas (incluindo 6 doctests) e 8 testes de ambiente ignorados.
+
+Os novos testes HTTP preservam JSON desconhecido/null nas três leituras; testes
+SQLite verificam original intacto após reabertura, claim/release/ack e replay,
+conflito por mudança de campo ignorado pelo extrator, isolamento de conta e
+recusa de tamanho sem truncamento. Metadados não adaptáveis são persistidos e
+notificados depois do commit, mas a entrega falha sem reservar ou descartar.
+O teste de página preparada confirma que original e horário/ID sobrevivem ao
+retry. As suítes existentes verificam percurso incremental e falhas antes/depois
+do commit do cursor. Não houve acesso ao Google real, teste gráfico, aplicativo
+instalado ou perfil de memória.

@@ -79,3 +79,5 @@ pub(crate) use remote::{RemoteDetector, RemoteDetectorCreateRequest};
 
 mod unified;
 pub use unified::*;
+
+mod record;

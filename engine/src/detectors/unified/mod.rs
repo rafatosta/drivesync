@@ -143,7 +143,7 @@ impl Detector {
         let recording = history.clone();
         let sync = scope.sync_id.clone();
         store.set_notification(Arc::new(move |file, origin| {
-            {
+            if let Some(file) = file {
                 let mut history = recording.lock().unwrap_or_else(|e| e.into_inner());
                 let events = &mut history[usize::from(origin == DetectorOrigin::Remote)];
                 if events.len() == 100 {

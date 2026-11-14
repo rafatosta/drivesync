@@ -2,9 +2,6 @@
 use super::{incomplete, valid, RemoteResult};
 use crate::{models::*, providers::google::GoogleFile};
 
-pub(super) fn is_folder(file: &GoogleFile) -> bool {
-    file.mime_type.as_ref().map(|m| m.0.as_str()) == Some("application/vnd.google-apps.folder")
-}
 /// A single allowlist drives the observed metadata and the provider payload.
 pub(super) fn filtered(raw: &GoogleFile) -> GoogleFile {
     GoogleFile {
@@ -107,4 +104,90 @@ pub(super) fn adapt(raw: &GoogleFile, account: &AccountId) -> RemoteResult<Remot
     };
     file.validate().map_err(|_| incomplete())?;
     Ok(file)
+}
+
+/// Extracts a common File from the immutable original record at delivery time.
+pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> RemoteResult<File> {
+    raw.validate().map_err(|_| incomplete())?;
+    let (file, evidence) = match raw.source {
+        RemoteObservationSource::Capture => (
+            Some(
+                serde_json::from_value::<GoogleFile>(raw.original.clone())
+                    .map_err(|_| incomplete())?,
+            ),
+            RemoteObservation {
+                source: raw.source,
+                removed: None,
+                time: None,
+                change_type: None,
+                drive_id: None,
+            },
+        ),
+        RemoteObservationSource::Changes => {
+            let change: crate::providers::google::GoogleChange =
+                serde_json::from_value(raw.original.clone()).map_err(|_| incomplete())?;
+            (
+                change.file,
+                RemoteObservation {
+                    source: raw.source,
+                    removed: change.removed,
+                    time: change.time,
+                    change_type: change.change_type,
+                    drive_id: change.drive_id.map(|id| id.0),
+                },
+            )
+        }
+    };
+    let event = File {
+        id: raw.id.clone(),
+        sync_id: raw.sync_id.clone(),
+        observed_at: raw.observed_at,
+        coverage: ObservationCoverage::Partial,
+        scope: FileScope::Remote(RemoteFileRef {
+            account_id: raw.account_id.clone(),
+            file_id: raw.resource_id.clone(),
+        }),
+        event: FileEvent {
+            local: None,
+            remote: Some(evidence),
+            kind: FileEventKind::Observed,
+            uncertainty: None,
+            previous: None,
+            current: file
+                .as_ref()
+                .and_then(|file| location(file, &raw.account_id)),
+        },
+        data: file
+            .as_ref()
+            .map(|file| adapt(file, &raw.account_id))
+            .transpose()?
+            .map(FileData::Remote),
+    };
+    event.validate().map_err(|_| incomplete())?;
+    Ok(event)
+}
+
+/// Checks the resource identity in the original Google item without adapting metadata.
+pub(crate) fn validate_original(
+    raw: &crate::detectors::record::RawRemoteObservation,
+) -> ModelResult<()> {
+    let key = match raw.source {
+        RemoteObservationSource::Capture => "id",
+        RemoteObservationSource::Changes => "fileId",
+    };
+    if raw.original.get(key).and_then(serde_json::Value::as_str) != Some(raw.resource_id.0.as_str())
+    {
+        return Err(ModelError::InconsistentEvent);
+    }
+    if raw.source == RemoteObservationSource::Changes {
+        if let Some(file) = raw.original.get("file").filter(|file| !file.is_null()) {
+            if !file.is_object()
+                || file.get("id").and_then(serde_json::Value::as_str)
+                    != Some(raw.resource_id.0.as_str())
+            {
+                return Err(ModelError::InconsistentEvent);
+            }
+        }
+    }
+    Ok(())
 }

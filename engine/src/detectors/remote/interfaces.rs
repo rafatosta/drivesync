@@ -46,6 +46,11 @@ pub(super) trait RemoteBackend: Send + Sync {
     fn next_scan(&self) -> RemoteResult<Option<RemoteScan>>;
     /// Accepts one complete occurrence; false denotes an identical durable replay.
     fn emit(&self, file: &File) -> RemoteResult<bool>;
+    /// Durably accepts original JSON without adapting it to RemoteFile.
+    fn emit_original(
+        &self,
+        raw: &crate::detectors::record::RawRemoteObservation,
+    ) -> RemoteResult<bool>;
 }
 
 pub(super) type ObserverFactory = fn(

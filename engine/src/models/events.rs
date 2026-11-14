@@ -119,6 +119,7 @@ pub enum FileData<R = RemoteFile> {
 ///
 /// Local and remote producers share identity, context and complete metadata payloads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct File<R = RemoteFile> {
     pub id: FileId,
     pub sync_id: SyncId,

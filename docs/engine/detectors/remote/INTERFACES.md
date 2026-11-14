@@ -232,7 +232,17 @@ preparada. Replay reutiliza IDs, horários e payloads inclusive quando parte dos
 eventos já está confirmada pelo consumidor externo. A confirmação de coleta
 continua independente de ack, pausa ou decisão de sincronização.
 
-Checkpoint Google 3 e esquema SQLite 5 são os únicos formatos aceitos, sem
+Checkpoint Google 4 e esquema SQLite 6 são os únicos formatos aceitos, sem
 migração ou conversão. A interface pública do Detector e o formato File não
 mudam nesta etapa. O conjunto de pastas visitadas é controle de percurso em
 disco; não é inventário nem histórico de metadados.
+
+## Persistência original e adaptação na entrega
+
+A porta privada emit_original recebe RawRemoteObservation. Captura e preparação
+persistem o item JSON recebido, sem construir RemoteFile. emit(File) permanece
+para avisos técnicos e observadores de outros provedores com contrato comum;
+não é leitura de formato antigo. A extração Google fica no especialista e é
+chamada pelo Storage na leitura, após a persistência. O formato público FileBatch
+não muda. Valores desconhecidos/null do original permanecem no registro, embora
+a projeção comum use somente o perfil selecionado de metadados.

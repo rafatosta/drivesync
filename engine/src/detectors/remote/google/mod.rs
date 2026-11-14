@@ -1,13 +1,13 @@
 //! Google evidence collection, initial traversal and crash-safe page replay through Provider.
 use super::*;
 mod api;
-mod metadata;
+pub(super) mod metadata;
 use crate::{
+    detectors::record::{ObservationRecord, RawRemoteObservation},
     models::*,
-    providers::google::{GoogleChangeList, GoogleFile, GoogleFileList},
 };
-use metadata::{adapt, filtered, is_folder, location};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -22,9 +22,37 @@ pub(super) enum Request {
 }
 pub(super) enum Response {
     Start(String),
-    File(Box<GoogleFile>),
-    List(GoogleFileList),
-    Changes(GoogleChangeList),
+    File(Box<Value>),
+    List(OriginalFileList),
+    Changes(OriginalChangeList),
+}
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OriginalFileList {
+    #[serde(default)]
+    files: Vec<Value>,
+    next_page_token: Option<String>,
+    incomplete_search: Option<bool>,
+}
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OriginalChangeList {
+    #[serde(default)]
+    changes: Vec<Value>,
+    next_page_token: Option<String>,
+    new_start_page_token: Option<String>,
+}
+#[cfg(test)]
+impl Response {
+    pub(super) fn file(file: impl Serialize) -> Self {
+        Self::File(Box::new(serde_json::to_value(file).unwrap()))
+    }
+    pub(super) fn list(page: impl Serialize) -> Self {
+        Self::List(serde_json::from_value(serde_json::to_value(page).unwrap()).unwrap())
+    }
+    pub(super) fn changes(page: impl Serialize) -> Self {
+        Self::Changes(serde_json::from_value(serde_json::to_value(page).unwrap()).unwrap())
+    }
 }
 /// Provider seam: typed requests only; no HTTP endpoints are built by the detector.
 pub(super) trait Api: Send + Sync {
@@ -33,7 +61,7 @@ pub(super) trait Api: Send + Sync {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pending {
-    files: Vec<File>,
+    files: Vec<ObservationRecord>,
     cursor: Option<String>,
     traversal: RemoteScanUpdate,
 }
@@ -55,7 +83,7 @@ impl State {
             .and_then(|mut file| file.read_exact(&mut seed))
             .map_err(|_| RemoteFailure::new(RemoteError::Internal))?;
         Ok(Self {
-            version: 3,
+            version: 4,
             epoch: format!("{:x}", Sha256::digest(seed)),
             sequence: 0,
             cursor: None,
@@ -104,10 +132,14 @@ impl GoogleRemoteDetector {
         for file in &pending.files {
             cancel.check()?;
             file.validate().map_err(|_| incomplete())?;
-            if file.sync_id != self.scope.sync_id {
+            if file.sync_id() != &self.scope.sync_id {
                 return Err(incomplete());
             }
-            if self.backend.emit(file)? {
+            let inserted = match file {
+                ObservationRecord::Common(file) => self.backend.emit(file)?,
+                ObservationRecord::Remote(raw) => self.backend.emit_original(raw)?,
+            };
+            if inserted {
                 count += 1;
             }
         }
@@ -121,7 +153,7 @@ impl GoogleRemoteDetector {
         &self,
         old: &mut Option<Vec<u8>>,
         state: &mut State,
-        files: Vec<File>,
+        files: Vec<ObservationRecord>,
         cursor: Option<String>,
         traversal: RemoteScanUpdate,
         cancel: &Cancellation,
@@ -167,45 +199,33 @@ impl GoogleRemoteDetector {
         event.validate().map_err(|_| incomplete())?;
         Ok(event)
     }
-    /// Maps one provider observation without consulting history or interpreting an action.
+    /// Preserves an original provider item; normalization belongs to delivery extraction.
     fn observation(
         &self,
         state: &State,
         index: usize,
         id: &str,
-        raw: Option<&GoogleFile>,
-        evidence: RemoteObservation,
-    ) -> RemoteResult<File> {
-        let file = File {
+        original: Value,
+        source: RemoteObservationSource,
+    ) -> RemoteResult<ObservationRecord> {
+        let raw = RawRemoteObservation {
             id: crate::models::FileId(format!("remote:{}:{}:{index}", state.epoch, state.sequence)),
             sync_id: self.scope.sync_id.clone(),
-            event: FileEvent {
-                local: None,
-                kind: FileEventKind::Observed,
-                remote: Some(evidence),
-                uncertainty: None,
-                previous: None,
-                current: raw.and_then(|file| location(file, &self.scope.account_id)),
-            },
             observed_at: now(),
-            coverage: ObservationCoverage::Partial,
-            scope: FileScope::Remote(RemoteFileRef {
-                account_id: self.scope.account_id.clone(),
-                file_id: RemoteFileId(id.to_owned()),
-            }),
-            data: raw
-                .map(|file| adapt(file, &self.scope.account_id))
-                .transpose()?
-                .map(FileData::Remote),
+            account_id: self.scope.account_id.clone(),
+            provider: ProviderId("google".into()),
+            resource_id: RemoteFileId(id.to_owned()),
+            source,
+            original,
         };
-        file.validate().map_err(|_| incomplete())?;
-        Ok(file)
+        raw.validate().map_err(|_| incomplete())?;
+        Ok(ObservationRecord::Remote(Box::new(raw)))
     }
     fn validate_checkpoint(&self) -> RemoteResult<()> {
         if let Some(bytes) = self.backend.load()? {
             let state: State = serde_json::from_slice(&bytes)
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
-            if state.version != 3
+            if state.version != 4
                 || state.epoch.len() != 64
                 || !state.epoch.bytes().all(|byte| byte.is_ascii_hexdigit())
                 || state.cursor.as_deref().is_some_and(|token| !valid(token))
@@ -222,7 +242,7 @@ impl GoogleRemoteDetector {
                 for file in pending.files {
                     file.validate()
                         .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
-                    if file.sync_id != self.scope.sync_id {
+                    if file.sync_id() != &self.scope.sync_id {
                         return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
                     }
                 }
@@ -304,7 +324,7 @@ impl GoogleRemoteDetector {
         self.stage(
             &mut old,
             &mut state,
-            vec![event],
+            vec![ObservationRecord::Common(Box::new(event))],
             cursor,
             RemoteScanUpdate::default(),
             cancel,
@@ -325,7 +345,7 @@ impl GoogleRemoteDetector {
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?,
             None => State::fresh()?,
         };
-        if state.version != 3 {
+        if state.version != 4 {
             return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
         }
         let mut emitted = self.flush(&mut old, &mut state, cancel)?;
@@ -345,7 +365,7 @@ impl GoogleRemoteDetector {
             emitted += self.stage(
                 &mut old,
                 &mut state,
-                vec![event],
+                vec![ObservationRecord::Common(Box::new(event))],
                 None,
                 RemoteScanUpdate {
                     reset: true,
@@ -378,20 +398,19 @@ impl GoogleRemoteDetector {
                 else {
                     return Err(incomplete());
                 };
-                if root.id.as_ref().map(|id| id.0.as_str()) != Some(&self.scope.remote_root_id)
-                    || root.mime_type.as_ref().map(|mime| mime.0.as_str())
+                if root.get("id").and_then(Value::as_str) != Some(&self.scope.remote_root_id)
+                    || root.get("mimeType").and_then(Value::as_str)
                         != Some("application/vnd.google-apps.folder")
-                    || root.trashed != Some(false)
+                    || root.get("trashed").and_then(Value::as_bool) != Some(false)
                 {
                     return Err(RemoteFailure::new(RemoteError::PermissionDenied));
                 }
-                let root = filtered(&root);
                 files.push(self.observation(
                     &state,
                     0,
                     &self.scope.remote_root_id,
-                    Some(&root),
-                    capture(),
+                    *root,
+                    RemoteObservationSource::Capture,
                 )?);
                 // Initial capture starts an empty traversal generation.
                 traversal.reset = true;
@@ -424,21 +443,22 @@ impl GoogleRemoteDetector {
                 for raw in page.files {
                     observed += 1;
                     progress(observed, emitted);
-                    let raw = filtered(&raw);
                     let id = raw
-                        .id
-                        .as_ref()
-                        .filter(|id| valid(&id.0))
-                        .map(|id| id.0.clone())
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| valid(id))
+                        .map(str::to_owned)
                         .ok_or_else(incomplete)?;
+                    let directory = raw.get("mimeType").and_then(Value::as_str)
+                        == Some("application/vnd.google-apps.folder");
                     files.push(self.observation(
                         &state,
                         files.len(),
                         &id,
-                        Some(&raw),
-                        capture(),
+                        raw,
+                        RemoteObservationSource::Capture,
                     )?);
-                    if is_folder(&raw) {
+                    if directory {
                         traversal.discovered.push(id);
                     }
                 }
@@ -468,29 +488,17 @@ impl GoogleRemoteDetector {
                     observed += 1;
                     progress(observed, emitted);
                     let id = change
-                        .file_id
-                        .as_ref()
-                        .filter(|id| valid(&id.0))
-                        .map(|id| id.0.clone())
+                        .get("fileId")
+                        .and_then(Value::as_str)
+                        .filter(|id| valid(id))
+                        .map(str::to_owned)
                         .ok_or_else(incomplete)?;
-                    let raw = change.file.as_ref().map(filtered);
-                    if raw.as_ref().is_some_and(|file| {
-                        file.id.as_ref().map(|id| id.0.as_str()) != Some(id.as_str())
-                    }) {
-                        return Err(incomplete());
-                    }
                     files.push(self.observation(
                         &state,
                         files.len(),
                         &id,
-                        raw.as_ref(),
-                        RemoteObservation {
-                            source: RemoteObservationSource::Changes,
-                            removed: change.removed,
-                            time: change.time,
-                            change_type: change.change_type,
-                            drive_id: change.drive_id.map(|id| id.0),
-                        },
+                        change,
+                        RemoteObservationSource::Changes,
                     )?);
                 }
                 cursor = Some(token);
@@ -515,15 +523,6 @@ impl GoogleRemoteDetector {
             has_more,
             checkpoint_confirmed: state.cursor.as_deref().map(fingerprint),
         })
-    }
-}
-fn capture() -> RemoteObservation {
-    RemoteObservation {
-        source: RemoteObservationSource::Capture,
-        removed: None,
-        time: None,
-        change_type: None,
-        drive_id: None,
     }
 }
 #[cfg(test)]

@@ -46,21 +46,21 @@ impl Api for Access {
             if session.account_id != account.0 { return Err(RemoteFailure::new(RemoteError::InvalidScope)); }
             Ok(match request {
                 Request::Start => Response::Start(client.changes_get_start_page_token(session, ChangeScopeOptions { supports_all_drives: Some(true), ..Default::default() }).await.map_err(failure)?.start_page_token),
-                Request::Get(id) => Response::File(Box::new(client.files_get(session, &FileId(id), FileGetOptions { fields: Some(FieldMask(FIELDS.into())), supports_all_drives: Some(true), ..Default::default() }).await.map_err(failure)?)),
+                Request::Get(id) => Response::File(Box::new(client.files_get_json(session, &FileId(id), FileGetOptions { fields: Some(FieldMask(FIELDS.into())), supports_all_drives: Some(true), ..Default::default() }).await.map_err(failure)?)),
                 Request::List { parent, token } => {
                     let quoted = parent.replace('\\', "\\\\").replace('\'', "\\'");
-                    Response::List(client.files_list(session, FileListOptions {
+                    Response::List(serde_json::from_value(client.files_list_json(session, FileListOptions {
                         q: Some(format!("'{quoted}' in parents and trashed = false")),
                         spaces: Some("drive".into()), page_size: Some(200), page_token: token,
                         supports_all_drives: Some(true), include_items_from_all_drives: Some(true),
                         fields: Some(FieldMask(format!("nextPageToken,incompleteSearch,files({FIELDS})"))), ..Default::default()
-                    }).await.map_err(failure)?)
+                    }).await.map_err(failure)?).map_err(|_| RemoteFailure::new(RemoteError::PageIncomplete))?)
                 }
-                Request::Changes(token) => Response::Changes(client.changes_list(session, ChangeListOptions {
+                Request::Changes(token) => Response::Changes(serde_json::from_value(client.changes_list_json(session, ChangeListOptions {
                     page_token: token, page_size: Some(200), include_removed: Some(true), spaces: Some("drive".into()),
                     supports_all_drives: Some(true), include_items_from_all_drives: Some(true),
                     fields: Some(FieldMask(format!("nextPageToken,newStartPageToken,changes(fileId,removed,time,changeType,driveId,file({FIELDS}))"))), ..Default::default()
-                }).await.map_err(failure)?),
+                }).await.map_err(failure)?).map_err(|_| RemoteFailure::new(RemoteError::PageIncomplete))?),
             })
         })
     }

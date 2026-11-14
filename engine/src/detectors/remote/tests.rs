@@ -21,9 +21,14 @@ impl Api for ApiFixture {
         }
         Ok(match request {
             Request::Start => Response::Start("start".into()),
-            Request::Get(id) => Response::File(Box::new(serde_json::from_value(serde_json::json!({"id":id,"name":"Root","mimeType":"application/vnd.google-apps.folder","trashed":false})).unwrap())),
-            Request::List { .. } => Response::List(GoogleFileList::default()),
-            Request::Changes(_) => Response::Changes(GoogleChangeList { new_start_page_token: Some("end".into()), ..Default::default() }),
+            Request::Get(id) => Response::file(
+                serde_json::json!({"id":id,"name":"Root","mimeType":"application/vnd.google-apps.folder","trashed":false}),
+            ),
+            Request::List { .. } => Response::list(GoogleFileList::default()),
+            Request::Changes(_) => Response::changes(GoogleChangeList {
+                new_start_page_token: Some("end".into()),
+                ..Default::default()
+            }),
         })
     }
 }
@@ -610,6 +615,12 @@ fn sqlite_restart_preserves_observations_after_failures_before_and_after_cursor_
         fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
             self.backend.next_scan()
         }
+        fn emit_original(
+            &self,
+            raw: &crate::detectors::record::RawRemoteObservation,
+        ) -> RemoteResult<bool> {
+            self.backend.emit_original(raw)
+        }
         fn emit(&self, file: &File) -> RemoteResult<bool> {
             self.backend.emit(file)
         }
@@ -687,7 +698,7 @@ fn sqlite_preserves_removal_signal_and_resource_identity_through_delivery_and_re
     impl Api for RemovalApi {
         fn call(&self, request: Request, cancel: &Cancellation) -> RemoteResult<Response> {
             if matches!(request, Request::Changes(_)) {
-                return Ok(Response::Changes(serde_json::from_value(serde_json::json!({
+                return Ok(Response::changes(serde_json::from_value::<GoogleChangeList>(serde_json::json!({
                     "changes": [{"fileId":"removed-file", "removed":true, "time":"2026-11-14T12:00:00Z", "changeType":"file"}],
                     "newStartPageToken":"end"
                 })).unwrap()));

@@ -1,6 +1,12 @@
 //! One transactional queue per account/synchronization/root identity.
 use super::{codec, filesystem, models::*, remote_work, RemoteScanUpdate};
-use crate::{detectors::LocalDetectorScope, models::File};
+use crate::{
+    detectors::{
+        record::{ObservationRecord, RawRemoteObservation},
+        LocalDetectorScope,
+    },
+    models::File,
+};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
@@ -26,7 +32,7 @@ CREATE TABLE remote_scan(seq INTEGER PRIMARY KEY AUTOINCREMENT,folder TEXT NOT N
 CREATE INDEX remote_scan_pending ON remote_scan(done,seq);
 CREATE TABLE remote_scan_control(id INTEGER PRIMARY KEY CHECK(id=1),total INTEGER NOT NULL CHECK(total BETWEEN 0 AND 100000),pending INTEGER NOT NULL CHECK(pending BETWEEN 0 AND total));
 INSERT INTO remote_scan_control VALUES(1,0,0);
-PRAGMA user_version=5;";
+PRAGMA user_version=6;";
 struct Identity<'a> {
     account: &'a str,
     sync: &'a str,
@@ -34,7 +40,7 @@ struct Identity<'a> {
     local: Option<&'a Path>,
     provider: Option<&'a str>,
 }
-type ObservationCallback = Arc<dyn Fn(&File, DetectorOrigin) + Send + Sync>;
+type ObservationCallback = Arc<dyn Fn(Option<&File>, DetectorOrigin) + Send + Sync>;
 /// Retains private directory descriptors for the lifetime of SQLite's file names.
 pub(crate) struct Store {
     connection: Mutex<Connection>,
@@ -399,6 +405,65 @@ impl Store {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
         let payload = codec::encode(file)?;
+        let initial = file.event.uncertainty
+            == Some(crate::models::ObservationUncertainty::CaptureStarted)
+            || file.event.remote.as_ref().is_some_and(|evidence| {
+                evidence.source == crate::models::RemoteObservationSource::Capture
+            });
+        let inserted = self.enqueue_payload(&file.id.0, payload, origin, initial)?;
+        if inserted {
+            self.notify(Some(file), origin);
+        }
+        Ok(inserted)
+    }
+    /// Persists original JSON before invoking any delivery/diagnostic adapter.
+    pub(crate) fn enqueue_original(&self, raw: &RawRemoteObservation) -> QueueResult<bool> {
+        raw.validate()
+            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        if !self.remote
+            || raw.account_id.0 != self.account
+            || raw.sync_id.0 != self.sync
+            || self.provider.as_ref() != Some(&raw.provider.0)
+        {
+            return Err(QueueFailure::new(QueueError::IdentityMismatch));
+        }
+        let payload = codec::encode_record(&ObservationRecord::Remote(Box::new(raw.clone())))?;
+        let inserted = self.enqueue_payload(
+            &raw.id.0,
+            payload,
+            DetectorOrigin::Remote,
+            raw.source == crate::models::RemoteObservationSource::Capture,
+        )?;
+        if inserted
+            && self
+                .notification
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+        {
+            let file = crate::detectors::remote::extract(raw).ok();
+            self.notify(file.as_ref(), DetectorOrigin::Remote);
+        }
+        Ok(inserted)
+    }
+    fn notify(&self, file: Option<&File>, origin: DetectorOrigin) {
+        let callback = self
+            .notification
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(callback) = callback {
+            let _ =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(file, origin)));
+        }
+    }
+    fn enqueue_payload(
+        &self,
+        id: &str,
+        payload: Vec<u8>,
+        origin: DetectorOrigin,
+        initial: bool,
+    ) -> QueueResult<bool> {
         let digest = Sha256::digest(&payload).to_vec();
         let inserted = self.run(true, |connection, _| {
             let tx = connection
@@ -407,13 +472,13 @@ impl Store {
             let existing: Option<(Vec<u8>, Vec<u8>)> = tx
                 .query_row(
                     "SELECT payload,digest FROM events WHERE id=?1",
-                    [&file.id.0],
+                    [&id],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()
                 .map_err(sql)?;
             if let Some((existing, stored_digest)) = existing {
-                self.decode(file.id.0.clone(), &existing, stored_digest)?;
+                self.checked_record(id, &existing, &stored_digest)?;
                 if existing != payload {
                     return Err(QueueFailure::new(QueueError::Conflict));
                 }
@@ -427,44 +492,25 @@ impl Store {
             }
             tx.execute(
                 "INSERT INTO events(id,payload,digest) VALUES(?1,?2,?3)",
-                params![file.id.0, payload, digest],
+                params![id, payload, digest],
             )
             .map_err(sql)?;
             tx.execute(
                 "INSERT INTO observations VALUES(?1,?2,?3)",
                 params![
-                    file.id.0,
+                    id,
                     if origin == DetectorOrigin::Local {
                         0
                     } else {
                         1
                     },
-                    file.event.uncertainty
-                        == Some(crate::models::ObservationUncertainty::CaptureStarted)
-                        || file
-                            .event
-                            .remote
-                            .as_ref()
-                            .is_some_and(|evidence| evidence.source
-                                == crate::models::RemoteObservationSource::Capture)
+                    initial
                 ],
             )
             .map_err(sql)?;
             tx.commit().map_err(sql)?;
             Ok(true)
         })?;
-        if inserted {
-            let callback = self
-                .notification
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            if let Some(callback) = callback {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    callback(file, origin)
-                }));
-            }
-        }
         Ok(inserted)
     }
     /// Stores observation progress independently of delivery acknowledgements.
@@ -651,7 +697,9 @@ impl Store {
                 let mut rows = statement.query([&id.0]).map_err(sql)?;
                 while let Some(row) = rows.next().map_err(sql)? {
                     let payload: Vec<u8> = row.get(1).map_err(sql)?;
-                    self.decode(row.get(0).map_err(sql)?, &payload, row.get(2).map_err(sql)?)?;
+                    let id: String = row.get(0).map_err(sql)?;
+                    let digest: Vec<u8> = row.get(2).map_err(sql)?;
+                    self.checked_record(&id, &payload, &digest)?;
                 }
             }
             let changed = if value.is_some() {
@@ -700,15 +748,35 @@ impl Store {
                 _ => false,
             }
     }
-    fn decode(&self, id: String, payload: &[u8], digest: Vec<u8>) -> QueueResult<File> {
+    /// Verifies durable bytes and collection identity without extracting remote metadata.
+    fn checked_record(
+        &self,
+        id: &str,
+        payload: &[u8],
+        digest: &[u8],
+    ) -> QueueResult<ObservationRecord> {
         if Sha256::digest(payload).as_slice() != digest {
             return Err(QueueFailure::new(QueueError::Corrupt));
         }
-        let file = codec::decode(payload)?;
-        if file.id.0 != id || !self.matches_scope(&file) {
+        let record = codec::decode_record(payload)?;
+        let matches = match &record {
+            ObservationRecord::Common(file) => self.matches_scope(file),
+            ObservationRecord::Remote(raw) => {
+                self.remote
+                    && raw.sync_id.0 == self.sync
+                    && raw.account_id.0 == self.account
+                    && self.provider.as_ref() == Some(&raw.provider.0)
+            }
+        };
+        if record.id().0 != id || !matches {
             return Err(QueueFailure::new(QueueError::Corrupt));
         }
-        Ok(file)
+        Ok(record)
+    }
+    fn decode(&self, id: String, payload: &[u8], digest: Vec<u8>) -> QueueResult<File> {
+        self.checked_record(&id, payload, &digest)?
+            .into_file()
+            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))
     }
     #[cfg(test)]
     pub(crate) fn recent(&self) -> QueueResult<Vec<File>> {
@@ -748,7 +816,7 @@ fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 5 {
+    if version != 6 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     remote_work::validate(connection)?;

@@ -1,5 +1,7 @@
 //! Deterministic provider, sink and checkpoint faults exercise the real Google producer.
+use super::metadata::adapt;
 use super::*;
+use crate::providers::google::{GoogleChangeList, GoogleFile, GoogleFileList};
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -87,6 +89,9 @@ impl RemoteBackend for Memory {
     fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
         Ok(self.work.lock().unwrap().front().cloned())
     }
+    fn emit_original(&self, raw: &RawRemoteObservation) -> RemoteResult<bool> {
+        self.emit(&metadata::extract(raw)?)
+    }
     fn emit(&self, file: &File) -> RemoteResult<bool> {
         if self.fail_emit.load(Ordering::SeqCst) > 0 {
             self.fail_emit.fetch_sub(1, Ordering::SeqCst);
@@ -109,7 +114,7 @@ fn root() -> GoogleFile {
     raw("root-id", "Root", "outside", true)
 }
 fn list(files: Vec<GoogleFile>, next: Option<&str>) -> RemoteResult<Response> {
-    Ok(Response::List(GoogleFileList {
+    Ok(Response::list(GoogleFileList {
         files,
         next_page_token: next.map(str::to_owned),
         incomplete_search: Some(false),
@@ -121,7 +126,7 @@ fn changes(
     terminal: Option<&str>,
 ) -> RemoteResult<Response> {
     use crate::providers::google::{FileId, GoogleChange};
-    Ok(Response::Changes(GoogleChangeList {
+    Ok(Response::changes(GoogleChangeList {
         changes: files
             .into_iter()
             .map(|file| GoogleChange {
@@ -157,7 +162,7 @@ fn fixture(
 fn initial() -> Vec<RemoteResult<Response>> {
     vec![
         Ok(Response::Start("cursor0".into())),
-        Ok(Response::File(Box::new(root()))),
+        Ok(Response::file(root())),
         list(vec![raw("f", "old", "root-id", false)], None),
         changes(vec![], None, Some("cursor1")),
     ]
@@ -203,7 +208,10 @@ fn sink_failure_and_checkpoint_failure_replay_identical_objects() {
         RemoteError::SinkUnavailable
     );
     let staged: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
-    let original = staged.pending.unwrap().files[0].clone();
+    let original = staged.pending.unwrap().files[0]
+        .clone()
+        .into_file()
+        .unwrap();
     assert!(staged.cursor.is_none());
     // The next save fails after the staged occurrence has been accepted.
     sink.fail_save.store(2, Ordering::SeqCst);
@@ -246,7 +254,7 @@ fn changes_preserve_metadata_and_removal_identity_without_classifying_actions() 
     modified.md5_checksum = Some("new-hash".into());
     replies.push(changes(vec![renamed.clone()], Some("page2"), None));
     replies.push(changes(vec![modified.clone()], Some("page3"), None));
-    replies.push(Ok(Response::Changes(serde_json::from_value(serde_json::json!({"changes":[{"fileId":"f","removed":true}],"newStartPageToken":"end"})).unwrap())));
+    replies.push(Ok(Response::changes(serde_json::from_value::<GoogleChangeList>(serde_json::json!({"changes":[{"fileId":"f","removed":true}],"newStartPageToken":"end"})).unwrap())));
     let (source, _, sink) = fixture(replies);
     source
         .poll(RemotePollMode::Initial, 10, &Cancellation::default())
@@ -389,7 +397,7 @@ fn identical_snapshots_are_delivered_as_distinct_observations_and_checkpoint_has
 #[test]
 fn change_fields_are_preserved_even_without_file_metadata() {
     let mut replies = initial();
-    replies.push(Ok(Response::Changes(serde_json::from_value(serde_json::json!({
+    replies.push(Ok(Response::changes(serde_json::from_value::<GoogleChangeList>(serde_json::json!({
         "changes":[{"fileId":"missing-metadata", "time":"2026-11-14T12:00:00Z", "changeType":"file", "driveId":"drive"}],
         "newStartPageToken":"end"
     })).unwrap())));
@@ -440,7 +448,7 @@ fn inaccessible_scope_emits_one_durable_warning_without_advancing_progress() {
 #[test]
 fn incomplete_changes_page_preserves_cursor_and_requests_recheck() {
     let mut replies = initial();
-    replies.push(Ok(Response::Changes(GoogleChangeList::default())));
+    replies.push(Ok(Response::changes(GoogleChangeList::default())));
     let (source, _, sink) = fixture(replies);
     source
         .poll(RemotePollMode::Initial, 10, &Cancellation::default())
@@ -469,14 +477,14 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
             cancel.check()?;
             match request {
                 Request::Start => Ok(Response::Start("start".into())),
-                Request::Get(_) => Ok(Response::File(Box::new(root()))),
+                Request::Get(_) => Ok(Response::file(root())),
                 Request::List { token, .. } => {
                     let offset: usize = token.as_deref().unwrap_or("0").parse().unwrap();
                     let end = (offset + 200).min(TOTAL);
                     let files = (offset..end)
                         .map(|i| raw(&format!("file-{i}"), "File", "root-id", false))
                         .collect();
-                    Ok(Response::List(GoogleFileList {
+                    Ok(Response::list(GoogleFileList {
                         files,
                         next_page_token: (end < TOTAL).then(|| end.to_string()),
                         incomplete_search: Some(false),
@@ -508,6 +516,11 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
         }
         fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
             self.checkpoint.next_scan()
+        }
+        fn emit_original(&self, raw: &RawRemoteObservation) -> RemoteResult<bool> {
+            raw.validate().unwrap();
+            self.emitted.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
         }
         fn emit(&self, file: &File) -> RemoteResult<bool> {
             file.validate().unwrap();
@@ -541,7 +554,7 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
 #[test]
 fn incompatible_checkpoint_versions_and_old_catalog_fail_without_mutation_or_network() {
     let mut payloads = Vec::new();
-    for version in [0, 1, 2, 4, 900] {
+    for version in [0, 1, 2, 3, 5, 900] {
         let mut state = State::fresh().unwrap();
         state.version = version;
         payloads.push(serde_json::to_vec(&state).unwrap());
@@ -583,6 +596,11 @@ fn cancellation_after_acceptance_preserves_pending_page_and_replays_identical_ev
         fn next_scan(&self) -> RemoteResult<Option<RemoteScan>> {
             self.backend.next_scan()
         }
+        fn emit_original(&self, raw: &RawRemoteObservation) -> RemoteResult<bool> {
+            let accepted = self.backend.emit_original(raw)?;
+            self.cancel.cancel();
+            Ok(accepted)
+        }
         fn emit(&self, file: &File) -> RemoteResult<bool> {
             let accepted = self.backend.emit(file)?;
             self.cancel.cancel();
@@ -603,7 +621,7 @@ fn cancellation_after_acceptance_preserves_pending_page_and_replays_identical_ev
         RemoteError::Cancelled
     );
     let state: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
-    let original = state.pending.unwrap().files[0].clone();
+    let original = state.pending.unwrap().files[0].clone().into_file().unwrap();
     assert!(state.cursor.is_none());
     assert!(sink.next_scan().unwrap().is_none());
     source.backend = sink.clone();
@@ -640,7 +658,7 @@ fn wide_capture_keeps_checkpoint_small_and_deduplicates_traversal_without_suppre
     directories.push(raw("directory-0", "Directory", "root-id", true));
     let mut replies = vec![
         Ok(Response::Start("cursor0".into())),
-        Ok(Response::File(Box::new(root()))),
+        Ok(Response::file(root())),
         list(directories, None),
     ];
     replies.extend((0..198).map(|_| list(vec![], None)));
@@ -679,5 +697,39 @@ fn wide_capture_keeps_checkpoint_small_and_deduplicates_traversal_without_suppre
             .filter(|call| *call == "list:root-id:None")
             .count(),
         1
+    );
+}
+
+#[test]
+fn prepared_page_contains_original_item_instead_of_normalized_remote_file() {
+    let original = serde_json::json!({"id":"root-id","mimeType":"application/vnd.google-apps.folder","trashed":false,"name":null,"unknown":{"nested":[null,0,false]}});
+    let (source, _, backend) = fixture(vec![
+        Ok(Response::Start("cursor".into())),
+        Ok(Response::file(original.clone())),
+    ]);
+    backend.fail_emit.store(1, Ordering::SeqCst);
+    assert_eq!(
+        source
+            .poll(RemotePollMode::Initial, 1, &Cancellation::default())
+            .unwrap_err()
+            .kind,
+        RemoteError::SinkUnavailable
+    );
+    let checkpoint = backend.load().unwrap().unwrap();
+    let state: State = serde_json::from_slice(&checkpoint).unwrap();
+    let pending = state.pending.unwrap();
+    let ObservationRecord::Remote(raw) = &pending.files[0] else {
+        panic!()
+    };
+    assert_eq!(raw.original, original);
+    assert!(state.cursor.is_none());
+    assert!(backend.next_scan().unwrap().is_none());
+    source
+        .poll(RemotePollMode::Incremental, 0, &Cancellation::default())
+        .unwrap();
+    assert_eq!(backend.files.lock().unwrap()[0].id, raw.id);
+    assert_eq!(
+        backend.files.lock().unwrap()[0].observed_at,
+        raw.observed_at
     );
 }

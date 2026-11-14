@@ -204,3 +204,26 @@ novas pastas são inseridas no fim, ignorando somente IDs já visitados/agendado
 Contadores são incrementais; sua integridade é conferida na abertura.
 Limite: 100.000 diretórios por captura, com erro e rollback ao exceder.
 Esquemas anteriores falham sem migração, conversão ou remoção de dados.
+
+## 13. Registro remoto original e extração na leitura
+
+No esquema SQLite 6, o payload usa codec de registros 4. ObservationRecord tem
+Common(File) para observações locais/avisos técnicos e Remote para item remoto
+original com contexto mínimo. No Google, original é o objeto recebido de File
+(captura) ou Change (incremental), não a página com tokens. O campo original é
+um objeto JSON aninhado, não uma string JSON escapada nem um RemoteFile pré-montado.
+Limite por registro permanece 1 MiB: exceder recusa a gravação sem truncar dados.
+
+Enqueue original valida identidade, objeto e proveniência, sem adaptar metadados.
+SQL, digest e índice de origem continuam transacionais. A adaptação é invocada
+somente após commit para diagnóstico ou na leitura para entrega/histórico.
+O consumidor recebe File com ID/horário estáveis. Original e digest permanecem
+iguais após claim, release, ack, reabertura e replay; não há normalização em disco.
+Campos desconhecidos e nulls recebidos são preservados e participam da comparação
+idempotente. A duplicata com mesmo ID e original divergente é Conflict.
+
+Falha de extração é InvalidRequest e não equivale a corrupção física SQLite;
+claim não cria lease e conserva o registro pendente. A notificação de disponibilidade
+não depende do sucesso da projeção de metadados em memória. A fila não descarta
+um original que o extrator não consegue interpretar. Versões antigas são recusadas,
+sem codecs paralelos, migração ou conversores.

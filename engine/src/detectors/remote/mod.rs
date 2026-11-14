@@ -69,3 +69,20 @@ pub(crate) fn validate_configuration(
     implementation_for(&context.provider)?;
     Ok(context.provider)
 }
+
+/// Adapts persisted provider evidence on the delivery path, never during collection.
+pub(crate) fn extract(
+    raw: &crate::detectors::record::RawRemoteObservation,
+) -> RemoteResult<crate::models::File> {
+    google::metadata::extract(raw)
+}
+
+/// Provider dispatch for original-item identity validation; no normalization or I/O.
+pub(crate) fn validate_original(
+    raw: &crate::detectors::record::RawRemoteObservation,
+) -> crate::models::ModelResult<()> {
+    match raw.provider.0.as_str() {
+        "google" => google::metadata::validate_original(raw),
+        _ => Err(crate::models::ModelError::InconsistentMetadata),
+    }
+}

@@ -311,7 +311,7 @@ fn codec_rejects_unvalidated_paths_unknown_fields_and_incompatible_versions() {
     let file = tree.event("event");
     let bytes = codec::encode(&file).unwrap();
     let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    wire["scope"] = serde_json::json!({"Local": [46,46,47,102]});
+    wire["record"]["Common"]["scope"] = serde_json::json!({"Local": [46,46,47,102]});
     assert_eq!(
         codec::decode(&serde_json::to_vec(&wire).unwrap())
             .unwrap_err()
@@ -326,7 +326,15 @@ fn codec_rejects_unvalidated_paths_unknown_fields_and_incompatible_versions() {
             .kind,
         QueueError::Corrupt
     );
-    for version in [0, 1, 2, 900] {
+    let mut extra: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    extra["record"]["Common"]["unexpected"] = serde_json::json!(true);
+    assert_eq!(
+        codec::decode(&serde_json::to_vec(&extra).unwrap())
+            .unwrap_err()
+            .kind,
+        QueueError::Corrupt
+    );
+    for version in [0, 1, 2, 3, 900] {
         let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         wire["version"] = serde_json::json!(version);
         assert_eq!(
@@ -462,7 +470,7 @@ fn reserved_state_never_follows_symlinks_or_creates_a_missing_user_root() {
 
 #[test]
 fn reserved_database_rejects_old_schema_without_migration() {
-    for version in [0, 1, 2, 3, 4, 900] {
+    for version in [0, 1, 2, 3, 4, 5, 900] {
         let tree = Tree::new();
         drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
         let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
@@ -758,4 +766,168 @@ fn traversal_is_isolated_by_account_and_provider_and_corrupt_counters_fail_witho
         QueueError::Corrupt
     );
     assert_eq!(fs::read(tree.db()).unwrap(), before);
+}
+
+#[test]
+fn original_remote_json_survives_reopen_delivery_and_ack_without_rewriting() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let original = serde_json::json!({
+        "fileId":"f", "removed":false, "time":null,
+        "file":{"id":"f","name":null,"parents":["root"],"size":"9","unknown":{"values":[null,false,0,"x"]}},
+        "newField":{"nested":null}
+    });
+    let raw = RawRemoteObservation {
+        id: FileId("original-item".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 13 },
+        account_id: AccountId("account".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Changes,
+        original: original.clone(),
+    };
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    assert!(store.enqueue_original(&raw).unwrap());
+    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let bytes: Vec<u8> = db
+        .query_row(
+            "SELECT payload FROM events WHERE id='original-item'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(wire["record"]["Remote"]["original"], original);
+    assert!(
+        wire["record"]["Remote"].get("data").is_none(),
+        "normalized metadata must not be stored"
+    );
+    drop(store);
+    let reopened = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    reopened.set_delivery(DeliveryState::Enabled).unwrap();
+    let request = || TakeEventsRequest {
+        max_events: 4,
+        lease_duration: Duration::from_secs(30),
+    };
+    let batch = reopened.claim(request()).unwrap();
+    let file = batch.files[0].clone();
+    assert_eq!(file.id, raw.id);
+    assert_eq!(file.observed_at, raw.observed_at);
+    let Some(FileData::Remote(metadata)) = &file.data else {
+        panic!()
+    };
+    assert_eq!(metadata.name, MetadataValue::NotCollected);
+    assert_eq!(metadata.size, MetadataValue::Known(9));
+    reopened.release(batch.batch_id.as_ref().unwrap()).unwrap();
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file]);
+    reopened
+        .acknowledge(
+            batch.batch_id.as_ref().unwrap(),
+            EventDisposition::Processed,
+        )
+        .unwrap();
+    assert!(!reopened.enqueue_original(&raw).unwrap());
+    let after: Vec<u8> = db
+        .query_row(
+            "SELECT payload FROM events WHERE id='original-item'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        bytes, after,
+        "delivery and ack must retain the original record"
+    );
+    let mut changed = raw;
+    changed.original["newField"] = serde_json::json!("changed");
+    assert_eq!(
+        reopened.enqueue_original(&changed).unwrap_err().kind,
+        QueueError::Conflict,
+        "raw fields participate in idempotence even when the adapter ignores them"
+    );
+}
+
+#[test]
+fn original_is_durable_before_extraction_and_invalid_metadata_is_not_discarded() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    let raw = RawRemoteObservation {
+        id: FileId("malformed-metadata".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 1 },
+        account_id: AccountId("account".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Capture,
+        original: serde_json::json!({"id":"f","size":"not-a-number","unknown":null}),
+    };
+    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+    let calls = Arc::new(AtomicU64::new(0));
+    let captured = calls.clone();
+    store.set_notification(Arc::new(move |file, _| {
+        assert!(
+            file.is_none(),
+            "unextractable data must not become fabricated File metadata"
+        );
+        let db = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM events", [], |row| row
+                .get::<_, u64>(0))
+                .unwrap(),
+            1,
+            "notification/extraction occurs after durable insertion"
+        );
+        captured.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert!(
+        store.enqueue_original(&raw).unwrap(),
+        "raw collection must not require RemoteFile adaptation"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    store.set_delivery(DeliveryState::Enabled).unwrap();
+    assert_eq!(
+        store
+            .claim(TakeEventsRequest {
+                max_events: 4,
+                lease_duration: Duration::from_secs(30)
+            })
+            .unwrap_err()
+            .kind,
+        QueueError::InvalidRequest
+    );
+    assert_eq!(store.snapshot().pending, 1);
+    assert_eq!(store.snapshot().leased, 0);
+}
+
+#[test]
+fn original_remote_records_reject_wrong_accounts_and_oversize_without_truncation() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    let mut raw = RawRemoteObservation {
+        id: FileId("bounded-original".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 1 },
+        account_id: AccountId("other".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Capture,
+        original: serde_json::json!({"id":"f"}),
+    };
+    assert_eq!(
+        store.enqueue_original(&raw).unwrap_err().kind,
+        QueueError::IdentityMismatch
+    );
+    raw.account_id = AccountId("account".into());
+    raw.original["extra"] = serde_json::Value::String("x".repeat(1024 * 1024));
+    assert_eq!(
+        store.enqueue_original(&raw).unwrap_err().kind,
+        QueueError::CapacityExceeded
+    );
+    assert_eq!(store.snapshot().detected, 0);
+    assert_eq!(raw.original["extra"].as_str().unwrap().len(), 1024 * 1024);
 }
