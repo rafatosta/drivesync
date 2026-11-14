@@ -153,3 +153,15 @@ fn inspection_bounds_pages_and_preserves_null_binary_and_truncated_utf8() {
     assert!(latest.display.len() <= 4096);
     assert!(latest.display.chars().all(|c| c == 'é'));
 }
+
+#[test]
+fn inaccessible_inventory_directory_is_not_reported_as_a_missing_database() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    fixture.initialize();
+    let directory = fixture.0.join(".drivesync");
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let result = inspect(fixture.request(InventoryTable::Items));
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(result.unwrap_err().kind, InventoryError::PermissionDenied);
+}

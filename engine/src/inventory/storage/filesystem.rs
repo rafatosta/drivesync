@@ -65,10 +65,11 @@ fn open_with_access(
     let root = directory(&request.local_root)?;
     let pinned = format!("/proc/self/fd/{}", root.as_raw_fd());
     let reserved = Path::new(&pinned).join(".drivesync");
-    let exists = reserved
-        .join("inventory.sqlite3")
-        .symlink_metadata()
-        .is_ok();
+    let exists = match reserved.join("inventory.sqlite3").symlink_metadata() {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(io(error)),
+    };
     if !exists {
         if !request.create_if_missing {
             return Err(failure(InventoryError::NotFound));
