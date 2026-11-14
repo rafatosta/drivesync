@@ -153,11 +153,7 @@ impl InventoryManager {
             .map(|error: &InventoryFailure| error.kind.clone());
         if matches!(
             status.last_error,
-            Some(
-                InventoryError::CorruptDatabase
-                    | InventoryError::UnsupportedSchema
-                    | InventoryError::InvalidIdentity
-            )
+            Some(InventoryError::CorruptDatabase | InventoryError::UnsupportedSchema)
         ) {
             status.availability = InventoryAvailability::Unavailable;
         }
