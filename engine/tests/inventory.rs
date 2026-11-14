@@ -1182,3 +1182,70 @@ fn materialization_cannot_finish_with_outstanding_downloads() {
             .initial_download_complete
     );
 }
+
+#[test]
+fn keeping_a_remote_association_preserves_presence_and_observed_metadata() {
+    let tree = Tree::new();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let file = create_remote(&inventory, "remote");
+    let linked = inventory
+        .link_item(LinkItemRequest {
+            item_id: file.id.clone(),
+            expected_revision: file.revision,
+            changes: ItemLinksChange {
+                local_file_id: FieldUpdate::Keep,
+                remote_ref: FieldUpdate::Set(file.remote_ref.clone().unwrap()),
+            },
+        })
+        .unwrap()
+        .item;
+    assert_eq!(linked.remote_presence, PresenceState::Present);
+    assert_eq!(linked.remote, file.remote);
+    let changed = inventory
+        .link_item(LinkItemRequest {
+            item_id: file.id,
+            expected_revision: linked.revision,
+            changes: ItemLinksChange {
+                local_file_id: FieldUpdate::Keep,
+                remote_ref: FieldUpdate::Set(m::RemoteFileRef {
+                    account_id: AccountId("account".into()),
+                    file_id: m::RemoteFileId("new-reference".into()),
+                }),
+            },
+        })
+        .unwrap()
+        .item;
+    assert_eq!(changed.remote_presence, PresenceState::Unknown);
+    assert!(changed.remote.is_none());
+}
+#[test]
+fn an_unknown_local_kind_does_not_reclassify_a_known_item() {
+    let tree = Tree::new();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let remote = create_remote(&inventory, "remote");
+    let first = attach_local(&tree, &inventory, &remote);
+    let mut file = local_file(&tree, "local-kind-unknown");
+    if let Some(m::FileData::Local(data)) = &mut file.data {
+        data.kind = m::MetadataValue::Known(m::LocalEntryKind::Unknown);
+        data.mode = m::MetadataValue::NotCollected;
+        data.symlink.target = m::MetadataValue::NotCollected;
+    }
+    let result = inventory
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(first.id),
+            expected_revision: Some(first.revision),
+            observation: LocalObservation {
+                observed: file,
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalEvent,
+                    observed_at: timestamp(20),
+                    scan_or_generation: None,
+                    complete_scope: false,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    assert_eq!(result.kind, ItemKind::File);
+}

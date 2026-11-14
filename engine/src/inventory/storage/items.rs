@@ -228,6 +228,7 @@ fn record(
                     LocalEntryKind::Regular => ItemKind::File,
                     LocalEntryKind::Directory => ItemKind::Directory,
                     LocalEntryKind::Symlink => ItemKind::Symlink,
+                    LocalEntryKind::Unknown => current.kind.clone(),
                     _ => ItemKind::Other,
                 };
                 db.execute(
@@ -395,8 +396,9 @@ impl InventoryManager {
                     db.execute("DELETE FROM remote_parents WHERE item=?1",[&item.id.0]).map_err(sql)?;
                     db.execute("DELETE FROM metadata_fields WHERE item=?1 AND side=1",[&item.id.0]).map_err(sql)?;
                     db.execute("DELETE FROM remote_files WHERE item=?1",[&item.id.0]).map_err(sql)?;
+                    db.execute("UPDATE items SET remote_account=?2,remote_id=?3,remote_presence='Unknown' WHERE id=?1",params![item.id.0,value.map(|v|&v.account_id.0),value.map(|v|&v.file_id.0)]).map_err(sql)?;
                 }
-                db.execute("UPDATE items SET remote_account=?2,remote_id=?3,remote_presence='Unknown' WHERE id=?1",params![item.id.0,value.map(|v|&v.account_id.0),value.map(|v|&v.file_id.0)]).map_err(sql)?;}
+            }
         }
         bump(db,&item.id)?;Ok(LinkItemResult{item:load(db,&item.id)?})
     })
