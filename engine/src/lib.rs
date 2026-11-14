@@ -19,3 +19,5 @@ pub mod orchestrator;
 pub use orchestrator::Orchestrator;
 
 pub mod inventory;
+
+mod filesystem;
