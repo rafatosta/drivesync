@@ -5,3 +5,5 @@ pub(crate) mod preferences;
 pub(crate) mod setup;
 
 pub(crate) mod configuration;
+
+pub(crate) mod local_folder;

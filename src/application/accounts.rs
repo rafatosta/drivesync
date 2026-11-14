@@ -37,7 +37,12 @@ pub(crate) fn disconnect(
         };
         let id = id.clone();
         let completed = completed.clone();
+        let context = context.clone();
         gtk::glib::spawn_future_local(async move {
+            context
+                .detector_generation
+                .set(context.detector_generation.get().wrapping_add(1));
+            super::detectors::remove(&context, &id).await;
             let result = crate::services::accounts::disconnect(&engine, id).await;
             completed(match result {
                 Ok(draft_removed) => DisconnectEvent::Disconnected { draft_removed },

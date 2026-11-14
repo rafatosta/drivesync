@@ -12,3 +12,8 @@ pub use accounts::{
     RemoveAccountRequest, RemoveAccountResult, UpdateAccountRequest, UpdateAccountResult,
 };
 pub use connection::*;
+
+pub mod detectors;
+
+pub mod orchestrator;
+pub use orchestrator::Orchestrator;

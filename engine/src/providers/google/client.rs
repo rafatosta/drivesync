@@ -123,20 +123,36 @@ impl GoogleDriveClient {
         file_id: &FileId,
         options: FileGetOptions,
     ) -> GoogleResult<GoogleFile> {
-        let body = self
-            .rest(
-                session,
-                reqwest::Method::GET,
-                &["files", &file_id.0],
-                "",
-                file_get_query(&options),
-                None,
-            )
-            .await?;
+        let body = self.files_get_body(session, file_id, options).await?;
         parse_file(&body).map_err(|mut failure| {
             failure.http_status = Some(200);
             failure
         })
+    }
+    /// Reads original file metadata JSON without dropping unknown or null fields.
+    pub async fn files_get_json(
+        &self,
+        session: &GoogleSession,
+        file_id: &FileId,
+        options: FileGetOptions,
+    ) -> GoogleResult<serde_json::Value> {
+        decode_http(&self.files_get_body(session, file_id, options).await?)
+    }
+    async fn files_get_body(
+        &self,
+        session: &GoogleSession,
+        file_id: &FileId,
+        options: FileGetOptions,
+    ) -> GoogleResult<Vec<u8>> {
+        self.rest(
+            session,
+            reqwest::Method::GET,
+            &["files", &file_id.0],
+            "",
+            file_get_query(&options),
+            None,
+        )
+        .await
     }
 }
 

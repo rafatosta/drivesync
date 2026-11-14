@@ -191,6 +191,21 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         options: ChangeListOptions,
     ) -> GoogleResult<GoogleChangeList> {
+        self.changes_list_response(session, options).await
+    }
+    /// Reads the original JSON object with the same bounds and error policy as the typed operation.
+    pub async fn changes_list_json(
+        &self,
+        session: &GoogleSession,
+        options: ChangeListOptions,
+    ) -> GoogleResult<serde_json::Value> {
+        self.changes_list_response(session, options).await
+    }
+    async fn changes_list_response<T: serde::de::DeserializeOwned>(
+        &self,
+        session: &GoogleSession,
+        options: ChangeListOptions,
+    ) -> GoogleResult<T> {
         let query = super::client::query_for(
             &options,
             &[
@@ -373,6 +388,21 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         options: FileListOptions,
     ) -> GoogleResult<GoogleFileList> {
+        self.files_list_response(session, options).await
+    }
+    /// Reads the original JSON object with the same bounds and error policy as the typed operation.
+    pub async fn files_list_json(
+        &self,
+        session: &GoogleSession,
+        options: FileListOptions,
+    ) -> GoogleResult<serde_json::Value> {
+        self.files_list_response(session, options).await
+    }
+    async fn files_list_response<T: serde::de::DeserializeOwned>(
+        &self,
+        session: &GoogleSession,
+        options: FileListOptions,
+    ) -> GoogleResult<T> {
         let query = super::client::query_for(
             &options,
             &[

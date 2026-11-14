@@ -59,3 +59,18 @@ Não aceitar um mock do Detector que sempre retorna `Ok` como comprovação de f
 Registrar `BLOCKED` para esses casos até contratos efetivos, sem declarar arquitetura fechada. Nunca alterar API proprietária de outro módulo para fazer teste passar sem decisão explícita.
 
 **Estado:** plano TDD, nenhum teste Rust executado.
+
+
+## Etapa mínima compilada
+
+`engine/tests/orchestrator.rs` usa a API pública, conector real sem OAuth, metadados de contas e diretórios temporários isolados:
+
+1. Construção permanece Stopped/Inactive mesmo com raiz inexistente, sem emissão. O conector é acessível e seu clone sobrevive à destruição do Orchestrator.
+2. Start idempotente inicia captura nativa; uma criação real entrega File ao sink. Stop repetido retorna zero trabalho em curso e mantém o conector acessível.
+3. Falha de raiz preserva RootUnavailable e Failed, sem desabilitar o conector; stop continua disponível.
+
+Esta cobertura não conclui ORC-01 a ORC-28: nenhuma fila durável, Scanner, Inventory, Analyzer, observação remota, autenticação real, remoção de conta ativa ou UI foi integrada. Os testes de conexão não acessam credenciais ou Google.
+
+Validação desta etapa no org.gnome.Sdk//50 com rust-stable: `cargo fmt --all --check`, `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`, `cargo test --offline --locked --workspace`, `cargo doc --offline --locked --workspace --no-deps --document-private-items` e `cargo test --offline --locked --workspace --doc` passaram. Resultado: 585 testes e 4 doctests aprovados, 6 testes de ambiente ignorados. Os três testes novos são de composição mínima; não comprovam a coordenação completa.
+
+Diagnósticos: teste de duas contas com captura nativa comprova identidade e isolamento de histórico/parada. Teste da fronteira de notificação comprova contagem estável em rejeições e retenção dos últimos 100 resumos. O modo observe é terminal diagnóstico, não teste de persistência.

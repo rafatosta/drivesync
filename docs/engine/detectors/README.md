@@ -8,7 +8,7 @@ Detectar alterações em arquivos locais e remotos e disponibilizar essas ocorr�
 
 O módulo reúne observações locais e remotas como eventos individuais, preserva os dados de cada ocorrência e os organiza em uma fila persistente. Eventos podem ser reservados em lotes, confirmados após processamento ou liberados para nova entrega. A retomada mantém a identidade e a ordem de enfileiramento dos registros.
 
-## Interface pública
+## Fachada unificada prevista
 
 - `new`: cria o detector.
 - `start`: inicia **sempre Local e Remoto juntos**, com entrega inicial habilitada ou pausada.
@@ -41,10 +41,19 @@ Durante `pause`, as origens continuam registrando na fila persistente própria d
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; não comprova implementação Rust.
+**Estado:** fachada `Detector`, captura local nativa, observador remoto Google e fila durável unificada implementados. Consulte o [fechamento e seus limites](CLOSURE.md).
 
 ## Persistência recuperável
 
 A fila e os checkpoints pertencem ao [Detector Storage](storage/INTERFACES.md), com identidade, schema e transações privados. Para bancos SQLite registrados, [Configuration](../configuration/INTERFACES.md) oferece o **backup/restauração física comum**; o Storage garante exclusividade e valida o resultado antes de retomar seu uso.
 
 Corrupção comprovada não pode apagar silenciosamente eventos. Se a restauração não for possível, o banco permanece indisponível; eventual reconstrução vazia é decisão distinta da coordenação e não comprova ausência de alterações. Após perda de fila ou checkpoints, o Orquestrador deve coordenar a recuperação de cobertura antes da continuidade segura.
+
+
+## Interface pública disponível para coleta local
+
+Usar `drivesync_engine::detectors::LocalMetadataCollector` com `LocalDetectorScope` para construir o coletor, `scope()` para consultar a configuração e `collect(LocalMetadataRequest)` para obter uma entrada. Cancelamento, erros, cobertura e resultados necessários são reexportados pelo mesmo módulo; LocalFile e caminhos permanecem em Models.
+
+A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. A publicação inicial do coletor foi ampliada posteriormente com LocalDetector::new/start/stop/status e eventos File, conforme Local INTERFACES § 12. A aplicação usa atualmente a fachada unificada, com fila persistente e consumo diagnóstico. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).
+
+**Fechamento implementado:** a fachada `Detector` agora compõe ambas as origens e uma fila física única, incluindo lotes mistos. A composição diagnóstica do Developer usa essa API. Os caminhos de compatibilidade antigos foram removidos. [Escopo entregue, validação e limites](CLOSURE.md).

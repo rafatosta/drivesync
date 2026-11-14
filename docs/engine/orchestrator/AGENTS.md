@@ -34,4 +34,12 @@ Implementar **apenas a coordenação de sincronização** por meio das interface
 
 Esta etapa preenche `docs/engine/orchestrator/{README,INTERFACES,TESTS,AGENTS}.md` e não reescreve `facade/`. O código `engine/src/facade.rs` existente pertence à implementação atual e não deve ser confundido com assinatura-alvo contratual sem revisão específica.
 
-**Estado:** documentação de arquitetura proposta, não implementação Rust.
+**Estado:** coordenação completa proposta; composição mínima implementada conforme a seção abaixo.
+
+
+## Etapa mínima compilada — inicialização local e conector
+
+- O usuário autorizou explicitamente uma composição pública mínima e acesso ao conector pela futura UI. Para essa etapa, usar o LocalDetector público real; isso substitui as restrições anteriores contra API pública nova e acesso a Local apenas neste escopo.
+- Preservar Engine e a UI existentes. Instanciar somente o LocalDetector; não simular remoto nem iniciar Scanner/Inventory/Analyzer.
+- Encaminhar eventos ao sink fornecido, sem fila em memória própria, descarte ou aceite durável fictício. Preservar os erros do detector e manter o conector utilizável independentemente da observação local.
+- O contrato compilado está na seção final de INTERFACES; os testes mínimos estão na seção final de TESTS. O coordenador completo continua documental e suas lacunas permanecem abertas.

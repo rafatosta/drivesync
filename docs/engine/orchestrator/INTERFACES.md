@@ -2,7 +2,7 @@
 
 ## Natureza
 
-Contrato **interno, conceitual e não implementado**. Não é a API pública de `facade/`; todas as integrações usam APENAS interfaces públicas dos módulos, mesmo que a implementação do Orchestrator possua funções privadas de coordenação. A API `facade/` não está documentada na branch atual (README vazio); portanto as assinaturas abaixo não são apresentadas como fachada externa validada.
+O coordenador completo abaixo é um contrato **interno, conceitual e não implementado**; a API mínima compilada está na seção final. Não é a API pública de `facade/`; todas as integrações usam APENAS interfaces públicas dos módulos, mesmo que a implementação do Orchestrator possua funções privadas de coordenação. A API `facade/` não está documentada na branch atual (README vazio); portanto as assinaturas abaixo não são apresentadas como fachada externa validada.
 
 O âmbito lógico de uma execução é um `SyncId`, associado a identidade de conta, raiz local e raiz remota validadas por seus proprietários. Não fixar instância por conta, instância global ou scheduler neste documento.
 
@@ -154,3 +154,16 @@ Apenas erros de coordenação devem ser próprios (`InvalidSyncScope`, `Dependen
 **Lacunas bloqueadoras:** (i) deduplicação durável por `File.id`, marcação durável dos itens que precisam de análise e contrato de ack entre bancos, (ii) persistência/consulta de `PendingAction`/resoluções, (iii) diagnóstico de cobertura de Scanner no Inventory, (iv) evidência de cobertura remota inicial, (v) cadastro de conexão, (vi) recuperação de planos persistidos da fila. Não criar assinaturas fictícias de módulos proprietários para contornar essas lacunas.
 
 **Estado:** contrato interno proposto para TDD; nenhum Rust compilado.
+
+
+## Etapa mínima compilada — Detector unificado e conector
+
+`Orchestrator::observe_detector(DetectorCreateRequest, DeliveryState)` é o único construtor. Compõe a fachada `Detector` e um consumidor terminal diagnóstico, sem executar sincronização. Os construtores locais anteriores e `attach_remote` foram removidos; não há adaptação de versões antigas.
+
+- `start_detector(DetectorStartMode)` e `stop_detector(DetectorStopMode)` controlam ambas as origens pela fachada.
+- `detector()` retorna `&Detector`; `detector_status()` retorna o estado agregado tipado.
+- `local_status()`, `diagnostics()` e `remote_diagnostics()` projetam caches por origem.
+- `pause_delivery()` e `resume_delivery()` controlam uma única política por conta, sem parar os produtores.
+- `connector()` mantém o acesso ao serviço de conexão, inclusive por clones após a parada.
+
+A política inicial só vale para banco novo; reabertura do mesmo formato restaura a política persistida. Não se trata de migração. O consumidor confirma lotes apenas para diagnóstico; não comprova ingestão no Inventário ou sincronização. Todos os comandos que realizam I/O devem ocorrer fora da thread gráfica. A validação completa do coordenador acima permanece posterior.

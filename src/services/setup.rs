@@ -4,7 +4,6 @@ use adw::gtk::{gio, glib};
 use drivesync_engine::{providers, AccountId};
 use gio::prelude::*;
 pub(crate) use providers::{ConnectionMethod, RegisteredProvider};
-use std::path::PathBuf;
 
 /// Reads the owning provider catalog, without a second UI registry.
 pub(crate) fn list_providers() -> Vec<RegisteredProvider> {
@@ -114,10 +113,7 @@ pub(crate) async fn check_local_folder(uri: &str) -> Result<(), glib::Error> {
 }
 /// Human-readable path; the stored URI preserves non-UTF-8 filename bytes.
 pub(crate) fn display_path(uri: &str) -> String {
-    gio::File::for_uri(uri)
-        .path()
-        .map(|p: PathBuf| p.display().to_string())
-        .unwrap_or_else(|| uri.into())
+    super::local_folder::display(uri)
 }
 /// Removes only this account's setup draft, without traversing user directories.
 pub(crate) async fn discard_draft(account_id: &AccountId) -> bool {

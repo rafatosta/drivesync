@@ -4,7 +4,7 @@
 
 Coordenar o ciclo de vida e a continuidade de **uma sincronização identificada por `SyncId`** por meio das APIs públicas de Detector, Scanner, Inventory e Analyzer. Não inspeciona SQL, não consulta diretamente APIs de provedores, não executa Operator nem reimplementa regras de reconciliação/conflitos.
 
-Este documento descreve a **API interna conceitual da engine**, não uma implementação existente nem a API externa `facade/`. A hipótese inicial é um fluxo de coordenação por sincronização pertencente a uma conta; **não** fixa uma instância global/per-account/per-sync, número de workers, threads ou concorrência de upload/download. A composição de instâncias é decisão posterior.
+As seções de coordenação completa descrevem a **API interna conceitual da engine**; a composição mínima compilada está na seção final. Não definem a API externa completa de `facade/`. A hipótese inicial é um fluxo de coordenação por sincronização pertencente a uma conta; **não** fixa uma instância global/per-account/per-sync, número de workers, threads ou concorrência de upload/download. A composição de instâncias é decisão posterior.
 
 ## Diagrama de responsabilidades
 
@@ -119,3 +119,10 @@ A coordenação pode oferecer status conceitual `Idle / Starting / Observing / R
 7. Recuperação de operações `Running` e persistência/reconstrução de planos completos; assunto de integração Analyzer–Inventory, não execução direta pelo Orchestrator.
 
 **Estado:** contrato-alvo documental, sem implementação Rust ou testes executados.
+
+
+## Etapa mínima compilada — inicialização local e conector
+
+A solicitação posterior do usuário autoriza uma composição pública mínima: `Orchestrator::new(Engine, LocalDetectorCreateRequest)` instancia o detector local em Stopped. `start/stop/status` controlam essa instância e `connector()` expõe o conector existente à futura interface externa. A UI atual e a API Engine permanecem sem alterações.
+
+A abertura do conector continua em Engine::open. Start/stop bloqueiam e devem rodar fora da thread de UI; status não faz I/O. Os eventos vão ao sink configurado, sem fila própria ou processamento pelo Orchestrator. Cadastro/ownership de sincronizações, detector remoto e os fluxos completos acima permanecem futuros. Contratos compilados: [INTERFACES](INTERFACES.md#etapa-mínima-compilada--inicialização-local-e-conector).

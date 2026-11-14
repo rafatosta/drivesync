@@ -1,8 +1,9 @@
-//! Standalone developer console with navigation and empty pages.
+//! Standalone developer console with module navigation and detector inspection.
 use adw::{gtk, prelude::*};
 
 /// Registers a window action and F12, reusing the console while it is open.
-pub(crate) fn install(parent: &adw::ApplicationWindow) {
+pub(crate) fn install(parent: &adw::ApplicationWindow, context: &crate::application::Context) {
+    let context = context.clone();
     let action = gtk::gio::SimpleAction::new("developer-console", None);
     let console = gtk::glib::WeakRef::<adw::ApplicationWindow>::new();
     let weak_parent = parent.downgrade();
@@ -14,7 +15,7 @@ pub(crate) fn install(parent: &adw::ApplicationWindow) {
         let Some(parent) = weak_parent.upgrade() else {
             return;
         };
-        let window = build(&parent);
+        let window = build(&parent, &context);
         console.set(Some(&window));
         window.present();
     });
@@ -24,7 +25,10 @@ pub(crate) fn install(parent: &adw::ApplicationWindow) {
     }
 }
 
-fn build(parent: &adw::ApplicationWindow) -> adw::ApplicationWindow {
+fn build(
+    parent: &adw::ApplicationWindow,
+    context: &crate::application::Context,
+) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .title("Developer Console")
         .default_width(1000)
@@ -38,7 +42,7 @@ fn build(parent: &adw::ApplicationWindow) -> adw::ApplicationWindow {
     for (name, title, page) in [
         ("overview", "Overview", super::overview::build()),
         ("provider", "Provider", super::provider::build()),
-        ("detector", "Detector", super::detector::build()),
+        ("detector", "Detector", super::detector::build(context)),
         ("scanner", "Scanner", super::scanner::build()),
         ("inventory", "Inventory", super::inventory::build()),
         ("analyzer", "Analyzer", super::analyzer::build()),
