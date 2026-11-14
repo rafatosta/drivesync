@@ -6,7 +6,7 @@ Identificar alterações no sistema de arquivos de uma raiz monitorada e produzi
 
 ## Funcionamento
 
-Combina notificações do sistema de arquivos com varreduras de verificação. Ao encontrar uma ocorrência, registra sua identidade, localização, tipo de alteração e metadados disponíveis. A observação deve distinguir resultados completos de leituras parciais ou inacessíveis, preservando incertezas em vez de presumir exclusões.
+Combina notificações do sistema de arquivos com varreduras de verificação. Ao encontrar uma ocorrência, registra caminho, sinais nativos, sessão de captura e metadados disponíveis, sem interpretar o tipo de ação. A observação deve distinguir resultados completos de leituras parciais ou inacessíveis, preservando incertezas em vez de presumir exclusões.
 
 As ocorrências são emitidas individualmente em objetos `File`, com dados locais quando disponíveis.
 
@@ -54,7 +54,13 @@ O aplicativo ou outra crate pode usar `drivesync_engine::detectors::LocalMetadat
 
 Controle público e limites operacionais: [INTERFACES § 12](INTERFACES.md#12-controle-local-compilado). O consumidor recebe File sem conhecer o mecanismo de captura; a integração com Orquestrador, Storage e remoto permanece futura.
 
-A etapa de classificação agora produz os tipos reais de criação, edição, metadados, remoção e movimentos correlacionados. Salvamento por substituição atômica de um destino conhecido é Modified; ambiguidades permanecem RecheckRequired. Ver [INTERFACES § 13](INTERFACES.md#13-classificação-compilada-dos-eventos-locais), que substitui a limitação anterior de emitir apenas rechecks. A captura não reconstrói watches por alterações de arquivos comuns.
+O Local entrega `Observed` com máscara e cookie originais e identidade da sessão
+de captura. Não mantém catálogo de arquivos/caminhos conhecidos, correlaciona
+movimentos ou normaliza salvamentos. Temporários e metades de movimento são
+preservados; metadados ausentes não eliminam uma notificação.
 
-
-A normalização por ciclos de escrita ocorre antes do sink/Orchestrator. O padrão agrupa 80 ms de quietude com teto de 500 ms; o fechamento da escrita separa ciclos independentes e movimentos comprovam a substituição por origem provisória. Escrita ainda aberta no teto é recheck com motivo, não edição concluída. Ver INTERFACES § 14.
+A FIFO em memória é limitada e preserva a ordem das notificações recebidas do
+kernel. A quietude padrão de 80 ms e teto de 500 ms apenas agendam o trabalho;
+não esperam fechamento de escrita nem fundem ações. Avisos de início, perda de
+cobertura e indisponibilidade continuam separados dos sinais de arquivos.
+Consulte INTERFACES §§ 13–14 para limites e garantias de entrega.

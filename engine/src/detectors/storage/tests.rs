@@ -476,3 +476,42 @@ fn reserved_database_rejects_old_schema_without_migration() {
     );
     assert_eq!(fs::read(path).unwrap(), before);
 }
+
+#[test]
+fn native_local_evidence_and_history_survive_sqlite_reopen_release_and_ack() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    let mut file = tree.event("native-move-half");
+    file.scope = FileScope::Local(LocalRelativePath::new(b"before-\xff".to_vec()).unwrap());
+    file.event.kind = FileEventKind::Observed;
+    file.event.uncertainty = None;
+    file.event.local = Some(LocalObservation {
+        capture_id: "capture-session".into(),
+        mask: libc::IN_MOVED_FROM,
+        cookie: 71,
+    });
+    assert!(store.enqueue(&file).unwrap());
+    drop(store);
+    let reopened = tree.store(&clock);
+    let request = || TakeEventsRequest {
+        max_events: 4,
+        lease_duration: Duration::from_secs(30),
+    };
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone()]);
+    reopened.release(batch.batch_id.as_ref().unwrap()).unwrap();
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone()]);
+    reopened
+        .acknowledge(
+            batch.batch_id.as_ref().unwrap(),
+            EventDisposition::Processed,
+        )
+        .unwrap();
+    assert_eq!(reopened.recent().unwrap(), vec![file.clone()]);
+    assert!(
+        !reopened.enqueue(&file).unwrap(),
+        "replay is idempotent after ack"
+    );
+}

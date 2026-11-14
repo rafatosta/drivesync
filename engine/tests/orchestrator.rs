@@ -112,7 +112,12 @@ async fn delivery_policy_and_pending_events_survive_reopen_without_crossing_acco
     wait(|| first.diagnostics().confirmed_events == Some(1));
     first.pause_delivery().unwrap();
     std::fs::write(tree.0.join("first/pending"), b"durable").unwrap();
-    wait(|| first.diagnostics().pending_events == Some(1));
+    wait(|| {
+        first
+            .diagnostics()
+            .pending_events
+            .is_some_and(|count| count >= 1)
+    });
     assert_eq!(second.diagnostics().delivery, Some(DeliveryState::Enabled));
     let id = first.diagnostics().events.last().unwrap().id.clone();
     drop(first);
@@ -120,7 +125,12 @@ async fn delivery_policy_and_pending_events_survive_reopen_without_crossing_acco
     assert_eq!(reopened.diagnostics().delivery, Some(DeliveryState::Paused));
     assert!(reopened.diagnostics().events.iter().any(|e| e.id == id));
     reopened.start_detector(DetectorStartMode::Restart).unwrap();
-    wait(|| reopened.diagnostics().pending_events == Some(2));
+    wait(|| {
+        reopened
+            .diagnostics()
+            .pending_events
+            .is_some_and(|count| count >= 2)
+    });
     reopened.resume_delivery().unwrap();
     wait(|| reopened.diagnostics().pending_events == Some(0));
     reopened.stop_detector(DetectorStopMode::StopNow).unwrap();

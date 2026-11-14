@@ -13,7 +13,7 @@ Operations. A validação real anterior abaixo não homologa esta revisão.
 | Sob demanda | permissões, capabilities, atalhos, labels, descrição, links de apresentação, proprietários, demais hashes | Não necessários à captura; não solicitados pelo detector |
 | Descartar | tokens, resource keys, sessões, conteúdo, pessoas e campos desconhecidos | Não pertencem ao snapshot de observação |
 
-RemoteFile guarda somente esse perfil. ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. Não transportar GoogleFile bruto. A fila admite payload remoto com validação integral e usa o codec File versão 2 no esquema SQLite versão 3.
+RemoteFile guarda somente esse perfil. ProviderFileData usa JSON UTF-8, formato `google.drive.detector-file`, versão 1, allowlist dos campos acima e limite de 64 KiB. Campos ausentes continuam NotCollected. Não transportar GoogleFile bruto. A fila admite payload remoto com validação integral e usa o codec File versão 3 no esquema SQLite versão 4.
 
 ## Progresso e falhas
 

@@ -188,7 +188,7 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 | ID | Contrato e cenário | Oráculo |
 | --- | --- | --- |
 | LOC-W-01 | Instalação em árvore existente; criar/mover subpasta durante instalação | Janela incerta é verificada; novos descendentes observados ou cobertura declarada Degraded, nunca cobertura completa inventada |
-| LOC-W-02 | Criar, editar, alterar metadados, remover, renomear e mover arquivos reais | Evidência suficiente produz tipo específico; correlação insuficiente produz RecheckRequired. Aceitar sequências equivalentes do SO, não exigir número exato de callbacks |
+| LOC-W-02 | Criar, editar, alterar metadados, remover, renomear e mover arquivos reais | Observed preserva sinais nativos, sem classificação/correlação. Aceitar sequências equivalentes do SO, não exigir número exato de callbacks |
 | LOC-W-03 | Debounce ausente/zero e positivo com relógio controlado | Sem espera intencional nos dois primeiros; janela positiva vence desde primeira pista e não é adiada por rajada contínua; avanço/recuo UTC não muda prazo |
 | LOC-W-04 | Limite de caminhos excedido, overflow e falha do backend | Memória de pistas limitada; necessidade de reavaliar raiz, Degraded e diagnóstico; nenhuma exclusão nem promessa de recuperar histórico |
 | LOC-W-05 | Alteração durante scan e no instante de conclusão | Ao menos uma observação posterior da mudança; sem dois workers nem perda na troca de rodada |
@@ -212,7 +212,7 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 ## 13. Método de execução e evidências futuras
 
 1. Implementar casos por contrato em RED → GREEN → REFACTOR, começando pelos tipos compartilhados aprovados e portas; seguir com percurso/coleta e ciclo de vida/watcher.
-2. Usar filesystem temporário real para regras de acesso; fake somente para dependências e injeção de falhas/tempo. A biblioteca do watcher não precisa produzir todos os tipos de evento: o normalizador deve preservar incerteza.
+2. Usar filesystem temporário real para regras de acesso; fake somente para dependências e injeção de falhas/tempo. A biblioteca do watcher não precisa produzir todos os tipos de evento: a coleta deve preservar os sinais efetivamente recebidos.
 3. Testes de permissões devem comprovar negação pelo kernel. Se o ambiente ignorar a restrição, registrar BLOCKED/skip justificado; um mock não comprova proteção física.
 4. Testes reais do watcher aguardam condições com timeout limitado e sincronização de prontidão, sem assumir ordenação ou cardinalidade de callbacks. Regras de debounce e corrida usam relógio controlado/barreiras, sem depender de execução rápida.
 5. Rodar os comandos Rust exigidos pelo AGENTS da raiz exclusivamente no Flatpak do manifesto; registrar comando, resultado e casos bloqueados. Não usar dados pessoais ou credenciais.
@@ -303,17 +303,47 @@ Cobertura parcial dos cenários LOC-S-02/04/05, LOC-D-01/05/06/11/12/14/16 e LOC
 
 Validação integrada desta etapa no org.gnome.Sdk//50, rust-stable, com cache exposto, `--offline --locked`: fmt --all --check, clippy --workspace --all-targets -- -D warnings, test --workspace, doc --workspace --no-deps --document-private-items e test --workspace --doc passaram. Resultado: 582 testes e 4 doctests aprovados; 6 testes de ambiente ignorados. Inclui 12 testes públicos de ciclo de vida e um teste privado dos três orçamentos de descoberta. Não houve teste de Google real, aplicativo instalado ou persistência de fila.
 
-## Classificação de eventos
+## Histórico de classificação — substituído pela revisão sem interpretação
 
 RED: o teste físico atualizado exigindo Created falhou, recebendo RecheckRequired. GREEN: os 15 testes públicos de Local passaram, incluindo Created/Modified/Renamed/Deleted, movimento entre diretórios, substituição atômica sobre destino preexistente, chmod/MetadataChanged, saída do escopo sem falsa exclusão e rename de diretório seguido de captura no novo caminho. O teste de substituição também verifica ausência de rechecks globais de arquivos e estado Running sem erro espúrio.
 
 Três testes privados da correlação cobrem metades de movimento recebidas em leituras separadas, expiração sem sleeps, movimento de entrada sem par, coalescência de salvamento temporário, catálogo incompleto e orçamento de pistas. Esses testes não simulam o detector inteiro. Overflow real do kernel, todas as estratégias de editores e todas as corridas de filesystem não foram exercitados.
 
 
-## Normalização antes do Orchestrator
+## Histórico de normalização — substituído pela revisão sem interpretação
 
 Os testes físicos agora verificam um único Modified na primeira entrega após criação/escrita/close/move de uma origem provisória, sem consumir silenciosamente notificações do temporário. Duas escritas com closes distintos geram duas ocorrências com IDs diferentes. Uma escrita ainda aberta gera WriteInProgress no teto e, após fechar, gera o evento concluído. Tráfego de escrita contínuo também respeita o teto.
 
 Os testes privados preservam delete/recreate, ciclos separados, overwrite com origem preexistente como movimentação, nomes `.goutputstream-*` persistentes, transferência de escrita durante correlação e notificações tardias no nome anterior. O teste público do Orchestrator confirma um único Modified no histórico para a substituição e o motivo CaptureStarted no aviso inicial. Modelos rejeitam rechecks sem motivo e ações classificadas com incerteza.
 
 A semântica padrão de debounce anterior (None sem espera) foi substituída pela janela normalizadora em INTERFACES § 14. Não se promete reconstruir transações arbitrariamente longas ou interpretar intenção do editor por nome de arquivo. Nenhum teste com Google, fila durável ou todos os editores foi realizado.
+
+## Revisão local sem interpretação
+
+Os testes públicos de filesystem verificam máscara/cookie/sessão em Observed,
+duas metades de movimento com mesmo cookie, temporários preservados mesmo sem
+metadados, escrita aberta sem espera por conclusão, CLOSE_WRITE separado,
+notificações contínuas com prazo limitado, nomes não UTF-8, chmod e saída do
+escopo sem classificação. Permanecem cobertura de novos diretórios,
+substituição de raiz/ancestrais, proteção de .drivesync/symlinks, retry idêntico,
+status não bloqueante, stop, concorrência e isolamento.
+
+Os testes privados de signals verificam FIFO, duplicatas, máscaras/cookies,
+separação de reobservação explícita e orçamento de notificações. Não há mais
+normalizador ou catálogo known. SQLite real verifica sinal MOVED_FROM sem
+metadados, caminho não UTF-8, reabertura, release/ack, histórico e idempotência.
+O processo filho encerrado abruptamente verifica replay do File nativo integral.
+A fixture gráfica foi atualizada para Observed e temporários visíveis, mas exige
+ambiente gráfico isolado e não deve ser declarada executada pela suíte padrão.
+
+Validação da revisão em 14/11/2026, no org.gnome.Sdk//50 com rust-stable:
+fmt --all --check, clippy --workspace --all-targets --offline -- -D warnings,
+test --workspace --offline, doc --workspace --no-deps --document-private-items
+--offline e test --workspace --doc --offline passaram. A suíte integrada teve
+662 execuções aprovadas (incluindo 6 doctests) e 8 ignoradas por exigirem
+ambiente gráfico, portais ou Secret Service isolado. Os 18 testes públicos de
+captura local usam inotify e filesystem reais temporários. Os resultados
+anteriores de classificação/normalização são históricos, não o contrato atual.
+Não foram executados Google real, perfil de heap/RSS, aplicação instalada,
+fixture gráfica nem overflow real do kernel. Limites de fila e caminhos são
+testados por portas internas; não equivalem a reproduzir overflow no kernel.

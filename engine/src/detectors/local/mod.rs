@@ -1,11 +1,11 @@
 //! Root-bound metadata collection and native local event production.
 
-mod changes;
 mod collector;
 mod filesystem;
 mod metadata;
 mod models;
 mod runtime;
+mod signals;
 mod watcher;
 
 pub use collector::FilesystemMetadataCollector;

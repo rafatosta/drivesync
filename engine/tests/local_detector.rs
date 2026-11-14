@@ -97,6 +97,14 @@ fn receive(rx: &mpsc::Receiver<File>, predicate: impl Fn(&File) -> bool) -> File
 fn path(file: &File, expected: &[u8]) -> bool {
     file.scope == FileScope::Local(LocalRelativePath::new(expected.to_vec()).unwrap())
 }
+fn signal(file: &File, mask: u32) -> bool {
+    file.event.kind == FileEventKind::Observed
+        && file
+            .event
+            .local
+            .as_ref()
+            .is_some_and(|evidence| evidence.mask & mask != 0)
+}
 fn size(file: &File, expected: u64) -> bool {
     matches!(&file.data,Some(FileData::Local(data))if data.storage.size_bytes==MetadataValue::Known(expected))
 }
@@ -116,7 +124,7 @@ fn wait_state(detector: &LocalDetector, expected: LocalDetectorState) {
 }
 
 #[test]
-fn starts_real_capture_and_delivers_create_edit_rename_remove_as_shared_events() {
+fn starts_real_capture_and_delivers_native_create_write_move_and_remove_signals() {
     let tree = Tree::new();
     let (detector, rx) = producer(&tree);
     let before = status(&detector);
@@ -131,23 +139,23 @@ fn starts_real_capture_and_delivers_create_edit_rename_remove_as_shared_events()
     let created = receive(&rx, |f| path(f, b"file") && f.data.is_some());
     drop(file);
     assert_eq!(created.sync_id, tree.scope().sync_id);
-    assert_eq!(created.event.kind, FileEventKind::Created);
+    assert!(signal(&created, libc::IN_CREATE));
     fs::write(tree.0.join("file"), b"four").unwrap();
     let edited = receive(&rx, |f| path(f, b"file") && size(f, 4));
     assert_ne!(created.id, edited.id);
-    assert_eq!(edited.event.kind, FileEventKind::Modified);
+    assert!(signal(&edited, libc::IN_MODIFY | libc::IN_CLOSE_WRITE));
     fs::rename(tree.0.join("file"), tree.0.join("renamed")).unwrap();
-    let renamed = receive(&rx, |f| path(f, b"renamed") && size(f, 4));
-    assert_eq!(renamed.event.kind, FileEventKind::Renamed);
-    assert_eq!(
-        renamed.event.previous,
-        Some(drivesync_engine::models::FileLocation::Local(
-            LocalRelativePath::new(b"file".to_vec()).unwrap()
-        ))
-    );
+    let source = receive(&rx, |f| path(f, b"file") && signal(f, libc::IN_MOVED_FROM));
+    let renamed = receive(&rx, |f| path(f, b"renamed") && signal(f, libc::IN_MOVED_TO));
+    let from = source.event.local.unwrap();
+    let to = renamed.event.local.unwrap();
+    assert_ne!(from.cookie, 0);
+    assert_eq!(from.cookie, to.cookie);
+    assert_eq!(from.capture_id, to.capture_id);
+    assert!(renamed.event.previous.is_none());
     fs::remove_file(tree.0.join("renamed")).unwrap();
     let removed = receive(&rx, |f| path(f, b"renamed") && f.data.is_none());
-    assert_eq!(removed.event.kind, FileEventKind::Deleted);
+    assert!(signal(&removed, libc::IN_DELETE));
     assert_eq!(stop(&detector).in_flight, 0);
     assert_eq!(stop(&detector).state, LocalDetectorState::Stopped);
     while rx.try_recv().is_ok() {}
@@ -422,7 +430,7 @@ fn native_events_preserve_non_utf8_names() {
     let file = fs::File::create(tree.0.join(std::ffi::OsStr::from_bytes(name))).unwrap();
     let event = receive(&rx, |f| path(f, name) && f.data.is_some());
     drop(file);
-    assert_eq!(event.event.kind, FileEventKind::Created);
+    assert!(signal(&event, libc::IN_CREATE));
     stop(&detector);
 }
 
@@ -481,7 +489,7 @@ fn permanent_sink_failure_is_observable_and_stoppable() {
 }
 
 #[test]
-fn classifies_cross_directory_move_and_atomic_replacement_without_global_rechecks() {
+fn forwards_cross_directory_move_and_replacement_as_native_signals() {
     let tree = Tree::new();
     fs::create_dir(tree.0.join("sub")).unwrap();
     fs::write(tree.0.join("original"), b"before").unwrap();
@@ -490,11 +498,11 @@ fn classifies_cross_directory_move_and_atomic_replacement_without_global_recheck
     ready(&rx);
     fs::rename(tree.0.join("original"), tree.0.join("sub/moved")).unwrap();
     let moved = receive(&rx, |f| path(f, b"sub/moved"));
-    assert_eq!(moved.event.kind, FileEventKind::Moved);
+    assert!(signal(&moved, libc::IN_MOVED_TO));
     fs::write(tree.0.join("temporary"), b"replacement").unwrap();
     fs::rename(tree.0.join("temporary"), tree.0.join("sub/moved")).unwrap();
     let saved = receive(&rx, |f| path(f, b"sub/moved") && size(f, 11));
-    assert_eq!(saved.event.kind, FileEventKind::Modified);
+    assert!(signal(&saved, libc::IN_MOVED_TO));
     assert_eq!(saved.event.previous, None);
     wait_state(&detector, LocalDetectorState::Running);
     assert_eq!(status(&detector).last_error, None);
@@ -513,10 +521,10 @@ fn metadata_changes_and_moves_outside_scope_do_not_invent_deletions() {
     ready(&rx);
     fs::set_permissions(tree.0.join("file"), fs::Permissions::from_mode(0o400)).unwrap();
     let metadata = receive(&rx, |f| path(f, b"file"));
-    assert_eq!(metadata.event.kind, FileEventKind::MetadataChanged);
+    assert!(signal(&metadata, libc::IN_ATTRIB));
     fs::rename(tree.0.join("file"), outside.0.join("file")).unwrap();
     let moved_out = receive(&rx, |f| path(f, b"file") && f.data.is_none());
-    assert_eq!(moved_out.event.kind, FileEventKind::RecheckRequired);
+    assert!(signal(&moved_out, libc::IN_MOVED_FROM));
     wait_state(&detector, LocalDetectorState::Running);
     stop(&detector);
 }
@@ -530,53 +538,44 @@ fn directory_rename_rebinds_capture_to_the_new_location() {
     ready(&rx);
     fs::rename(tree.0.join("before"), tree.0.join("after")).unwrap();
     let renamed = receive(&rx, |f| path(f, b"after") && f.data.is_some());
-    assert_eq!(renamed.event.kind, FileEventKind::Renamed);
+    assert!(signal(&renamed, libc::IN_MOVED_TO));
     fs::write(tree.0.join("after/file"), b"after").unwrap();
     receive(&rx, |f| path(f, b"after/file") && f.data.is_some());
     stop(&detector);
 }
 
 #[test]
-fn atomic_save_is_normalized_before_the_sink_and_distinct_saves_are_preserved() {
-    use std::io::Write;
+fn atomic_save_preserves_temporary_signals_and_both_move_halves() {
     let tree = Tree::new();
     fs::write(tree.0.join("document"), b"before").unwrap();
     let (detector, rx) = producer(&tree);
     start(&detector);
     ready(&rx);
-    // A newly created source, not its name, proves the replacement candidate.
-    let mut temporary = fs::File::create(tree.0.join("unremarkable-name")).unwrap();
-    temporary.write_all(b"after").unwrap();
-    std::thread::sleep(Duration::from_millis(10));
-    drop(temporary);
-    fs::rename(tree.0.join("unremarkable-name"), tree.0.join("document")).unwrap();
-    let saved = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(
-        path(&saved, b"document"),
-        "temporary must not reach the sink: {saved:?}"
+    fs::write(tree.0.join("temporary"), b"after").unwrap();
+    fs::rename(tree.0.join("temporary"), tree.0.join("document")).unwrap();
+    let created = receive(&rx, |f| path(f, b"temporary") && signal(f, libc::IN_CREATE));
+    assert!(created.event.previous.is_none());
+    let from = receive(&rx, |f| {
+        path(f, b"temporary") && signal(f, libc::IN_MOVED_FROM)
+    });
+    let to = receive(&rx, |f| {
+        path(f, b"document") && signal(f, libc::IN_MOVED_TO)
+    });
+    assert_eq!(
+        from.event.local.as_ref().unwrap().cookie,
+        to.event.local.as_ref().unwrap().cookie
     );
-    assert_eq!(saved.validate(), Ok(()));
-    assert_eq!(saved.event.kind, FileEventKind::Modified);
+    assert_ne!(from.id, to.id);
+    assert!(to.event.previous.is_none());
     assert!(
-        matches!(
-            rx.recv_timeout(Duration::from_millis(120)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ),
-        "duplicate notifications must not reach the sink"
+        from.data.is_none(),
+        "the source no longer exists, but its move signal survives"
     );
-    fs::write(tree.0.join("document"), b"second").unwrap();
-    fs::write(tree.0.join("document"), b"third").unwrap();
-    let first = receive(&rx, |f| path(f, b"document"));
-    let second = receive(&rx, |f| path(f, b"document"));
-    assert_eq!(first.event.kind, FileEventKind::Modified);
-    assert_eq!(second.event.kind, FileEventKind::Modified);
-    assert_ne!(first.id, second.id);
     stop(&detector);
 }
 
 #[test]
-fn open_write_has_bounded_latency_and_explicit_uncertainty_then_finishes() {
-    use drivesync_engine::models::ObservationUncertainty;
+fn open_write_is_observed_without_waiting_for_close_and_close_is_delivered_separately() {
     use std::io::Write;
     let tree = Tree::new();
     fs::write(tree.0.join("document"), b"before").unwrap();
@@ -588,25 +587,22 @@ fn open_write_has_bounded_latency_and_explicit_uncertainty_then_finishes() {
         .open(tree.0.join("document"))
         .unwrap();
     writer.write_all(b"after!").unwrap();
-    let event = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-    assert!(path(&event, b"document"));
-    assert_eq!(event.event.kind, FileEventKind::RecheckRequired);
-    assert_eq!(
-        event.event.uncertainty,
-        Some(ObservationUncertainty::WriteInProgress)
-    );
-    assert_eq!(event.validate(), Ok(()));
+    let event = receive(&rx, |f| path(f, b"document") && signal(f, libc::IN_MODIFY));
+    assert!(event.event.uncertainty.is_none());
     drop(writer);
-    let finished = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-    assert!(path(&finished, b"document"));
-    assert_eq!(finished.event.kind, FileEventKind::Modified);
-    assert_eq!(finished.event.uncertainty, None);
+    let finished = receive(&rx, |f| {
+        path(f, b"document") && signal(f, libc::IN_CLOSE_WRITE)
+    });
+    assert_ne!(finished.id, event.id);
+    assert_eq!(
+        finished.event.local.as_ref().unwrap().capture_id,
+        event.event.local.as_ref().unwrap().capture_id
+    );
     stop(&detector);
 }
 
 #[test]
-fn continuous_write_notifications_cannot_postpone_the_maximum_window() {
-    use drivesync_engine::models::ObservationUncertainty;
+fn continuous_notifications_have_bounded_latency_without_interpreting_write_completion() {
     use std::io::Write;
     let tree = Tree::new();
     fs::write(tree.0.join("document"), b"before").unwrap();
@@ -625,15 +621,11 @@ fn continuous_write_notifications_cannot_postpone_the_maximum_window() {
             std::thread::sleep(Duration::from_millis(5));
         }
     });
-    let event = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-    assert_eq!(event.event.kind, FileEventKind::RecheckRequired);
-    assert_eq!(
-        event.event.uncertainty,
-        Some(ObservationUncertainty::WriteInProgress)
-    );
+    let started = Instant::now();
+    let event = receive(&rx, |f| signal(f, libc::IN_MODIFY));
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(event.event.uncertainty.is_none());
     writer.join().unwrap();
-    let finished = rx.recv_timeout(Duration::from_secs(3)).unwrap();
-    assert_eq!(finished.event.kind, FileEventKind::Modified);
-    assert_eq!(finished.event.uncertainty, None);
+    receive(&rx, |f| signal(f, libc::IN_CLOSE_WRITE));
     stop(&detector);
 }

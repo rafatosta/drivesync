@@ -242,6 +242,12 @@ fn abruptly_terminated_unified_detector_replays_the_exact_committed_file() {
     child.wait().unwrap();
     let original: File =
         serde_json::from_slice(&std::fs::read(tree.0.join("committed.json")).unwrap()).unwrap();
+    assert_eq!(original.event.kind, FileEventKind::Observed);
+    assert!(original
+        .event
+        .local
+        .as_ref()
+        .is_some_and(|evidence| evidence.mask != 0 && !evidence.capture_id.is_empty()));
     let detector = open(&tree.0);
     detector
         .start(DetectorStartRequest {

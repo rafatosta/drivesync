@@ -1,13 +1,13 @@
 //! Local event production: native hints -> opaque metadata -> shared File sink.
 use super::{
-    changes::Changes,
     collector::FilesystemMetadataCollector,
     models::*,
+    signals::{Signals, Trigger},
     watcher::{Hints, Limits, Wake, Watches},
 };
 use crate::models::{
-    File, FileData, FileEvent, FileEventKind, FileId, FileLocation, FileScope, LocalRelativePath,
-    ObservationCoverage, ObservationUncertainty, Timestamp,
+    File, FileData, FileEvent, FileEventKind, FileId, FileLocation, FileScope, LocalObservation,
+    LocalRelativePath, ObservationCoverage, ObservationUncertainty, Timestamp,
 };
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
@@ -516,7 +516,7 @@ fn run(
         ObservationUncertainty::CaptureStarted
     });
     let mut pending = Some(initial);
-    let mut changes = Changes::new(watches.entries.clone(), coverage_error.is_none());
+    let mut signals = Signals::default();
     let mut recheck: Option<ObservationUncertainty> = None;
     let mut deadline = Some(Instant::now());
     let mut first_hint: Option<Instant> = None;
@@ -533,28 +533,16 @@ fn run(
         if !requested.is_empty() {
             for path in requested {
                 if let Some(path) = path {
-                    changes.request_recheck(path);
+                    signals.request_recheck(path);
                 } else {
                     coverage_error = watches.discover(&cancel, Limits::default()).err();
-                    changes.replace_known(watches.entries.clone(), coverage_error.is_none());
                     recheck = Some(ObservationUncertainty::CoverageIncomplete);
                 }
             }
             deadline = Some(Instant::now());
         }
-        changes.expire(Instant::now());
-        if changes.has_pending() && deadline.is_none() {
+        if signals.has_pending() && deadline.is_none() {
             deadline = Some(Instant::now());
-        }
-        if changes.has_open_write() && deadline.is_some_and(|at| Instant::now() >= at) {
-            if let Some(first) = first_hint {
-                let bound = first
-                    + Duration::from_millis(settings.debounce_ms.unwrap_or(80))
-                        .max(Duration::from_millis(500));
-                if Instant::now() < bound {
-                    deadline = Some(bound);
-                }
-            }
         }
         if deadline.is_some_and(|at| Instant::now() >= at) {
             shared.change(generation, |s| {
@@ -575,24 +563,18 @@ fn run(
                         let mut event = envelope(&mut ids, &scope.sync_id, None, None, false)?;
                         event.event.uncertainty = Some(reason);
                         pending = Some(event);
-                    } else if let Some((path, change)) = changes.pop() {
-                        if change.kind == FileEventKind::Deleted {
-                            let mut event = envelope(
-                                &mut ids,
-                                &scope.sync_id,
-                                Some(path.clone()),
-                                None,
-                                false,
-                            )?;
-                            event.event.kind = FileEventKind::Deleted;
-                            event.event.uncertainty = None;
-                            event.event.previous = Some(FileLocation::Local(path));
-                            event.validate().map_err(|_| {
-                                LocalDetectorFailure::new(LocalDetectorError::ModelInvalid)
-                            })?;
-                            pending = Some(event);
-                            continue;
-                        }
+                    } else if let Some(trigger) = signals.pop() {
+                        let (path, native) = match trigger {
+                            Trigger::Native(hint) => (
+                                hint.path,
+                                Some(LocalObservation {
+                                    capture_id: ids.prefix.clone(),
+                                    mask: hint.mask,
+                                    cookie: hint.cookie,
+                                }),
+                            ),
+                            Trigger::Recheck(path) => (path, None),
+                        };
                         let result = LocalMetadataCollector::collect(
                             collector.as_ref(),
                             LocalMetadataRequest {
@@ -616,16 +598,11 @@ fn run(
                                     Some(result),
                                     false,
                                 )?;
-                                if event.data.is_none() {
-                                    event.event.uncertainty =
-                                        Some(change.uncertainty.unwrap_or(
-                                            ObservationUncertainty::ObservationUnstable,
-                                        ));
-                                }
-                                if event.data.is_some() {
-                                    event.event.kind = change.kind;
-                                    event.event.uncertainty = change.uncertainty;
-                                    event.event.previous = change.previous.map(FileLocation::Local);
+                                if native.is_some() {
+                                    event.event.kind = FileEventKind::Observed;
+                                    event.event.local = native;
+                                    event.event.uncertainty = None;
+                                    event.coverage = ObservationCoverage::Partial;
                                     event.validate().map_err(|_| {
                                         LocalDetectorFailure::new(LocalDetectorError::ModelInvalid)
                                     })?;
@@ -638,7 +615,14 @@ fn run(
                             Err(failure) => {
                                 error = Some(failure.kind);
                                 round_coverage = LocalScanCoverage::Partial;
-                                envelope(&mut ids, &scope.sync_id, Some(path), None, true)?
+                                let mut event =
+                                    envelope(&mut ids, &scope.sync_id, Some(path), None, true)?;
+                                if native.is_some() {
+                                    event.event.kind = FileEventKind::Observed;
+                                    event.event.local = native;
+                                    event.coverage = ObservationCoverage::Partial;
+                                }
+                                event
                             }
                         });
                     } else {
@@ -702,11 +686,7 @@ fn run(
                 });
             }
         }
-        let wait_deadline = match (deadline, changes.deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
-        let timeout = wait_deadline.map_or(250, |at| {
+        let timeout = deadline.map_or(250, |at| {
             at.saturating_duration_since(Instant::now())
                 .as_millis()
                 .min(250) as i32
@@ -734,12 +714,12 @@ fn run(
             error = Some(LocalDetectorError::PartialObservation);
         }
         if overflow {
-            changes.reset(Default::default());
+            signals.reset();
         }
         for hint in incoming.into_iter().filter(|_| !overflow) {
-            changes.push(hint);
-            if changes.over_budget(settings.max_pending_paths as usize) {
-                changes.reset(Default::default());
+            signals.push(hint);
+            if signals.over_budget(settings.max_pending_paths as usize) {
+                signals.reset();
                 recheck = Some(ObservationUncertainty::ResourceLimit);
                 error = Some(LocalDetectorError::ResourceLimit);
                 break;
@@ -758,7 +738,6 @@ fn run(
             };
             coverage_error = next.discover(&cancel, Limits::default()).err();
             error = coverage_error.as_ref().map(|e| e.kind).or(error);
-            changes.replace_known(next.entries.clone(), coverage_error.is_none());
             watches = next;
             recheck = Some(if overflow {
                 ObservationUncertainty::NativeOverflow
@@ -773,8 +752,8 @@ fn run(
         if required && recheck.is_none() {
             recheck = Some(ObservationUncertainty::UnclassifiedSignal);
         }
-        if changes.over_budget(settings.max_pending_paths as usize) {
-            changes.reset(Default::default());
+        if signals.over_budget(settings.max_pending_paths as usize) {
+            signals.reset();
             recheck = Some(ObservationUncertainty::ResourceLimit);
             error = Some(LocalDetectorError::ResourceLimit);
         }

@@ -1,5 +1,5 @@
-//! Private Linux notifications. Raw hints never escape to the orchestrator.
-use super::{changes::Hint, collector::FilesystemMetadataCollector, filesystem, models::*};
+//! Private Linux capture; path, mask and cookie are preserved as observation evidence.
+use super::{collector::FilesystemMetadataCollector, filesystem, models::*, signals::Hint};
 use crate::models::LocalRelativePath;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -90,7 +90,6 @@ pub(super) struct Watches {
     root: Arc<FilesystemMetadataCollector>,
     directories: usize,
     path_bytes: usize,
-    pub entries: BTreeSet<LocalRelativePath>,
 }
 impl Watches {
     /// Captures root and ancestry before asynchronous recursive coverage verification.
@@ -111,7 +110,6 @@ impl Watches {
             root,
             directories: 0,
             path_bytes: 0,
-            entries: BTreeSet::new(),
         };
         let chain = this.root.root_chain(cancel)?;
         for (parent, name) in chain.ancestor_guards() {
@@ -256,7 +254,6 @@ impl Watches {
                 bytes.extend_from_slice(name.as_bytes());
                 let relative = LocalRelativePath::new(bytes.clone())
                     .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::InvalidScope))?;
-                self.entries.insert(relative.clone());
                 entry_bytes = entry_bytes.saturating_add(relative.as_bytes().len());
                 if entry_bytes > limits.path_bytes {
                     return Err(LocalDetectorFailure::new(LocalDetectorError::ResourceLimit));

@@ -55,7 +55,7 @@ pub(super) trait LocalNotificationSink: Send + Sync {
 
 **Regras de encapsulamento:** o produtor emite **um File por chamada**. `File.data=Some(FileData::Local(local_file))` preserva integralmente o objeto entregue pelo coletor; `File.data=None` é válido para `Deleted` suspeito, `RecheckRequired` e `ScopeUnavailable` segundo os invariantes de Models. O Local constrói somente contexto do evento (`FileEventKind`, localizações anterior/atual, `FileScope`, horário e cobertura), sem inspecionar campos internos de `LocalFile`. Não fabrica identidade ou ação.
 
-`Created/Modified/Renamed/Moved/MetadataChanged` requerem evidências confiáveis e metadados presentes. Para movimento/renomeação, preservar `previous/current` quando correlacionados com segurança; caso contrário, usar `RecheckRequired`. Watcher remove pode ser exclusão suspeita, nunca comando de apagar. Falhas em escopo são indisponibilidade, não exclusão.
+Notificações nativas produzem `Observed`, com caminho, máscara, cookie e sessão de captura. O Local não classifica ações, correlaciona movimentos ou compara com caminhos conhecidos. Falhas de cobertura continuam avisos técnicos; ausência de metadados não elimina o sinal recebido.
 
 ### Porta estável de obtenção de LocalFile
 
@@ -176,7 +176,7 @@ impl LocalDetector {
 ### LOC-01 — `new`
 
 **Finalidade:** configurar observador local isolado para `sync_id`, conta e raiz, com sink de saída.
-**Parâmetros:** `scope`, `notifications`, `collector` e `settings` obrigatórios; `debounce_ms=None` seleciona 80 ms de quietude; `Some(0)` desativa apenas a espera de quietude, preservando as regras de escrita/correlação. `max_pending_paths` deve ser positivo.
+**Parâmetros:** `scope`, `notifications`, `collector` e `settings` obrigatórios; `debounce_ms=None` seleciona 80 ms de quietude; `Some(0)` desativa apenas a espera de quietude, sem alterar os sinais recebidos. `max_pending_paths` deve ser positivo.
 **Retorno:** instância `Stopped`, sem watcher ativo.
 **Erros/limites:** `InvalidScope` para identidade vazia, raiz relativa/reservada ou limite zero; não consultar Accounts para validar associação. Não fabricar `LocalFile`. A validação física ocorre em `start`/`scan_once`.
 
@@ -262,9 +262,9 @@ Estas regras complementam as assinaturas da seção 4. São definição document
 
 - O callback do watcher só registra pistas e sinaliza trabalho. Não faz coleta, percurso, banco, hashing, rede ou entrega bloqueante. Callbacks de gerações encerradas são descartados antes de qualquer efeito.
 - A captura deve cobrir subdiretórios novos/movidos e verificar a janela entre enumeração e instalação. Overflow, limite do backend ou cobertura incerta causam `Degraded` e reavaliação do escopo afetado. Reparo da captura não chama Scanner, Inventário ou Analisador.
-- `debounce_ms=Some(n)` positivo define quietude após a última pista, limitada a `max(n, 500)` ms desde a primeira pista da rodada, em relógio monotônico. Não é uma promessa de latência quando há trabalho em curso. Só pistas ainda não convertidas em `File` podem ser agrupadas por caminho; eventos já construídos não são fundidos nem alterados.
-- `max_pending_paths` limita caminhos de pistas, não a fila persistente do pai. Ao exceder o limite, substituir pistas por uma necessidade de reavaliação de toda a raiz, marcar cobertura degradada e não alegar histórico completo. Também limitar o trabalho em trânsito: não acumular uma segunda fila ilimitada de `File`.
-- A primeira observação de um item em scan é `RecheckRequired`, não `Created` por ausência de histórico. Tipos específicos exigem evidência do watcher e coleta atual; renomear/mover exige correlação confiável fornecida pelo backend. Inode ou semelhança de nome não bastam. Em dúvida, reavaliar os caminhos afetados.
+- `debounce_ms=Some(n)` positivo define quietude após a última pista, limitada a `max(n, 500)` ms desde a primeira pista da rodada, em relógio monotônico. Não é uma promessa de latência quando há trabalho em curso. O prazo apenas agenda o processamento; pistas não são fundidas, correlacionadas ou reclassificadas. Eventos construídos continuam imutáveis.
+- `max_pending_paths` limita a quantidade de notificações pendentes (inclusive caminhos repetidos), não a fila persistente do pai. Ao exceder o limite, substituir pistas por uma necessidade de reavaliação de toda a raiz, marcar cobertura degradada e não alegar histórico completo. Também limitar o trabalho em trânsito: não acumular uma segunda fila ilimitada de `File`.
+- A primeira observação de um item em scan é `RecheckRequired`, não `Created` por ausência de histórico. Notificações nativas produzem Observed com sua evidência original, independentemente de histórico e da disponibilidade de metadados.
 - `notify` recebe um `File` por chamada e retorna somente após aceitar ou rejeitar. `Ok` significa aceite durável no pai; erro, inclusive resultado incerto após gravação, não autoriza contar entrega. Testes locais simulam esse contrato e não comprovam durabilidade.
 - Em falha, preservar o `File` integral, inclusive ID e horário, para repetição enquanto a instância permanecer ativa; não recoletar para modificar essa mesma ocorrência. Falha retryable deixa o produtor ativo `Degraded` (em scan isolado, permanece `Stopped` com `last_error`); novo `scan_once` tenta primeiro a entrega pendente antes de observar novamente. Não fazer loop de retry sem limite; pistas posteriores permanecem como necessidade de observação. Falha não retryable leva a `Failed`, exigindo parada e diagnóstico.
 - Parada/crash não dá durabilidade ao evento ainda não aceito: a pendência é volátil e deve ser informada como erro/estado degradado antes de parar. Reinício não promete replay desses objetos nem recuperação do histórico. A decisão de pedir nova varredura do intervalo interrompido pertence ao Orquestrador.
@@ -272,7 +272,7 @@ Estas regras complementam as assinaturas da seção 4. São definição document
 
 ## 9. Portas internas de coleta e notificação
 
-As portas das seções 2 e 3 são os únicos contratos de dependência de negócio nesta etapa. O backend concreto do watcher fica privado; sua normalização será testada por pistas controladas e por alterações reais no filesystem, sem expor tipos da biblioteca ao pai.
+As portas das seções 2 e 3 são os únicos contratos de dependência de negócio nesta etapa. O backend concreto do watcher fica privado; a preservação de seus sinais é testada por pistas controladas e por alterações reais no filesystem, sem expor tipos da biblioteca ao pai.
 
 ### `LocalMetadataCollector::scope`
 
@@ -386,36 +386,58 @@ A solicitação posterior do usuário autoriza disponibilizar `LocalDetector::ne
 
 O backend privado usa inotify e eventfd. Mudanças disparam coleta de metadados, sem polling de conteúdo, hashing ou uploads. Descoberta recursiva instala watches apenas em diretórios; não segue symlinks e ignora `.drivesync`. Descritores e guards dos ancestrais preservam a raiz original, inclusive entre stop/start. Substituição da raiz/ancestral gera ScopeUnavailable e falha; não vincula silenciosamente outra pasta.
 
-Cada aviso transporta o mesmo `File` compartilhado. Sem evidência suficiente para classificar a operação, usa RecheckRequired, inclusive em remoções. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura não é Scanner nem reconciliação. `scan_once` manual não faz parte desta implementação.
+Cada aviso transporta o mesmo `File` compartilhado. Notificações nativas usam Observed, inclusive sem metadados; não há classificação de operação. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura não é Scanner nem reconciliação. `scan_once` manual não faz parte desta implementação.
 
-Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. O intervalo padrão de quietude é 80 ms, com teto de 500 ms desde a primeira pista; ver § 14 para a normalização por fechamento de escrita. A espera cancelável não produz varreduras periódicas.
+Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. O intervalo padrão de quietude é 80 ms, com teto de 500 ms desde a primeira pista; sem esperar fechamento de escrita nem interpretar ciclos. A espera cancelável não produz varreduras periódicas.
 
 O sink recebe um File por chamada; Ok transfere responsabilidade de persistência ao consumidor. Erro retryable retém o mesmo evento, ID e horário, com novas tentativas automáticas e backoff de 250 ms até 30 s, sem loop ocupado; erro permanente torna o produtor Failed. A fachada Detector oferece fila durável; o coletor/LocalDetector isolado não mantém persistência. Os testes usam sinks em memória e não comprovam persistência após crash. A composição com Orquestrador e Remoto pertence à fachada Detector.
 
-## 13. Classificação compilada dos eventos locais
+## 13. Observações locais sem interpretação
 
-A captura preserva máscara e cookie nativos em hints privados. O produtor classifica Created, Modified, MetadataChanged e Deleted a partir dos sinais correspondentes; o File mantém metadados integrais e localizações. Deleted é observação de remoção, com previous e cobertura parcial, não autorização para excluir outro recurso. Não exige coleta de metadados de uma entrada que já foi removida.
+Cada notificação recebida do inotify produz `FileEventKind::Observed` com
+`File.event.local: LocalObservation { capture_id, mask, cookie }`. O caminho
+relativo preserva bytes não UTF-8 em File.scope; previous=None. Os bits da
+máscara, inclusive IN_ISDIR, e o cookie são preservados sem converter em
+criação, edição, exclusão, renomeação, movimento ou mudança de metadados.
+A sessão de captura identifica a geração do produtor e impede correlacionar
+cookies de reinícios diferentes como se fossem a mesma captura.
 
-Cookies correlacionam MOVED_FROM/MOVED_TO, inclusive entre leituras, por até 100 ms: mesmo diretório produz Renamed; diretórios diferentes produzem Moved, com previous/current. Um destino já conhecido produz Modified para representar substituição atômica naquele caminho, sem afirmar identidade física ou lógica preservada. O catálogo transitório inicial contém caminhos observados pela descoberta; não é Inventory nem baseline. Se a descoberta estiver incompleta, destino desconhecido não autoriza classificação de rename/replacement. Movimentos sem par ou com cookie ausente permanecem RecheckRequired; uma saída sem destino conhecido não é Deleted.
+O Detector não mantém catálogo de caminhos conhecidos. A descoberta percorre
+entradas somente para instalar watches de diretórios e verificar os limites;
+não retém caminhos de arquivos como índice. A FIFO de pistas preserva ordem,
+repetições e arquivos temporários. MOVED_FROM e MOVED_TO são observações
+separadas; o Detector não procura o par nem espera por ele. Não há estado de
+escritas abertas, origem provisória, aliases de caminhos ou normalização de
+salvamentos. A interpretação pertence ao Analisador com o Inventory.
 
-A coalescência conserva criação/movimento durante escritas subsequentes na mesma rodada e retira a pista do temporário quando sua movimentação é correlacionada. Se o temporário já tiver sido observado em rodada anterior, essa ocorrência permanece no histórico. Não se ignora um arquivo só pelo nome de temporário. Se a entrada desaparecer ou mudar durante a coleta, a ocorrência fica RecheckRequired sem metadados inventados; isso por si só não significa falha de cobertura do watcher.
+O coletor continua sendo a única porta que constrói LocalFile. Os metadados
+opcionais são coletados depois da notificação; não representam um snapshot de
+cada ação intermediária. Se uma entrada já desapareceu, a observação nativa
+permanece com data=None. Erros de coleta preservam o sinal e informam o estado
+operacional. Observed tem cobertura Partial e não afirma que uma escrita terminou.
 
-Watches não são reconstruídos por criar/remover/mover arquivos comuns. Mudanças estruturais de diretórios ainda exigem restabelecimento de cobertura e aviso WholeSync. WholeSync também permanece no start e na recuperação de overflow; não é um evento de arquivo. Overflow invalida pistas pendentes e produz recheck conservador, sem classificar a parte possivelmente incompleta. Limites de hints, cookies e catálogo são finitos (catálogo até 100000 entradas; orçamento total de caminhos 8 MiB); excedê-los descarta evidência de classificação e solicita recheck.
+## 14. Agendamento, limites e entrega
 
-A implementação não promete sequência exata de operações intermediárias do usuário, persistência de histórico, correlação entre reinícios ou deduplicação entre contas. IDs e reentrega ao sink continuam preservados. A UI apenas mapeia o tipo recebido para rótulos e cores; não deduz ações de caminhos ou nomes.
+A janela padrão mantém 80 ms de quietude e teto de max(quietude, 500 ms) desde a
+primeira pista, apenas para agendar coleta/entrega. Não funde notificações,
+espera CLOSE_WRITE ou interpreta escrita concluída. IN_MODIFY e IN_CLOSE_WRITE
+são entregues separadamente quando recebidos do kernel.
 
+A FIFO é limitada por max_pending_paths (quantidade de notificações, inclusive
+caminhos repetidos) e 8 MiB de caminhos. Excesso invalida a cobertura da coleta,
+limpa o trabalho volátil e emite aviso ResourceLimit; overflow do inotify exige
+aviso NativeOverflow. Não se promete recuperar sinais perdidos. O próprio kernel
+pode agrupar notificações iguais: o Detector preserva as notificações recebidas,
+não promete uma ocorrência por syscall ou ação do usuário.
 
-## 14. Normalização antes do sink/Orchestrator
+Start, reobservação explícita e reconstrução da cobertura continuam usando
+avisos técnicos RecheckRequired/ScopeUnavailable, sem classificações de arquivos.
+Mudanças estruturais de diretórios ainda reconstroem watches; mudanças de
+arquivos comuns não. A segurança por descritores, exclusão de .drivesync e
+não seguimento de symlinks continuam vigentes.
 
-O produtor mantém ciclos de escrita distintos, delimitados por IN_CLOSE_WRITE. Pistas de um mesmo ciclo não se tornam vários File. Uma nova escrita após o fechamento anterior preserva outro ciclo, mesmo se chegar dentro da mesma janela temporal; remover/recriar e renomear um recurso preexistente também não são fundidos apenas pelo tempo.
-
-A janela padrão aguarda 80 ms de quietude e no máximo 500 ms desde a primeira pista. Uma escrita sem fechamento aguarda o teto e produz RecheckRequired/WriteInProgress, sem declarar conclusão. Seu contexto limitado permanece para emitir o evento concluído quando chegar o fechamento. Tráfego contínuo não adia o teto. Esses prazos limitam o agrupamento quando o worker/sink estão disponíveis, não são garantia de tempo real nem interrompem uma syscall/callback bloqueado.
-
-Uma origem criada durante a janela, ainda sem entrega, pode ser correlacionada por cookie ao destino: se o destino existia, a normalização produz Modified somente no destino; caso contrário, Created no destino. Notificações tardias no nome anterior são associadas pela movimentação comprovada. Nenhum nome `.goutputstream-*` é descartado por prefixo. Se a criação já foi entregue, não é retraída; uma operação posterior é preservada. O agrupamento não promete identificar transações de qualquer editor separadas por pausas arbitrariamente maiores que a janela.
-
-A fila em memória de ciclos normalizados, movimentos, escritas abertas e aliases compartilha os limites existentes; excesso invalida a evidência e exige recheck do escopo. Não há segunda fila durável. O File é construído somente na entrega da rodada e, depois de construído, continua imutável durante rejeição/retry. Os metadados pertencem à observação realizada na entrega, não a snapshots históricos de cada syscall intermediária.
-
-Todo RecheckRequired exige `File.event.uncertainty: Some(ObservationUncertainty)` de Models; eventos classificados e ScopeUnavailable exigem None. Há motivos explícitos para início/reconstrução, cobertura incompleta, perda nativa, recursos, movimento sem par, sinal desconhecido, leitura instável, escrita em andamento e sequência conflitante. O Orchestrator recebe esses mesmos File, sem deduzir ações. ScopeUnavailable mantém seu erro operacional separado.
-
-
-A entrega retryable agora também acorda por backoff, sem depender de outra alteração na pasta. Isso permite recuperar SQLITE_BUSY e outras recusas transitórias da fila preservando o File já construído. Trabalho ainda não aceito pelo SQLite continua volátil; não é declarado persistido antes do commit.
+O File construído é imutável durante retry, incluindo ID, horário, máscara,
+cookie, sessão e metadados. Backoff retryable permanece entre 250 ms e 30 s.
+Somente aceite pelo sink durável transfere a responsabilidade de entrega;
+pistas ainda não aceitas continuam voláteis. A fila conserva eventos aceitos,
+leases, confirmação e histórico sem consultar inventário para classificá-los.

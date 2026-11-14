@@ -196,10 +196,9 @@ fn live_account_selection_and_detector_layout() {
             .text(),
         "0"
     );
-    assert!(personal.contains("CREATE"));
-    assert!(personal.contains("MODIFY"));
-    assert!(personal.contains("RENAME"));
-    assert!(personal.contains("personal-only.txt → renamed.txt"));
+    assert!(personal.contains("OBSERVED"));
+    assert!(!personal.contains("RENAME"));
+    assert!(personal.contains("renamed.txt"));
     assert!(personal.contains("Verify monitored folder"));
     assert!(personal.contains("RECHECK"));
     assert!(personal.contains("Capture started; initial verification required"));
@@ -223,12 +222,12 @@ fn live_account_selection_and_detector_layout() {
     .unwrap();
     settle();
     let after_save = session.diagnostics();
-    assert_eq!(after_save.events_detected, before_save + 1);
+    assert!(after_save.events_detected > before_save + 1);
     assert_eq!(
         after_save.events.last().unwrap().event.kind,
-        drivesync_engine::models::FileEventKind::Modified
+        drivesync_engine::models::FileEventKind::Observed
     );
-    assert!(!texts(page.upcast_ref()).contains("ordinary-source"));
+    assert!(texts(page.upcast_ref()).contains("ordinary-source"));
     let before_gio_save = session.diagnostics().events_detected;
     gtk::glib::MainContext::default().block_on(async {
         gtk::gio::File::for_path(base.join("personal@example.invalid/renamed.txt"))
@@ -243,15 +242,13 @@ fn live_account_selection_and_detector_layout() {
     });
     settle();
     let after_gio_save = session.diagnostics();
-    assert_eq!(
-        after_gio_save.events_detected,
-        before_gio_save + 1,
-        "GIO replacement must produce one normalized action: {:?}",
-        after_gio_save.events
+    assert!(
+        after_gio_save.events_detected > before_gio_save,
+        "GIO notifications must reach the sink without action normalization"
     );
     assert_eq!(
         after_gio_save.events.last().unwrap().event.kind,
-        drivesync_engine::models::FileEventKind::Modified
+        drivesync_engine::models::FileEventKind::Observed
     );
     std::fs::create_dir(base.join("personal@example.invalid/new-folder")).unwrap();
     settle();

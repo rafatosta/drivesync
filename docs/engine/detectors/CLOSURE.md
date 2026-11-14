@@ -28,7 +28,7 @@ O índice durável registra a origem real de emissão, inclusive avisos sem payl
 
 A localização é derivada da raiz local pelo Storage; não há parâmetro público de diretório de dados nem fallback para XDG. A raiz precisa existir e estar acessível. O diretório reservado usa 0700 e o banco 0600. Links simbólicos no caminho, hardlinks do banco e identidades divergentes são rejeitados. O banco do Inventário é independente, no mesmo diretório: `inventory.sqlite3`, ainda documental. Escritas internas não geram eventos de usuário.
 
-Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 3); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
+Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 4); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
 
 `PersistentDetector` e os caminhos antigos de composição do Orquestrador foram removidos. Os especialistas Local/Remoto mantêm testes independentes, mas a aplicação compõe apenas a fachada `Detector`.
 
@@ -46,5 +46,15 @@ O remoto agora coleta observações `Observed` com os sinais fornecidos pelo
 Google, sem manter `known` nem classificar ações. Consulte
 [IMPLEMENTATION](remote/IMPLEMENTATION.md) para o contrato atual. Resultados
 anteriores de classificação e integração real são históricos e não homologam
-esta revisão. O fluxo local permanece como estava; Analisador e Inventory não
-foram implementados. A fila continua confirmável e conserva histórico.
+esta revisão. O fluxo local foi revisado posteriormente conforme a seção seguinte; Analisador
+e Inventory não foram implementados. A fila continua confirmável e conserva histórico.
+
+## Revisão de responsabilidade do Detector local
+
+O Local também entrega Observed, com máscara/cookie nativos e sessão de captura.
+Não mantém caminhos conhecidos nem correlaciona rename/move, escritas abertas ou
+substituições atômicas. Mantém somente watches de diretórios e FIFO limitada de
+notificações. Metadados vêm do coletor sem inspeção dos seus atributos. Avisos
+operacionais permanecem; classificação e tratamento pertencem ao futuro
+Analisador/Inventory. O codec atual é File v3, com SQLite v4; bancos anteriores
+falham explicitamente, sem migração nem exclusão automática.
