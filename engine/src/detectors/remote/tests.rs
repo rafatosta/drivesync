@@ -514,3 +514,63 @@ fn google_provider_identity_keeps_existing_database_paths_and_rejects_foreign_pa
     drop(reopened);
     std::fs::remove_dir_all(base).unwrap();
 }
+
+#[test]
+fn drain_finishes_the_current_round_without_cancelling_or_starting_another() {
+    use std::sync::atomic::AtomicBool;
+    struct Blocking {
+        entered: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl Api for Blocking {
+        fn call(&self, _: Request, cancel: &Cancellation) -> RemoteResult<Response> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.entered.store(true, Ordering::SeqCst);
+            while !self.release.load(Ordering::SeqCst) {
+                cancel.check()?;
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(RemoteFailure::new(RemoteError::RemoteUnavailable))
+        }
+    }
+    let base = base();
+    let entered = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let detector = Arc::new(
+        open_google(
+            scope("a", "root"),
+            settings(),
+            base.clone(),
+            Arc::new(Blocking {
+                entered: entered.clone(),
+                release: release.clone(),
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap(),
+    );
+    detector
+        .start(RemoteStartRequest {
+            mode: RemotePollMode::Initial,
+        })
+        .unwrap();
+    wait_until(|| entered.load(Ordering::SeqCst));
+    let draining = detector.clone();
+    let (done, received) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = draining.stop_mode(true);
+        done.send(result).unwrap();
+    });
+    assert!(received.recv_timeout(Duration::from_millis(30)).is_err());
+    release.store(true, Ordering::SeqCst);
+    received
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    drop(detector);
+    std::fs::remove_dir_all(base).unwrap();
+}

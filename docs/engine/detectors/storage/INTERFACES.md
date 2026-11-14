@@ -167,3 +167,8 @@ O backend remoto usa uma extensão privada `remote_progress` no mesmo armazename
 
 
 A abertura remota recebe explicitamente o provedor selecionado pela fachada. O prefixo é `remote:<provider>:<root>`, com validação do identificador do provedor para evitar ambiguidades. Para Google, a identidade e o caminho resultantes permanecem iguais aos anteriores. Enqueue/leitura rejeitam payload remoto de outro provedor, mesmo com conta e SyncId iguais.
+
+
+## 9. Composição unificada
+
+`Store::open_unified` é privado à composição da fachada. Usa identidade `unified-v1` com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. Filas já existentes são indexadas transacionalmente ao abrir, preservando formato, payloads e leases. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. O namespace novo não substitui bancos antigos nem migra SyncIds de sessões diagnósticas anteriores.

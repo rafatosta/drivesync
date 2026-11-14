@@ -19,6 +19,7 @@ struct Shared {
 }
 struct Worker {
     signal: Arc<(Mutex<bool>, Condvar)>,
+    requested: Arc<Mutex<Option<RemotePollMode>>>,
     cancel: Cancellation,
     join: JoinHandle<()>,
 }
@@ -48,11 +49,13 @@ impl RemoteBackend for DurableBackend {
             })
     }
     fn emit(&self, file: &File) -> RemoteResult<bool> {
-        self.0.enqueue(file).map_err(|error| RemoteFailure {
-            kind: RemoteError::SinkUnavailable,
-            retryable: error.retryable,
-            retry_after: None,
-        })
+        self.0
+            .enqueue_from(file, DetectorOrigin::Remote)
+            .map_err(|error| RemoteFailure {
+                kind: RemoteError::SinkUnavailable,
+                retryable: error.retryable,
+                retry_after: None,
+            })
     }
 }
 impl RemoteDetector {
@@ -74,10 +77,17 @@ impl RemoteDetector {
             )
             .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?,
         );
+        Self::from_store(settings, store, create)
+    }
+    pub(super) fn from_store(
+        settings: RemoteDetectorSettings,
+        store: Arc<Store>,
+        create: impl FnOnce(Arc<dyn RemoteBackend>) -> RemoteResult<Box<dyn RemoteObserver>>,
+    ) -> RemoteResult<Self> {
         let source = create(Arc::new(DurableBackend(store.clone())))?;
         source.validate_progress()?;
         let events = store
-            .recent()
+            .recent_for(DetectorOrigin::Remote)
             .map_err(|_| RemoteFailure::new(RemoteError::SinkUnavailable))?;
         Ok(Self {
             shared: Arc::new(Shared {
@@ -137,6 +147,8 @@ impl RemoteDetector {
         let shared = self.shared.clone();
         let running = signal.clone();
         let cancellation = cancel.clone();
+        let requested = Arc::new(Mutex::new(None));
+        let requests = requested.clone();
         {
             let mut status = shared.status.lock().unwrap_or_else(|e| e.into_inner());
             status.state = RemoteState::Starting;
@@ -147,8 +159,13 @@ impl RemoteDetector {
             .spawn(move || {
                 let mut mode = request.mode;
                 loop {
-                    if cancellation.check().is_err() {
+                    if cancellation.check().is_err()
+                        || *running.0.lock().unwrap_or_else(|e| e.into_inner())
+                    {
                         break;
+                    }
+                    if let Some(next) = requests.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        mode = next;
                     }
                     let result = shared.poll(mode, shared.settings.page_budget, &cancellation);
                     if cancellation.check().is_err() {
@@ -194,7 +211,10 @@ impl RemoteDetector {
                     // A monotonic deadline owns scheduling; UI clocks never start rounds.
                     let deadline = Instant::now() + delay;
                     let mut stop = running.0.lock().unwrap_or_else(|e| e.into_inner());
-                    while !*stop && Instant::now() < deadline {
+                    while !*stop
+                        && requests.lock().unwrap_or_else(|e| e.into_inner()).is_none()
+                        && Instant::now() < deadline
+                    {
                         let remaining = deadline.saturating_duration_since(Instant::now());
                         stop = running
                             .1
@@ -216,6 +236,7 @@ impl RemoteDetector {
             })?;
         *worker = Some(Worker {
             signal,
+            requested,
             cancel,
             join,
         });
@@ -262,6 +283,9 @@ impl RemoteDetector {
     }
     /// Cancels in-flight provider I/O, joins the worker, and preserves all durable progress.
     pub fn stop(&self, _: RemoteStopRequest) -> RemoteResult<RemoteStopResult> {
+        self.stop_mode(false)
+    }
+    pub(crate) fn stop_mode(&self, drain: bool) -> RemoteResult<RemoteStopResult> {
         let _lifecycle = self
             .lifecycle
             .lock()
@@ -285,7 +309,9 @@ impl RemoteDetector {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .state = RemoteState::Stopping;
-            worker.cancel.cancel();
+            if !drain {
+                worker.cancel.cancel();
+            }
             *worker.signal.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
             worker.signal.1.notify_all();
             worker
@@ -306,6 +332,20 @@ impl RemoteDetector {
             state: RemoteState::Stopped,
         })
     }
+    pub(crate) fn request_observation(&self, mode: RemotePollMode) -> RemoteResult<()> {
+        let worker = self
+            .worker
+            .lock()
+            .map_err(|_| RemoteFailure::new(RemoteError::Internal))?;
+        let worker = worker
+            .as_ref()
+            .ok_or_else(|| RemoteFailure::new(RemoteError::InvalidState))?;
+        *worker.requested.lock().unwrap_or_else(|e| e.into_inner()) = Some(mode);
+        // Share the wait mutex so a request cannot be lost between predicate and sleep.
+        let _guard = worker.signal.0.lock().unwrap_or_else(|e| e.into_inner());
+        worker.signal.1.notify_all();
+        Ok(())
+    }
     /// Cached, credential-free status; performs no I/O and never schedules polling.
     pub fn status(&self, _: RemoteStatusRequest) -> RemoteResult<RemoteStatusResult> {
         self.shared
@@ -322,7 +362,7 @@ impl RemoteDetector {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            queue: self.shared.store.snapshot(),
+            queue: self.shared.store.snapshot_for(DetectorOrigin::Remote),
             events: self
                 .shared
                 .events
@@ -337,7 +377,7 @@ impl RemoteDetector {
         *self.shared.events.lock().unwrap_or_else(|e| e.into_inner()) = self
             .shared
             .store
-            .recent()?
+            .recent_for(DetectorOrigin::Remote)?
             .into_iter()
             .map(RemoteEventSummary::from_file)
             .collect();
@@ -402,7 +442,7 @@ impl Shared {
                 status.emitted_in_current_round = emitted;
             },
         );
-        if let Ok(events) = self.store.recent() {
+        if let Ok(events) = self.store.recent_for(DetectorOrigin::Remote) {
             *self.events.lock().unwrap_or_else(|e| e.into_inner()) = events
                 .into_iter()
                 .map(RemoteEventSummary::from_file)

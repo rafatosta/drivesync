@@ -39,6 +39,46 @@ impl DiagnosticQueue for RemoteDetector {
         self.acknowledge(batch, EventDisposition::Processed)
     }
 }
+pub(super) fn queue_error(error: DetectorFailure) -> QueueFailure {
+    QueueFailure {
+        kind: error.queue.unwrap_or(QueueError::Internal),
+        retryable: error.retryable,
+    }
+}
+pub(super) fn local_error(error: DetectorFailure) -> LocalDetectorFailure {
+    LocalDetectorFailure {
+        kind: match error.source {
+            Some(DetectorSourceError::Local(kind)) => kind,
+            _ => LocalDetectorError::Internal,
+        },
+        message: error.to_string(),
+        retryable: error.retryable,
+        progress: None,
+    }
+}
+impl DiagnosticQueue for Detector {
+    fn refresh(&self) -> QueueResult<()> {
+        self.refresh_queue().map_err(queue_error)
+    }
+    fn delivery(&self) -> DeliveryState {
+        self.status(DetectorStatusRequest {})
+            .map(|s| s.status.delivery)
+            .unwrap_or(DeliveryState::Paused)
+    }
+    fn take(&self, request: TakeEventsRequest) -> QueueResult<FileBatch> {
+        self.take_events(request)
+            .map(|r| r.batch)
+            .map_err(queue_error)
+    }
+    fn confirm(&self, batch: &BatchId) -> QueueResult<u32> {
+        self.acknowledge(AcknowledgeEventsRequest {
+            batch_id: batch.clone(),
+            disposition: EventDisposition::Processed,
+        })
+        .map(|r| r.confirmed_count)
+        .map_err(queue_error)
+    }
+}
 pub(super) struct DiagnosticDelivery {
     signal: Arc<(Mutex<bool>, Condvar)>,
     worker: Option<JoinHandle<()>>,

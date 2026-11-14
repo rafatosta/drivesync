@@ -1,7 +1,7 @@
 //! Local and remote observation with durable, confirmable event queues.
 //!
-//! PersistentDetector and RemoteDetector provide scoped durable queues.
-//! The unified detector facade remains future work. Collector construction and collection
+//! Detector privately composes both producers with one durable queue and explicit leases.
+//! Earlier source-specific APIs remain available for compatibility. Collector construction and collection
 //! perform synchronous filesystem I/O and should run off the UI thread.
 //!
 //! ```
@@ -37,6 +37,16 @@
 //! }
 //! ```
 
+//! Unified producer types are Send + Sync and implementation ports remain private.
+//! ```
+//! use drivesync_engine::detectors::Detector;
+//! fn assert_send_sync<T: Send + Sync>() {}
+//! assert_send_sync::<Detector>();
+//! ```
+//! ```compile_fail,E0603
+//! use drivesync_engine::detectors::unified::interfaces::Source;
+//! ```
+
 mod local;
 
 pub use local::{
@@ -54,8 +64,8 @@ pub use local::{
 
 mod storage;
 pub use storage::{
-    BatchId, DeliveryState, EventDisposition, FileBatch, QueueError, QueueFailure, QueueResult,
-    QueueStats, TakeEventsRequest,
+    BatchId, DeliveryState, DetectorOrigin, EventDisposition, FileBatch, QueueError, QueueFailure,
+    QueueResult, QueueStats, TakeEventsRequest,
 };
 mod persistent;
 pub use persistent::{PersistentDetector, PersistentDetectorRequest};
@@ -68,3 +78,6 @@ pub use remote::{
     RemoteResult, RemoteStartRequest, RemoteStartResult, RemoteState, RemoteStatusRequest,
     RemoteStatusResult, RemoteStopRequest, RemoteStopResult,
 };
+
+mod unified;
+pub use unified::*;

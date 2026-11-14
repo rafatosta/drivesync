@@ -30,6 +30,22 @@ impl RemoteDetector {
     }
 }
 
+impl RemoteDetector {
+    pub(crate) fn with_store(
+        request: RemoteDetectorCreateRequest,
+        store: std::sync::Arc<super::storage::Store>,
+    ) -> RemoteResult<Self> {
+        runtime::validate(&request.scope, &request.settings)?;
+        let session = request
+            .connector
+            .remote_session_context(&request.scope.account_id)?;
+        let factory = implementation_for(&session.provider)?;
+        Self::from_store(request.settings, store, move |backend| {
+            factory(request.connector, session, request.scope, backend)
+        })
+    }
+}
+
 /// The only common-module registry that knows the concrete provider implementations.
 fn implementation_for(provider: &crate::ProviderId) -> RemoteResult<ObserverFactory> {
     match provider.0.as_str() {
@@ -40,3 +56,14 @@ fn implementation_for(provider: &crate::ProviderId) -> RemoteResult<ObserverFact
 
 #[cfg(test)]
 mod dispatch_tests;
+
+pub(crate) fn validate_configuration(
+    request: &RemoteDetectorCreateRequest,
+) -> RemoteResult<crate::ProviderId> {
+    runtime::validate(&request.scope, &request.settings)?;
+    let context = request
+        .connector
+        .remote_session_context(&request.scope.account_id)?;
+    implementation_for(&context.provider)?;
+    Ok(context.provider)
+}

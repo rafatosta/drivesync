@@ -229,3 +229,10 @@ Validação final desta publicação em org.gnome.Sdk//50 com rust-stable e CARG
 - `cargo test --offline --locked --workspace --doc`: 4 doctests PASS, incluindo duas recusas de compilação para os caminhos/hooks privados.
 
 Não houve teste de integração com GUI, conta Google, instalação Flatpak ou observação contínua. A publicação permite chamadas explícitas à coleta; não altera sua implementação física.
+
+
+## Fachada unificada implementada
+
+`engine/src/detectors/unified/tests.rs` testa o Detector real com origens falsas e SQLite real, sem Orquestrador: falha parcial, início de ambas, fila mista/FIFO/ack atômico, pausa com captura ativa, lease anterior à pausa, reentrega com payload completo, status sem bloqueio durante início, concorrência, avisos pós-commit e contadores iniciais. `engine/tests/detector.rs` é consumidor externo da API pública, com captura nativa real e Accounts sintético, incluindo retomada exata de uma ocorrência após matar o processo produtor. O teste do scheduler remoto distingue DrainInFlight de cancelamento imediato. Não usar a presença de um teste ambiental ignorado como evidência de execução.
+
+Validação final do fechamento no org.gnome.Sdk//50: 663 testes aprovados, 8 ignorados por dependências de ambiente, 6 doctests aprovados, fmt, Clippy com warnings negados e documentação privada gerada. O fixture gráfico isolado também passou (duas contas, pausa compartilhada e larguras adaptativas). Nenhum teste usou credenciais reais nesta etapa.

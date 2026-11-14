@@ -36,3 +36,8 @@ Executar os cenários de [TESTS.md](TESTS.md), incluindo eventos locais e remoto
 - A implementação é reexportada com nome público e métodos inerentes; a trait interna permanece para composição futura. Não duplicar DTOs ou reimplementar coleta no módulo pai.
 - Testes de consumidor externo devem importar somente detectors/models e exercitar a API pública; doctests compile_fail verificam os limites de visibilidade.
 - Esta publicação não autoriza implementar métodos provisórios da fachada unificada, modelos remotos ou fila. A fachada unificada continua pendente; LocalDetector::new/start/stop/status foram autorizados posteriormente e estão implementados.
+
+
+## Fechamento autorizado da fachada
+
+A solicitação posterior de finalizar o Detector autorizou a fachada unificada; as restrições históricas da publicação parcial não a bloqueiam. A API compilada está em `engine/src/detectors/unified/` e INTERFACES § 11. Preservar a fila física única, o início de ambas as origens, a pausa somente da entrega, a separação do Scanner e o contrato do especialista remoto. APIs anteriores são compatibilidade para filas antigas, não o caminho novo do Developer. Não apagar nem importar automaticamente filas legadas alterando IDs/SyncIds. Consultar CLOSURE.md para o namespace e os limites atuais.

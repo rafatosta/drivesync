@@ -173,9 +173,10 @@ impl GoogleRemoteDetector {
             } else {
                 ObservationCoverage::Partial
             },
-            scope: reference
-                .map(FileScope::Remote)
-                .unwrap_or(FileScope::WholeSync),
+            scope: FileScope::Remote(reference.unwrap_or_else(|| RemoteFileRef {
+                account_id: self.scope.account_id.clone(),
+                file_id: RemoteFileId(self.scope.remote_root_id.clone()),
+            })),
             data,
         };
         event.validate().map_err(|_| incomplete())?;

@@ -2,7 +2,7 @@
 
 ## 1. Contrato público e visibilidade
 
-**API disponível agora:** `drivesync_engine::detectors::LocalMetadataCollector`, com `new`, `scope` e `collect` da coleta local já implementada. Esta publicação parcial foi explicitamente solicitada; não implementa nem publica um Detector unificado provisório. Os exemplos de Detector/FileBatch abaixo continuam contrato futuro. A seção 8 descreve a superfície compilada.
+**API disponível agora:** `drivesync_engine::detectors::Detector` oferece a fachada unificada com captura Local/Remota, fila mista, controle de entrega, reobservação e status individual. As APIs anteriores continuam compatíveis com as filas já criadas. Os exemplos conceituais abaixo são complementados pela superfície compilada da seção 11 e pelo [fechamento da etapa](CLOSURE.md).
 
 `Detector` disponibiliza uma interface pública única para observar alterações, reservar eventos e confirmar sua entrega. As observações locais e remotas chegam individualmente e podem ser entregues em lotes mistos.
 
@@ -307,3 +307,14 @@ PersistentDetector::open(PersistentDetectorRequest { scope, settings, data_direc
 pause/resume retornam QueueResult<()> e persistem a política. take_events(TakeEventsRequest { max_events, lease_duration }) reserva um FileBatch com BatchId opaco e Vec<File> integral. acknowledge(&BatchId, EventDisposition) e release_events(&BatchId) devolvem quantidades, são transacionais e idempotentes para repetição equivalente. Pause barra claims novos, mas não impede ack/release de reservas anteriores. Esses métodos executam I/O e devem rodar fora da UI. queue_status e delivery são snapshots em memória; refresh_queue atualiza o cache via SQLite fora da UI.
 
 O codec, o banco, o caminho gerado e a fábrica continuam privados. Falhas de abertura/entrega usam QueueError sanitizado; falha ao persistir uma ocorrência não retorna aceite ao Local e preserva retry com o mesmo File. Ver Storage INTERFACES § 7 para limites, integridade, retenção e a lacuna explícita de backup Configuration.
+
+
+## 11. Fachada unificada compilada
+
+`Detector::new(DetectorCreateRequest)` retorna `DetectorCreateResult { detector, state }`. O request contém `connector: Engine`, `scope: DetectorScope { account_id, sync_id, local_root, remote_root_id }`, settings locais/remotos, diretório privado e `event_available_sink: Option<Arc<dyn EventAvailableSink>>`. Não exige objetos de Local/Remote/Storage. Construção faz I/O privado, sem HTTP; executar fora da thread gráfica.
+
+Os dez métodos da seção 4 estão implementados. `status()` retorna `DetectorStatus` com estado, entrega, `local`/`remote: DetectorSourceStatus` e `queue: QueueStats`. O status de cada origem conserva o DTO específico de atividade/rodada e `DetectorSourceError`, sem consultar o provedor. Os erros de fachada mantêm categoria, retryability e erro tipado de origem ou fila, sem mensagens externas.
+
+`take_events` retorna `TakeEventsResult { batch: FileBatch }`, com File integrais e limites opcionais de tempo observado; máximo compilado de 64 eventos e 8 MiB por lote, lease positivo de até uma hora. Ack/release usam os requests/resultados acima e permanecem funcionais durante pausa/parada para leases válidos. `refresh_queue`, `source_queue_status`, `recent_events` e `remote_diagnostics` dão suporte aos diagnósticos; somente getters de snapshot/cache são livres de I/O.
+
+Ver [CLOSURE.md](CLOSURE.md) para semântica dos modos de parada, reobservação, identidade nova da fila unificada, compatibilidade das filas anteriores e limites de aceite.

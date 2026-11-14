@@ -21,6 +21,7 @@ pub struct DetectorDiagnostics {
     pub account_id: AccountId,
     pub sync_id: SyncId,
     pub events_detected: u64,
+    pub initial_observations: u64,
     pub last_event_at: Option<Timestamp>,
     pub pending_events: Option<u64>,
     pub leased_events: Option<u64>,
@@ -53,6 +54,13 @@ impl History {
             account_id: self.account.clone(),
             sync_id: self.sync.clone(),
             events_detected: self.detected,
+            initial_observations: self
+                .events
+                .iter()
+                .filter(|event| {
+                    event.event.uncertainty == Some(ObservationUncertainty::CaptureStarted)
+                })
+                .count() as u64,
             last_event_at: self.last_time,
             pending_events: None,
             leased_events: None,
@@ -114,6 +122,22 @@ pub(super) struct ObservationOnly;
 impl LocalNotificationSink for ObservationOnly {
     fn notify(&self, _: File) -> LocalDetectorResult<()> {
         Ok(())
+    }
+}
+
+pub(super) fn summarize(file: File) -> DetectorEventSummary {
+    DetectorEventSummary {
+        id: file.id,
+        observed_at: file.observed_at,
+        event: file.event,
+        scope: file.scope,
+        entry_kind: match file.data {
+            Some(FileData::Local(local)) => match local.kind {
+                MetadataValue::Known(kind) => Some(kind),
+                _ => None,
+            },
+            _ => None,
+        },
     }
 }
 

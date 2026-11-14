@@ -1,9 +1,9 @@
-//! Minimal composition of the connection API and one local detector.
+//! Minimal connection and Detector composition for terminal developer diagnostics.
 //!
 //! This is not the full synchronization coordinator: no Inventory, Scanner or
-//! Analyzer is created. Local capture and optional remote capture have independent
-//! durable queues and explicit terminal diagnostic consumers. Source health remains
-//! separate; connection services are shared without exposing credentials.
+//! Analyzer is created. The current path consumes the unified Detector facade.
+//! Earlier source-specific constructors remain compatibility APIs for legacy queues.
+//! Source health stays separate; no diagnostic acknowledgement means synchronization.
 mod delivery;
 mod diagnostics;
 use crate::{detectors::*, Engine};
@@ -29,6 +29,10 @@ pub struct Orchestrator {
 enum Capture {
     Local(LocalDetector),
     Persistent(Arc<PersistentDetector>),
+    Unified {
+        detector: Arc<Detector>,
+        delivery: DeliveryState,
+    },
 }
 impl Orchestrator {
     /// Composes an existing connector and creates a stopped local detector.
@@ -114,9 +118,81 @@ impl Orchestrator {
             history,
         })
     }
+    /// Composes only the public unified Detector. The terminal consumer is diagnostic.
+    pub fn observe_detector(
+        request: DetectorCreateRequest,
+        delivery: DeliveryState,
+    ) -> DetectorResult<Self> {
+        let connector = request.connector.clone();
+        let local_scope = LocalDetectorScope {
+            account_id: request.scope.account_id.clone(),
+            sync_id: request.scope.sync_id.clone(),
+            local_root: request.scope.local_root.clone(),
+        };
+        let detector = Arc::new(Detector::new(request)?.detector);
+        let delivery = if detector.queue_is_new() {
+            delivery
+        } else {
+            detector.status(DetectorStatusRequest {})?.status.delivery
+        };
+        let delivery_worker = DiagnosticDelivery::new(detector.clone())?;
+        Ok(Self {
+            connector,
+            detector: Capture::Unified { detector, delivery },
+            delivery_worker: Some(delivery_worker),
+            remote: None,
+            remote_delivery_worker: None,
+            history: Arc::new(Mutex::new(History::new(&local_scope))),
+        })
+    }
+    /// Access to the composed public facade, without exposing its children.
+    pub fn detector(&self) -> Option<&Detector> {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            Some(detector.as_ref())
+        } else {
+            None
+        }
+    }
+    pub fn start_detector(&self, mode: DetectorStartMode) -> DetectorResult<DetectorStartResult> {
+        let Capture::Unified { detector, delivery } = &self.detector else {
+            return Err(DetectorFailure {
+                kind: DetectorError::InvalidState,
+                retryable: false,
+                source: None,
+                queue: None,
+            });
+        };
+        detector.start(DetectorStartRequest {
+            mode,
+            delivery: *delivery,
+        })
+    }
+    pub fn stop_detector(&self, mode: DetectorStopMode) -> DetectorResult<DetectorStopResult> {
+        self.detector()
+            .ok_or(DetectorFailure {
+                kind: DetectorError::InvalidState,
+                retryable: false,
+                source: None,
+                queue: None,
+            })?
+            .stop(DetectorStopRequest { mode })
+    }
+    pub fn detector_status(&self) -> Option<DetectorStatus> {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            detector
+                .status(DetectorStatusRequest {})
+                .ok()
+                .map(|result| result.status)
+        } else {
+            None
+        }
+    }
     /// Attaches a stopped remote producer for Developer diagnostics. No HTTP runs here.
     /// Queues stay separate by origin; this is not the full synchronization coordinator.
     pub fn attach_remote(&mut self, request: RemoteDetectorCreateRequest) -> RemoteResult<()> {
+        if matches!(self.detector, Capture::Unified { .. }) {
+            return Err(RemoteFailure::new(RemoteError::InvalidState));
+        }
         if self.remote.is_some() {
             return Err(RemoteFailure::new(RemoteError::InvalidState));
         }
@@ -142,15 +218,24 @@ impl Orchestrator {
         Ok(())
     }
     pub fn remote_diagnostics(&self) -> Option<RemoteDiagnostics> {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            return detector.remote_diagnostics();
+        }
         self.remote.as_ref().map(|remote| remote.diagnostics())
     }
     pub fn pause_remote_delivery(&self) -> QueueResult<()> {
+        if matches!(self.detector, Capture::Unified { .. }) {
+            return self.pause_delivery();
+        }
         self.remote
             .as_ref()
             .ok_or_else(|| QueueFailure::new(QueueError::InvalidRequest))?
             .pause()
     }
     pub fn resume_remote_delivery(&self) -> QueueResult<()> {
+        if matches!(self.detector, Capture::Unified { .. }) {
+            return self.resume_delivery();
+        }
         self.remote
             .as_ref()
             .ok_or_else(|| QueueFailure::new(QueueError::InvalidRequest))?
@@ -162,12 +247,27 @@ impl Orchestrator {
     }
     /// Pauses only new delivery reservations. Existing accepted events remain durable.
     pub fn pause_delivery(&self) -> QueueResult<()> {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            return detector
+                .pause(DetectorPauseRequest {})
+                .map(|_| ())
+                .map_err(delivery::queue_error);
+        }
         let Capture::Persistent(detector) = &self.detector else {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         };
         detector.pause()
     }
     pub fn resume_delivery(&self) -> QueueResult<()> {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            detector
+                .resume(DetectorResumeRequest {})
+                .map_err(delivery::queue_error)?;
+            if let Some(worker) = &self.delivery_worker {
+                worker.wake();
+            }
+            return Ok(());
+        }
         let Capture::Persistent(detector) = &self.detector else {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         };
@@ -182,6 +282,28 @@ impl Orchestrator {
     /// current occurrence do not inflate the count. At most 100 events survive;
     /// Ephemeral sessions have no queue counts; persistent sessions use cached SQLite counts.
     pub fn diagnostics(&self) -> DetectorDiagnostics {
+        if let Capture::Unified { detector, .. } = &self.detector {
+            let scope = self.history.lock().unwrap_or_else(|e| e.into_inner());
+            let queue = detector.source_queue_status(DetectorOrigin::Local);
+            let events: Vec<_> = detector
+                .recent_events(DetectorOrigin::Local)
+                .into_iter()
+                .map(diagnostics::summarize)
+                .collect();
+            return DetectorDiagnostics {
+                account_id: scope.account.clone(),
+                sync_id: scope.sync.clone(),
+                events_detected: queue.detected,
+                initial_observations: queue.initial_observations,
+                last_event_at: events.last().map(|event| event.observed_at),
+                pending_events: Some(queue.pending + queue.leased),
+                leased_events: Some(queue.leased),
+                confirmed_events: Some(queue.confirmed),
+                delivery: Some(queue.delivery),
+                queue_error: queue.last_error,
+                events,
+            };
+        }
         let mut snapshot = self
             .history
             .lock()
@@ -190,6 +312,7 @@ impl Orchestrator {
         if let Capture::Persistent(detector) = &self.detector {
             let queue = detector.queue_status();
             snapshot.events_detected = queue.detected;
+            snapshot.initial_observations = queue.initial_observations;
             snapshot.pending_events = Some(queue.pending.saturating_add(queue.leased));
             snapshot.leased_events = Some(queue.leased);
             snapshot.confirmed_events = Some(queue.confirmed);
@@ -219,6 +342,25 @@ impl Orchestrator {
         match &self.detector {
             Capture::Local(d) => d.start(request),
             Capture::Persistent(d) => d.start(request),
+            Capture::Unified { detector, delivery } => detector
+                .start(DetectorStartRequest {
+                    mode: if matches!(request.mode, LocalStartMode::Initial) {
+                        DetectorStartMode::Initial
+                    } else {
+                        DetectorStartMode::Restart
+                    },
+                    delivery: *delivery,
+                })
+                .map(|_| LocalStartResult {
+                    state: detector
+                        .status(DetectorStatusRequest {})
+                        .ok()
+                        .and_then(|s| s.status.local.local)
+                        .map(|s| s.state)
+                        .unwrap_or(LocalDetectorState::Failed),
+                    scheduled_scan: true,
+                })
+                .map_err(delivery::local_error),
         }
     }
 
@@ -232,6 +374,15 @@ impl Orchestrator {
         match &self.detector {
             Capture::Local(d) => d.stop(request),
             Capture::Persistent(d) => d.stop(request),
+            Capture::Unified { detector, .. } => detector
+                .stop(DetectorStopRequest {
+                    mode: DetectorStopMode::StopNow,
+                })
+                .map(|result| LocalStopResult {
+                    state: LocalDetectorState::Stopped,
+                    in_flight: result.in_flight,
+                })
+                .map_err(delivery::local_error),
         }
     }
 
@@ -241,6 +392,20 @@ impl Orchestrator {
         match &self.detector {
             Capture::Local(d) => d.status(request),
             Capture::Persistent(d) => d.status(request),
+            Capture::Unified { detector, .. } => detector
+                .status(DetectorStatusRequest {})
+                .map_err(delivery::local_error)?
+                .status
+                .local
+                .local
+                .ok_or_else(|| {
+                    delivery::local_error(DetectorFailure {
+                        kind: DetectorError::Internal,
+                        retryable: false,
+                        source: None,
+                        queue: None,
+                    })
+                }),
         }
     }
 }

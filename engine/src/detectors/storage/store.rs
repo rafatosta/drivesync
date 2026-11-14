@@ -27,6 +27,7 @@ struct Identity<'a> {
     local: Option<&'a Path>,
     provider: Option<&'a str>,
 }
+type ObservationCallback = Arc<dyn Fn(&File, DetectorOrigin) + Send + Sync>;
 /// Retains private directory descriptors for the lifetime of SQLite's file names.
 pub(crate) struct Store {
     connection: Mutex<Connection>,
@@ -35,9 +36,12 @@ pub(crate) struct Store {
     sync: String,
     account: String,
     remote: bool,
+    local: bool,
     provider: Option<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     cached: Mutex<QueueStats>,
+    cached_sources: Mutex<[QueueStats; 2]>,
+    notification: Mutex<Option<ObservationCallback>>,
 }
 fn sql(error: rusqlite::Error) -> QueueFailure {
     use rusqlite::ErrorCode::*;
@@ -145,6 +149,31 @@ impl Store {
             Arc::new(clock),
         )
     }
+    pub(crate) fn open_unified(
+        base: &Path,
+        scope: &LocalDetectorScope,
+        provider: &str,
+        remote_root: &str,
+    ) -> QueueResult<Self> {
+        let root = serde_json::to_vec(&(
+            "unified-v1",
+            scope.local_root.as_os_str().as_bytes(),
+            provider,
+            remote_root,
+        ))
+        .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        Self::open_identity(
+            base,
+            Identity {
+                account: &scope.account_id.0,
+                sync: &scope.sync_id.0,
+                root: &root,
+                local: Some(&scope.local_root),
+                provider: Some(provider),
+            },
+            Arc::new(clock),
+        )
+    }
     fn open_identity(
         base: &Path,
         scope: Identity<'_>,
@@ -221,6 +250,31 @@ impl Store {
             .map_err(sql)?;
         }
         verify(&tx, &scope)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1))); CREATE INDEX IF NOT EXISTS observations_origin ON observations(origin)").map_err(sql)?;
+        {
+            let mut query = tx
+                .prepare(
+                    "SELECT id,payload FROM events WHERE id NOT IN (SELECT id FROM observations)",
+                )
+                .map_err(sql)?;
+            let missing = query
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?;
+            for (id, payload) in missing {
+                let file = codec::decode(&payload)?;
+                let initial = file.event.uncertainty
+                    == Some(crate::models::ObservationUncertainty::CaptureStarted);
+                tx.execute(
+                    "INSERT INTO observations VALUES(?1,?2,?3)",
+                    params![id, i32::from(scope.local.is_none()), initial],
+                )
+                .map_err(sql)?;
+            }
+        }
         reap(&tx, clock())?;
         tx.commit().map_err(sql)?;
         // SAFETY: release the initialization lock before descriptor destruction.
@@ -234,10 +288,13 @@ impl Store {
             _directory: directory,
             sync: scope.sync.to_owned(),
             account: scope.account.to_owned(),
-            remote: scope.local.is_none(),
+            remote: scope.provider.is_some(),
+            local: scope.local.is_some(),
             provider: scope.provider.map(str::to_owned),
             clock,
             cached: Mutex::new(QueueStats::default()),
+            cached_sources: Mutex::new([QueueStats::default(), QueueStats::default()]),
+            notification: Mutex::new(None),
         };
         store.refresh()?;
         Ok(store)
@@ -273,6 +330,13 @@ impl Store {
                         stats.last_error = cached.last_error;
                     }
                     *cached = stats;
+                    *self
+                        .cached_sources
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = [
+                        stats_for(&connection, now, Some(0))?,
+                        stats_for(&connection, now, Some(1))?,
+                    ];
                 }
                 Err(error) => {
                     cached.last_error = Some(error.kind);
@@ -282,6 +346,25 @@ impl Store {
             Err(error) => cached.last_error = Some(error.kind),
         }
         result
+    }
+    pub(crate) fn set_notification(&self, callback: ObservationCallback) {
+        *self.notification.lock().unwrap_or_else(|e| e.into_inner()) = Some(callback);
+    }
+    pub(crate) fn snapshot_for(&self, origin: DetectorOrigin) -> QueueStats {
+        let mut stats = self
+            .cached_sources
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())[usize::from(origin == DetectorOrigin::Remote)]
+        .clone();
+        stats.last_error = self.snapshot().last_error;
+        stats
+    }
+    pub(crate) fn recent_for(&self, origin: DetectorOrigin) -> QueueResult<Vec<File>> {
+        self.run(false, |connection, _| {
+            let mut query = connection.prepare("SELECT e.id,e.payload,e.digest FROM events e JOIN observations o ON o.id=e.id WHERE o.origin=?1 ORDER BY e.seq DESC LIMIT 100").map_err(sql)?;
+            let rows = query.query_map([if origin == DetectorOrigin::Local {0} else {1}], |row| Ok((row.get::<_, String>(0)?,row.get::<_, Vec<u8>>(1)?,row.get::<_, Vec<u8>>(2)?))).map_err(sql)?;
+            let mut files = Vec::new(); for row in rows { let (id,payload,digest) = row.map_err(sql)?; files.push(self.decode(id,&payload,digest)?); } files.reverse(); Ok(files)
+        })
     }
     pub(crate) fn snapshot(&self) -> QueueStats {
         self.cached
@@ -293,12 +376,44 @@ impl Store {
         self.run(false, |_, _| Ok(()))
     }
     pub(crate) fn enqueue(&self, file: &File) -> QueueResult<bool> {
+        self.enqueue_from(
+            file,
+            if self.remote && !self.local {
+                DetectorOrigin::Remote
+            } else {
+                DetectorOrigin::Local
+            },
+        )
+    }
+    pub(crate) fn enqueue_from(&self, file: &File, origin: DetectorOrigin) -> QueueResult<bool> {
+        if matches!(
+            (&file.scope, &file.data, origin),
+            (
+                crate::models::FileScope::Local(_),
+                _,
+                DetectorOrigin::Remote
+            ) | (
+                _,
+                Some(crate::models::FileData::Local(_)),
+                DetectorOrigin::Remote
+            ) | (
+                crate::models::FileScope::Remote(_),
+                _,
+                DetectorOrigin::Local
+            ) | (
+                _,
+                Some(crate::models::FileData::Remote(_)),
+                DetectorOrigin::Local
+            )
+        ) {
+            return Err(QueueFailure::new(QueueError::IdentityMismatch));
+        }
         if !self.matches_scope(file) {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
         let payload = codec::encode(file)?;
         let digest = Sha256::digest(&payload).to_vec();
-        self.run(true, |connection, _| {
+        let inserted = self.run(true, |connection, _| {
             let tx = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sql)?;
@@ -328,9 +443,36 @@ impl Store {
                 params![file.id.0, payload, digest],
             )
             .map_err(sql)?;
+            tx.execute(
+                "INSERT INTO observations VALUES(?1,?2,?3)",
+                params![
+                    file.id.0,
+                    if origin == DetectorOrigin::Local {
+                        0
+                    } else {
+                        1
+                    },
+                    file.event.uncertainty
+                        == Some(crate::models::ObservationUncertainty::CaptureStarted)
+                ],
+            )
+            .map_err(sql)?;
             tx.commit().map_err(sql)?;
             Ok(true)
-        })
+        })?;
+        if inserted {
+            let callback = self
+                .notification
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(callback) = callback {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    callback(file, origin)
+                }));
+            }
+        }
+        Ok(inserted)
     }
     /// Stores observation progress independently of delivery acknowledgements.
     /// The producer owns serialization; compare-and-swap rejects concurrent producers.
@@ -403,10 +545,7 @@ impl Store {
                 .map_err(sql)?;
             if busy {
                 tx.commit().map_err(sql)?;
-                return Ok(FileBatch {
-                    batch_id: None,
-                    files: vec![],
-                });
+                return Ok(FileBatch::new(None, vec![]));
             }
             let files = {
                 let mut statement = tx
@@ -433,10 +572,7 @@ impl Store {
             };
             if files.is_empty() {
                 tx.commit().map_err(sql)?;
-                return Ok(FileBatch {
-                    batch_id: None,
-                    files,
-                });
+                return Ok(FileBatch::new(None, files));
             }
             let id = token()?;
             tx.execute(
@@ -452,10 +588,7 @@ impl Store {
                 .map_err(sql)?;
             }
             tx.commit().map_err(sql)?;
-            Ok(FileBatch {
-                batch_id: Some(BatchId(id)),
-                files,
-            })
+            Ok(FileBatch::new(Some(BatchId(id)), files))
         })
     }
     pub(crate) fn acknowledge(
@@ -558,7 +691,7 @@ impl Store {
                         }
                 }
                 (FileScope::WholeSync, None) => true,
-                (FileScope::Local(_), _) => !self.remote,
+                (FileScope::Local(_), _) => self.local,
                 _ => false,
             }
     }
@@ -593,10 +726,16 @@ impl Store {
     }
 }
 fn stats(connection: &Connection, now: i64) -> QueueResult<QueueStats> {
-    let enabled: bool = connection
+    stats_for(connection, now, None)
+}
+fn stats_for(connection: &Connection, now: i64, origin: Option<i32>) -> QueueResult<QueueStats> {
+    let enabled: i64 = connection
         .query_row("SELECT delivery FROM control WHERE id=1", [], |r| r.get(0))
         .map_err(sql)?;
-    connection.query_row("SELECT (SELECT count(*) FROM events WHERE state=0) + (SELECT count(*) FROM events e JOIN leases l ON e.lease=l.id WHERE e.state=1 AND l.expires<=?1), (SELECT count(*) FROM events e JOIN leases l ON e.lease=l.id WHERE e.state=1 AND l.expires>?1), (SELECT count(*) FROM events WHERE state=2), (SELECT count(*) FROM events)", [now], |r| Ok(QueueStats { pending: r.get(0)?, leased: r.get(1)?, confirmed: r.get(2)?, detected: r.get(3)?, last_error: None, delivery: if enabled { DeliveryState::Enabled } else { DeliveryState::Paused } })).map_err(sql)
+    connection.query_row("SELECT COALESCE(SUM(e.state=0 OR (e.state=1 AND l.expires<=?1)),0), COALESCE(SUM(e.state=1 AND l.expires>?1),0), COALESCE(SUM(e.state=2),0), COUNT(*), COALESCE(SUM(o.initial),0) FROM events e JOIN observations o ON o.id=e.id LEFT JOIN leases l ON e.lease=l.id WHERE ?2 IS NULL OR o.origin=?2", params![now, origin], |r| {
+        let detected: u64 = r.get(3)?; let initial: u64 = r.get(4)?;
+        Ok(QueueStats { pending: r.get(0)?, leased: r.get(1)?, confirmed: r.get(2)?, detected, initial_observations: initial, changes_detected: detected.saturating_sub(initial), last_error: None, delivery: if enabled == 1 { DeliveryState::Enabled } else { DeliveryState::Paused } })
+    }).map_err(sql)
 }
 
 fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {

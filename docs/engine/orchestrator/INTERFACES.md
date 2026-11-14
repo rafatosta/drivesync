@@ -189,3 +189,10 @@ DetectorEventSummary.entry_kind: Option<LocalEntryKind> preserva o tipo conhecid
 observe_persistent(connector, scope, settings, data_directory, delivery) compõe PersistentDetector. O argumento delivery vale na criação de fila nova; reabrir respeita a política armazenada, inclusive Paused. Recupera os últimos 100 File para o histórico antes de iniciar a captura. pause_delivery/resume_delivery persistem a política sem parar o watcher.
 
 O worker terminal diagnóstico reserva/valida/confirma lotes; isso permite testar a entrega, não substitui ingestão no Inventory nem é sucesso de sincronização. O modo PersistentDetector público, por si só, não consome nem confirma eventos automaticamente. Diagnósticos expõem pendentes+reservados, reservados separadamente, confirmados, estado de entrega e erro da fila por conta/raiz. A interface lê só snapshots; SQLite e o consumidor trabalham fora da thread gráfica.
+
+
+## Caminho compilado após fechamento do Detector
+
+`Orchestrator::observe_detector(DetectorCreateRequest, DeliveryState)` compõe a fachada unificada, mantendo o consumidor terminal explicitamente diagnóstico. `start_detector(DetectorStartMode)`, `stop_detector(DetectorStopMode)`, `detector_status()` e `detector()` trabalham pela API pública do Detector, sem acessar filhos. `connector()` mantém o acesso à conexão. O Developer usa esse caminho; os construtores antigos permanecem compatibilidade para filas separadas anteriores.
+
+A coordenação completa Detector/Scanner/Inventário/Analisador ainda não é implementada nem validada por esta composição. A integração futura poderá consumir a fila pública sem o consumidor terminal diagnóstico.

@@ -65,6 +65,13 @@ impl Changes {
             retired: HashMap::new(),
         }
     }
+    /// Explicit observation never overwrites or reclassifies an existing native occurrence.
+    pub fn request_recheck(&mut self, path: LocalRelativePath) {
+        self.ready.push_back((
+            path,
+            Change::uncertain(ObservationUncertainty::CoverageIncomplete),
+        ));
+    }
     pub fn deadline(&self) -> Option<Instant> {
         self.moves.values().map(|entry| entry.expires).min()
     }

@@ -23,6 +23,7 @@ struct Shared {
     status: Mutex<LocalStatusResult>,
     generation: AtomicU64,
     active: Mutex<Option<(u64, LocalCancellation, Arc<Wake>)>>,
+    requested: Mutex<Vec<Option<LocalRelativePath>>>,
 }
 impl Shared {
     fn change(&self, generation: u64, edit: impl FnOnce(&mut LocalStatusResult)) {
@@ -87,11 +88,47 @@ impl LocalDetector {
                     status: Mutex::new(status),
                     generation: AtomicU64::new(0),
                     active: Mutex::new(None),
+                    requested: Mutex::new(Vec::new()),
                 }),
                 control: Mutex::new(None),
                 root: Arc::new(Mutex::new(None)),
             },
         })
+    }
+    pub(crate) fn request_observation(
+        &self,
+        paths: Vec<Option<LocalRelativePath>>,
+    ) -> LocalDetectorResult<()> {
+        if !matches!(
+            self.status(LocalStatusRequest {})?.state,
+            LocalDetectorState::Starting
+                | LocalDetectorState::Running
+                | LocalDetectorState::Degraded
+        ) {
+            return Err(LocalDetectorFailure::new(LocalDetectorError::InvalidState));
+        }
+        let active = self
+            .shared
+            .active
+            .lock()
+            .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::Internal))?;
+        let Some((_, cancel, wake)) = active.as_ref() else {
+            return Err(LocalDetectorFailure::new(LocalDetectorError::InvalidState));
+        };
+        cancel.check()?;
+        let mut queued = self
+            .shared
+            .requested
+            .lock()
+            .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::Internal))?;
+        if queued.len().saturating_add(paths.len())
+            > self.request.settings.max_pending_paths as usize
+        {
+            return Err(LocalDetectorFailure::new(LocalDetectorError::ResourceLimit));
+        }
+        queued.extend(paths);
+        wake.signal();
+        Ok(())
     }
     /// Installs root capture and starts asynchronous coverage verification and event production.
     /// Repeated starts while operational do not create a second worker. Physical failures
@@ -485,6 +522,24 @@ fn run(
     let mut retry_delay = Duration::from_millis(250);
     loop {
         cancel.check()?;
+        let requested = std::mem::take(
+            &mut *shared
+                .requested
+                .lock()
+                .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::Internal))?,
+        );
+        if !requested.is_empty() {
+            for path in requested {
+                if let Some(path) = path {
+                    changes.request_recheck(path);
+                } else {
+                    coverage_error = watches.discover(&cancel, Limits::default()).err();
+                    changes.replace_known(watches.entries.clone(), coverage_error.is_none());
+                    recheck = Some(ObservationUncertainty::CoverageIncomplete);
+                }
+            }
+            deadline = Some(Instant::now());
+        }
         changes.expire(Instant::now());
         if changes.has_pending() && deadline.is_none() {
             deadline = Some(Instant::now());
