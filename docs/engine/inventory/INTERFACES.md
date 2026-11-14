@@ -841,3 +841,14 @@ continuam contratos-alvo. Não existem stubs de itens ou operações.
 A regra de metadados permanece aguardando escolha sobre valor conhecido versus
 condição da leitura recente; nenhum esquema de metadados foi criado.
 Consulte IMPLEMENTATION.md para testes e limites efetivamente verificados.
+
+## Observações compiladas — decisão de retenção
+
+O usuário aprovou manter último valor conhecido e condição recente separadamente.
+SyncItem passa a expor local_latest/remote_latest, além das visões local/remote;
+local_file_id e remote_ref representam vínculos mesmo sem metadados. O esquema 2
+armazena cabeçalhos e relações indexados e uma linha por atributo com known/latest.
+ProviderFileData segue somente o perfil Google previamente selecionado. Ver
+IMPLEMENTATION.md para seleção, coerência dos grupos e política de replay.
+Estão implementados get_item/list_items, record_local/record_remote, link_item e
+update_item_status. Baseline, fila de operações e atividades seguem na próxima unidade.

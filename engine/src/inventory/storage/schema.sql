@@ -1,0 +1,11 @@
+CREATE TABLE sync_info(id INTEGER PRIMARY KEY CHECK(id=1),sync TEXT NOT NULL,account TEXT NOT NULL,remote_root TEXT NOT NULL,local_root BLOB NOT NULL,generation INTEGER NOT NULL CHECK(generation>0),initial_complete INTEGER NOT NULL CHECK(initial_complete IN(0,1)));
+CREATE TABLE items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,local_presence TEXT NOT NULL,remote_presence TEXT NOT NULL,status TEXT NOT NULL,conflict_reason TEXT,revision INTEGER NOT NULL CHECK(revision>0),last_checked INTEGER,last_synced INTEGER,local_id TEXT UNIQUE,remote_account TEXT,remote_id TEXT,UNIQUE(remote_account,remote_id),CHECK((remote_account IS NULL)=(remote_id IS NULL)));
+CREATE INDEX items_status ON items(status,seq);
+CREATE TABLE local_files(item TEXT PRIMARY KEY REFERENCES items(id),path BLOB NOT NULL UNIQUE,parent_path BLOB NOT NULL);
+CREATE INDEX local_parent ON local_files(parent_path,item);
+CREATE TABLE remote_files(item TEXT PRIMARY KEY REFERENCES items(id),provider TEXT NOT NULL);
+CREATE TABLE remote_parents(item TEXT NOT NULL REFERENCES items(id),account TEXT NOT NULL,parent TEXT NOT NULL,PRIMARY KEY(item,parent));
+CREATE INDEX remote_parent ON remote_parents(account,parent,item);
+CREATE TABLE metadata_fields(item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),field TEXT NOT NULL,latest TEXT NOT NULL,known TEXT,PRIMARY KEY(item,side,field));
+CREATE TABLE receipts(event TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),digest BLOB NOT NULL,proof TEXT NOT NULL);
+PRAGMA user_version=2;

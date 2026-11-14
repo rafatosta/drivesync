@@ -27,10 +27,10 @@ pub(super) fn sql(error: rusqlite::Error) -> InventoryFailure {
         _ => InventoryError::TransactionFailed,
     })
 }
-const SCHEMA: &str = "
-CREATE TABLE sync_info(id INTEGER PRIMARY KEY CHECK(id=1),sync TEXT NOT NULL,account TEXT NOT NULL,remote_root TEXT NOT NULL,local_root BLOB NOT NULL,generation INTEGER NOT NULL CHECK(generation>0),initial_complete INTEGER NOT NULL CHECK(initial_complete IN(0,1)));
-PRAGMA user_version=1;
-";
+const SCHEMA: &str = include_str!("schema.sql");
+mod items;
+mod metadata;
+mod pagination;
 impl InventoryManager {
     /// Opens the private database, rejecting incompatible identity/schema without replacement.
     /// Creation is explicit and requires an existing root without user entries.
@@ -218,7 +218,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 1 {
+    if version != 2 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

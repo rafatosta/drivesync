@@ -77,8 +77,14 @@ pub enum FieldUpdate<T> {
 pub struct SyncItem {
     pub id: SyncItemId,
     pub kind: ItemKind,
+    pub local_file_id: Option<LocalFileId>,
+    pub remote_ref: Option<RemoteFileRef>,
     pub local: Option<LocalFile>,
     pub remote: Option<RemoteFile>,
+    /// Most recent local collection, including failures and uncollected fields.
+    pub local_latest: Option<LocalFile>,
+    /// Most recent remote collection, distinct from retained known values.
+    pub remote_latest: Option<RemoteFile>,
     pub baseline: Option<SyncBaseline>,
     pub local_presence: PresenceState,
     pub remote_presence: PresenceState,

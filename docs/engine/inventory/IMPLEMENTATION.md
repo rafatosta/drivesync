@@ -23,16 +23,37 @@ Não existe ainda mecanismo comum de backup/restauração em Configuration. A ba
 atual falha explicitamente e preserva o banco, sem simular Restored/Rebuilt.
 A implementação não abre bancos de contas reais nem se integra à GUI nesta etapa.
 
-## Regra de metadados aguardando definição
+## Itens e metadados
 
-O contrato metadata/INTERFACES.md deixa em aberto como manter o último valor
-conhecido e a condição da coleta recente. A pergunta foi encaminhada ao usuário.
-O esquema dos metadados e record_local/record_remote dependem dessa decisão;
-nenhum codec ou atualização parcial deve ser escolhido silenciosamente.
+A decisão do usuário mantém último valor conhecido e condição recente em campos
+separados. Identidades, caminhos Unix, relações de pais, presença, status e
+revisão são relacionais/indexados. metadata_fields tem uma linha por atributo,
+com latest e known separados; não há SyncItem/LocalFile/RemoteFile inteiro em
+um blob. O JSON de um atributo individual preserva u64, estados de coleta e
+valores compostos sem inventar um tipo SQL incapaz de representá-los.
 
-Os tipos de requisição seguem o contrato documental. Métodos de itens, baseline,
-operações e atividades serão acrescentados por unidades funcionais, com SQLite
-real e transações, sem stubs nem implementação do Analisador/Operations.
+SyncItem.local/remote oferecem a visão conhecida; local_latest/remote_latest
+expõem a coleta mais recente. NotApplicable é uma condição atual efetiva, não
+apaga o valor conhecido histórico. Se a combinação de tipo/modo/alvo local de
+coletas diferentes for incoerente, esse grupo usa a observação recente em vez
+de devolver um LocalFile inválido; os valores conhecidos continuam no banco.
+Referências lógicas ficam disponíveis mesmo quando não há metadados associados.
+
+record_local/record_remote validam origem, conta, escopo, presença e revisão.
+Uma ocorrência repetida com os mesmos dados/prova é idempotente antes do teste
+de revisão; payload ou associação divergentes falham. Ausência confirmada exige
+prova de varredura/listagem completa e identificada, fornecida pelo chamador;
+Inventory não gera essa prova nem infere exclusão. Observações não avançam baseline.
+
+Paginação usa chave crescente e limite de inserção da primeira página, com
+cursor vinculado a identidade/filtro/geração; alterações de status continuam
+sendo lidas como estado atual, sem prometer snapshot histórico entre chamadas.
+link_item é explícito e transacional; trocar referência remota limpa somente a
+projeção observada daquele lado para evitar atribuir metadados a outro recurso.
+
+ProviderFileData aceito: perfil Google já selecionado, formato
+google.drive.detector-file v1, allowlist e 64 KiB. Nenhum catálogo extra, ACL,
+xattr, segredo ou dado bruto do Provider é acrescentado ao Inventory.
 
 ## Validação da fundação em 14/11/2026
 
