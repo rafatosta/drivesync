@@ -497,3 +497,27 @@ fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_check
     assert!(state.progress.scanned.is_empty());
     assert!(state.pending.is_none());
 }
+
+#[test]
+fn incompatible_checkpoint_versions_and_old_catalog_fail_without_mutation_or_network() {
+    let mut payloads = Vec::new();
+    for version in [0, 1, 3, 900] {
+        let mut state = State::fresh().unwrap();
+        state.version = version;
+        payloads.push(serde_json::to_vec(&state).unwrap());
+    }
+    let mut old_catalog = serde_json::to_value(State::fresh().unwrap()).unwrap();
+    old_catalog["progress"]["known"] = serde_json::json!({});
+    payloads.push(serde_json::to_vec(&old_catalog).unwrap());
+    for original in payloads {
+        let (source, api, sink) = fixture(vec![]);
+        *sink.progress.lock().unwrap() = Some(original.clone());
+        assert_eq!(
+            source.validate_checkpoint().unwrap_err().kind,
+            RemoteError::CheckpointUnavailable
+        );
+        assert_eq!(sink.load().unwrap(), Some(original));
+        assert!(api.calls.lock().unwrap().is_empty());
+        assert!(sink.files.lock().unwrap().is_empty());
+    }
+}

@@ -58,3 +58,16 @@ notificações. Metadados vêm do coletor sem inspeção dos seus atributos. Avi
 operacionais permanecem; classificação e tratamento pertencem ao futuro
 Analisador/Inventory. O codec atual é File v3, com SQLite v4; bancos anteriores
 falham explicitamente, sem migração nem exclusão automática.
+
+## Auditoria de ausência de retrocompatibilidade
+
+A verificação posterior confirmou um único esquema SQLite aceito (4), um único
+codec File (3) e um único checkpoint Google (2). Não há migração, importação,
+backfill, leitura dupla ou conversor para formatos anteriores. Os números de
+versão identificam e rejeitam formatos incompatíveis; não implicam suporte legado.
+
+Os testes rejeitam esquemas 0/1/2/3/900 preservando o arquivo byte a byte, codecs
+0/1/2/900 e checkpoints 0/1/3/900. Um checkpoint contendo o catálogo antigo known
+também é recusado sem mutação ou chamada ao Provider. Reabertura e replay no
+formato atual continuam sendo recuperação de falha, não retrocompatibilidade.
+Nenhum banco do usuário foi removido ou convertido durante a auditoria.

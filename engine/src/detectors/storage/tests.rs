@@ -306,7 +306,7 @@ fn private_paths_identity_and_rollback_are_enforced() {
 }
 
 #[test]
-fn codec_rejects_unvalidated_paths_unknown_fields_and_future_versions() {
+fn codec_rejects_unvalidated_paths_unknown_fields_and_incompatible_versions() {
     let tree = Tree::new();
     let file = tree.event("event");
     let bytes = codec::encode(&file).unwrap();
@@ -326,14 +326,17 @@ fn codec_rejects_unvalidated_paths_unknown_fields_and_future_versions() {
             .kind,
         QueueError::Corrupt
     );
-    let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    wire["version"] = serde_json::json!(900);
-    assert_eq!(
-        codec::decode(&serde_json::to_vec(&wire).unwrap())
-            .unwrap_err()
-            .kind,
-        QueueError::SchemaUnsupported
-    );
+    for version in [0, 1, 2, 900] {
+        let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        wire["version"] = serde_json::json!(version);
+        assert_eq!(
+            codec::decode(&serde_json::to_vec(&wire).unwrap())
+                .unwrap_err()
+                .kind,
+            QueueError::SchemaUnsupported,
+            "incompatible codec version {version} must not be adapted"
+        );
+    }
 }
 
 #[test]
@@ -459,22 +462,28 @@ fn reserved_state_never_follows_symlinks_or_creates_a_missing_user_root() {
 
 #[test]
 fn reserved_database_rejects_old_schema_without_migration() {
-    let tree = Tree::new();
-    drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
-    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
-    let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 3).unwrap();
-    db.execute_batch("DROP TABLE observations;").unwrap();
-    drop(db);
-    let before = fs::read(&path).unwrap();
-    assert_eq!(
-        Store::open_unified(&tree.scope(), "google", "root")
-            .err()
-            .unwrap()
-            .kind,
-        QueueError::SchemaUnsupported
-    );
-    assert_eq!(fs::read(path).unwrap(), before);
+    for version in [0, 1, 2, 3, 900] {
+        let tree = Tree::new();
+        drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
+        let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        drop(db);
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            Store::open_unified(&tree.scope(), "google", "root")
+                .err()
+                .unwrap()
+                .kind,
+            QueueError::SchemaUnsupported,
+            "incompatible schema {version} must not be migrated"
+        );
+        assert_eq!(
+            fs::read(path).unwrap(),
+            before,
+            "rejection must preserve the database"
+        );
+    }
 }
 
 #[test]
