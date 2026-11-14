@@ -49,6 +49,19 @@ fn directory(path: &Path) -> InventoryResult<File> {
     Ok(current)
 }
 pub(super) fn open(request: &OpenInventoryRequest) -> InventoryResult<(File, File, bool)> {
+    open_with_access(request, false)
+}
+/// Pins and validates an existing database without creating files or requiring write access.
+pub(super) fn open_readonly(request: &OpenInventoryRequest) -> InventoryResult<(File, File, bool)> {
+    if request.create_if_missing {
+        return Err(failure(InventoryError::InvalidArgument));
+    }
+    open_with_access(request, true)
+}
+fn open_with_access(
+    request: &OpenInventoryRequest,
+    readonly: bool,
+) -> InventoryResult<(File, File, bool)> {
     let root = directory(&request.local_root)?;
     let pinned = format!("/proc/self/fd/{}", root.as_raw_fd());
     let reserved = Path::new(&pinned).join(".drivesync");
@@ -97,7 +110,7 @@ pub(super) fn open(request: &OpenInventoryRequest) -> InventoryResult<(File, Fil
     let open_existing = || {
         OpenOptions::new()
             .read(true)
-            .write(true)
+            .write(!readonly)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
             .open(&path)
     };
@@ -128,7 +141,17 @@ pub(super) fn open(request: &OpenInventoryRequest) -> InventoryResult<(File, Fil
         return Err(failure(InventoryError::PermissionDenied));
     }
     // SAFETY: flock uses this owned regular-file descriptor and no pointers.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+    if unsafe {
+        libc::flock(
+            file.as_raw_fd(),
+            (if readonly {
+                libc::LOCK_SH
+            } else {
+                libc::LOCK_EX
+            }) | libc::LOCK_NB,
+        )
+    } != 0
+    {
         return Err(io(std::io::Error::last_os_error()));
     }
     Ok((dir, file, created))

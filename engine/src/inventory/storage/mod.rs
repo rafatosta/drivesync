@@ -4,6 +4,7 @@ use crate::models::*;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::{fs::File as FsFile, sync::Mutex};
 mod filesystem;
+pub mod inspection;
 
 /// Persistent state access for one synchronization; owns no observer or transfer worker.
 pub struct InventoryManager {

@@ -121,3 +121,21 @@ caminhos legados e dependências adicionais: nenhum remanescente identificado.
 Não foram introduzidas dependências. Branch feat/inventory; commits locais,
 sem publicação remota. Integração com Analisador/GUI, testes com contas reais,
 benchmark de 80 mil itens e backup/restauração continuam fora desta entrega.
+
+## Inspeção de tabelas para desenvolvimento
+
+`inventory::inspection::inspect` é uma API de diagnóstico separada da fachada
+transacional. Consulta somente as 11 tabelas permitidas, com conexão SQLite
+read-only, query_only, identidade por conta/raízes e validação do esquema. Não
+cria arquivos, não inicializa inventário e não disponibiliza SQL arbitrário.
+O SyncId real é lido do inventário, sem supor o identificador de um detector.
+
+Páginas têm até 100 registros por rowid e prévias limitadas a 4096 bytes por
+célula. NULL, texto, número, BLOB UTF-8 e BLOB hexadecimal permanecem distintos;
+truncamento e tamanho original são explícitos. Cada página é uma leitura
+consistente, mas páginas seguintes consultam o estado atual. A inspeção não
+substitui API de domínio nem restauração de banco incompatível.
+
+Validação no SDK: fmt, clippy do workspace e 21 testes públicos de inventário,
+incluindo três testes novos para consulta sem escrita (banco com permissão 0400),
+ausência sem criação, identidade/esquema, paginação e prévias binárias/UTF-8.

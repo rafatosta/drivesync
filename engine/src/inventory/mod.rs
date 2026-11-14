@@ -3,4 +3,4 @@
 mod models;
 mod storage;
 pub use models::*;
-pub use storage::InventoryManager;
+pub use storage::{inspection, InventoryManager};
