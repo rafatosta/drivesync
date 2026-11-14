@@ -830,3 +830,14 @@ A identidade do `File` (ocorrência) não deve ser persistida como chave do `Syn
 - Definição de operações simultâneas sobre um mesmo item e estratégias de lock. Estes detalhes devem ser fechados antes de implementar os respectivos métodos, **sem mudar a orientação a objetos da API**.
 
 **Importante:** este documento é o contrato de projeto para implementação e seus invariantes, não comprova compilação Rust nem implementação. O próximo passo é descrever `TESTS.md` e criar testes que falhem antes de implementar o módulo.
+
+
+## Fundação compilada
+
+A primeira unidade implementa open, status, get_sync_info e
+mark_initial_download_complete, com identidade, esquema, integridade e segurança
+física, sem criar dados de contas reais. Os demais métodos deste documento
+continuam contratos-alvo. Não existem stubs de itens ou operações.
+A regra de metadados permanece aguardando escolha sobre valor conhecido versus
+condição da leitura recente; nenhum esquema de metadados foi criado.
+Consulte IMPLEMENTATION.md para testes e limites efetivamente verificados.

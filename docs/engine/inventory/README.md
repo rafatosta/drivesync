@@ -35,7 +35,7 @@ Transações continuam síncronas e atômicas; chamadas potencialmente bloqueant
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; sua existência não comprova implementação Rust.
+**Estado:** fundação Rust implementada: open, status, get_sync_info e mark_initial_download_complete. Itens, observações, baseline, operações e atividades ainda não estão implementados. Ver [IMPLEMENTATION](IMPLEMENTATION.md).
 
 ## Recuperação do Inventário
 
