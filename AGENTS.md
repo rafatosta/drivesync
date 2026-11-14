@@ -14,6 +14,22 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 - Preservar isolamento por conta, credenciais, dados locais e garantias contra operações destrutivas.
 - Não desenvolver funcionalidades adicionais, criar dependências ou refatorar módulos alheios sem necessidade demonstrável.
 
+## Retrocompatibilidade entre versões
+
+- Antes de alterar contratos ou formatos entre versões, perguntar ao usuário se
+  deseja manter retrocompatibilidade. A regra abrange código, APIs, bancos e
+  esquemas, configurações, arquivos persistidos, protocolos e demais interfaces.
+- Explicar brevemente o impacto da escolha e aguardar a resposta antes de
+  implementar a parte dependente dessa decisão. Não presumir necessidade de
+  migrações, conversões, adaptadores, aliases, fallbacks ou suporte legado.
+- Se o usuário já definiu a política para o escopo em andamento, seguir essa
+  decisão sem perguntar novamente. Atualmente, o usuário determinou que não há
+  retrocompatibilidade nesta fase de desenvolvimento; uma nova necessidade deve
+  ser confirmada antes de introduzir suporte a versões anteriores.
+- Quando a retrocompatibilidade não for desejada, remover código substituído e
+  caminhos legados sem criar migrações ou adaptações. Isso não autoriza apagar
+  dados existentes, arquivos do usuário ou modificar contratos fora do escopo.
+
 ## Fonte de verdade e documentação
 
 A documentação em `docs/architecture/` não deve ser consultada e nem editada.
