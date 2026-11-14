@@ -114,6 +114,7 @@ mod tests {
             id: FileId("occurrence".into()),
             sync_id: SyncId("sync".into()),
             event: FileEvent {
+                local: None,
                 remote: None,
                 kind: FileEventKind::Created,
                 uncertainty: None,

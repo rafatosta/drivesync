@@ -24,7 +24,7 @@ pub(super) fn encode(file: &File) -> QueueResult<Vec<u8>> {
     file.validate()
         .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
     let value = Wire {
-        version: 2,
+        version: 3,
         id: file.id.clone(),
         sync_id: file.sync_id.clone(),
         event: file.event.clone(),
@@ -50,7 +50,7 @@ pub(super) fn decode(bytes: &[u8]) -> QueueResult<File> {
     }
     let value: Wire =
         serde_json::from_slice(bytes).map_err(|_| QueueFailure::new(QueueError::Corrupt))?;
-    if value.version != 2 {
+    if value.version != 3 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     let file = File {

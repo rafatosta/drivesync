@@ -148,6 +148,7 @@ impl GoogleRemoteDetector {
             id: crate::models::FileId(format!("remote:{}:{}:0", state.epoch, state.sequence)),
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
+                local: None,
                 remote: None,
                 kind,
                 uncertainty: reason,
@@ -182,6 +183,7 @@ impl GoogleRemoteDetector {
             id: crate::models::FileId(format!("remote:{}:{}:{index}", state.epoch, state.sequence)),
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
+                local: None,
                 kind: FileEventKind::Observed,
                 remote: Some(evidence),
                 uncertainty: None,

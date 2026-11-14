@@ -181,3 +181,10 @@ O esquema SQLite passa à versão 3 e o codec File à versão 2, para persistir
 O histórico distingue captura inicial (`RemoteObservationSource::Capture`) de
 alterações recebidas (`Changes`), sem classificar ações sobre arquivos.
 Os contratos de leases, ordenação, confirmação e retenção continuam vigentes.
+
+## 11. Evidência nativa local
+
+O esquema SQLite versão 4 e codec File versão 3 preservam também
+`File.event.local` integralmente. Esquemas anteriores são recusados explicitamente,
+sem migração ou exclusão. Fila, digest, leases, confirmação e histórico continuam
+com as mesmas responsabilidades. Não há índice de caminhos conhecidos no Storage.

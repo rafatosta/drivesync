@@ -22,7 +22,7 @@ CREATE INDEX delivery_order ON events(state,seq);
 CREATE TABLE observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1)));
 CREATE INDEX observations_origin ON observations(origin);
 CREATE TABLE remote_progress(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
-PRAGMA user_version=3;";
+PRAGMA user_version=4;";
 struct Identity<'a> {
     account: &'a str,
     sync: &'a str,
@@ -738,7 +738,7 @@ fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 3 {
+    if version != 4 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     let stored: (String, String, Vec<u8>) = connection

@@ -417,6 +417,7 @@ fn envelope(
         observed_at,
         scope: path.clone().map_or(FileScope::WholeSync, FileScope::Local),
         event: FileEvent {
+            local: None,
             remote: None,
             kind: if unavailable {
                 FileEventKind::ScopeUnavailable

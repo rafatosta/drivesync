@@ -720,3 +720,16 @@ ID remoto; `data=None` não perde a identidade da alteração.
 O Orquestrador entrega as observações; o Analisador consulta o Inventory e decide
 seu significado e tratamento. Nenhum desses componentes é implementado por esta
 revisão. Eventos locais existentes permanecem inalterados.
+
+## Revisão local: evidência nativa sem classificação
+
+`Observed` também representa uma notificação local sem interpretação.
+`File.event.local: Option<LocalObservation>` preserva `capture_id`, `mask` e
+`cookie` do inotify. O identificador de captura delimita a sessão na qual o
+cookie pode ser correlacionado; zero significa ausência de correlação nativa.
+A máscara não é transformada em criação, edição, exclusão, renomeação ou movimento.
+Um Observed contém exatamente uma evidência local ou remota, coerente com scope;
+previous=None e cobertura Partial. Metadados locais são opcionais e refletem
+somente o resultado da coleta posterior à notificação. Ausência de metadados
+não elimina o sinal nativo nem comprova exclusão. Avisos técnicos continuam
+RecheckRequired/ScopeUnavailable, sem evidência de recurso fabricada.

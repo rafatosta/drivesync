@@ -16,7 +16,7 @@ pub struct RemoteFileRef {
 /// Classification of an observation, never a synchronization command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileEventKind {
-    /// Uninterpreted remote evidence; the analyzer determines its meaning.
+    /// Uninterpreted source evidence; the analyzer determines its meaning.
     Observed,
     Created,
     Modified,
@@ -51,6 +51,15 @@ pub enum ObservationUncertainty {
     WriteInProgress,
     ConflictingSequence,
 }
+/// Linux notification evidence, without pairing or action classification.
+/// The cookie is meaningful only within this capture session; zero means unpaired.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalObservation {
+    pub capture_id: String,
+    pub mask: u32,
+    pub cookie: u32,
+}
 /// Collection operation that supplied a remote observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RemoteObservationSource {
@@ -72,6 +81,8 @@ pub struct RemoteObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEvent {
+    /// Original local notification, present only for native local observations.
+    pub local: Option<LocalObservation>,
     /// Raw collection evidence, present only for uninterpreted remote observations.
     pub remote: Option<RemoteObservation>,
     pub kind: FileEventKind,
@@ -127,13 +138,28 @@ impl File {
         if (self.event.kind == FileEventKind::RecheckRequired) != self.event.uncertainty.is_some() {
             return invalid();
         }
-        if (self.event.kind == FileEventKind::Observed) != self.event.remote.is_some() {
+        let native = self.event.local.is_some() || self.event.remote.is_some();
+        if (self.event.kind == FileEventKind::Observed) != native
+            || (self.event.local.is_some() && self.event.remote.is_some())
+        {
             return invalid();
         }
         if self.event.kind == FileEventKind::Observed
-            && (!matches!(self.scope, FileScope::Remote(_))
-                || self.event.previous.is_some()
-                || self.coverage != ObservationCoverage::Partial)
+            && (self.event.previous.is_some()
+                || self.coverage != ObservationCoverage::Partial
+                || match &self.scope {
+                    FileScope::Remote(_) => self.event.remote.is_none(),
+                    FileScope::Local(_) => self.event.local.is_none(),
+                    FileScope::WholeSync => true,
+                })
+        {
+            return invalid();
+        }
+        if self
+            .event
+            .local
+            .as_ref()
+            .is_some_and(|signal| signal.capture_id.trim().is_empty() || signal.mask == 0)
         {
             return invalid();
         }

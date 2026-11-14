@@ -61,6 +61,7 @@ impl Tree {
             coverage: ObservationCoverage::Partial,
             data: None,
             event: FileEvent {
+                local: None,
                 remote: None,
                 kind: FileEventKind::RecheckRequired,
                 previous: None,
@@ -117,6 +118,7 @@ fn enqueue_reopen_complete_payload_bytes_order_and_idempotent_ack() {
         LocalScanCoverage::Unavailable => ObservationCoverage::Unavailable,
     };
     file.event = FileEvent {
+        local: None,
         remote: None,
         kind: FileEventKind::Renamed,
         previous: Some(FileLocation::Local(
@@ -461,7 +463,7 @@ fn reserved_database_rejects_old_schema_without_migration() {
     drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
     let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 2).unwrap();
+    db.pragma_update(None, "user_version", 3).unwrap();
     db.execute_batch("DROP TABLE observations;").unwrap();
     drop(db);
     let before = fs::read(&path).unwrap();

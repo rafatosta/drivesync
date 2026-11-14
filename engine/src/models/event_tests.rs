@@ -42,6 +42,7 @@ fn event(kind: FileEventKind) -> File {
         coverage: ObservationCoverage::Complete,
         scope: FileScope::Local(path.clone()),
         event: FileEvent {
+            local: None,
             remote: None,
             kind,
             uncertainty: (kind == FileEventKind::RecheckRequired)
@@ -169,6 +170,7 @@ fn remote_observation_preserves_raw_removal_without_metadata_or_inferred_action(
         id: FileId("observation".into()),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
+            local: None,
             kind: FileEventKind::Observed,
             remote: Some(RemoteObservation {
                 source: RemoteObservationSource::Changes,
@@ -196,5 +198,28 @@ fn remote_observation_preserves_raw_removal_without_metadata_or_inferred_action(
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
     file.event.kind = FileEventKind::Observed;
     file.event.remote = None;
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
+}
+
+#[test]
+fn local_native_observation_preserves_signals_without_previous_location_or_metadata() {
+    let mut file = event(FileEventKind::Observed);
+    file.coverage = ObservationCoverage::Partial;
+    file.event.local = Some(LocalObservation {
+        capture_id: "session".into(),
+        mask: libc::IN_MOVED_FROM,
+        cookie: 42,
+    });
+    file.data = None;
+    file.event.current = None;
+    assert_eq!(file.validate(), Ok(()));
+    let bytes = serde_json::to_vec(&file).unwrap();
+    assert_eq!(serde_json::from_slice::<File>(&bytes).unwrap(), file);
+    file.event.previous = Some(FileLocation::Local(
+        LocalRelativePath::new(b"before".to_vec()).unwrap(),
+    ));
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
+    file.event.previous = None;
+    file.event.local.as_mut().unwrap().mask = 0;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }
