@@ -188,3 +188,19 @@ O esquema SQLite versão 4 e codec File versão 3 preservam também
 `File.event.local` integralmente. Esquemas anteriores são recusados explicitamente,
 sem migração ou exclusão. Fila, digest, leases, confirmação e histórico continuam
 com as mesmas responsabilidades. Não há índice de caminhos conhecidos no Storage.
+
+## 12. Percurso remoto incremental
+
+O esquema SQLite 5 acrescenta remote_scan (fila ordenada e diretórios já visitados)
+e remote_scan_control (contadores). Não há metadados ou catálogo de arquivos.
+A consulta do próximo trabalho usa índice (done,seq); cada pasta tem identidade
+única dentro do banco isolado por conta/sincronização/provedor/raízes.
+
+Um delta contém no máximo 200 pastas descobertas, o trabalho concluído e seu
+token de continuação opcional, ou um reset explícito para nova captura. Storage
+aplica o delta e o checkpoint sob a mesma transação IMMEDIATE com compare-and-swap.
+O DAO não faz commits próprios. Continuação mantém o trabalho na cabeça da fila;
+novas pastas são inseridas no fim, ignorando somente IDs já visitados/agendados.
+Contadores são incrementais; sua integridade é conferida na abertura.
+Limite: 100.000 diretórios por captura, com erro e rollback ao exceder.
+Esquemas anteriores falham sem migração, conversão ou remoção de dados.

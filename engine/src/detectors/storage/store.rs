@@ -1,5 +1,5 @@
 //! One transactional queue per account/synchronization/root identity.
-use super::{codec, filesystem, models::*};
+use super::{codec, filesystem, models::*, remote_work, RemoteScanUpdate};
 use crate::{detectors::LocalDetectorScope, models::File};
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
@@ -22,7 +22,11 @@ CREATE INDEX delivery_order ON events(state,seq);
 CREATE TABLE observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1)));
 CREATE INDEX observations_origin ON observations(origin);
 CREATE TABLE remote_progress(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
-PRAGMA user_version=4;";
+CREATE TABLE remote_scan(seq INTEGER PRIMARY KEY AUTOINCREMENT,folder TEXT NOT NULL UNIQUE,token TEXT,done INTEGER NOT NULL CHECK(done IN(0,1)),CHECK(done=0 OR token IS NULL));
+CREATE INDEX remote_scan_pending ON remote_scan(done,seq);
+CREATE TABLE remote_scan_control(id INTEGER PRIMARY KEY CHECK(id=1),total INTEGER NOT NULL CHECK(total BETWEEN 0 AND 100000),pending INTEGER NOT NULL CHECK(pending BETWEEN 0 AND total));
+INSERT INTO remote_scan_control VALUES(1,0,0);
+PRAGMA user_version=5;";
 struct Identity<'a> {
     account: &'a str,
     sync: &'a str,
@@ -477,10 +481,24 @@ impl Store {
                 .map_err(sql)
         })
     }
+    #[cfg(test)]
+    pub(crate) fn next_remote_scan(&self) -> QueueResult<Option<super::RemoteScan>> {
+        self.run(false, |connection, _| remote_work::next(connection))
+    }
+    /// Transitional code port, removed when the producer switches to page deltas.
     pub(crate) fn save_remote_state(
         &self,
         previous: Option<&[u8]>,
         value: &[u8],
+    ) -> QueueResult<()> {
+        self.save_remote_page(previous, value, &RemoteScanUpdate::default())
+    }
+    /// Commits a bounded traversal delta and checkpoint with one compare-and-swap.
+    pub(crate) fn save_remote_page(
+        &self,
+        previous: Option<&[u8]>,
+        value: &[u8],
+        update: &RemoteScanUpdate,
     ) -> QueueResult<()> {
         if value.len() > 16 * 1024 * 1024 {
             return Err(QueueFailure::new(QueueError::CapacityExceeded));
@@ -489,6 +507,7 @@ impl Store {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
             let stored: Option<Vec<u8>> = tx.query_row("SELECT payload FROM remote_progress WHERE id=1", [], |row| row.get(0)).optional().map_err(sql)?;
             if stored.as_deref() != previous { return Err(QueueFailure::new(QueueError::Conflict)); }
+            remote_work::apply(&tx, update)?;
             tx.execute("INSERT INTO remote_progress VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [value]).map_err(sql)?;
             tx.commit().map_err(sql)
         })
@@ -738,9 +757,10 @@ fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 4 {
+    if version != 5 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
+    remote_work::validate(connection)?;
     let stored: (String, String, Vec<u8>) = connection
         .query_row("SELECT account,sync,root FROM identity", [], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?))

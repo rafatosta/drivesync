@@ -462,7 +462,7 @@ fn reserved_state_never_follows_symlinks_or_creates_a_missing_user_root() {
 
 #[test]
 fn reserved_database_rejects_old_schema_without_migration() {
-    for version in [0, 1, 2, 3, 900] {
+    for version in [0, 1, 2, 3, 4, 900] {
         let tree = Tree::new();
         drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
         let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
@@ -522,5 +522,88 @@ fn native_local_evidence_and_history_survive_sqlite_reopen_release_and_ack() {
     assert!(
         !reopened.enqueue(&file).unwrap(),
         "replay is idempotent after ack"
+    );
+}
+
+#[test]
+fn traversal_delta_and_checkpoint_are_atomic_ordered_and_reopenable() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(
+            None,
+            b"first",
+            &RemoteScanUpdate {
+                reset: true,
+                discovered: vec!["root".into(), "child".into(), "root".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let root = store.next_remote_scan().unwrap().unwrap();
+    assert_eq!(root.folder, "root");
+    store
+        .save_remote_page(
+            Some(b"first"),
+            b"second",
+            &RemoteScanUpdate {
+                finished: Some(root.clone()),
+                continuation: Some("page2".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.next_remote_scan().unwrap().unwrap().token.as_deref(),
+        Some("page2")
+    );
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"first"),
+                b"stale",
+                &RemoteScanUpdate {
+                    reset: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::Conflict
+    );
+    let before = store.remote_state().unwrap();
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"second"),
+                b"invalid",
+                &RemoteScanUpdate {
+                    finished: Some(root),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::Conflict
+    );
+    assert_eq!(store.remote_state().unwrap(), before);
+    drop(store);
+    let reopened = tree.store(&clock);
+    let root = reopened.next_remote_scan().unwrap().unwrap();
+    reopened
+        .save_remote_page(
+            Some(b"second"),
+            b"third",
+            &RemoteScanUpdate {
+                finished: Some(root),
+                discovered: vec!["child".into(), "last".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        reopened.next_remote_scan().unwrap().unwrap().folder,
+        "child"
     );
 }
