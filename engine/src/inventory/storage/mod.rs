@@ -171,6 +171,11 @@ impl InventoryManager {
         self.run(false, |tx| {
             Ok(GetSyncInfoResult {
                 info: sync_info(tx)?,
+                local_root: tx
+                    .query_row("SELECT local_root FROM sync_info WHERE id=1", [], |r| {
+                        r.get(0)
+                    })
+                    .map_err(sql)?,
             })
         })
     }

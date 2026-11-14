@@ -253,6 +253,8 @@ pub struct GetSyncInfoRequest {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GetSyncInfoResult {
     pub info: SyncInfo,
+    /// Exact Unix bytes of the configured absolute root, for producer scope validation.
+    pub local_root: Vec<u8>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarkInitialDownloadCompleteRequest {

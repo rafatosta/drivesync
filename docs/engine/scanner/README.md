@@ -57,7 +57,7 @@ O Scanner não executa reparo de arquivo, download, upload, renomeação ou excl
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** especificação documental inicial, não implementação Rust. A persistência de diagnósticos individuais no Inventário exige integração ainda não prevista integralmente em seu contrato atual.
+**Estado:** Scanner Rust implementado em `engine/src/scanner/`, com `new`, `scan` e `status`. O usuário confirmou que varredura parcial mantém o Analisador suspenso. Fluxo, decisões técnicas, testes e lacunas estão em [IMPLEMENTATION.md](IMPLEMENTATION.md). Não há ainda inicialização automática do aplicativo nem persistência de todo ScanIssue.
 
 ## Independência da recuperação de banco
 
