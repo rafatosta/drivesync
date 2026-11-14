@@ -35,10 +35,10 @@ Transações continuam síncronas e atômicas; chamadas potencialmente bloqueant
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** fundação Rust implementada: open, status, get_sync_info e mark_initial_download_complete. Itens, observações, baseline, operações e atividades ainda não estão implementados. Ver [IMPLEMENTATION](IMPLEMENTATION.md).
+**Estado:** as 17 operações Rust estão implementadas, incluindo itens, observações, baseline, fila e histórico. Não há ainda conexão com Analisador/GUI nem backup/restauração comum. Ver [IMPLEMENTATION](IMPLEMENTATION.md).
 
 ## Recuperação do Inventário
 
-O [Storage](storage/INTERFACES.md) mantém schema, transações e identidade do Inventário, enquanto [Configuration](../configuration/INTERFACES.md) disponibiliza o **mecanismo comum de backup e restauração física SQLite** a bancos registrados. O Storage detecta falhas de integridade e coordena fechamento/exclusividade para uma restauração segura. Depois da troca, valida identidade e esquema antes de indicar `Restored`.
+O [Storage](storage/INTERFACES.md) mantém schema, transações e identidade do Inventário. O contrato prevê integração futura com o **mecanismo comum de backup e restauração física SQLite** de [Configuration](../configuration/INTERFACES.md), ainda não implementado. O Storage detecta falhas de integridade e coordena fechamento/exclusividade para uma restauração segura. Depois da troca, valida identidade e esquema antes de indicar `Restored`.
 
 Se a restauração falhar, preservar dados anteriores e informar indisponibilidade, **sem reconstruir automaticamente**. A eventual reconstrução vazia é uma decisão separada da coordenação, executada com inicialização própria do Storage. Um banco restaurado ou reconstruído não comprova equivalência com a nuvem nem autoriza interpretar ausência de registros como exclusão. O fluxo de sincronização decide a reobservação necessária.

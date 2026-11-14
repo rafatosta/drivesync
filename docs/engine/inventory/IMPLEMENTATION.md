@@ -71,7 +71,28 @@ disco. A verificação final repetiu clippy e os três testes públicos de Inven
 após acrescentar os traits de identidade previstos no contrato. Não houve teste
 com contas reais, GUI, pacote instalado ou mecanismo de backup/restauração.
 
-API compilada nesta unidade: open, status, get_sync_info e
-mark_initial_download_complete. Os tipos dos demais contratos foram declarados,
-mas seus métodos ainda não existem e não são stubs. Esta fundação não representa
-o Inventory completo nem integração com o Analisador.
+## Baseline, operações e atividades
+
+As 17 operações estão compiladas. Baselines têm uma linha por lado, pais tipados,
+nomes locais em bytes e tamanho textual exato para u64. Apenas confirm_sync os
+substitui. A confirmação requer estado conhecido nos dois lados e fatos
+verificados pelo chamador; não coleta nem compara conteúdo físico.
+
+Operations registra intenção e precondições em colunas relacionais. Claim usa
+transação IMMEDIATE, revisão-base, versão remota recente e unicidade de Running
+por item. Não há lease por tempo nem recuperação automática de Running. Requeue
+é explícito após verificação do efeito pelo chamador. Tokens de tentativa evitam
+atualização por worker antigo. A fila não executa efeitos, não decide ações,
+não reescreve revisão-base e não transforma ausência de versão em autorização.
+
+A confirmação grava baseline, estado/revisão, conclusão de operação, atividade
+e recibo idempotente na mesma transação. O replay exato não duplica histórico.
+Histórico é append-only, com FK para item/operação do mesmo item e consulta
+cronológica por (occurred_at, id), com limite de inserção e cursor por filtro.
+Não há política de expurgo destrutivo nem eliminação de tombstones.
+
+As políticas exatas de confirmação, presença, deduplicação, retry/requeue e
+limites de texto estão em INTERFACES.md. Os testes públicos usam SQLite real,
+duas conexões concorrentes, reinício com Running, tentativa antiga, metadados
+parciais, ausência comprovada, replay e falha SQL forçada no histórico para
+verificar rollback integral. Não usam conta real nem executores físicos.

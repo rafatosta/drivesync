@@ -28,8 +28,11 @@ pub(super) fn sql(error: rusqlite::Error) -> InventoryFailure {
     })
 }
 const SCHEMA: &str = include_str!("schema.sql");
+mod activity;
+mod baseline;
 mod items;
 mod metadata;
+mod operations;
 mod pagination;
 impl InventoryManager {
     /// Opens the private database, rejecting incompatible identity/schema without replacement.
@@ -185,6 +188,13 @@ impl InventoryManager {
             if request.expected_complete {
                 return Err(failure(InventoryError::InvalidTransition));
             }
+            let unfinished: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM operations WHERE direction='Download' AND state!='Completed') OR EXISTS(SELECT 1 FROM items WHERE status='PendingDownload')",
+                [], |r| r.get(0),
+            ).map_err(sql)?;
+            if unfinished {
+                return Err(failure(InventoryError::InvalidTransition));
+            }
             tx.execute("UPDATE sync_info SET initial_complete=1 WHERE id=1", [])
                 .map_err(sql)?;
             Ok(MarkInitialDownloadCompleteResult {
@@ -214,7 +224,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 2 {
+    if version != 3 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

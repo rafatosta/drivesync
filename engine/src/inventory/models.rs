@@ -373,6 +373,8 @@ pub struct ConfirmSyncRequest {
     pub expected_item_revision: u64,
     pub confirmed: ConfirmedState,
     pub completed_operation: Option<OperationId>,
+    /// Claim attempt being confirmed; required exactly when completing an operation.
+    pub expected_operation_attempt: Option<u32>,
     pub activity: Option<NewActivity>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -438,6 +440,8 @@ pub struct ClaimOperationResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateOperationRequest {
     pub operation_id: OperationId,
+    /// Rejects a stale worker after the same operation has been claimed again.
+    pub expected_attempt_count: u32,
     pub expected_state: OperationState,
     pub transition: OperationTransition,
 }

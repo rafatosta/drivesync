@@ -1,3 +1,18 @@
+# Verificação da implementação
+
+Os cenários abaixo continuam um catálogo de requisitos, não uma afirmação de que
+todos foram executados. A cobertura atual está em `engine/tests/inventory.rs`,
+`engine/tests/inventory_errors.rs` e no teste interno de status. Inclui SQLite
+real, contas sintéticas, relações/rollback, metadados conhecidos versus recentes,
+paginação, disputa de claim por duas conexões, retry/reinício, tentativa antiga,
+confirmação idempotente, erro SQL injetado e tombstones com histórico.
+
+Não foram validados GUI, contas reais, executores de transferência, escala de
+80 mil itens ou backup/restauração. Veja IMPLEMENTATION.md para comandos e
+resultados da validação integrada. As lacunas de política listadas historicamente
+no catálogo foram resolvidas no contrato compilado de INTERFACES.md; lacunas de
+integração permanecem abertas.
+
 # Inventário — TESTS
 
 ## 1. Objetivo, fonte de verdade e limites

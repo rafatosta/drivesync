@@ -8,4 +8,14 @@ CREATE TABLE remote_parents(item TEXT NOT NULL REFERENCES items(id),account TEXT
 CREATE INDEX remote_parent ON remote_parents(account,parent,item);
 CREATE TABLE metadata_fields(item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),field TEXT NOT NULL,latest TEXT NOT NULL,known TEXT,PRIMARY KEY(item,side,field));
 CREATE TABLE receipts(event TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),digest BLOB NOT NULL,proof TEXT NOT NULL);
-PRAGMA user_version=2;
+CREATE TABLE operations(seq INTEGER PRIMARY KEY AUTOINCREMENT,item TEXT NOT NULL REFERENCES items(id),direction TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,base_revision INTEGER NOT NULL CHECK(base_revision>0),expected_version TEXT,attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 4294967295),next_attempt INTEGER,last_error TEXT,created INTEGER NOT NULL,started INTEGER,completed INTEGER,dedup TEXT,fingerprint BLOB NOT NULL,UNIQUE(item,dedup),UNIQUE(seq,item));
+CREATE INDEX operation_queue ON operations(state,next_attempt,seq);
+CREATE INDEX operation_item ON operations(item,seq);
+CREATE UNIQUE INDEX running_item ON operations(item) WHERE state='Running';
+CREATE TABLE baselines(item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),presence TEXT NOT NULL,name TEXT,local_name BLOB,parent_local TEXT REFERENCES items(id),parent_account TEXT,parent_remote TEXT,version TEXT,checksum TEXT,size TEXT,modified INTEGER,confirmed INTEGER NOT NULL,PRIMARY KEY(item,side),CHECK((parent_account IS NULL)=(parent_remote IS NULL)));
+CREATE TABLE activities(seq INTEGER PRIMARY KEY AUTOINCREMENT,item TEXT NOT NULL REFERENCES items(id),operation INTEGER,event_type TEXT NOT NULL,origin TEXT NOT NULL,outcome TEXT NOT NULL,occurred INTEGER NOT NULL,description TEXT,error_kind TEXT,item_name TEXT,remote_id TEXT,local_path BLOB,FOREIGN KEY(operation,item) REFERENCES operations(seq,item));
+CREATE INDEX activity_time ON activities(occurred,seq);
+CREATE INDEX activity_item ON activities(item,occurred,seq);
+CREATE INDEX activity_operation ON activities(operation,occurred,seq);
+CREATE TABLE confirmations(item TEXT NOT NULL REFERENCES items(id),revision INTEGER NOT NULL,digest BLOB NOT NULL,operation INTEGER REFERENCES operations(seq),activity INTEGER REFERENCES activities(seq),PRIMARY KEY(item,revision));
+PRAGMA user_version=3;

@@ -1,6 +1,6 @@
 # Operations — contrato interno
 
-**Estado:** porta de persistência proposta. `inventory/operations/` é proprietário da **fila de operações de sincronização** (`SyncOperation`), com estados, reservas, tentativas e confirmação persistentes.
+**Estado:** implementado em `engine/src/inventory/storage/operations.rs`; as assinaturas internas abaixo são ilustrações de responsabilidades, não traits públicos. `inventory/operations/` é proprietário da **fila de operações de sincronização** (`SyncOperation`), com estados, reservas, tentativas e confirmação persistentes.
 
 ## Responsabilidades
 
@@ -57,4 +57,4 @@ O diagrama **não** amplia `OperationTransition`: as transições exatas entre e
 
 Fila offline/reabertura; claim concorrente; transições válidas e inválidas; deduplicação; concorrência por revisão; retry; crash e reavaliação; conclusão atômica com baseline e atividade; preservação de `OperationDirection` e `OperationKind`. Nenhum teste precisa de API remota real.
 
-**Pendente:** critérios exatos de claim/lease de worker, requeue de `Running`, elegibilidade e deduplicação entre operações sequenciais do mesmo item; não presumir um executor dentro do Inventário.
+**Decisões implementadas:** consulte [contrato compilado](../INTERFACES.md#contrato-compilado-e-decisões-de-implementação) para precondições, tipagem, retomada, deduplicação e retenção. A integração com executores e backup/restauração permanece separada.

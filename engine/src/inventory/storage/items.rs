@@ -48,6 +48,7 @@ pub(super) fn load(db: &Connection, id: &SyncItemId) -> InventoryResult<SyncItem
     item.local_latest = metadata::local_load(db, &id.0, true)?;
     item.remote = metadata::remote_load(db, &id.0, false)?;
     item.remote_latest = metadata::remote_load(db, &id.0, true)?;
+    item.baseline = super::baseline::load(db, id)?;
     Ok(item)
 }
 pub(super) fn revision(item: &SyncItem, expected: u64) -> InventoryResult<()> {
