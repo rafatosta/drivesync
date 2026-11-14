@@ -2,7 +2,7 @@
 use super::Context;
 use adw::gtk::{gio, prelude::*};
 use drivesync_engine::{
-    detectors::*, models::SyncId, Account, AccountId, ListAccountsRequest, Orchestrator, Timestamp,
+    detectors::*, models::SyncId, Account, AccountId, ListAccountsRequest, Orchestrator,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -17,10 +17,9 @@ pub(crate) async fn remove(context: &Context, id: &AccountId) {
     let session = context.detectors.borrow_mut().remove(&id.0);
     if let Some(session) = session {
         let _ = gio::spawn_blocking(move || {
-            session.orchestrator.stop(LocalStopRequest {
-                reason: LocalStopReason::UserRequest,
-                requested_at: Timestamp { unix_millis: 0 },
-            })
+            session
+                .orchestrator
+                .stop_detector(DetectorStopMode::StopNow)
         })
         .await;
     }
@@ -88,43 +87,26 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
             remove(context, &account.id).await;
             let connector = engine.clone();
             let queue_directory = queue_directory.clone();
-            let scope = LocalDetectorScope {
+            let scope = DetectorScope {
                 account_id: account.id.clone(),
-                // A diagnostic session identity, not a persisted synchronization registration.
-                sync_id: SyncId(format!("developer-local:{}", account.id.0)),
+                sync_id: SyncId(format!("developer-unified:{}", account.id.0)),
                 local_root: root.clone(),
-            };
-            let remote_scope = RemoteDetectorScope {
-                account_id: account.id.clone(),
-                sync_id: SyncId(format!("developer-remote:{}", account.id.0)),
                 remote_root_id: remote_root_id.clone(),
             };
             let created = gio::spawn_blocking(move || {
-                let remote_connector = connector.clone();
-                let remote_directory = queue_directory.clone();
-                let mut orchestrator = Orchestrator::observe_persistent(
-                    connector,
-                    scope,
-                    LocalDetectorSettings::default(),
-                    queue_directory,
+                let orchestrator = Arc::new(Orchestrator::observe_detector(
+                    DetectorCreateRequest {
+                        connector,
+                        scope,
+                        local_settings: LocalDetectorSettings::default(),
+                        remote_settings: RemoteDetectorSettings::default(),
+                        data_directory: queue_directory,
+                        event_available_sink: None,
+                    },
                     DeliveryState::Enabled,
-                )?;
-                let remote_error = orchestrator
-                    .attach_remote(RemoteDetectorCreateRequest {
-                        connector: remote_connector,
-                        scope: remote_scope,
-                        settings: RemoteDetectorSettings::default(),
-                        data_directory: remote_directory,
-                    })
-                    .err()
-                    .map(|error| error.to_string());
-                let orchestrator = Arc::new(orchestrator);
-                // Preserve Failed status and diagnostics if root capture cannot start.
-                let _ = orchestrator.start(LocalStartRequest {
-                    mode: LocalStartMode::Initial,
-                    requested_at: Timestamp { unix_millis: 0 },
-                });
-                Ok::<_, QueueFailure>((orchestrator, remote_error))
+                )?);
+                let _ = orchestrator.start_detector(DetectorStartMode::Initial);
+                Ok::<_, DetectorFailure>((orchestrator, None))
             })
             .await
             .map_err(|_| "Could not create observation worker".to_owned())?;

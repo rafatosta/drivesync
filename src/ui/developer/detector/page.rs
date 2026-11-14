@@ -149,7 +149,7 @@ impl View {
             button.set_tooltip_text(Some(if paused {
                 "Resume delivery"
             } else {
-                "Interrupt delivery · Continue detecting and persisting changes"
+                "Interrupt delivery for this account · Continue detecting and persisting changes"
             }));
             button.update_property(&[gtk::accessible::Property::Label(if paused {
                 "Resume delivery"
@@ -194,10 +194,11 @@ impl View {
         if let Some(delivery) = snapshot.delivery {
             self.detail.set_label(&format!(
                 "{}
-Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
+Delivery: {delivery:?} · Leased: {} · Confirmed: {} · Initial/recovery observations: {}{}",
                 self.detail.text(),
                 snapshot.leased_events.unwrap_or(0),
                 snapshot.confirmed_events.unwrap_or(0),
+                snapshot.initial_observations,
                 snapshot
                     .queue_error
                     .map(|e| format!(" · Last queue error: {e:?}"))
@@ -210,8 +211,12 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
                 .map(time)
                 .unwrap_or_else(|| "—".into()),
         );
-        self.detected
-            .set_label(&snapshot.events_detected.to_string());
+        self.detected.set_label(
+            &snapshot
+                .events_detected
+                .saturating_sub(snapshot.initial_observations)
+                .to_string(),
+        );
         self.pending.set_label(
             &snapshot
                 .pending_events
@@ -267,7 +272,7 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
             button.set_tooltip_text(Some(if paused {
                 "Resume delivery"
             } else {
-                "Interrupt delivery · Continue polling and persisting changes"
+                "Interrupt delivery for this account · Continue detecting and persisting changes"
             }));
             button.update_property(&[gtk::accessible::Property::Label(if paused {
                 "Resume delivery"
@@ -283,7 +288,7 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
             .unwrap_or_else(|| "—".into());
         self.last.set_label(&last);
         self.detected
-            .set_label(&snapshot.queue.detected.to_string());
+            .set_label(&snapshot.queue.changes_detected.to_string());
         self.pending.set_label(
             &snapshot
                 .queue
@@ -309,14 +314,14 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {}{}",
                 .unwrap_or_default(),
         ));
         self.extra_detail.set_label(&format!(
-            "Folder: {}\nInterval: {:.1}s · Last poll: {} · Next poll: {} · Duration: {}\nActivity: {:?} · Coverage: {:?} · Cursor: {} · Returned: {} · Produced: {}\nDelivery: {:?} · Leased: {} · Confirmed: {} · Failures: {} · Recoveries: {}{}{}",
+            "Folder: {}\nInterval: {:.1}s · Last poll: {} · Next poll: {} · Duration: {}\nActivity: {:?} · Coverage: {:?} · Cursor: {} · Returned: {} · Produced: {}\nDelivery: {:?} · Leased: {} · Confirmed: {} · Initial/recovery observations: {} · Failures: {} · Recoveries: {}{}{}",
             session.remote_root_id, status.polling_interval.as_secs_f64(),
             status.last_poll_started_at.map(time).unwrap_or_else(|| "—".into()),
             status.next_poll_at.map(time).unwrap_or_else(|| "—".into()),
             status.last_poll_duration.map(|duration| format!("{}ms", duration.as_millis())).unwrap_or_else(|| "—".into()),
             status.activity, status.coverage, status.cursor.as_deref().unwrap_or("—"),
             status.observed_in_current_round, status.emitted_in_current_round,
-            snapshot.queue.delivery, snapshot.queue.leased, snapshot.queue.confirmed,
+            snapshot.queue.delivery, snapshot.queue.leased, snapshot.queue.confirmed, snapshot.queue.initial_observations,
             status.consecutive_failures, status.recovery_attempts,
             status.last_error.map(|error| format!(" · Error: {error:?}")).unwrap_or_default(),
             snapshot.queue.last_error.map(|error| format!(" · Queue: {error:?}")).unwrap_or_default(),
@@ -535,7 +540,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     events.set_margin_end(20);
     events.set_margin_bottom(16);
     events.append(&stream);
-    events.append(&label("Diagnostic delivery only · Last 100 durable events per account and folder · No file synchronization is performed.", "dim-label"));
+    events.append(&label("Diagnostic delivery only · Shared delivery for Local and Remote · Initial observations are counted separately · Last 100 observations per source · No file synchronization is performed.", "dim-label"));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)

@@ -112,37 +112,25 @@ fn live_account_selection_and_detector_layout() {
     for account in ["personal@example.invalid", "work@example.invalid"] {
         let root = base.join(account);
         std::fs::create_dir(&root).unwrap();
-        let mut session = Orchestrator::observe_persistent(
-            engine.clone(),
-            LocalDetectorScope {
-                account_id: AccountId(account.into()),
-                sync_id: SyncId(format!("test-{account}")),
-                local_root: root.clone(),
+        let session = Orchestrator::observe_detector(
+            DetectorCreateRequest {
+                connector: engine.clone(),
+                scope: DetectorScope {
+                    account_id: AccountId(account.into()),
+                    sync_id: SyncId(format!("test-{account}")),
+                    local_root: root.clone(),
+                    remote_root_id: "fixture-root".into(),
+                },
+                local_settings: LocalDetectorSettings::default(),
+                remote_settings: RemoteDetectorSettings::default(),
+                data_directory: base.join("queues"),
+                event_available_sink: None,
             },
-            LocalDetectorSettings::default(),
-            base.join("queues"),
             DeliveryState::Enabled,
         )
         .unwrap();
-        session
-            .attach_remote(RemoteDetectorCreateRequest {
-                connector: engine.clone(),
-                scope: RemoteDetectorScope {
-                    account_id: AccountId(account.into()),
-                    sync_id: SyncId(format!("remote-test-{account}")),
-                    remote_root_id: "fixture-root".into(),
-                },
-                settings: RemoteDetectorSettings::default(),
-                data_directory: base.join("remote-queues"),
-            })
-            .unwrap();
         let session = Arc::new(session);
-        session
-            .start(LocalStartRequest {
-                mode: LocalStartMode::Initial,
-                requested_at: Timestamp { unix_millis: 0 },
-            })
-            .unwrap();
+        session.start_detector(DetectorStartMode::Initial).unwrap();
         context.detectors.borrow_mut().insert(
             account.into(),
             detectors::Session {
@@ -346,7 +334,7 @@ fn live_account_selection_and_detector_layout() {
         session.remote_diagnostics().unwrap().queue.delivery,
         DeliveryState::Paused
     );
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
     capture(&window, "detector-remote-paused");
     selector.set_selected(1);
     settle();
