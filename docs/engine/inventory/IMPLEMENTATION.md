@@ -96,3 +96,28 @@ limites de texto estão em INTERFACES.md. Os testes públicos usam SQLite real,
 duas conexões concorrentes, reinício com Running, tentativa antiga, metadados
 parciais, ausência comprovada, replay e falha SQL forçada no histórico para
 verificar rollback integral. Não usam conta real nem executores físicos.
+
+## Validação integrada final em 14/11/2026
+
+Executados exclusivamente em org.gnome.Sdk//50 com a extensão rust-stable:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo doc --workspace --no-deps --document-private-items
+cargo test --workspace --doc
+```
+
+Todos passaram, sem warnings. `cargo test --workspace`: 693 testes aprovados
+(incluindo 6 doctests), 8 testes de ambiente ignorados. A execução explícita de
+`--doc` repetiu os 6 doctests, todos aprovados. O Inventory tem 18 testes públicos
+e um teste interno de consulta de status durante transação.
+
+A revisão final corrigiu o erro de conta que indevidamente desabilitava uma
+instância saudável, a perda de presença ao repetir o mesmo vínculo remoto e a
+reclassificação por tipo local desconhecido. Procurados stubs, código morto,
+caminhos legados e dependências adicionais: nenhum remanescente identificado.
+Não foram introduzidas dependências. Branch feat/inventory; commits locais,
+sem publicação remota. Integração com Analisador/GUI, testes com contas reais,
+benchmark de 80 mil itens e backup/restauração continuam fora desta entrega.
