@@ -1,6 +1,6 @@
 # Activity — contrato interno
 
-**Estado:** proposta de contrato interno para histórico; não implementado. `inventory/activity/` persiste `SyncActivity` e `NewActivity` definidos em [Inventário — INTERFACES](../INTERFACES.md).
+**Estado:** implementado em `engine/src/inventory/storage/activity.rs`; as assinaturas internas abaixo são ilustrações de responsabilidades, não traits públicos. `inventory/activity/` persiste `SyncActivity` e `NewActivity` definidos em [Inventário — INTERFACES](../INTERFACES.md).
 
 ## Responsabilidade
 
@@ -33,4 +33,4 @@ A fachada expõe somente `record_activity` e `list_activities` e faz a coordena�
 
 Inclusão independente de conflito; histórico associado a operação; FK e isolamento de sincronização; ordenação/paginação por data; filtros; tombstone; rollback de confirmação conjunta; deduplicação de retry; strings de erro sanitizadas.
 
-**Pendente:** política de retenção, chave estável para idempotência de histórico, filtragem de descrições/dados pessoais e ordenação determinística para itens com timestamps iguais.
+**Decisões implementadas:** consulte [contrato compilado](../INTERFACES.md#contrato-compilado-e-decisões-de-implementação) para precondições, tipagem, retomada, deduplicação e retenção. A integração com executores e backup/restauração permanece separada.

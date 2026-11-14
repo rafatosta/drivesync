@@ -17,3 +17,5 @@ pub mod detectors;
 
 pub mod orchestrator;
 pub use orchestrator::Orchestrator;
+
+pub mod inventory;
