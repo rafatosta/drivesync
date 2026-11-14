@@ -1,7 +1,7 @@
 //! Local and remote observation with durable, confirmable event queues.
 //!
 //! Detector privately composes both producers with one durable queue and explicit leases.
-//! Earlier source-specific APIs remain available for compatibility. Collector construction and collection
+//! Collector construction and collection
 //! perform synchronous filesystem I/O and should run off the UI thread.
 //!
 //! ```
@@ -67,8 +67,6 @@ pub use storage::{
     BatchId, DeliveryState, DetectorOrigin, EventDisposition, FileBatch, QueueError, QueueFailure,
     QueueResult, QueueStats, TakeEventsRequest,
 };
-mod persistent;
-pub use persistent::{PersistentDetector, PersistentDetectorRequest};
 
 pub(crate) mod remote;
 pub use remote::{

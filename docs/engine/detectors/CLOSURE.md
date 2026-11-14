@@ -24,11 +24,11 @@ O Scanner Local permanece responsável pelo levantamento local via Inventário. 
 
 O índice durável registra a origem real de emissão, inclusive avisos sem payload. `QueueStats.detected` representa todas as observações; `initial_observations` separa CaptureStarted, incluindo bootstrap após recuperação; `changes_detected` exclui essas observações iniciais. A página Developer apresenta eventos posteriores no indicador principal e observações iniciais/de recuperação nos detalhes. Avisos e incertezas continuam identificados; os contadores não provam sincronização.
 
-## Compatibilidade dos dados de desenvolvimento
+## Formato em desenvolvimento
 
-As APIs anteriores LocalDetector/PersistentDetector/RemoteDetector continuam disponíveis. Suas filas não são apagadas nem reinterpretadas. O novo namespace `unified-v1` inclui ambas as raízes e o provedor; o Developer usa `developer-unified:<account>`. Portanto, o histórico anterior das sessões `developer-local` e `developer-remote` não é importado automaticamente para esta nova identidade. Ele permanece nos bancos anteriores, acessível pelas APIs de compatibilidade. A primeira execução da nova sessão pode repetir o bootstrap remoto, contado separadamente das alterações.
+Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 2); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
 
-O codec de File permanece versão 1. O índice auxiliar de origem/bootstrap é criado e preenchido transacionalmente ao abrir bancos anteriores, sem alterar IDs, payloads, leases ou checkpoints. Troca de conta ou raiz não mistura filas.
+`PersistentDetector` e os caminhos antigos de composição do Orquestrador foram removidos. Os especialistas Local/Remoto mantêm testes independentes, mas a aplicação compõe apenas a fachada `Detector`.
 
 ## Validação e limites
 

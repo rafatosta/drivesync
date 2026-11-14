@@ -156,43 +156,14 @@ Apenas erros de coordenação devem ser próprios (`InvalidSyncScope`, `Dependen
 **Estado:** contrato interno proposto para TDD; nenhum Rust compilado.
 
 
-## Etapa mínima compilada — inicialização local e conector
+## Etapa mínima compilada — Detector unificado e conector
 
-A solicitação posterior do usuário autoriza uma composição pública mínima, distinta do coordenador completo descrito acima. `drivesync_engine::Orchestrator` (também em `orchestrator::Orchestrator`) recebe `Engine` e `LocalDetectorCreateRequest` por `new`, instancia o detector em Stopped e mantém o mesmo conector. Não muda a API Engine existente nem migra a UI atual.
+`Orchestrator::observe_detector(DetectorCreateRequest, DeliveryState)` é o único construtor. Compõe a fachada `Detector` e um consumidor terminal diagnóstico, sem executar sincronização. Os construtores locais anteriores e `attach_remote` foram removidos; não há adaptação de versões antigas.
 
-- `new(connector: Engine, local: LocalDetectorCreateRequest) -> LocalDetectorResult<Self>` valida a configuração local sem I/O. A abertura do conector continua por `Engine::open(EngineConfig)`; pode ser feita pela futura composição externa antes de criar o Orchestrator.
-- `connector(&self) -> &Engine` disponibiliza contas, autenticação e navegação remota já existentes para a futura interface. Clones compartilham o serviço; continuam utilizáveis após a destruição do Orchestrator.
-- `start(LocalStartRequest) -> LocalDetectorResult<LocalStartResult>` inicia a captura local real; repetição operacional é idempotente. O retorno não promete verificação inicial concluída.
-- `stop(LocalStopRequest) -> LocalDetectorResult<LocalStopResult>` aguarda a parada e callbacks em curso; Drop também encerra o detector. Não chamar do próprio callback.
-- `status(LocalStatusRequest) -> LocalDetectorResult<LocalStatusResult>` apresenta o snapshot local, sem I/O ou estado global fictício.
+- `start_detector(DetectorStartMode)` e `stop_detector(DetectorStopMode)` controlam ambas as origens pela fachada.
+- `detector()` retorna `&Detector`; `detector_status()` retorna o estado agregado tipado.
+- `local_status()`, `diagnostics()` e `remote_diagnostics()` projetam caches por origem.
+- `pause_delivery()` e `resume_delivery()` controlam uma única política por conta, sem parar os produtores.
+- `connector()` mantém o acesso ao serviço de conexão, inclusive por clones após a parada.
 
-start/stop são síncronos e devem rodar fora da thread de UI. Os erros são os tipos reais do detector, preservados sem tradução. O sink fornecido recebe os eventos File; o Orchestrator não os descarta, não cria fila paralela e não alega persistência própria. Apenas o detector local está disponível; não simular origem remota nem iniciar Scanner, Inventory, Analyzer ou sincronização.
-
-O escopo e sua associação à conta são fornecidos pelo consumidor. Esta composição não cadastra sincronizações, não verifica associação consultando Accounts e não altera o bloqueio de remoção de contas do conector. Essas integrações permanecem para a etapa de cadastro/ownership. Cada instância possui um detector; nenhum registro global, scheduler ou novo runtime foi introduzido.
-
-As restrições anteriores contra API pública nova ou acesso direto a Local referem-se ao coordenador completo; para esta etapa, o usuário autorizou explicitamente a composição do LocalDetector público já implementado. Permanecem válidas para o futuro fluxo durável as regras de ingestão/ack e a ordem Detector/Scanner.
-
-### Diagnóstico de observação por conta
-
-`Orchestrator::diagnostics() -> DetectorDiagnostics` fornece AccountId/SyncId, total de ocorrências, último horário e os últimos 100 resumos (ID, horário, FileEvent e FileScope), sem conteúdo/metadados privados ou I/O. Repetir a ocorrência corrente rejeitada não incrementa o total. `pending_events: Option<u64>` é None até existir telemetria da fila; histórico não é fila.
-
-`Orchestrator::observe(Engine, LocalDetectorScope, LocalDetectorSettings)` cria uma sessão explicitamente diagnóstica. O consumidor terminal apenas observa; não assume trabalho de sincronização, persistência ou replay. A aceitação termina o processamento diagnóstico, não declara gravação numa fila durável. As sessões normais de `new` continuam encaminhando o File integral ao sink fornecido, com seu resultado intacto. A captura de resumos não muda o aceite do sink.
-
-
-Os File locais chegam normalizados por ciclos de escrita antes do sink. FileEvent.uncertainty é obrigatório para RecheckRequired e é preservado nos resumos/diagnósticos; o Orchestrator não precisa inferir a causa pela ausência de dados. O teste de composição confirma a substituição por origem provisória como um único Modified do destino. As limitações de janela e cobertura estão em Local INTERFACES § 14.
-
-DetectorEventSummary.entry_kind: Option<LocalEntryKind> preserva o tipo conhecido do payload local para apresentação. Ausência de metadados não é convertida em Regular; não há cache histórico de tipo para exclusões nem inferência por extensão.
-
-
-### Observação diagnóstica persistente
-
-observe_persistent(connector, scope, settings, data_directory, delivery) compõe PersistentDetector. O argumento delivery vale na criação de fila nova; reabrir respeita a política armazenada, inclusive Paused. Recupera os últimos 100 File para o histórico antes de iniciar a captura. pause_delivery/resume_delivery persistem a política sem parar o watcher.
-
-O worker terminal diagnóstico reserva/valida/confirma lotes; isso permite testar a entrega, não substitui ingestão no Inventory nem é sucesso de sincronização. O modo PersistentDetector público, por si só, não consome nem confirma eventos automaticamente. Diagnósticos expõem pendentes+reservados, reservados separadamente, confirmados, estado de entrega e erro da fila por conta/raiz. A interface lê só snapshots; SQLite e o consumidor trabalham fora da thread gráfica.
-
-
-## Caminho compilado após fechamento do Detector
-
-`Orchestrator::observe_detector(DetectorCreateRequest, DeliveryState)` compõe a fachada unificada, mantendo o consumidor terminal explicitamente diagnóstico. `start_detector(DetectorStartMode)`, `stop_detector(DetectorStopMode)`, `detector_status()` e `detector()` trabalham pela API pública do Detector, sem acessar filhos. `connector()` mantém o acesso à conexão. O Developer usa esse caminho; os construtores antigos permanecem compatibilidade para filas separadas anteriores.
-
-A coordenação completa Detector/Scanner/Inventário/Analisador ainda não é implementada nem validada por esta composição. A integração futura poderá consumir a fila pública sem o consumidor terminal diagnóstico.
+A política inicial só vale para banco novo; reabertura do mesmo formato restaura a política persistida. Não se trata de migração. O consumidor confirma lotes apenas para diagnóstico; não comprova ingestão no Inventário ou sincronização. Todos os comandos que realizam I/O devem ocorrer fora da thread gráfica. A validação completa do coordenador acima permanece posterior.

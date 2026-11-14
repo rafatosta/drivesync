@@ -48,6 +48,10 @@ fn observed_at() -> Timestamp {
     }
 }
 impl Detector {
+    /// Returns the immutable identity and roots that own this detector.
+    pub fn scope(&self) -> &DetectorScope {
+        &self.scope
+    }
     /// Constructs stopped producers using a provider selected from Accounts. No HTTP runs.
     #[allow(
         clippy::new_ret_no_self,

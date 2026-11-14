@@ -127,7 +127,9 @@ fn scheduler_polls_while_delivery_is_paused_and_stop_cancels_wait() {
     assert!(detector.diagnostics().status.next_poll_at.is_some());
     assert_eq!(
         detector
-            .take_events(TakeEventsRequest {
+            .shared
+            .store
+            .claim(TakeEventsRequest {
                 max_events: 10,
                 lease_duration: Duration::from_secs(30)
             })
@@ -192,24 +194,36 @@ fn real_storage_reopens_cursor_and_complete_payload_without_duplicate_initial_ev
         })
         .unwrap();
     assert_eq!(reopened.diagnostics().queue.detected, 1);
-    reopened.resume().unwrap();
+    reopened
+        .shared
+        .store
+        .set_delivery(DeliveryState::Enabled)
+        .unwrap();
     let batch = reopened
-        .take_events(TakeEventsRequest {
+        .shared
+        .store
+        .claim(TakeEventsRequest {
             max_events: 10,
             lease_duration: Duration::from_secs(30),
         })
         .unwrap();
     assert_eq!(batch.files, vec![original]);
     reopened
-        .release_events(batch.batch_id.as_ref().unwrap())
+        .shared
+        .store
+        .release(batch.batch_id.as_ref().unwrap())
         .unwrap();
     let batch = reopened
-        .take_events(TakeEventsRequest {
+        .shared
+        .store
+        .claim(TakeEventsRequest {
             max_events: 10,
             lease_duration: Duration::from_secs(30),
         })
         .unwrap();
     reopened
+        .shared
+        .store
         .acknowledge(
             batch.batch_id.as_ref().unwrap(),
             EventDisposition::Processed,

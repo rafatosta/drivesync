@@ -12,6 +12,7 @@ pub use runtime::RemoteDetector;
 impl RemoteDetector {
     /// Resolves the persisted account provider before opening any producer storage.
     /// Unsupported providers fail explicitly; no implementation is inferred from paths.
+    #[cfg(test)]
     pub fn new(request: RemoteDetectorCreateRequest) -> RemoteResult<Self> {
         runtime::validate(&request.scope, &request.settings)?;
         let session = request

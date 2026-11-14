@@ -56,7 +56,4 @@ Usar `drivesync_engine::detectors::LocalMetadataCollector` com `LocalDetectorSco
 
 A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. A publicação inicial do coletor foi ampliada posteriormente com LocalDetector::new/start/stop/status e eventos File, conforme Local INTERFACES § 12. A aplicação usa atualmente a fachada unificada, com fila persistente e consumo diagnóstico. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).
 
-As APIs anteriores `LocalDetector`/`PersistentDetector` e `RemoteDetector` permanecem disponíveis com filas isoladas por origem para compatibilidade. O caminho atual da aplicação usa `Detector`, com fila compartilhada; o consumo diagnóstico não executa sincronização. Ver [Remote — implementação](remote/IMPLEMENTATION.md).
-
-
-**Fechamento implementado:** a fachada `Detector` agora compõe ambas as origens e uma fila física única, incluindo lotes mistos. A composição diagnóstica do Developer usa essa API. As superfícies individuais anteriores permanecem para compatibilidade. [Escopo entregue, validação e limites](CLOSURE.md).
+**Fechamento implementado:** a fachada `Detector` agora compõe ambas as origens e uma fila física única, incluindo lotes mistos. A composição diagnóstica do Developer usa essa API. Os caminhos de compatibilidade antigos foram removidos. [Escopo entregue, validação e limites](CLOSURE.md).

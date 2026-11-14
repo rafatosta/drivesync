@@ -159,10 +159,7 @@ impl View {
             button.set_sensitive(snapshot.delivery.is_some() && !self.control_busy.get());
         }
 
-        if let Ok(status) = session
-            .orchestrator
-            .status(drivesync_engine::detectors::LocalStatusRequest {})
-        {
+        if let Ok(status) = session.orchestrator.local_status() {
             use drivesync_engine::detectors::LocalDetectorState::*;
             self.status.set_label(match status.state {
                 Running => "Monitoring",
@@ -720,16 +717,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
             }
             gtk::glib::spawn_future_local(async move {
                 let result = gtk::gio::spawn_blocking(move || {
-                    if remote {
-                        if session.remote_diagnostics().is_some_and(|snapshot| {
-                            snapshot.queue.delivery
-                                == drivesync_engine::detectors::DeliveryState::Paused
-                        }) {
-                            session.resume_remote_delivery()
-                        } else {
-                            session.pause_remote_delivery()
-                        }
-                    } else if session.diagnostics().delivery
+                    if session.diagnostics().delivery
                         == Some(drivesync_engine::detectors::DeliveryState::Paused)
                     {
                         session.resume_delivery()
@@ -808,9 +796,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                             snapshot.queue_error,
                         )
                     }),
-                    session.map(|s| s
-                        .orchestrator
-                        .status(drivesync_engine::detectors::LocalStatusRequest {})),
+                    session.map(|s| s.orchestrator.local_status()),
                     session.map(|s| s.orchestrator.remote_diagnostics().map(|snapshot| (
                         snapshot.status,
                         snapshot.queue.detected,

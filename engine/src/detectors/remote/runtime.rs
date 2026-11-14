@@ -23,7 +23,7 @@ struct Worker {
     cancel: Cancellation,
     join: JoinHandle<()>,
 }
-/// Remote-only producer with a durable queue and explicit confirmable delivery.
+/// Remote producer backed by the queue owned by the public Detector.
 /// No diagnostic consumer is implicit. All I/O methods must run outside the UI thread.
 /// Drop cancels and joins the scheduler without clearing its checkpoint or queue.
 pub struct RemoteDetector {
@@ -59,6 +59,7 @@ impl RemoteBackend for DurableBackend {
     }
 }
 impl RemoteDetector {
+    #[cfg(test)]
     pub(super) fn open(
         scope: RemoteDetectorScope,
         settings: RemoteDetectorSettings,
@@ -382,24 +383,6 @@ impl RemoteDetector {
             .map(RemoteEventSummary::from_file)
             .collect();
         Ok(())
-    }
-    pub(crate) fn queue_is_new(&self) -> bool {
-        self.shared.store.created
-    }
-    pub fn pause(&self) -> QueueResult<()> {
-        self.shared.store.set_delivery(DeliveryState::Paused)
-    }
-    pub fn resume(&self) -> QueueResult<()> {
-        self.shared.store.set_delivery(DeliveryState::Enabled)
-    }
-    pub fn take_events(&self, request: TakeEventsRequest) -> QueueResult<FileBatch> {
-        self.shared.store.claim(request)
-    }
-    pub fn acknowledge(&self, batch: &BatchId, disposition: EventDisposition) -> QueueResult<u32> {
-        self.shared.store.acknowledge(batch, disposition)
-    }
-    pub fn release_events(&self, batch: &BatchId) -> QueueResult<u32> {
-        self.shared.store.release(batch)
     }
 }
 impl Shared {

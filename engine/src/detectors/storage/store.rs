@@ -19,7 +19,9 @@ INSERT INTO control VALUES(1,0);
 CREATE TABLE leases(id TEXT PRIMARY KEY, expires INTEGER NOT NULL, state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 3), count INTEGER NOT NULL, disposition INTEGER);
 CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, payload BLOB NOT NULL, digest BLOB NOT NULL, state INTEGER NOT NULL DEFAULT 0 CHECK(state BETWEEN 0 AND 2), lease TEXT REFERENCES leases(id));
 CREATE INDEX delivery_order ON events(state,seq);
-PRAGMA user_version=1;";
+CREATE TABLE observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1)));
+CREATE INDEX observations_origin ON observations(origin);
+PRAGMA user_version=2;";
 struct Identity<'a> {
     account: &'a str,
     sync: &'a str,
@@ -98,9 +100,11 @@ fn reap(tx: &Transaction<'_>, now: i64) -> QueueResult<()> {
     Ok(())
 }
 impl Store {
+    #[cfg(test)]
     pub(crate) fn open(base: &Path, scope: &LocalDetectorScope) -> QueueResult<Self> {
         Self::open_clock(base, scope, Arc::new(clock))
     }
+    #[cfg(test)]
     pub(super) fn open_clock(
         base: &Path,
         scope: &LocalDetectorScope,
@@ -121,6 +125,7 @@ impl Store {
             clock,
         )
     }
+    #[cfg(test)]
     pub(crate) fn open_remote(
         base: &Path,
         provider: &str,
@@ -250,31 +255,6 @@ impl Store {
             .map_err(sql)?;
         }
         verify(&tx, &scope)?;
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1))); CREATE INDEX IF NOT EXISTS observations_origin ON observations(origin)").map_err(sql)?;
-        {
-            let mut query = tx
-                .prepare(
-                    "SELECT id,payload FROM events WHERE id NOT IN (SELECT id FROM observations)",
-                )
-                .map_err(sql)?;
-            let missing = query
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-                })
-                .map_err(sql)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql)?;
-            for (id, payload) in missing {
-                let file = codec::decode(&payload)?;
-                let initial = file.event.uncertainty
-                    == Some(crate::models::ObservationUncertainty::CaptureStarted);
-                tx.execute(
-                    "INSERT INTO observations VALUES(?1,?2,?3)",
-                    params![id, i32::from(scope.local.is_none()), initial],
-                )
-                .map_err(sql)?;
-            }
-        }
         reap(&tx, clock())?;
         tx.commit().map_err(sql)?;
         // SAFETY: release the initialization lock before descriptor destruction.
@@ -375,6 +355,7 @@ impl Store {
     pub(crate) fn refresh(&self) -> QueueResult<()> {
         self.run(false, |_, _| Ok(()))
     }
+    #[cfg(test)]
     pub(crate) fn enqueue(&self, file: &File) -> QueueResult<bool> {
         self.enqueue_from(
             file,
@@ -705,6 +686,7 @@ impl Store {
         }
         Ok(file)
     }
+    #[cfg(test)]
     pub(crate) fn recent(&self) -> QueueResult<Vec<File>> {
         self.run(false, |connection, _| {
             let mut statement = connection
@@ -742,7 +724,7 @@ fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 1 {
+    if version != 2 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     let stored: (String, String, Vec<u8>) = connection

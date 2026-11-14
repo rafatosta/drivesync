@@ -147,7 +147,7 @@ Falhas transitórias, indisponibilidade, `Conflict`, `CapacityExceeded`, identid
 
 ## 7. Implementação local compilada
 
-A solicitação de fila persistente autoriza a implementação em `engine/src/detectors/storage/` e a composição pública `PersistentDetector`. O Storage continua privado. A API compilada usa QueueError/QueueFailure/QueueStats, BatchId, FileBatch, EventDisposition e TakeEventsRequest; o contrato conceitual anterior orienta as operações, não impõe uma trait pública ou modelos remotos não revisados.
+A solicitação de fila persistente autoriza a implementação em `engine/src/detectors/storage/` e a composição pública `Detector`. O Storage continua privado. A API compilada usa QueueError/QueueFailure/QueueStats, BatchId, FileBatch, EventDisposition e TakeEventsRequest; o contrato conceitual anterior orienta as operações, não impõe uma trait pública ou modelos remotos não revisados.
 
 Cada banco é identificado por AccountId, SyncId e bytes da raiz local. A fábrica gera seu subdiretório por SHA-256 na base privada fornecida; a localização não fica na pasta sincronizada e não pode ficar dentro da raiz monitorada. Diretórios novos usam 0700 e o banco 0600; symlinks, hardlinks do banco, donos incorretos e diretório-base compartilhado são recusados. Conexões são protegidas por mutex; SQLite coordena processos e transações concorrentes. Há apenas um lease ativo por fila, para impedir ultrapassar um lote reservado na ordem de inserção.
 
@@ -166,9 +166,9 @@ O codec versão 1 admite agora `Remote(RemoteFile)` além de Local, mantendo a c
 O backend remoto usa uma extensão privada `remote_progress` no mesmo armazenamento privado. O especialista acessa apenas portas de carregar/salvar/emitir. Página preparada contém os File completos, com IDs e horários estáveis; após falha entre enqueue e checkpoint, o replay é idempotente pela identidade/payload. Compare-and-swap impede sobrescrever progresso concorrente. Checkpoint ilegível falha sem descarte ou reconstrução silenciosa. A confirmação de progresso remoto não depende de ack externo nem da política de entrega.
 
 
-A abertura remota recebe explicitamente o provedor selecionado pela fachada. O prefixo é `remote:<provider>:<root>`, com validação do identificador do provedor para evitar ambiguidades. Para Google, a identidade e o caminho resultantes permanecem iguais aos anteriores. Enqueue/leitura rejeitam payload remoto de outro provedor, mesmo com conta e SyncId iguais.
+A abertura remota recebe explicitamente o provedor selecionado pela fachada. O prefixo é `remote:<provider>:<root>`, com validação do identificador do provedor para evitar ambiguidades. Esse caminho isolado existe apenas nos testes dos especialistas. Enqueue/leitura rejeitam payload remoto de outro provedor, mesmo com conta e SyncId iguais.
 
 
 ## 9. Composição unificada
 
-`Store::open_unified` é privado à composição da fachada. Usa identidade `unified-v1` com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. Filas já existentes são indexadas transacionalmente ao abrir, preservando formato, payloads e leases. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. O namespace novo não substitui bancos antigos nem migra SyncIds de sessões diagnósticas anteriores.
+`Store::open_unified` é privado à composição da fachada. Usa identidade `unified-v1` com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. O índice é criado junto ao esquema atual (SQLite versão 2). Não existe backfill nem migração de versões anteriores. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. O namespace novo não substitui bancos antigos nem migra SyncIds de sessões diagnósticas anteriores.

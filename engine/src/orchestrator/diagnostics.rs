@@ -1,10 +1,5 @@
-//! Bounded observational history, distinct from the future durable event queue.
+//! Cached summaries projected from the unified durable event queue.
 use crate::{detectors::*, models::*};
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
-const HISTORY_LIMIT: usize = 100;
 /// Event context for inspection; no file contents, credentials or metadata payload.
 #[derive(Clone, Debug)]
 pub struct DetectorEventSummary {
@@ -15,7 +10,7 @@ pub struct DetectorEventSummary {
     /// Observed type only; absent metadata never implies a regular file.
     pub entry_kind: Option<LocalEntryKind>,
 }
-/// Per-instance diagnostics. Pending durable work is unknown until queue integration.
+/// Per-account local diagnostics projected from the unified queue.
 #[derive(Clone, Debug)]
 pub struct DetectorDiagnostics {
     pub account_id: AccountId,
@@ -30,101 +25,6 @@ pub struct DetectorDiagnostics {
     pub queue_error: Option<QueueError>,
     pub events: Vec<DetectorEventSummary>,
 }
-pub(super) struct History {
-    pub account: AccountId,
-    pub sync: SyncId,
-    pub detected: u64,
-    pub last_id: Option<FileId>,
-    pub last_time: Option<Timestamp>,
-    pub events: VecDeque<DetectorEventSummary>,
-}
-impl History {
-    pub fn new(scope: &LocalDetectorScope) -> Self {
-        Self {
-            account: scope.account_id.clone(),
-            sync: scope.sync_id.clone(),
-            detected: 0,
-            last_id: None,
-            last_time: None,
-            events: VecDeque::new(),
-        }
-    }
-    pub fn snapshot(&self) -> DetectorDiagnostics {
-        DetectorDiagnostics {
-            account_id: self.account.clone(),
-            sync_id: self.sync.clone(),
-            events_detected: self.detected,
-            initial_observations: self
-                .events
-                .iter()
-                .filter(|event| {
-                    event.event.uncertainty == Some(ObservationUncertainty::CaptureStarted)
-                })
-                .count() as u64,
-            last_event_at: self.last_time,
-            pending_events: None,
-            leased_events: None,
-            confirmed_events: None,
-            delivery: None,
-            queue_error: None,
-            events: self.events.iter().cloned().collect(),
-        }
-    }
-}
-pub(super) struct RecordingSink {
-    pub history: Arc<Mutex<History>>,
-    pub receiver: Arc<dyn LocalNotificationSink>,
-}
-impl LocalNotificationSink for RecordingSink {
-    fn notify(&self, file: File) -> LocalDetectorResult<()> {
-        {
-            let mut history = self.history.lock().unwrap_or_else(|e| e.into_inner());
-            // The producer retries only its current occurrence, retaining its ID.
-            if history.last_id.as_ref() != Some(&file.id) {
-                history.last_id = Some(file.id.clone());
-                history.last_time = Some(file.observed_at);
-                history.detected = history.detected.saturating_add(1);
-                if history.events.len() == HISTORY_LIMIT {
-                    history.events.pop_front();
-                }
-                history.events.push_back(DetectorEventSummary {
-                    id: file.id.clone(),
-                    observed_at: file.observed_at,
-                    event: file.event.clone(),
-                    scope: file.scope.clone(),
-                    entry_kind: match &file.data {
-                        Some(FileData::Local(local)) => match local.kind {
-                            MetadataValue::Known(kind) => Some(kind),
-                            _ => None,
-                        },
-                        None => None,
-                        Some(FileData::Remote(remote)) => match remote.kind {
-                            MetadataValue::Known(RemoteEntryKind::Directory) => {
-                                Some(LocalEntryKind::Directory)
-                            }
-                            MetadataValue::Known(RemoteEntryKind::File) => {
-                                Some(LocalEntryKind::Regular)
-                            }
-                            MetadataValue::Known(RemoteEntryKind::Shortcut) => {
-                                Some(LocalEntryKind::Symlink)
-                            }
-                            _ => None,
-                        },
-                    },
-                });
-            }
-        }
-        self.receiver.notify(file)
-    }
-}
-/// Terminal diagnostic consumer; no synchronization work is accepted or queued.
-pub(super) struct ObservationOnly;
-impl LocalNotificationSink for ObservationOnly {
-    fn notify(&self, _: File) -> LocalDetectorResult<()> {
-        Ok(())
-    }
-}
-
 pub(super) fn summarize(file: File) -> DetectorEventSummary {
     DetectorEventSummary {
         id: file.id,
@@ -138,66 +38,5 @@ pub(super) fn summarize(file: File) -> DetectorEventSummary {
             },
             _ => None,
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn retries_keep_one_occurrence_and_history_has_a_finite_tail() {
-        struct Reject;
-        impl LocalNotificationSink for Reject {
-            fn notify(&self, _: File) -> LocalDetectorResult<()> {
-                Err(LocalDetectorFailure {
-                    kind: LocalDetectorError::NotificationFailed,
-                    message: "retry".into(),
-                    retryable: true,
-                    progress: None,
-                })
-            }
-        }
-        let history = Arc::new(Mutex::new(History::new(&LocalDetectorScope {
-            account_id: AccountId("account".into()),
-            sync_id: SyncId("sync".into()),
-            local_root: "/tmp".into(),
-        })));
-        let sink = RecordingSink {
-            history: history.clone(),
-            receiver: Arc::new(Reject),
-        };
-        let event = |id| File {
-            id: FileId(format!("event-{id}")),
-            sync_id: SyncId("sync".into()),
-            event: FileEvent {
-                kind: FileEventKind::RecheckRequired,
-                uncertainty: Some(ObservationUncertainty::CaptureStarted),
-                previous: None,
-                current: None,
-            },
-            observed_at: Timestamp { unix_millis: id },
-            coverage: ObservationCoverage::Partial,
-            scope: FileScope::WholeSync,
-            data: None,
-        };
-        for _ in 0..3 {
-            assert!(sink.notify(event(0)).unwrap_err().retryable);
-        }
-        assert_eq!(history.lock().unwrap().snapshot().events_detected, 1);
-        for id in 1..150 {
-            let _ = sink.notify(event(id));
-        }
-        let snapshot = history.lock().unwrap().snapshot();
-        assert_eq!(snapshot.events_detected, 150);
-        assert_eq!(snapshot.events.len(), 100);
-        assert_eq!(
-            snapshot.events.first().unwrap().id,
-            FileId("event-50".into())
-        );
-        assert_eq!(
-            snapshot.events.last().unwrap().id,
-            FileId("event-149".into())
-        );
-        assert_eq!(snapshot.pending_events, None);
     }
 }

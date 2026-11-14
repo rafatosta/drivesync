@@ -11,34 +11,6 @@ pub(super) trait DiagnosticQueue: Send + Sync {
     fn take(&self, request: TakeEventsRequest) -> QueueResult<FileBatch>;
     fn confirm(&self, batch: &BatchId) -> QueueResult<u32>;
 }
-impl DiagnosticQueue for PersistentDetector {
-    fn refresh(&self) -> QueueResult<()> {
-        self.refresh_queue()
-    }
-    fn delivery(&self) -> DeliveryState {
-        self.delivery()
-    }
-    fn take(&self, request: TakeEventsRequest) -> QueueResult<FileBatch> {
-        self.take_events(request)
-    }
-    fn confirm(&self, batch: &BatchId) -> QueueResult<u32> {
-        self.acknowledge(batch, EventDisposition::Processed)
-    }
-}
-impl DiagnosticQueue for RemoteDetector {
-    fn refresh(&self) -> QueueResult<()> {
-        self.refresh_queue()
-    }
-    fn delivery(&self) -> DeliveryState {
-        self.diagnostics().queue.delivery
-    }
-    fn take(&self, request: TakeEventsRequest) -> QueueResult<FileBatch> {
-        self.take_events(request)
-    }
-    fn confirm(&self, batch: &BatchId) -> QueueResult<u32> {
-        self.acknowledge(batch, EventDisposition::Processed)
-    }
-}
 pub(super) fn queue_error(error: DetectorFailure) -> QueueFailure {
     QueueFailure {
         kind: error.queue.unwrap_or(QueueError::Internal),

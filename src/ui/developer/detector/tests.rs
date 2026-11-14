@@ -415,7 +415,7 @@ fn live_account_selection_and_detector_layout() {
         &AccountId("personal@example.invalid".into()),
     ));
     assert_eq!(
-        first.status(LocalStatusRequest {}).unwrap().state,
+        first.local_status().unwrap().state,
         LocalDetectorState::Stopped
     );
     assert_eq!(
@@ -425,7 +425,7 @@ fn live_account_selection_and_detector_layout() {
             .get("work@example.invalid")
             .unwrap()
             .orchestrator
-            .status(LocalStatusRequest {})
+            .local_status()
             .unwrap()
             .state,
         LocalDetectorState::Running
