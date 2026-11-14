@@ -3271,3 +3271,51 @@ async fn malformed_metadata_retains_its_received_http_status() {
     assert_eq!(err.kind, GoogleApiError::InvalidResponse);
     assert_eq!(err.http_status, Some(200));
 }
+
+#[tokio::test]
+async fn observation_json_reads_preserve_unknown_fields_nulls_and_nested_values() {
+    let original = r#"{"id":"f","name":null,"unknown":{"value":[false,0,null,"x"]}}"#;
+    let server = Server::start(vec![
+        Reply::json(200, original),
+        Reply::json(200, original),
+        Reply::json(200, original),
+    ]);
+    let client = server.client();
+    let expected: serde_json::Value = serde_json::from_str(original).unwrap();
+    assert_eq!(
+        client
+            .files_get_json(&session(), &FileId("f".into()), FileGetOptions::default())
+            .await
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        client
+            .files_list_json(&session(), FileListOptions::default())
+            .await
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        client
+            .changes_list_json(
+                &session(),
+                ChangeListOptions {
+                    page_token: "cursor".into(),
+                    ..Default::default()
+                }
+            )
+            .await
+            .unwrap(),
+        expected
+    );
+    let paths: Vec<_> = server
+        .recorded()
+        .iter()
+        .map(|request| request.path().to_owned())
+        .collect();
+    assert_eq!(
+        paths,
+        ["/drive/v3/files/f", "/drive/v3/files", "/drive/v3/changes"]
+    );
+}

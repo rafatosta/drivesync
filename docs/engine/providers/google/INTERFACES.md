@@ -2476,3 +2476,17 @@ completo são a única confirmação final; não há retry nem consulta automát
 
 `trash_file`, `rename_file` e `move_file` usam exclusivamente PATCH de metadados,
 com `supportsAllDrives=true`. Mover usa `addParents` e `removeParents`, nunca bytes.
+
+## Original JSON observations
+
+The read-only methods files_get_json, files_list_json and changes_list_json use
+the same session, options, endpoints, response bounds and sanitized failures as
+their typed counterparts. They return the received JSON object as serde_json::Value,
+preserving unknown fields, explicit nulls and nested values before typed mapping.
+They do not expand the requested fields or persist headers, credentials or HTTP
+error bodies. JSON formatting/key order are not a byte-for-byte HTTP recording.
+Existing typed methods remain used by metadata/picker consumers.
+
+References: https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get,
+https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list,
+https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list.
