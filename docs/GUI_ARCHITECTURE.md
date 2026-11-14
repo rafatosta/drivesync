@@ -108,7 +108,7 @@ O Event stream diferencia entradas por ícones com tooltip e nome acessível: ar
 
 ### Fila persistente e interrupção de entrega no Developer
 
-As sessões reais do Developer agora usam Orchestrator::observe_detector e SQLite na área privada `data/drivesync/detector-queues` do aplicativo, separada por conta/SyncId/raiz. Reabrir recupera o histórico recente, as contagens e a política de entrega. Configurar outra pasta cria outro escopo; a fila anterior não é apagada ou atribuída à nova pasta. Desconectar encerra a captura, mas não limpa silenciosamente registros persistidos.
+As sessões reais do Developer agora usam Orchestrator::observe_detector e SQLite em `<pasta-local>/.drivesync/detector.sqlite3`, validado por conta/SyncId/raízes. Reabrir recupera o histórico recente, as contagens e a política de entrega. Configurar outra pasta cria outro escopo; a fila anterior não é apagada ou atribuída à nova pasta. Desconectar encerra a captura, mas não limpa silenciosamente registros persistidos.
 
 O botão de pause/play ao lado de recarregar (tooltips “Interrupt delivery” / “Resume delivery”) atua somente na conta selecionada, com I/O fora da thread GTK. Durante a interrupção, captura e gravação continuam e Pending events cresce. O Event stream mostra observações capturadas, inclusive durante pause; ele não é uma lista de operações sincronizadas. A página mostra entrega, reservas, confirmações diagnósticas e último erro da fila. Ao retomar, o consumidor terminal diagnóstico reserva e confirma os lotes; não há Inventory, upload/download ou sucesso de sincronização implícito. A fachada Detector oferece consumo explícito e não confirma sozinha.
 
@@ -129,6 +129,8 @@ Na aba Remote, intervalo, última/próxima consulta e falha atual permanecem vis
 
 O Developer passa a usar `Orchestrator::observe_detector`, adaptador da fachada pública `Detector`. Local e Remote da mesma conta compartilham uma fila física e uma política de entrega; o play/pause em qualquer aba pausa/libera o consumo de ambas, mantendo watchers e polling ativos. Outra conta não é afetada. Os indicadores por aba continuam filtrados pela origem real.
 
-`Events detected` exclui CaptureStarted; observações iniciais/de recuperação são mostradas nos detalhes. O histórico continua preservando esses eventos como reavaliações, sem escondê-los ou convertê-los em alterações novas. A sessão agora usa `developer-unified:<account>` e identidade contendo ambas as raízes. Filas diagnósticas antigas continuam em disco e acessíveis pelas APIs anteriores; não há importação automática nem exclusão. A primeira execução desta nova identidade pode reler o remoto.
+`Events detected` exclui CaptureStarted; observações iniciais/de recuperação são mostradas nos detalhes. O histórico continua preservando esses eventos como reavaliações, sem escondê-los ou convertê-los em alterações novas. A sessão agora usa `developer-unified:<account>` e identidade contendo ambas as raízes. Não há APIs de compatibilidade ou importação de bancos antigos. Sem checkpoint no banco atual, a primeira execução relê o remoto.
 
 A interface continua consumindo apenas diagnósticos reais. Nenhuma operação de sincronização é executada e o Scanner Local não foi incorporado ao Detector. Ver `docs/engine/detectors/CLOSURE.md` para a superfície pública e os limites de validação.
+
+A localização do banco é derivada pela engine. A UI não fornece diretório de fila nem usa fallback XDG. Inventário e Detector ficam no mesmo diretório oculto reservado, com bancos separados; a implementação do Inventário permanece futura.

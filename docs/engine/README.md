@@ -20,3 +20,15 @@ Accounts/Connection, Providers Google, Models e Detector têm implementação Ru
 O Scanner é exclusivamente local. Não recebe eventos dos Detectores, não acessa APIs remotas e não entrega itens diretamente ao Analisador. Seu contrato foi especificado posteriormente para manter o levantamento local separado da análise por item. Os contratos de Scanner/Inventário/Analisador/Operador e do Orquestrador completo devem ser conferidos antes das respectivas implementações.
 
 O fluxo futuro é `Detector → Orquestrador → Inventário → Analisador`, com `Scanner Local → Inventário` no levantamento local e `Analisador → Operador` na execução. A leitura inicial remota pertence ao especialista do Detector. Consumo terminal no Developer confirma somente a observação diagnóstica, nunca sincronização ou baseline.
+
+## Persistência por pasta local
+
+Cada par de sincronização reserva uma pasta oculta dentro da raiz local:
+
+```text
+<pasta-local>/.drivesync/
+├── detector.sqlite3    # Eventos locais/remotos, leases e checkpoint remoto
+└── inventory.sqlite3   # Identidades, metadados, baseline, operações e histórico
+```
+
+`detector.sqlite3` está implementado. `inventory.sqlite3` é o caminho contratado para a implementação futura do Inventário; o Detector não cria nem altera esse banco. Não existe `history.sqlite3` separado. `.drivesync/` é excluída da observação e do conteúdo sincronizável. Accounts e credenciais permanecem nos locais próprios da aplicação. Não há migração de bancos de desenvolvimento anteriores.

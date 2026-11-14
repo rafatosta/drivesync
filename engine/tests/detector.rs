@@ -40,7 +40,6 @@ fn open(path: &Path) -> Detector {
         },
         local_settings: LocalDetectorSettings::default(),
         remote_settings: RemoteDetectorSettings::default(),
-        data_directory: path.join("queues"),
         event_available_sink: None,
     })
     .unwrap()
@@ -103,6 +102,19 @@ fn real_capture_remains_healthy_when_remote_requires_authorization_and_pause_kee
         DetectorState::Stopped
     );
     start(&detector);
+    assert!(tree.0.join("local/.drivesync/detector.sqlite3").is_file());
+    let before = detector.source_queue_status(DetectorOrigin::Local).detected;
+    std::fs::write(
+        tree.0.join("local/.drivesync/inventory.sqlite3"),
+        b"internal state fixture",
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(350));
+    assert_eq!(
+        detector.source_queue_status(DetectorOrigin::Local).detected,
+        before,
+        "internal database writes must never become user file events"
+    );
     let status = detector.status(DetectorStatusRequest {}).unwrap().status;
     assert_eq!(status.state, DetectorState::Degraded);
     assert_eq!(status.local.state, DetectorState::Running);

@@ -15,6 +15,7 @@ impl Tree {
             NEXT.fetch_add(1, Ordering::SeqCst)
         ));
         std::fs::create_dir(&path).unwrap();
+        std::fs::create_dir(path.join("local")).unwrap();
         Self(path)
     }
 }
@@ -95,7 +96,6 @@ fn store(tree: &Tree) -> Arc<Store> {
     let scope = scope(tree);
     Arc::new(
         Store::open_unified(
-            &tree.0.join("queues"),
             &LocalDetectorScope {
                 account_id: scope.account_id,
                 sync_id: scope.sync_id,

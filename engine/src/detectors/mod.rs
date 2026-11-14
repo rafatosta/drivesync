@@ -70,12 +70,12 @@ pub use storage::{
 
 pub(crate) mod remote;
 pub use remote::{
-    RemoteActivity, RemoteCoverage, RemoteDetector, RemoteDetectorCreateRequest,
-    RemoteDetectorScope, RemoteDetectorSettings, RemoteDiagnostics, RemoteError,
-    RemoteEventSummary, RemoteFailure, RemotePollMode, RemotePollRequest, RemotePollResult,
-    RemoteResult, RemoteStartRequest, RemoteStartResult, RemoteState, RemoteStatusRequest,
-    RemoteStatusResult, RemoteStopRequest, RemoteStopResult,
+    RemoteActivity, RemoteCoverage, RemoteDetectorScope, RemoteDetectorSettings, RemoteDiagnostics,
+    RemoteError, RemoteEventSummary, RemoteFailure, RemotePollMode, RemotePollRequest,
+    RemotePollResult, RemoteResult, RemoteStartRequest, RemoteStartResult, RemoteState,
+    RemoteStatusRequest, RemoteStatusResult, RemoteStopRequest, RemoteStopResult,
 };
+pub(crate) use remote::{RemoteDetector, RemoteDetectorCreateRequest};
 
 mod unified;
 pub use unified::*;

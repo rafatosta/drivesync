@@ -124,7 +124,8 @@ fn scheduler_polls_while_delivery_is_paused_and_stop_cancels_wait() {
     wait_until(|| api.calls.load(Ordering::SeqCst) >= 6);
     assert_eq!(detector.diagnostics().queue.delivery, DeliveryState::Paused);
     assert_eq!(detector.diagnostics().queue.detected, 1);
-    assert!(detector.diagnostics().status.next_poll_at.is_some());
+    // API call entry does not imply that the round has published its next schedule.
+    wait_until(|| detector.diagnostics().status.next_poll_at.is_some());
     assert_eq!(
         detector
             .shared
@@ -490,23 +491,13 @@ fn scheduler_and_queue_accept_a_provider_independent_observer() {
 }
 
 #[test]
-fn google_provider_identity_keeps_existing_database_paths_and_rejects_foreign_payloads() {
-    use sha2::{Digest, Sha256};
+fn google_provider_identity_rejects_foreign_payloads() {
     let base = base();
     let api = Arc::new(ApiFixture {
         calls: AtomicUsize::new(0),
         slow: false,
     });
     let detector = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
-    let previous_identity =
-        serde_json::to_vec(&("a", "sync-a", b"remote:google:root".as_slice())).unwrap();
-    let existing_path = base
-        .join(format!("{:x}", Sha256::digest(previous_identity)))
-        .join("events.sqlite3");
-    assert!(
-        existing_path.is_file(),
-        "Google keeps the namespace from the prior implementation"
-    );
     detector
         .poll_once(RemotePollRequest {
             mode: RemotePollMode::Initial,

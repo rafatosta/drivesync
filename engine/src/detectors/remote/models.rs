@@ -1,6 +1,5 @@
 //! Remote lifecycle, scheduling and diagnostics without provider credentials.
 use crate::{detectors::QueueStats, models::*};
-use std::path::PathBuf;
 use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteDetectorScope {
@@ -26,7 +25,8 @@ pub struct RemoteDetectorCreateRequest {
     pub connector: crate::Engine,
     pub scope: RemoteDetectorScope,
     pub settings: RemoteDetectorSettings,
-    pub data_directory: PathBuf,
+    #[cfg(test)]
+    pub data_directory: std::path::PathBuf,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteState {

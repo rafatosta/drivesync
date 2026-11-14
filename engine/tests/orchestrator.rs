@@ -52,7 +52,6 @@ impl Tree {
                 },
                 local_settings: LocalDetectorSettings::default(),
                 remote_settings: RemoteDetectorSettings::default(),
-                data_directory: self.0.join("queues"),
                 event_available_sink: None,
             },
             DeliveryState::Enabled,

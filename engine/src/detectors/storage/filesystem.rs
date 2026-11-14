@@ -1,4 +1,4 @@
-//! Private app-data directories and no-follow queue file creation.
+//! Owner-private reserved state directories and no-follow queue file creation.
 use super::models::*;
 use std::{
     ffi::{CString, OsStr},
@@ -12,7 +12,7 @@ use std::{
 fn error() -> QueueFailure {
     QueueFailure::new(QueueError::Unavailable)
 }
-fn open_at(parent: &File, name: &OsStr) -> QueueResult<File> {
+fn open_at(parent: &File, name: &OsStr, create: bool) -> QueueResult<File> {
     let name = CString::new(name.as_bytes()).map_err(|_| error())?;
     // SAFETY: owned parent and NUL-terminated relative component remain live.
     let mut fd = unsafe {
@@ -22,7 +22,7 @@ fn open_at(parent: &File, name: &OsStr) -> QueueResult<File> {
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
-    if fd < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
+    if create && fd < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
         // SAFETY: same live parent and component; mode creates an owner-private directory.
         if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } < 0
             && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST)
@@ -45,16 +45,32 @@ fn open_at(parent: &File, name: &OsStr) -> QueueResult<File> {
     // SAFETY: a successful unique descriptor is transferred once.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
-pub(super) fn directory(path: &Path) -> QueueResult<File> {
+/// Opens an existing root without following symlinks or creating missing ancestors.
+/// User roots need not be private; the reserved state directory must be.
+pub(super) fn existing_directory(path: &Path) -> QueueResult<File> {
+    walk(path, false)
+}
+fn walk(path: &Path, create: bool) -> QueueResult<File> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(error());
     }
     let mut parent = File::open("/").map_err(|_| error())?;
     for component in path.components() {
         if let Component::Normal(name) = component {
-            parent = open_at(&parent, name)?;
+            parent = open_at(&parent, name, create)?;
         }
     }
+    Ok(parent)
+}
+#[cfg(test)]
+pub(super) fn directory(path: &Path) -> QueueResult<File> {
+    let parent = walk(path, true)?;
+    private_directory(parent)
+}
+pub(super) fn reserved_directory(root: &File) -> QueueResult<File> {
+    private_directory(open_at(root, OsStr::new(".drivesync"), true)?)
+}
+fn private_directory(parent: File) -> QueueResult<File> {
     let metadata = parent.metadata().map_err(|_| error())?;
     // SAFETY: geteuid has no arguments or memory effects.
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
@@ -63,7 +79,7 @@ pub(super) fn directory(path: &Path) -> QueueResult<File> {
     Ok(parent)
 }
 pub(super) fn database(parent: &File) -> QueueResult<(File, bool)> {
-    let name = c"events.sqlite3";
+    let name = c"detector.sqlite3";
     // SAFETY: parent stays live and the literal is NUL-terminated.
     let mut fd = unsafe {
         libc::openat(

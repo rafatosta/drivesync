@@ -2,7 +2,7 @@
 
 ## Escopo entregue
 
-A API pública `drivesync_engine::detectors::Detector` compõe Local e Remoto privadamente, escolhe o especialista remoto pelo provedor de Accounts e usa uma única fila SQLite por conta, SyncId e par de raízes. Google é o especialista remoto implementado. Provedores sem registro falham explicitamente.
+A API pública `drivesync_engine::detectors::Detector` compõe Local e Remoto privadamente, escolhe o especialista remoto pelo provedor de Accounts e usa uma única fila SQLite em `<raiz-local>/.drivesync/detector.sqlite3`, validada por conta, SyncId e par de raízes. Google é o especialista remoto implementado. Provedores sem registro falham explicitamente.
 
 Estão implementados `new`, `start`, `pause`, `resume`, `stop`, `request_scan`, `status`, `take_events`, `acknowledge` e `release_events`. O consumidor não instancia filhos. A fachada não constrói Inventário, Scanner, Analisador ou operações de sincronização.
 
@@ -24,7 +24,9 @@ O Scanner Local permanece responsável pelo levantamento local via Inventário. 
 
 O índice durável registra a origem real de emissão, inclusive avisos sem payload. `QueueStats.detected` representa todas as observações; `initial_observations` separa CaptureStarted, incluindo bootstrap após recuperação; `changes_detected` exclui essas observações iniciais. A página Developer apresenta eventos posteriores no indicador principal e observações iniciais/de recuperação nos detalhes. Avisos e incertezas continuam identificados; os contadores não provam sincronização.
 
-## Formato em desenvolvimento
+## Localização e formato em desenvolvimento
+
+A localização é derivada da raiz local pelo Storage; não há parâmetro público de diretório de dados nem fallback para XDG. A raiz precisa existir e estar acessível. O diretório reservado usa 0700 e o banco 0600. Links simbólicos no caminho, hardlinks do banco e identidades divergentes são rejeitados. O banco do Inventário é independente, no mesmo diretório: `inventory.sqlite3`, ainda documental. Escritas internas não geram eventos de usuário.
 
 Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 2); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
 

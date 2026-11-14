@@ -41,3 +41,5 @@ Executar os cenários de [TESTS.md](TESTS.md), incluindo eventos locais e remoto
 ## Fechamento autorizado da fachada
 
 A solicitação posterior de finalizar o Detector autorizou a fachada unificada; as restrições históricas da publicação parcial não a bloqueiam. A API compilada está em `engine/src/detectors/unified/` e INTERFACES § 11. Preservar a fila física única, o início de ambas as origens, a pausa somente da entrega, a separação do Scanner e o contrato do especialista remoto. Não manter APIs antigas, migrações ou backfill: o usuário explicitou que esta fase é desenvolvimento. Recuperação de eventos no mesmo formato permanece obrigatória. Consultar CLOSURE.md para os limites atuais.
+
+A fila deve ficar em `<raiz-local>/.drivesync/detector.sqlite3`, junto do caminho contratado para o Inventário (`inventory.sqlite3`). Derivar o caminho internamente; não aceitar base externa nem fallback XDG. Não criar banco do Inventário antes da implementação do proprietário. A raiz deve existir e as gravações internas não podem produzir eventos sincronizáveis.

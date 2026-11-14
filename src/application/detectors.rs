@@ -73,7 +73,6 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
         remove(context, &AccountId(id)).await;
     }
     let mut result = Vec::new();
-    let queue_directory = adw::gtk::glib::user_data_dir().join("drivesync/detector-queues");
     for (account, root, remote_root_id, local_error) in configured {
         let existing = context
             .detectors
@@ -86,7 +85,6 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
         } else {
             remove(context, &account.id).await;
             let connector = engine.clone();
-            let queue_directory = queue_directory.clone();
             let scope = DetectorScope {
                 account_id: account.id.clone(),
                 sync_id: SyncId(format!("developer-unified:{}", account.id.0)),
@@ -100,7 +98,6 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
                         scope,
                         local_settings: LocalDetectorSettings::default(),
                         remote_settings: RemoteDetectorSettings::default(),
-                        data_directory: queue_directory,
                         event_available_sink: None,
                     },
                     DeliveryState::Enabled,

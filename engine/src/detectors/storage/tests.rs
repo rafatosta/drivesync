@@ -75,7 +75,7 @@ impl Tree {
             .unwrap()
             .unwrap()
             .path()
-            .join("events.sqlite3")
+            .join("detector.sqlite3")
     }
 }
 impl Drop for Tree {
@@ -358,4 +358,117 @@ fn corruption_during_a_reservation_blocks_ack_without_confirming_the_batch() {
         store.refresh().is_err(),
         "corruption must remain unavailable, not clear on a status query"
     );
+}
+
+#[test]
+fn unified_queue_uses_reserved_directory_and_preserves_inventory() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let state = tree.scope().local_root.join(".drivesync");
+    let store = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    assert!(state.join("detector.sqlite3").is_file());
+    assert_eq!(
+        fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(state.join("detector.sqlite3"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert!(!tree.0.join("state").exists());
+    let inventory = state.join("inventory.sqlite3");
+    fs::write(&inventory, b"independent inventory owner").unwrap();
+    store
+        .enqueue_from(&tree.event("durable"), DetectorOrigin::Local)
+        .unwrap();
+    drop(store);
+    let reopened = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    assert_eq!(reopened.snapshot().pending, 1);
+    assert_eq!(fs::read(inventory).unwrap(), b"independent inventory owner");
+}
+
+#[test]
+fn root_queue_refuses_different_accounts_roots_or_syncs_without_replacement() {
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    store
+        .enqueue_from(&tree.event("owned"), DetectorOrigin::Local)
+        .unwrap();
+    drop(store);
+    let mut scope = tree.scope();
+    scope.account_id = AccountId("other".into());
+    assert_eq!(
+        Store::open_unified(&scope, "google", "remote-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    scope = tree.scope();
+    scope.sync_id = SyncId("other-sync".into());
+    assert_eq!(
+        Store::open_unified(&scope, "google", "remote-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    assert_eq!(
+        Store::open_unified(&tree.scope(), "google", "other-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    assert_eq!(
+        Store::open_unified(&tree.scope(), "google", "remote-root")
+            .unwrap()
+            .snapshot()
+            .pending,
+        1
+    );
+}
+
+#[test]
+fn reserved_state_never_follows_symlinks_or_creates_a_missing_user_root() {
+    let tree = Tree::new();
+    let mut scope = tree.scope();
+    scope.local_root = tree.0.join("missing/root");
+    assert!(Store::open_unified(&scope, "google", "root").is_err());
+    assert!(!tree.0.join("missing").exists());
+    fs::create_dir(tree.0.join("outside")).unwrap();
+    symlink(
+        tree.0.join("outside"),
+        tree.scope().local_root.join(".drivesync"),
+    )
+    .unwrap();
+    assert!(Store::open_unified(&tree.scope(), "google", "root").is_err());
+    assert!(fs::read_dir(tree.0.join("outside"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+#[test]
+fn reserved_database_rejects_old_schema_without_migration() {
+    let tree = Tree::new();
+    drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
+    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 1).unwrap();
+    db.execute_batch("DROP TABLE observations;").unwrap();
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        Store::open_unified(&tree.scope(), "google", "root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::SchemaUnsupported
+    );
+    assert_eq!(fs::read(path).unwrap(), before);
 }

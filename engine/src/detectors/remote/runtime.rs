@@ -247,6 +247,7 @@ impl RemoteDetector {
         })
     }
     /// Executes bounded work synchronously. Concurrent rounds are rejected, never overlapped.
+    #[cfg(test)]
     pub fn poll_once(&self, request: RemotePollRequest) -> RemoteResult<RemotePollResult> {
         let budget = request
             .page_budget

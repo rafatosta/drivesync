@@ -13,7 +13,6 @@ pub struct DetectorCreateRequest {
     pub scope: DetectorScope,
     pub local_settings: LocalDetectorSettings,
     pub remote_settings: RemoteDetectorSettings,
-    pub data_directory: PathBuf,
     pub event_available_sink: Option<Arc<dyn EventAvailableSink>>,
 }
 /// Emits a lightweight availability signal. Do not reenter blocking control methods

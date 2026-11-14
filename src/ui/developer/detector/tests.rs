@@ -123,7 +123,6 @@ fn live_account_selection_and_detector_layout() {
                 },
                 local_settings: LocalDetectorSettings::default(),
                 remote_settings: RemoteDetectorSettings::default(),
-                data_directory: base.join("queues"),
                 event_available_sink: None,
             },
             DeliveryState::Enabled,

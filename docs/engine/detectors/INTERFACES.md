@@ -302,7 +302,7 @@ Além do coletor da seção 8, o módulo detectors reexporta LocalDetector e os 
 
 ## 11. Fachada unificada compilada
 
-`Detector::new(DetectorCreateRequest)` retorna `DetectorCreateResult { detector, state }`. O request contém `connector: Engine`, `scope: DetectorScope { account_id, sync_id, local_root, remote_root_id }`, settings locais/remotos, diretório privado e `event_available_sink: Option<Arc<dyn EventAvailableSink>>`. Não exige objetos de Local/Remote/Storage. Construção faz I/O privado, sem HTTP; executar fora da thread gráfica.
+`Detector::new(DetectorCreateRequest)` retorna `DetectorCreateResult { detector, state }`. O request contém `connector: Engine`, `scope: DetectorScope { account_id, sync_id, local_root, remote_root_id }`, settings locais/remotos e `event_available_sink: Option<Arc<dyn EventAvailableSink>>`. Não exige objetos de Local/Remote/Storage. O Storage deriva `<raiz-local>/.drivesync/detector.sqlite3`, sem parâmetro de localização pública. Construção faz I/O privado, sem HTTP; executar fora da thread gráfica.
 
 Os dez métodos da seção 4 estão implementados. `status()` retorna `DetectorStatus` com estado, entrega, `local`/`remote: DetectorSourceStatus` e `queue: QueueStats`. O status de cada origem conserva o DTO específico de atividade/rodada e `DetectorSourceError`, sem consultar o provedor. Os erros de fachada mantêm categoria, retryability e erro tipado de origem ou fila, sem mensagens externas.
 

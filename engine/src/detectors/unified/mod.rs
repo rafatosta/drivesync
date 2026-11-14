@@ -83,7 +83,8 @@ impl Detector {
                 remote_root_id: request.scope.remote_root_id.clone(),
             },
             settings: request.remote_settings,
-            data_directory: request.data_directory.clone(),
+            #[cfg(test)]
+            data_directory: request.scope.local_root.join(".drivesync"),
         };
         let provider = super::remote::validate_configuration(&remote_request).map_err(|error| {
             DetectorFailure {
@@ -94,7 +95,6 @@ impl Detector {
             }
         })?;
         let store = Arc::new(Store::open_unified(
-            &request.data_directory,
             &scope,
             &provider.0,
             &request.scope.remote_root_id,

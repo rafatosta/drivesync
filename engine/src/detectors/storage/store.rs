@@ -21,6 +21,7 @@ CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQ
 CREATE INDEX delivery_order ON events(state,seq);
 CREATE TABLE observations(id TEXT PRIMARY KEY REFERENCES events(id), origin INTEGER NOT NULL CHECK(origin IN(0,1)), initial INTEGER NOT NULL CHECK(initial IN(0,1)));
 CREATE INDEX observations_origin ON observations(origin);
+CREATE TABLE remote_progress(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL);
 PRAGMA user_version=2;";
 struct Identity<'a> {
     account: &'a str,
@@ -113,8 +114,15 @@ impl Store {
         if !scope.local_root.is_absolute() {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
+        let identity = serde_json::to_vec(&(
+            scope.account_id.0.as_str(),
+            scope.sync_id.0.as_str(),
+            scope.local_root.as_os_str().as_bytes(),
+        ))
+        .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        let location = base.join(format!("{:x}", Sha256::digest(identity)));
         Self::open_identity(
-            base,
+            &location,
             Identity {
                 account: &scope.account_id.0,
                 sync: &scope.sync_id.0,
@@ -123,6 +131,7 @@ impl Store {
                 provider: None,
             },
             clock,
+            filesystem::directory(&location)?,
         )
     }
     #[cfg(test)]
@@ -142,8 +151,11 @@ impl Store {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
         let root = format!("remote:{provider}:{root}");
+        let identity = serde_json::to_vec(&(account, sync, root.as_bytes()))
+            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        let location = base.join(format!("{:x}", Sha256::digest(identity)));
         Self::open_identity(
-            base,
+            &location,
             Identity {
                 account,
                 sync,
@@ -152,23 +164,24 @@ impl Store {
                 provider: Some(provider),
             },
             Arc::new(clock),
+            filesystem::directory(&location)?,
         )
     }
     pub(crate) fn open_unified(
-        base: &Path,
         scope: &LocalDetectorScope,
         provider: &str,
         remote_root: &str,
     ) -> QueueResult<Self> {
+        // Only the reserved child may be created; a missing sync root is unavailable.
+        let _root = filesystem::existing_directory(&scope.local_root)?;
         let root = serde_json::to_vec(&(
-            "unified-v1",
             scope.local_root.as_os_str().as_bytes(),
             provider,
             remote_root,
         ))
         .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
         Self::open_identity(
-            base,
+            &scope.local_root.join(".drivesync"),
             Identity {
                 account: &scope.account_id.0,
                 sync: &scope.sync_id.0,
@@ -177,36 +190,25 @@ impl Store {
                 provider: Some(provider),
             },
             Arc::new(clock),
+            filesystem::reserved_directory(&_root)?,
         )
     }
     fn open_identity(
         base: &Path,
         scope: Identity<'_>,
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+        directory: FsFile,
     ) -> QueueResult<Self> {
         if scope.account.trim().is_empty() || scope.sync.trim().is_empty() {
             return Err(QueueFailure::new(QueueError::InvalidRequest));
         }
-        let identity = serde_json::to_vec(&(scope.account, scope.sync, scope.root))
-            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
-        let key = format!("{:x}", Sha256::digest(&identity));
-        let location = base.join(&key);
-        if scope
-            .local
-            .is_some_and(|root| location.starts_with(root) || root.starts_with(&location))
-        {
-            return Err(QueueFailure::new(QueueError::InvalidRequest));
-        }
-        // Validate the supplied app-private base before creating its identity directory.
-        let _base = filesystem::directory(base)?;
-        let directory = filesystem::directory(&base.join(&key))?;
         let (file, created) = filesystem::database(&directory)?;
         // SAFETY: flock operates on our live owned database descriptor. It serializes initialization only.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(QueueFailure::new(QueueError::Unavailable));
         }
         let mut connection = Connection::open_with_flags(
-            base.join(key).join("events.sqlite3"),
+            base.join("detector.sqlite3"),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -459,8 +461,14 @@ impl Store {
     /// The producer owns serialization; compare-and-swap rejects concurrent producers.
     pub(crate) fn remote_state(&self) -> QueueResult<Option<Vec<u8>>> {
         self.run(false, |connection, _| {
-            connection.execute_batch("CREATE TABLE IF NOT EXISTS remote_progress(id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)").map_err(sql)?;
-            connection.query_row("SELECT payload FROM remote_progress WHERE id=1", [], |row| row.get(0)).optional().map_err(sql)
+            connection
+                .query_row(
+                    "SELECT payload FROM remote_progress WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql)
         })
     }
     pub(crate) fn save_remote_state(
