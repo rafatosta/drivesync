@@ -128,3 +128,29 @@ cargo test -p drivesync-engine scanner::tests --lib (14 aprovados),
 cargo test -p drivesync-engine --test scanner (1 aprovado) e
 cargo clippy --workspace --all-targets -- -D warnings. O teste público também
 reabre o banco e consulta os itens por PendingReconciliation.
+
+## Verificação integrada final em 14/11/2026
+
+Executados exclusivamente em org.gnome.Sdk//50 com a extensão rust-stable:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo doc --workspace --no-deps --document-private-items
+cargo test --workspace --doc
+cargo build --workspace
+```
+
+Todos passaram, sem warnings. O workspace aprovou 712 testes, incluindo 6
+doctests; 9 testes de ambiente existentes ficaram ignorados. A chamada explícita
+--doc repetiu os 6 doctests, todos aprovados. O Scanner tem 14 testes internos e
+um teste público; o último usa executor mínimo sem Tokio e reabre o banco para
+consultar pendências duráveis. SC-05 e SC-20 permanecem lacunas documentadas, não
+são contados como testes aprovados ou ignorados.
+
+A revisão final verificou fronteiras (sem SQL/Detector/Provider no Scanner),
+raízes/links, cobertura, paginação, revisão antes da coleta, cancelamento, ausência
+de stubs e dependências novas. Não foram identificados resíduos que justificassem
+um commit artificial de limpeza. A implementação está em commits locais da
+branch feat/scanner, sem publicação remota.
