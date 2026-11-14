@@ -163,7 +163,7 @@ impl RemoteDetector {
 ## 6. Eventos tipados e encapsulamento em Models
 
 - Um sinal por `RemoteEventSink.emit(File)`; quando há metadados seguros, `File.data=Some(FileData::Remote(remote_file))` preserva o objeto integral.
-- `File.event.kind` utiliza `FileEventKind` de Models: Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired ou ScopeUnavailable. Não inventar uma categoria sem evidência.
+- Observações de recursos remotos usam `FileEventKind::Observed`, com evidência original em `File.event.remote`. Avisos técnicos usam RecheckRequired ou ScopeUnavailable. O Detector não classifica ações sobre arquivos.
 - Para renomeação/movimento preservar `File.event.previous/current` quando correlacionados com segurança; `FileLocation::Remote` identifica conta/ID, pai e nome quando conhecidos.
 - `GoogleChange.removed=true`, perda de acesso, HTTP 403/404, cursor inválido ou paginação incompleta não comprovam exclusão; solicitar reavaliação ou registrar escopo indisponível.
 - O adaptador especializado sabe converter `GoogleFile` em `RemoteFile`; o Detector não acessa seus atributos internos nem muda com sua evolução.
@@ -193,9 +193,19 @@ A aplicação acessa somente a fachada `drivesync_engine::detectors::Detector`. 
 - `RemotePollResult` acrescenta `observed`; `RemoteStatusResult` informa cobertura, intervalo, horários de consulta/próxima consulta, duração, contadores ativos, falhas consecutivas e tentativas de recuperação. `checkpoint_confirmed`/`cursor` são fingerprints SHA-256 truncados de diagnóstico; tokens reais permanecem privados. Falhas são tipadas e sanitizadas, sem mensagens externas.
 - `pause/resume`, `take_events`, `acknowledge` e `release_events` pertencem somente à fachada Detector, sem pausar o especialista Google/scheduler. Diagnósticos usam apenas snapshots e eventos resumidos, sem payload do provedor.
 
-O especialista recebe portas internas de Provider e persistência. Não conhece EventStore, SQLite ou Orquestrador. O backend armazena página preparada, snapshots e cursor com compare-and-swap; a emissão individual precede a confirmação de progresso. A fila unificada é validada por conta/SyncId/raízes; a origem é registrada por ocorrência. Initial retoma checkpoint existente; Recovery emite reavaliação e obtém nova leitura sem concluir remoções por ausência. Ancestralidade é limitada a 64 níveis; estado a 16 MiB e árvore a 100.000 entradas. Limites atingidos geram falha/cobertura parcial, sem completar cursor fictício.
+O especialista recebe portas internas de Provider e persistência. Não conhece
+SQLite, Inventory ou Orquestrador. O backend armazena uma página preparada e
+progresso técnico com compare-and-swap; a emissão individual precede a
+confirmação do cursor. Não mantém snapshots anteriores nem índice de arquivos
+conhecidos. Initial retoma a coleta existente; Recovery reinicia a captura sem
+concluir remoções por ausência. O estado é limitado a 16 MiB e o trabalho de
+percurso inicial a 100.000 diretórios/trabalhos pendentes.
 
-O Google Changes fornece o estado atual, podendo reunir alterações entre consultas: não se promete reconstrução de todas as ações transitórias. CREATE exige createdTime normalizado posterior ao início da observação; entradas antigas/sem evidência geram RECHECK. Rename/Move exigem snapshot correlacionado; alterações compostas, perda de projeção, remoção e perda de acesso permanecem conservadoras. MODIFY exige evidência de hash diferente. Consultas usam somente Providers; nenhuma mutação remota é executada pelo detector.
+O Google Changes fornece metadados atuais e sinais da alteração, podendo reunir
+mudanças entre consultas. O Detector repassa esses dados, inclusive alterações
+fora da raiz inicial, sem consultas de ancestralidade ou supressão de snapshots
+iguais. O Analisador é responsável pela interpretação e pelo uso do Inventory.
+Consultas usam somente Providers; nenhuma mutação remota é executada aqui.
 
 
 ## 9. Seleção por provedor e contrato dos especialistas
@@ -204,6 +214,6 @@ O Google Changes fornece o estado atual, podendo reunir alterações entre consu
 
 `remote/interfaces.rs` define a porta interna `RemoteObserver` (`validate_progress` e `poll_once`) e a persistência opaca `RemoteBackend`. Cada especialista implementa a observação pelo contrato comum; `RemoteDetector` oferece `new/start/poll_once/stop/status` e compartilha agendamento, cancelamento, entrega e diagnóstico entre implementações. Não há scheduler duplicado por provedor nem dependência do runtime genérico em tipos Google.
 
-A implementação concreta `google::GoogleRemoteDetector` fica em `google/mod.rs`, com chamadas Google em `google/api.rs` e adaptação/classificação em `google/metadata.rs`. `Connection` fornece contexto validado e execução com sessão renovada, sem interpretar endpoints ou alterações Google. Antes de cada consulta, a conta/provedor são revalidados. A sessão Google existente em Accounts continua sendo obtida somente pelo especialista selecionado; novos provedores exigirão o respectivo suporte real em Accounts/Providers e registro no módulo remoto.
+A implementação concreta `google::GoogleRemoteDetector` fica em `google/mod.rs`, com chamadas Google em `google/api.rs` e adaptação dos metadados em `google/metadata.rs`. `Connection` fornece contexto validado e execução com sessão renovada, sem interpretar endpoints ou alterações Google. Antes de cada consulta, a conta/provedor são revalidados. A sessão Google existente em Accounts continua sendo obtida somente pelo especialista selecionado; novos provedores exigirão o respectivo suporte real em Accounts/Providers e registro no módulo remoto.
 
 A identidade da fila inclui o ProviderId validado. A localização é sempre `.drivesync/detector.sqlite3` na raiz local; não há preservação de namespaces ou migração de versões antigas. O armazenamento também rejeita payload cujo provedor não corresponda à fila.

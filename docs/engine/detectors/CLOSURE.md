@@ -22,13 +22,13 @@ O Scanner Local permanece responsável pelo levantamento local via Inventário. 
 
 ## Contadores
 
-O índice durável registra a origem real de emissão, inclusive avisos sem payload. `QueueStats.detected` representa todas as observações; `initial_observations` separa CaptureStarted, incluindo bootstrap após recuperação; `changes_detected` exclui essas observações iniciais. A página Developer apresenta eventos posteriores no indicador principal e observações iniciais/de recuperação nos detalhes. Avisos e incertezas continuam identificados; os contadores não provam sincronização.
+O índice durável registra a origem real de emissão, inclusive avisos sem payload. `QueueStats.detected` representa todas as observações; `initial_observations` separa CaptureStarted local e RemoteObservationSource::Capture remoto, incluindo bootstrap após recuperação; `changes_detected` exclui essas observações iniciais. A página Developer apresenta eventos posteriores no indicador principal e observações iniciais/de recuperação nos detalhes. Avisos e incertezas continuam identificados; os contadores não provam sincronização.
 
 ## Localização e formato em desenvolvimento
 
 A localização é derivada da raiz local pelo Storage; não há parâmetro público de diretório de dados nem fallback para XDG. A raiz precisa existir e estar acessível. O diretório reservado usa 0700 e o banco 0600. Links simbólicos no caminho, hardlinks do banco e identidades divergentes são rejeitados. O banco do Inventário é independente, no mesmo diretório: `inventory.sqlite3`, ainda documental. Escritas internas não geram eventos de usuário.
 
-Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 2); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
+Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 3); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
 
 `PersistentDetector` e os caminhos antigos de composição do Orquestrador foram removidos. Os especialistas Local/Remoto mantêm testes independentes, mas a aplicação compõe apenas a fachada `Detector`.
 
@@ -39,3 +39,12 @@ A suíte independente do Orquestrador usa portas de origem falsas e SQLite real 
 O Developer usa `Orchestrator::observe_detector` apenas como adaptador/consumidor terminal diagnóstico; não é a validação do Orquestrador de sincronização completo. O play/pause controla a entrega de ambas as origens da conta selecionada. A fila pública não confirma sozinha.
 
 Não foram repetidas mutações no Drive real nesta etapa. Autenticação real, portal/pacote instalado, permissões e expiração reais do Google permanecem validações de integração/ambiente. Backup/restauração via Configuration é uma dependência futura já registrada no contrato de Storage, não uma implementação simulada desta etapa. Permanecem os limites documentados de capacidade, tamanho de payload e árvore/paginação; falhas são explícitas, sem limpeza ou reconstrução silenciosa.
+
+## Revisão de responsabilidade do Detector remoto
+
+O remoto agora coleta observações `Observed` com os sinais fornecidos pelo
+Google, sem manter `known` nem classificar ações. Consulte
+[IMPLEMENTATION](remote/IMPLEMENTATION.md) para o contrato atual. Resultados
+anteriores de classificação e integração real são históricos e não homologam
+esta revisão. O fluxo local permanece como estava; Analisador e Inventory não
+foram implementados. A fila continua confirmável e conserva histórico.

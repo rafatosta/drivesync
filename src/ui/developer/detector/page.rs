@@ -81,6 +81,11 @@ fn description(event: &DetectorEventSummary) -> String {
         _ => match &event.scope {
             FileScope::Local(path) => String::from_utf8_lossy(path.as_bytes()).into_owned(),
             FileScope::WholeSync => "Verify monitored folder".into(),
+            FileScope::Remote(reference)
+                if event.event.kind == drivesync_engine::models::FileEventKind::Observed =>
+            {
+                format!("Remote item {}", reference.file_id.0)
+            }
             FileScope::Remote(_) => "Remote scope".into(),
         },
     };

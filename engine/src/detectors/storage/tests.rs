@@ -461,7 +461,7 @@ fn reserved_database_rejects_old_schema_without_migration() {
     drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
     let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 1).unwrap();
+    db.pragma_update(None, "user_version", 2).unwrap();
     db.execute_batch("DROP TABLE observations;").unwrap();
     drop(db);
     let before = fs::read(&path).unwrap();

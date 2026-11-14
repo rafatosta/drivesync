@@ -161,7 +161,7 @@ Retenção nesta versão: registros completos, inclusive confirmados, são manti
 
 ## 8. Payload e checkpoint remotos
 
-O codec versão 1 admite agora `Remote(RemoteFile)` além de Local, mantendo a codificação dos registros locais existentes. O backend remoto usa a mesma fila que a origem local; a identidade validada impede misturar contas e raízes. Enqueue e leitura validam a conta do payload remoto e o SyncId da fila.
+O codec versão 2 admite `Remote(RemoteFile)` e Local, incluindo a evidência remota sem classificação. Bancos anteriores não são adaptados. O backend remoto usa a mesma fila que a origem local; a identidade validada impede misturar contas e raízes. Enqueue e leitura validam a conta do payload remoto e o SyncId da fila.
 
 O backend remoto usa uma extensão privada `remote_progress` no mesmo armazenamento privado. O especialista acessa apenas portas de carregar/salvar/emitir. Página preparada contém os File completos, com IDs e horários estáveis; após falha entre enqueue e checkpoint, o replay é idempotente pela identidade/payload. Compare-and-swap impede sobrescrever progresso concorrente. Checkpoint ilegível falha sem descarte ou reconstrução silenciosa. A confirmação de progresso remoto não depende de ack externo nem da política de entrega.
 
@@ -171,7 +171,7 @@ A abertura remota recebe explicitamente o provedor selecionado pela fachada. Ide
 
 ## 9. Composição unificada
 
-`Store::open_unified` é privado à composição da fachada. Valida identidade com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. O índice é criado junto ao esquema atual (SQLite versão 2). Não existe backfill nem migração de versões anteriores. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. Não existe caminho alternativo para filas antigas nem adaptação de SyncIds.
+`Store::open_unified` é privado à composição da fachada. Valida identidade com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. O índice é criado junto ao esquema atual (SQLite versão 3). Não existe backfill nem migração de versões anteriores. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. Não existe caminho alternativo para filas antigas nem adaptação de SyncIds.
 
 ## 10. Revisão de observações remotas sem classificação
 

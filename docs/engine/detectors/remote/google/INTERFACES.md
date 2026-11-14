@@ -31,7 +31,7 @@ O especialista Google é o **único componente que conhece simultaneamente `Goog
 2. Normalizar **somente campos comprovadamente fornecidos** pela resposta Google, distinguindo `false`, `0`, `[]` de campo não solicitado por `fields`.
 3. Preservar metadados especializados aprovados para retenção em `ProviderFileData` opaco, identificado por provedor/formato/versão, **sem tokens, chaves de criptografia, conteúdo de arquivo ou material sensível desnecessário**.
 4. Entregar o `RemoteFile` completo à porta genérica; o Detector não inspeciona campos nem precisa mudar quando o esquema evoluir.
-5. Se `GoogleFile.id` estiver ausente ou `GoogleChange.removed` não fornecer arquivo, emitir **reavaliação de escopo**, não um RemoteFile fictício nem uma exclusão confirmada.
+5. Preservar `GoogleChange.file_id` em File.scope mesmo quando File está ausente. Sem identidade válida, falhar a página sem avançar cursor; não fabricar um RemoteFile nem inferir exclusão.
 
 Rotinas auxiliares do especialista podem consultar detalhes adicionais (permissões, labels, atalhos, capacidades etc.) sem alterar polling, fila ou fachada. **Antes da implementação**, revisar a necessidade de cada campo e documentar `manter / sob demanda / descartar`, conforme [Models — INTERFACES](../../../models/INTERFACES.md#3-remotefile--metadados-remotos-e-associação-ao-provedor).
 
@@ -47,11 +47,24 @@ Rotinas auxiliares do especialista podem consultar detalhes adicionais (permiss�
 
 ## 5. Unidade de ocorrência emitida
 
-`RemoteEventSink.emit(file: File)` recebe **uma observação completa**. Quando `GoogleFile.id` existe, o adaptador fornece `File.data=Some(FileData::Remote(remote_file))` e contexto `FileEvent`/`FileScope` de Models. Sem identidade confiável ou diante de `GoogleChange.removed` sem objeto, emitir `RecheckRequired` ou `ScopeUnavailable` com `data=None`; não gerar `RemoteFile` falso.
+`RemoteEventSink.emit(file: File)` recebe uma observação completa com kind
+`Observed`, sem interpretação de ação. `File.event.remote` contém a origem
+Capture/Changes e os sinais opcionais removed/time/changeType/driveId recebidos.
+Os metadados disponíveis viram FileData::Remote; sua ausência mantém data=None
+e a identidade qualificada em File.scope. `previous` permanece None.
 
-As propriedades detalhadas do provedor permanecem no `ProviderFileData` quando autorizadas, inclusive estados de coleta parciais. Para `Renamed/Moved`, `previous/current` só são preenchidos com localização correlacionada; nunca por comparação superficial de nomes. A emissão não modifica checkpoint até aceite durável do `File` integral. Evolução do modelo remoto não altera polling/scan, apenas o adaptador especializado e seus testes.
+A captura inicial percorre a raiz configurada. Changes repassa as alterações da
+conta, sem consultar pais ou filtrar por pertencimento. Não existe comparação
+com histórico, deduplicação por igualdade de metadados nem classificação de
+rename/move/edit/delete. A idempotência se aplica à reentrega da mesma ocorrência,
+não à supressão de ocorrências diferentes com os mesmos metadados.
+
+O checkpoint contém somente controle de coleta e página pendente para replay.
+O histórico de observações pertence à fila; o estado conhecido dos arquivos e
+a interpretação pertencem a Inventory/Analisador. Falhas de coleta continuam
+sendo avisos técnicos RecheckRequired/ScopeUnavailable.
 
 
 ## Organização compilada
 
-O registro em `remote/mod.rs` seleciona a factory Google a partir da conta validada. `google/mod.rs` implementa `RemoteObserver` em `GoogleRemoteDetector`; a fachada comum oferece o ciclo de vida e o scheduler. `api.rs` usa apenas Providers Google e sessões obtidas por Connection/Accounts. `metadata.rs`, `timestamp.rs` e `tests.rs` mantêm os detalhes específicos do Google dentro deste diretório. Os métodos públicos de ciclo de vida são os da fachada `RemoteDetector`, compartilhados por todos os especialistas; a implementação concreta não é exposta ao consumidor externo.
+O registro em `remote/mod.rs` seleciona a factory Google a partir da conta validada. `google/mod.rs` implementa `RemoteObserver` em `GoogleRemoteDetector`; a fachada comum oferece o ciclo de vida e o scheduler. `api.rs` usa apenas Providers Google e sessões obtidas por Connection/Accounts. `metadata.rs` e `tests.rs` mantêm os detalhes específicos do Google dentro deste diretório. Os métodos públicos de ciclo de vida são os da fachada `RemoteDetector`, compartilhados por todos os especialistas; a implementação concreta não é exposta ao consumidor externo.

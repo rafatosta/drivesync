@@ -580,3 +580,173 @@ fn drain_finishes_the_current_round_without_cancelling_or_starting_another() {
     drop(detector);
     std::fs::remove_dir_all(base).unwrap();
 }
+
+#[test]
+fn sqlite_restart_replays_prepared_observation_after_acceptance_before_cursor_commit() {
+    struct FailCommit {
+        backend: Arc<dyn RemoteBackend>,
+        saves: AtomicUsize,
+    }
+    impl RemoteBackend for FailCommit {
+        fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
+            self.backend.load()
+        }
+        fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+            if self.saves.fetch_add(1, Ordering::SeqCst) == 1 {
+                return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
+            }
+            self.backend.save(previous, value)
+        }
+        fn emit(&self, file: &File) -> RemoteResult<bool> {
+            self.backend.emit(file)
+        }
+    }
+    let base = base();
+    let api = Arc::new(ApiFixture {
+        calls: AtomicUsize::new(0),
+        slow: false,
+    });
+    let source_scope = scope("a", "root");
+    let source_api = api.clone();
+    let detector = RemoteDetector::open(
+        source_scope.clone(),
+        settings(),
+        base.clone(),
+        ProviderId("google".into()),
+        move |backend| {
+            Ok(Box::new(GoogleRemoteDetector {
+                scope: source_scope,
+                api: source_api,
+                backend: Arc::new(FailCommit {
+                    backend,
+                    saves: AtomicUsize::new(0),
+                }),
+            }))
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        detector
+            .poll_once(RemotePollRequest {
+                mode: RemotePollMode::Initial,
+                page_budget: None,
+            })
+            .unwrap_err()
+            .kind,
+        RemoteError::CheckpointUnavailable
+    );
+    let original = detector.shared.store.recent().unwrap()[0].clone();
+    assert_eq!(original.event.kind, FileEventKind::Observed);
+    assert_eq!(
+        original.event.remote.as_ref().unwrap().source,
+        RemoteObservationSource::Capture
+    );
+    drop(detector);
+    let reopened = open_google(scope("a", "root"), settings(), base.clone(), api.clone()).unwrap();
+    reopened
+        .poll_once(RemotePollRequest {
+            mode: RemotePollMode::Incremental,
+            page_budget: None,
+        })
+        .unwrap();
+    assert_eq!(reopened.shared.store.recent().unwrap(), vec![original]);
+    assert_eq!(reopened.diagnostics().queue.detected, 1);
+    assert_eq!(
+        api.calls.load(Ordering::SeqCst),
+        4,
+        "replay must not query the root again"
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn sqlite_preserves_removal_signal_and_resource_identity_through_delivery_and_reopen() {
+    struct RemovalApi;
+    impl Api for RemovalApi {
+        fn call(&self, request: Request, cancel: &Cancellation) -> RemoteResult<Response> {
+            if matches!(request, Request::Changes(_)) {
+                return Ok(Response::Changes(serde_json::from_value(serde_json::json!({
+                    "changes": [{"fileId":"removed-file", "removed":true, "time":"2026-11-14T12:00:00Z", "changeType":"file"}],
+                    "newStartPageToken":"end"
+                })).unwrap()));
+            }
+            ApiFixture {
+                calls: AtomicUsize::new(0),
+                slow: false,
+            }
+            .call(request, cancel)
+        }
+    }
+    let base = base();
+    let detector = open_google(
+        scope("a", "root"),
+        settings(),
+        base.clone(),
+        Arc::new(RemovalApi),
+    )
+    .unwrap();
+    detector
+        .poll_once(RemotePollRequest {
+            mode: RemotePollMode::Initial,
+            page_budget: None,
+        })
+        .unwrap();
+    let original = detector.shared.store.recent().unwrap();
+    let removed = original.iter().find(|file| file.data.is_none()).unwrap();
+    assert_eq!(removed.event.kind, FileEventKind::Observed);
+    assert_eq!(
+        removed.scope,
+        FileScope::Remote(RemoteFileRef {
+            account_id: AccountId("a".into()),
+            file_id: RemoteFileId("removed-file".into()),
+        })
+    );
+    assert_eq!(removed.event.remote.as_ref().unwrap().removed, Some(true));
+    assert_eq!(
+        removed.event.remote.as_ref().unwrap().time.as_deref(),
+        Some("2026-11-14T12:00:00Z")
+    );
+    drop(detector);
+    let reopened = open_google(
+        scope("a", "root"),
+        settings(),
+        base.clone(),
+        Arc::new(RemovalApi),
+    )
+    .unwrap();
+    assert_eq!(reopened.shared.store.recent().unwrap(), original);
+    reopened
+        .shared
+        .store
+        .set_delivery(DeliveryState::Enabled)
+        .unwrap();
+    let batch = reopened
+        .shared
+        .store
+        .claim(TakeEventsRequest {
+            max_events: 10,
+            lease_duration: Duration::from_secs(30),
+        })
+        .unwrap();
+    assert_eq!(batch.files.len(), 2);
+    for file in &batch.files {
+        assert!(original.contains(file));
+    }
+    reopened
+        .shared
+        .store
+        .acknowledge(
+            batch.batch_id.as_ref().unwrap(),
+            EventDisposition::Processed,
+        )
+        .unwrap();
+    assert_eq!(
+        reopened.shared.store.recent().unwrap(),
+        original,
+        "ack must retain history"
+    );
+    assert_eq!(reopened.diagnostics().queue.confirmed, 2);
+    drop(reopened);
+    std::fs::remove_dir_all(base).unwrap();
+}

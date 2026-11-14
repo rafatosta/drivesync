@@ -1,11 +1,11 @@
-//! Filtered Google metadata adaptation and conservative classification, independent of polling.
-use super::{incomplete, now, valid, RemoteResult};
+//! Filtered Google metadata adaptation without historical comparison or action classification.
+use super::{incomplete, valid, RemoteResult};
 use crate::{models::*, providers::google::GoogleFile};
 
 pub(super) fn is_folder(file: &GoogleFile) -> bool {
     file.mime_type.as_ref().map(|m| m.0.as_str()) == Some("application/vnd.google-apps.folder")
 }
-/// A single allowlist drives both retained progress and the provider payload.
+/// A single allowlist drives the observed metadata and the provider payload.
 pub(super) fn filtered(raw: &GoogleFile) -> GoogleFile {
     GoogleFile {
         id: raw.id.clone(),
@@ -37,82 +37,6 @@ pub(super) fn location(raw: &GoogleFile, account: &AccountId) -> Option<FileLoca
         }),
         name: raw.name.clone(),
     })
-}
-pub(super) fn classify(
-    previous: Option<&GoogleFile>,
-    raw: &GoogleFile,
-    scanning: bool,
-    started_at: Option<i64>,
-) -> (FileEventKind, Option<ObservationUncertainty>) {
-    let Some(previous) = previous else {
-        if raw.trashed == Some(false)
-            && started_at
-                .zip(
-                    raw.created_time
-                        .as_deref()
-                        .and_then(super::timestamp::utc_millis),
-                )
-                .is_some_and(|(started, created)| {
-                    created >= started && created <= now().unix_millis
-                })
-        {
-            return (FileEventKind::Created, None);
-        }
-        return (
-            FileEventKind::RecheckRequired,
-            Some(if scanning {
-                ObservationUncertainty::CaptureStarted
-            } else {
-                ObservationUncertainty::ObservationUnstable
-            }),
-        );
-    };
-    if raw.trashed != Some(false)
-        || raw.name.is_none()
-        || raw.mime_type.is_none()
-        || raw.parents.is_none()
-        || (previous.md5_checksum.is_some() && raw.md5_checksum.is_none())
-        || (previous.sha256_checksum.is_some() && raw.sha256_checksum.is_none())
-    {
-        return (
-            FileEventKind::RecheckRequired,
-            Some(ObservationUncertainty::ObservationUnstable),
-        );
-    }
-    let moved =
-        previous.parents.is_some() && raw.parents.is_some() && previous.parents != raw.parents;
-    let renamed = previous.name.is_some() && raw.name.is_some() && previous.name != raw.name;
-    let content = (previous.md5_checksum.is_some()
-        && raw.md5_checksum.is_some()
-        && previous.md5_checksum != raw.md5_checksum)
-        || (previous.sha256_checksum.is_some()
-            && raw.sha256_checksum.is_some()
-            && previous.sha256_checksum != raw.sha256_checksum);
-    if (moved && renamed) || ((moved || renamed) && content) {
-        return (
-            FileEventKind::RecheckRequired,
-            Some(ObservationUncertainty::ConflictingSequence),
-        );
-    }
-    if moved {
-        return (FileEventKind::Moved, None);
-    }
-    if renamed {
-        return (FileEventKind::Renamed, None);
-    }
-    if content {
-        return (FileEventKind::Modified, None);
-    }
-    if previous.modified_time.is_some()
-        && raw.modified_time.is_some()
-        && previous.modified_time != raw.modified_time
-    {
-        return (
-            FileEventKind::RecheckRequired,
-            Some(ObservationUncertainty::ObservationUnstable),
-        );
-    }
-    (FileEventKind::MetadataChanged, None)
 }
 fn value<T>(value: Option<T>) -> MetadataValue<T> {
     value

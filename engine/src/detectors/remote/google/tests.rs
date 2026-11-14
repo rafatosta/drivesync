@@ -205,7 +205,7 @@ fn sink_failure_and_checkpoint_failure_replay_identical_objects() {
     );
 }
 #[test]
-fn matching_identity_correlates_rename_move_and_content_while_removed_is_recheck() {
+fn changes_preserve_metadata_and_removal_identity_without_classifying_actions() {
     let mut replies = initial();
     let mut renamed = raw("f", "renamed", "root-id", false);
     renamed.version = Some("2".into());
@@ -222,10 +222,26 @@ fn matching_identity_correlates_rename_move_and_content_while_removed_is_recheck
         .poll(RemotePollMode::Incremental, 10, &Cancellation::default())
         .unwrap();
     let files = sink.files.lock().unwrap();
-    assert_eq!(files[2].event.kind, FileEventKind::Renamed);
-    assert_ne!(files[2].event.previous, files[2].event.current);
-    assert_eq!(files[3].event.kind, FileEventKind::Modified);
-    assert_eq!(files[4].event.kind, FileEventKind::RecheckRequired);
+    for file in files.iter() {
+        assert_eq!(file.event.kind, FileEventKind::Observed);
+        assert!(file.event.previous.is_none());
+    }
+    let Some(FileData::Remote(remote)) = &files[2].data else {
+        panic!()
+    };
+    assert_eq!(remote.name, MetadataValue::Known("renamed".into()));
+    let Some(FileData::Remote(remote)) = &files[3].data else {
+        panic!()
+    };
+    assert_eq!(remote.md5_checksum, MetadataValue::Known("new-hash".into()));
+    assert_eq!(files[4].event.remote.as_ref().unwrap().removed, Some(true));
+    assert_eq!(
+        files[4].scope,
+        FileScope::Remote(RemoteFileRef {
+            account_id: AccountId("account".into()),
+            file_id: RemoteFileId("f".into()),
+        })
+    );
     assert!(files[4].data.is_none());
     assert!(!files
         .iter()
@@ -276,24 +292,27 @@ fn malformed_page_never_commits_its_cursor_and_expiry_requires_explicit_recovery
         .any(|file| file.event.uncertainty == Some(ObservationUncertainty::CoverageIncomplete)));
 }
 #[test]
-fn unrelated_changes_are_filtered_by_ancestry_and_unknown_scope_is_not_deleted() {
+fn account_changes_are_forwarded_without_ancestry_queries_or_scope_inference() {
     let mut replies = initial();
     replies.push(changes(
         vec![raw("unrelated", "Outside", "outside-root", false)],
         None,
         Some("end"),
     ));
-    let mut outside = raw("outside-root", "OutsideRoot", "", true);
-    outside.parents = Some(vec![]);
-    replies.push(Ok(Response::File(Box::new(outside))));
-    let (source, _, sink) = fixture(replies);
+    let (source, api, sink) = fixture(replies);
     source
         .poll(RemotePollMode::Initial, 10, &Cancellation::default())
         .unwrap();
     source
         .poll(RemotePollMode::Incremental, 10, &Cancellation::default())
         .unwrap();
-    assert_eq!(sink.files.lock().unwrap().len(), 2);
+    assert_eq!(sink.files.lock().unwrap().len(), 3);
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| call == "get:outside-root"));
 }
 #[test]
 fn stop_token_prevents_network_or_checkpoint_mutation() {
@@ -312,31 +331,56 @@ fn stop_token_prevents_network_or_checkpoint_mutation() {
 }
 
 #[test]
-fn creation_requires_creation_time_evidence_and_compound_changes_stay_uncertain() {
-    let mut file = raw("new", "New", "root-id", false);
+fn identical_snapshots_are_delivered_as_distinct_observations_and_checkpoint_has_no_catalog() {
+    let mut replies = initial();
+    replies.push(changes(
+        vec![raw("f", "old", "root-id", false); 2],
+        None,
+        Some("end"),
+    ));
+    let (source, _, sink) = fixture(replies);
+    source
+        .poll(RemotePollMode::Initial, 10, &Cancellation::default())
+        .unwrap();
+    source
+        .poll(RemotePollMode::Incremental, 10, &Cancellation::default())
+        .unwrap();
+    let files = sink.files.lock().unwrap();
+    assert_eq!(files.len(), 4);
+    assert_ne!(files[2].id, files[3].id);
+    assert_eq!(files[2].data, files[3].data);
+    let checkpoint = String::from_utf8(sink.load().unwrap().unwrap()).unwrap();
+    assert!(!checkpoint.contains("md5Checksum"));
+    assert!(!checkpoint.contains("known"));
+}
+#[test]
+fn change_fields_are_preserved_even_without_file_metadata() {
+    let mut replies = initial();
+    replies.push(Ok(Response::Changes(serde_json::from_value(serde_json::json!({
+        "changes":[{"fileId":"missing-metadata", "time":"2026-11-14T12:00:00Z", "changeType":"file", "driveId":"drive"}],
+        "newStartPageToken":"end"
+    })).unwrap())));
+    let (source, _, sink) = fixture(replies);
+    source
+        .poll(RemotePollMode::Initial, 10, &Cancellation::default())
+        .unwrap();
+    source
+        .poll(RemotePollMode::Incremental, 10, &Cancellation::default())
+        .unwrap();
+    let files = sink.files.lock().unwrap();
+    let file = files.last().unwrap();
+    assert!(file.data.is_none());
     assert_eq!(
-        classify(None, &file, false, Some(1000)).0,
-        FileEventKind::RecheckRequired
+        file.event.remote,
+        Some(RemoteObservation {
+            source: RemoteObservationSource::Changes,
+            removed: None,
+            time: Some("2026-11-14T12:00:00Z".into()),
+            change_type: Some("file".into()),
+            drive_id: Some("drive".into()),
+        })
     );
-    file.created_time = Some("1970-01-01T00:00:02Z".into());
-    assert_eq!(
-        classify(None, &file, false, Some(1000)).0,
-        FileEventKind::Created
-    );
-    assert_eq!(
-        classify(None, &file, false, Some(3000)).0,
-        FileEventKind::RecheckRequired
-    );
-    let previous = file.clone();
-    file.name = Some("Renamed".into());
-    file.parents = Some(vec![crate::providers::google::FileId("another".into())]);
-    assert_eq!(
-        classify(Some(&previous), &file, false, Some(1000)),
-        (
-            FileEventKind::RecheckRequired,
-            Some(ObservationUncertainty::ConflictingSequence)
-        )
-    );
+    file.validate().unwrap();
 }
 #[test]
 fn inaccessible_scope_emits_one_durable_warning_without_advancing_progress() {
@@ -381,4 +425,75 @@ fn incomplete_changes_page_preserves_cursor_and_requests_recheck() {
         sink.files.lock().unwrap().last().unwrap().event.uncertainty,
         Some(ObservationUncertainty::CoverageIncomplete)
     );
+}
+
+#[test]
+fn large_initial_capture_keeps_only_page_payloads_and_traversal_control_in_checkpoint() {
+    const TOTAL: usize = 80_000;
+    struct StreamingApi;
+    impl Api for StreamingApi {
+        fn call(&self, request: Request, cancel: &Cancellation) -> RemoteResult<Response> {
+            cancel.check()?;
+            match request {
+                Request::Start => Ok(Response::Start("start".into())),
+                Request::Get(_) => Ok(Response::File(Box::new(root()))),
+                Request::List { token, .. } => {
+                    let offset: usize = token.as_deref().unwrap_or("0").parse().unwrap();
+                    let end = (offset + 200).min(TOTAL);
+                    let files = (offset..end)
+                        .map(|i| raw(&format!("file-{i}"), "File", "root-id", false))
+                        .collect();
+                    Ok(Response::List(GoogleFileList {
+                        files,
+                        next_page_token: (end < TOTAL).then(|| end.to_string()),
+                        incomplete_search: Some(false),
+                    }))
+                }
+                Request::Changes(_) => changes(vec![], None, Some("end")),
+            }
+        }
+    }
+    #[derive(Default)]
+    struct CountingBackend {
+        checkpoint: Memory,
+        emitted: AtomicUsize,
+        largest_checkpoint: AtomicUsize,
+    }
+    impl RemoteBackend for CountingBackend {
+        fn load(&self) -> RemoteResult<Option<Vec<u8>>> {
+            self.checkpoint.load()
+        }
+        fn save(&self, previous: Option<&[u8]>, value: &[u8]) -> RemoteResult<()> {
+            self.largest_checkpoint
+                .fetch_max(value.len(), Ordering::SeqCst);
+            self.checkpoint.save(previous, value)
+        }
+        fn emit(&self, file: &File) -> RemoteResult<bool> {
+            file.validate().unwrap();
+            self.emitted.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
+        }
+    }
+    let backend = Arc::new(CountingBackend::default());
+    let source = GoogleRemoteDetector {
+        scope: RemoteDetectorScope {
+            account_id: AccountId("account".into()),
+            sync_id: SyncId("sync".into()),
+            remote_root_id: "root-id".into(),
+        },
+        api: Arc::new(StreamingApi),
+        backend: backend.clone(),
+    };
+    let result = source
+        .poll(RemotePollMode::Initial, 1000, &Cancellation::default())
+        .unwrap();
+    assert!(!result.has_more);
+    assert_eq!(backend.emitted.load(Ordering::SeqCst), TOTAL + 1);
+    assert!(backend.largest_checkpoint.load(Ordering::SeqCst) < 1024 * 1024);
+    let checkpoint = backend.load().unwrap().unwrap();
+    assert!(checkpoint.len() < 512);
+    let state: State = serde_json::from_slice(&checkpoint).unwrap();
+    assert!(state.progress.scan.is_empty());
+    assert!(state.progress.scanned.is_empty());
+    assert!(state.pending.is_none());
 }

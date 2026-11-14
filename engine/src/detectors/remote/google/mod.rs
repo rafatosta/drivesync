@@ -1,17 +1,16 @@
-//! Google interpretation, scoped traversal and crash-safe page replay through Provider.
+//! Google evidence collection, initial traversal and crash-safe page replay through Provider.
 use super::*;
 mod api;
 mod metadata;
-mod timestamp;
 use crate::{
     models::*,
     providers::google::{GoogleChangeList, GoogleFile, GoogleFileList},
 };
-use metadata::{adapt, classify, filtered, is_folder, location};
+use metadata::{adapt, filtered, is_folder, location};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     sync::Arc,
 };
 
@@ -43,11 +42,9 @@ struct Scan {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Progress {
-    started_at: Option<i64>,
     cursor: Option<String>,
     scan: VecDeque<Scan>,
     scanned: BTreeSet<String>,
-    known: BTreeMap<String, GoogleFile>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,7 +71,7 @@ impl State {
             .and_then(|mut file| file.read_exact(&mut seed))
             .map_err(|_| RemoteFailure::new(RemoteError::Internal))?;
         Ok(Self {
-            version: 1,
+            version: 2,
             epoch: format!("{:x}", Sha256::digest(seed)),
             sequence: 0,
             progress: Progress::default(),
@@ -140,33 +137,22 @@ impl GoogleRemoteDetector {
         self.save(old, state)?;
         self.flush(old, state, cancel)
     }
-    fn event(
+    /// Reports collection failures, independently of resource change interpretation.
+    fn warning_event(
         &self,
         state: &State,
-        index: usize,
-        raw: Option<&GoogleFile>,
-        previous: Option<&GoogleFile>,
         kind: FileEventKind,
         reason: Option<ObservationUncertainty>,
     ) -> RemoteResult<File> {
-        let id = format!("remote:{}:{}:{index}", state.epoch, state.sequence);
-        let reference = raw.and_then(|f| f.id.as_ref()).map(|id| RemoteFileRef {
-            account_id: self.scope.account_id.clone(),
-            file_id: RemoteFileId(id.0.clone()),
-        });
-        let data = raw
-            .map(|raw| adapt(raw, &self.scope.account_id))
-            .transpose()?
-            .map(FileData::Remote);
         let event = File {
-            id: crate::models::FileId(id),
+            id: crate::models::FileId(format!("remote:{}:{}:0", state.epoch, state.sequence)),
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
                 remote: None,
                 kind,
                 uncertainty: reason,
-                previous: previous.and_then(|file| location(file, &self.scope.account_id)),
-                current: raw.and_then(|file| location(file, &self.scope.account_id)),
+                previous: None,
+                current: None,
             },
             observed_at: now(),
             coverage: if kind == FileEventKind::ScopeUnavailable {
@@ -174,23 +160,55 @@ impl GoogleRemoteDetector {
             } else {
                 ObservationCoverage::Partial
             },
-            scope: FileScope::Remote(reference.unwrap_or_else(|| RemoteFileRef {
+            scope: FileScope::Remote(RemoteFileRef {
                 account_id: self.scope.account_id.clone(),
                 file_id: RemoteFileId(self.scope.remote_root_id.clone()),
-            })),
-            data,
+            }),
+            data: None,
         };
         event.validate().map_err(|_| incomplete())?;
         Ok(event)
+    }
+    /// Maps one provider observation without consulting history or interpreting an action.
+    fn observation(
+        &self,
+        state: &State,
+        index: usize,
+        id: &str,
+        raw: Option<&GoogleFile>,
+        evidence: RemoteObservation,
+    ) -> RemoteResult<File> {
+        let file = File {
+            id: crate::models::FileId(format!("remote:{}:{}:{index}", state.epoch, state.sequence)),
+            sync_id: self.scope.sync_id.clone(),
+            event: FileEvent {
+                kind: FileEventKind::Observed,
+                remote: Some(evidence),
+                uncertainty: None,
+                previous: None,
+                current: raw.and_then(|file| location(file, &self.scope.account_id)),
+            },
+            observed_at: now(),
+            coverage: ObservationCoverage::Partial,
+            scope: FileScope::Remote(RemoteFileRef {
+                account_id: self.scope.account_id.clone(),
+                file_id: RemoteFileId(id.to_owned()),
+            }),
+            data: raw
+                .map(|file| adapt(file, &self.scope.account_id))
+                .transpose()?
+                .map(FileData::Remote),
+        };
+        file.validate().map_err(|_| incomplete())?;
+        Ok(file)
     }
     fn validate_checkpoint(&self) -> RemoteResult<()> {
         if let Some(bytes) = self.backend.load()? {
             let state: State = serde_json::from_slice(&bytes)
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
-            if state.version != 1
+            if state.version != 2
                 || state.epoch.len() != 64
                 || !state.epoch.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || state.progress.known.len() > 100_000
                 || state
                     .progress
                     .cursor
@@ -265,11 +283,8 @@ impl GoogleRemoteDetector {
             error,
             RemoteError::PermissionDenied | RemoteError::AuthorizationRequired
         );
-        let event = self.event(
+        let event = self.warning_event(
             &state,
-            0,
-            None,
-            None,
             if inaccessible {
                 FileEventKind::ScopeUnavailable
             } else {
@@ -299,7 +314,7 @@ impl GoogleRemoteDetector {
                 .map_err(|_| RemoteFailure::new(RemoteError::CheckpointUnavailable))?,
             None => State::fresh()?,
         };
-        if state.version != 1 {
+        if state.version != 2 {
             return Err(RemoteFailure::new(RemoteError::CheckpointUnavailable));
         }
         let mut emitted = self.flush(&mut old, &mut state, cancel)?;
@@ -307,11 +322,8 @@ impl GoogleRemoteDetector {
         progress(observed, emitted);
         if mode == RemotePollMode::Recovery && state.progress.cursor.is_some() {
             state.sequence += 1;
-            let event = self.event(
+            let event = self.warning_event(
                 &state,
-                0,
-                None,
-                None,
                 FileEventKind::RecheckRequired,
                 Some(ObservationUncertainty::CoverageIncomplete),
             )?;
@@ -332,7 +344,6 @@ impl GoogleRemoteDetector {
             let mut files = Vec::new();
             state.sequence += 1;
             if next.cursor.is_none() {
-                next.started_at = Some(now().unix_millis);
                 let Response::Start(cursor) = self.api.call(Request::Start, cancel)? else {
                     return Err(incomplete());
                 };
@@ -353,15 +364,13 @@ impl GoogleRemoteDetector {
                     return Err(RemoteFailure::new(RemoteError::PermissionDenied));
                 }
                 let root = filtered(&root);
-                files.push(self.event(
+                files.push(self.observation(
                     &state,
                     0,
+                    &self.scope.remote_root_id,
                     Some(&root),
-                    None,
-                    FileEventKind::RecheckRequired,
-                    Some(ObservationUncertainty::CaptureStarted),
+                    capture(),
                 )?);
-                next.known.insert(self.scope.remote_root_id.clone(), root);
                 next.cursor = Some(cursor);
                 next.scanned.insert(self.scope.remote_root_id.clone());
                 next.scan.push_back(Scan {
@@ -401,49 +410,28 @@ impl GoogleRemoteDetector {
                     observed += 1;
                     progress(observed, emitted);
                     let raw = filtered(&raw);
-                    let Some(id) = raw
+                    let id = raw
                         .id
                         .as_ref()
                         .filter(|id| valid(&id.0))
                         .map(|id| id.0.clone())
-                    else {
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            None,
-                            None,
-                            FileEventKind::RecheckRequired,
-                            Some(ObservationUncertainty::ObservationUnstable),
-                        )?);
-                        continue;
-                    };
-                    if !raw
-                        .parents
-                        .as_ref()
-                        .is_some_and(|parents| parents.iter().any(|p| p.0 == scan.folder))
-                        || raw.trashed != Some(false)
-                    {
-                        return Err(incomplete());
-                    }
-                    if next.known.get(&id) != Some(&raw) {
-                        let previous = next.known.get(&id);
-                        let (kind, reason) = classify(previous, &raw, true, next.started_at);
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            Some(&raw),
-                            previous,
-                            kind,
-                            reason,
-                        )?);
-                    }
+                        .ok_or_else(incomplete)?;
+                    files.push(self.observation(
+                        &state,
+                        files.len(),
+                        &id,
+                        Some(&raw),
+                        capture(),
+                    )?);
                     if is_folder(&raw) && next.scanned.insert(id.clone()) {
                         next.scan.push_back(Scan {
                             folder: id.clone(),
                             token: None,
                         });
                     }
-                    next.known.insert(id, raw);
+                }
+                if next.scan.is_empty() {
+                    next.scanned.clear();
                 }
             } else {
                 let cursor = next.cursor.clone().unwrap();
@@ -469,104 +457,35 @@ impl GoogleRemoteDetector {
                     cancel.check()?;
                     observed += 1;
                     progress(observed, emitted);
-                    let Some(id) = change
+                    let id = change
                         .file_id
                         .as_ref()
                         .filter(|id| valid(&id.0))
                         .map(|id| id.0.clone())
-                    else {
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            None,
-                            None,
-                            FileEventKind::RecheckRequired,
-                            Some(ObservationUncertainty::ObservationUnstable),
-                        )?);
-                        continue;
-                    };
-                    if change.removed != Some(false) || change.file.is_none() {
-                        // Removed is also loss of access. Unknown removals cannot be scoped safely.
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            None,
-                            None,
-                            FileEventKind::RecheckRequired,
-                            Some(ObservationUncertainty::ObservationUnstable),
-                        )?);
-                        continue;
+                        .ok_or_else(incomplete)?;
+                    let raw = change.file.as_ref().map(filtered);
+                    if raw.as_ref().is_some_and(|file| {
+                        file.id.as_ref().map(|id| id.0.as_str()) != Some(id.as_str())
+                    }) {
+                        return Err(incomplete());
                     }
-                    let raw = filtered(change.file.as_ref().unwrap());
-                    if raw.id.as_ref().map(|f| &f.0) != Some(&id) {
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            None,
-                            None,
-                            FileEventKind::RecheckRequired,
-                            Some(ObservationUncertainty::ObservationUnstable),
-                        )?);
-                        continue;
-                    }
-                    if id == self.scope.remote_root_id && raw.trashed != Some(false) {
-                        return Err(RemoteFailure::new(RemoteError::PermissionDenied));
-                    }
-                    let previous = next.known.get(&id).cloned();
-                    let inside = match self.belongs(&raw, &next.known, cancel) {
-                        Ok(inside) => inside,
-                        Err(error)
-                            if matches!(
-                                error.kind,
-                                RemoteError::PageIncomplete | RemoteError::PermissionDenied
-                            ) =>
-                        {
-                            files.push(self.event(
-                                &state,
-                                files.len(),
-                                None,
-                                None,
-                                FileEventKind::RecheckRequired,
-                                Some(ObservationUncertainty::CoverageIncomplete),
-                            )?);
-                            continue;
-                        }
-                        Err(error) => return Err(error),
-                    };
-                    let was_inside = previous
-                        .as_ref()
-                        .map(|file| self.belongs(file, &next.known, cancel))
-                        .transpose()?
-                        .unwrap_or(false);
-                    if !inside && !was_inside {
-                        continue;
-                    }
-                    if previous.as_ref() != Some(&raw) {
-                        let (kind, reason) =
-                            classify(previous.as_ref(), &raw, false, next.started_at);
-                        files.push(self.event(
-                            &state,
-                            files.len(),
-                            Some(&raw),
-                            previous.as_ref(),
-                            kind,
-                            reason,
-                        )?);
-                        if is_folder(&raw) && inside && !was_inside {
-                            next.scanned.clear();
-                            next.scanned.insert(self.scope.remote_root_id.clone());
-                            next.scanned.insert(id.clone());
-                            next.scan.push_back(Scan {
-                                folder: id.clone(),
-                                token: None,
-                            });
-                        }
-                        next.known.insert(id, raw);
-                    }
+                    files.push(self.observation(
+                        &state,
+                        files.len(),
+                        &id,
+                        raw.as_ref(),
+                        RemoteObservation {
+                            source: RemoteObservationSource::Changes,
+                            removed: change.removed,
+                            time: change.time,
+                            change_type: change.change_type,
+                            drive_id: change.drive_id.map(|id| id.0),
+                        },
+                    )?);
                 }
                 next.cursor = Some(token);
             }
-            if next.known.len() > 100_000 || next.scan.len() > 100_000 {
+            if next.scanned.len() > 100_000 || next.scan.len() > 100_000 {
                 return Err(incomplete());
             }
             state.warning = None;
@@ -590,50 +509,14 @@ impl GoogleRemoteDetector {
             checkpoint_confirmed: state.progress.cursor.as_deref().map(fingerprint),
         })
     }
-    fn belongs(
-        &self,
-        file: &GoogleFile,
-        known: &BTreeMap<String, GoogleFile>,
-        cancel: &Cancellation,
-    ) -> RemoteResult<bool> {
-        let mut current = file.clone();
-        let mut visited = BTreeSet::new();
-        for _ in 0..64 {
-            cancel.check()?;
-            let id = current.id.as_ref().ok_or_else(incomplete)?;
-            if id.0 == self.scope.remote_root_id {
-                return Ok(true);
-            }
-            if !visited.insert(id.0.clone()) {
-                return Err(incomplete());
-            }
-            let Some(parents) = &current.parents else {
-                return Err(incomplete());
-            };
-            if parents.is_empty() {
-                return Ok(false);
-            }
-            if parents.iter().any(|id| id.0 == self.scope.remote_root_id) {
-                return Ok(true);
-            }
-            if parents.len() != 1 {
-                return Err(incomplete());
-            }
-            let parent = &parents[0].0;
-            if let Some(file) = known.get(parent) {
-                current = file.clone();
-            } else {
-                let Response::File(file) = self.api.call(Request::Get(parent.clone()), cancel)?
-                else {
-                    return Err(incomplete());
-                };
-                if file.id.as_ref().map(|id| &id.0) != Some(parent) {
-                    return Err(incomplete());
-                }
-                current = *file;
-            }
-        }
-        Err(incomplete())
+}
+fn capture() -> RemoteObservation {
+    RemoteObservation {
+        source: RemoteObservationSource::Capture,
+        removed: None,
+        time: None,
+        change_type: None,
+        drive_id: None,
     }
 }
 #[cfg(test)]

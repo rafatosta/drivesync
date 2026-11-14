@@ -59,7 +59,7 @@ impl Api for Access {
                 Request::Changes(token) => Response::Changes(client.changes_list(session, ChangeListOptions {
                     page_token: token, page_size: Some(200), include_removed: Some(true), spaces: Some("drive".into()),
                     supports_all_drives: Some(true), include_items_from_all_drives: Some(true),
-                    fields: Some(FieldMask(format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FIELDS}))"))), ..Default::default()
+                    fields: Some(FieldMask(format!("nextPageToken,newStartPageToken,changes(fileId,removed,time,changeType,driveId,file({FIELDS}))"))), ..Default::default()
                 }).await.map_err(failure)?),
             })
         })

@@ -10,6 +10,11 @@ O detector remoto executa observações iniciais e incrementais, conforme as cap
 
 O checkpoint avança somente depois que os eventos correspondentes têm entrega durável confirmada. Respostas parciais, cursores inválidos e indisponibilidade de acesso devem ser representados sem inferências de exclusão.
 
+O Detector não classifica ações nem mantém um inventário paralelo. A captura
+inicial entrega os itens da raiz; Changes entrega os sinais da conta sem
+verificação de ancestralidade. O Analisador recebe essas observações pelo
+Orquestrador e consulta o Inventory para decidir seu significado e tratamento.
+
 ## Interface
 
 - `new`: prepara a observação.
@@ -44,8 +49,7 @@ remote/
   google/
     mod.rs               # GoogleRemoteDetector implementation
     api.rs               # Existing Google Provider operations
-    metadata.rs          # Mapping and conservative event classification
-    timestamp.rs         # Google timestamp evidence
+    metadata.rs          # Mapping of received metadata
     tests.rs             # Specialist tests
 ```
 
