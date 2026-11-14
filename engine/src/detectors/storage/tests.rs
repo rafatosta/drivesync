@@ -61,6 +61,7 @@ impl Tree {
             coverage: ObservationCoverage::Partial,
             data: None,
             event: FileEvent {
+                remote: None,
                 kind: FileEventKind::RecheckRequired,
                 previous: None,
                 current: None,
@@ -116,6 +117,7 @@ fn enqueue_reopen_complete_payload_bytes_order_and_idempotent_ack() {
         LocalScanCoverage::Unavailable => ObservationCoverage::Unavailable,
     };
     file.event = FileEvent {
+        remote: None,
         kind: FileEventKind::Renamed,
         previous: Some(FileLocation::Local(
             LocalRelativePath::new(b"old".to_vec()).unwrap(),

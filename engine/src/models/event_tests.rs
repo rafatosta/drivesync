@@ -42,6 +42,7 @@ fn event(kind: FileEventKind) -> File {
         coverage: ObservationCoverage::Complete,
         scope: FileScope::Local(path.clone()),
         event: FileEvent {
+            remote: None,
             kind,
             uncertainty: (kind == FileEventKind::RecheckRequired)
                 .then_some(ObservationUncertainty::ObservationUnstable),
@@ -159,5 +160,41 @@ fn rechecks_require_a_reason_and_classified_events_cannot_carry_uncertainty() {
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
     let mut file = event(FileEventKind::Created);
     file.event.uncertainty = Some(ObservationUncertainty::ObservationUnstable);
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
+}
+
+#[test]
+fn remote_observation_preserves_raw_removal_without_metadata_or_inferred_action() {
+    let mut file = File {
+        id: FileId("observation".into()),
+        sync_id: SyncId("sync".into()),
+        event: FileEvent {
+            kind: FileEventKind::Observed,
+            remote: Some(RemoteObservation {
+                source: RemoteObservationSource::Changes,
+                removed: Some(true),
+                time: Some("2026-11-14T12:00:00Z".into()),
+                change_type: Some("file".into()),
+                drive_id: None,
+            }),
+            uncertainty: None,
+            previous: None,
+            current: None,
+        },
+        observed_at: Timestamp { unix_millis: 1 },
+        coverage: ObservationCoverage::Partial,
+        scope: FileScope::Remote(RemoteFileRef {
+            account_id: AccountId("account".into()),
+            file_id: RemoteFileId("remote-file".into()),
+        }),
+        data: None,
+    };
+    assert_eq!(file.validate(), Ok(()));
+    let bytes = serde_json::to_vec(&file).unwrap();
+    assert_eq!(serde_json::from_slice::<File>(&bytes).unwrap(), file);
+    file.event.kind = FileEventKind::Deleted;
+    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
+    file.event.kind = FileEventKind::Observed;
+    file.event.remote = None;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }

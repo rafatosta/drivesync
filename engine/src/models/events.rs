@@ -16,6 +16,8 @@ pub struct RemoteFileRef {
 /// Classification of an observation, never a synchronization command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileEventKind {
+    /// Uninterpreted remote evidence; the analyzer determines its meaning.
+    Observed,
     Created,
     Modified,
     Deleted,
@@ -49,10 +51,29 @@ pub enum ObservationUncertainty {
     WriteInProgress,
     ConflictingSequence,
 }
+/// Collection operation that supplied a remote observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemoteObservationSource {
+    Capture,
+    Changes,
+}
+/// Provider change evidence, preserved without classifying a filesystem action.
+/// Missing fields remain absent; removed is not proof of deletion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteObservation {
+    pub source: RemoteObservationSource,
+    pub removed: Option<bool>,
+    pub time: Option<String>,
+    pub change_type: Option<String>,
+    pub drive_id: Option<String>,
+}
 /// Location context before and after an observed occurrence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEvent {
+    /// Raw collection evidence, present only for uninterpreted remote observations.
+    pub remote: Option<RemoteObservation>,
     pub kind: FileEventKind,
     /// Required for RecheckRequired; absent for classified or unavailable events.
     pub uncertainty: Option<ObservationUncertainty>,
@@ -106,6 +127,16 @@ impl File {
         if (self.event.kind == FileEventKind::RecheckRequired) != self.event.uncertainty.is_some() {
             return invalid();
         }
+        if (self.event.kind == FileEventKind::Observed) != self.event.remote.is_some() {
+            return invalid();
+        }
+        if self.event.kind == FileEventKind::Observed
+            && (!matches!(self.scope, FileScope::Remote(_))
+                || self.event.previous.is_some()
+                || self.coverage != ObservationCoverage::Partial)
+        {
+            return invalid();
+        }
         let data = match &self.data {
             Some(FileData::Local(file)) => {
                 file.validate()?;
@@ -136,7 +167,9 @@ impl File {
                     || self.data.is_some()
                     || !matches!(
                         self.event.kind,
-                        FileEventKind::RecheckRequired | FileEventKind::ScopeUnavailable
+                        FileEventKind::Observed
+                            | FileEventKind::RecheckRequired
+                            | FileEventKind::ScopeUnavailable
                     )
                     || self.event.current.is_some()
                     || self.event.previous.is_some()
@@ -168,6 +201,7 @@ impl File {
             }
         }
         match self.event.kind {
+            FileEventKind::Observed => {}
             FileEventKind::Created
             | FileEventKind::Modified
             | FileEventKind::MetadataChanged

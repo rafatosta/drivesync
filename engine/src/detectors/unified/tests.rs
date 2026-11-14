@@ -140,6 +140,7 @@ fn remote_file(id: &str) -> File {
         id: FileId(id.into()),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
+            remote: None,
             kind: FileEventKind::Created,
             uncertainty: None,
             previous: None,
@@ -177,6 +178,7 @@ fn local_file(tree: &Tree, id: &str) -> File {
         id: FileId(id.into()),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
+            remote: None,
             kind: FileEventKind::Created,
             uncertainty: None,
             previous: None,
@@ -396,6 +398,7 @@ fn source_counters_distinguish_bootstrap_and_real_changes() {
         id: FileId("initial".into()),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
+            remote: None,
             kind: FileEventKind::RecheckRequired,
             uncertainty: Some(ObservationUncertainty::CaptureStarted),
             previous: None,

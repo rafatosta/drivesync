@@ -162,6 +162,7 @@ impl GoogleRemoteDetector {
             id: crate::models::FileId(id),
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
+                remote: None,
                 kind,
                 uncertainty: reason,
                 previous: previous.and_then(|file| location(file, &self.scope.account_id)),

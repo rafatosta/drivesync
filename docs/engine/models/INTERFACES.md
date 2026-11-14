@@ -704,3 +704,19 @@ Persistência local: os valores concretos locais e de contexto oferecem serde Se
 A implementação do Detector Remoto selecionou o perfil em [remote/IMPLEMENTATION.md](../detectors/remote/IMPLEMENTATION.md). `RemoteFile`, `ProviderFileData` e `RemoteEntryKind` são dados puros em `engine/src/models/remote.rs`; Models não importa GoogleFile nem executa I/O. A seleção substitui a pendência remota das etapas locais anteriores, sem implementar o catálogo completo da seção 3.
 
 `File` e `FileData` preservam o parâmetro genérico, agora com `RemoteFile` como padrão. `File::validate()` verifica as duas origens, incluindo conta/recurso/localização e payload versionado/limitado; consumidores exclusivamente locais podem continuar usando explicitamente `Infallible`. O adaptador Google retém somente a projeção aprovada e preserva ausência com `NotCollected`, inclusive tamanho e hashes ausentes de documentos nativos.
+
+## Revisão do Detector remoto: observação sem classificação
+
+O Detector remoto emite `FileEventKind::Observed`, sem comparar snapshots ou
+inferir criação, edição, renomeação, movimento ou exclusão. `File.event.remote`
+contém `RemoteObservation`: origem `Capture`/`Changes` e os sinais opcionais
+`removed`, `time`, `change_type` e `drive_id` efetivamente recebidos do provedor.
+Ausência não vira false ou valor vazio. `removed` não comprova exclusão.
+`File.event.previous` permanece ausente; `current` descreve somente os metadados
+recebidos, quando presentes. Sem metadados, `File.scope` ainda preserva conta e
+ID remoto; `data=None` não perde a identidade da alteração.
+
+`File.id` identifica a ocorrência e não substitui o ID remoto em `File.scope`.
+O Orquestrador entrega as observações; o Analisador consulta o Inventory e decide
+seu significado e tratamento. Nenhum desses componentes é implementado por esta
+revisão. Eventos locais existentes permanecem inalterados.

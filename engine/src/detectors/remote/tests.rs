@@ -423,6 +423,7 @@ fn scheduler_and_queue_accept_a_provider_independent_observer() {
                 id: crate::models::FileId("independent-occurrence".into()),
                 sync_id: SyncId("sync-a".into()),
                 event: FileEvent {
+                    remote: None,
                     kind: FileEventKind::RecheckRequired,
                     uncertainty: Some(ObservationUncertainty::CaptureStarted),
                     previous: None,

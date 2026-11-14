@@ -172,3 +172,12 @@ A abertura remota recebe explicitamente o provedor selecionado pela fachada. Ide
 ## 9. Composição unificada
 
 `Store::open_unified` é privado à composição da fachada. Valida identidade com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. O índice é criado junto ao esquema atual (SQLite versão 2). Não existe backfill nem migração de versões anteriores. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. Não existe caminho alternativo para filas antigas nem adaptação de SyncIds.
+
+## 10. Revisão de observações remotas sem classificação
+
+O esquema SQLite passa à versão 3 e o codec File à versão 2, para persistir
+`File.event.remote` integralmente. Abertura de esquema anterior falha com
+`SchemaUnsupported`: sem migração, adaptação, descarte ou sobrescrita automática.
+O histórico distingue captura inicial (`RemoteObservationSource::Capture`) de
+alterações recebidas (`Changes`), sem classificar ações sobre arquivos.
+Os contratos de leases, ordenação, confirmação e retenção continuam vigentes.

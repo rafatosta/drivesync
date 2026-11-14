@@ -45,6 +45,7 @@ fn location(location: &FileLocation) -> String {
 fn event_label(kind: drivesync_engine::models::FileEventKind) -> (&'static str, &'static str) {
     use drivesync_engine::models::FileEventKind::*;
     match kind {
+        Observed => ("OBSERVED", "detector-event-modified"),
         Created => ("CREATE", "detector-event-created"),
         Modified => ("MODIFY", "detector-event-modified"),
         Renamed => ("RENAME", "detector-event-location"),
