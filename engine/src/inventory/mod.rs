@@ -4,3 +4,6 @@ mod models;
 mod storage;
 pub use models::*;
 pub use storage::{inspection, InventoryManager};
+
+mod analysis;
+pub use analysis::*;

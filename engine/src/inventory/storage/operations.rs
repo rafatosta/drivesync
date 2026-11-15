@@ -118,6 +118,7 @@ impl InventoryManager {
     ) -> InventoryResult<ClaimOperationResult> {
         self.run(true,|db|{
             let operation=load(db,&request.operation_id)?;
+            super::analysis::ensure_executable(db,&operation.id)?;
             if operation.state!=request.expected_state{return Err(failure(InventoryError::VersionMismatch));}
             if !matches!(operation.state,OperationState::Pending|OperationState::RetryWait)
                 || operation.next_attempt_at.as_ref().is_some_and(|v|v.unix_millis>request.claimed_at.unix_millis)
@@ -140,6 +141,7 @@ impl InventoryManager {
     ) -> InventoryResult<UpdateOperationResult> {
         self.run(true,|db|{
             let op=load(db,&request.operation_id)?;
+            super::analysis::ensure_executable(db,&op.id)?;
             if op.state!=request.expected_state || op.attempt_count!=request.expected_attempt_count{return Err(failure(InventoryError::VersionMismatch));}
             let (state,next,error,completed)=match &request.transition {
                 OperationTransition::Retry{next_attempt_at,error_kind} if op.state==OperationState::Running=>{

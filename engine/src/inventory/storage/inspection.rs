@@ -22,10 +22,14 @@ pub enum InventoryTable {
     Baselines,
     Activities,
     Confirmations,
+    Analyses,
+    AnalysisFindings,
+    AnalysisRequirements,
+    AnalysisDecisions,
 }
 impl InventoryTable {
     /// All supported tables in presentation order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 15] = [
         Self::SyncInfo,
         Self::Items,
         Self::LocalFiles,
@@ -37,6 +41,10 @@ impl InventoryTable {
         Self::Baselines,
         Self::Activities,
         Self::Confirmations,
+        Self::Analyses,
+        Self::AnalysisFindings,
+        Self::AnalysisRequirements,
+        Self::AnalysisDecisions,
     ];
     /// Physical name for diagnostic presentation; not a caller-controlled SQL fragment.
     pub fn name(self) -> &'static str {
@@ -52,6 +60,10 @@ impl InventoryTable {
             Self::Baselines => "baselines",
             Self::Activities => "activities",
             Self::Confirmations => "confirmations",
+            Self::Analyses => "analyses",
+            Self::AnalysisFindings => "analysis_findings",
+            Self::AnalysisRequirements => "analysis_requirements",
+            Self::AnalysisDecisions => "analysis_decisions",
         }
     }
 }
@@ -168,7 +180,7 @@ pub fn inspect(request: InspectInventoryRequest) -> InventoryResult<InspectionPa
     let version: u32 = tx
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 3 {
+    if version != 4 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(&tx)?;
