@@ -37,7 +37,7 @@ mod operations;
 mod pagination;
 impl InventoryManager {
     /// Opens the private database, rejecting incompatible identity/schema without replacement.
-    /// Creation is explicit and requires an existing root without user entries.
+    /// Creation is explicit and preserves user entries in an existing configured root.
     pub fn open(request: OpenInventoryRequest) -> InventoryResult<OpenInventoryResult> {
         use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
         if request.expected.sync_id.0.trim().is_empty()
