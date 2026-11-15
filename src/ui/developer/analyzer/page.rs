@@ -275,8 +275,8 @@ impl View {
                 .spacing(12)
                 .margin_start(16)
                 .margin_end(16)
-                .margin_top(12)
-                .margin_bottom(12)
+                .margin_top(10)
+                .margin_bottom(10)
                 .build();
             let icon = gtk::Image::from_icon_name(if item.kind == ItemKind::Directory {
                 "folder-symbolic"
@@ -288,7 +288,7 @@ impl View {
             body.append(&icon);
             let content = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
-                .spacing(5)
+                .spacing(4)
                 .hexpand(true)
                 .build();
             let name = file_name(&item);
@@ -296,19 +296,29 @@ impl View {
             title.add_css_class("heading");
             title.set_tooltip_text(Some(&name));
             content.append(&title);
+            let summary = gtk::Box::new(gtk::Orientation::Horizontal, 12);
             let category = label(&operation_category(&record));
             category.add_css_class("heading");
             category.set_widget_name("analyzer-operation-category");
-            content.append(&category);
-            if let Some(direction) = operation_direction(&record) {
-                let direction = label(direction);
-                direction.add_css_class("caption");
-                direction.set_widget_name("analyzer-operation-direction");
-                content.append(&direction);
-            }
-            let action = label(&actions(&record));
-            content.append(&action);
-            if !record.decisions.is_empty() && !record.requirements.is_empty() {
+            summary.append(&category);
+            let metadata = match operation_direction(&record) {
+                Some(direction) => format!("{direction} · {}", status(&record)),
+                None => status(&record).to_owned(),
+            };
+            let badge = label(&metadata);
+            badge.set_xalign(1.0);
+            badge.set_valign(gtk::Align::Start);
+            badge.add_css_class("caption");
+            badge.add_css_class(if record.stale {
+                "dim-label"
+            } else if record.disposition == AnalysisDisposition::PendingUserDecision {
+                "warning"
+            } else {
+                "accent"
+            });
+            summary.append(&badge);
+            content.append(&summary);
+            if !record.requirements.is_empty() {
                 let needs = label(&format!(
                     "Needs: {}",
                     record
@@ -319,30 +329,29 @@ impl View {
                         .join(" · ")
                 ));
                 needs.add_css_class("dim-label");
+                needs.add_css_class("caption");
                 content.append(&needs);
             }
-            let badge = label(status(&record));
-            badge.add_css_class("caption");
-            badge.add_css_class(if record.stale {
-                "dim-label"
-            } else if record.disposition == AnalysisDisposition::PendingUserDecision {
-                "warning"
-            } else {
-                "accent"
-            });
-            content.append(&badge);
             if record.stale {
                 let note = label("Outdated analysis — reobserve before applying this decision.");
                 note.add_css_class("warning");
                 content.append(&note);
             }
+            let details = gtk::Expander::builder().label("Details").build();
+            details.add_css_class("caption");
+            let information = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            information.set_margin_top(4);
+            let action = label(&actions(&record));
+            action.add_css_class("dim-label");
+            information.append(&action);
             let revision = label(&format!(
                 "Analysis #{} · revision {}",
                 record.id.0, record.analyzed_item_revision
             ));
-            revision.add_css_class("caption");
             revision.add_css_class("dim-label");
-            content.append(&revision);
+            information.append(&revision);
+            details.set_child(Some(&information));
+            content.append(&details);
             body.append(&content);
             self.list.append(&body);
         }

@@ -159,8 +159,10 @@ públicas, sem iniciar scan, análise, entrega de eventos ou operação física.
 Cada linha mostra nome/caminho local (ou nome/identidade remota) e as ações
 `Create file`, `Create folder`, `Update content`, `Rename` ou `Move`, conforme as
 decisões persistidas. Múltiplas ações do mesmo item permanecem visíveis, em ordem.
-`Upload`/`Download` aparece separadamente como sentido de propagação; os detalhes
-indicam o destino de cada operação. Conflitos têm prioridade como `Manual action`.
+Ação e metadados ocupam a mesma linha adaptável: `Upload`/`Download` indica o
+sentido de propagação junto do status. Requisitos continuam visíveis em texto
+secundário. `Details`, recolhido inicialmente, reúne o destino específico e o
+ID/revisão da análise, evitando linhas repetidas no card. Conflitos têm prioridade como `Manual action`.
 Sem direção/ação identificável, a tela mostra `Awaiting evidence`; sem mudanças,
 `No action needed`. Registros obsoletos mostram `Awaiting analysis`, sem apresentar
 uma decisão antiga como atual. A GUI não infere novas operações nem altera políticas.
