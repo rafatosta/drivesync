@@ -128,6 +128,7 @@ impl Drop for Flow {
     }
 }
 pub(super) struct Context {
+    pub connector: crate::Engine,
     pub detector: Arc<Detector>,
     pub scanner: Arc<Scanner>,
     pub inventory: Arc<InventoryManager>,
@@ -343,6 +344,7 @@ async fn process(
             context.identity.clone(),
             context.epoch.clone(),
             context.expected,
+            context.connector.clone(),
         )
         .await?;
     } else {
@@ -352,6 +354,7 @@ async fn process(
             context.epoch.clone(),
             context.expected,
             ids,
+            context.connector.clone(),
         )
         .await?;
     }

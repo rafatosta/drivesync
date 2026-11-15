@@ -14,6 +14,7 @@ pub struct AnalyzerDependencies {
     pub inventory: Arc<InventoryManager>,
 }
 pub struct AnalyzerConfig {
+    pub provider: crate::models::ProviderId,
     pub identity: SyncIdentity,
     pub dependencies: AnalyzerDependencies,
 }

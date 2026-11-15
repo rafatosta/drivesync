@@ -10,7 +10,7 @@
 //! # async fn example(inventory: Arc<InventoryManager>, identity: SyncIdentity,
 //! # item: SyncItem, evidence: AnalysisEvidence, recorded_at: Timestamp)
 //! # -> AnalyzerResult<()> {
-//! let analyzer = Analyzer::new(AnalyzerConfig {
+//! let analyzer = Analyzer::new(AnalyzerConfig { provider: drivesync_engine::models::ProviderId("google".into()),
 //!     identity: identity.clone(),
 //!     dependencies: AnalyzerDependencies { inventory },
 //! })?;
@@ -52,6 +52,7 @@ use std::{
 pub struct Analyzer {
     inventory: Arc<InventoryManager>,
     identity: SyncIdentity,
+    provider: crate::models::ProviderId,
     active: Arc<Mutex<BTreeMap<SyncItemId, ActiveAnalysis>>>,
 }
 fn error(kind: AnalyzerErrorKind) -> AnalyzerError {
@@ -100,7 +101,8 @@ impl Analyzer {
     /// Validates the configured inventory identity without starting an analysis.
     /// Blocking: construct off the GTK main loop; no database is opened or created here.
     pub fn new(config: AnalyzerConfig) -> AnalyzerResult<Self> {
-        if config.identity.sync_id.0.trim().is_empty()
+        if config.provider.0.trim().is_empty()
+            || config.identity.sync_id.0.trim().is_empty()
             || config.identity.account_id.0.trim().is_empty()
             || config.identity.remote_root_id.trim().is_empty()
         {
@@ -121,6 +123,7 @@ impl Analyzer {
         Ok(Self {
             inventory: config.dependencies.inventory,
             identity: config.identity,
+            provider: config.provider,
             active: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -139,8 +142,9 @@ impl Analyzer {
             .map_err(|_| error(AnalyzerErrorKind::RuntimeUnavailable))?;
         let guard = self.reserve(&request.item.id, request.item.revision)?;
         let inventory = self.inventory.clone();
+        let provider = self.provider.clone();
         runtime
-            .spawn_blocking(move || analyze_one(&inventory, request, guard))
+            .spawn_blocking(move || analyze_one(&inventory, &provider, request, guard))
             .await
             .map_err(|_| error(AnalyzerErrorKind::Internal))?
     }
@@ -183,9 +187,19 @@ impl Analyzer {
 }
 fn analyze_one(
     inventory: &InventoryManager,
+    provider: &crate::models::ProviderId,
     request: AnalyzeRequest,
     guard: Reservation,
 ) -> AnalyzerResult<AnalysisOutcome> {
+    if request
+        .item
+        .remote_latest
+        .as_ref()
+        .or(request.item.remote.as_ref())
+        .is_some_and(|r| r.provider != *provider)
+    {
+        return Err(error(AnalyzerErrorKind::WrongSyncScope));
+    }
     let current = inventory
         .get_item(GetItemRequest {
             selector: ItemSelector::Id(request.item.id.clone()),
@@ -236,6 +250,7 @@ fn analyze_one(
             account_id: info.account_id,
             remote_root_id: info.remote_root_id,
         },
+        provider,
         &request,
         &mut assessment,
     )?;

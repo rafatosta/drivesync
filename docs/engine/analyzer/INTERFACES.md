@@ -17,6 +17,7 @@ acessa SQL, Inventory concreto, filesystem, Provider, Operador ou GUI.
 pub fn Analyzer::new(config: AnalyzerConfig) -> AnalyzerResult<Analyzer>;
 
 pub struct AnalyzerConfig {
+    pub provider: ProviderId,
     pub identity: SyncIdentity,
     pub dependencies: AnalyzerDependencies,
 }
@@ -160,3 +161,8 @@ Os contratos dessas funcionalidades deverão ser definidos quando implementados,
 sem expor os algoritmos privados nem permitir SQL fora do Inventory.
 
 O recibo agora contém plano opcional: [PLANNING.md](PLANNING.md). O fluxo do Analyzer sempre o produz; persistência direta de avaliações isoladas pode usar `None`.
+
+O provedor é resolvido pelo Orchestrator a partir da conta persistida via Engine,
+sem credenciais ou HTTP, e passado na configuração. Não é inferido de nomes ou
+da existência de arquivos remotos; uma pasta remota vazia continua tendo provedor.
+Metadata de outro provedor é recusada. A fase transitória inclui `Planning`.

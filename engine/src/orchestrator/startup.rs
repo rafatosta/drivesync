@@ -304,6 +304,7 @@ impl Orchestrator {
                 let scope = self.detector.scope();
                 self.flow
                     .start(flow::Context {
+                        connector: self.connector.clone(),
                         detector: self.detector.clone(),
                         scanner,
                         inventory,

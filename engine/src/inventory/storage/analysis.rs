@@ -227,7 +227,7 @@ impl InventoryManager {
             for (position,f) in request.assessment.findings.iter().enumerate() {db.execute("INSERT INTO analysis_findings VALUES(?1,?2,?3,?4,?5,?6)",params![id,position as i64,enum_text(&f.origin)?,enum_text(&f.dimension)?,enum_text(&f.status)?,enum_text(&f.reason)?]).map_err(sql)?;}
             for (position,r) in request.assessment.requirements.iter().enumerate() {db.execute("INSERT INTO analysis_requirements VALUES(?1,?2,?3)",params![id,position as i64,enum_text(r)?]).map_err(sql)?;}
             for (position,intent) in request.assessment.intents.iter().enumerate() {
-                let block=match request.assessment.disposition {AnalysisDisposition::PendingUserDecision=>"AnalyzerConflictPending",AnalysisDisposition::PendingEvidence=>"AnalyzerEvidencePending",_=>"AnalyzerCommandUnavailable"};
+                let block=match request.assessment.disposition {AnalysisDisposition::PendingUserDecision=>"AnalyzerConflictPending",AnalysisDisposition::PendingEvidence=>"AnalyzerEvidencePending",_=>"AnalyzerExecutionUnavailable"};
                 let version=item.remote_latest.as_ref().and_then(|r|if let MetadataValue::Known(v)=&r.version{Some(v)}else{None});
                 db.execute("INSERT INTO operations(item,direction,kind,state,base_revision,expected_version,created,last_error,fingerprint) VALUES(?1,?2,?3,'Blocked',?4,?5,?6,?7,?8)",params![item.id.0,enum_text(&intent.direction)?,enum_text(&intent.kind)?,revision,version,request.recorded_at.unix_millis,block,digest(&(id,position,intent))?]).map_err(sql)?;
                 let operation=db.last_insert_rowid();

@@ -434,6 +434,14 @@ async fn complete_scan_records_decisions_before_live_delivery_without_executing_
         assert_eq!(record.evidence.local_content, EvidenceRelation::Unknown);
         assert_eq!(record.evidence.current_content, EvidenceRelation::Unknown);
         assert_eq!(record.decisions.len(), 1);
+        if record.item_kind == ItemKind::Directory {
+            let plan = record.plan.as_ref().unwrap();
+            assert!(matches!(
+                plan.steps[0].command,
+                Some(drivesync_engine::operations::OperationCommand::CreateDirectory { .. })
+            ));
+            assert!(!plan.steps[0].blocked_by.contains(&PlanBlock::Capabilities));
+        }
         assert_eq!(
             record.decisions[0].intent,
             AnalysisIntent {

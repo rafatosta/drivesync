@@ -17,8 +17,15 @@ use std::{
 
 /// Refuses symlink traversal and stale/unstable observations. No file is written.
 /// Missing evidence or an unstable writer yields None, never an invented checksum.
-pub(crate) fn sha256(root: &Path, observed: &LocalFile) -> Option<String> {
-    fn read(root: &Path, o: &LocalFile) -> io::Result<String> {
+pub(crate) fn sha256(
+    root: &Path,
+    observed: &LocalFile,
+    cancelled: impl Fn() -> bool,
+) -> Option<String> {
+    fn read(root: &Path, o: &LocalFile, cancelled: &impl Fn() -> bool) -> io::Result<String> {
+        if cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let mut directory = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -77,6 +84,9 @@ pub(crate) fn sha256(root: &Path, observed: &LocalFile) -> Option<String> {
         let mut buffer = [0; 65536];
         let mut count = 0u64;
         loop {
+            if cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             let n = file.read(&mut buffer)?;
             if n == 0 {
                 break;
@@ -104,7 +114,7 @@ pub(crate) fn sha256(root: &Path, observed: &LocalFile) -> Option<String> {
         }
         Ok(format!("sha256:{:x}", hash.finalize()))
     }
-    read(root, observed).ok()
+    read(root, observed, &cancelled).ok()
 }
 
 #[cfg(test)]
@@ -123,12 +133,13 @@ mod tests {
             LocalRelativePath::new(b"file".to_vec()).unwrap(),
         )
         .unwrap();
-        assert!(sha256(&root, &observed).is_some());
+        assert!(sha256(&root, &observed, || false).is_some());
+        assert!(sha256(&root, &observed, || true).is_none());
         std::fs::write(&path, b"different").unwrap();
-        assert!(sha256(&root, &observed).is_none());
+        assert!(sha256(&root, &observed, || false).is_none());
         std::fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink("/etc/passwd", &path).unwrap();
-        assert!(sha256(&root, &observed).is_none());
+        assert!(sha256(&root, &observed, || false).is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

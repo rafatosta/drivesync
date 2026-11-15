@@ -114,6 +114,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     assert!(!first.scan_local);
     let id = first.item.unwrap();
     let analyzer = Analyzer::new(AnalyzerConfig {
+        provider: crate::models::ProviderId("google".into()),
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),

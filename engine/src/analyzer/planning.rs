@@ -98,17 +98,11 @@ fn all(inventory: &InventoryManager) -> AnalyzerResult<Vec<SyncItem>> {
 struct World<'a> {
     items: &'a [SyncItem],
     identity: &'a SyncIdentity,
+    provider: &'a ProviderId,
 }
 impl World<'_> {
-    fn provider(&self, i: &SyncItem) -> Option<ProviderId> {
-        remote(i)
-            .or_else(|| {
-                self.items
-                    .iter()
-                    .filter_map(remote)
-                    .find(|r| r.reference.account_id == self.identity.account_id)
-            })
-            .map(|r| r.provider.clone())
+    fn provider(&self, _item: &SyncItem) -> Option<ProviderId> {
+        Some(self.provider.clone())
     }
     fn destination(
         &self,
@@ -248,6 +242,7 @@ fn block_for(r: AnalysisRequirement) -> PlanBlock {
 pub(super) fn build(
     inventory: &InventoryManager,
     identity: &SyncIdentity,
+    provider: &ProviderId,
     request: &AnalyzeRequest,
     assessment: &mut NewAnalysisAssessment,
 ) -> AnalyzerResult<()> {
@@ -256,6 +251,7 @@ pub(super) fn build(
     let world = World {
         items: &items,
         identity,
+        provider,
     };
     let mut plan = AnalysisPlan {
         restore_request: request.directive.clone(),
@@ -488,6 +484,59 @@ pub(super) fn build(
                     })
             }
             OperationKind::Trash => {
+                if item.kind == ItemKind::Directory {
+                    push(
+                        &mut assessment.requirements,
+                        AnalysisRequirement::VerifySurvivingState,
+                    );
+                    let directory = match target.as_ref() {
+                        Some(ResourceRef::Remote {
+                            provider_id,
+                            reference,
+                        }) => Some(DirectoryRef::Remote {
+                            provider_id: provider_id.clone(),
+                            reference: reference.clone(),
+                        }),
+                        Some(ResourceRef::Local {
+                            relative_path,
+                            local_id,
+                        }) => Some(DirectoryRef::Local {
+                            relative_path: relative_path.clone(),
+                            local_id: local_id.clone(),
+                        }),
+                        _ => None,
+                    };
+                    if let Some(directory) = directory {
+                        push(
+                            &mut plan.namespaces,
+                            inventory
+                                .get_namespace(GetNamespaceRequest { directory })
+                                .map_err(inventory_error)?
+                                .guard,
+                        );
+                    }
+                    for child in &items {
+                        let local_child = !upload
+                            && local(item)
+                                .zip(local(child))
+                                .is_some_and(|(parent, child)| {
+                                    let mut prefix = parent.relative_path.as_bytes().to_vec();
+                                    prefix.push(b'/');
+                                    child.relative_path.as_bytes().starts_with(&prefix)
+                                });
+                        let remote_child = upload
+                            && item.remote_ref.as_ref().is_some_and(|parent| {
+                                remote(child)
+                                    .and_then(|c| known(&c.parent_ids))
+                                    .is_some_and(|ids| ids.contains(&parent.file_id))
+                            });
+                        if child.id != item.id && (local_child || remote_child) {
+                            add_guard(&mut plan, child)?;
+                            push(&mut step.depends_on, child.id.clone());
+                            push(&mut step.blocked_by, PlanBlock::Parent);
+                        }
+                    }
+                }
                 push(
                     &mut assessment.requirements,
                     AnalysisRequirement::AuthorizeDeletion,

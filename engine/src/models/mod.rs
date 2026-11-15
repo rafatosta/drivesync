@@ -23,7 +23,9 @@ pub struct SyncId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FileId(pub String);
 
-/// Optional logical local identity, never inferred from an inode or path.
+/// Optional scoped local entry identity. Collectors require complete device,
+/// inode and birth evidence; path or inode alone never establish identity.
+/// This identity never associates an independent remote resource.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LocalFileId(pub String);
 

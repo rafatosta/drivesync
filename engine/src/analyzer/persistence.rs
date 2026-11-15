@@ -23,7 +23,28 @@ fn comparison(value: EvidenceRelation) -> r::Comparison {
         EvidenceRelation::Unknown => r::Comparison::Unknown,
     }
 }
+/// A known trashed remote object proves absence from the active tree, not
+/// permanent deletion. Preserve the original Inventory snapshot for persistence.
+/// Unknown presence/access and retained fields never establish this projection.
+fn active_view(request: &AnalyzeRequest) -> AnalyzeRequest {
+    let mut view = request.clone();
+    if view.item.remote_presence == PresenceState::Present
+        && view.evidence.remote_scope_complete
+        && view
+            .item
+            .remote_latest
+            .as_ref()
+            .or(view.item.remote.as_ref())
+            .is_some_and(|r| r.trashed == crate::models::MetadataValue::Known(true))
+    {
+        view.item.remote_presence = PresenceState::AbsentConfirmed;
+        view.evidence.current_content = EvidenceRelation::Unknown;
+    }
+    view
+}
 pub(super) fn reconcile(request: &AnalyzeRequest) -> AnalyzerResult<r::ReconciliationAssessment> {
+    let active = active_view(request);
+    let request = &active;
     let e = &request.evidence;
     // Reconciliation assumes a confirmed baseline. Do not erase an untrusted
     // historical snapshot and reinterpret deletion as first-time creation.
@@ -69,6 +90,8 @@ pub(super) fn reconcile(request: &AnalyzeRequest) -> AnalyzerResult<r::Reconcili
     })
 }
 pub(super) fn conflicts(request: &AnalyzeRequest) -> AnalyzerResult<c::ConflictAssessment> {
+    let active = active_view(request);
+    let request = &active;
     let e = &request.evidence;
     c::evaluate(c::ConflictRequest {
         item: request.item.clone(),

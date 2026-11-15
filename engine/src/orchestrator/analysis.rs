@@ -34,6 +34,8 @@ fn evidence(
     inventory: &InventoryManager,
     item: &SyncItem,
     identity: &SyncIdentity,
+    epoch: &AtomicU64,
+    expected: u64,
 ) -> Result<AnalysisEvidence, PreparationFailure> {
     let local = item.local_latest.as_ref().or(item.local.as_ref());
     let parent_path = local.and_then(|file| {
@@ -87,14 +89,26 @@ fn evidence(
         .get_sync_info(GetSyncInfoRequest {})
         .map_err(PreparationFailure::Inventory)?
         .local_root;
+    let remote_hash = remote.and_then(|r| known_sha256(&r.sha256_checksum));
+    let baseline_hash = item
+        .baseline
+        .as_ref()
+        .and_then(|b| b.local.checksum.as_deref());
+    let measurement_needed = remote_hash.is_some()
+        || compare_hash(baseline_hash, baseline_hash) == EvidenceRelation::Equal;
     let local_hash = local
-        .filter(|_| item.kind == ItemKind::File && item.local_presence == PresenceState::Present)
+        .filter(|_| {
+            measurement_needed
+                && item.kind == ItemKind::File
+                && item.local_presence == PresenceState::Present
+        })
         .and_then(|file| {
             crate::filesystem::content::sha256(
                 std::path::Path::new(
                     <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&root),
                 ),
                 file,
+                || epoch.load(Ordering::Acquire) != expected,
             )
         });
     Ok(AnalysisEvidence {
@@ -110,19 +124,12 @@ fn evidence(
                 .and_then(|b| b.local.checksum.as_deref()),
         ),
         remote_content: compare_hash(
-            remote
-                .and_then(|r| known_sha256(&r.sha256_checksum))
-                .as_deref(),
+            remote_hash.as_deref(),
             item.baseline
                 .as_ref()
                 .and_then(|b| b.remote.checksum.as_deref()),
         ),
-        current_content: compare_hash(
-            local_hash.as_deref(),
-            remote
-                .and_then(|r| known_sha256(&r.sha256_checksum))
-                .as_deref(),
-        ),
+        current_content: compare_hash(local_hash.as_deref(), remote_hash.as_deref()),
         local_parent: parent
             .filter(|p| p.kind == ItemKind::Directory && p.local_presence == PresenceState::Present)
             .map(|p| p.id),
@@ -161,9 +168,12 @@ pub(super) async fn analyze_all(
     identity: SyncIdentity,
     epoch: Arc<AtomicU64>,
     expected: u64,
+    connector: crate::Engine,
 ) -> Result<(), PreparationFailure> {
     current(&epoch, expected)?;
+    let provider = account_provider(&connector, &identity).await?;
     let analyzer = Analyzer::new(AnalyzerConfig {
+        provider: provider.clone(),
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),
@@ -196,8 +206,11 @@ pub(super) async fn analyze_selected(
     epoch: Arc<AtomicU64>,
     expected: u64,
     ids: std::collections::BTreeSet<SyncItemId>,
+    connector: crate::Engine,
 ) -> Result<(), PreparationFailure> {
+    let provider = account_provider(&connector, &identity).await?;
     let analyzer = Analyzer::new(AnalyzerConfig {
+        provider: provider.clone(),
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),
@@ -225,7 +238,7 @@ async fn analyze_item(
         .map_err(PreparationFailure::Inventory)?
         .item
         .ok_or(PreparationFailure::Internal)?;
-    let evidence = evidence(inventory, &item, identity)?;
+    let evidence = evidence(inventory, &item, identity, epoch, expected)?;
     current(epoch, expected)?;
     analyzer
         .analyze(AnalyzeRequest {
@@ -255,11 +268,12 @@ impl Orchestrator {
         };
         let epoch = self.preparation.epoch.clone();
         let control = self.preparation.control.clone();
+        let connector = self.connector.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::Builder::new()
             .name("sync-analysis".into())
             .spawn(move || {
-                let result = run_pass(inventory, identity, epoch, expected, control);
+                let result = run_pass(inventory, identity, epoch, expected, control, connector);
                 let _ = tx.send(result);
             })
             .map_err(|_| PreparationFailure::Internal)?;
@@ -272,6 +286,7 @@ fn run_pass(
     epoch: Arc<AtomicU64>,
     expected: u64,
     control: Arc<Mutex<()>>,
+    connector: crate::Engine,
 ) -> Result<(), PreparationFailure> {
     let _control = control.lock().map_err(|_| PreparationFailure::Internal)?;
     current(&epoch, expected)?;
@@ -279,5 +294,21 @@ fn run_pass(
         .enable_all()
         .build()
         .map_err(|_| PreparationFailure::Internal)?;
-    runtime.block_on(analyze_all(inventory, identity, epoch, expected))
+    runtime.block_on(analyze_all(inventory, identity, epoch, expected, connector))
+}
+
+/// Resolves local persisted account metadata, without credentials or Provider calls.
+async fn account_provider(
+    connector: &crate::Engine,
+    identity: &SyncIdentity,
+) -> Result<crate::ProviderId, PreparationFailure> {
+    connector
+        .list_accounts(crate::ListAccountsRequest { provider: None })
+        .await
+        .map_err(|_| PreparationFailure::Internal)?
+        .accounts
+        .into_iter()
+        .find(|a| a.id == identity.account_id)
+        .map(|a| a.provider)
+        .ok_or(PreparationFailure::Internal)
 }

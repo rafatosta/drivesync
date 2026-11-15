@@ -241,6 +241,7 @@ fn setup() -> (Tree, Arc<InventoryManager>, SyncItem) {
 }
 fn analyzer(tree: &Tree, inventory: Arc<InventoryManager>) -> Analyzer {
     Analyzer::new(AnalyzerConfig {
+        provider: drivesync_engine::models::ProviderId("google".into()),
         identity: tree.request().expected,
         dependencies: AnalyzerDependencies { inventory },
     })
@@ -352,7 +353,7 @@ async fn unilateral_changes_persist_ordered_blocked_operations_in_both_direction
         assert_eq!(ops[0].base_item_revision, out.resulting_item_revision);
         assert_eq!(
             ops[0].last_error_kind.as_deref(),
-            Some("AnalyzerCommandUnavailable")
+            Some("AnalyzerExecutionUnavailable")
         );
         assert_eq!(current(&inventory, &item.id).baseline, item.baseline);
     }
@@ -495,7 +496,7 @@ fn constructor_rejects_a_different_inventory_identity() {
     let mut identity = tree.request().expected;
     identity.account_id = AccountId("other".into());
     assert!(
-        matches!(Analyzer::new(AnalyzerConfig{identity,dependencies:AnalyzerDependencies{inventory}}),Err(e)if e.kind==AnalyzerErrorKind::WrongSyncScope)
+        matches!(Analyzer::new(AnalyzerConfig{ provider: drivesync_engine::models::ProviderId("google".into()),identity,dependencies:AnalyzerDependencies{inventory}}),Err(e)if e.kind==AnalyzerErrorKind::WrongSyncScope)
     );
 }
 #[test]
@@ -1078,4 +1079,254 @@ async fn native_documents_are_never_given_an_implicit_binary_download() {
     assert!(out.plan.unwrap().steps[0]
         .blocked_by
         .contains(&PlanBlock::Capabilities));
+}
+
+#[tokio::test]
+async fn known_remote_trash_is_active_absence_while_unknown_access_never_is() {
+    for changed in [false, true] {
+        let (tree, inv, item) = setup();
+        let mut parent = local_file("local-parent", b"parent");
+        if let Some(m::FileData::Local(f)) = &mut parent.data {
+            f.local_id = Some(m::LocalFileId("parent-local".into()));
+            f.kind = m::MetadataValue::Known(m::LocalEntryKind::Directory)
+        }
+        let parent = inv
+            .record_local(RecordLocalObservation {
+                selector: ObservationTarget::NewItem,
+                expected_revision: None,
+                observation: LocalObservation {
+                    observed: parent,
+                    presence: PresenceState::Present,
+                    proof: ObservationProof {
+                        source: ObservationSource::LocalEvent,
+                        observed_at: m::Timestamp { unix_millis: 10 },
+                        scan_or_generation: None,
+                        complete_scope: false,
+                    },
+                },
+            })
+            .unwrap()
+            .item;
+        let item = record_local(&inv, &item, "local-moved", b"parent/file");
+        let mut baseline = item.baseline.clone().unwrap();
+        baseline.confirmed_at = m::Timestamp { unix_millis: 21 };
+        baseline.local.parent_identity = Some(BaselineParent::Local(parent.id.clone()));
+        let item = inv
+            .confirm_sync(ConfirmSyncRequest {
+                item_id: item.id.clone(),
+                expected_item_revision: item.revision,
+                confirmed: ConfirmedState {
+                    baseline,
+                    status: SyncStatus::Synced,
+                    verified_at: m::Timestamp { unix_millis: 21 },
+                },
+                completed_operation: None,
+                expected_operation_attempt: None,
+                activity: None,
+            })
+            .unwrap()
+            .item;
+        let mut observed =
+            remote_file("in-trash", "remote", m::MetadataValue::Known("file".into()));
+        if let Some(m::FileData::Remote(r)) = &mut observed.data {
+            r.trashed = m::MetadataValue::Known(true)
+        }
+        let item = inv
+            .record_remote(remote_request(
+                observed,
+                ObservationTarget::Existing(item.id.clone()),
+                Some(item.revision),
+            ))
+            .unwrap()
+            .item;
+        let mut req = request(item.clone());
+        req.evidence.local_parent = Some(parent.id);
+        req.evidence.local_content = if changed {
+            EvidenceRelation::Different
+        } else {
+            EvidenceRelation::Equal
+        };
+        let a = analyzer(&tree, inv.clone());
+        let out = a.analyze(req).await.unwrap().analysis;
+        if changed {
+            assert_eq!(out.disposition, AnalysisDisposition::PendingUserDecision);
+            assert!(out.decisions.is_empty());
+            assert!(out
+                .findings
+                .iter()
+                .any(|f| f.reason == AnalysisReason::DeleteVsChange));
+        } else {
+            assert_eq!(
+                out.decisions[0].intent,
+                AnalysisIntent {
+                    kind: OperationKind::Trash,
+                    direction: OperationDirection::Download
+                }
+            );
+            assert!(out.plan.unwrap().steps[0]
+                .blocked_by
+                .contains(&PlanBlock::UserAuthorization));
+        }
+        // Losing access cannot reuse the retained trash flag as current proof.
+        let item = current(&inv, &item.id);
+        let mut unknown = remote_file(
+            "unavailable",
+            "remote",
+            m::MetadataValue::Known("file".into()),
+        );
+        unknown.data = None;
+        unknown.event.current = None;
+        let mut unknown = remote_request(
+            unknown,
+            ObservationTarget::Existing(item.id.clone()),
+            Some(item.revision),
+        );
+        unknown.observation.presence = PresenceState::Unknown;
+        let item = inv.record_remote(unknown).unwrap().item;
+        let mut req = request(item);
+        req.evidence.current_content = EvidenceRelation::Unknown;
+        req.evidence.remote_scope_complete = false;
+        let out = a.analyze(req).await.unwrap().analysis;
+        assert!(out.decisions.is_empty());
+        assert!(out
+            .requirements
+            .contains(&AnalysisRequirement::ObserveRemote));
+    }
+}
+
+#[tokio::test]
+async fn configured_provider_mismatch_cannot_reuse_a_google_plan() {
+    let (tree, inv, item) = setup();
+    let a = Analyzer::new(AnalyzerConfig {
+        provider: m::ProviderId("other".into()),
+        identity: tree.request().expected,
+        dependencies: AnalyzerDependencies {
+            inventory: inv.clone(),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        a.analyze(request(item)).await.unwrap_err().kind,
+        AnalyzerErrorKind::WrongSyncScope
+    );
+    assert!(records(&inv).is_empty());
+}
+
+#[tokio::test]
+async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements() {
+    let tree = Tree::new();
+    let inv = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let mut observed = remote_file("folder", "folder", m::MetadataValue::Known("folder".into()));
+    if let Some(m::FileData::Remote(f)) = &mut observed.data {
+        f.kind = m::MetadataValue::Known(m::RemoteEntryKind::Directory)
+    }
+    let folder = inv
+        .record_remote(remote_request(observed, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let mut local = local_file("folder-local", b"folder");
+    if let Some(m::FileData::Local(f)) = &mut local.data {
+        f.kind = m::MetadataValue::Known(m::LocalEntryKind::Directory)
+    }
+    let folder = inv
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(folder.id.clone()),
+            expected_revision: Some(folder.revision),
+            observation: LocalObservation {
+                observed: local,
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalEvent,
+                    observed_at: m::Timestamp { unix_millis: 10 },
+                    scan_or_generation: None,
+                    complete_scope: false,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    let local = BaselineSide {
+        presence: PresenceState::Present,
+        name: None,
+        local_name_bytes: Some(b"folder".to_vec()),
+        parent_identity: None,
+        version: None,
+        checksum: None,
+        size: None,
+        modified_at: None,
+    };
+    let mut remote = local.clone();
+    remote.local_name_bytes = None;
+    remote.name = Some("folder".into());
+    remote.parent_identity = Some(BaselineParent::Remote(m::RemoteFileRef {
+        account_id: AccountId("account".into()),
+        file_id: m::RemoteFileId("root".into()),
+    }));
+    let folder = inv
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: folder.id.clone(),
+            expected_item_revision: folder.revision,
+            confirmed: ConfirmedState {
+                baseline: SyncBaseline {
+                    local,
+                    remote,
+                    confirmed_at: m::Timestamp { unix_millis: 20 },
+                },
+                status: SyncStatus::Synced,
+                verified_at: m::Timestamp { unix_millis: 20 },
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+    let mut child = remote_file("child", "child", m::MetadataValue::Known("child".into()));
+    if let Some(m::FileData::Remote(f)) = &mut child.data {
+        f.parent_ids = m::MetadataValue::Known(vec![m::RemoteFileId("folder".into())])
+    }
+    if let Some(m::FileLocation::Remote { parent_id, .. }) = &mut child.event.current {
+        *parent_id = Some(m::RemoteFileId("folder".into()))
+    }
+    let child = inv
+        .record_remote(remote_request(child, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let mut local = local_file("folder-gone", b"folder");
+    local.data = None;
+    local.event.current = None;
+    let folder = inv
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(folder.id.clone()),
+            expected_revision: Some(folder.revision),
+            observation: LocalObservation {
+                observed: local,
+                presence: PresenceState::AbsentConfirmed,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalScan,
+                    observed_at: m::Timestamp { unix_millis: 30 },
+                    scan_or_generation: Some("scan".into()),
+                    complete_scope: true,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    let mut req = request(folder);
+    req.evidence.current_content = EvidenceRelation::Unknown;
+    let out = analyzer(&tree, inv.clone())
+        .analyze(req)
+        .await
+        .unwrap()
+        .analysis;
+    assert_eq!(out.decisions[0].intent.kind, OperationKind::Trash);
+    assert!(out
+        .requirements
+        .contains(&AnalysisRequirement::VerifySurvivingState));
+    let plan = out.plan.unwrap();
+    assert!(plan.steps[0].depends_on.contains(&child.id));
+    assert!(plan.steps[0]
+        .blocked_by
+        .contains(&PlanBlock::UserAuthorization));
+    assert!(current(&inv, &child.id).baseline.is_none());
 }

@@ -61,3 +61,14 @@ revalidar as guardas, capacidade, autorização e o recurso físico.
 Conflitos e colisões têm recursos envolvidos e motivo em `AnalysisPlan.manual`;
 falta de prova continua separada de conflito. Todas as operações persistidas estão
 Blocked, inclusive planos sem pendências de dados: o Operator não tem implementação.
+
+## Contexto de conta e lixeira observada
+
+O provedor vem da conta persistida, inclusive sem observações remotas. Um objeto
+remoto com presença atual comprovada e `trashed=true` está ausente da árvore ativa:
+a fachada fornece essa visão aos algoritmos, preservando o snapshot bruto do
+Inventory. Não equivale a exclusão permanente nem a perda de acesso. Presença
+Unknown nunca reutiliza um `trashed` retido como prova atual. Conteúdo sobrevivente
+alterado continua DeleteVsChange; inalterado permite intenção condicionada Trash.
+Pasta a enviar à lixeira exige revalidar sobreviventes/descendentes e guarda seu
+namespace/dependências; a autorização não é presumida.

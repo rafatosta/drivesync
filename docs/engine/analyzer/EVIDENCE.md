@@ -20,3 +20,7 @@ renomeação/movimentação. Sem nascimento confiável ou em hardlinks, não inv
 Identidade física diferente em caminho ocupado exige rechecagem, não associação
 local↔remoto por nome; o estado pode continuar desconhecido. A execução futura
 precisará revalidar recurso e precondições, inclusive após a medição atual.
+
+A leitura ocorre somente quando há checksum SHA-256 remoto ou do baseline para
+comparar. Novos arquivos sem referência não são lidos inutilmente. Cancelamento
+da sessão é verificado entre blocos, sem publicar checksum parcial ou falso.
