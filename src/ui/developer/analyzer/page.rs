@@ -110,6 +110,32 @@ fn actions(record: &RecordedAnalysis) -> String {
             .join(" · ")
     }
 }
+/// Summarize persisted decisions without treating missing evidence as a user conflict.
+fn operation_category(record: &RecordedAnalysis) -> &'static str {
+    if record.stale {
+        return "Awaiting analysis";
+    }
+    match record.disposition {
+        AnalysisDisposition::PendingUserDecision => "Manual action",
+        AnalysisDisposition::NoChanges => "No action needed",
+        AnalysisDisposition::PendingEvidence | AnalysisDisposition::PendingOperations => {
+            let upload = record
+                .decisions
+                .iter()
+                .any(|d| d.intent.direction == OperationDirection::Upload);
+            let download = record
+                .decisions
+                .iter()
+                .any(|d| d.intent.direction == OperationDirection::Download);
+            match (upload, download) {
+                (true, true) => "Upload + Download",
+                (true, false) => "Upload",
+                (false, true) => "Download",
+                (false, false) => "Awaiting evidence",
+            }
+        }
+    }
+}
 fn status(record: &RecordedAnalysis) -> &'static str {
     if record.stale {
         return "Outdated";
@@ -236,6 +262,10 @@ impl View {
             title.add_css_class("heading");
             title.set_tooltip_text(Some(&name));
             content.append(&title);
+            let category = label(operation_category(&record));
+            category.add_css_class("heading");
+            category.set_widget_name("analyzer-operation-category");
+            content.append(&category);
             let action = label(&actions(&record));
             content.append(&action);
             if !record.decisions.is_empty() && !record.requirements.is_empty() {
@@ -445,7 +475,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     let title = label("Analyzer decisions");
     title.add_css_class("title-1");
     body.append(&title);
-    let explanation=label("Inspect the file and the action identified by analysis. Decisions are saved during preparation and as observations arrive; operations are not executed.");
+    let explanation=label("Inspect the file and the action identified by analysis. Upload, Download and Manual action summarize the decisions. Missing evidence is shown separately. Operations are not executed.");
     explanation.add_css_class("dim-label");
     body.append(&explanation);
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 12);

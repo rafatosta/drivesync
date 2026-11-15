@@ -38,6 +38,32 @@ fn record() -> RecordedAnalysis {
     }
 }
 #[test]
+fn operation_categories_respect_conflicts_evidence_and_obsolete_decisions() {
+    let mut r = record();
+    assert_eq!(operation_category(&r), "Download");
+    r.decisions[0].intent.direction = OperationDirection::Upload;
+    assert_eq!(operation_category(&r), "Upload");
+    r.decisions.push(AnalysisDecision {
+        intent: AnalysisIntent {
+            direction: OperationDirection::Download,
+            kind: OperationKind::Rename,
+        },
+        operation_id: OperationId(2),
+    });
+    assert_eq!(operation_category(&r), "Upload + Download");
+    r.disposition = AnalysisDisposition::PendingUserDecision;
+    assert_eq!(operation_category(&r), "Manual action");
+    r.disposition = AnalysisDisposition::PendingEvidence;
+    assert_eq!(operation_category(&r), "Upload + Download");
+    r.decisions.clear();
+    assert_eq!(operation_category(&r), "Awaiting evidence");
+    r.stale = true;
+    assert_eq!(operation_category(&r), "Awaiting analysis");
+    r.stale = false;
+    r.disposition = AnalysisDisposition::NoChanges;
+    assert_eq!(operation_category(&r), "No action needed");
+}
+#[test]
 fn file_actions_and_missing_evidence_are_presented_without_execution_claims() {
     let mut r = record();
     assert_eq!(actions(&r), "Download new file");
@@ -241,6 +267,24 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
         ..request
     }
 }
+fn categories(widget: &gtk::Widget) -> Vec<String> {
+    let mut result = Vec::new();
+    if widget.widget_name() == "analyzer-operation-category" {
+        result.push(
+            widget
+                .downcast_ref::<gtk::Label>()
+                .unwrap()
+                .text()
+                .to_string(),
+        );
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        result.extend(categories(&node));
+        child = node.next_sibling();
+    }
+    result
+}
 fn wait(view: &View) {
     let context = gtk::glib::MainContext::default();
     let end = Instant::now() + Duration::from_secs(10);
@@ -332,6 +376,10 @@ fn analyzer_page_shows_persisted_files_actions_and_account_isolation() {
         view.message.text()
     );
     assert!(view.range.text().contains("4 analyses"));
+    let displayed = categories(view.list.upcast_ref());
+    assert!(displayed.contains(&"Download".to_string()));
+    assert!(displayed.contains(&"Manual action".to_string()));
+    assert!(displayed.contains(&"Awaiting evidence".to_string()));
     let first_row = view.list.first_child().unwrap();
     assert!(first_row.width() <= root.width());
     let texts = analyzer::read(first.clone(), None, false)
@@ -354,6 +402,7 @@ fn analyzer_page_shows_persisted_files_actions_and_account_isolation() {
     view.outdated.set_active(true);
     wait(&view);
     assert_eq!(view.list.observe_children().n_items(), 5);
+    assert!(categories(view.list.upcast_ref()).contains(&"Awaiting analysis".to_string()));
     view.accounts.set_selected(1);
     wait(&view);
     assert_eq!(view.list.observe_children().n_items(), 0);
@@ -516,6 +565,10 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
         result
     }
     assert!(text(view.list.upcast_ref()).contains("New folder/Created after opening.txt"));
+    let rows = text(view.list.upcast_ref());
+    assert_eq!(categories(view.list.upcast_ref()), vec!["Upload", "Upload"]);
+    assert!(!rows.contains("Awaiting evidence"));
+    assert!(rows.contains("Needs evidence"));
     let owner = context
         .detectors
         .borrow()

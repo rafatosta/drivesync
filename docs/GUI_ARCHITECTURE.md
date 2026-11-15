@@ -156,10 +156,13 @@ F12 → Analyzer permite verificar o **arquivo e a ação necessária** registra
 pela preparação e pelo consumo contínuo. A página lê as avaliações persistentes do Inventory pelas APIs
 públicas, sem iniciar scan, análise, entrega de eventos ou operação física.
 
-Cada linha mostra nome/caminho local (ou nome/identidade remota), ação legível
-como upload, download, rename ou resolução de conflito, status da decisão e
-requisitos de evidência. Ausência de prova aparece como “Observe remote state”
-ou “Verify file contents”, sem inventar transferência ou estado sincronizado.
+Cada linha mostra nome/caminho local (ou nome/identidade remota) e a categoria
+`Upload`, `Download` ou `Manual action` (conflito), seguida da operação específica,
+status e requisitos. Decisões compatíveis em ambos os sentidos mostram
+`Upload + Download`. A categoria usa somente as decisões persistidas do Analyzer;
+requisitos de evidência não escondem uma direção já identificada. Sem direção,
+a tela mostra `Awaiting evidence`; sem mudanças, `No action needed`. Registros
+obsoletos mostram `Awaiting analysis`, sem apresentar uma direção antiga como atual.
 Decisões continuam pendentes, sem botões de execução ou resolução.
 
 A seleção de conta reutiliza as configurações concluídas e a identidade da sessão
@@ -198,5 +201,6 @@ capturas realçadas por `DRIVESYNC_UI_PREVIEW_DIR` foram inspecionadas em 960 e
 O teste gráfico do fluxo ao vivo também usa o hook real de restauração, sem chamar
 prepare/scan/analyze diretamente: cria arquivos depois da abertura e verifica sua
 aparição automática no Analyzer. A remoção da conta encerra o consumidor e captura.
-As regras atuais do Analyzer permanecem intactas; a política final de interpretação
-dos dados e a execução pelo Operator serão etapas posteriores.
+O Analyzer identifica a direção inicial de replicação e persiste intenções
+bloqueadas; a tela não deduz direção pela existência de um caminho. A execução
+pelo Operator e a obtenção de evidências de conteúdo ainda são etapas posteriores.
