@@ -195,7 +195,7 @@ impl World<'_> {
         }
         bytes.extend(n.as_bytes());
         self.items.iter().filter(|other|other.id!=item.id && (
-            other.local_presence!=PresenceState::AbsentConfirmed && local(other).is_some_and(|f|f.relative_path.as_bytes()==bytes)
+            other.local_presence==PresenceState::Present && local(other).is_some_and(|f|f.relative_path.as_bytes()==bytes)
             // Independent remote homonyms competing for the same local path are
             // a destination collision, never a proposed identity association.
             || other.local.is_none() && other.local_presence==PresenceState::Unknown && other.remote_presence==PresenceState::Present
@@ -574,6 +574,31 @@ pub(super) fn build(
                     .guard,
             );
             if let Some(n) = new_name.as_ref() {
+                let path = match (directory, n) {
+                    (DirectoryRef::LocalRoot, ItemName::Local(n)) => Some(n.as_bytes().to_vec()),
+                    (DirectoryRef::Local { relative_path, .. }, ItemName::Local(n)) => {
+                        let mut p = relative_path.as_bytes().to_vec();
+                        p.push(b'/');
+                        p.extend(n.as_bytes());
+                        Some(p)
+                    }
+                    _ => None,
+                };
+                if let Some(path) = path {
+                    for other in &items {
+                        if other.id != item.id
+                            && other.local_presence == PresenceState::Unknown
+                            && local(other).is_some_and(|f| f.relative_path.as_bytes() == path)
+                        {
+                            add_guard(&mut plan, other)?;
+                            push(&mut step.blocked_by, PlanBlock::Evidence);
+                            push(
+                                &mut assessment.requirements,
+                                AnalysisRequirement::ObserveLocal,
+                            );
+                        }
+                    }
+                }
                 for other in world.collisions(item, directory, n) {
                     add_guard(&mut plan, other)?;
                     push(&mut step.blocked_by, PlanBlock::Collision);

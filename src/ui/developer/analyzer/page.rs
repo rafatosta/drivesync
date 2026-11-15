@@ -131,7 +131,7 @@ fn manual_reason(reason: ManualReason) -> &'static str {
     match reason {
         ManualReason::ConcurrentChanges => "Changes on both sides",
         ManualReason::DeleteVsChange => "Deletion versus modification",
-        ManualReason::DestinationOccupied => "Destination occupied by an independent item",
+        ManualReason::DestinationOccupied => "Independent items require the same destination",
         ManualReason::AssociationRequired => "Explicit identity association required",
         ManualReason::MissingBaseline => "Confirmed baseline needed",
         ManualReason::DeletionAuthorization => "Trash authorization required",

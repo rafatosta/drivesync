@@ -1330,3 +1330,51 @@ async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements
         .contains(&PlanBlock::UserAuthorization));
     assert!(current(&inv, &child.id).baseline.is_none());
 }
+
+#[tokio::test]
+async fn unknown_old_destination_is_evidence_pending_not_a_proven_collision() {
+    let (tree, inv, item) = setup();
+    let mut missing = local_file("unobserved", b"file");
+    missing.data = None;
+    missing.event.current = None;
+    inv.record_local(RecordLocalObservation {
+        selector: ObservationTarget::Existing(item.id.clone()),
+        expected_revision: Some(item.revision),
+        observation: LocalObservation {
+            observed: missing,
+            presence: PresenceState::Unknown,
+            proof: ObservationProof {
+                source: ObservationSource::LocalEvent,
+                observed_at: m::Timestamp { unix_millis: 10 },
+                scan_or_generation: None,
+                complete_scope: false,
+            },
+        },
+    })
+    .unwrap();
+    let other = inv
+        .record_remote(remote_request(
+            remote_file(
+                "independent",
+                "independent",
+                m::MetadataValue::Known("file".into()),
+            ),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let record = analyzer(&tree, inv.clone())
+        .analyze(fresh_request(other))
+        .await
+        .unwrap()
+        .analysis;
+    assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+    let plan = record.plan.unwrap();
+    assert!(!plan.steps[0].blocked_by.contains(&PlanBlock::Collision));
+    assert!(plan.steps[0].blocked_by.contains(&PlanBlock::Evidence));
+    assert!(!plan
+        .manual
+        .iter()
+        .any(|m| m.reason == ManualReason::DestinationOccupied));
+}
