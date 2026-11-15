@@ -69,6 +69,7 @@ pub(crate) fn build(
             };
             match result {
                 Ok(result) => {
+                    crate::application::detectors::schedule_refresh(&context);
                     crate::ui::components::connection::install_action(&context, &nav, &toasts);
                     crate::application::navigation::show_accounts(
                         &context,

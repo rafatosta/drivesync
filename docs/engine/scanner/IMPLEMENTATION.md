@@ -107,10 +107,9 @@ ScannerError, sem recriar banco nem declarar ausência.
   diagnóstico global.
 - **SC-05 / identidade persistente para renomeações: BLOCKED.** O coletor ainda
   fornece local_id=None. Scanner não deduz identidade estável por nome ou inode.
-- A inicialização automática do aplicativo, a coordenação completa do Orquestrador
-  e o Analisador continuam uma integração posterior. O consumidor atual do
-  Developer é diagnóstico terminal e confirma filas: ele não pode substituir o
-  consumidor futuro nem ser retomado como se fizesse reconciliação.
+- A abertura do aplicativo agora integra Detector pausado, Inventory e Scanner.
+  O consumidor terminal diagnóstico foi removido. A ingestão/Analyzer continuam
+  pendentes; mesmo após scan completo, eventos não são consumidos ou confirmados.
 - Inventory deve ser entregue ao Scanner já aberto e utilizável. Scanner não
   altera a política de provisionamento/recuperação do banco nem o inicializa.
 - Não foram usados contas reais, transferência, GUI ou benchmark de 80 mil itens.
@@ -154,3 +153,36 @@ raízes/links, cobertura, paginação, revisão antes da coleta, cancelamento, a
 de stubs e dependências novas. Não foram identificados resíduos que justificassem
 um commit artificial de limpeza. A implementação está em commits locais da
 branch feat/scanner, sem publicação remota.
+
+## Abertura e Developer integrados — 15/11/2026
+
+A restauração do aplicativo e a conclusão de configuração iniciam sessões reais
+por conta sem precisar abrir o Developer Console, inclusive com janela oculta.
+A aplicação serializa descoberta/substituição de sessões, invalida resultados
+de escopo antigo e cancela preparação antes de desconectar/parar. Abertura da
+página usa o mesmo estado; só Scan again solicita nova varredura.
+
+O Orchestrator inicia ambas as fontes em Paused, aguarda captura local pronta,
+abre Inventory e aguarda Scanner. Snapshot de preparação distingue Starting,
+Scanning, ReadyForAnalyzer, Partial, Failed, Cancelled e Stopped. O Analyzer ainda
+não está conectado, portanto nenhuma conclusão de scan confirma eventos da fila.
+
+A página Scanner mostra conta, raiz, estado, pré-requisito de análise, contagens,
+horários, pasta corrente e até 100 problemas do relatório atual. Durante scan, os
+contadores vêm do snapshot; os detalhes ficam disponíveis ao terminar. O relatório
+é da execução atual da aplicação, não histórico SQLite de ScanIssue.
+
+A inicialização explícita do inventário aceita agora arquivos locais existentes
+sem os modificar. Banco incompatível/corrompido continua preservado, sem migração
+ou reconstrução automática. As lacunas SC-05 e SC-20 permanecem separadas.
+
+A repetição após falha na captura local também para/reinicia a fonte antes de
+varrer novamente; o Detector não era reiniciado ao receber start enquanto estava
+Degraded com a fonte local Failed. O teste de recuperação com raiz
+temporariamente movida cobre esse caso, sem apagar fila ou inventário.
+
+Validação da integração: sete testes públicos do Orchestrator e os 17 de
+Inventory passaram no SDK, além de Clippy do workspace com warnings negados.
+O teste gráfico de abertura/Scanner e o de Detector passaram separadamente
+em Mutter/Wayland e perfis XDG isolados. Capturas completa/parcial e estreita
+foram inspecionadas visualmente. Não foram usados dados ou contas pessoais.

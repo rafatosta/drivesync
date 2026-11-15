@@ -44,7 +44,6 @@ type ObservationCallback = Arc<dyn Fn(Option<&File>, DetectorOrigin) + Send + Sy
 /// Retains private directory descriptors for the lifetime of SQLite's file names.
 pub(crate) struct Store {
     connection: Mutex<Connection>,
-    pub(crate) created: bool,
     _directory: FsFile,
     sync: String,
     account: String,
@@ -276,7 +275,6 @@ impl Store {
         drop(file);
         let store = Self {
             connection: Mutex::new(connection),
-            created,
             _directory: directory,
             sync: scope.sync.to_owned(),
             account: scope.account.to_owned(),

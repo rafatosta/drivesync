@@ -126,3 +126,16 @@ A coordenação pode oferecer status conceitual `Idle / Starting / Observing / R
 A solicitação posterior do usuário autoriza uma composição pública mínima: `Orchestrator::new(Engine, LocalDetectorCreateRequest)` instancia o detector local em Stopped. `start/stop/status` controlam essa instância e `connector()` expõe o conector existente à futura interface externa. A UI atual e a API Engine permanecem sem alterações.
 
 A abertura do conector continua em Engine::open. Start/stop bloqueiam e devem rodar fora da thread de UI; status não faz I/O. Os eventos vão ao sink configurado, sem fila própria ou processamento pelo Orchestrator. Cadastro/ownership de sincronizações, detector remoto e os fluxos completos acima permanecem futuros. Contratos compilados: [INTERFACES](INTERFACES.md#etapa-mínima-compilada--inicialização-local-e-conector).
+
+## Estado compilado atual — abertura do aplicativo
+
+A restauração das contas configuradas inicia a composição real de Detector,
+Inventory e Scanner pelo Orchestrator. Detector.start usa entrega Paused antes
+da varredura; captura e polling continuam, sem consumidor terminal. O Scanner
+alimenta o inventário e a preparação termina em ReadyForAnalyzer ou Partial.
+Partial não libera análise. Como Analyzer/ingestão ainda não estão implementados,
+ReadyForAnalyzer também conserva os eventos na fila sem confirmação.
+
+A página Scanner do Developer Console acompanha os mesmos objetos da aplicação;
+abrir/fechar a página não recria a varredura. O consumidor diagnóstico anterior
+foi removido. Ver a seção compilada de INTERFACES.md para a API efetiva.

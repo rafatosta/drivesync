@@ -373,9 +373,6 @@ impl Detector {
             .as_ref()
             .map(|remote| remote.diagnostics())
     }
-    pub(crate) fn queue_is_new(&self) -> bool {
-        self.store.created
-    }
 }
 impl Drop for Detector {
     fn drop(&mut self) {

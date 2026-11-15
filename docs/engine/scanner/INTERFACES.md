@@ -236,7 +236,7 @@ Quando uma leitura falha, distinguir:
 
 **Lacuna atual de integração:** a API documentada do Inventário possui `record_local`, `ObservationProof` e `PresenceState`, mas ainda **não define método/campo específico para persistir `ScanIssue` por item nem um marcador de geração/escopo da varredura**. A implementação precisa acordar essa representação no contrato do Inventário antes de afirmar que o Analisador consegue recuperar todos os diagnósticos após reinício. Não armazenar as questões apenas em memória e declarar recuperação durável.
 
-O Detector Local mantém sua fila própria e não escreve no Inventário através do Scanner. O Orquestrador inicia/aguarda o Scanner e, após conclusão, volta a consumir os eventos persistidos pelos Detectores. Não cabe ao Scanner ordenar ou reconciliar essas ocorrências.
+O Detector Local mantém sua fila própria e não escreve no Inventário através do Scanner. O Orquestrador inicia/aguarda o Scanner; uma conclusão completa satisfaz o pré-requisito local para análise. Enquanto Analyzer/ingestão não estiverem conectados, a entrega continua pausada e nenhum evento é confirmado. Não cabe ao Scanner ordenar ou reconciliar essas ocorrências.
 
 ## 9. Concorrência e segurança
 
@@ -252,8 +252,8 @@ O Detector Local mantém sua fila própria e não escreve no Inventário atravé
 ## Decisões compiladas
 
 O relatório expõe ready_for_analysis(), verdadeiro somente em Completed, conforme
-a decisão do usuário. Partial mantém análise/consumo suspensos. A coordenação
-real e o Analisador ainda não foram conectados; não retomar o consumidor diagnóstico.
+a decisão do usuário. Partial mantém análise/consumo suspensos. A coordenação inicial está conectada à abertura, mas o Analisador ainda não. O
+consumidor diagnóstico foi removido; não confirmar eventos como substituto de análise.
 
 Cada observação aceita deixa o item PendingReconciliation. Os contadores de
 items_recorded contam record_local aceito; falha na marca posterior torna o

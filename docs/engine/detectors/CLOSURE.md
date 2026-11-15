@@ -36,7 +36,7 @@ Não há compatibilidade ou migração de bancos antigos. A criação instala o 
 
 A suíte independente do Orquestrador usa portas de origem falsas e SQLite real para verificar início de ambas, falha parcial, pausa, lotes mistos, ack idempotente, release, reentrega, concorrência, aviso pós-commit, consulta de status durante início lento e contagem de bootstrap. O teste consumidor externo usa captura nativa real, conta sintética que exige reautorização, reobservação local e um processo filho encerrado abruptamente.
 
-O Developer usa `Orchestrator::observe_detector` apenas como adaptador/consumidor terminal diagnóstico; não é a validação do Orquestrador de sincronização completo. O play/pause controla a entrega de ambas as origens da conta selecionada. A fila pública não confirma sozinha.
+A aplicação usa `Orchestrator::new` e `prepare` para iniciar captura pausada antes do Scanner. O consumidor terminal diagnóstico e seu play/pause foram removidos. Até conectar Analyzer/ingestão, a fila não é consumida ou confirmada. O Developer acompanha os mesmos snapshots da aplicação.
 
 Não foram repetidas mutações no Drive real nesta etapa. Autenticação real, portal/pacote instalado, permissões e expiração reais do Google permanecem validações de integração/ambiente. Backup/restauração via Configuration é uma dependência futura já registrada no contrato de Storage, não uma implementação simulada desta etapa. Permanecem os limites documentados de capacidade, tamanho de payload e árvore/paginação; falhas são explícitas, sem limpeza ou reconstrução silenciosa.
 

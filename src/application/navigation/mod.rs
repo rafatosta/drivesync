@@ -206,4 +206,5 @@ pub(crate) fn show_dashboard(
         window.set_title(Some("DriveSync"));
     }
     nav.replace(&[crate::ui::dashboard::build(context, nav)]);
+    super::detectors::schedule_refresh(context);
 }

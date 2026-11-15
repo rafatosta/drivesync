@@ -17,6 +17,9 @@ use std::{
 #[derive(Clone, Default)]
 pub(crate) struct Context {
     pub engine: Rc<RefCell<Option<Engine>>>,
+    pub shutting_down: Rc<Cell<bool>>,
+    pub preparation_refreshing: Rc<Cell<bool>>,
+    pub preparation_errors: Rc<RefCell<std::collections::HashMap<String, String>>>,
     pub detector_generation: Rc<Cell<u64>>,
     pub detectors: Rc<RefCell<std::collections::HashMap<String, detectors::Session>>>,
     pub navigation_generation: Rc<Cell<u64>>,

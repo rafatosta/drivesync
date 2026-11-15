@@ -1,53 +1,42 @@
-//! Minimal connection and unified Detector composition for developer diagnostics.
-//! No Inventory, Scanner, Analyzer or synchronization executor is created.
-mod delivery;
+//! Coordinates paused detection and local Scanner preparation, without consuming events.
 mod diagnostics;
+mod startup;
 use crate::{detectors::*, Engine};
-use delivery::DiagnosticDelivery;
 pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
+pub use startup::*;
 use std::sync::Arc;
 
-/// Owns both producers through Detector and an explicit diagnostic terminal consumer.
-/// Construction leaves capture stopped; dropping stops capture and preserves the queue.
+/// Owns capture and the preparation barrier. No Analyzer or diagnostic consumer is attached.
 pub struct Orchestrator {
     connector: Engine,
     detector: Arc<Detector>,
-    delivery_worker: DiagnosticDelivery,
-    initial_delivery: DeliveryState,
+    preparation: startup::Preparation,
 }
 impl Orchestrator {
-    /// Opens the queue without starting capture. Reopens preserve stored delivery policy.
-    /// Performs blocking filesystem work and belongs off the UI thread.
-    pub fn observe_detector(
-        request: DetectorCreateRequest,
-        delivery: DeliveryState,
-    ) -> DetectorResult<Self> {
-        let connector = request.connector.clone();
-        let detector = Arc::new(Detector::new(request)?.detector);
-        let initial_delivery = if detector.queue_is_new() {
-            delivery
-        } else {
-            detector.status(DetectorStatusRequest {})?.status.delivery
-        };
-        let delivery_worker = DiagnosticDelivery::new(detector.clone())?;
-        Ok(Self {
-            connector,
-            detector,
-            delivery_worker,
-            initial_delivery,
-        })
-    }
     /// Borrows the single public detection facade without exposing its children.
     pub fn detector(&self) -> &Detector {
         &self.detector
     }
-    pub fn start_detector(&self, mode: DetectorStartMode) -> DetectorResult<DetectorStartResult> {
-        self.detector.start(DetectorStartRequest {
-            mode,
-            delivery: self.initial_delivery,
-        })
-    }
+    /// Stops capture and invalidates in-flight setup. The owning task must be cancelled first.
     pub fn stop_detector(&self, mode: DetectorStopMode) -> DetectorResult<DetectorStopResult> {
+        self.preparation
+            .epoch
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.preparation
+            .snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .state = PreparationState::Stopped;
+        let _control = self
+            .preparation
+            .control
+            .lock()
+            .map_err(|_| DetectorFailure {
+                kind: DetectorError::Internal,
+                retryable: false,
+                source: None,
+                queue: None,
+            })?;
         self.detector.stop(DetectorStopRequest { mode })
     }
     pub fn detector_status(&self) -> DetectorResult<DetectorStatus> {
@@ -58,11 +47,11 @@ impl Orchestrator {
     /// Returns the cached local source snapshot, not overall synchronization readiness.
     pub fn local_status(&self) -> LocalDetectorResult<LocalStatusResult> {
         self.detector_status()
-            .map_err(delivery::local_error)?
+            .map_err(diagnostics::local_error)?
             .local
             .local
             .ok_or_else(|| {
-                delivery::local_error(DetectorFailure {
+                diagnostics::local_error(DetectorFailure {
                     kind: DetectorError::Internal,
                     retryable: false,
                     source: None,
@@ -72,20 +61,6 @@ impl Orchestrator {
     }
     pub fn remote_diagnostics(&self) -> Option<RemoteDiagnostics> {
         self.detector.remote_diagnostics()
-    }
-    /// Pauses only consumption for the account; both sources keep capturing durably.
-    pub fn pause_delivery(&self) -> QueueResult<()> {
-        self.detector
-            .pause(DetectorPauseRequest {})
-            .map(|_| ())
-            .map_err(delivery::queue_error)
-    }
-    pub fn resume_delivery(&self) -> QueueResult<()> {
-        self.detector
-            .resume(DetectorResumeRequest {})
-            .map_err(delivery::queue_error)?;
-        self.delivery_worker.wake();
-        Ok(())
     }
     /// Reads cached per-source counters and the bounded tail without I/O.
     pub fn diagnostics(&self) -> DetectorDiagnostics {

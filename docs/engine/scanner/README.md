@@ -57,7 +57,7 @@ O Scanner não executa reparo de arquivo, download, upload, renomeação ou excl
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** Scanner Rust implementado em `engine/src/scanner/`, com `new`, `scan` e `status`. O usuário confirmou que varredura parcial mantém o Analisador suspenso. Fluxo, decisões técnicas, testes e lacunas estão em [IMPLEMENTATION.md](IMPLEMENTATION.md). Não há ainda inicialização automática do aplicativo nem persistência de todo ScanIssue.
+**Estado:** Scanner Rust implementado em `engine/src/scanner/`, com `new`, `scan` e `status`. O usuário confirmou que varredura parcial mantém o Analisador suspenso. Fluxo, decisões técnicas, testes e lacunas estão em [IMPLEMENTATION.md](IMPLEMENTATION.md). A abertura do aplicativo já integra a varredura com os detectores pausados e a página Scanner mostra os mesmos resultados. Persistência de todo ScanIssue e o Analisador ainda não estão conectados.
 
 ## Independência da recuperação de banco
 
