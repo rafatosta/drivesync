@@ -68,9 +68,9 @@ animações apenas no processo de teste para registrar o estado final. Ver
 
 A aplicação inicia as sessões das contas configuradas durante a restauração,
 independentemente de abrir o console. Local e Remote capturam em fila persistente
-compartilhada com entrega suspensa. O Orchestrator aguarda a captura local e
+compartilhada com entrega suspensa durante a preparação. O Orchestrator aguarda a captura local e
 executa o Scanner no inventário. A página Detector apenas acompanha essas mesmas
-sessões por conta, sem consumir ou confirmar ocorrências.
+sessões por conta; o consumo e a confirmação pertencem ao Orchestrator.
 
 Recarregar relê contas/pastas e reutiliza sessões existentes; mudança de escopo
 ou desconexão cancela a preparação e para as fontes antigas. Falha de leitura
@@ -79,9 +79,10 @@ preserva dados. O encerramento libera tarefas/recursos fora da thread GTK.
 Eventos são observações brutas, sem inferir CREATE/MODIFY/RENAME. Indicadores e
 últimos 100 eventos por origem vêm da engine. Snapshot visual não agenda polling
 remoto nem faz SQL. O botão pause/play do consumidor diagnóstico foi removido.
-A entrega permanece Paused mesmo após scan completo; fila e observação continuam
-ativas. O Analyzer produz decisões após o scan, sem consumir eventos nem executar
-operações.
+Após scan completo e análise inicial, o Orchestrator libera a entrega e consome
+continuamente Local/Remote: registra observações no Inventory, entrega snapshots
+ao Analyzer e confirma os eventos somente depois da persistência. Não executa
+operações físicas. Scan Partial/falha conserva entrega pausada e eventos pendentes.
 
 ### Acesso nativo às pastas no desenvolvimento Flatpak
 
@@ -129,11 +130,13 @@ comparação byte a byte antes/depois.
 F12 → Scanner acompanha a preparação iniciada na abertura, por conta. Mostra
 estado, raiz, arquivos/pastas observados, observações aceitas no inventário,
 problemas, horários e diretório corrente. Não inventa percentual/ETA. Scan again
-repete a preparação da conta selecionada, mantendo captura e fila pausadas.
+repete a preparação da conta selecionada, pausando entrega até concluir e
+retomando o consumidor depois.
 
 Partial mantém análise suspensa e expõe os problemas. Após scan completo, a
 preparação registra as decisões do Analyzer; a página acompanha a fase real
-Analyzing e mantém a entrega de eventos suspensa. Até 100 problemas do último
+Analyzing e ProcessingEvents, seguidas pelo consumo contínuo. Entrega pausada
+permanece restrita à preparação incompleta/falha/parada. Até 100 problemas do último
 relatório desta execução são mostrados; não é histórico durável de ScanIssue.
 
 A atualização a cada 250 ms lê somente snapshots de memória. Trocar conta muda
@@ -150,7 +153,7 @@ O teste de Detector também foi reexecutado sem o antigo consumidor diagnóstico
 ## Developer / Analyzer
 
 F12 → Analyzer permite verificar o **arquivo e a ação necessária** registrados
-pela preparação. A página lê as avaliações persistentes do Inventory pelas APIs
+pela preparação e pelo consumo contínuo. A página lê as avaliações persistentes do Inventory pelas APIs
 públicas, sem iniciar scan, análise, entrega de eventos ou operação física.
 
 Cada linha mostra nome/caminho local (ou nome/identidade remota), ação legível
@@ -160,7 +163,10 @@ ou “Verify file contents”, sem inventar transferência ou estado sincronizad
 Decisões continuam pendentes, sem botões de execução ou resolução.
 
 A seleção de conta reutiliza as configurações concluídas e a identidade da sessão
-já preparada; não inventa SyncId. Refresh relê contas e registros. A listagem é
+já preparada; não inventa SyncId. Refresh relê contas e registros. Enquanto visível na primeira página de análises
+atuais, a tela acompanha eventos processados/estado do Orchestrator e relê os
+registros automaticamente, com I/O somente no worker. Histórico/paginação não são
+interrompidos por esse refresh automático. Falha/Partial do fluxo aparece na página. A listagem é
 paginada pelo cursor do Inventory e mostra apenas análises atuais por padrão.
 “Include outdated analyses” permite inspecionar o histórico, explicitamente marcado
 como obsoleto. Os nomes exibidos vêm do item atual e podem diferir do nome histórico.
@@ -187,3 +193,10 @@ O teste gráfico ignorado por padrão foi executado explicitamente e passou em
 Wayland/Mutter headless com perfis XDG sintéticos e renderer Cairo no SDK. As
 capturas realçadas por `DRIVESYNC_UI_PREVIEW_DIR` foram inspecionadas em 960 e
 430 pixels. Não houve teste com contas reais nem atualização do Flatpak instalado.
+
+
+O teste gráfico do fluxo ao vivo também usa o hook real de restauração, sem chamar
+prepare/scan/analyze diretamente: cria arquivos depois da abertura e verifica sua
+aparição automática no Analyzer. A remoção da conta encerra o consumidor e captura.
+As regras atuais do Analyzer permanecem intactas; a política final de interpretação
+dos dados e a execução pelo Operator serão etapas posteriores.

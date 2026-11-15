@@ -146,8 +146,41 @@ struct View {
     generation: Cell<u64>,
     loading_accounts: Cell<bool>,
     read_gate: std::sync::Arc<std::sync::Mutex<()>>,
+    last_flow: Cell<Option<(u64, drivesync_engine::orchestrator::PreparationState)>>,
 }
 impl View {
+    fn flow_version(&self) -> Option<(u64, drivesync_engine::orchestrator::PreparationState)> {
+        let id = self
+            .state
+            .borrow()
+            .scopes
+            .get(self.accounts.selected() as usize)?
+            .account_id
+            .clone();
+        let sessions = self.context.detectors.borrow();
+        let snapshot = sessions.get(&id)?.orchestrator.preparation_status();
+        Some((snapshot.events_processed, snapshot.state))
+    }
+    fn flow_problem(&self) -> Option<String> {
+        let id = self
+            .state
+            .borrow()
+            .scopes
+            .get(self.accounts.selected() as usize)?
+            .account_id
+            .clone();
+        let sessions = self.context.detectors.borrow();
+        let snapshot = sessions.get(&id)?.orchestrator.preparation_status();
+        if let Some(error) = snapshot.error {
+            return Some(format!("Observation processing stopped: {error}. Open Scanner for details and retry preparation."));
+        }
+        if snapshot.state == drivesync_engine::orchestrator::PreparationState::Partial {
+            return Some(
+                "Analysis is waiting for a complete scan. Open Scanner for details.".into(),
+            );
+        }
+        None
+    }
     fn controls(&self) {
         let state = self.state.borrow();
         let busy = state.loading || self.loading_accounts.get();
@@ -244,7 +277,10 @@ impl View {
             self.list.append(&body);
         }
         self.state.borrow_mut().next = page.next_cursor;
-        self.message.set_label(if count==0{"No analyses to show. Preparation records decisions after a complete scan; refresh when it finishes."}else{"File names reflect the current inventory. Actions below are decisions, not executed operations."});
+        self.message.set_label(if count==0{"No analyses to show yet. Decisions appear after preparation and as new observations are processed."}else{"File names reflect the current inventory. Actions below are decisions, not executed operations."});
+        if let Some(problem) = self.flow_problem() {
+            self.message.set_label(&problem);
+        }
         self.range.set_label(&format!(
             "Page {} · {} analyses",
             self.state.borrow().history.len() + 1,
@@ -289,6 +325,7 @@ impl View {
         let after = self.state.borrow().after.clone();
         let include_outdated = self.outdated.is_active();
         let weak = Rc::downgrade(self);
+        let flow_version = self.flow_version();
         let read_gate = self.read_gate.clone();
         gtk::glib::spawn_future_local(async move {
             let result = gtk::gio::spawn_blocking(move || {
@@ -306,7 +343,10 @@ impl View {
             };
             view.state.borrow_mut().loading = false;
             match result {
-                Ok(Ok(page)) => view.render(page),
+                Ok(Ok(page)) => {
+                    view.render(page);
+                    view.last_flow.set(flow_version);
+                }
                 Ok(Err(error)) => view.message.set_label(match error.kind {
                     InventoryError::NotFound => {
                         "Inventory is not available yet. Refresh after preparation completes."
@@ -405,7 +445,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     let title = label("Analyzer decisions");
     title.add_css_class("title-1");
     body.append(&title);
-    let explanation=label("Inspect the file and the action identified by analysis. Decisions are saved during preparation; operations are not executed.");
+    let explanation=label("Inspect the file and the action identified by analysis. Decisions are saved during preparation and as observations arrive; operations are not executed.");
     explanation.add_css_class("dim-label");
     body.append(&explanation);
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -492,6 +532,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
         generation: Cell::new(0),
         loading_accounts: Cell::new(false),
         read_gate: std::sync::Arc::new(std::sync::Mutex::new(())),
+        last_flow: Cell::new(None),
     });
     accounts.connect_selected_notify({
         let weak = Rc::downgrade(&view);
@@ -547,6 +588,29 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
                 }
             }
         }
+    });
+    let weak = Rc::downgrade(&view);
+    gtk::glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+        let Some(view) = weak.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        let Some(root) = view.root.upgrade() else {
+            return gtk::glib::ControlFlow::Break;
+        };
+        let first_page = view.state.borrow().after.is_none();
+        if root.is_mapped()
+            && first_page
+            && !view.outdated.is_active()
+            && !view.loading_accounts.get()
+            && !view.state.borrow().loading
+        {
+            if let Some(version) = view.flow_version() {
+                if view.last_flow.get() != Some(version) {
+                    view.load();
+                }
+            }
+        }
+        gtk::glib::ControlFlow::Continue
     });
     view.controls();
     (root, view)

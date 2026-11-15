@@ -191,16 +191,13 @@ fn live_account_selection_and_detector_layout() {
     let personal = texts(page.upcast_ref());
     assert!(personal.contains("Monitoring"));
     assert!(personal.contains("personal-only.txt"));
-    assert!(
-        find(page.upcast_ref(), "detector-pending")
-            .unwrap()
-            .downcast::<gtk::Label>()
-            .unwrap()
-            .text()
-            .parse::<u64>()
-            .unwrap()
-            > 0
-    );
+    let pending = find(page.upcast_ref(), "detector-pending")
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap()
+        .text()
+        .parse::<u64>()
+        .unwrap();
     assert!(personal.contains("OBSERVED"));
     assert!(!personal.contains("RENAME"));
     assert!(personal.contains("renamed.txt"));
@@ -214,6 +211,8 @@ fn live_account_selection_and_detector_layout() {
         .unwrap()
         .orchestrator
         .clone();
+    assert_eq!(Some(pending), session.diagnostics().pending_events);
+    assert!(session.preparation_status().events_processed > 0);
     let before_save = session.diagnostics().events_detected;
     std::fs::write(
         base.join("personal@example.invalid/ordinary-source"),

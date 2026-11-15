@@ -32,4 +32,5 @@ pura de cada algoritmo é complementar. Executar Rust exclusivamente no Flatpak
 definido pelo projeto e registrar comandos/resultados reais.
 
 **Estado:** análise/persistência implementadas e chamadas pelo Orchestrator após
-Scanner completo. Execução e resolução permanecem pendentes.
+Scanner completo e durante o consumo contínuo de observações. Execução e
+resolução permanecem pendentes.

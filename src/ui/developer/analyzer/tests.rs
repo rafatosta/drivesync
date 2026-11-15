@@ -407,3 +407,137 @@ fn decision_reads_use_bounded_filter_bound_pages() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated GTK display and XDG profile"]
+fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manual_refresh() {
+    use std::os::unix::fs::PermissionsExt;
+    let profile = std::env::var("XDG_DATA_HOME").expect("isolated profile");
+    assert!(profile.starts_with("/tmp/drivesync-ui-test-"));
+    adw::init().unwrap();
+    gtk::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
+    let base = PathBuf::from(profile).join("live-startup");
+    std::fs::create_dir_all(base.join("accounts")).unwrap();
+    std::fs::set_permissions(
+        base.join("accounts"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let id = "live@example.invalid";
+    let accounts = base.join("accounts/accounts.json");
+    std::fs::write(&accounts,serde_json::to_vec(&serde_json::json!({"version":1,"application":"org.example.LiveAnalyzerUI","intent":null,"records":{(id):{"account":{"id":id,"provider":"google","provider_user_id":id,"email":id,"display_name":"Personal","state":"ReauthorizationRequired","created_at":{"unix_millis":0},"updated_at":{"unix_millis":0}},"key":format!("google:{id}:synthetic")}}})).unwrap()).unwrap();
+    std::fs::set_permissions(&accounts, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let root = base.join("drive");
+    std::fs::create_dir(&root).unwrap();
+    let configuration = crate::services::configuration::Configuration {
+        account_id: AccountId(id.into()),
+        local_uri: gtk::gio::File::for_path(&root).uri().into(),
+        remote_id: "root".into(),
+        remote_path: "My Drive".into(),
+    };
+    gtk::glib::MainContext::default().block_on(crate::services::configuration::seed_for_test(
+        &configuration,
+    ));
+    let context = Context::default();
+    let app = adw::Application::builder()
+        .application_id("org.example.LiveAnalyzerUI")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gtk::gio::Cancellable>).unwrap();
+    let navigation = adw::NavigationView::new();
+    let toasts = adw::ToastOverlay::new();
+    toasts.set_child(Some(&navigation));
+    let window = adw::ApplicationWindow::builder()
+        .application(&app)
+        .default_width(960)
+        .default_height(860)
+        .content(&toasts)
+        .build();
+    // Same restoration hook as the real application; no manual prepare/scan/analyze call.
+    navigation.add(&crate::ui::dashboard::restoration::build(
+        drivesync_engine::EngineConfig {
+            data_directory: base.join("accounts"),
+            application_id: "org.example.LiveAnalyzerUI".into(),
+            google_oauth_file: None,
+        },
+        &context,
+        &navigation,
+        &toasts,
+    ));
+    window.present();
+    fn until(test: impl Fn() -> bool) {
+        let main = gtk::glib::MainContext::default();
+        let end = Instant::now() + Duration::from_secs(20);
+        while !test() {
+            assert!(Instant::now() < end, "live startup timed out");
+            while main.pending() {
+                main.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    until(|| {
+        context.detectors.borrow().get(id).is_some_and(|session| {
+            session
+                .orchestrator
+                .detector_status()
+                .is_ok_and(|s| s.delivery == drivesync_engine::detectors::DeliveryState::Enabled)
+        })
+    });
+    let (page, view) = create(&context);
+    let retained = view.clone();
+    page.connect_map(move |_| retained.reload());
+    window.set_content(Some(&page));
+    until(|| {
+        !view.loading_accounts.get()
+            && !view.state.borrow().loading
+            && view.accounts.model().is_some()
+    });
+    std::fs::create_dir(root.join("New folder")).unwrap();
+    std::fs::write(
+        root.join("New folder/Created after opening.txt"),
+        b"local user content",
+    )
+    .unwrap();
+    until(|| view.list.observe_children().n_items() == 2 && !view.state.borrow().loading);
+    fn text(widget: &gtk::Widget) -> String {
+        let mut result = widget
+            .downcast_ref::<gtk::Label>()
+            .map(|l| l.text().to_string())
+            .unwrap_or_default();
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            result.push_str(&text(&node));
+            child = node.next_sibling();
+        }
+        result
+    }
+    assert!(text(view.list.upcast_ref()).contains("New folder/Created after opening.txt"));
+    let owner = context
+        .detectors
+        .borrow()
+        .get(id)
+        .unwrap()
+        .orchestrator
+        .clone();
+    assert!(owner.preparation_status().events_processed > 0);
+    assert!(owner.diagnostics().confirmed_events.unwrap() > 0);
+    assert_eq!(
+        std::fs::read(root.join("New folder/Created after opening.txt")).unwrap(),
+        b"local user content"
+    );
+    wait(&view);
+    capture(&window, "analyzer-live-startup");
+    gtk::glib::MainContext::default().block_on(crate::application::detectors::remove(
+        &context,
+        &AccountId(id.into()),
+    ));
+    assert_eq!(
+        owner.preparation_status().state,
+        drivesync_engine::orchestrator::PreparationState::Stopped
+    );
+    window.close();
+}
