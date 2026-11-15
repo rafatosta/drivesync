@@ -79,8 +79,9 @@ preserva dados. O encerramento libera tarefas/recursos fora da thread GTK.
 Eventos são observações brutas, sem inferir CREATE/MODIFY/RENAME. Indicadores e
 últimos 100 eventos por origem vêm da engine. Snapshot visual não agenda polling
 remoto nem faz SQL. O botão pause/play do consumidor diagnóstico foi removido.
-Até conectar Analyzer/ingestão, a entrega permanece Paused mesmo após scan
-completo; fila e observação continuam ativas.
+A entrega permanece Paused mesmo após scan completo; fila e observação continuam
+ativas. O Analyzer produz decisões após o scan, sem consumir eventos nem executar
+operações.
 
 ### Acesso nativo às pastas no desenvolvimento Flatpak
 
@@ -130,9 +131,9 @@ estado, raiz, arquivos/pastas observados, observações aceitas no inventário,
 problemas, horários e diretório corrente. Não inventa percentual/ETA. Scan again
 repete a preparação da conta selecionada, mantendo captura e fila pausadas.
 
-Partial mantém análise suspensa e expõe os problemas. Scan complete significa
-apenas inventário local apto à próxima etapa: a página explica que Analyzer ainda
-não está conectado e que a entrega continua suspensa. Até 100 problemas do último
+Partial mantém análise suspensa e expõe os problemas. Após scan completo, a
+preparação registra as decisões do Analyzer; a página acompanha a fase real
+Analyzing e mantém a entrega de eventos suspensa. Até 100 problemas do último
 relatório desta execução são mostrados; não é histórico durável de ScanIssue.
 
 A atualização a cada 250 ms lê somente snapshots de memória. Trocar conta muda
@@ -144,3 +145,45 @@ Teste gráfico em perfil XDG e Wayland isolados cobre abertura real antes de
 existir Developer Console, duas contas, parcial/completo, reuso sem rescan,
 contagens, problemas, captura com entrega suspensa, rescan, 440 pixels e remoção.
 O teste de Detector também foi reexecutado sem o antigo consumidor diagnóstico.
+
+
+## Developer / Analyzer
+
+F12 → Analyzer permite verificar o **arquivo e a ação necessária** registrados
+pela preparação. A página lê as avaliações persistentes do Inventory pelas APIs
+públicas, sem iniciar scan, análise, entrega de eventos ou operação física.
+
+Cada linha mostra nome/caminho local (ou nome/identidade remota), ação legível
+como upload, download, rename ou resolução de conflito, status da decisão e
+requisitos de evidência. Ausência de prova aparece como “Observe remote state”
+ou “Verify file contents”, sem inventar transferência ou estado sincronizado.
+Decisões continuam pendentes, sem botões de execução ou resolução.
+
+A seleção de conta reutiliza as configurações concluídas e a identidade da sessão
+já preparada; não inventa SyncId. Refresh relê contas e registros. A listagem é
+paginada pelo cursor do Inventory e mostra apenas análises atuais por padrão.
+“Include outdated analyses” permite inspecionar o histórico, explicitamente marcado
+como obsoleto. Os nomes exibidos vêm do item atual e podem diferir do nome histórico.
+
+Todas as leituras SQLite ocorrem em worker; a abertura força `create_if_missing=false`.
+Uma geração de requisição impede respostas antigas após troca de conta/filtro e
+um gate serializa as leituras da página para evitar concorrência na abertura do
+mesmo Inventory. Conta vazia/indisponível limpa os registros da seleção anterior.
+Nomes são texto literal, com escapes para bytes Unix não UTF-8, e quebram linhas
+em janelas estreitas. Não se usa SQL ou Storage interno na aplicação.
+
+O teste gráfico usa contas e SQLite sintéticos em perfil XDG/Wayland isolado;
+valida largura normal/430 pixels, caracteres especiais, histórico e troca de
+conta. Testes sem display cobrem tradução de ações, ausência de criação de banco
+e paginação vinculada a filtros. Nenhuma validação usa conta Google real.
+
+Validação da página Analyzer: SDK `org.gnome.Sdk//50` com a extensão rust-stable
+do manifesto, `cargo fmt --all --check`, `cargo clippy --offline --workspace
+--all-targets -- -D warnings`, `cargo build --offline --bin drivesync`, `cargo test
+--offline --workspace`, `cargo doc --offline --workspace --no-deps
+--document-private-items` e `cargo test --offline --workspace --doc` passaram.
+Foram 787 testes aprovados, 11 ignorados por padrão e 9 doctests aprovados.
+O teste gráfico ignorado por padrão foi executado explicitamente e passou em
+Wayland/Mutter headless com perfis XDG sintéticos e renderer Cairo no SDK. As
+capturas realçadas por `DRIVESYNC_UI_PREVIEW_DIR` foram inspecionadas em 960 e
+430 pixels. Não houve teste com contas reais nem atualização do Flatpak instalado.
