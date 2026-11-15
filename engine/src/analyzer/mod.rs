@@ -3,3 +3,6 @@
 // integration rather than exposing it solely to suppress unused-code diagnostics.
 #[allow(dead_code)]
 mod reconciliation;
+// Identification is isolated until the Analyzer facade coordinates both algorithms.
+#[allow(dead_code)]
+mod conflicts;

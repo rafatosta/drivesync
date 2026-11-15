@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Implementar um avaliador puro de conflitos para **um item lógico, dois lados e um baseline opcional**, retornando presença de conflito, evidências, encaminhamento e opções seguras.
+Implementar um avaliador puro de conflitos para **um item lógico, dois lados e um baseline opcional**, retornando somente classificação, motivos e requisitos de evidência. O usuário limitou esta etapa a identificar; ações e resoluções serão implementadas posteriormente.
 
 ## Leitura obrigatória
 
@@ -21,8 +21,8 @@ Implementar um avaliador puro de conflitos para **um item lógico, dois lados e 
 - Comparar presença, conteúdo, nome, localização e metadados de forma independente, usando o baseline confirmado quando disponível.
 - Tratar metadados desconhecidos, observações parciais e ausência de snapshot como evidência insuficiente, quando a informação for necessária à decisão.
 - Não interpretar timestamps/tamanho idênticos como prova de conteúdo idêntico, nem nomes iguais como identidade comprovada.
-- Retornar `NoConflict`, `Conflict` ou `Undetermined` com `findings` coerentes; preencher `decision` conforme o contrato.
-- Só propor resolução automática com evidências e precondições suficientes; caso contrário devolver opções válidas ou reobservação.
+- Retornar `NoConflict`, `Conflict` ou `Undetermined` com `findings` coerentes. Intervenção do usuário somente para conflito comprovado; incerteza requer evidência.
+- Não propor resolução automática, opções, comandos nem ações. Descrever apenas os requisitos de evidência que faltam.
 - Não usar o Operador, acessar Providers, alterar Inventário, criar filas ou interagir com o usuário.
 - Manter os contratos do Analisador intactos nesta fase; registrar divergências de integração sem editar outros módulos.
 
@@ -34,6 +34,6 @@ A execução de compilação e testes Rust deve ocorrer exclusivamente no ambien
 
 ## Escopo
 
-Esta etapa abrange somente os quatro documentos da raiz de `docs/engine/analyzer/conflicts/`. A documentação do Reconciliador e os contratos do Analisador principal permanecem inalterados e serão revisados na etapa de integração.
+A implementação autorizada está em `engine/src/analyzer/conflicts/`, privada ao Analyzer, acompanhada por estes documentos. Preservar o Reconciliador e os contratos da fachada Analyzer; a integração será tratada posteriormente.
 
-**Estado:** especificação documental inicial; não representa código implementado.
+**Estado:** identificação implementada. Ações, opções de resolução e integração com a fachada permanecem fora do escopo.

@@ -1,209 +1,123 @@
-# Conflitos — INTERFACES
+# Conflitos — interfaces implementadas
 
-## 1. Objetivo do contrato
+## Escopo: somente identificação
 
-A API **interna ao Analisador** avalia uma situação entre duas representações do mesmo `SyncItem` e devolve uma conclusão autocontida: há conflito ou não, qual a razão, que evidência suporta a conclusão e o que fazer em seguida.
+`engine/src/analyzer/conflicts/` é privado ao Analyzer e independente do
+Reconciler. A função síncrona `evaluate(ConflictRequest) -> Result<ConflictAssessment,
+ConflictError>` identifica conflitos de **um item por chamada**, deterministicamente,
+sem I/O ou estado mutável externo.
 
-É uma interface de **entrada única e saída única**. Não implementa o fluxo do Analisador nem executa ações. As assinaturas Rust são **propostas para TDD**, a serem refinadas após documentação do Reconciliador.
+Esta versão não oferece `Automatic`, `RequiresDecision`, opções de resolução,
+`OperationCommand`, escolhas de versão ou ações. Ações e interação serão
+implementadas posteriormente pelo Analyzer.
 
-Reutilizar os tipos proprietários:
-- [Inventário](../../inventory/INTERFACES.md): `SyncItemId`, `SyncBaseline`, `PresenceState`.
-- [Models](../../models/INTERFACES.md): `LocalFile`, `RemoteFile` e identidades associadas.
-- [Analisador](../INTERFACES.md): `OperationCommand`, `ResolutionMeaning` e `StateFingerprint` como contratos de integração; evitar duplicá-los em Rust.
+## Entrada e propriedade
 
-## 2. Interface de acesso
+`ConflictRequest` contém `item: inventory::SyncItem` e `evidence: ConflictEvidence`.
+O item inclui identidade, revisão, presenças, snapshots e baseline. Não duplicar
+`SyncItem`, `LocalFile`, `RemoteFile`, `SyncBaseline` ou seus identificadores.
 
-```rust
-pub(crate) type ConflictResult<T> = Result<T, ConflictError>;
-
-pub(crate) fn evaluate(
-    request: ConflictRequest,
-) -> ConflictResult<ConflictAssessment>;
-```
-
-A função é conceitualmente síncrona, determinística e livre de I/O. Recebe todos os dados necessários, sem acessar Inventário ou API remota. Uma mesma entrada deve produzir a mesma avaliação, independentemente da ordem de outras análises.
-
-## 3. Objeto de entrada
-
-```rust
-pub(crate) struct ConflictRequest {
-    pub item_id: SyncItemId,
-    pub local: ConflictSide<LocalFile>,
-    pub remote: ConflictSide<RemoteFile>,
-    pub baseline: Option<SyncBaseline>,
-    pub evidence: ConflictEvidence,
-}
-
-pub(crate) struct ConflictSide<T> {
-    pub presence: PresenceState,
-    pub snapshot: Option<T>,
-}
-
-pub(crate) struct ConflictEvidence {
-    pub baseline_confirmed: bool,
-    pub local_scope_complete: bool,
-    pub remote_scope_complete: bool,
-    pub local_content_identity: EvidenceValue<String>,
-    pub remote_content_identity: EvidenceValue<String>,
-}
-
-pub(crate) enum EvidenceValue<T> {
-    Verified(T),
-    NotCollected,
-    Unsupported,
-    Unavailable,
-}
-```
-
-### Atributos e semântica
-
-| Campo | Obrigatório | Significado |
+| Evidência | Tipo | Significado |
 | --- | --- | --- |
-| `item_id` | Sim | Identidade lógica única a que os dois lados se referem |
-| `local.presence` | Sim | Presença conhecida, ausência confirmada ou desconhecimento local |
-| `local.snapshot` | Não | Metadados locais efetivamente observados; `None` não indica exclusão |
-| `remote.presence` | Sim | Presença conhecida, ausência confirmada ou desconhecimento remoto |
-| `remote.snapshot` | Não | Metadados remotos efetivamente observados; `None` não indica exclusão |
-| `baseline` | Não | Último estado sincronizado confirmado; `None` indica ausência de referência histórica |
-| `evidence.baseline_confirmed` | Sim | Indica se o baseline fornecido possui confirmação confiável |
-| `evidence.local_scope_complete` | Sim | Evidência suficiente da abrangência da observação local para avaliar ausência |
-| `evidence.remote_scope_complete` | Sim | Evidência suficiente da abrangência da observação remota para avaliar ausência |
-| `evidence.*_content_identity` | Sim | Evidência de identidade do conteúdo (por exemplo, hash verificado), separando desconhecimento de igualdade comprovada |
+| `baseline_confirmed` | `bool` | Permite usar o baseline fornecido como histórico confirmado |
+| `local_scope_complete`, `remote_scope_complete` | `bool` | Cobertura suficiente para concluir sobre a presença de cada lado |
+| `content` | `ContentEvidence` | Comparações explícitas de conteúdo atual contra baseline e entre lados |
+| `local_parent` | `Option<SyncItemId>` | Pai local atual mapeado para identidade lógica do Inventário |
+| `current_parents` | `EvidenceComparison` | Equivalência lógica comprovada dos pais atuais |
 
-**Validação:** `Present` exige snapshot do lado correspondente. `AbsentConfirmed` exige evidência suficiente do escopo e não deve conter snapshot atual marcado como presente; snapshots históricos pertencem ao baseline. `Unknown` nunca deve virar ausência por inferência. `baseline_confirmed=true` requer `baseline=Some`; caso contrário a entrada é inválida. O campo `baseline_confirmed` não comprova por si só autenticidade: a origem dos dados deve ser confiável no contrato com o Analisador.
+`ContentEvidence` contém `local_to_baseline`, `remote_to_baseline` e
+`current_sides`, todos `EvidenceComparison::{Equal, Different, Unknown}`.
+As comparações de conteúdo pertencem ao contrato de entrada do Conflicts; o
+algoritmo não chama Reconciliação nem usa sua avaliação como verdade.
 
-**Identidade do conteúdo:** `Verified` só pode ser usado para evidência verificada e comparável entre os lados (mesmo algoritmo e domínio, quando hash). Tokens não comparáveis não autorizam conclusão de igualdade. O tipo `String` é ilustrativo: pode ser substituído por um tipo com algoritmo, escopo e versão explícitos antes da implementação.
+O chamador interno deve fornecer comparações confiáveis e vinculadas à revisão
+analisada, com o mesmo algoritmo/domínio ao comparar hashes. O avaliador não
+coleta nem autentica evidências. Não usa tamanho, data, inode, nome ou versão
+remota como prova de conteúdo. Comparações contra baseline ausente ou não
+confirmado não são usadas para inferir histórico. Diretórios não comparam conteúdo.
 
-## 4. Objeto de retorno
+Snapshots `*_latest` prevalecem quando disponíveis; campos desconhecidos neles
+não são preenchidos com os valores retidos. Snapshots retidos de lados ausentes
+são históricos e não são usados como prova de presença atual.
 
-```rust
-pub(crate) struct ConflictAssessment {
-    pub item_id: SyncItemId,
-    pub presence: ConflictPresence,
-    pub decision: ConflictDecision,
-    pub findings: Vec<ConflictFinding>,
-}
+## Retorno: classificação e motivos
 
-pub(crate) enum ConflictPresence {
-    NoConflict,
-    Conflict,
-    Undetermined,
-}
+`ConflictAssessment` contém:
 
-pub(crate) enum ConflictDecision {
-    NoAction,
-    Automatic { operations: Vec<OperationCommand> },
-    RequiresDecision { options: Vec<ConflictOption> },
-    Reobserve { requirements: Vec<EvidenceRequirement> },
-}
+- `item_id`, `item_revision`: identidade e revisão exatas da entrada;
+- `presence: ConflictPresence`: `NoConflict`, `Conflict` ou `Undetermined`;
+- `findings: Vec<ConflictFinding>`: dimensões avaliadas, status e motivo;
+- `requirements: Vec<EvidenceRequirement>`: evidências faltantes, sem duplicatas.
 
-pub(crate) struct ConflictOption {
-    pub meaning: ResolutionMeaning,
-    pub explanation: String,
-}
+`requires_user_intervention()` retorna verdadeiro somente para `Conflict`.
+`Undetermined` exige obter evidências antes de concluir; não é convertido em
+uma escolha do usuário. `NoConflict` identifica ausência de incompatibilidade
+nas dimensões avaliadas; não afirma que o item está sincronizado nem autoriza
+execução, exclusão ou confirmação do baseline.
 
-pub(crate) enum ConflictDimension {
-    Presence,
-    Content,
-    Name,
-    Location,
-    Metadata,
-}
+Cada `ConflictFinding` contém `dimension`, `status` e `reason`:
 
-pub(crate) struct ConflictFinding {
-    pub dimension: ConflictDimension,
-    pub status: FindingStatus,
-    pub explanation: String,
-}
-
-pub(crate) enum FindingStatus {
-    Compatible,
-    Divergent,
-    Unknown,
-}
-
-pub(crate) enum EvidenceRequirement {
-    ObserveLocal,
-    ObserveRemote,
-    VerifyContent,
-    VerifyIdentity,
-    VerifyBaseline,
-}
-```
-
-### Semântica da saída
-
-- **`presence`:** é a classificação explícita de conflito: `NoConflict` (não foi detectada incompatibilidade com evidência suficiente), `Conflict` (mudança incompatível comprovada) ou `Undetermined` (impossível concluir com a evidência disponível).
-- **`decision`:** indica o encaminhamento sugerido. `NoAction` significa que o avaliador de conflitos não exige providência; **não** afirma que o item esteja sincronizado. `Automatic` contém operações concretas propostas, nunca executadas. `RequiresDecision` apresenta alternativas que o Analisador poderá oferecer externamente. `Reobserve` explica que evidência precisa ser obtida.
-- **`findings`:** registra quais dimensões foram comparadas, por que são compatíveis/divergentes/desconhecidas e o suporte utilizado; não pode ser lista vazia quando houver conflito ou evidência insuficiente.
-- **`options`:** opções semanticamente compatíveis com `ResolutionMeaning` definido no Analisador, tipicamente `KeepLocal`, `KeepRemote`, `KeepBoth` ou `Defer`. Não oferecer `KeepBoth` sem uma estratégia capaz de preservar efetivamente ambas as versões; não inventar operações de preservação.
-- **`operations`:** reutiliza o contrato `OperationCommand` do Analisador/Operador. Cada comando proposto deve conter as precondições pertinentes e respeitar a ordem/dependências; o Analisador revalida as condições antes de executá-lo.
-
-### Coerência entre presença e decisão
-
-| Presença | Decisões permitidas | Observação |
-| --- | --- | --- |
-| `NoConflict` | `NoAction`, `Automatic` | `Automatic` somente se houver transformação segura derivável |
-| `Conflict` | `Automatic`, `RequiresDecision` | A classificação de conflito pode ser resolvida automaticamente por regra comprovada |
-| `Undetermined` | `Reobserve` | Não inventar solução ou alternativas destrutivas sem prova |
-
-`RequiresDecision.options` e `Reobserve.requirements` não podem ser vazios. `Automatic.operations` não pode ser vazio; quando não há operações, usar `NoAction`.
-
-## 5. Erros da interface
-
-```rust
-pub(crate) struct ConflictError {
-    pub kind: ConflictErrorKind,
-    pub message: String,
-}
-
-pub(crate) enum ConflictErrorKind {
-    InvalidRequest,
-    InconsistentInput,
-    WrongItemIdentity,
-    InvalidEvidence,
-    Internal,
-}
-```
-
-**`InvalidRequest`:** campos obrigatórios ausentes ou combinações inválidas. **`InconsistentInput`:** presença, snapshot, baseline ou escopo apresentam contradição. **`WrongItemIdentity`:** as referências informadas não pertencem ao mesmo item lógico ou não podem ser vinculadas com segurança. **`InvalidEvidence`:** evidência declarada como verificada sem requisitos mínimos de confiabilidade/comparabilidade. **`Internal`:** falha interna do algoritmo que impede classificar o caso.
-
-**Não tratar como erro técnico:** conflito real, decisão externa necessária ou evidência insuficiente; essas situações pertencem a `ConflictAssessment`.
-
-Mensagens técnicas devem ser sanitizadas e não carregar tokens, credenciais ou conteúdo dos arquivos.
-
-## 6. Contrato funcional de `evaluate`
-
-**Assinatura:** `pub(crate) fn evaluate(request: ConflictRequest) -> ConflictResult<ConflictAssessment>`.
-
-**Finalidade:** comparar uma divergência de um item entre as representações local e remota, considerando o baseline quando disponível, e devolver a conclusão e o encaminhamento seguro.
-
-**Parâmetros:** `request.item_id` identifica o item; `request.local` e `request.remote` fornecem presença e snapshot por lado; `request.baseline` oferece o estado anterior confirmado; `request.evidence` informa qualidade e completude das observações, incluindo identidade de conteúdo.
-
-**Retorno:** objeto `ConflictAssessment` contendo `item_id`, `presence`, `decision` e `findings`. Em casos sem conflito, `NoAction` significa que esta avaliação não exige ação; a reconciliação pode ainda propor operações legítimas.
-
-**Limites e erros:** entradas inválidas retornam `ConflictError`; dados apenas incompletos resultam em `Undetermined/Reobserve`. O algoritmo nunca realiza I/O, persiste dados, pergunta ao usuário ou executa as operações propostas.
-
-## 7. Regras mínimas de avaliação
-
-| Estados observados | Conclusão mínima |
+| Campo | Valores |
 | --- | --- |
-| Local e remoto equivalentes por evidência suficiente | `NoConflict`, inclusive se ambos mudaram de forma equivalente |
-| Um lado mudou e outro permanece igual ao baseline confirmado | `NoConflict`; possível transformação pertence ao plano de reconciliação |
-| Ambos alteraram conteúdo de maneiras comprovadamente diferentes | `Conflict`; avaliar se existe solução comprovada ou decisão necessária |
-| Mudanças simultâneas em dimensões independentes e compatíveis | `NoConflict`, sem descartar nenhuma das mudanças |
-| Exclusão confirmada de um lado e alteração do outro | `Conflict`, não propagar exclusão automaticamente |
-| Exclusão suspeita ou escopo incompleto | `Undetermined/Reobserve`, sem inferir `AbsentConfirmed` |
-| Ambos com ausência confirmada, mesmo item identificado | `NoConflict`, desde que evidências sejam suficientes |
-| Baseline ausente e dois conteúdos distintos sem vínculo comprovado | `Undetermined/Reobserve` ou `Conflict` somente com prova suficiente da incompatibilidade e identidade |
-| Hash desconhecido, timestamps/tamanho iguais | Não concluir igualdade de conteúdo; `Undetermined` quando essa igualdade for determinante |
+| `ConflictDimension` | `Presence`, `Content`, `Name`, `Location` |
+| `FindingStatus` | `Compatible`, `Divergent`, `Unknown` |
+| `FindingReason` | `Equivalent`, `UnilateralChange`, `ConcurrentChanges`, `DeleteVsChange`, `NewItem`, `MissingBaseline`, `InsufficientEvidence`, `UnsupportedKind` |
 
-**Segurança:** nomes e caminhos não são identidades globais. Comparar recursos remotos com IDs qualificados por conta e identidades locais conforme Models/Inventário. Conclusões condicionadas por capacidades do serviço nunca devem presumir que uma operação está disponível.
+A ordem é presença, conteúdo (arquivos), nome e localização. Na avaliação de
+exclusão versus alteração, um finding de presença agrega as comparações do lado
+sobrevivente. Requisitos específicos preservam lacunas de conteúdo, nome ou pai.
 
-## 8. Integração com o Analisador
+`EvidenceRequirement` distingue `ObserveLocal`, `ObserveRemote`, `VerifyBaseline`,
+`VerifyContent`, `VerifyParent`, `VerifyName` e `VerifyKind`. São descrições de
+lacunas, sem agendar ou executar observações.
 
-O Analisador é responsável por adaptar o objeto `SyncItem` para `ConflictRequest`, coordenar a chamada, traduzir `RequiresDecision` em `PendingAction` e converter `Reobserve` em pendência de evidência. Os objetos públicos de pendência, revisão, opções selecionadas e estado de operação permanecem de propriedade do Analisador e do Inventário.
+## Regras determinísticas
 
-O módulo Conflitos devolve apenas avaliação e recomendações tipadas. Sua assinatura não depende de `Operator`, `InventoryManager` ou `Orchestrator` concretos; não possui estado persistente.
+1. Presença desconhecida, cobertura incompleta, tipo desconhecido ou estado remoto
+   em lixeira/indeterminado produzem `Undetermined` com requisito específico.
+2. Ambos ausentes comprovadamente produzem `NoConflict`. Um lado presente sem
+   baseline representa item novo, sem conflito comprovado. Baseline existente mas
+   não confirmado não permite distinguir criação de exclusão histórica.
+3. Para dois lados presentes, comparar conteúdo, nome e localização de forma
+   independente. Igualdade atual comprovada é compatível mesmo quando ambos mudaram.
+4. Mudança unilateral em relação a baseline confirmado é compatível. Renomeação
+   local e edição remota, por exemplo, não exigem decisão do usuário por si só.
+5. Mudanças concorrentes da mesma dimensão, com resultados atuais comprovadamente
+   distintos, produzem `Conflict/ConcurrentChanges` e exigem intervenção do usuário.
+6. Exclusão confirmada contra mudança comprovada de conteúdo, nome ou pai produz
+   `Conflict/DeleteVsChange`. Contra lado inalterado produz `NoConflict`; isso não
+   fornece política ou autorização de exclusão. Lado sobrevivente desconhecido
+   produz `Undetermined` quando não existe mudança comprovada.
+7. Nomes locais preservam bytes Unix e são comparados com seu próprio baseline;
+   nomes remotos usam valores conhecidos. Nomes iguais não provam identidade.
+8. Pai local usa identidade lógica; pai remoto usa referência qualificada pela
+   conta. Zero/múltiplos pais remotos ficam desconhecidos. A equivalência entre
+   os lados depende de mapeamento explícito, não de nome/caminho semelhante.
+9. Ausência de baseline não prova concorrência: diferenças sem histórico confirmado
+   produzem `Undetermined/VerifyBaseline`. Estados atuais comprovadamente
+   equivalentes podem ser classificados sem inventar histórico.
+10. Um finding divergente determina `Conflict` mesmo havendo dimensões desconhecidas;
+    os requisitos continuam presentes. Sem divergência, qualquer finding desconhecido
+    determina `Undetermined`; todos compatíveis determinam `NoConflict`.
 
-**Ponto de revisão:** o contrato do Analisador ainda está conceitual e não define uma representação Rust definitiva para `OperationCommand` nem persistência durável de `PendingAction`. Essas decisões devem ser reconciliadas na integração, sem criar tipos duplicados.
+## Validação e erros
+
+`ConflictError` contém apenas `InvalidRequest`, `InconsistentInput`,
+`WrongItemIdentity` e `InvalidEvidence`, sem caminhos, tokens ou payloads.
+Valida IDs não vazios, revisão positiva, coerência dos modelos, tipos, vínculos
+local/remoto, conta do pai remoto e provedor entre snapshot retido e recente.
+`Present` sem snapshot é erro; `Unknown` com snapshot ausente é incerteza legítima.
+`baseline_confirmed=true` exige baseline. Comparação cruzada de conteúdo exige
+arquivo presente nos dois lados. Ambos inalterados contra baseline confirmado
+mas conteúdos atuais distintos constituem evidência contraditória.
+
+## Limites de integração
+
+O módulo não conhece Inventário concreto, Operador, Providers, Orquestrador, GUI,
+filas ou pendências persistidas. O Analyzer poderá consumir a classificação para
+criar pendências posteriormente; essa integração não está implementada aqui.
+
+Metadados específicos (permissões, proprietário, capacidades e atributos do
+provedor) não têm política/baseline portátil suficiente e não são classificados
+nesta versão. Presenças e comparações são evidências declaradas pelo coordenador;
+a função não comprova sua autenticidade nem exclusividade entre instâncias.
