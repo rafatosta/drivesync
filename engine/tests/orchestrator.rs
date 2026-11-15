@@ -102,73 +102,84 @@ async fn connector_survives_stopped_capture_and_facade_starts_both_sources() {
         2
     );
 }
+fn settle_flow(session: &Orchestrator) {
+    use drivesync_engine::orchestrator::PreparationState;
+    wait(|| {
+        let status = session.preparation_status();
+        assert!(
+            !matches!(
+                status.state,
+                PreparationState::Failed | PreparationState::Partial
+            ),
+            "flow failed: {:?}",
+            status.error
+        );
+        status.state == PreparationState::ReadyForAnalyzer
+            && session.diagnostics().pending_events == Some(0)
+            && session.diagnostics().leased_events == Some(0)
+            && session.remote_diagnostics().is_some_and(|remote| {
+                remote.status.last_error == Some(RemoteError::AuthorizationRequired)
+            })
+    });
+}
 #[tokio::test]
-async fn paused_capture_survives_reopen_without_acknowledgement_or_crossing_accounts() {
+async fn live_capture_delivers_new_files_and_folders_to_analyzer_without_rescan_or_crossing_accounts(
+) {
+    use drivesync_engine::inventory::*;
     let (tree, connector) = Tree::new().await;
     let first = tree.open(connector.clone(), "first");
     let second = tree.open(connector.clone(), "second");
     first.prepare().await.unwrap();
     second.prepare().await.unwrap();
-    wait(|| first.diagnostics().pending_events.is_some_and(|v| v >= 1));
-    let before = first.diagnostics().pending_events.unwrap();
-    std::fs::write(tree.0.join("first/pending"), b"durable").unwrap();
+    settle_flow(&first);
+    settle_flow(&second);
+    let inv = inventory(&tree, "first");
+    let before = first.diagnostics().confirmed_events.unwrap();
+    std::fs::create_dir(tree.0.join("first/new-folder")).unwrap();
+    std::fs::write(tree.0.join("first/new-folder/new-file.txt"), b"durable").unwrap();
     wait(|| {
-        first
-            .diagnostics()
-            .pending_events
-            .is_some_and(|v| v > before)
-    });
-    assert_eq!(first.diagnostics().confirmed_events, Some(0));
-    assert_eq!(first.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert_eq!(second.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert!(first
-        .detector()
-        .take_events(TakeEventsRequest {
-            max_events: 10,
-            lease_duration: Duration::from_secs(10)
+        items(&inv).iter().any(|item| {
+            item.local
+                .as_ref()
+                .is_some_and(|file| file.relative_path.as_bytes() == b"new-folder/new-file.txt")
         })
-        .is_err());
-    let id = first.diagnostics().events.last().unwrap().id.clone();
-    first.stop_detector(DetectorStopMode::StopNow).unwrap();
-    drop(first);
-    let reopened = tree.open(connector, "first");
-    let report = reopened.prepare().await.unwrap();
-    assert!(report.ready_for_analysis());
-    assert!(reopened.diagnostics().events.iter().any(|e| e.id == id));
-    assert_eq!(reopened.diagnostics().confirmed_events, Some(0));
-    let inventory = drivesync_engine::inventory::InventoryManager::open(
-        drivesync_engine::inventory::OpenInventoryRequest {
-            local_root: tree.0.join("first"),
-            expected: drivesync_engine::inventory::SyncIdentity {
-                sync_id: SyncId("sync-first".into()),
-                account_id: AccountId("first".into()),
-                remote_root_id: "root".into(),
+    });
+    settle_flow(&first);
+    let current = inv
+        .list_analyses(ListAnalysesRequest {
+            filter: AnalysisFilter {
+                current_only: true,
+                ..Default::default()
             },
-            create_if_missing: false,
-        },
-    )
-    .unwrap()
-    .inventory;
-    let items = inventory
-        .list_items(drivesync_engine::inventory::ListItemsRequest {
-            filter: Default::default(),
-            pagination: Default::default(),
+            pagination: Pagination::default(),
         })
         .unwrap()
         .page
         .entries;
-    assert!(items.iter().any(|item| item
-        .local
-        .as_ref()
-        .is_some_and(|l| l.relative_path.as_bytes() == b"pending")));
-    assert!(
-        second
-            .diagnostics()
-            .events
-            .iter()
-            .all(|e| e.scope
-                != FileScope::Local(LocalRelativePath::new(b"pending".to_vec()).unwrap()))
+    assert_eq!(current.len(), 2);
+    assert!(current.iter().all(|r| !r.stale));
+    assert!(first.diagnostics().confirmed_events.unwrap() > before);
+    assert!(first.preparation_status().events_processed > 0);
+    assert_eq!(first.diagnostics().delivery, Some(DeliveryState::Enabled));
+    assert!(items(&inventory(&tree, "second")).is_empty());
+    let ids = items(&inv)
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+    first.stop_detector(DetectorStopMode::StopNow).unwrap();
+    drop(first);
+    let reopened = tree.open(connector, "first");
+    reopened.prepare().await.unwrap();
+    settle_flow(&reopened);
+    assert!(ids
+        .iter()
+        .all(|id| items(&inv).iter().any(|item| &item.id == id)));
+    assert_eq!(
+        std::fs::read(tree.0.join("first/new-folder/new-file.txt")).unwrap(),
+        b"durable"
     );
+    reopened.stop_detector(DetectorStopMode::StopNow).unwrap();
+    second.stop_detector(DetectorStopMode::StopNow).unwrap();
 }
 #[tokio::test]
 async fn partial_preparation_keeps_capture_and_delivery_paused_until_a_successful_rescan() {
@@ -179,6 +190,7 @@ async fn partial_preparation_keeps_capture_and_delivery_paused_until_a_successfu
     std::fs::write(root.join("locked/child"), b"data").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
     let result = session.prepare().await;
     std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -189,13 +201,13 @@ async fn partial_preparation_keeps_capture_and_delivery_paused_until_a_successfu
         PreparationState::Partial
     );
     assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert!(session.diagnostics().confirmed_events.is_some());
     assert!(session.prepare().await.unwrap().ready_for_analysis());
     assert_eq!(
         session.preparation_status().state,
         PreparationState::ReadyForAnalyzer
     );
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
 }
 #[tokio::test]
 async fn incompatible_inventory_is_preserved_and_never_consumes_capture_events() {
@@ -203,6 +215,8 @@ async fn incompatible_inventory_is_preserved_and_never_consumes_capture_events()
     let (tree, connector) = Tree::new().await;
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
     let path = tree.0.join("first/.drivesync/inventory.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
     db.pragma_update(None, "user_version", 900).unwrap();
@@ -214,7 +228,7 @@ async fn incompatible_inventory_is_preserved_and_never_consumes_capture_events()
     ));
     assert_eq!(session.preparation_status().state, PreparationState::Failed);
     assert_eq!(std::fs::read(path).unwrap(), before);
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert!(session.diagnostics().confirmed_events.is_some());
 }
 
 #[tokio::test]
@@ -234,7 +248,7 @@ async fn stopping_during_preparation_cannot_publish_ready_after_stop() {
     let _ = task.await;
     assert_eq!(owner.preparation_status().state, PreparationState::Stopped);
     assert_eq!(owner.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert_eq!(owner.diagnostics().confirmed_events, Some(0));
+    assert_eq!(owner.diagnostics().leased_events, Some(0));
 }
 #[tokio::test]
 async fn another_preparation_is_rejected_while_inventory_setup_is_busy() {
@@ -275,8 +289,8 @@ async fn preparation_can_retry_after_local_capture_failed_to_start() {
         session.preparation_status().state,
         PreparationState::ReadyForAnalyzer
     );
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
+    assert!(session.diagnostics().confirmed_events.is_some());
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
 }
 
 fn inventory(tree: &Tree, id: &str) -> drivesync_engine::inventory::InventoryManager {
@@ -393,7 +407,7 @@ fn remote_observation(
     }
 }
 #[tokio::test]
-async fn complete_scan_records_decisions_for_every_item_without_consuming_events_or_executing() {
+async fn complete_scan_records_decisions_before_live_delivery_without_executing_operations() {
     use drivesync_engine::inventory::*;
     let (tree, connector) = Tree::new().await;
     std::fs::create_dir(tree.0.join("first/folder")).unwrap();
@@ -401,6 +415,7 @@ async fn complete_scan_records_decisions_for_every_item_without_consuming_events
     let session = tree.open(connector, "first");
     let report = session.prepare().await.unwrap();
     assert!(report.ready_for_analysis());
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let entries = items(&inventory);
     let records = analyses(&inventory);
@@ -421,8 +436,8 @@ async fn complete_scan_records_decisions_for_every_item_without_consuming_events
         std::fs::read(tree.0.join("first/folder/file")).unwrap(),
         b"unchanged"
     );
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
+    assert!(session.diagnostics().confirmed_events.is_some());
     session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }
 #[tokio::test]
@@ -433,6 +448,7 @@ async fn persisted_remote_rename_produces_only_a_blocked_decision_and_preserves_
     std::fs::write(tree.0.join("first/file"), b"local-content").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let item = items(&inventory).remove(0);
     let item = inventory
@@ -538,6 +554,7 @@ async fn known_remote_absence_creates_an_upload_intent_without_uploading() {
     std::fs::write(tree.0.join("first/file"), b"stay-local").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let item = items(&inventory).remove(0);
     let item = inventory
@@ -591,7 +608,7 @@ async fn known_remote_absence_creates_an_upload_intent_without_uploading() {
         std::fs::read(tree.0.join("first/file")).unwrap(),
         b"stay-local"
     );
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert!(session.diagnostics().confirmed_events.is_some());
     session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }
 #[tokio::test]
@@ -602,6 +619,7 @@ async fn partial_scan_does_not_publish_new_analyses_until_coverage_is_restored()
     std::fs::write(tree.0.join("first/locked/file"), b"data").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let before = analyses(&inventory).len();
     std::fs::set_permissions(
@@ -632,6 +650,7 @@ async fn analysis_persistence_failure_is_visible_and_preparation_can_retry() {
     std::fs::write(tree.0.join("first/file"), b"data").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let before = analyses(&inventory).len();
     let db = rusqlite::Connection::open(tree.0.join("first/.drivesync/inventory.sqlite3")).unwrap();
@@ -647,7 +666,7 @@ async fn analysis_persistence_failure_is_visible_and_preparation_can_retry() {
         .unwrap()
         .ready_for_analysis());
     assert_eq!(analyses(&inventory).len(), before);
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert!(session.diagnostics().confirmed_events.is_some());
     db.execute_batch("DROP TRIGGER reject_analysis;").unwrap();
     assert!(session.prepare().await.unwrap().ready_for_analysis());
     assert!(analyses(&inventory).len() > before);
@@ -734,6 +753,7 @@ async fn configured_root_alias_mismatch_does_not_invent_different_parent_evidenc
     std::fs::write(tree.0.join("first/file"), b"data").unwrap();
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
+    settle_flow(&session);
     let inventory = inventory(&tree, "first");
     let item = items(&inventory).remove(0);
     let mut observed = remote_observation(&inventory, &item, "canonical-root", "file");
@@ -759,5 +779,127 @@ async fn configured_root_alias_mismatch_does_not_invent_different_parent_evidenc
         .decisions
         .iter()
         .all(|d| d.intent.kind != OperationKind::Move));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+
+#[tokio::test]
+async fn live_ingestion_failures_keep_events_for_recovery_and_exact_file_receipts_are_not_duplicated(
+) {
+    use drivesync_engine::{inventory::*, orchestrator::PreparationState};
+    for table in ["receipts", "analyses"] {
+        let (tree, connector) = Tree::new().await;
+        let root = tree.0.join("first");
+        std::fs::write(root.join("file"), b"before").unwrap();
+        let session = tree.open(connector, "first");
+        session.prepare().await.unwrap();
+        settle_flow(&session);
+        let inv = inventory(&tree, "first");
+        let before = session.diagnostics().confirmed_events.unwrap();
+        let db = rusqlite::Connection::open(root.join(".drivesync/inventory.sqlite3")).unwrap();
+        db.execute_batch(&format!("CREATE TRIGGER reject_live BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected'); END;")).unwrap();
+        std::fs::write(root.join("file"), b"after").unwrap();
+        wait(|| {
+            session.preparation_status().state == PreparationState::Failed
+                && session.diagnostics().delivery == Some(DeliveryState::Paused)
+        });
+        assert_eq!(session.diagnostics().confirmed_events, Some(before));
+        assert_eq!(session.diagnostics().leased_events, Some(0));
+        assert!(session.diagnostics().pending_events.unwrap() > 0);
+        let event = session
+            .diagnostics()
+            .events
+            .iter()
+            .rev()
+            .find(|e| {
+                e.scope == FileScope::Local(LocalRelativePath::new(b"file".to_vec()).unwrap())
+            })
+            .unwrap()
+            .id
+            .clone();
+        db.execute_batch("DROP TRIGGER reject_live;").unwrap();
+        session.prepare().await.unwrap();
+        settle_flow(&session);
+        assert!(session.diagnostics().confirmed_events.unwrap() > before);
+        assert_eq!(session.diagnostics().pending_events, Some(0));
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM receipts WHERE event=?1",
+                [&event.0],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "the same File.id must be ingested exactly once");
+        let current = inv
+            .list_analyses(ListAnalysesRequest {
+                filter: AnalysisFilter {
+                    current_only: true,
+                    ..Default::default()
+                },
+                pagination: Pagination::default(),
+            })
+            .unwrap()
+            .page
+            .entries;
+        assert_eq!(current.len(), 1);
+        assert_eq!(std::fs::read(root.join("file")).unwrap(), b"after");
+        session.stop_detector(DetectorStopMode::StopNow).unwrap();
+    }
+}
+#[tokio::test]
+async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without_executing_operations(
+) {
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    let root = tree.0.join("first");
+    std::fs::write(root.join("original"), b"user bytes").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    settle_flow(&session);
+    let inv = inventory(&tree, "first");
+    std::fs::rename(root.join("original"), root.join("renamed")).unwrap();
+    wait(|| {
+        items(&inv).iter().any(|i| {
+            i.local_presence == PresenceState::Present
+                && i.local
+                    .as_ref()
+                    .is_some_and(|f| f.relative_path.as_bytes() == b"renamed")
+        })
+    });
+    settle_flow(&session);
+    assert!(!root.join("original").exists());
+    assert_eq!(std::fs::read(root.join("renamed")).unwrap(), b"user bytes");
+    std::fs::remove_file(root.join("renamed")).unwrap();
+    wait(|| {
+        items(&inv)
+            .iter()
+            .filter(|i| {
+                i.local
+                    .as_ref()
+                    .is_some_and(|f| f.relative_path.as_bytes() == b"renamed")
+            })
+            .all(|i| i.local_presence == PresenceState::AbsentConfirmed)
+    });
+    settle_flow(&session);
+    assert!(items(&inv).iter().all(|i| i.baseline.is_none()));
+    assert!(inv
+        .list_operations(ListOperationsRequest {
+            filter: OperationFilter::default(),
+            pagination: Pagination::default()
+        })
+        .unwrap()
+        .page
+        .entries
+        .iter()
+        .all(|op| op.state == OperationState::Blocked && op.attempt_count == 0));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+    let detected = session.diagnostics().events_detected;
+    std::fs::write(root.join("created-while-stopped"), b"new").unwrap();
+    assert_eq!(session.diagnostics().events_detected, detected);
+    session.prepare().await.unwrap();
+    settle_flow(&session);
+    assert!(items(&inv).iter().any(|i| i
+        .local
+        .as_ref()
+        .is_some_and(|f| f.relative_path.as_bytes() == b"created-while-stopped")));
     session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }

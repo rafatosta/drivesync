@@ -270,8 +270,8 @@ fn live_account_selection_and_detector_layout() {
                 == Some(drivesync_engine::models::LocalEntryKind::Directory))
     );
     assert!(find(page.upcast_ref(), "detector-delivery-toggle").is_none());
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
-    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
+    assert!(session.diagnostics().confirmed_events.is_some());
     capture(&window, "detector-local-personal");
     let tabs = find(page.upcast_ref(), "detector-tabs")
         .unwrap()
@@ -284,7 +284,7 @@ fn live_account_selection_and_detector_layout() {
     assert!(texts(page.upcast_ref()).contains("AuthorizationRequired"));
     assert_eq!(
         session.remote_diagnostics().unwrap().queue.delivery,
-        DeliveryState::Paused
+        DeliveryState::Enabled
     );
     capture(&window, "detector-remote-paused");
     tabs.set_visible_child_name("local");

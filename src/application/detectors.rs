@@ -51,7 +51,10 @@ pub(crate) fn rescan(context: &Context, id: &str) -> Result<(), String> {
     use drivesync_engine::orchestrator::PreparationState;
     if matches!(
         session.orchestrator.preparation_status().state,
-        PreparationState::Starting | PreparationState::Scanning | PreparationState::Analyzing
+        PreparationState::Starting
+            | PreparationState::Scanning
+            | PreparationState::Analyzing
+            | PreparationState::ProcessingEvents
     ) {
         return Err("A scan is already running".into());
     }

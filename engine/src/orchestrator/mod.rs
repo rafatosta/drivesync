@@ -1,17 +1,20 @@
 //! Coordinates paused detection, Scanner observation and durable Analyzer decisions.
 mod analysis;
 mod diagnostics;
+mod flow;
+mod ingestion;
 mod startup;
 use crate::{detectors::*, Engine};
 pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
 pub use startup::*;
 use std::sync::Arc;
 
-/// Owns capture and the scan/analysis barrier; no event or operation consumer is attached.
+/// Owns capture, the initial scan barrier and continuous observation ingestion.
 pub struct Orchestrator {
     connector: Engine,
     detector: Arc<Detector>,
     preparation: startup::Preparation,
+    flow: flow::Flow,
 }
 impl Orchestrator {
     /// Borrows the single public detection facade without exposing its children.
@@ -28,6 +31,7 @@ impl Orchestrator {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .state = PreparationState::Stopped;
+        self.flow.cancel();
         let _control = self
             .preparation
             .control

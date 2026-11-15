@@ -1,100 +1,98 @@
-# Orchestrator — interfaces da preparação e análise
+# Orchestrator — fluxo da aplicação
 
-## Superfície preservada
+## API e composição
 
-As assinaturas públicas compiladas continuam iguais:
+Os métodos existentes `new`, `prepare`, `preparation_status`, `stop_detector`,
+`detector_status`, `local_status`, `remote_diagnostics`, `diagnostics` e `connector`
+mantêm as assinaturas. `OrchestratorCreateRequest` continua recebendo somente
+`DetectorCreateRequest`. Detector, Scanner, Inventory e Analyzer são utilizados
+pelas suas fachadas públicas, sem alteração de suas interfaces ou esquemas.
 
-- `new(OrchestratorCreateRequest) -> DetectorResult<Orchestrator>`;
-- `prepare(&self) -> Result<Arc<ScanReport>, PreparationFailure>` (assíncrono);
-- `preparation_status(&self) -> PreparationStatus`;
-- `detector`, `stop_detector`, `detector_status`, `local_status`,
-  `remote_diagnostics`, `diagnostics`, `connector`.
+O callback existente `EventAvailableSink` é composto com um sinal interno de
+condvar: o sink configurado pelo chamador continua recebendo disponibilidade.
+O sinal não contém arquivos, não acessa SQL e não chama os controles bloqueantes
+do Detector. A única fila de observações permanece no Detector.
 
-`OrchestratorCreateRequest` continua contendo apenas `detector: DetectorCreateRequest`.
-Nenhuma interface de Detector, Scanner ou Inventory é alterada. A configuração
-existente das fontes permanece como antes; não se introduz configuração de
-transferências, pool global, runtime do chamador ou política automática de resolução.
+## Preparação e estado
 
-## Estado e falha
+`prepare` inicia Local e Remote com `Paused`, abre Inventory/Scanner, aguarda scan
+completo e solicita análise inicial. Só então inicia o consumidor e libera entrega.
+O worker aguarda a publicação da preparação antes de consumir, evitando uma corrida
+entre estados iniciais e o processamento contínuo. Scan Partial/falha não libera a
+barreira. Chamadores GLib não precisam fornecer runtime Tokio: os workers o hospedam.
 
-`PreparationState` contém `Idle`, `Starting`, `Scanning`, **`Analyzing`**,
-`ReadyForAnalyzer`, `Partial`, `Failed`, `Cancelled` e `Stopped`.
-`Analyzing` é a passagem real de produção/persistência de decisões, sem execução.
-O valor existente `ReadyForAnalyzer` passa a ser publicado após a varredura completa
-e a passagem de análise bem-sucedida. Ele não significa sincronização concluída,
-conteúdo equivalente ou ausência de conflitos: pendências duráveis são resultados
-válidos da análise.
+`PreparationState` conserva os valores anteriores e acrescenta `ProcessingEvents`.
+`ReadyForAnalyzer` representa a preparação completa e o consumidor aguardando
+observações; `ProcessingEvents` representa ingestão/rechecagem/análise. Nenhum deles
+significa upload/download ou sincronização concluída.
 
-`PreparationFailure` conserva variantes de Detector, Inventory, Scanner,
-AlreadyRunning e Internal e acrescenta `Analyzer(AnalyzerError)` para erro técnico
-durante produção/persistência de decisões. Conflito ou evidência insuficiente são
-recibos válidos no Inventory, não falhas da preparação.
+`PreparationStatus` conserva seus campos e acrescenta `events_processed: u64`,
+contador cumulativo em memória dos eventos confirmados depois de ingestão e análise
+por esta instância. O contador não mede operações físicas nem é histórico oficial;
+o Detector mantém os contadores duráveis. A UI usa a mudança desse snapshot para
+reler os recibos do Analyzer, sem polling SQL no loop GTK.
 
-`PreparationStatus` conserva `state`, `scanner`, `report` e `error`. Durante
-`Analyzing`, `scanner` já pode estar `Completed` e `report` oferece o relatório
-completo; não indicar Scanner ainda ativo. Falha do Analyzer preserva esse relatório.
-A consulta lê apenas snapshots de memória, sem SQL ou espera pelo worker.
+`PreparationFailure` acrescenta `InvalidObservation(FileId)` para entrada inválida,
+escopo errado ou recurso remoto sem associação/snapshot suficientes. Display não
+expõe o payload. Erros de Inventory/Scanner/Analyzer permanecem tipados e visíveis.
+Conflito ou evidência insuficiente retornados pelo Analyzer são resultados válidos,
+não falhas de ingestão.
 
-## Composição privada
+## Projeção das observações
 
-`prepare` mantém Detector com entrega pausada, cria Inventory/Scanner pelas APIs
-existentes, aguarda o scan e só então chama a passagem privada de análise.
-O mesmo `Arc<InventoryManager>` é compartilhado pelo Scanner e pela fachada Analyzer.
-Nenhum handle SQL, Provider, Operador ou algoritmo privado é exposto.
+- Validar `File`, `SyncId` e conta da referência remota.
+- Resolver local por ID fornecido, ou pelo índice público de caminho relativo;
+  resolver remoto por referência qualificada. Não correlacionar lados pelo nome.
+- Registrar o `File` integral com seu ID original, revisão atual e prova de origem
+  local/remota. `Some(data)` indica presença observada; `None` permanece `Unknown`.
+  Um evento isolado nunca cria `AbsentConfirmed`.
+- Reentrega reaproveita o recibo por `File.id` do Inventory, inclusive quando a revisão
+  já foi avançada por análise anterior. Nenhum SQL é emitido pelo Orchestrator.
+- Local com snapshot mais antigo que a observação persistida, diretório, lacuna ou
+  ausência de metadados exige scan. Isso evita manter um estado local antigo após
+  ingerir eventos acumulados durante o scan inicial.
+- Rechecagem de escopo local exige Scanner completo. Observações ausentes sem item
+  associado não fabricam registros vazios; a rechecagem trata os itens conhecidos.
+- Avisos técnicos da raiz remota não inventam SyncItem e não provam cobertura. O
+  estado técnico permanece no Detector; itens existentes são reavaliados.
+- Evento remoto sem snapshot e sem item associado gera erro e continua pendente.
 
-A passagem privada executa em thread finita, com runtime Tokio próprio em que o
-Analyzer pode despachar seu trabalho bloqueante. Portanto `prepare` continua
-funcionando sem runtime Tokio no chamador, inclusive sob GLib. Não é consumidor
-permanente de eventos, worker de transferências ou fila de execução paralela.
+## Análise e ack
 
-Para cada página do Inventory (`list_items` com filtro de todos os status), a
-passagem recarrega cada item via `get_item`, constrói `AnalysisEvidence` e chama
-`Analyzer::analyze(AnalyzeRequest { sync_id, item, evidence, recorded_at })`.
-As revisões e snapshots são revalidados pelo Analyzer e na transação do Inventory.
-Uma observação concorrente pode gerar erro tipado de revisão; o rescan seguinte
-permite retomar com estado novo, sem sobrescrever a observação.
+Observações remotas comuns entregam ao Analyzer os IDs afetados, recarregando seus
+snapshots atuais. Rechecagem local/aviso global visita os itens atuais por paginação,
+inclusive status Synced ou Conflict. O Scanner já persiste sua cobertura e suas
+observações; o Orchestrator não reimplementa a coleta nem suas provas de ausência.
 
-## Montagem das evidências
+A montagem de `AnalysisEvidence` permanece igual à integração anterior: presença
+conhecida por item, baseline confirmado pelo Inventory, conteúdo desconhecido sem
+hash local e pais por referências/raízes explícitas. Esta entrega **não redefine
+como o Analyzer compara ou resolve os dados**.
 
-- `baseline_confirmed`: baseline existente no Inventory, cujo contrato permite
-  gravá-lo apenas por confirmação explícita;
-- `local_scope_complete`/`remote_scope_complete`: presença do item diferente de
-  `Unknown`, sem alegar cobertura global nem medição recente da árvore remota;
-- comparações de conteúdo: sempre `Unknown`, pois a composição ainda não dispõe
-  de prova de conteúdo local compatível com hash remoto;
-- `local_parent`: consulta por caminho relativo do pai no Inventory, aceitando
-  somente diretório presente;
-- `current_parents`: comparação de referências qualificadas quando o pai lógico
-  possui vínculo remoto ou quando o arquivo está na raiz local explicitamente
-  vinculada à raiz remota. Zero/múltiplos pais ou mapeamento ausente ficam desconhecidos. Divergência
-  textual contra a raiz configurada também fica desconhecida, pois a configuração
-  pode usar um alias do provedor que esta camada não resolve.
+`acknowledge(Processed)` ocorre após análise bem-sucedida e persistente. Um guard
+libera o lote inteiro em erro/cancelamento/Partial. Se a lease expirou ou o processo
+caiu, a fila permite reentrega após expiração. Não há ack parcial ou descarte para
+ocultar falhas. Os efeitos de ingestão já gravados são recuperáveis pelos recibos;
+o ack nunca autoriza executar uma operação do Inventory.
 
-Esta montagem fornece contexto e evidências, não reimplementa decisões de
-reconciliação ou conflito. Nome/caminho igual nunca associa um item local a remoto.
-Ausência de snapshot ou falha de fonte não é convertida em `AbsentConfirmed`.
+## Ciclo de vida
 
-## Parada, cancelamento e recuperação
+Um worker é mantido por sessão preparada. Novo prepare invalida o epoch, sinaliza
+e retira o worker anterior e aguarda sua saída fora de GTK antes de substituir os
+módulos. Parada/cancelamento acorda o worker mesmo ocioso; scan ativo recebe pedido
+de cancelamento e sua saída é aguardada. Uma análise já despachada pode terminar a
+transação, mas o epoch é revalidado antes de confirmar eventos ou publicar estado.
+O lock de controle impede processamento simultâneo com setup/parada.
 
-O epoch existente invalida preparação antiga. A passagem verifica esse token antes
-de inicializar, entre itens e depois de cada chamada. O lock de controle serializa
-setup/análise com a parada física. Uma análise já despachada pode gravar seu recibo;
-parada/cancelamento não promete rollback, mas impede iniciar o próximo item quando
-o token invalidado é observado. Nenhum desses caminhos executa operação física.
+Wakeups são incrementais e não se perdem entre consulta de fila e espera. Um
+heartbeat de um segundo cobre leases abandonados. Lotes usam o limite público de
+64 eventos e lease de 300 segundos; não há renovação/roubo de lease por SQL. Falha
+técnica pausa entrega e publica Failed; Partial pausa sem fingir cobertura completa.
+As fontes continuam capturando até uma parada física solicitada.
 
-Erro técnico termina em `Failed` com causa. Decisões de um prefixo já processado
-permanecem duráveis; a passagem inteira não é uma transação global. Um próximo
-`prepare` refaz observação e visita todos os itens, inclusive aqueles cujo status
-anterior era `Synced`, conflito ou pendência.
+## Fora do escopo
 
-## Funcionalidades não ativadas
-
-A fila Detector continua `Paused`, sem `take_events`, ack, release ou descarte
-pelo Orchestrator. Ingestão contínua `Detector → Inventory → Analyzer`, política
-de redelivery/ack e recuperação de gaps serão tratadas separadamente, sem alterar
-interfaces de outros módulos por conveniência. Não criar consumidor parcial que
-reconheça eventos antes de sua ingestão durável.
-
-Comandos, execução, progresso de transferências, opções de resolução, confirmação
-de baseline e recuperação de efeitos físicos ficam para o Operator e sua integração
-posterior. A única saída do Analyzer nesta etapa é o recibo persistente de decisões.
+Nenhum Operator, comando físico, resolução ou confirmação de baseline é chamado.
+Não se libera `SyncOperation::Blocked`, não se faz replay de operações Running e
+não se altera política de identidade/conflito/conteúdo do Analyzer. Cobertura
+remota global e medição de conteúdo permanecem responsabilidade de seus módulos.

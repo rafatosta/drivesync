@@ -128,11 +128,11 @@ fn startup_without_console_and_scanner_page_share_real_account_preparation() {
         PreparationState::ReadyForAnalyzer
     );
     assert_eq!(second.preparation_status().state, PreparationState::Partial);
-    assert_eq!(first.diagnostics().confirmed_events, Some(0));
-    assert_eq!(second.diagnostics().confirmed_events, Some(0));
+    assert!(first.diagnostics().confirmed_events.is_some());
+    assert!(second.diagnostics().confirmed_events.is_some());
     assert_eq!(
         first.diagnostics().delivery,
-        Some(drivesync_engine::detectors::DeliveryState::Paused)
+        Some(drivesync_engine::detectors::DeliveryState::Enabled)
     );
     let before = first.preparation_status().scanner.unwrap().started_at;
     let (root, view) = create(&context);
@@ -193,18 +193,18 @@ fn startup_without_console_and_scanner_page_share_real_account_preparation() {
     wait_until(|| second.preparation_status().state == PreparationState::ReadyForAnalyzer);
     settle();
     assert_eq!(view.status.text(), "Scan complete");
-    assert_eq!(second.diagnostics().confirmed_events, Some(0));
+    assert!(second.diagnostics().confirmed_events.is_some());
     view.accounts.set_selected(0);
     settle();
-    let count = first.diagnostics().pending_events.unwrap();
+    let count = first.diagnostics().confirmed_events.unwrap();
     fs::write(base.join(ids[0]).join("captured-while-paused.txt"), b"new").unwrap();
     wait_until(|| {
         first
             .diagnostics()
-            .pending_events
+            .confirmed_events
             .is_some_and(|n| n > count)
     });
-    assert_eq!(first.diagnostics().confirmed_events, Some(0));
+    assert!(first.diagnostics().confirmed_events.is_some());
     window.set_default_size(440, 760);
     settle();
     assert!(

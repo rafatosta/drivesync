@@ -14,14 +14,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-fn current(epoch: &AtomicU64, expected: u64) -> Result<(), PreparationFailure> {
+pub(super) fn current(epoch: &AtomicU64, expected: u64) -> Result<(), PreparationFailure> {
     if epoch.load(Ordering::Acquire) != expected {
         Err(PreparationFailure::Internal)
     } else {
         Ok(())
     }
 }
-fn now() -> Timestamp {
+pub(super) fn now() -> Timestamp {
     let unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(time) => time.as_millis().min(i64::MAX as u128) as i64,
         Err(error) => -(error.duration().as_millis().min(i64::MAX as u128) as i64),
@@ -100,7 +100,7 @@ fn evidence(
 }
 /// Visits every persisted item, regardless of status: observations can invalidate
 /// an old analysis without changing status. Keyset pages survive our revision bumps.
-async fn analyze_all(
+pub(super) async fn analyze_all(
     inventory: Arc<InventoryManager>,
     identity: SyncIdentity,
     epoch: Arc<AtomicU64>,
@@ -126,32 +126,61 @@ async fn analyze_all(
             .page;
         for item in page.entries {
             current(&epoch, expected)?;
-            // Reload the exact current snapshot rather than reusing a stale page row.
-            let item = inventory
-                .get_item(GetItemRequest {
-                    selector: ItemSelector::Id(item.id),
-                })
-                .map_err(PreparationFailure::Inventory)?
-                .item
-                .ok_or(PreparationFailure::Internal)?;
-            let evidence = evidence(&inventory, &item, &identity)?;
-            current(&epoch, expected)?;
-            analyzer
-                .analyze(AnalyzeRequest {
-                    sync_id: identity.sync_id.clone(),
-                    item,
-                    evidence,
-                    recorded_at: now(),
-                })
-                .await
-                .map_err(PreparationFailure::Analyzer)?;
-            current(&epoch, expected)?;
+            analyze_item(&analyzer, &inventory, &identity, &epoch, expected, item.id).await?;
         }
         let Some(after) = page.next_cursor else {
             return Ok(());
         };
         pagination.after = Some(after);
     }
+}
+pub(super) async fn analyze_selected(
+    inventory: Arc<InventoryManager>,
+    identity: SyncIdentity,
+    epoch: Arc<AtomicU64>,
+    expected: u64,
+    ids: std::collections::BTreeSet<SyncItemId>,
+) -> Result<(), PreparationFailure> {
+    let analyzer = Analyzer::new(AnalyzerConfig {
+        identity: identity.clone(),
+        dependencies: AnalyzerDependencies {
+            inventory: inventory.clone(),
+        },
+    })
+    .map_err(PreparationFailure::Analyzer)?;
+    for id in ids {
+        analyze_item(&analyzer, &inventory, &identity, &epoch, expected, id).await?;
+    }
+    Ok(())
+}
+async fn analyze_item(
+    analyzer: &Analyzer,
+    inventory: &InventoryManager,
+    identity: &SyncIdentity,
+    epoch: &AtomicU64,
+    expected: u64,
+    id: SyncItemId,
+) -> Result<(), PreparationFailure> {
+    current(epoch, expected)?;
+    let item = inventory
+        .get_item(GetItemRequest {
+            selector: ItemSelector::Id(id),
+        })
+        .map_err(PreparationFailure::Inventory)?
+        .item
+        .ok_or(PreparationFailure::Internal)?;
+    let evidence = evidence(inventory, &item, identity)?;
+    current(epoch, expected)?;
+    analyzer
+        .analyze(AnalyzeRequest {
+            sync_id: identity.sync_id.clone(),
+            item,
+            evidence,
+            recorded_at: now(),
+        })
+        .await
+        .map_err(PreparationFailure::Analyzer)?;
+    current(epoch, expected)
 }
 impl Orchestrator {
     /// Keeps runtime setup and all Inventory calls off callers such as GLib.

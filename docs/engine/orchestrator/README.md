@@ -1,64 +1,74 @@
 # Orchestrator
 
-Coordena a preparação de uma sincronização pelas fachadas públicas existentes de
-Detector, Scanner, Inventory e Analyzer. A etapa atual é uma **passagem finita de
-observação local e produção de decisões**, disparada por `prepare()` na abertura
-do aplicativo e nos rescans já existentes.
+A sessão da aplicação executa o fluxo real de observação e análise: inicia os dois
+detectores com entrega pausada, aguarda o Scanner, analisa o Inventory e libera
+um consumidor contínuo dos eventos locais e remotos. O console acompanha a mesma
+sessão; abrir uma página não inicia um pipeline paralelo.
 
 ```mermaid
 flowchart TD
-  D["Detector: Local + Remoto com entrega pausada"] --> S["Scanner: observações no Inventory"]
-  S --> C{"Varredura completa?"}
-  C -->|Não| P["Partial: análise suspensa"]
-  C -->|Sim| I["Inventory: itens atuais"]
-  I --> A["Analyzer: um item por chamada"]
-  A --> R["Inventory: decisões e pendências persistentes"]
+  A["Abertura / configuração da conta"] --> D["Detector Local + Remote: captura, entrega pausada"]
+  D --> S["Scanner → Inventory"]
+  S --> B{"Scan completo?"}
+  B -->|Não| P["Partial: entrega pausada, observações preservadas"]
+  B -->|Sim| I["Analyzer: itens atuais do Inventory"]
+  I --> R["Liberar entrega e consumir fila durável"]
+  R --> E["File → Inventory: ingestão idempotente"]
+  E --> C["Revalidar escopo local pelo Scanner quando necessário"]
+  C --> N["Analyzer: snapshots atuais"]
+  N --> K["Decisões persistidas → confirmar lote do Detector"]
+  K --> R
 ```
 
-O Analyzer apenas produz e persiste decisões. Não há chamada ao Operator,
-transferência, rename físico, exclusão, resolução de conflito ou confirmação do
-baseline. Intenções ficam `Blocked` no Inventory até a implementação dos comandos.
+**Este fluxo não executa sincronização física.** O Analyzer mantém suas regras
+atuais e registra decisões/pendências; o Operator não é chamado, operações ficam
+bloqueadas e o Orchestrator não confirma baseline. A interpretação definitiva dos
+dados pelo Analyzer continua sendo uma etapa separada.
 
-## Barreira e ciclo de vida
+## Funcionamento contínuo
 
-O Detector inicia as duas fontes com entrega `Paused` **antes** do Scanner. Só um
-relatório `ready_for_analysis()` verdadeiro libera a passagem pelo Analyzer. Uma
-varredura parcial conserva as observações/diagnósticos e não cria novas análises.
+O callback público de disponibilidade desperta um worker da sessão, sem guardar
+uma segunda fila de `File` em memória. O worker usa apenas `take_events`,
+`record_local`/`record_remote`, consultas do Inventory, Scanner e `Analyzer::analyze`.
+Uma mesma sessão não tem dois consumidores. A preparação inicial ainda funciona
+quando chamada pelo loop GLib sem runtime Tokio no chamador.
 
-Após varredura completa, o Orchestrator pagina todos os itens pelo Inventory,
-recarrega cada snapshot e chama `Analyzer::analyze`. Não filtra apenas status
-pendentes: uma observação pode invalidar avaliação antiga sem mudar o status.
-As decisões e os conflitos são registrados pelo próprio Analyzer/Inventory.
+Cada `File` associável conserva identidade e payload originais ao ser registrado
+no Inventory. Reentrega usa o recibo durável por `File.id`. Identidades remotas são
+qualificadas por conta; caminhos locais localizam somente o lado local, sem parear
+arquivos locais/remotos pelo nome. Metadados ausentes não provam exclusão.
 
-A análise usa um worker finito com runtime privado, mantendo compatibilidade com
-o chamador GLib sem runtime Tokio. Não cria serviço contínuo, fila privada ou
-scheduler de operações. Estado transitório `Analyzing` impede rescan concorrente
-e comunica a etapa real. Parada/cancelamento invalida o epoch; a passagem verifica
-o token entre itens. Uma gravação já iniciada pode terminar, mas nenhum efeito
-físico é executado. Não publicar sucesso final após a parada.
+Observações locais antigas, exclusões suspeitas, diretórios e avisos de captura
+reconstruída usam o Scanner existente para revalidar o estado atual. Um aviso de
+início já coberto por scan completo não exige repetir a varredura. Um caminho que
+sumiu antes de qualquer associação pode ser resolvido por rechecagem do escopo,
+sem inventar tombstone ou SyncItem vazio. Avisos técnicos da raiz remota permanecem
+no diagnóstico do Detector e não viram arquivos fictícios no Inventory.
 
-## Evidências conservadoras
+## Confirmação e falhas
 
-O Orchestrator não calcula diferenças nem chama os algoritmos privados do Analyzer.
-A presença conhecida de cada item vem do Inventory; `Unknown` continua desconhecido.
-Isso não comprova cobertura de toda a árvore remota ou atualidade de uma medição
-física. Baseline fornecido pelo Inventory é tratado como confirmado por seu contrato.
+O lote só recebe `Processed` depois da ingestão, rechecagem necessária e análise
+concluídas com persistência. Falha, cancelamento ou scan parcial libera o lote
+inteiro sem ack. Nenhum caminho usa `Discarded`. O prefixo já registrado permanece
+válido e pode ser reenviado sem duplicar seu recibo de observação.
 
-Não há hash local disponível para comparação confiável: conteúdo local/remoto e
-comparação cruzada ficam `Unknown`. Falta de evidência gera pendência, sem igualdade
-presumida por tamanho, mtime ou versão remota. Pais são mapeados por consulta indexada
-do Inventory e vínculo explícito entre raízes, nunca por nomes locais/remotos iguais.
+Falha técnica pausa a entrega e fica visível em `preparation_status`; as fontes
+continuam guardando eventos. Nova preparação retira o worker antigo, reconstrói o
+estado pelo Scanner e retoma os eventos pendentes. Um scan parcial mantém `Partial`
+e não confirma seu lote. Não existe transação distribuída entre os dois bancos:
+a segurança depende de reentrega e idempotência, não de ack antecipado.
 
-## Limite desta integração
+Os lotes são limitados a 64 eventos, com lease de cinco minutos pela API existente.
+Após queda abrupta, leases antigos podem exigir aguardar sua expiração; um heartbeat
+reverifica a fila. Expiração durante um processamento longo gera falha segura sem
+confirmar o lote. A parada normal libera o lease e aguarda o trabalho local ativo.
 
-As interfaces de Detector, Scanner e Inventory permanecem inalteradas. Os métodos
-públicos já existentes do Orchestrator mantêm suas assinaturas. A página Scanner
-apenas acompanha a nova etapa e informa quando as decisões foram registradas.
+## Limites preservados
 
-A fila do Detector continua pausada: esta entrega **não ativa ingestão contínua**,
-não reserva nem confirma lotes e não descarta eventos. Eventos capturados depois
-da passagem permanecem na fila até uma futura implementação de ingestão. Novo
-rescan observa o estado local e produz outra análise. Não alegar sincronização
-contínua, cobertura remota completa ou replay de operações reais.
+As interfaces e esquemas de Detector, Scanner e Inventory não foram alterados.
+Os algoritmos, tipos públicos e políticas do Analyzer também permanecem intactos.
+Não há cálculo de hash, pareamento por nome, transferência, resolução automática
+ou confirmação de sincronização. Eventos remotos sem snapshot e sem item conhecido
+são preservados como erro explícito, aguardando recuperação/evidência adequada.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações](AGENTS.md)

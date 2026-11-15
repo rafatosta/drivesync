@@ -1,39 +1,36 @@
 # Orchestrator — orientações para agentes
 
-## Escopo
+## Escopo autorizado
 
-Coordenar por interfaces públicas, sem reimplementar Scanner, Detector, Inventory,
-Analyzer ou seus algoritmos. Ler [README](README.md), [INTERFACES](INTERFACES.md),
-[TESTS](TESTS.md) e o [AGENTS raiz](../../../AGENTS.md).
+O usuário solicitou fluxo real e contínuo da aplicação: iniciar os detectores,
+aguardar Scanner, entregar itens ao Analyzer e continuar consumindo eventos.
+As decisões de como o Analyzer trata os dados serão discutidas posteriormente.
+Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
+[AGENTS raiz](../../../AGENTS.md).
 
-A integração autorizada é `Scanner → Inventory → Analyzer` durante `prepare`,
-com Detector capturando e entrega pausada. O Analyzer **apenas produz/persiste
-decisões**; execução real ficará para implementação posterior do Operator.
-
-- Preservar interfaces existentes de Detector, Scanner e Inventory, conforme
-  instrução expressa do usuário. Usar os métodos públicos atuais.
-- Iniciar as duas fontes com entrega Paused antes do Scanner. Scan Partial não
-  libera análises, não fabrica cobertura e não descarta eventos.
-- Após scan completo, consultar itens atuais do Inventory e chamar a fachada
-  Analyzer por item. Nunca chamar Reconciliação, Conflitos, Operator, Providers,
-  Storage, SQL ou primitivas de filesystem diretamente para tomar/executar decisões.
-- Não confirmar baseline nem duplicar a persistência já feita pelo Analyzer.
-- Não inferir igualdade de conteúdo por tamanho/data/versão, ausência remota por
-  falta de snapshot ou associação local/remota por nome. Manter evidência desconhecida.
-- Visitar todos os status: observações podem invalidar avaliações sem mudar status.
-- Manter trabalho bloqueante fora de GTK e permitir `prepare` sem runtime Tokio
-  no chamador. Worker da análise é finito, não scheduler global ou fila privada.
-- Preservar epoch e controle de parada/cancelamento. Uma chamada despachada pode
-  terminar a transação; não publicar sucesso final após parada.
-- Status reflete fases reais e snapshots locais; `Analyzing` não é transferência.
-- Não ativar consumidor contínuo/ack parcial da fila nesta fase. Uma futura
-  ingestão deve persistir todas as observações e necessidades de reanálise antes
-  do reconhecimento; idempotência e gaps precisam ser testados com APIs públicas.
-- Ações/opções de resolução, comandos completos e execução ficam fora do escopo.
+- Preservar interfaces de Detector, Scanner, Inventory e Analyzer. Usar somente
+  métodos públicos; não acessar SQL, storages internos, Providers ou algoritmos privados.
+- Iniciar captura com entrega pausada antes do scan. Somente scan completo e análise
+  inicial bem-sucedida liberam o consumidor da sessão.
+- A fila pertence ao Detector. O sinal de disponibilidade não é entrega nem ack;
+  não criar backlog paralelo de File ou um consumidor por página GTK.
+- Preservar File.id e payload ao registrar observações associáveis. Não inventar
+  ausência confirmada, identidade local/remota por nome ou SyncItem sem dados.
+- Usar Scanner para lacunas locais; não implementar outro coletor. Avisos técnicos
+  não equivalem a arquivos e permanecem observáveis no Detector.
+- Confirmar o lote somente após ingestão, rechecagem necessária e análise duráveis.
+  Falha/Partial/cancelamento preserva o lote por release/expiração, sem Discarded.
+- Testar reentrega entre os bancos, cuja gravação não é uma transação distribuída.
+- O Analyzer apenas produz decisões. Não alterar suas regras, liberar operações,
+  confirmar baseline, transferir conteúdo ou implementar Operator nesta demanda.
+- Manter GTK livre de I/O, preservar chamadores sem Tokio externo, epoch de sessão,
+  wakeup sem perda de sinal, worker único, desligamento e substituição seguros.
+- Expor estado real de ingestão, erros e contagem de eventos processados, sem
+  apresentar ack de observação como sincronização concluída.
 
 ## Validação
 
-Usar módulos reais, SQLite temporário, contas/arquivos sintéticos e falhas
-injetadas para testar durabilidade, retry, isolamento e ausência de efeitos reais.
-Executar Rust somente no Flatpak do projeto. Registrar testes realmente executados
-e limitações de GUI, contas reais, aplicativo instalado e ingestão futura.
+Usar módulos reais, SQLite e contas/arquivos sintéticos para fluxo pós-abertura,
+isolamento, falhas injetadas, reentrega, stop/restart e ausência de efeitos físicos.
+Testar também o hook real de restauração da aplicação e atualização da UI sem
+refresh manual, em perfil gráfico isolado. Rust somente no Flatpak do manifesto.

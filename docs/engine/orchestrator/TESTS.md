@@ -1,66 +1,76 @@
-# Orchestrator — testes
+# Orchestrator — testes do fluxo contínuo
 
-`engine/tests/orchestrator.rs` utiliza Detector/Scanner/Analyzer/Inventory reais,
-SQLite temporário, contas sintéticas sem OAuth e arquivos isolados. A coordenação
-não acessa armazenamento interno nem SQL; apenas os testes usam conexão SQLite
-adicional para injetar falha e verificar preservação.
+A suíte `engine/tests/orchestrator.rs` usa Detector/Scanner/Analyzer/Inventory reais,
+contas sintéticas e SQLite temporário. A aplicação não usa SQL no coordenador;
+conexões SQL adicionais existem somente nos testes de injeção de falha.
 
-## Preparação existente
+## Casos verificáveis
 
-Os sete cenários originais permanecem: início das duas fontes e conector;
-fila pausada/reabertura/isolamento sem ack; scan parcial e repetição; esquema
-incompatível preservado; parada sem publicação final de Ready; preparação
-concorrente rejeitada; recuperação após falha inicial da captura local.
+- Início de Local e Remote antes do scan, barreira de Scanner completo e entrega
+  Enabled somente depois da preparação/análise inicial.
+- Criação real de pasta e arquivo depois de `prepare`: ingestão e recibos atuais
+  aparecem sem rescan manual, sem cruzar contas e sem executar sincronização.
+- Rename e remoção locais: observações/rechecagens atualizam Inventory/Analyzer,
+  sem atribuir ao Orchestrator uma política física de rename/delete.
+- Stop/restart e criação durante parada: Scanner recupera o estado, seguido por
+  consumo contínuo; eventos em captura permanecem duráveis.
+- Falhas em `receipts` e `analyses` durante processamento ao vivo: pausa visível,
+  lease liberada, zero ack antecipado e recuperação sem duplicar File.id.
+- Scan parcial: entrega continua pausada e nenhuma análise é liberada indevidamente.
+- Esquema incompatível preservado, configuração por conta, alias de raiz remoto,
+  caller sem Tokio, preparação concorrente e parada sem Ready posterior.
+- Intenções de upload/rename ficam Blocked com zero tentativas; bytes e baseline
+  permanecem intactos. A interpretação atual do Analyzer não foi alterada.
 
-## Integração do Analyzer
+Os testes privados `orchestrator::ingestion::tests` exercitam observações remotas
+com metadados reais dos modelos: ingestão → Analyzer → recibo, reentrega idempotente,
+remoção indeterminada, aviso de raiz sem arquivo fictício e rejeição de escopo ou
+recurso desconhecido sem snapshot. Não requerem OAuth ou rede.
 
-| Cenário | Garantia |
-| --- | --- |
-| Scan completo com arquivo/diretório | Um recibo durável por item; ausência remota não presumida; fila pausada sem ack |
-| Rename remoto previamente observado e baseline confirmado | Decisão vinculada à operação Blocked; arquivo/nome local e baseline permanecem intactos |
-| Ausência remota confirmada no Inventory | Intenção de criação Upload persistida sem upload ou tentativa de execução |
-| Scan Partial | Nenhuma nova análise até recuperar cobertura completa |
-| Falha SQLite durante registro da análise | Estado Failed com causa Analyzer; relatório Scanner completo preservado; retry posterior válido |
-| Duas contas e reabertura | Recibos e itens isolados e histórico persistente preservado |
-| Chamador sem runtime Tokio | `prepare` completa scan e análise por workers privados sem exigir runtime externo |
+## Aplicação e interface
 
-O teste de rename deixa o item em `Synced` antes da nova observação remota e prova
-que a passagem visita todos os status, sem perder uma análise invalidada. Intenções
-são conferidas pelo tipo/direção, `OperationId`, estado `Blocked`, tentativas zero
-e ausência de `started_at`; comparar também bytes/nome locais e baseline.
+O teste gráfico `application_startup_delivers_live_files_to_the_visible_analyzer_without_manual_refresh`
+usa o mesmo hook de restauração da aplicação. Antes de existir página Developer,
+a conta é restaurada e o pipeline começa. Depois de abrir o Analyzer, o teste cria
+pasta/arquivo e aguarda a linha correspondente sem chamar prepare/scan/analyze ou
+Refresh. Também verifica ack, contador da sessão, preservação dos bytes e parada
+na remoção da conta. Perfil XDG/Wayland e conta são sintéticos.
 
-A página Scanner adapta o estado `Analyzing`, mantém o rescan desabilitado durante
-a passagem e informa decisões registradas. Seu teste gráfico existente acompanha
-a preparação da aplicação em perfis sintéticos; teste ignorado por padrão exige
-ambiente gráfico isolado para execução explícita. Compilar os alvos não comprova
-validação visual.
+Os testes gráficos anteriores de Detector/Scanner foram ajustados para entrega
+ativa e consumo, mantendo pausa somente nos casos Partial/parada. Capturar e
+confirmar eventos não comprova upload/download ou integração com Google real.
 
 ## Limites
 
-Não há ingestão contínua de lotes do Detector nesta entrega; ack/redelivery,
-coleta de hashes locais, cobertura remota global, transferências e resolução de
-conflitos permanecem fora desta suíte. Nenhum teste declara sincronização real
-com Google ou aceitação do aplicativo instalado. As interfaces proprietárias dos
-três módulos são verificadas também pela ausência de diff em seus arquivos.
+Leases antigas aguardam expiração pela API do Detector; não há renovação ou acesso
+SQL para roubar lease. Eventos remotos sem snapshot e sem associação conhecida
+continuam pendentes com erro explícito. A segurança entre bancos depende de
+idempotência/reentrega e do guard de release, não de transação distribuída.
+Não declarar validação de Operator, política final do Analyzer ou contas reais.
 
-## Validação executada
+## Validação executada nesta entrega
 
-No `org.gnome.Sdk//50`, com a extensão `rust-stable` definida pelo manifesto e
-cache `CARGO_HOME=/home/tosta/.cargo`:
+SDK `org.gnome.Sdk//50`, extensão rust-stable do manifesto e cache
+`CARGO_HOME=/home/tosta/.cargo`:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --offline --workspace --all-targets -- -D warnings
+cargo build --offline --bin drivesync
 cargo test --offline -p drivesync-engine --test orchestrator
+cargo test --offline -p drivesync-engine orchestrator::ingestion --lib
 cargo test --offline --workspace
 cargo doc --offline --workspace --no-deps --document-private-items
 cargo test --offline --workspace --doc
 ```
 
-Passaram os 15 testes públicos do Orchestrator (oito novos), incluindo proteção
-contra inferência de pai diferente ao comparar um alias de raiz remota. A execução
-integrada teve 784 testes aprovados, 10 ignorados e 9 doctests aprovados. Formatação,
-Clippy e rustdoc passaram sem avisos. Links relativos e `git diff --check` passaram.
-`git diff --exit-code HEAD -- engine/src/detectors engine/src/scanner engine/src/inventory`
-confirmou ausência de alterações nos três módulos nesta entrega. O teste gráfico
-foi adaptado à mensagem real, compilado, mas não executado explicitamente.
+Passaram 17 testes públicos do Orchestrator, três testes privados de ingestão,
+792 testes no workspace e 9 doctests; 12 testes dependentes de ambiente ficaram
+ignorados por padrão. Formatação, Clippy, build e rustdoc passaram sem avisos Rust.
+O teste gráfico de abertura real/atualização ao vivo foi executado explicitamente
+com `--ignored --exact --test-threads=1` em Wayland/Mutter headless, perfil XDG
+sintético e renderer Cairo, e passou. A captura resultante foi inspecionada.
+
+`git diff --exit-code HEAD -- engine/src/detectors engine/src/scanner engine/src/inventory engine/src/analyzer`
+confirmou que as interfaces/esquemas dos módulos e as regras do Analyzer não foram
+alterados. Não houve instalação de aplicativo nem teste com conta Google real.
