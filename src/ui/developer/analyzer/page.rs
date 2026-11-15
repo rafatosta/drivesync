@@ -110,30 +110,64 @@ fn actions(record: &RecordedAnalysis) -> String {
             .join(" · ")
     }
 }
-/// Summarize persisted decisions without treating missing evidence as a user conflict.
-fn operation_category(record: &RecordedAnalysis) -> &'static str {
+/// Classify the actual semantic operations; direction is presented separately.
+fn operation_category(record: &RecordedAnalysis) -> String {
     if record.stale {
-        return "Awaiting analysis";
+        return "Awaiting analysis".into();
     }
     match record.disposition {
-        AnalysisDisposition::PendingUserDecision => "Manual action",
-        AnalysisDisposition::NoChanges => "No action needed",
+        AnalysisDisposition::PendingUserDecision => "Manual action".into(),
+        AnalysisDisposition::NoChanges => "No action needed".into(),
         AnalysisDisposition::PendingEvidence | AnalysisDisposition::PendingOperations => {
-            let upload = record
-                .decisions
-                .iter()
-                .any(|d| d.intent.direction == OperationDirection::Upload);
-            let download = record
-                .decisions
-                .iter()
-                .any(|d| d.intent.direction == OperationDirection::Download);
-            match (upload, download) {
-                (true, true) => "Upload + Download",
-                (true, false) => "Upload",
-                (false, true) => "Download",
-                (false, false) => "Awaiting evidence",
+            let mut kinds = Vec::new();
+            for decision in &record.decisions {
+                let name = match decision.intent.kind {
+                    OperationKind::Create if record.item_kind == ItemKind::Directory => {
+                        "Create folder"
+                    }
+                    OperationKind::Create => "Create file",
+                    OperationKind::UpdateContent => "Update content",
+                    OperationKind::Rename => "Rename",
+                    OperationKind::Move => "Move",
+                    OperationKind::Trash => "Move to trash",
+                    OperationKind::Delete => "Delete",
+                    OperationKind::Restore => "Restore",
+                };
+                if !kinds.contains(&name) {
+                    kinds.push(name);
+                }
+            }
+            if kinds.is_empty() {
+                "Awaiting evidence".into()
+            } else {
+                kinds.join(" · ")
             }
         }
+    }
+}
+/// Keep propagation direction distinct from operation kind and user conflicts.
+fn operation_direction(record: &RecordedAnalysis) -> Option<&'static str> {
+    if record.stale
+        || matches!(
+            record.disposition,
+            AnalysisDisposition::PendingUserDecision | AnalysisDisposition::NoChanges
+        )
+    {
+        return None;
+    }
+    let upload = record
+        .decisions
+        .iter()
+        .any(|d| d.intent.direction == OperationDirection::Upload);
+    let download = record
+        .decisions
+        .iter()
+        .any(|d| d.intent.direction == OperationDirection::Download);
+    match (upload, download) {
+        (true, true) => Some("Upload + Download"),
+        (true, false) => Some("Upload"),
+        (false, true) => Some("Download"),
+        _ => None,
     }
 }
 fn status(record: &RecordedAnalysis) -> &'static str {
@@ -262,10 +296,16 @@ impl View {
             title.add_css_class("heading");
             title.set_tooltip_text(Some(&name));
             content.append(&title);
-            let category = label(operation_category(&record));
+            let category = label(&operation_category(&record));
             category.add_css_class("heading");
             category.set_widget_name("analyzer-operation-category");
             content.append(&category);
+            if let Some(direction) = operation_direction(&record) {
+                let direction = label(direction);
+                direction.add_css_class("caption");
+                direction.set_widget_name("analyzer-operation-direction");
+                content.append(&direction);
+            }
             let action = label(&actions(&record));
             content.append(&action);
             if !record.decisions.is_empty() && !record.requirements.is_empty() {
@@ -475,7 +515,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     let title = label("Analyzer decisions");
     title.add_css_class("title-1");
     body.append(&title);
-    let explanation=label("Inspect the file and the action identified by analysis. Upload, Download and Manual action summarize the decisions. Missing evidence is shown separately. Operations are not executed.");
+    let explanation=label("Inspect the file and the action identified by analysis. Actions identify creation, content updates, renames, moves or manual intervention. Upload/Download indicates direction. Operations are not executed.");
     explanation.add_css_class("dim-label");
     body.append(&explanation);
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 12);

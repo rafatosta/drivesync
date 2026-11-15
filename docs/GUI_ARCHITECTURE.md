@@ -156,13 +156,14 @@ F12 → Analyzer permite verificar o **arquivo e a ação necessária** registra
 pela preparação e pelo consumo contínuo. A página lê as avaliações persistentes do Inventory pelas APIs
 públicas, sem iniciar scan, análise, entrega de eventos ou operação física.
 
-Cada linha mostra nome/caminho local (ou nome/identidade remota) e a categoria
-`Upload`, `Download` ou `Manual action` (conflito), seguida da operação específica,
-status e requisitos. Decisões compatíveis em ambos os sentidos mostram
-`Upload + Download`. A categoria usa somente as decisões persistidas do Analyzer;
-requisitos de evidência não escondem uma direção já identificada. Sem direção,
-a tela mostra `Awaiting evidence`; sem mudanças, `No action needed`. Registros
-obsoletos mostram `Awaiting analysis`, sem apresentar uma direção antiga como atual.
+Cada linha mostra nome/caminho local (ou nome/identidade remota) e as ações
+`Create file`, `Create folder`, `Update content`, `Rename` ou `Move`, conforme as
+decisões persistidas. Múltiplas ações do mesmo item permanecem visíveis, em ordem.
+`Upload`/`Download` aparece separadamente como sentido de propagação; os detalhes
+indicam o destino de cada operação. Conflitos têm prioridade como `Manual action`.
+Sem direção/ação identificável, a tela mostra `Awaiting evidence`; sem mudanças,
+`No action needed`. Registros obsoletos mostram `Awaiting analysis`, sem apresentar
+uma decisão antiga como atual. A GUI não infere novas operações nem altera políticas.
 Decisões continuam pendentes, sem botões de execução ou resolução.
 
 A seleção de conta reutiliza as configurações concluídas e a identidade da sessão

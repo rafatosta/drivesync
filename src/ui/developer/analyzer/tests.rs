@@ -40,9 +40,11 @@ fn record() -> RecordedAnalysis {
 #[test]
 fn operation_categories_respect_conflicts_evidence_and_obsolete_decisions() {
     let mut r = record();
-    assert_eq!(operation_category(&r), "Download");
+    assert_eq!(operation_category(&r), "Create file");
+    assert_eq!(operation_direction(&r), Some("Download"));
     r.decisions[0].intent.direction = OperationDirection::Upload;
-    assert_eq!(operation_category(&r), "Upload");
+    assert_eq!(operation_category(&r), "Create file");
+    assert_eq!(operation_direction(&r), Some("Upload"));
     r.decisions.push(AnalysisDecision {
         intent: AnalysisIntent {
             direction: OperationDirection::Download,
@@ -50,11 +52,14 @@ fn operation_categories_respect_conflicts_evidence_and_obsolete_decisions() {
         },
         operation_id: OperationId(2),
     });
-    assert_eq!(operation_category(&r), "Upload + Download");
+    assert_eq!(operation_category(&r), "Create file · Rename");
+    assert_eq!(operation_direction(&r), Some("Upload + Download"));
     r.disposition = AnalysisDisposition::PendingUserDecision;
     assert_eq!(operation_category(&r), "Manual action");
+    assert_eq!(operation_direction(&r), None);
     r.disposition = AnalysisDisposition::PendingEvidence;
-    assert_eq!(operation_category(&r), "Upload + Download");
+    assert_eq!(operation_category(&r), "Create file · Rename");
+    assert_eq!(operation_direction(&r), Some("Upload + Download"));
     r.decisions.clear();
     assert_eq!(operation_category(&r), "Awaiting evidence");
     r.stale = true;
@@ -62,6 +67,35 @@ fn operation_categories_respect_conflicts_evidence_and_obsolete_decisions() {
     r.stale = false;
     r.disposition = AnalysisDisposition::NoChanges;
     assert_eq!(operation_category(&r), "No action needed");
+}
+#[test]
+fn operation_kinds_are_independent_of_direction_and_preserve_multiple_actions() {
+    let mut r = record();
+    for direction in [OperationDirection::Upload, OperationDirection::Download] {
+        for (kind, expected) in [
+            (OperationKind::Create, "Create file"),
+            (OperationKind::UpdateContent, "Update content"),
+            (OperationKind::Rename, "Rename"),
+            (OperationKind::Move, "Move"),
+        ] {
+            r.decisions[0].intent = AnalysisIntent {
+                direction: direction.clone(),
+                kind,
+            };
+            assert_eq!(operation_category(&r), expected);
+        }
+    }
+    r.item_kind = ItemKind::Directory;
+    r.decisions[0].intent.kind = OperationKind::Create;
+    assert_eq!(operation_category(&r), "Create folder");
+    r.decisions.push(AnalysisDecision {
+        intent: AnalysisIntent {
+            direction: OperationDirection::Download,
+            kind: OperationKind::Move,
+        },
+        operation_id: OperationId(2),
+    });
+    assert_eq!(operation_category(&r), "Create folder · Move");
 }
 #[test]
 fn file_actions_and_missing_evidence_are_presented_without_execution_claims() {
@@ -377,7 +411,7 @@ fn analyzer_page_shows_persisted_files_actions_and_account_isolation() {
     );
     assert!(view.range.text().contains("4 analyses"));
     let displayed = categories(view.list.upcast_ref());
-    assert!(displayed.contains(&"Download".to_string()));
+    assert!(displayed.contains(&"Create file".to_string()));
     assert!(displayed.contains(&"Manual action".to_string()));
     assert!(displayed.contains(&"Awaiting evidence".to_string()));
     let first_row = view.list.first_child().unwrap();
@@ -566,7 +600,10 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
     }
     assert!(text(view.list.upcast_ref()).contains("New folder/Created after opening.txt"));
     let rows = text(view.list.upcast_ref());
-    assert_eq!(categories(view.list.upcast_ref()), vec!["Upload", "Upload"]);
+    assert_eq!(
+        categories(view.list.upcast_ref()),
+        vec!["Create folder", "Create file"]
+    );
     assert!(!rows.contains("Awaiting evidence"));
     assert!(rows.contains("Needs evidence"));
     let owner = context
