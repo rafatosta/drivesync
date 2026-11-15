@@ -36,4 +36,4 @@ A execução de compilação e testes Rust deve ocorrer exclusivamente no ambien
 
 A implementação autorizada está em `engine/src/analyzer/conflicts/`, privada ao Analyzer, acompanhada por estes documentos. Preservar o Reconciliador e os contratos da fachada Analyzer; a integração será tratada posteriormente.
 
-**Estado:** identificação implementada. Ações, opções de resolução e integração com a fachada permanecem fora do escopo.
+**Estado:** identificação implementada. A fachada persiste a identificação no Inventory; ações e opções de resolução permanecem fora do escopo.

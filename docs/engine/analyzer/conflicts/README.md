@@ -25,7 +25,7 @@ usa os tipos reais do Inventário/Models e comparações explícitas fornecidas 
 coordenador, sem acessar banco, filesystem ou rede.
 
 **Estado:** identificação implementada em `engine/src/analyzer/conflicts/`.
-Resolução de conflitos, ações, metadados específicos e integração com a fachada
-Analyzer permanecem fora desta etapa.
+A fachada Analyzer persiste esta identificação no Inventory. Resolução de
+conflitos, ações e metadados específicos permanecem fora desta etapa.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)

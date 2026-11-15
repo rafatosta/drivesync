@@ -115,7 +115,7 @@ mas conteúdos atuais distintos constituem evidência contraditória.
 
 O módulo não conhece Inventário concreto, Operador, Providers, Orquestrador, GUI,
 filas ou pendências persistidas. O Analyzer poderá consumir a classificação para
-criar pendências posteriormente; essa integração não está implementada aqui.
+criar pendências posteriormente; a fachada atual já persiste a classificação no Inventory, sem criar opções ou ações.
 
 Metadados específicos (permissões, proprietário, capacidades e atributos do
 provedor) não têm política/baseline portátil suficiente e não são classificados

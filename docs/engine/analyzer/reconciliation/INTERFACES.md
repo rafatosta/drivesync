@@ -105,3 +105,8 @@ possuem baseline/política portátil suficiente e não são propagados. Recupera
 persistente e autorização de exclusão também não são implementadas. Somente o
 Analyzer poderá coordenar Conflitos, chamar o Operador e confirmar efeitos no
 Inventário; este núcleo não depende dessas implementações.
+
+
+A fachada Analyzer já mapeia estas decisões para fatos do Inventory e operações
+persistentes `Blocked`; a avaliação continua sem dependência do Inventory concreto.
+Essa integração não materializa comandos executáveis. Ver [Analyzer](../INTERFACES.md).

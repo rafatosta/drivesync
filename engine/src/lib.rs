@@ -24,4 +24,4 @@ mod filesystem;
 
 pub mod scanner;
 
-mod analyzer;
+pub mod analyzer;
