@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Demonstrar a conformidade do executor Google com todos os métodos do `OperationExecutor`, incluindo seleção de sessão, execução de comandos, respostas e preservação de dados.
+Demonstrar a conformidade do executor Google com todos os métodos do `Operator`, incluindo seleção de sessão, execução de comandos, respostas e preservação de dados.
 
 ## Ambiente
 
@@ -19,7 +19,7 @@ Utilizar um Provider Google simulado, com IDs remotos, versões, metadados, capa
 | OPR-G-05 | `update_content` | Atualiza versão do arquivo identificado mantendo seu ID; rejeita precondição divergente |
 | OPR-G-06 | `rename` | Altera o nome do mesmo ID remoto; não retransfere conteúdo |
 | OPR-G-07 | `move_item` | Atualiza o pai do mesmo ID remoto; valida destino e não retransfere conteúdo |
-| OPR-G-08 | `delete` | Aplica exclusão ao ID exato; diferencia falha de efeito desconhecido |
+| OPR-G-08 | `delete` | Recusa com `PermanentDeletionProhibited`, sem HTTP, autenticação ou efeito |
 | OPR-G-09 | `trash` | Marca recurso elegível na lixeira; devolve estado real ou erro tipado |
 | OPR-G-10 | `restore` | Restaura recurso elegível; devolve estado real ou erro tipado |
 

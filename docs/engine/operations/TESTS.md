@@ -1,5 +1,14 @@
 # Operador — TESTS
 
+## Cobertura compilada atual
+
+`engine/tests/operator_contract.rs` verifica consumo público, object safety,
+ports Send/Sync e assinaturas das dez operações com futures Send, sem criar
+executor, mock ou executar chamadas. O doctest demonstra consumo por
+`Arc<dyn Operator>`. Os cenários funcionais abaixo são requisitos futuros;
+nenhuma execução real do Operator é validada nesta etapa.
+
+
 ## Objetivo
 
 Verificar que cada método público executa o comando solicitado no recurso e destino corretos, respeita suas precondições e informa o resultado observável com segurança.
@@ -27,7 +36,7 @@ Os testes seguem [INTERFACES.md](INTERFACES.md) e [README.md](README.md). Cada m
 | OPR-06 | `update_content` | Atualiza conteúdo preservando identidade do destino | Precondição divergente, falha de escrita/rede, destino inexistente |
 | OPR-07 | `rename` | Altera somente o nome do recurso | Nome inválido, conflito, revisão divergente, identidade preservada |
 | OPR-08 | `move_item` | Altera localização no mesmo ambiente | Ciclo de diretórios, destino incompatível, conflito, identidade preservada |
-| OPR-09 | `delete` | Remove exclusivamente recurso identificado | Identidade errada, permissão negada, precondição divergente |
+| OPR-09 | `delete` | Recusa com `PermanentDeletionProhibited`, sem efeitos | Nenhum I/O, autenticação ou fallback; exclusão permanente proibida |
 | OPR-10 | `trash` | Envia recurso à lixeira e retorna resultado disponível | Lixeira indisponível, acesso negado, conflito de versão |
 | OPR-11 | `restore` | Restaura o recurso com identidade e localização observadas | Recurso não restaurável, destino ocupado, falta de permissão |
 
@@ -131,11 +140,12 @@ Testes documentais devem usar execução controlada e fakes de IO para observar 
 5. Testes comprovam comportamento por evidências independentes da própria implementação.
 6. Resultados executados são relatados como PASS/FAIL/BLOCKED, identificando cenários não validados.
 
-**Estado:** plano de testes documental; nenhum teste foi executado pela criação deste arquivo.
+**Estado:** o contrato compilado possui testes de consumo público sem execução.
+Os cenários funcionais deste plano permanecem pendentes até existir executor.
 
 ## Conformidade dos executores especializados
 
-Executar esta suíte com cada implementação real do contrato `OperationExecutor`, usando um provedor simulado e filesystem temporário. Validar a saída e os efeitos reais capturados pelo ambiente de teste.
+Executar esta suíte com cada implementação real do contrato `Operator`, usando um provedor simulado e filesystem temporário. Validar a saída e os efeitos reais capturados pelo ambiente de teste.
 
 | Caso | Validação |
 | --- | --- |
@@ -146,7 +156,7 @@ Executar esta suíte com cada implementação real do contrato `OperationExecuto
 | OPR-E-05 | `download` publica arquivo local íntegro |
 | OPR-E-06 | `update_content` preserva a identidade do recurso existente |
 | OPR-E-07 | `rename` e `move_item` alteram metadados preservando a identidade |
-| OPR-E-08 | `delete`, `trash` e `restore` aplicam somente o efeito requisitado |
+| OPR-E-08 | `delete` recusa sem efeito; `trash` e `restore` aplicam somente o efeito requisitado |
 | OPR-E-09 | Capacidade ausente retorna erro tipado, sem falso sucesso |
 | OPR-E-10 | Conflitos, permissão negada, falha parcial e resultado indeterminado são tratados |
 | OPR-E-11 | Operações sobre arquivos locais respeitam as garantias da biblioteca privada |

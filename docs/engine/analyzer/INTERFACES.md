@@ -28,7 +28,8 @@ pub struct AnalyzerDependencies {
 `SyncIdentity`/`InventoryManager` pertencem ao Inventory. `new` verifica
 sincronização, conta e raiz remota pela API pública do Inventory já aberto. Não
 abre/cria banco nem executa operações físicas. É bloqueante e deve ser chamado
-fora do loop GTK. Não exige dependência fictícia de `Operator`, ainda ausente.
+fora do loop GTK. Não exige dependência de execução do `Operator`: seu contrato já está compilado,
+mas ainda não há executor nem integração de execução nesta fachada.
 
 ## Entrada e processamento individual
 

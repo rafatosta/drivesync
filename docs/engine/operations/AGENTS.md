@@ -18,7 +18,7 @@ Implementar a API pública de execução segura de comandos de manipulação e t
 - [TESTS.md](TESTS.md): verificações funcionais e critérios de aceite.
 - [AGENTS.md da raiz](../../../AGENTS.md): padrões gerais do repositório.
 
-A documentação descreve uma arquitetura proposta e não comprova a existência das interfaces em código Rust.
+O contrato público está compilado em `engine/src/operations/`: traits `Operator`, `OperatorFactory`, ports e modelos. Não há implementação de operações, factories ou seleção. A etapa atual foi explicitamente limitada pelo usuário a contratos sem implementação; não criar stubs, executores ou corpos de operações.
 
 ## Diretrizes de implementação
 
@@ -54,4 +54,4 @@ Revisar os tipos de referência e conteúdo, ownership e assincronicidade, a pas
 
 ## Contrato das implementações especializadas
 
-Cada implementação em `operations/<provedor>/` deve satisfazer os dez métodos do contrato `OperationExecutor` descritos em [INTERFACES.md](INTERFACES.md#7-contrato-de-implementação-especializada) e a suíte compartilhada de [TESTS.md](TESTS.md#conformidade-dos-executores-especializados). Manter `google/` como documentação especializada e `example/` como referência ilustrativa. Reutilizar as funções privadas do Operador quando necessário e acessar serviços externos somente por `providers/`.
+Cada implementação em `operations/<provedor>/` deve satisfazer os dez métodos do contrato `Operator` descritos em [INTERFACES.md](INTERFACES.md#7-contrato-de-implementação-especializada) e a suíte compartilhada de [TESTS.md](TESTS.md#conformidade-dos-executores-especializados). Manter `google/` como documentação especializada e `example/` como referência ilustrativa. Reutilizar as funções privadas do Operador quando necessário e acessar serviços externos somente por `providers/`.

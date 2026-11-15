@@ -8,9 +8,13 @@ Implementar e testar a execução das operações sobre recursos do Google Drive
 
 [README](README.md) · [INTERFACES](INTERFACES.md) · [TESTS](TESTS.md) · [Operador](../AGENTS.md)
 
-## Implementação
+## Implementação futura
 
-- Implementar os dez métodos da interface `OperationExecutor`, utilizando os tipos comuns definidos pelo Operador.
+A etapa atual entrega somente o contrato compilado comum. Não criar implementação
+Google, stubs ou dispatcher sem nova solicitação. Exclusão permanente é proibida;
+`delete` deve recusar sem efeitos quando o executor for implementado.
+
+- Implementar os dez métodos da interface `Operator`, utilizando os tipos comuns definidos pelo Operador.
 - Selecionar e validar a sessão Google associada à requisição e preservar identidades remotas.
 - Utilizar exclusivamente a [API do Provider Google](../../providers/google/INTERFACES.md) nas operações remotas.
 - Usar as funções privadas do Operador para operações de filesystem aplicáveis.

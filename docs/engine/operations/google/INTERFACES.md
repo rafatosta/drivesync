@@ -1,8 +1,8 @@
 # Operador Google — INTERFACES
 
-## Interface implementada
+## Interface prevista, sem executor implementado
 
-O executor Google implementa as dez funções da [interface `OperationExecutor`](../INTERFACES.md#7-contrato-de-implementação-especializada), utilizando os mesmos tipos de requisição, resultados e erros do Operador. A API de execução permanece única e as funções específicas do Google ficam encapsuladas nesta implementação.
+O futuro executor Google implementará as dez funções da [interface `Operator`](../INTERFACES.md#7-contrato-de-implementação-especializada), utilizando os mesmos tipos de requisição, resultados e erros do Operador. A API de execução permanece única e as funções específicas do Google ficam encapsuladas nesta implementação.
 
 ## Execução dos comandos
 
@@ -15,7 +15,7 @@ O executor Google implementa as dez funções da [interface `OperationExecutor`]
 | `update_content` | ID remoto existente, fonte de bytes, precondições | Mesmo ID remoto com metadados atualizados |
 | `rename` | ID remoto, nome novo, precondições | Mesmo ID remoto com novo nome |
 | `move_item` | ID remoto, pasta pai de destino, precondições | Mesmo ID remoto com localização atualizada |
-| `delete` | ID remoto, precondições | Resultado verificável da exclusão |
+| `delete` | ID remoto, precondições | `PermanentDeletionProhibited`, sem I/O ou efeito |
 | `trash` | ID remoto, precondições | Estado remoto de lixeira quando disponível |
 | `restore` | ID remoto e precondições | Identidade e estado após restauração |
 

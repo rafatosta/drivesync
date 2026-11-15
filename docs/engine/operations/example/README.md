@@ -6,7 +6,7 @@ Ilustrar como uma nova implementação especializada seria organizada dentro de 
 
 ## Contrato
 
-Uma nova implementação deve satisfazer todos os métodos do [`OperationExecutor`](../INTERFACES.md#7-contrato-de-implementação-especializada):
+Uma nova implementação deve satisfazer todos os métodos do [`Operator`](../INTERFACES.md#7-contrato-de-implementação-especializada):
 
 `create_file`, `create_directory`, `upload`, `download`, `update_content`, `rename`, `move_item`, `delete`, `trash` e `restore`.
 

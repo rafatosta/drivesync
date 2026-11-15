@@ -10,7 +10,7 @@ A implementação Google recebe uma requisição vinculada a uma sessão e a um 
 
 ## Contrato implementado
 
-A implementação deve disponibilizar integralmente o [contrato `OperationExecutor`](../INTERFACES.md#7-contrato-de-implementação-especializada):
+A implementação deve disponibilizar integralmente o [contrato `Operator`](../INTERFACES.md#7-contrato-de-implementação-especializada):
 
 | Operação | Execução esperada |
 | --- | --- |
@@ -21,7 +21,7 @@ A implementação deve disponibilizar integralmente o [contrato `OperationExecut
 | `update_content` | Atualizar conteúdo preservando o ID remoto |
 | `rename` | Alterar nome do recurso pelo ID remoto |
 | `move_item` | Alterar a pasta pai do recurso |
-| `delete` | Excluir definitivamente o recurso identificado |
+| `delete` | Recusar exclusão permanente sem efeitos |
 | `trash` | Enviar recurso à lixeira |
 | `restore` | Restaurar recurso elegível |
 

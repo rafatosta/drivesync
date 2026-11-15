@@ -9,7 +9,7 @@
 
 ## Objetivo
 
-Disponibilizar uma API pública para executar comandos de manipulação e transferência de arquivos e diretórios em ambientes locais e remotos.
+Definir a API pública para futuramente executar comandos de manipulação e transferência de arquivos e diretórios em ambientes locais e remotos.
 
 ## Funcionamento
 
@@ -32,7 +32,7 @@ As manipulações de nome e localização preservam a identidade do recurso semp
 | `update_content` | Substituir conteúdo de arquivo existente |
 | `rename` | Renomear arquivo ou diretório |
 | `move_item` | Mover arquivo ou diretório no mesmo ambiente |
-| `delete` | Excluir recurso definitivamente |
+| `delete` | Proibido: futuro executor deve recusar sem efeitos |
 | `trash` | Enviar recurso à lixeira quando suportado |
 | `restore` | Restaurar recurso quando suportado |
 
@@ -57,4 +57,4 @@ Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementaç�
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** contrato arquitetural proposto; não implica implementação Rust existente.
+**Estado:** contrato Rust compilado em `engine/src/operations/`, somente modelos e traits. Nenhum executor, fábrica concreta, seleção ou operação implementado. O Analyzer ainda não chama execução.

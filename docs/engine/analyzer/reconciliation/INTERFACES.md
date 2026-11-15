@@ -97,7 +97,8 @@ Falta de evidência produz requisitos; contradição estrutural produz erro.
 
 O contrato anterior previa `operations: Vec<PlannedOperation>` com
 `OperationCommand`, IDs de etapas, dependências e prontidão. Esses comandos **não
-foram implementados**: o Operador e suas requisições não existem no código atual.
+foram implementados**. O módulo `operations` já declara as requisições e o
+contrato do Operator, mas não contém executor nem comandos materializados pelo Analyzer.
 O núcleo implementado devolve decisões, sem inventar cópias dos tipos de execução.
 A construção dos comandos, resolução de destinos/pais, capacidades, precondições
 atômicas e dependências entre etapas permanece uma fase posterior no Analyzer.
