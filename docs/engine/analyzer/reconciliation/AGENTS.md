@@ -37,6 +37,6 @@ Usar os testes `RC-01` a `RC-20` e `RC-S01` a `RC-S12` como critérios TDD, incl
 
 Testes Rust e documentação rustdoc devem ser executados dentro do Flatpak configurado pelo repositório. Declarar apenas verificações realmente realizadas e registrar bloqueios decorrentes de contratos ainda conceituais.
 
-Limitar alterações desta etapa aos quatro arquivos da raiz de `docs/engine/analyzer/reconciliation/`. Reavaliar integração com o Analisador após concluir também os contratos internos; não modificar outros módulos sem solicitação explícita.
+A implementação autorizada do núcleo está em `engine/src/analyzer/reconciliation/`, privado ao Analyzer. Preservar os contratos dos outros módulos. A saída atual contém decisões semânticas; não declarar comandos tipados implementados nem criar tipos concorrentes do Operador para preencher a lacuna. Reavaliar a integração quando os contratos de execução estiverem disponíveis.
 
-**Estado:** contrato documental inicial, sem implementação Rust comprovada.
+**Estado:** núcleo puro implementado; comandos executáveis e dependências permanecem pendentes conforme INTERFACES.md.
