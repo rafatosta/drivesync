@@ -45,6 +45,8 @@ flowchart TD
 
 `AnalysisOutcome` oferece `Completed`, `Pending` e `Failed`. `Pending` devolve um objeto autocontido para registrar a pendência e apresentar alternativas, sem suspender outros itens. `Failed` preserva os efeitos já ocorridos. A mesma função `analyze` retoma um item após decisão externa, validando novamente o estado.
 
+A configuração recebe handles compartilhados de Inventário e Operador. `OperationCommand` pertence ao Analyzer; o Operador conserva a propriedade das requisições e resultados. Nenhum algoritmo privado é exposto pela configuração ou pelos retornos.
+
 As assinaturas, campos, tipos, regras de falha e integração estão em [INTERFACES.md](INTERFACES.md).
 
 ## Acompanhamento durante a análise
@@ -81,4 +83,4 @@ A implementação não deve criar cópias concorrentes dos modelos proprietário
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** contrato arquitetural proposto para a primeira versão documental. Não representa implementação Rust comprovada. Os contratos próprios dos algoritmos internos serão documentados posteriormente.
+**Estado:** contrato arquitetural proposto para a primeira versão documental. Não representa implementação Rust comprovada. Os algoritmos internos possuem contratos documentais separados; permanecem privados à fachada.

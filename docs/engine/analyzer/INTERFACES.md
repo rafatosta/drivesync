@@ -5,11 +5,11 @@
 O Analisador oferece **construção, processamento individual e consulta de execução em andamento por item**. A API pública recebe um `SyncItem` e uma resolução opcional; não recebe lotes nem delega ao chamador a execução das operações.
 
 Os tipos importados abaixo **não devem ser redefinidos**:
-- De [Inventário](../inventory/INTERFACES.md): `SyncItem`, `SyncItemId`, `SyncBaseline`, `PresenceState`, `SyncStatus`, `OperationId`, `SyncOperation`, `InventoryManager`, estruturas de operações, confirmação e atividades.
+- De [Inventário](../inventory/INTERFACES.md): `SyncItem`, `SyncItemId`, `SyncBaseline`, `PresenceState`, `SyncStatus`, `OperationKind`, `OperationId`, `SyncOperation`, `InventoryManager`, estruturas de operações, confirmação e atividades.
 - De [Operador](../operations/INTERFACES.md): `Operator`, `OperatorError`, `CreateFileRequest`, `CreateDirectoryRequest`, `UploadRequest`, `DownloadRequest`, `UpdateContentRequest`, `RenameRequest`, `MoveRequest`, `DeleteRequest`, `TrashRequest`, `RestoreRequest`, `ItemResult`, `TransferResult`, `DeleteResult`, `VerificationStatus`.
-- De Models, indiretamente via Inventário: `LocalFile`, `RemoteFile`, identidades e metadados observados.
+- De [Models](../models/INTERFACES.md): `LocalFile`, `RemoteFile`, `Timestamp`, identidades e metadados observados. Importar esses tipos do proprietário, mesmo quando aparecem em campos do Inventário.
 
-O código Rust abaixo representa a **assinatura-alvo para TDD**, não uma implementação existente. `AnalyzerDependencies` e demais tipos próprios serão definidos no módulo, preservando os contratos já documentados.
+O código Rust abaixo representa a **assinatura-alvo para TDD**, não uma implementação existente. Os tipos próprios pertencem à fachada `analyzer`; as dependências externas conservam sua propriedade e seus contratos. Não há módulo Rust `analyzer` ou `operations` exportado no checkout atual: as assinaturas dependentes do Operador continuam sendo contrato-alvo.
 
 ```rust
 pub type AnalyzerResult<T> = Result<T, AnalyzerError>;
@@ -68,7 +68,7 @@ O Analisador é **assíncrono por chamada**, não um serviço contínuo: `analyz
 
 `status()` deve ler uma fotografia interna coerente, rápida e sem I/O remoto, SQLite ou bloqueio até o final da tarefa. `phase` identifica a etapa corrente, não a conclusão do algoritmo; `current_operation` usa a categoria `OperationKind` já pertencente ao Inventário, sem inventar enum paralelo. A classificação deverá distinguir comandos como criação de diretório quando necessário na implementação; se não houver correspondência fiel, **não fabricar uma categoria**, deixando `current_operation=None` e usando a etapa `Executing`. `planned_operations=None` quando a lista ainda não foi construída. `transfer` só é preenchido quando existe progresso real reportado pelo Operador; não calcular porcentagens ou ETA sem total comprovado.
 
-**Concorrência:** permitir execuções de itens independentes, mas recusar imediatamente outra `analyze()` para o **mesmo `SyncItemId`** na mesma instância com `AnalyzerErrorKind::AlreadyRunning`, sem iniciar operação duplicada. Além dessa proteção local, toda execução mantém revisão e precondições do Inventário para prevenir concorrência entre instâncias. Não introduzir `pause`, `resume`, `stop` ou fila própria no Analyzer. Ao devolver `Pending`, não reter tarefa ativa aguardando usuário; uma nova invocação com `Resolution` revalida as evidências.
+**Concorrência:** permitir execuções de itens independentes, mas recusar imediatamente outra `analyze()` para o **mesmo `SyncItemId`** na mesma instância com `AnalyzerErrorKind::AlreadyRunning`, sem iniciar operação duplicada. Além dessa proteção local, toda execução mantém revisão e precondições do Inventário para detectar alterações concorrentes entre instâncias; isso não garante exclusividade global de efeitos externos. Não introduzir `pause`, `resume`, `stop` ou fila própria no Analyzer. Ao devolver `Pending`, não reter tarefa ativa aguardando usuário; uma nova invocação com `Resolution` revalida as evidências.
 
 ## 3. Configuração e entrada
 
@@ -77,11 +77,9 @@ pub struct AnalyzerConfig {
     pub dependencies: AnalyzerDependencies,
 }
 
-// Contêiner conceitual: dependências por interfaces injetadas.
-// A representação concreta (Arc, lifetimes, traits) é definida em Rust.
 pub struct AnalyzerDependencies {
-    pub inventory: InventoryAccess,
-    pub operator: OperatorAccess,
+    pub inventory: std::sync::Arc<InventoryManager>,
+    pub operator: std::sync::Arc<Operator>,
 }
 
 pub struct AnalyzeRequest {
@@ -116,7 +114,7 @@ pub enum StateToken {
 }
 ```
 
-**`AnalyzerConfig.dependencies`:** recebe os acessos já configurados ao inventário e ao operador, vinculados ao contexto da sincronização. Não entrega conexões SQLite, tokens de autenticação ou clientes HTTP ao Analisador. As interfaces injetadas permitem substituir as dependências por fakes em testes.
+**`AnalyzerConfig.dependencies`:** recebe os acessos já configurados ao inventário e ao operador, vinculados ao contexto da sincronização. Não entrega conexões SQLite, tokens de autenticação ou clientes HTTP ao Analisador. A fachada recebe handles compartilhados dos módulos proprietários, sem exigir traits públicos adicionais nem expor genéricos de armazenamento ou execução. Adaptadores e pontos de substituição por fakes ficam privados ao Analyzer; não são campos de configuração pública. `Arc` define ownership compartilhado, não comprova `Send`/`Sync` nem torna I/O bloqueante assíncrono. Chamadas bloqueantes do Inventário devem sair do executor assíncrono; a estratégia concreta será validada na implementação.
 
 **`AnalyzeRequest.item` (obrigatório):** fotografia de um único `SyncItem`, com ID lógico, revisão otimista, snapshots `local` e `remote`, presenças e baseline opcionais. A ausência de `local` ou `remote` não prova exclusão: consultar também `local_presence` e `remote_presence`. Um baseline `None` significa que não há estado confirmado anterior; não fabricar uma versão de referência.
 
@@ -124,7 +122,7 @@ pub enum StateToken {
 
 **`StateFingerprint`:** identifica o conjunto de evidências verificado na análise anterior. `StateToken::Verified` é um identificador determinístico de evidência do estado (não um hash inventado); `Unknown` representa insuficiência de prova. A estratégia de composição e persistência é decisão de implementação; o token nunca substitui o controle de revisão do Inventário.
 
-## 3. Retorno principal
+## 4. Retorno principal
 
 ```rust
 pub enum AnalysisOutcome {
@@ -164,7 +162,7 @@ pub enum OperationExecutionResult {
 
 **Semântica da verificação:** `OperatorResult::Ok` com `VerificationStatus::Unverified` não autoriza tratar a sincronização como confirmada. O Analisador deve obter evidência suficiente antes de avançar o baseline.
 
-## 4. Comandos de operação
+## 5. Comandos de operação
 
 ```rust
 pub enum OperationCommand {
@@ -181,11 +179,11 @@ pub enum OperationCommand {
 }
 ```
 
-O `OperationCommand` **pertence conceitualmente à integração com o Operador** e reutiliza seus dez tipos de requisição. A definição Rust pode ser atribuída ao próprio módulo Operador na integração, para evitar ciclo de dependências; o Analisador não criará uma segunda cópia dos comandos. Cada variante exige exatamente a requisição tipada correspondente.
+O `OperationCommand` **pertence ao Analyzer** e reutiliza os dez tipos de requisição do Operador. É um registro tipado de proposta/execução, sem método público de despacho. O Analyzer converte cada variante na chamada correspondente da fachada `Operator` (`Move` chama `move_item`). O Operador não importa esse enum nem conhece `SyncItem`, pendências ou algoritmos internos; não há dependência reversa. Reconciliador e Conflitos reutilizam o mesmo tipo do módulo pai, sem cópias. Cada variante exige exatamente a requisição tipada correspondente. O chamador recebe comandos apenas como evidência do resultado e não assume sua execução.
 
 A ordem de operações e suas dependências são definidas no plano produzido pelo algoritmo de reconciliação. O Analisador deve respeitá-las. Uma solicitação sem precondições suficientes para uma ação potencialmente destrutiva retorna `Pending` ou falha segura; não completar precondições por adivinhação.
 
-## 5. Pendência e resolução
+## 6. Pendência e resolução
 
 ```rust
 pub struct PendingAction {
@@ -237,7 +235,7 @@ pub enum ResolutionMeaning {
 
 **Reanálise:** `Resolution` não é comando de execução. O Analisador revalida `PendingId`, opção, identidade, revisão e evidências correntes, só então produz os comandos aplicáveis. Se as condições mudaram, retorna uma nova pendência ou falha tipada; não aplica uma decisão antiga ao estado novo. O armazenamento durável da pendência e de suas opções precisa ser acordado na integração com o Inventário; o contrato atual de `InventoryManager` não declara uma tabela/API específica para `PendingAction`.
 
-## 6. Falha de análise e erros
+## 7. Falha de análise e erros
 
 ```rust
 pub struct AnalysisFailure {
@@ -295,7 +293,7 @@ pub enum AnalyzerErrorKind {
 
 A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do usuário ou caminhos desnecessários. Tipos técnicos subjacentes permanecem disponíveis ao diagnóstico em um mecanismo seguro, sem vazar detalhes sensíveis na API de apresentação.
 
-## 7. Métodos públicos — contrato funcional
+## 8. Métodos públicos — contrato funcional
 
 ### `Analyzer::status`
 
@@ -305,7 +303,7 @@ A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do
 
 **Resultado:** `ActiveAnalysis` quando o item está ativo nesta instância; `None` em caso contrário. A resposta é uma fotografia temporal, não um evento durável. Para o desfecho e histórico, utilizar `AnalysisOutcome` e o Inventário, respectivamente.
 
-**Limites:** rejeitar requisições inválidas ou de escopo incorreto. A implementação deve assegurar progresso observável durante I/O longo, inclusive quando o Operador fornece `ProgressReporter`. Para comandos que ainda não oferecem progresso, informar etapa e contador de comandos, sem simular bytes ou porcentagem.
+**Limites:** rejeitar IDs sintaticamente inválidos; um ID válido sem análise local retorna `active=None`, sem consulta de escopo por I/O. A implementação deve assegurar progresso observável durante I/O longo, inclusive quando o Operador fornece `ProgressReporter`. Para comandos que ainda não oferecem progresso, informar etapa e contador de comandos, sem simular bytes ou porcentagem.
 
 
 ### `Analyzer::new`
@@ -341,15 +339,15 @@ A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do
 
 **Concorrência:** análises simultâneas do mesmo `SyncItem` precisam ser serializadas por item ou rejeitadas por revisão/precondições, sem bloquear itens independentes. A forma concreta de sincronização é detalhe interno.
 
-## 8. Coordenação interna e integração com Inventário
+## 9. Coordenação interna e integração com Inventário
 
-O Reconciliador e o algoritmo de Conflitos são **independentes** e retornam dados. Seus contratos serão detalhados em suas próprias documentações posteriormente; o Analisador não fixa nesta etapa a assinatura interna deles.
+O Reconciliador e o algoritmo de Conflitos são **independentes** e retornam dados. Seus contratos estão documentados separadamente em [Reconciliação](reconciliation/INTERFACES.md) e [Conflitos](conflicts/INTERFACES.md); esta etapa não altera suas assinaturas ou algoritmos.
 
 A saída do Reconciliador é uma **lista de transformações propostas** com ordem/dependências. O algoritmo de Conflitos avalia uma divergência contextualizada entre versões, devolvendo ausência de conflito, solução possível ou necessidade de decisão. O Analisador coordena ambos e transforma decisões aprovadas em comandos do Operador.
 
 O Inventário é proprietário da fila, `SyncItem.revision`, status, baseline e atividades. O Analisador utiliza os métodos do `InventoryManager` e não executa SQL diretamente. Para comandos que serão persistidos, a ordem segura é registrar/reservar a intenção, executar, verificar efeitos e confirmar os estados em transação, respeitando os contratos vigentes. A API de `NewSyncOperation` atualmente expressa direção e tipo, mas **não carrega todos os parâmetros de `OperationCommand`**; persistência/reconstrução segura do plano concreto permanece questão explícita de integração, não uma capacidade já existente.
 
-## 9. Garantias e decisões de implementação
+## 10. Garantias e decisões de implementação
 
 1. A interface pública contém somente `new`, `analyze` e `status`; a análise continua por item, sem lote ou fila própria.
 2. A resolução não congela a chamada nem dá autorização irrestrita para sobrescrita.
@@ -359,3 +357,49 @@ O Inventário é proprietário da fila, `SyncItem.revision`, status, baseline e 
 6. `PendingAction` não é uma mera string de erro; contém identidade, evidências e alternativas aplicáveis.
 7. A modelagem precisa resolver a persistência de pendências e comandos completos antes de prometer retomada após reinício.
 8. Tipos e contratos acima são previstos para a primeira implementação; modelos externos seguem suas fontes proprietárias, sem duplicações.
+
+
+## 11. Fronteiras de visibilidade e dependências
+
+A superfície pública proposta fica no módulo `analyzer` da crate do engine: `Analyzer`, configuração,
+requisições, resultados, erros e todos os tipos próprios transitivamente presentes
+nos campos públicos definidos neste documento. `Analyzer` mantém seus campos privados;
+o chamador só usa `new`, `analyze` e `status`. Tipos externos são referenciados pelos
+módulos proprietários, sem reexportações genéricas de Inventário ou Operador.
+
+Organização-alvo: `analyzer/mod.rs` declara os módulos privados e reexporta
+explicitamente os tipos da fachada. `reconciliation` e `conflicts` são módulos
+privados, sem reexportação de funções, planos, avaliações ou erros internos. A
+visibilidade efetiva de seus contratos deve ficar restrita ao Analyzer, ainda
+que os esboços documentais internos usem `pub(crate)`; não tornar os módulos
+acessíveis ao Orquestrador para acomodar testes.
+
+| Consumidor | Acesso permitido | Limite |
+| --- | --- | --- |
+| Orquestrador | `Analyzer`, entradas, desfechos e status | Não chama algoritmos nem despacha comandos retornados |
+| Analyzer | Fachadas públicas de Inventário e Operador; algoritmos privados | Sem SQL, filesystem direto, HTTP, Providers ou GUI |
+| Reconciliação e Conflitos | Valores de domínio e contratos do pai | Sem I/O, handles de dependências ou chamada entre os dois algoritmos |
+| Inventário | Seus modelos, persistência e confirmação | Não depende de Analyzer ou Operador |
+| Operador | Suas requisições, execução e resultados | Não depende de Analyzer ou Inventário |
+
+Não expor traits dos algoritmos privados em `AnalyzerConfig`, `AnalyzeRequest` ou
+retornos. A injeção para testes é detalhe interno. Traduzir falhas dos algoritmos
+para `AnalyzerError` ou `AnalysisFailure`, preservando o desfecho parcial sem
+expor seus tipos privados.
+
+**Validação de escopo:** um ID isolado não comprova pertença à sincronização.
+Antes de planejar efeitos, buscar o item pela API pública do Inventário configurado,
+validar revisão e identidades qualificadas e usar o estado corrente validado.
+Não aceitar snapshots adulterados com o mesmo ID/revisão. Item não encontrado ou
+incompatível não autoriza execução. `status` consulta somente o mapa local de
+análises: não consulta o Inventário para provar a pertença de um ID inativo;
+para um ID sintaticamente válido sem execução local retorna `active=None`.
+
+**Lacunas de integração:** persistência de `PendingAction`, reconstrução de
+comandos completos e garantias de exclusão entre instâncias continuam sem
+contrato suficiente. Revisões e `claim_operation` não equivalem a uma transação
+atômica entre banco e filesystem/serviço remoto. Não prometer ausência global
+de efeitos duplicados apenas pela proteção local `AlreadyRunning`. Ausência de
+precondição atômica suficiente exige bloqueio seguro/reobservação. Cancelar ou
+abandonar o future após iniciar uma operação também exige reobservação de efeitos
+incertos; a limpeza do status transitório deve ocorrer inclusive nesse caminho.

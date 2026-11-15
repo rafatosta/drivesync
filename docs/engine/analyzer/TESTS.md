@@ -81,8 +81,8 @@ Os testes só comprovam acompanhamento quando conseguem observar uma execução 
 
 ## Isolamento e conformidade
 
-1. Testar ambos os métodos públicos com cenários de sucesso, falha e ausência de efeitos proibidos.
-2. Usar o Analisador concreto com fakes do Reconciliador, Conflitos e Operador para verificar coordenação; algoritmos internos terão suas suítes independentes quando documentados.
+1. Testar os três métodos públicos com cenários de sucesso, falha e ausência de efeitos proibidos.
+2. Usar o Analisador concreto com fakes do Reconciliador, Conflitos e Operador para verificar coordenação; algoritmos internos possuem especificações de suítes independentes. Os fakes são injetados por pontos privados, sem ampliar a configuração pública.
 3. Validar confirmação com Inventário SQLite real temporário e `InventoryManager`, incluindo rollback e reabertura quando aplicável.
 4. Validar separadamente que as funções do Operador foram chamadas **somente** pelo Analisador e com requisições tipadas completas.
 5. Não reutilizar as funções de decisão sob teste para gerar expectativas; inspecionar estados e rastros independentes.
@@ -90,3 +90,21 @@ Os testes só comprovam acompanhamento quando conseguem observar uma execução 
 7. Executar compilação/testes Rust exclusivamente no Flatpak configurado pelo repositório e informar exatamente o que foi efetivamente executado.
 
 **Estado:** plano de testes documental; nenhuma execução de teste Rust foi realizada por esta alteração.
+
+
+## Contratos de isolamento — critérios para implementação
+
+| Caso | Verificação |
+| --- | --- |
+| AN-I01 | Consumidor externo importa os tipos da fachada e chama somente `new`, `analyze` e `status`; nenhum campo público usa tipo inacessível |
+| AN-I02 | Teste de compilação negativa rejeita acesso externo a `reconciliation`, `conflicts` e seus pontos de injeção |
+| AN-I03 | Inventário e Operador não importam Analyzer; o enum `OperationCommand` tem uma única definição no Analyzer |
+| AN-I04 | Mesmo ID/revisão com snapshots adulterados é rejeitado ou substituído pelo estado corrente validado antes de qualquer efeito |
+| AN-I05 | `status` de ID válido inativo retorna `None` sem leitura do Inventário; ID inválido retorna erro |
+| AN-I06 | Abandono do future limpa atividade local e não transforma efeito incerto em sucesso nem autoriza replay |
+
+Nesta entrega documental, revisar propriedade de tipos, links relativos, superfície
+pública e ausência de alterações em módulos vizinhos. Os casos acima exigem código
+futuro; não representam testes Rust executados. AN-S06 depende também de garantias
+atômicas de execução externas: revisão do Inventário isolada não comprova ausência
+de efeitos duplicados entre processos.
