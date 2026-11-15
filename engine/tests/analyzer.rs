@@ -742,3 +742,90 @@ async fn initial_remote_observation_persists_download_before_local_binding_witho
         record
     );
 }
+
+#[test]
+fn homonyms_remain_distinct_until_an_explicit_user_association_is_committed() {
+    let tree = Tree::new();
+    let inv = InventoryManager::open(tree.request()).unwrap().inventory;
+    let remote = inv
+        .record_remote(remote_request(
+            remote_file("r", "remote", m::MetadataValue::Known("file".into())),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let local = inv
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::NewItem,
+            expected_revision: None,
+            observation: LocalObservation {
+                observed: local_file("l", b"file"),
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalEvent,
+                    observed_at: m::Timestamp { unix_millis: 10 },
+                    scan_or_generation: None,
+                    complete_scope: false,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    assert_ne!(local.id, remote.id);
+    let choice = AssociateItemsRequest {
+        expected_local: local.clone(),
+        expected_remote: remote.clone(),
+        decision_id: "user-choice-1".into(),
+        decided_at: m::Timestamp { unix_millis: 30 },
+    };
+    let mut stale = choice.clone();
+    stale.expected_remote.revision += 1;
+    assert_eq!(
+        inv.associate_items(stale).unwrap_err().kind,
+        InventoryError::VersionMismatch
+    );
+    let out = inv.associate_items(choice.clone()).unwrap();
+    assert_eq!(out.item.id, local.id);
+    assert_eq!(out.item.remote_ref, remote.remote_ref);
+    assert!(out.item.baseline.is_none());
+    assert_eq!(
+        inv.associate_items(choice).unwrap().association,
+        out.association
+    );
+    assert_eq!(
+        inv.get_item(GetItemRequest {
+            selector: ItemSelector::Id(remote.id)
+        })
+        .unwrap()
+        .item
+        .unwrap()
+        .id,
+        local.id
+    );
+    assert_eq!(
+        inv.list_items(ListItemsRequest {
+            filter: Default::default(),
+            pagination: Default::default()
+        })
+        .unwrap()
+        .page
+        .entries
+        .len(),
+        1
+    );
+    assert!(inv
+        .get_association(GetAssociationRequest {
+            item_id: local.id.clone()
+        })
+        .unwrap()
+        .association
+        .is_some());
+    drop(inv);
+    let inv = InventoryManager::open(tree.request()).unwrap().inventory;
+    assert!(inv
+        .get_association(GetAssociationRequest { item_id: local.id })
+        .unwrap()
+        .association
+        .is_some());
+}

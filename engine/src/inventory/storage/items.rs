@@ -13,7 +13,7 @@ pub(super) fn resolve(
 ) -> InventoryResult<Option<SyncItemId>> {
     let value: Option<String> = match selector {
         ItemSelector::Id(id) => db
-            .query_row("SELECT id FROM items WHERE id=?1", [&id.0], |r| r.get(0))
+            .query_row("SELECT COALESCE((SELECT canonical FROM item_associations WHERE retired=?1),id) FROM items WHERE id=?1", [&id.0], |r| r.get(0))
             .optional(),
         ItemSelector::RemoteRef(reference) => {
             if reference.account_id != sync_info(db)?.account_id {
@@ -334,7 +334,7 @@ impl InventoryManager {
         self.run(false,|db|{
         let filter=&request.filter;
         let (after,through,signature)=pagination::bounds(db,"items",&( "items",filter),&request.pagination)?;
-        let mut query="SELECT i.seq,i.id FROM items i WHERE i.seq>? AND i.seq<=?".to_owned();let mut values=vec![Value::Integer(after),Value::Integer(through)];
+        let mut query="SELECT i.seq,i.id FROM items i WHERE i.seq>? AND i.seq<=? AND NOT EXISTS(SELECT 1 FROM item_associations a WHERE a.retired=i.id)".to_owned();let mut values=vec![Value::Integer(after),Value::Integer(through)];
         if !filter.statuses.is_empty(){query.push_str(" AND i.status IN (");query.push_str(&vec!["?";filter.statuses.len()].join(","));query.push(')');for status in &filter.statuses{values.push(Value::Text(enum_text(status)?));}}
         for (column,presence)in[("local_presence",&filter.local_presence),("remote_presence",&filter.remote_presence)]{if let Some(presence)=presence{query.push_str(&format!(" AND i.{column}=?"));values.push(Value::Text(enum_text(presence)?));}}
         if let Some(parent)=&filter.remote_parent{if parent.account_id!=sync_info(db)?.account_id{return Err(failure(InventoryError::InvalidIdentity));}query.push_str(" AND EXISTS(SELECT 1 FROM remote_parents p WHERE p.item=i.id AND p.account=? AND p.parent=?)");values.extend([Value::Text(parent.account_id.0.clone()),Value::Text(parent.file_id.0.clone())]);}

@@ -15,6 +15,7 @@ fn digest(value: &impl serde::Serialize) -> InventoryResult<Vec<u8>> {
 }
 fn assessment(record: &RecordedAnalysis) -> NewAnalysisAssessment {
     NewAnalysisAssessment {
+        plan: record.plan.clone(),
         disposition: record.disposition,
         findings: record.findings.clone(),
         requirements: record.requirements.clone(),
@@ -25,7 +26,7 @@ fn load(db: &Connection, id: i64) -> InventoryResult<RecordedAnalysis> {
     let mut record = db.query_row(
         "SELECT item,item_kind,base_revision,result_revision,input_digest,recorded,disposition,baseline_confirmed,local_complete,remote_complete,local_content,remote_content,current_content,local_parent,current_parents FROM analyses WHERE seq=?1", [id], |r| {
             Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u64>(2)?,r.get::<_,u64>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,i64>(5)?,r.get::<_,String>(6)?,r.get::<_,bool>(7)?,r.get::<_,bool>(8)?,r.get::<_,bool>(9)?,r.get::<_,String>(10)?,r.get::<_,String>(11)?,r.get::<_,String>(12)?,r.get::<_,Option<String>>(13)?,r.get::<_,String>(14)?))
-        }).map_err(sql).and_then(|r| Ok(RecordedAnalysis {
+        }).map_err(sql).and_then(|r| Ok(RecordedAnalysis { plan: None,
             id: AnalysisId(id), item_id: SyncItemId(r.0), item_kind: enum_value(r.1)?, analyzed_item_revision:r.2, resulting_item_revision:r.3,input_fingerprint:r.4,recorded_at:Timestamp{unix_millis:r.5},disposition:enum_value(r.6)?,
             evidence:AnalysisEvidence{baseline_confirmed:r.7,local_scope_complete:r.8,remote_scope_complete:r.9,local_content:enum_value(r.10)?,remote_content:enum_value(r.11)?,current_content:enum_value(r.12)?,local_parent:r.13.map(SyncItemId),current_parents:enum_value(r.14)?},
             findings:vec![],requirements:vec![],decisions:vec![],stale:false,
@@ -79,7 +80,9 @@ fn load(db: &Connection, id: i64) -> InventoryResult<RecordedAnalysis> {
             operation_id: OperationId(r.2),
         });
     }
-    record.stale = items::load(db, &record.item_id)?.revision != record.resulting_item_revision;
+    record.plan = super::planning::load_plan(db, id)?;
+    record.stale = !super::planning::plan_current(db, record.plan.as_ref())?
+        || items::load(db, &record.item_id)?.revision != record.resulting_item_revision;
     Ok(record)
 }
 fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
@@ -178,6 +181,7 @@ impl InventoryManager {
             if item!=request.expected_item {return Err(failure(InventoryError::VersionMismatch));}
             let previous:Option<i64>=db.query_row("SELECT seq FROM analyses WHERE item=?1 AND result_revision=?2 ORDER BY seq DESC LIMIT 1",params![item.id.0,item.revision],|r|r.get(0)).optional().map_err(sql)?;
             if let Some(id)=previous {let old=load(db,id)?;if old.evidence==request.evidence && assessment(&old)==request.assessment {return Ok(RecordAnalysisResult{analysis:old});}}
+            super::planning::validate_plan(db,request.assessment.plan.as_ref())?;
             let running:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE item=?1 AND state='Running')",[&item.id.0],|r|r.get(0)).map_err(sql)?;
             if running {return Err(failure(InventoryError::InvalidTransition));}
             items::bump(db,&item.id)?;
@@ -196,6 +200,7 @@ impl InventoryManager {
                 let operation=db.last_insert_rowid();
                 db.execute("INSERT INTO analysis_decisions VALUES(?1,?2,?3,?4,?5,?6)",params![id,item.id.0,position as i64,enum_text(&intent.direction)?,enum_text(&intent.kind)?,operation]).map_err(sql)?;
             }
+            super::planning::save_plan(db,id,request.assessment.plan.as_ref())?;
             Ok(RecordAnalysisResult{analysis:load(db,id)?})
         })
     }
@@ -238,7 +243,7 @@ impl InventoryManager {
             let mut ids=stmt.query_map(rusqlite::params_from_iter(values),|r|r.get::<_,i64>(0)).map_err(sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
             let more=ids.len()>request.pagination.limit as usize;if more{ids.pop();}
             let next_cursor=if more{Some(pagination::next(db,signature,*ids.last().unwrap(),through)?)}else{None};
-            let entries=ids.into_iter().map(|id|load(db,id)).collect::<InventoryResult<_>>()?;
+            let entries=ids.into_iter().map(|id|load(db,id)).collect::<InventoryResult<Vec<_>>>()?.into_iter().filter(|a| !filter.current_only || !a.stale).collect();
             Ok(ListAnalysesResult{page:Page{entries,next_cursor}})
         })
     }

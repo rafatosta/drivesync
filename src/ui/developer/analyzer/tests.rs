@@ -7,6 +7,7 @@ use std::{
 };
 fn record() -> RecordedAnalysis {
     RecordedAnalysis {
+        plan: None,
         id: AnalysisId(1),
         item_id: SyncItemId("item".into()),
         item_kind: ItemKind::File,
@@ -241,6 +242,7 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
             _ => None,
         };
         let assessment = NewAnalysisAssessment {
+            plan: None,
             disposition: report.disposition,
             findings: vec![AnalysisFinding {
                 origin: AnalysisOrigin::Conflicts,

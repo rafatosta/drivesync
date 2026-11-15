@@ -37,6 +37,7 @@ mod items;
 mod metadata;
 mod operations;
 mod pagination;
+mod planning;
 impl InventoryManager {
     /// Opens the private database, rejecting incompatible identity/schema without replacement.
     /// Creation is explicit and preserves user entries in an existing configured root.
@@ -232,7 +233,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 4 {
+    if version != 5 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

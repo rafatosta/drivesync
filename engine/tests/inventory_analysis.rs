@@ -138,6 +138,7 @@ fn request(item: SyncItem) -> RecordAnalysisRequest {
             current_parents: EvidenceRelation::Unknown,
         },
         assessment: NewAnalysisAssessment {
+            plan: None,
             disposition: AnalysisDisposition::PendingEvidence,
             findings: vec![AnalysisFinding {
                 origin: AnalysisOrigin::Conflicts,
@@ -493,4 +494,126 @@ fn invalid_assessments_and_duplicate_requirements_never_persist() {
     );
     assert!(analyses(&inventory, false).is_empty());
     assert!(operations(&inventory, &item.id).is_empty());
+}
+
+#[test]
+fn typed_plan_is_atomic_durable_and_invalidated_by_related_observations() {
+    let (tree, inv, item) = setup();
+    let related = inv
+        .record_remote(remote_request(
+            remote_file(
+                "parent-event",
+                "parent",
+                m::MetadataValue::Known("parent".into()),
+            ),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let mut req = request(item.clone());
+    req.assessment.plan = Some(AnalysisPlan {
+        namespaces: vec![],
+        guards: vec![
+            ItemGuard::for_item(&item).unwrap(),
+            ItemGuard::for_item(&related).unwrap(),
+        ],
+        steps: vec![PlannedStep {
+            method: PlannedMethod::Download,
+            command: None,
+            blocked_by: vec![PlanBlock::Parent],
+            depends_on: vec![related.id.clone()],
+        }],
+        manual: vec![],
+    });
+    let sql = rusqlite::Connection::open(tree.0.join(".drivesync/inventory.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_plan BEFORE INSERT ON analysis_plan_steps BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(inv.record_analysis(req.clone()).is_err());
+    assert_eq!(current(&inv, &item.id).revision, item.revision);
+    assert!(analyses(&inv, false).is_empty());
+    sql.execute_batch("DROP TRIGGER fail_plan;").unwrap();
+    let record = inv.record_analysis(req.clone()).unwrap().analysis;
+    assert_eq!(record.plan, req.assessment.plan);
+    assert_eq!(inv.record_analysis(req).unwrap().analysis, record);
+    let mut change = remote_request(
+        remote_file(
+            "parent-change",
+            "parent",
+            m::MetadataValue::Known("different".into()),
+        ),
+        ObservationTarget::Existing(related.id),
+        Some(related.revision),
+    );
+    change.observation.proof.observed_at = m::Timestamp { unix_millis: 11 };
+    inv.record_remote(change).unwrap();
+    assert!(
+        inv.get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::Id(record.id.clone())
+        })
+        .unwrap()
+        .analysis
+        .unwrap()
+        .stale
+    );
+    assert!(analyses(&inv, true).is_empty());
+    drop(inv);
+    drop(sql);
+    let inv = InventoryManager::open(tree.request()).unwrap().inventory;
+    assert_eq!(
+        inv.get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::Id(record.id)
+        })
+        .unwrap()
+        .analysis
+        .unwrap()
+        .plan,
+        record.plan
+    );
+}
+
+#[test]
+fn a_new_destination_child_invalidates_a_plan_without_changing_its_source() {
+    use drivesync_engine::operations::DirectoryRef;
+    let (_tree, inv, item) = setup();
+    let directory = DirectoryRef::Remote {
+        provider_id: m::ProviderId("google".into()),
+        reference: m::RemoteFileRef {
+            account_id: AccountId("account".into()),
+            file_id: m::RemoteFileId("root".into()),
+        },
+    };
+    let mut req = request(item.clone());
+    req.assessment.plan = Some(AnalysisPlan {
+        namespaces: vec![
+            inv.get_namespace(GetNamespaceRequest { directory })
+                .unwrap()
+                .guard,
+        ],
+        guards: vec![ItemGuard::for_item(&item).unwrap()],
+        steps: vec![],
+        manual: vec![],
+    });
+    let receipt = inv.record_analysis(req).unwrap().analysis;
+    inv.record_remote(remote_request(
+        remote_file(
+            "new-child",
+            "other",
+            m::MetadataValue::Known("other".into()),
+        ),
+        ObservationTarget::NewItem,
+        None,
+    ))
+    .unwrap();
+    let after = inv
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::Id(receipt.id),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert!(after.stale);
+    assert_eq!(
+        current(&inv, &item.id).revision,
+        receipt.resulting_item_revision
+    );
 }

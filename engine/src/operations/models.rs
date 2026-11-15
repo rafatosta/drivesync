@@ -7,6 +7,7 @@ use crate::{
     },
     Engine,
 };
+use serde::{Deserialize, Serialize};
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 /// A typed failure, never a synthetic successful execution result.
@@ -32,7 +33,7 @@ pub struct OperatorScope {
 
 /// Identifies a resource, not an association inferred from a name.
 /// Local identity is optional evidence; missing identity never proves equivalence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceRef {
     Local {
         relative_path: LocalRelativePath,
@@ -45,8 +46,10 @@ pub enum ResourceRef {
 }
 
 /// An explicitly identified parent, always interpreted inside OperatorScope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DirectoryRef {
+    /// The configured local root; an empty LocalRelativePath is never fabricated.
+    LocalRoot,
     Local {
         relative_path: LocalRelativePath,
         local_id: Option<LocalFileId>,
@@ -59,7 +62,7 @@ pub enum DirectoryRef {
 
 /// Preserve arbitrary Unix filename bytes; remote names are Unicode strings.
 /// The executor must reject the wrong name representation for its destination.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemName {
     Local(OsString),
     Remote(String),
@@ -67,7 +70,7 @@ pub enum ItemName {
 
 /// Content is an explicit resource or bounded in-memory input. File inputs allow
 /// future streaming without exposing provider byte streams through this contract.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentSource {
     LocalFile {
         relative_path: LocalRelativePath,
@@ -82,7 +85,7 @@ pub enum ContentSource {
 }
 
 /// Expected resource versions; absence never grants implicit overwrite authority.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preconditions {
     pub expected_version: Option<String>,
     pub expected_revision: Option<String>,
@@ -257,4 +260,53 @@ pub struct OperatorFailure {
     pub kind: OperatorError,
     pub effect: ExecutionEffect,
     pub resource: Option<ResourceRef>,
+}
+
+/// Durable, unexecuted commands. Runtime options are supplied only upon future
+/// execution. Permanent deletion deliberately has no representable variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperationCommand {
+    CreateFile {
+        parent: DirectoryRef,
+        name: ItemName,
+        content: Option<ContentSource>,
+    },
+    CreateDirectory {
+        parent: DirectoryRef,
+        name: ItemName,
+    },
+    Upload {
+        source: ResourceRef,
+        destination: DirectoryRef,
+        name: ItemName,
+    },
+    Download {
+        source: ResourceRef,
+        destination: DirectoryRef,
+        name: ItemName,
+    },
+    UpdateContent {
+        target: ResourceRef,
+        source: ContentSource,
+        preconditions: Preconditions,
+    },
+    Rename {
+        target: ResourceRef,
+        new_name: ItemName,
+        preconditions: Preconditions,
+    },
+    Move {
+        target: ResourceRef,
+        destination: DirectoryRef,
+        preconditions: Preconditions,
+    },
+    Trash {
+        target: ResourceRef,
+        preconditions: Preconditions,
+    },
+    Restore {
+        target: ResourceRef,
+        destination: Option<DirectoryRef>,
+        preconditions: Preconditions,
+    },
 }

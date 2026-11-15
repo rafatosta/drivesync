@@ -97,6 +97,7 @@ pub struct AnalysisIntent {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewAnalysisAssessment {
+    pub plan: Option<super::AnalysisPlan>,
     pub disposition: AnalysisDisposition,
     pub findings: Vec<AnalysisFinding>,
     pub requirements: Vec<AnalysisRequirement>,
@@ -121,6 +122,7 @@ pub struct AnalysisDecision {
 /// Blocked operations are linked explicitly; no executable plan is persisted yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedAnalysis {
+    pub plan: Option<super::AnalysisPlan>,
     pub id: AnalysisId,
     pub item_id: SyncItemId,
     pub item_kind: ItemKind,

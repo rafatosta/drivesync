@@ -63,7 +63,7 @@ Não existe exclusividade transacional entre SQLite e efeitos físicos/remotos.
 
 ## Esquema e limites
 
-Esquema SQLite **4**, com tabelas relacionais `analyses`, `analysis_findings`,
+Esquema SQLite **5**, com tabelas relacionais `analyses`, `analysis_findings`,
 `analysis_requirements` e `analysis_decisions`, ligadas a `items`/`operations` por
 chaves estrangeiras, incluindo associação item/operação. Não há blob genérico de
 avaliação ou cópia serializada integral de `SyncItem`; o snapshot integral só é
@@ -77,3 +77,5 @@ Nenhum banco real do usuário é aberto pela suíte de validação.
 Opções de resolução, ações do usuário, comandos completos e recuperação de efeitos
 incertos continuam fora deste contrato. Um registro persistente de conflito não é
 um `PendingAction` público com opções de resolução implementadas.
+
+Vínculos explícitos e planos: [PLANNING.md](PLANNING.md).

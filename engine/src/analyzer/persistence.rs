@@ -240,6 +240,7 @@ pub(super) fn assessment(
         AnalysisDisposition::NoChanges
     };
     Ok(NewAnalysisAssessment {
+        plan: None,
         disposition,
         findings,
         requirements,
