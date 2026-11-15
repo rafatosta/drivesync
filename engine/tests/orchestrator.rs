@@ -158,6 +158,10 @@ async fn live_capture_delivers_new_files_and_folders_to_analyzer_without_rescan_
         .entries;
     assert_eq!(current.len(), 2);
     assert!(current.iter().all(|r| !r.stale));
+    assert!(current
+        .iter()
+        .all(|r| r.decisions.len() == 1
+            && r.decisions[0].intent.direction == OperationDirection::Upload));
     assert!(first.diagnostics().confirmed_events.unwrap() > before);
     assert!(first.preparation_status().events_processed > 0);
     assert_eq!(first.diagnostics().delivery, Some(DeliveryState::Enabled));
@@ -429,7 +433,14 @@ async fn complete_scan_records_decisions_before_live_delivery_without_executing_
             .contains(&AnalysisRequirement::ObserveRemote));
         assert_eq!(record.evidence.local_content, EvidenceRelation::Unknown);
         assert_eq!(record.evidence.current_content, EvidenceRelation::Unknown);
-        assert!(record.decisions.is_empty());
+        assert_eq!(record.decisions.len(), 1);
+        assert_eq!(
+            record.decisions[0].intent,
+            AnalysisIntent {
+                direction: OperationDirection::Upload,
+                kind: OperationKind::Create,
+            }
+        );
     }
     assert!(entries.iter().all(|item| item.baseline.is_none()));
     assert_eq!(
@@ -901,5 +912,115 @@ async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without
         .local
         .as_ref()
         .is_some_and(|f| f.relative_path.as_bytes() == b"created-while-stopped")));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+
+#[tokio::test]
+async fn live_missing_local_path_and_remote_change_identify_manual_intervention() {
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/file"), b"preserve both versions").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    settle_flow(&session);
+    let inv = inventory(&tree, "first");
+    let item = items(&inv).remove(0);
+    let item = inv
+        .record_remote(remote_observation(&inv, &item, "remote-initial", "file"))
+        .unwrap()
+        .item;
+    let side = BaselineSide {
+        presence: PresenceState::Present,
+        name: None,
+        local_name_bytes: None,
+        parent_identity: None,
+        version: None,
+        checksum: None,
+        size: None,
+        modified_at: None,
+    };
+    let mut local = side.clone();
+    local.local_name_bytes = Some(b"file".to_vec());
+    let mut remote = side;
+    remote.name = Some("file".into());
+    // This fixture represents a previously verified synchronization, not an effect of analysis.
+    let item = inv
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: item.id.clone(),
+            expected_item_revision: item.revision,
+            confirmed: ConfirmedState {
+                baseline: SyncBaseline {
+                    local,
+                    remote,
+                    confirmed_at: Timestamp { unix_millis: 20 },
+                },
+                status: SyncStatus::Synced,
+                verified_at: Timestamp { unix_millis: 20 },
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+    let item = inv
+        .record_remote(remote_observation(
+            &inv,
+            &item,
+            "remote-renamed",
+            "remote-name",
+        ))
+        .unwrap()
+        .item;
+    let baseline = item.baseline.clone();
+    std::fs::rename(tree.0.join("first/file"), tree.0.join("first/local-name")).unwrap();
+    wait(|| {
+        inv.get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id.clone()),
+        })
+        .unwrap()
+        .analysis
+        .is_some_and(|a| !a.stale && a.disposition == AnalysisDisposition::PendingUserDecision)
+    });
+    settle_flow(&session);
+    let record = inv
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id.clone()),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert!(record
+        .findings
+        .iter()
+        .any(|f| f.dimension == AnalysisDimension::Presence
+            && f.status == AnalysisFindingStatus::Divergent
+            && f.reason == AnalysisReason::DeleteVsChange));
+    assert!(record.decisions.is_empty());
+    assert_eq!(
+        std::fs::read(tree.0.join("first/local-name")).unwrap(),
+        b"preserve both versions"
+    );
+    assert!(!tree.0.join("first/remote-name").exists());
+    assert_eq!(
+        inv.get_item(GetItemRequest {
+            selector: ItemSelector::Id(item.id)
+        })
+        .unwrap()
+        .item
+        .unwrap()
+        .baseline,
+        baseline
+    );
+    assert!(inv
+        .list_operations(ListOperationsRequest {
+            filter: Default::default(),
+            pagination: Default::default()
+        })
+        .unwrap()
+        .page
+        .entries
+        .iter()
+        .all(|o| o.state == OperationState::Blocked && o.attempt_count == 0));
     session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }

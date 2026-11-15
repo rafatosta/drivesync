@@ -39,7 +39,8 @@ A saída pode conter decisões e pendências simultaneamente: por exemplo, uma m
 ## Regras essenciais
 
 - `PresenceState::Unknown` não equivale a recurso excluído. Somente `AbsentConfirmed` sustentado por observação confiável pode fundamentar exclusão.
-- Um arquivo novo local com ausência remota comprovada gera intenção de criação remota; a situação inversa gera intenção de criação local. A tradução futura será `Upload`/`Download`.
+- Um arquivo novo local com ausência remota comprovada gera intenção de criação remota; a situação inversa gera intenção de criação local. A direção persistida é `Upload`/`Download`.
+- Na primeira observação de um item sem baseline nem vínculo/snapshot do outro lado, a origem completa já identifica a direção de replicação: local → `Upload`, remoto → `Download`. Presença oposta continua `Unknown`; a intenção permanece bloqueada por reobservação, verificação de identidade e resolução do destino. Não é prova de ausência nem autorização para criar uma duplicata.
 - Arquivo existente com conteúdo alterado unilateralmente gera decisão de propagação, preservando a identidade do destino.
 - Renomeações e movimentações remotas são propostas por referência/ID, não por reenvio do conteúdo.
 - Alterações simultâneas compatíveis podem produzir uma sequência de decisões; alterações incompatíveis são relatadas como divergências.

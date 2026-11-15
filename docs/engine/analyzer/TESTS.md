@@ -55,3 +55,14 @@ aprovados, 10 ignorados e 9 doctests aprovados; formatação, Clippy e rustdoc s
 avisos. Links relativos e `git diff --check` passaram. Os 10 testes novos da
 persistência foram validados também com as suítes públicas existentes do Inventory
 (32 testes aprovados nessa etapa). Nenhum banco real de usuário foi aberto.
+
+## Direção de replicação inicial
+
+A suíte pura verifica os dois sentidos para itens inicialmente sem vínculo,
+conservação de `Unknown`, requisitos explícitos e determinismo. Vínculo prévio,
+baseline ou observação parcial não autorizam esse caminho. A suíte pública grava
+um download a partir de observação remota inicial, verifica retry idempotente,
+reabertura SQLite, fila bloqueada, baseline ausente e nenhum arquivo criado.
+A suíte do Orchestrator verifica uploads após scan e após criação de arquivo/pasta
+com a sessão aberta, sem chamar análise manualmente. Conflitos continuam cobertos
+pelos cenários públicos de mudanças concorrentes.

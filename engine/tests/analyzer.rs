@@ -680,3 +680,65 @@ async fn untrusted_baseline_blocks_decisions_instead_of_inventing_new_creation()
     assert!(out.decisions.is_empty());
     assert!(operations(&inventory).is_empty());
 }
+
+#[tokio::test]
+async fn initial_remote_observation_persists_download_before_local_binding_without_execution() {
+    let tree = Tree::new();
+    let inventory = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let item = inventory
+        .record_remote(remote_request(
+            remote_file(
+                "first-remote",
+                "remote",
+                m::MetadataValue::Known("file".into()),
+            ),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let a = analyzer(&tree, inventory.clone());
+    let mut req = request(item.clone());
+    req.evidence.baseline_confirmed = false;
+    req.evidence.local_scope_complete = false;
+    req.evidence.local_content = EvidenceRelation::Unknown;
+    req.evidence.remote_content = EvidenceRelation::Unknown;
+    req.evidence.current_content = EvidenceRelation::Unknown;
+    let record = a.analyze(req.clone()).await.unwrap().analysis;
+    assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+    assert_eq!(record.decisions.len(), 1);
+    assert_eq!(
+        record.decisions[0].intent,
+        AnalysisIntent {
+            direction: OperationDirection::Download,
+            kind: OperationKind::Create
+        }
+    );
+    assert!(record
+        .requirements
+        .contains(&AnalysisRequirement::ObserveLocal));
+    assert!(record
+        .requirements
+        .contains(&AnalysisRequirement::VerifyIdentity));
+    assert_eq!(a.analyze(req).await.unwrap().analysis.id, record.id);
+    assert_eq!(operations(&inventory).len(), 1);
+    assert_eq!(operations(&inventory)[0].state, OperationState::Blocked);
+    assert_eq!(operations(&inventory)[0].attempt_count, 0);
+    let after = current(&inventory, &item.id);
+    assert_eq!(after.local_presence, PresenceState::Unknown);
+    assert!(after.baseline.is_none());
+    assert!(!tree.0.join("file").exists());
+    drop(a);
+    drop(inventory);
+    let reopened = InventoryManager::open(tree.request()).unwrap().inventory;
+    assert_eq!(
+        reopened
+            .get_analysis(GetAnalysisRequest {
+                selector: AnalysisSelector::LatestForItem(item.id)
+            })
+            .unwrap()
+            .analysis
+            .unwrap(),
+        record
+    );
+}

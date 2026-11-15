@@ -20,10 +20,10 @@ flowchart TD
   K --> R
 ```
 
-**Este fluxo não executa sincronização física.** O Analyzer mantém suas regras
-atuais e registra decisões/pendências; o Operator não é chamado, operações ficam
-bloqueadas e o Orchestrator não confirma baseline. A interpretação definitiva dos
-dados pelo Analyzer continua sendo uma etapa separada.
+**Este fluxo não executa sincronização física.** O Analyzer identifica e registra
+upload, download e conflitos para intervenção manual; o Operator não é chamado,
+operações ficam bloqueadas e o Orchestrator não confirma baseline. Requisitos
+faltantes permanecem explícitos, sem transformar incerteza em conflito.
 
 ## Funcionamento contínuo
 
@@ -66,7 +66,9 @@ confirmar o lote. A parada normal libera o lease e aguarda o trabalho local ativ
 ## Limites preservados
 
 As interfaces e esquemas de Detector, Scanner e Inventory não foram alterados.
-Os algoritmos, tipos públicos e políticas do Analyzer também permanecem intactos.
+Tipos públicos do Analyzer permanecem intactos; suas políticas de decisão pertencem
+exclusivamente ao Analyzer. Itens inicialmente sem vínculo já identificam direção
+Upload/Download com requisitos pendentes, sem promover `Unknown` a ausência.
 Não há cálculo de hash, pareamento por nome, transferência, resolução automática
 ou confirmação de sincronização. Eventos remotos sem snapshot e sem item conhecido
 são preservados como erro explícito, aguardando recuperação/evidência adequada.

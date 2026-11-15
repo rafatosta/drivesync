@@ -73,6 +73,7 @@ pub(super) fn reconcile(
         }
     }
     if !out.requirements.is_empty() {
+        identify_initial_direction(item, &mut out);
         return Ok(out);
     }
     match (&item.local_presence, &item.remote_presence) {
@@ -154,6 +155,41 @@ pub(super) fn reconcile(
         request.evidence.parent_comparison,
     );
     Ok(out)
+}
+
+/// A first observation can identify a replication direction before a destination
+/// is verified. Preserve unknown presence and require identity/destination checks:
+/// this is a blocked intent, never proof that the opposite resource is absent.
+/// Existing bindings, retained snapshots and baselines disallow this shortcut.
+fn identify_initial_direction(item: &SyncItem, out: &mut ReconciliationAssessment) {
+    if item.baseline.is_some() {
+        return;
+    }
+    let source = if item.local_presence == PresenceState::Present
+        && item.remote_presence == PresenceState::Unknown
+        && item.remote_ref.is_none()
+        && item.remote.is_none()
+        && item.remote_latest.is_none()
+        && out.requirements == [Requirement::Observe(Side::Remote)]
+    {
+        Side::Local
+    } else if item.remote_presence == PresenceState::Present
+        && item.local_presence == PresenceState::Unknown
+        && item.local_file_id.is_none()
+        && item.local.is_none()
+        && item.local_latest.is_none()
+        && out.requirements == [Requirement::Observe(Side::Local)]
+    {
+        Side::Remote
+    } else {
+        return;
+    };
+    out.decisions.push(Decision::Create {
+        source,
+        kind: item.kind.clone(),
+    });
+    out.require(Requirement::VerifyIdentity);
+    out.require(Requirement::ResolveDestination);
 }
 
 fn reconcile_presence(request: &ReconciliationRequest, out: &mut ReconciliationAssessment) {

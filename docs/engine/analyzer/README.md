@@ -39,3 +39,18 @@ itens observados pelos detectores durante a sessão, sem executar operações. E
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
 [Persistência](../inventory/ANALYSIS.md) · [Orientações](AGENTS.md)
+
+## Decisão de direção no fluxo real
+
+Itens novos locais sem vínculo remoto produzem intenção de `Upload`; itens novos
+remotos sem vínculo local produzem intenção de `Download`, incluindo diretórios.
+A identificação vem do Reconciler e é persistida pelo Analyzer, não inferida pela
+GUI. A origem deve estar completamente observada e o tipo ser suportado. Ausência
+de vínculo não comprova ausência do recurso: verificações de identidade, observação
+e destino permanecem explícitas e a operação continua `Blocked`.
+
+Conflitos comprovados produzem `PendingUserDecision`, apresentado como ação
+manual. Dados inconclusivos sem direção identificável permanecem pendência de
+evidência, sem escolher uma versão arbitrária nem fabricar conflito. Dois lados
+já vinculados continuam usando baseline e comparações confiáveis para propagar
+mudanças. A classificação não confirma sincronização nem executa comandos.

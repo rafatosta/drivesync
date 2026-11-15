@@ -585,3 +585,58 @@ fn optional_local_id_is_not_fabricated_or_required_for_pure_comparison() {
     r.item.local.as_mut().unwrap().local_id = None;
     assert!(outcome(r).requirements.is_empty());
 }
+
+#[test]
+fn unbound_initial_observations_identify_direction_without_fabricating_absence() {
+    for source in [Side::Local, Side::Remote] {
+        let mut r = request();
+        r.item.baseline = None;
+        r.evidence.local_content = Change::Unknown;
+        r.evidence.remote_content = Change::Unknown;
+        r.evidence.content_comparison = Comparison::Unknown;
+        let opposite = match source {
+            Side::Local => {
+                r.item.remote_presence = PresenceState::Unknown;
+                r.item.remote_ref = None;
+                r.item.remote = None;
+                Side::Remote
+            }
+            Side::Remote => {
+                r.item.local_presence = PresenceState::Unknown;
+                r.item.local_file_id = None;
+                r.item.local = None;
+                Side::Local
+            }
+        };
+        let original = r.clone();
+        let a = outcome(r.clone());
+        assert_eq!(
+            a.decisions,
+            vec![Decision::Create {
+                source,
+                kind: ItemKind::File
+            }]
+        );
+        assert_eq!(
+            a.requirements,
+            vec![
+                Requirement::Observe(opposite),
+                Requirement::VerifyIdentity,
+                Requirement::ResolveDestination
+            ]
+        );
+        assert_eq!(r, original);
+        assert_eq!(a, outcome(r.clone()));
+        match source {
+            Side::Local => r.item.remote_ref = request().item.remote_ref,
+            Side::Remote => r.item.local_file_id = request().item.local_file_id,
+        }
+        assert!(outcome(r).decisions.is_empty());
+        let mut partial = original;
+        match source {
+            Side::Local => partial.evidence.local_observation = ObservationConfidence::Partial,
+            Side::Remote => partial.evidence.remote_observation = ObservationConfidence::Partial,
+        }
+        assert!(outcome(partial).decisions.is_empty());
+    }
+}

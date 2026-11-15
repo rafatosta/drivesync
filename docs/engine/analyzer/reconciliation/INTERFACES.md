@@ -64,7 +64,10 @@ ordem estável. Lista de decisões vazia com requisitos/divergências não é su
 2. Preferir `local_latest`/`remote_latest` quando disponíveis. Não preencher campos
    desconhecidos dessas observações usando valores retidos de `local`/`remote`.
 3. Presença desconhecida ou cobertura parcial/indeterminada exige reobservação,
-   sem decisões de transformação. Tipo observado desconhecido ou estado de lixeira
+   sem decisões executáveis. Uma primeira observação completa, sem baseline nem
+   identidade/snapshot associado ao lado oposto, pode identificar intenção de criação
+   local→remoto (`Upload`) ou remoto→local (`Download`), preservando `Unknown` e
+   os requisitos `Observe`, `VerifyIdentity` e `ResolveDestination`. Tipo observado desconhecido ou estado de lixeira
    remoto desconhecido/ativo também exige reobservação. Links e tipos especiais não
    são autorizados pela simples existência de `ItemKind`.
 4. Ambos ausentes comprovadamente não exigem efeito físico. Só um presente sem

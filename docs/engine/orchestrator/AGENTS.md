@@ -4,7 +4,8 @@
 
 O usuário solicitou fluxo real e contínuo da aplicação: iniciar os detectores,
 aguardar Scanner, entregar itens ao Analyzer e continuar consumindo eventos.
-As decisões de como o Analyzer trata os dados serão discutidas posteriormente.
+O Analyzer identifica e persiste direções de upload/download e conflitos para
+intervenção manual; a execução pelo Operator permanece fora do escopo.
 Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
 [AGENTS raiz](../../../AGENTS.md).
 
@@ -21,8 +22,9 @@ Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
 - Confirmar o lote somente após ingestão, rechecagem necessária e análise duráveis.
   Falha/Partial/cancelamento preserva o lote por release/expiração, sem Discarded.
 - Testar reentrega entre os bancos, cuja gravação não é uma transação distribuída.
-- O Analyzer apenas produz decisões. Não alterar suas regras, liberar operações,
-  confirmar baseline, transferir conteúdo ou implementar Operator nesta demanda.
+- O Analyzer apenas produz decisões. As políticas pertencem ao Analyzer, nunca
+  ao consumidor ou à GUI. Não liberar operações, confirmar baseline, transferir
+  conteúdo ou implementar Operator nesta demanda.
 - Manter GTK livre de I/O, preservar chamadores sem Tokio externo, epoch de sessão,
   wakeup sem perda de sinal, worker único, desligamento e substituição seguros.
 - Expor estado real de ingestão, erros e contagem de eventos processados, sem

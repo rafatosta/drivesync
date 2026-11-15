@@ -1,4 +1,4 @@
-//! Remote/local ingestion recovery with real Inventory and the unchanged Analyzer.
+//! Remote/local ingestion recovery with real Inventory and durable Analyzer decisions.
 use super::*;
 use crate::models as m;
 use std::{
@@ -158,6 +158,25 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         .analysis;
     assert_eq!(first, second);
     assert_eq!(first.disposition, AnalysisDisposition::PendingEvidence);
+    assert_eq!(first.decisions.len(), 1);
+    assert_eq!(
+        first.decisions[0].intent,
+        AnalysisIntent {
+            direction: OperationDirection::Download,
+            kind: OperationKind::Create,
+        }
+    );
+    let operations = inventory
+        .list_operations(ListOperationsRequest {
+            filter: Default::default(),
+            pagination: Default::default(),
+        })
+        .unwrap()
+        .page
+        .entries;
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].state, OperationState::Blocked);
+    assert_eq!(operations[0].attempt_count, 0);
     assert_eq!(
         inventory
             .list_items(ListItemsRequest {
