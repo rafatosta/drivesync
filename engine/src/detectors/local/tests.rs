@@ -65,7 +65,20 @@ fn collects_real_file_metadata_and_preserves_root_scope() {
     assert_eq!(result.coverage, LocalScanCoverage::Complete);
     let file = result.file.unwrap();
     assert_eq!(file.relative_path.as_bytes(), b"file");
-    assert_eq!(file.local_id, None);
+    if matches!(file.times.created_at, MetadataValue::Known(_)) {
+        assert!(file.local_id.is_some());
+        assert_eq!(
+            file.local_id,
+            collector
+                .collect(request(b"file"))
+                .unwrap()
+                .file
+                .unwrap()
+                .local_id
+        );
+    } else {
+        assert!(file.local_id.is_none());
+    }
     assert_eq!(file.kind, MetadataValue::Known(LocalEntryKind::Regular));
     assert_eq!(file.storage.size_bytes, MetadataValue::Known(13));
     assert_eq!(file.storage.inode, MetadataValue::Known(expected.ino()));

@@ -916,7 +916,7 @@ async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without
 }
 
 #[tokio::test]
-async fn live_missing_local_path_and_remote_change_identify_manual_intervention() {
+async fn live_local_and_remote_renames_identify_manual_intervention() {
     use drivesync_engine::inventory::*;
     let (tree, connector) = Tree::new().await;
     std::fs::write(tree.0.join("first/file"), b"preserve both versions").unwrap();
@@ -993,9 +993,9 @@ async fn live_missing_local_path_and_remote_change_identify_manual_intervention(
     assert!(record
         .findings
         .iter()
-        .any(|f| f.dimension == AnalysisDimension::Presence
+        .any(|f| f.dimension == AnalysisDimension::Name
             && f.status == AnalysisFindingStatus::Divergent
-            && f.reason == AnalysisReason::DeleteVsChange));
+            && f.reason == AnalysisReason::ConcurrentChanges));
     assert!(record.decisions.is_empty());
     assert_eq!(
         std::fs::read(tree.0.join("first/local-name")).unwrap(),
@@ -1022,5 +1022,93 @@ async fn live_missing_local_path_and_remote_change_identify_manual_intervention(
         .entries
         .iter()
         .all(|o| o.state == OperationState::Blocked && o.attempt_count == 0));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+
+#[tokio::test]
+async fn observed_content_hashes_drive_real_upload_decisions_without_changing_files() {
+    use drivesync_engine::inventory::*;
+    use sha2::{Digest, Sha256};
+    let (tree, connector) = Tree::new().await;
+    let path = tree.0.join("first/file");
+    std::fs::write(&path, b"original").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    settle_flow(&session);
+    let inv = inventory(&tree, "first");
+    let item = items(&inv).remove(0);
+    let hash = format!("{:x}", Sha256::digest(b"original"));
+    let mut observation = remote_observation(&inv, &item, "remote-content", "file");
+    if let Some(FileData::Remote(r)) = &mut observation.observation.observed.data {
+        r.sha256_checksum = MetadataValue::Known(hash.clone());
+    }
+    let item = inv.record_remote(observation).unwrap().item;
+    let local = BaselineSide {
+        presence: PresenceState::Present,
+        name: None,
+        local_name_bytes: Some(b"file".to_vec()),
+        parent_identity: None,
+        version: None,
+        checksum: Some(format!("sha256:{hash}")),
+        size: Some(8),
+        modified_at: None,
+    };
+    let mut remote = local.clone();
+    remote.local_name_bytes = None;
+    remote.name = Some("file".into());
+    let item = inv
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: item.id.clone(),
+            expected_item_revision: item.revision,
+            confirmed: ConfirmedState {
+                baseline: SyncBaseline {
+                    local,
+                    remote,
+                    confirmed_at: Timestamp { unix_millis: 20 },
+                },
+                status: SyncStatus::Synced,
+                verified_at: Timestamp { unix_millis: 20 },
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+    std::fs::write(&path, b"edited locally").unwrap();
+    wait(|| {
+        inv.get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id.clone()),
+        })
+        .unwrap()
+        .analysis
+        .is_some_and(|a| {
+            !a.stale
+                && a.decisions.iter().any(|d| {
+                    d.intent.kind == OperationKind::UpdateContent
+                        && d.intent.direction == OperationDirection::Upload
+                })
+        })
+    });
+    settle_flow(&session);
+    let record = inv
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id.clone()),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert_eq!(record.evidence.local_content, EvidenceRelation::Different);
+    assert_eq!(record.evidence.remote_content, EvidenceRelation::Equal);
+    assert_eq!(std::fs::read(path).unwrap(), b"edited locally");
+    let baseline = inv
+        .get_item(GetItemRequest {
+            selector: ItemSelector::Id(item.id),
+        })
+        .unwrap()
+        .item
+        .unwrap()
+        .baseline;
+    assert_eq!(baseline, item.baseline);
     session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }

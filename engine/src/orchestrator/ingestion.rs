@@ -67,6 +67,25 @@ pub(super) fn ingest(
         .get_item(GetItemRequest { selector })
         .map_err(PreparationFailure::Inventory)?
         .item;
+    if !remote && existing.is_none() {
+        if let FileScope::Local(path) = &file.scope {
+            let occupied = inventory
+                .get_item(GetItemRequest {
+                    selector: ItemSelector::LocalRelativePath(path.clone()),
+                })
+                .map_err(PreparationFailure::Inventory)?
+                .item;
+            if let Some(occupied) = occupied {
+                // A different physical identity at the old path is not an
+                // automatic association. Recheck and durably expose uncertainty.
+                return Ok(Ingested {
+                    item: Some(occupied.id),
+                    scan_local: true,
+                    analyze_all: true,
+                });
+            }
+        }
+    }
     if file.data.is_none() && existing.is_none() {
         if remote {
             return Err(PreparationFailure::InvalidObservation(file.id.clone()));

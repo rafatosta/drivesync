@@ -308,6 +308,29 @@ impl Run<'_> {
                 return self.persist(relative, None, PresenceState::Unknown, false, existing);
             }
         };
+        let existing = if let Some(id) = &file.local_id {
+            let by_id = self
+                .inner
+                .inventory
+                .get_item(GetItemRequest {
+                    selector: ItemSelector::LocalId(id.clone()),
+                })
+                .map_err(inventory_error)?
+                .item;
+            if let Some(previous) = &existing {
+                if previous.local_file_id.as_ref().is_some_and(|old| old != id) {
+                    self.issue(
+                        path,
+                        ScanIssueKind::EntryChanged,
+                        ScanIssueImpact::ItemIncomplete,
+                    );
+                    return self.persist(relative, None, PresenceState::Unknown, false, existing);
+                }
+            }
+            by_id.or(existing)
+        } else {
+            existing
+        };
         #[cfg(test)]
         if let Some(hook) = &self.inner.hook {
             hook(Stage::Observed, path);

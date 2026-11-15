@@ -83,20 +83,76 @@ fn evidence(
         (Some(_), Some(_)) if parent_path.is_some() => EvidenceRelation::Different,
         _ => EvidenceRelation::Unknown,
     };
+    let root = inventory
+        .get_sync_info(GetSyncInfoRequest {})
+        .map_err(PreparationFailure::Inventory)?
+        .local_root;
+    let local_hash = local
+        .filter(|_| item.kind == ItemKind::File && item.local_presence == PresenceState::Present)
+        .and_then(|file| {
+            crate::filesystem::content::sha256(
+                std::path::Path::new(
+                    <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&root),
+                ),
+                file,
+            )
+        });
     Ok(AnalysisEvidence {
         baseline_confirmed: item.baseline.is_some(),
         // These describe the persisted item presence, not a complete remote tree
         // or fresh content measurement. Unknown sides remain explicitly unknown.
         local_scope_complete: item.local_presence != PresenceState::Unknown,
         remote_scope_complete: item.remote_presence != PresenceState::Unknown,
-        local_content: EvidenceRelation::Unknown,
-        remote_content: EvidenceRelation::Unknown,
-        current_content: EvidenceRelation::Unknown,
+        local_content: compare_hash(
+            local_hash.as_deref(),
+            item.baseline
+                .as_ref()
+                .and_then(|b| b.local.checksum.as_deref()),
+        ),
+        remote_content: compare_hash(
+            remote
+                .and_then(|r| known_sha256(&r.sha256_checksum))
+                .as_deref(),
+            item.baseline
+                .as_ref()
+                .and_then(|b| b.remote.checksum.as_deref()),
+        ),
+        current_content: compare_hash(
+            local_hash.as_deref(),
+            remote
+                .and_then(|r| known_sha256(&r.sha256_checksum))
+                .as_deref(),
+        ),
         local_parent: parent
             .filter(|p| p.kind == ItemKind::Directory && p.local_presence == PresenceState::Present)
             .map(|p| p.id),
         current_parents,
     })
+}
+fn known_sha256(value: &MetadataValue<String>) -> Option<String> {
+    match value {
+        MetadataValue::Known(v) if v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            Some(format!("sha256:{}", v.to_ascii_lowercase()))
+        }
+        _ => None,
+    }
+}
+fn compare_hash(a: Option<&str>, b: Option<&str>) -> EvidenceRelation {
+    match (a, b) {
+        (Some(a), Some(b))
+            if [a, b].iter().all(|s| {
+                s.strip_prefix("sha256:")
+                    .is_some_and(|v| v.len() == 64 && v.bytes().all(|c| c.is_ascii_hexdigit()))
+            }) =>
+        {
+            if a.eq_ignore_ascii_case(b) {
+                EvidenceRelation::Equal
+            } else {
+                EvidenceRelation::Different
+            }
+        }
+        _ => EvidenceRelation::Unknown,
+    }
 }
 /// Visits every persisted item, regardless of status: observations can invalidate
 /// an old analysis without changing status. Keyset pages survive our revision bumps.
