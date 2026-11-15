@@ -10,7 +10,9 @@ retirado da listagem atual, mas seu ID/histórico é preservado. Referências e 
 remotos são vinculados ao canônico na mesma transação. Não compara nome/hash,
 não altera arquivos e não confirma baseline. Escolhas antigas ou incompatíveis
 falham; retry idêntico recupera a proveniência. `get_association` consulta o registro.
-Ainda não existe UI de escolha nem confirmação de vínculo por Operator executado.
+O console oferece seleção explícita dos dois IDs; ainda não existe confirmação
+de vínculo por Operator executado. A raiz remota configurada não pode ser
+associada a um filho local.
 
 `NewAnalysisAssessment.plan` e `RecordedAnalysis.plan` guardam o plano opcional.
 O Analyzer preencherá o plano; chamadas legadas de análise isolada usam `None`.

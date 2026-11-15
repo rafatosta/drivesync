@@ -23,7 +23,7 @@ fn label(text: &str) -> gtk::Label {
         .build()
 }
 /// Preserve non-UTF-8 Unix names as visible byte escapes rather than replacement characters.
-fn file_name(item: &SyncItem) -> String {
+pub(super) fn file_name(item: &SyncItem) -> String {
     if let Some(local) = item.local_latest.as_ref().or(item.local.as_ref()) {
         return std::str::from_utf8(local.relative_path.as_bytes())
             .map(str::to_owned)
@@ -47,6 +47,95 @@ fn file_name(item: &SyncItem) -> String {
         .map(|r| format!("Drive item {}", r.file_id.0))
         .unwrap_or_else(|| format!("Item {}", item.id.0))
         .replace('\0', "\\0")
+}
+fn resource_label(resource: &drivesync_engine::operations::ResourceRef) -> String {
+    use drivesync_engine::operations::ResourceRef;
+    match resource {
+        ResourceRef::Local { relative_path, .. } => format!(
+            "Local {:?}",
+            <std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(
+                relative_path.as_bytes().to_vec()
+            )
+        ),
+        ResourceRef::Remote { reference, .. } => format!(
+            "Drive ID {} (account {})",
+            reference.file_id.0, reference.account_id.0
+        ),
+    }
+}
+fn command_label(command: &drivesync_engine::operations::OperationCommand) -> String {
+    use drivesync_engine::operations::*;
+    fn directory(d: &DirectoryRef) -> String {
+        match d {
+            DirectoryRef::LocalRoot => "Local sync root".into(),
+            DirectoryRef::Local {
+                relative_path,
+                local_id,
+            } => resource_label(&ResourceRef::Local {
+                relative_path: relative_path.clone(),
+                local_id: local_id.clone(),
+            }),
+            DirectoryRef::Remote {
+                provider_id,
+                reference,
+            } => resource_label(&ResourceRef::Remote {
+                provider_id: provider_id.clone(),
+                reference: reference.clone(),
+            }),
+        }
+    }
+    fn name(n: &ItemName) -> String {
+        match n {
+            ItemName::Local(n) => format!("{n:?}"),
+            ItemName::Remote(n) => n.clone(),
+        }
+    }
+    match command {
+        OperationCommand::Upload {
+            source,
+            destination,
+            name: n,
+        }
+        | OperationCommand::Download {
+            source,
+            destination,
+            name: n,
+        } => format!(
+            "{} → {} / {}",
+            resource_label(source),
+            directory(destination),
+            name(n)
+        ),
+        OperationCommand::CreateFile {
+            parent, name: n, ..
+        }
+        | OperationCommand::CreateDirectory { parent, name: n } => {
+            format!("Destination: {} / {}", directory(parent), name(n))
+        }
+        OperationCommand::UpdateContent { target, .. } => {
+            format!("Update existing {}", resource_label(target))
+        }
+        OperationCommand::Rename {
+            target, new_name, ..
+        } => format!("{} → {}", resource_label(target), name(new_name)),
+        OperationCommand::Move {
+            target,
+            destination,
+            ..
+        } => format!("{} → {}", resource_label(target), directory(destination)),
+        OperationCommand::Trash { target, .. } => format!("Trash: {}", resource_label(target)),
+        OperationCommand::Restore { target, .. } => format!("Restore: {}", resource_label(target)),
+    }
+}
+fn manual_reason(reason: ManualReason) -> &'static str {
+    match reason {
+        ManualReason::ConcurrentChanges => "Changes on both sides",
+        ManualReason::DeleteVsChange => "Deletion versus modification",
+        ManualReason::DestinationOccupied => "Destination occupied by an independent item",
+        ManualReason::AssociationRequired => "Explicit identity association required",
+        ManualReason::MissingBaseline => "Confirmed baseline needed",
+        ManualReason::DeletionAuthorization => "Trash authorization required",
+    }
 }
 fn intent_name(intent: &AnalysisIntent, kind: &ItemKind) -> &'static str {
     match (&intent.direction, &intent.kind) {
@@ -352,6 +441,64 @@ impl View {
             ));
             revision.add_css_class("dim-label");
             information.append(&revision);
+            if let Some(plan) = &record.plan {
+                for (index, step) in plan.steps.iter().enumerate() {
+                    let blocked = step
+                        .blocked_by
+                        .iter()
+                        .map(|b| format!("{b:?}"))
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    let text = label(&format!(
+                        "Step {}: {:?}{}",
+                        index + 1,
+                        step.method,
+                        if blocked.is_empty() {
+                            " · planned, not executed".into()
+                        } else {
+                            format!(" · blocked: {blocked}")
+                        }
+                    ));
+                    text.set_widget_name("analyzer-plan-step");
+                    information.append(&text);
+                    if let Some(command) = &step.command {
+                        let description = label(&command_label(command));
+                        description.add_css_class("dim-label");
+                        information.append(&description);
+                    }
+                    if !step.depends_on.is_empty() || !step.depends_on_steps.is_empty() {
+                        let dependencies = label(&format!(
+                            "Depends on items: {} · prior steps: {}",
+                            step.depends_on
+                                .iter()
+                                .map(|i| i.0.clone())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            step.depends_on_steps
+                                .iter()
+                                .map(|i| (i + 1).to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                        dependencies.add_css_class("dim-label");
+                        information.append(&dependencies);
+                    }
+                }
+                for issue in &plan.manual {
+                    let issue = label(&format!(
+                        "{} · {}",
+                        manual_reason(issue.reason),
+                        issue
+                            .resources
+                            .iter()
+                            .map(resource_label)
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    ));
+                    issue.add_css_class("warning");
+                    information.append(&issue);
+                }
+            }
             details.set_child(Some(&information));
             content.append(&details);
             body.append(&content);
@@ -578,6 +725,10 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     body.append(&path);
     let outdated = gtk::CheckButton::with_label("Include outdated analyses");
     body.append(&outdated);
+    let associate = gtk::Button::with_label("Associate existing identities…");
+    associate.set_halign(gtk::Align::Start);
+    associate.set_widget_name("analyzer-associate");
+    body.append(&associate);
     let message = label("Select an account to read its analysis decisions.");
     message.set_widget_name("analyzer-message");
     body.append(&message);
@@ -692,6 +843,32 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
             }
         }
         gtk::glib::ControlFlow::Continue
+    });
+    associate.connect_clicked({
+        let weak = Rc::downgrade(&view);
+        move |_| {
+            if let Some(view) = weak.upgrade() {
+                let scope = view
+                    .state
+                    .borrow()
+                    .scopes
+                    .get(view.accounts.selected() as usize)
+                    .cloned();
+                if let (Some(scope), Some(root)) = (scope, view.root.upgrade()) {
+                    let weak = Rc::downgrade(&view);
+                    super::association::present(
+                        root.upcast_ref(),
+                        view.context.clone(),
+                        scope,
+                        Rc::new(move || {
+                            if let Some(view) = weak.upgrade() {
+                                view.reset();
+                            }
+                        }),
+                    );
+                }
+            }
+        }
     });
     view.controls();
     (root, view)

@@ -265,10 +265,11 @@ impl InventoryManager {
             if a.decision_id!=r.decision_id || a.retired_item!=r.expected_remote.id || stored!=(digest(&r.expected_local)?,digest(&r.expected_remote)?){return Err(failure(InventoryError::VersionMismatch))}
             return Ok(AssociateItemsResult{item:items::load(db,&a.canonical_item)?,association:a})
         }
-        let account=sync_info(db)?.account_id;
+        let info=sync_info(db)?;
+        let account=info.account_id;
         let l=items::load(db,&r.expected_local.id)?;let remote=items::load(db,&r.expected_remote.id)?;
         if l!=r.expected_local || remote!=r.expected_remote{return Err(failure(InventoryError::VersionMismatch))}
-        if l.id==remote.id || l.kind!=remote.kind || l.baseline.is_some() || remote.baseline.is_some() || l.local_presence!=PresenceState::Present || remote.remote_presence!=PresenceState::Present || l.remote_ref.is_some() || remote.local.is_some() || remote.local_latest.is_some() || remote.local_file_id.is_some() || remote.remote_ref.as_ref().is_none_or(|v| v.account_id!=account){return Err(failure(InventoryError::InvalidIdentity))}
+        if l.id==remote.id || l.kind!=remote.kind || l.baseline.is_some() || remote.baseline.is_some() || l.local_presence!=PresenceState::Present || remote.remote_presence!=PresenceState::Present || l.remote_ref.is_some() || remote.local.is_some() || remote.local_latest.is_some() || remote.local_file_id.is_some() || remote.remote_ref.as_ref().is_none_or(|v| v.account_id!=account || v.file_id.0==info.remote_root_id){return Err(failure(InventoryError::InvalidIdentity))}
         let running:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE item IN (?1,?2) AND state='Running')",params![l.id.0,remote.id.0],|row|row.get(0)).map_err(sql)?;
         if running{return Err(failure(InventoryError::InvalidTransition))}
         db.execute("UPDATE items SET remote_account=NULL,remote_id=NULL,remote_presence='Unknown',status='Error',conflict_reason='ExplicitAssociationRetired' WHERE id=?1",[&remote.id.0]).map_err(sql)?;

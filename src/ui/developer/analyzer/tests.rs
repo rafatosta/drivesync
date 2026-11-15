@@ -623,6 +623,208 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
     );
     wait(&view);
     capture(&window, "analyzer-live-startup");
+    fn first_expander(widget: &gtk::Widget) -> Option<gtk::Expander> {
+        if let Some(expander) = widget.downcast_ref::<gtk::Expander>() {
+            return Some(expander.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            if let Some(found) = first_expander(&node) {
+                return Some(found);
+            }
+            child = node.next_sibling();
+        }
+        None
+    }
+    let details = first_expander(view.list.upcast_ref()).unwrap();
+    assert!(!details.is_expanded());
+    details.set_expanded(true);
+    wait(&view);
+    assert!(text(view.list.upcast_ref()).contains("Step 1:"));
+    capture(&window, "analyzer-plan-details");
+    details.set_expanded(false);
+
+    // Select two identities explicitly through the real console dialog. A remote
+    // item with a different name is intentionally used: names never choose pairs.
+    until(|| owner.diagnostics().pending_events == Some(0));
+    let scope = owner.detector().scope().clone();
+    let opening = OpenInventoryRequest {
+        local_root: root.clone(),
+        expected: SyncIdentity {
+            sync_id: scope.sync_id.clone(),
+            account_id: scope.account_id.clone(),
+            remote_root_id: scope.remote_root_id.clone(),
+        },
+        create_if_missing: false,
+    };
+    let inv = InventoryManager::open(opening.clone()).unwrap().inventory;
+    let local = inv
+        .get_item(GetItemRequest {
+            selector: ItemSelector::LocalRelativePath(
+                LocalRelativePath::new(b"New folder/Created after opening.txt".to_vec()).unwrap(),
+            ),
+        })
+        .unwrap()
+        .item
+        .unwrap();
+    let template = seed(&base.join("reference-metadata"), id, 1);
+    let reference_inv = InventoryManager::open(template).unwrap().inventory;
+    let file = reference_inv
+        .list_items(ListItemsRequest {
+            filter: Default::default(),
+            pagination: Default::default(),
+        })
+        .unwrap()
+        .page
+        .entries
+        .remove(0)
+        .remote
+        .unwrap();
+    let reference = file.reference.clone();
+    let name = match &file.name {
+        MetadataValue::Known(name) => name.clone(),
+        _ => unreachable!(),
+    };
+    let remote = inv
+        .record_remote(RecordRemoteObservation {
+            selector: ObservationTarget::NewItem,
+            expected_revision: None,
+            observation: drivesync_engine::inventory::RemoteObservation {
+                observed: File {
+                    id: FileId("user-choice-remote-observation".into()),
+                    sync_id: scope.sync_id.clone(),
+                    observed_at: Timestamp { unix_millis: 1 },
+                    scope: FileScope::Remote(reference.clone()),
+                    coverage: ObservationCoverage::Partial,
+                    data: Some(FileData::Remote(file)),
+                    event: FileEvent {
+                        kind: FileEventKind::Observed,
+                        local: None,
+                        remote: Some(drivesync_engine::models::RemoteObservation {
+                            source: RemoteObservationSource::Changes,
+                            removed: Some(false),
+                            time: None,
+                            change_type: None,
+                            drive_id: None,
+                        }),
+                        uncertainty: None,
+                        previous: None,
+                        current: Some(FileLocation::Remote {
+                            reference: reference.clone(),
+                            parent_id: Some(RemoteFileId("root".into())),
+                            name: Some(name),
+                        }),
+                    },
+                },
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::RemoteChange,
+                    observed_at: Timestamp { unix_millis: 1 },
+                    scan_or_generation: None,
+                    complete_scope: false,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    assert_ne!(local.id, remote.id);
+    fn find(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+        if widget.widget_name() == name {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            if let Some(found) = find(&node, name) {
+                return Some(found);
+            }
+            child = node.next_sibling();
+        }
+        None
+    }
+    let changed = Rc::new(Cell::new(false));
+    let changed_flag = changed.clone();
+    let dialog = super::super::association::present(
+        window.upcast_ref(),
+        context.clone(),
+        analyzer::Scope {
+            account_id: id.into(),
+            label: "Personal · explicitly selected identities".into(),
+            request: Ok(opening),
+        },
+        Rc::new(move || changed_flag.set(true)),
+    );
+    let local_choice = find(dialog.upcast_ref(), "association-local")
+        .unwrap()
+        .downcast::<gtk::DropDown>()
+        .unwrap();
+    let remote_choice = find(dialog.upcast_ref(), "association-remote")
+        .unwrap()
+        .downcast::<gtk::DropDown>()
+        .unwrap();
+    let confirm = find(dialog.upcast_ref(), "associate-confirm")
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap();
+    until(|| remote_choice.model().is_some_and(|m| m.n_items() == 2));
+    assert_eq!(local_choice.selected(), 0);
+    assert_eq!(remote_choice.selected(), 0);
+    assert!(!confirm.is_sensitive());
+    let model = local_choice.model().unwrap();
+    let selected = (0..model.n_items())
+        .find(|n| {
+            model
+                .item(*n)
+                .unwrap()
+                .downcast::<gtk::StringObject>()
+                .unwrap()
+                .string()
+                .contains(&local.id.0)
+        })
+        .unwrap();
+    local_choice.set_selected(selected);
+    assert!(!confirm.is_sensitive());
+    remote_choice.set_selected(1);
+    assert!(confirm.is_sensitive());
+    wait(&view);
+    if let Some(path) = std::env::var_os("DRIVESYNC_UI_PREVIEW_DIR") {
+        let snapshot = gtk::Snapshot::new();
+        gtk::WidgetPaintable::new(Some(&dialog)).snapshot(
+            &snapshot,
+            dialog.width() as f64,
+            dialog.height() as f64,
+        );
+        let node = snapshot.to_node().unwrap();
+        dialog
+            .renderer()
+            .unwrap()
+            .render_texture(&node, None)
+            .save_to_png(PathBuf::from(path).join("analyzer-association.png"))
+            .unwrap();
+    }
+    confirm.emit_clicked();
+    until(|| changed.get());
+    let linked = inv
+        .get_item(GetItemRequest {
+            selector: ItemSelector::Id(local.id.clone()),
+        })
+        .unwrap()
+        .item
+        .unwrap();
+    assert_eq!(linked.remote_ref, Some(reference));
+    assert!(linked.baseline.is_none());
+    assert!(inv
+        .get_association(GetAssociationRequest { item_id: local.id })
+        .unwrap()
+        .association
+        .unwrap()
+        .decision_id
+        .starts_with("user-association-"));
+    assert_eq!(
+        std::fs::read(root.join("New folder/Created after opening.txt")).unwrap(),
+        b"local user content"
+    );
+    dialog.close();
+
     gtk::glib::MainContext::default().block_on(crate::application::detectors::remove(
         &context,
         &AccountId(id.into()),

@@ -207,3 +207,21 @@ aparição automática no Analyzer. A remoção da conta encerra o consumidor e 
 O Analyzer identifica a direção inicial de replicação e persiste intenções
 bloqueadas; a tela não deduz direção pela existência de um caminho. A execução
 pelo Operator e a obtenção de evidências de conteúdo ainda são etapas posteriores.
+
+## Analyzer: planos e associação explícita
+
+Details mostra passos do plano, origem/destino disponíveis, bloqueios, dependências
+e recursos/motivos para intervenção manual. A abertura da página continua somente
+leitura; planos e operações não são executados.
+
+“Associate existing identities…” abre seleção explícita de um item local e um
+remoto independentes. Ambos começam em opções de seleção vazia; nome, caminho e
+hash não filtram nem escolhem pares. As listas exibem os IDs e o usuário precisa
+selecionar os dois lados compatíveis para habilitar a confirmação. A ação grava
+somente o vínculo via Inventory e reutiliza a preparação da sessão para reanálise.
+Não confirma baseline nem executa transferência. Escolhas antigas/escopo alterado
+são recusados. A raiz remota configurada não é candidata a associação de um filho.
+
+O teste gráfico de startup também confirma uma associação entre identidades com
+nomes diferentes, verifica que o botão começa desabilitado e só habilita após as
+duas escolhas, e comprova preservação dos arquivos e baseline não confirmado.

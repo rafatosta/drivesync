@@ -1,4 +1,5 @@
-//! Scoped, bounded analysis reads for the Developer Console; no preparation or execution.
+//! Scoped analysis reads and explicit user association for the Developer Console.
+//! Page reads never prepare or execute; a confirmed association reuses preparation.
 use super::{inventory, Context};
 use drivesync_engine::inventory::*;
 
@@ -71,4 +72,96 @@ pub(crate) fn read(
         entries,
         next_cursor: page.next_cursor,
     })
+}
+
+pub(crate) struct AssociationCandidates {
+    pub local: Vec<SyncItem>,
+    pub remote: Vec<SyncItem>,
+}
+/// Blocking read only: enumerate independent identities without name matching.
+pub(crate) fn association_candidates(
+    mut request: OpenInventoryRequest,
+) -> InventoryResult<AssociationCandidates> {
+    request.create_if_missing = false;
+    let info = request.expected.clone();
+    let inventory = InventoryManager::open(request)?.inventory;
+    let mut result = AssociationCandidates {
+        local: vec![],
+        remote: vec![],
+    };
+    let mut pagination = Pagination::default();
+    loop {
+        let page = inventory
+            .list_items(ListItemsRequest {
+                filter: ItemFilter::default(),
+                pagination: pagination.clone(),
+            })?
+            .page;
+        for item in page.entries {
+            if item.baseline.is_some() {
+                continue;
+            }
+            if item.local_presence == PresenceState::Present && item.remote_ref.is_none() {
+                result.local.push(item)
+            } else if item.remote_presence == PresenceState::Present
+                && item.local.is_none()
+                && item.local_latest.is_none()
+                && item.local_file_id.is_none()
+                && item
+                    .remote_ref
+                    .as_ref()
+                    .is_some_and(|r| r.file_id.0 != info.remote_root_id)
+            {
+                result.remote.push(item)
+            }
+        }
+        match page.next_cursor {
+            Some(next) => pagination.after = Some(next),
+            None => return Ok(result),
+        }
+    }
+}
+/// Explicit user action only. Persist identity choice off GTK, then reuse the
+/// existing session preparation to reanalyze; never execute an Operator.
+pub(crate) async fn associate(
+    context: &Context,
+    scope: Scope,
+    choice: AssociateItemsRequest,
+) -> Result<Option<String>, String> {
+    let mut opening = scope.request?;
+    opening.create_if_missing = false;
+    let session = context
+        .detectors
+        .borrow()
+        .get(&scope.account_id)
+        .map(|s| s.orchestrator.clone());
+    if let Some(session) = &session {
+        let current = session.detector().scope();
+        if current.sync_id != opening.expected.sync_id
+            || current.local_root != opening.local_root
+            || current.account_id != opening.expected.account_id
+            || current.remote_root_id != opening.expected.remote_root_id
+        {
+            return Err("Account scope changed. Reopen the association dialog.".into());
+        }
+    }
+    adw::gtk::gio::spawn_blocking(move || {
+        InventoryManager::open(opening)?
+            .inventory
+            .associate_items(choice)
+    })
+    .await
+    .map_err(|_| "Association worker unavailable".to_string())?
+    .map_err(|e| format!("Association was refused: {:?}", e.kind))?;
+    match session {
+        Some(session) => match session.prepare().await {
+            Ok(_) => Ok(None),
+            Err(e) => Ok(Some(format!(
+                "Association saved; preparation needs attention: {e:?}"
+            ))),
+        },
+        None => Ok(Some(
+            "Association saved. Reopen the application to prepare this account.".into(),
+        )),
+    }
 }
