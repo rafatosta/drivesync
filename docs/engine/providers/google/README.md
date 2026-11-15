@@ -1,5 +1,18 @@
 # Google
 
+## Política obrigatória: nenhuma exclusão permanente
+
+Por determinação explícita do usuário, exclusão de arquivos e pastas deve usar
+somente lixeira. `files_delete`, `files_empty_trash`, `revisions_delete` e
+`drives_delete` conservam suas assinaturas e traits, mas estão desativados:
+registram aviso estático e retornam `UnsupportedOperation` local, sem HTTP,
+autenticação ou alteração. O erro não é repetível, não tem status HTTP e não
+representa sucesso nem envio à lixeira. Usar `trash_file`/`trashed=true` para
+lixeira; não redirecionar silenciosamente uma chamada de exclusão permanente.
+A remoção de comentários/permissões não é exclusão de arquivo e não foi alterada.
+Esta política prevalece sobre descrições históricas dos endpoints abaixo.
+
+
 ## Objetivo
 
 Disponibilizar a API do Google Drive, incluindo as operações de autenticação Google necessárias ao seu acesso, por meio de funções que abstraem a comunicação com os serviços externos.

@@ -29,6 +29,10 @@ confirma baseline automaticamente. A definição e persistência de sua proveni�
 fazem parte do contrato futuro; o modelo atual não registra uma escolha de
 associação feita pela UI.
 
+Exclusão permanente é proibida, inclusive esvaziamento de lixeira e remoção de
+revisões pela API. Toda exclusão deve ir para a lixeira. A falta de suporte à
+lixeira exige bloqueio, nunca fallback para exclusão permanente.
+
 ## 2. Ação, direção e disposição são coisas diferentes
 
 - **Ação:** o que precisa mudar, por exemplo criar, atualizar conteúdo ou renomear.
@@ -51,7 +55,7 @@ com direção identificada pode continuar pendente de identidade, destino ou evi
 | Renomear | Renomear o recurso remoto vinculado | Renomear o recurso local vinculado | Mudança de nome unilateral em relação ao baseline, preservando identidade | Núcleo e persistência implementados; dependem do vínculo correto |
 | Mover | Alterar pasta do recurso remoto vinculado | Alterar pasta do recurso local vinculado | Mudança unilateral de pai lógico, com vínculo e evidências de localização | Núcleo e persistência implementados; mapeamento dos pais pode continuar pendente |
 | Enviar à lixeira | Destino remoto | Destino local, se suportado | Identidade, ausência/exclusão comprovada, política e autorização específicas | Vocabulário geral do Inventory/Operator; Analyzer não gera esta intenção |
-| Excluir definitivamente | Remover recurso remoto | Remover recurso local | Política explícita, autorização e proteção dos descendentes; nunca inferir de snapshot ausente | Analyzer não gera esta intenção |
+| Excluir definitivamente | Proibido | Proibido | Nenhuma autorização deve liberar exclusão permanente; toda exclusão deve ir para a lixeira | Analyzer não deve gerar esta intenção; métodos destrutivos da API permanecem chamáveis, mas bloqueados sem execução |
 | Restaurar | Restaurar recurso remoto | Restaurar recurso local, se suportado | Recurso recuperável identificado e política/escolha explícita | Analyzer não gera esta intenção |
 
 Na primeira observação sem vínculo oposto, `Create` indica **replicação desejada**,
@@ -144,7 +148,7 @@ nas suítes atuais; esta lista não declara funcionalidades futuras implementada
 | Criação | Arquivo e pasta, nos dois sentidos; origem parcial; lado oposto desconhecido; destino ocupado | Intenções básicas cobertas; colisões/dependências pendentes |
 | Conteúdo | Mudança unilateral em ambos os sentidos; convergência; mudanças concorrentes distintas; arquivo mudando durante medição | Algoritmos com evidência sintética cobertos; aquisição real pendente |
 | Nome/localização | Rename, move, combinações compatíveis e conflito; pai ausente; identidade preservada após mudança | Núcleo coberto; identidade local e dependências precisam de validação integrada completa |
-| Exclusão | Ausência comprovada, perda de acesso, scan parcial, exclusão×edição, descendentes | Proteções/requisitos existentes; política e decisões destrutivas pendentes |
+| Exclusão | Ausência comprovada, perda de acesso, scan parcial, exclusão×edição, descendentes | Proteções/requisitos existentes; política de envio à lixeira pendente; exclusão permanente proibida |
 | Persistência | Retry, reentrega, reinício, obsolescência, isolamento, falha transacional | Suítes atuais cobrem análise e ingestão; efeitos do Operator ainda inexistentes |
 | Manual | Identificação, escolhas com revisões antigas, revalidação e preservação das duas versões | Identificação implementada; escolhas e resolução pendentes |
 | Interface | Arquivo, múltiplas ações, direção, requisitos, detalhes e análise obsoleta | Painel implementado; ações do usuário ainda não implementadas |

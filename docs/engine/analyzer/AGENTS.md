@@ -25,6 +25,8 @@ e o [AGENTS da raiz](../../../AGENTS.md) antes de alterar a integração.
 - Não apagar baseline existente para tratar estado incerto como primeira criação.
 - Persistir decisões, conflitos e requisitos sem afirmar execução. Operações
   vinculadas permanecem `Blocked`, sem liberação por claim/requeue genéricos.
+- Exclusão permanente é proibida. Toda exclusão deve ir para a lixeira;
+  ausência de suporte exige bloqueio, nunca fallback para delete definitivo.
 - Não confirmar baseline nem fabricar `Synced` a partir do retorno da análise.
 - Status lê apenas a atividade local em memória, sem SQL. A reserva pertence ao
   worker mesmo se o future aguardado for cancelado; o worker ainda pode gravar.

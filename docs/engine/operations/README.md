@@ -1,5 +1,12 @@
 # Operador
 
+> Política obrigatória: toda exclusão deve ir para a lixeira. Exclusão permanente
+> é proibida. O método conceitual `delete` não autoriza execução e, se preservado
+> no contrato futuro, deve recusar localmente sem efeitos. Nunca usar delete como
+> fallback quando lixeira não estiver disponível. No Provider Google, os métodos
+> destrutivos já retornam `UnsupportedOperation` sem HTTP.
+
+
 ## Objetivo
 
 Disponibilizar uma API pública para executar comandos de manipulação e transferência de arquivos e diretórios em ambientes locais e remotos.

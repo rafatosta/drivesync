@@ -512,26 +512,17 @@ impl GoogleDriveClient {
         )
     }
 
-    /// drive.revisions.delete: DELETE /files/{fileId}/revisions/{revisionId}. No automatic retry.
+    /// Disabled: permanent deletion is prohibited. Move items to trash instead.
+    /// Keeps the public call intact, emits a static warning and returns local
+    /// `UnsupportedOperation` without authentication, HTTP or mutation.
     pub async fn revisions_delete(
         &self,
         session: &GoogleSession,
         file_id: &FileId,
         revision_id: &RevisionId,
     ) -> GoogleResult<()> {
-        let query = Vec::new();
-        let body = None;
-        let _ = self
-            .rest(
-                session,
-                reqwest::Method::DELETE,
-                &["files", &file_id.0, "revisions", &revision_id.0],
-                "",
-                query,
-                body,
-            )
-            .await?;
-        Ok(())
+        let _ = (session, file_id, revision_id);
+        Err(super::errors::permanent_deletion_disabled())
     }
 
     /// drive.revisions.update: PATCH /files/{fileId}/revisions/{revisionId}. No automatic retry.

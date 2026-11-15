@@ -1,7 +1,7 @@
 //! Direct Google Drive v3, desktop OAuth and OpenID Connect mapping.
 //!
-//! All 78 documented operations are implemented independently of application
-//! synchronization. Network operations use bounded async HTTP on Tokio; pure
+//! The documented public calls are preserved. Permanent deletion endpoints are
+//! disabled locally by explicit policy; callers must use trash instead. Network operations use bounded async HTTP on Tokio; pure
 //! parameter transformations and authorization URL construction stay synchronous.
 //! No credential persistence, retries, task scheduler or synchronization policy.
 

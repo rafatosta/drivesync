@@ -1,5 +1,18 @@
 # Google — INTERFACES
 
+## Política obrigatória: nenhuma exclusão permanente
+
+Por determinação explícita do usuário, exclusão de arquivos e pastas deve usar
+somente lixeira. `files_delete`, `files_empty_trash`, `revisions_delete` e
+`drives_delete` conservam suas assinaturas e traits, mas estão desativados:
+registram aviso estático e retornam `UnsupportedOperation` local, sem HTTP,
+autenticação ou alteração. O erro não é repetível, não tem status HTTP e não
+representa sucesso nem envio à lixeira. Usar `trash_file`/`trashed=true` para
+lixeira; não redirecionar silenciosamente uma chamada de exclusão permanente.
+A remoção de comentários/permissões não é exclusão de arquivo e não foi alterada.
+Esta política prevalece sobre descrições históricas dos endpoints abaixo.
+
+
 **Fronteira técnica:** esta é a documentação da API Google diretamente no submódulo `google/`. As assinaturas e tipos aqui descritos mapeiam operações técnicas do serviço, não processos de negócio.
 
 **Contrato Rust v1 para TDD.** Todas as operações e os tipos declarados são públicos nesta versão. As assinaturas representam a API que será implementada, não código existente. Não há compromisso de reduzir a visibilidade dos métodos depois.
@@ -770,13 +783,16 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 #### `drives_delete`
 
-**Finalidade:** Exclui os drives compartilhados por meio de `DELETE /drives/{driveId}`.
 
-**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``drive_id: &DriveId`: valor obrigatório pelo contrato tipado; `options: DriveDeleteOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+**Finalidade atual:** chamada preservada, mas exclusão permanente proibida.
 
-**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+**Parâmetros e assinatura:** mantidos conforme o catálogo acima; nenhuma opção,
+permissão administrativa ou sessão habilita a execução.
 
-**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+**Retorno:** `GoogleResult<()>` com `Err(UnsupportedOperation)`, `http_status=None`,
+sem razão remota e `retryable=false`. Emite aviso estático para usar a lixeira.
+Não autentica, não envia HTTP, não altera recurso nem retorna sucesso fictício.
+Não redireciona para lixeira automaticamente; essa ação exige chamada explícita.
 
 #### `drives_get`
 
@@ -850,13 +866,16 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 #### `files_delete`
 
-**Finalidade:** Exclui os arquivos por meio de `DELETE /files/{fileId}`.
 
-**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `options: FileDeleteOptions``: objeto de opções desse endpoint; campos opcionais definidos no próprio tipo.
+**Finalidade atual:** chamada preservada, mas exclusão permanente proibida.
 
-**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+**Parâmetros e assinatura:** mantidos conforme o catálogo acima; nenhuma opção,
+permissão administrativa ou sessão habilita a execução.
 
-**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+**Retorno:** `GoogleResult<()>` com `Err(UnsupportedOperation)`, `http_status=None`,
+sem razão remota e `retryable=false`. Emite aviso estático para usar a lixeira.
+Não autentica, não envia HTTP, não altera recurso nem retorna sucesso fictício.
+Não redireciona para lixeira automaticamente; essa ação exige chamada explícita.
 
 #### `files_download`
 
@@ -870,13 +889,16 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 #### `files_empty_trash`
 
-**Finalidade:** Esvazia a lixeira de os arquivos por meio de `DELETE /files/trash`.
 
-**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``options: EmptyTrashOptions``: valor obrigatório pelo contrato tipado.
+**Finalidade atual:** chamada preservada, mas exclusão permanente proibida.
 
-**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+**Parâmetros e assinatura:** mantidos conforme o catálogo acima; nenhuma opção,
+permissão administrativa ou sessão habilita a execução.
 
-**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+**Retorno:** `GoogleResult<()>` com `Err(UnsupportedOperation)`, `http_status=None`,
+sem razão remota e `retryable=false`. Emite aviso estático para usar a lixeira.
+Não autentica, não envia HTTP, não altera recurso nem retorna sucesso fictício.
+Não redireciona para lixeira automaticamente; essa ação exige chamada explícita.
 
 #### `files_export`
 
@@ -1080,13 +1102,16 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 
 #### `revisions_delete`
 
-**Finalidade:** Exclui as revisões por meio de `DELETE /files/{fileId}/revisions/{revisionId}`.
 
-**Parâmetros:** `session: &GoogleSession` seleciona a conta autenticada. ``file_id: &FileId`: valor obrigatório pelo contrato tipado; `revision_id: &RevisionId``: identidade da revisão.
+**Finalidade atual:** chamada preservada, mas exclusão permanente proibida.
 
-**Retorno:** `GoogleResult<()>`. Confirmação sem objeto de recurso; erros continuam tipados.
+**Parâmetros e assinatura:** mantidos conforme o catálogo acima; nenhuma opção,
+permissão administrativa ou sessão habilita a execução.
 
-**Limites e erros:** Pode alterar ou remover dados; não assumir reversibilidade. Falhas seguem `GoogleApiFailure`; a obrigatoriedade e semântica dos atributos internos continuam definidas nos tipos do contrato.
+**Retorno:** `GoogleResult<()>` com `Err(UnsupportedOperation)`, `http_status=None`,
+sem razão remota e `retryable=false`. Emite aviso estático para usar a lixeira.
+Não autentica, não envia HTTP, não altera recurso nem retorna sucesso fictício.
+Não redireciona para lixeira automaticamente; essa ação exige chamada explícita.
 
 #### `revisions_get`
 
@@ -1318,7 +1343,7 @@ Referências: [download e exportação](https://developers.google.com/workspace/
 | --- | --- |
 | OAuth / OIDC | PKCE e `state`; token emitido; refresh sem novo refresh token; erro de consentimento; `sub` imutável; JWT inválido |
 | About / Apps | Máscara de campos, lista de apps e metadados indisponíveis |
-| Files | Criar, copiar, atualizar, mover, renomear, lixeira, excluir permanentemente, listar com filtros; 404 não significa exclusão comprovada |
+| Files | Criar, copiar, atualizar, mover, renomear, lixeira, listar com filtros; exclusão permanente bloqueada localmente; 404 não significa exclusão comprovada |
 | Changes | Cursor inicial, paginação, `newStartPageToken` somente no final; `removed=true` também pode indicar perda de acesso |
 | Drives | Criação, listagem paginada, atualização, ocultação e exclusão autorizada |
 | Permissions / Proposals | Criação, atualização, listagem, rejeição e direitos insuficientes |
