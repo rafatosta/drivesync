@@ -112,24 +112,26 @@ fn live_account_selection_and_detector_layout() {
     for account in ["personal@example.invalid", "work@example.invalid"] {
         let root = base.join(account);
         std::fs::create_dir(&root).unwrap();
-        let session = Orchestrator::observe_detector(
-            DetectorCreateRequest {
-                connector: engine.clone(),
-                scope: DetectorScope {
-                    account_id: AccountId(account.into()),
-                    sync_id: SyncId(format!("test-{account}")),
-                    local_root: root.clone(),
-                    remote_root_id: "fixture-root".into(),
+        let session =
+            Orchestrator::new(drivesync_engine::orchestrator::OrchestratorCreateRequest {
+                detector: DetectorCreateRequest {
+                    connector: engine.clone(),
+                    scope: DetectorScope {
+                        account_id: AccountId(account.into()),
+                        sync_id: SyncId(format!("test-{account}")),
+                        local_root: root.clone(),
+                        remote_root_id: "fixture-root".into(),
+                    },
+                    local_settings: LocalDetectorSettings::default(),
+                    remote_settings: RemoteDetectorSettings::default(),
+                    event_available_sink: None,
                 },
-                local_settings: LocalDetectorSettings::default(),
-                remote_settings: RemoteDetectorSettings::default(),
-                event_available_sink: None,
-            },
-            DeliveryState::Enabled,
-        )
-        .unwrap();
+            })
+            .unwrap();
         let session = Arc::new(session);
-        session.start_detector(DetectorStartMode::Initial).unwrap();
+        gtk::glib::MainContext::default()
+            .block_on(session.prepare())
+            .unwrap();
         context.detectors.borrow_mut().insert(
             account.into(),
             detectors::Session {
@@ -137,6 +139,7 @@ fn live_account_selection_and_detector_layout() {
                 orchestrator: session,
                 remote_root_id: "fixture-root".into(),
                 remote_error: None,
+                preparation: None,
             },
         );
     }
@@ -188,13 +191,15 @@ fn live_account_selection_and_detector_layout() {
     let personal = texts(page.upcast_ref());
     assert!(personal.contains("Monitoring"));
     assert!(personal.contains("personal-only.txt"));
-    assert_eq!(
+    assert!(
         find(page.upcast_ref(), "detector-pending")
             .unwrap()
             .downcast::<gtk::Label>()
             .unwrap()
-            .text(),
-        "0"
+            .text()
+            .parse::<u64>()
+            .unwrap()
+            > 0
     );
     assert!(personal.contains("OBSERVED"));
     assert!(!personal.contains("RENAME"));
@@ -264,52 +269,9 @@ fn live_account_selection_and_detector_layout() {
             .any(|event| event.entry_kind
                 == Some(drivesync_engine::models::LocalEntryKind::Directory))
     );
-    let delivery_button = find(page.upcast_ref(), "detector-delivery-toggle")
-        .unwrap()
-        .downcast::<gtk::Button>()
-        .unwrap();
-    assert_eq!(
-        delivery_button.icon_name().as_deref(),
-        Some("media-playback-pause-symbolic")
-    );
-    delivery_button.emit_clicked();
-    settle();
+    assert!(find(page.upcast_ref(), "detector-delivery-toggle").is_none());
     assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
-    std::fs::write(
-        base.join("personal@example.invalid/queued-while-paused"),
-        b"durable",
-    )
-    .unwrap();
-    settle();
-    assert_eq!(session.diagnostics().pending_events, Some(1));
-    assert_eq!(
-        delivery_button.icon_name().as_deref(),
-        Some("media-playback-start-symbolic")
-    );
-    capture(&window, "detector-delivery-paused");
-    selector.set_selected(1);
-    settle();
-    assert_eq!(
-        delivery_button.icon_name().as_deref(),
-        Some("media-playback-pause-symbolic")
-    );
-    assert_eq!(
-        context
-            .detectors
-            .borrow()
-            .get("work@example.invalid")
-            .unwrap()
-            .orchestrator
-            .diagnostics()
-            .delivery,
-        Some(DeliveryState::Enabled)
-    );
-    selector.set_selected(0);
-    settle();
-    delivery_button.emit_clicked();
-    settle();
-    assert_eq!(session.diagnostics().pending_events, Some(0));
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Enabled));
+    assert_eq!(session.diagnostics().confirmed_events, Some(0));
     capture(&window, "detector-local-personal");
     let tabs = find(page.upcast_ref(), "detector-tabs")
         .unwrap()
@@ -319,33 +281,12 @@ fn live_account_selection_and_detector_layout() {
         .unwrap();
     tabs.set_visible_child_name("remote");
     settle();
-    let remote = texts(page.upcast_ref());
-    assert!(remote.contains("AuthorizationRequired"));
-    assert!(remote.contains("Next poll:"));
-    assert!(remote.contains("Interval:"));
-    assert!(delivery_button.is_sensitive());
-    delivery_button.emit_clicked();
-    settle();
+    assert!(texts(page.upcast_ref()).contains("AuthorizationRequired"));
     assert_eq!(
         session.remote_diagnostics().unwrap().queue.delivery,
         DeliveryState::Paused
     );
-    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
     capture(&window, "detector-remote-paused");
-    selector.set_selected(1);
-    settle();
-    assert_eq!(
-        delivery_button.icon_name().as_deref(),
-        Some("media-playback-pause-symbolic")
-    );
-    selector.set_selected(0);
-    settle();
-    delivery_button.emit_clicked();
-    settle();
-    assert_eq!(
-        session.remote_diagnostics().unwrap().queue.delivery,
-        DeliveryState::Enabled
-    );
     tabs.set_visible_child_name("local");
     settle();
     selector.set_selected(1);

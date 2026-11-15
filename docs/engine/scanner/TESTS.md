@@ -1,3 +1,12 @@
+# Verificação compilada
+
+A implementação e suas limitações estão em IMPLEMENTATION.md. O catálogo abaixo
+é referência de cenários, não prova de execução. Testes reais estão em
+engine/src/scanner/tests.rs e engine/tests/scanner.rs, com filesystem e SQLite
+temporários. SC-20 e SC-05 continuam BLOCKED pelos contratos de integração.
+SC-18/SC-26 são exercitados por cancelamento ao descartar o future; não há método
+cancel adicional. A inicialização completa do Orquestrador não foi simulada.
+
 # Scanner Local — TESTS
 
 ## Objetivo
@@ -84,4 +93,4 @@ Não exigir porcentagem de progresso: o Scanner não conhece antecipadamente o n
 6. A estrutura de diagnóstico de cada item deve estar recuperável pelo Analisador através do Inventário antes de declarar integração completa; até lá, testes correspondentes permanecem `BLOCKED`.
 7. Testes reais de Rust usam o Flatpak do projeto; reportar `PASS`, `FAIL` e `BLOCKED` sem declarar testes não executados.
 
-**Estado:** plano de testes TDD documental; nenhuma implementação ou execução de testes Rust ocorreu nesta alteração.
+**Estado:** catálogo de referência. Resultados realmente executados e lacunas estão em IMPLEMENTATION.md.

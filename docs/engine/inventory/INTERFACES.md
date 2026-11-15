@@ -214,7 +214,7 @@ pub struct OpenInventoryResult {
     pub recovery: InventoryRecoveryOutcome,
 }
 pub struct GetSyncInfoRequest {}
-pub struct GetSyncInfoResult { pub info: SyncInfo }
+pub struct GetSyncInfoResult { pub info: SyncInfo, pub local_root: Vec<u8> }
 pub struct MarkInitialDownloadCompleteRequest {
     pub expected_generation: u64,
     pub expected_complete: bool,
@@ -870,3 +870,9 @@ Veja [IMPLEMENTATION.md](IMPLEMENTATION.md) e [TESTS.md](TESTS.md) para verifica
 executadas e lacunas de integração. Backup/restauração comum de Configuration
 continua indisponível: a implementação preserva o banco e falha explicitamente,
 sem informar restauração ou reconstrução que não aconteceu.
+
+## Vínculo de produtores locais
+
+GetSyncInfoResult expõe local_root como bytes Unix da raiz absoluta persistida,
+além de info. O Scanner valida esse vínculo antes de qualquer observação, sem
+consultar SQLite diretamente. O acréscimo não muda o esquema.

@@ -7,8 +7,8 @@ Branch de implementação: feat/inventory, a partir do merge do PR #96.
 Abertura de inventory.sqlite3 na pasta reservada da raiz, identidade por conta,
 sincronização, raiz remota e bytes da raiz local; esquema inicial versionado e
 integridade verificada. Sem migração, conversores, exclusão ou recriação automática.
-A raiz deve existir. Criar exige create_if_missing=true e ausência de arquivos
-de usuário; .drivesync existente é permitido para coexistência com o Detector.
+A raiz deve existir. Criar exige create_if_missing=true e preserva arquivos de
+usuário; .drivesync existente é permitido para coexistência com o Detector.
 
 Abertura usa descritores sem seguir symlinks, verifica dono, permissões e hardlinks,
 serializa a inicialização e mantém o diretório reservado aberto. SQLite usa
@@ -162,3 +162,15 @@ e janela de 520 pixels. Foram validados Next/Previous, troca rápida de escopo,
 truncamento, seleção e liberação da página. Não foram usadas contas reais.
 A inspeção tem quatro testes públicos; os 22 testes públicos de Inventory
 foram reexecutados após corrigir a distinção entre permissão e inexistência.
+
+## Provisionamento para a inicialização com Scanner
+
+A abertura explícita com create_if_missing=true passa a aceitar uma raiz
+configurada que já contenha arquivos. Somente o banco privado ausente é criado;
+conteúdo do usuário e bancos existentes não são apagados, migrados ou
+substituídos. Isso permite inventariar arquivos que já estavam no local antes
+de iniciar o aplicativo. A inspeção somente leitura continua sem criar bancos.
+
+Validação no SDK: os 17 testes públicos de Inventory passaram, incluindo a
+criação em pasta ocupada com preservação do conteúdo e a recusa de banco com
+esquema incompatível sem alteração dos bytes.

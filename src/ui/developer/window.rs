@@ -43,7 +43,7 @@ fn build(
         ("overview", "Overview", super::overview::build()),
         ("provider", "Provider", super::provider::build()),
         ("detector", "Detector", super::detector::build(context)),
-        ("scanner", "Scanner", super::scanner::build()),
+        ("scanner", "Scanner", super::scanner::build(context)),
         ("inventory", "Inventory", super::inventory::build(context)),
         ("analyzer", "Analyzer", super::analyzer::build()),
         ("operator", "Operator", super::operator::build()),

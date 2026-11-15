@@ -74,11 +74,6 @@ fn open_with_access(
         if !request.create_if_missing {
             return Err(failure(InventoryError::NotFound));
         }
-        for entry in fs::read_dir(&pinned).map_err(io)? {
-            if entry.map_err(io)?.file_name() != ".drivesync" {
-                return Err(failure(InventoryError::AlreadyExists));
-            }
-        }
         match fs::DirBuilder::new().mode(0o700).create(&reserved) {
             Ok(()) => {
                 root.sync_all().map_err(io)?;

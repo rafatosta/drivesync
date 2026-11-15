@@ -105,15 +105,10 @@ struct View {
     detail: gtk::Label,
     extra_detail: gtk::Label,
     extra: gtk::Expander,
-    delivery_toggle: gtk::glib::WeakRef<gtk::Button>,
-    control_busy: Rc<Cell<bool>>,
 }
 impl View {
     fn clear(&self) {
         self.extra.set_visible(false);
-        if let Some(button) = self.delivery_toggle.upgrade() {
-            button.set_sensitive(false);
-        }
         self.status.remove_css_class("success");
         self.status.remove_css_class("error");
         for value in [&self.last, &self.detected, &self.pending] {
@@ -144,27 +139,6 @@ impl View {
             return;
         };
         let snapshot = session.orchestrator.diagnostics();
-        if let Some(button) = self.delivery_toggle.upgrade() {
-            use drivesync_engine::detectors::DeliveryState;
-            let paused = snapshot.delivery == Some(DeliveryState::Paused);
-            button.set_icon_name(if paused {
-                "media-playback-start-symbolic"
-            } else {
-                "media-playback-pause-symbolic"
-            });
-            button.set_tooltip_text(Some(if paused {
-                "Resume delivery"
-            } else {
-                "Interrupt delivery for this account · Continue detecting and persisting changes"
-            }));
-            button.update_property(&[gtk::accessible::Property::Label(if paused {
-                "Resume delivery"
-            } else {
-                "Interrupt delivery"
-            })]);
-            button.set_sensitive(snapshot.delivery.is_some() && !self.control_busy.get());
-        }
-
         if let Ok(status) = session.orchestrator.local_status() {
             use drivesync_engine::detectors::LocalDetectorState::*;
             self.status.set_label(match status.state {
@@ -264,25 +238,6 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {} · Initial/recovery observ
         }
         if matches!(status.state, RemoteState::Failed | RemoteState::Degraded) {
             self.status.add_css_class("error");
-        }
-        if let Some(button) = self.delivery_toggle.upgrade() {
-            let paused = snapshot.queue.delivery == DeliveryState::Paused;
-            button.set_icon_name(if paused {
-                "media-playback-start-symbolic"
-            } else {
-                "media-playback-pause-symbolic"
-            });
-            button.set_tooltip_text(Some(if paused {
-                "Resume delivery"
-            } else {
-                "Interrupt delivery for this account · Continue detecting and persisting changes"
-            }));
-            button.update_property(&[gtk::accessible::Property::Label(if paused {
-                "Resume delivery"
-            } else {
-                "Interrupt delivery"
-            })]);
-            button.set_sensitive(!self.control_busy.get());
         }
         let last = snapshot
             .events
@@ -466,15 +421,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     account_row.append(&accounts);
     account_row.append(&refresh_button);
     body.append(&account_row);
-    let delivery_toggle = gtk::Button::from_icon_name("media-playback-pause-symbolic");
-    delivery_toggle.set_widget_name("detector-delivery-toggle");
-    delivery_toggle.set_tooltip_text(Some(
-        "Pause delivery for this account. Continue detecting and persisting changes.",
-    ));
-    delivery_toggle.set_halign(gtk::Align::Start);
-    delivery_toggle.set_sensitive(false);
-    account_row.append(&delivery_toggle);
-    let control_busy = Rc::new(Cell::new(false));
+
     let feedback = label("", "error");
     feedback.set_visible(false);
     feedback.connect_label_notify(|label| label.set_visible(!label.text().is_empty()));
@@ -543,7 +490,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     events.set_margin_end(20);
     events.set_margin_bottom(16);
     events.append(&stream);
-    events.append(&label("Diagnostic delivery only · Shared delivery for Local and Remote · Initial observations are counted separately · Last 100 observations per source · No file synchronization is performed.", "dim-label"));
+    events.append(&label("Capture only · Delivery paused; Analyzer not connected · Shared queue for Local and Remote · Initial observations are counted separately · Last 100 observations per source · No file synchronization is performed.", "dim-label"));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -563,8 +510,6 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
         detail,
         extra_detail,
         extra,
-        delivery_toggle: delivery_toggle.downgrade(),
-        control_busy: control_busy.clone(),
     };
     let ids = Rc::new(RefCell::new(Vec::<String>::new()));
     let errors = Rc::new(RefCell::new(
@@ -680,80 +625,6 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
                     .and_then(|id| errors.borrow().get(id).cloned())
                     .as_deref(),
             );
-        }
-    });
-    delivery_toggle.connect_clicked({
-        let context = context.clone();
-        let ids = ids.clone();
-        let accounts = accounts.downgrade();
-        let render = render_selection.clone();
-        let feedback = feedback.downgrade();
-        let selected_tabs = tabs.downgrade();
-        move |button| {
-            if control_busy.replace(true) {
-                return;
-            }
-            let id = accounts
-                .upgrade()
-                .and_then(|accounts| ids.borrow().get(accounts.selected() as usize).cloned());
-            let session = id.as_ref().and_then(|id| {
-                context
-                    .detectors
-                    .borrow()
-                    .get(id)
-                    .map(|session| session.orchestrator.clone())
-            });
-            let Some(session) = session else {
-                control_busy.set(false);
-                return;
-            };
-            button.set_sensitive(false);
-            let remote = selected_tabs
-                .upgrade()
-                .is_some_and(|tabs| tabs.visible_child_name().as_deref() == Some("remote"));
-            let action_id = id.clone();
-            let selected_accounts = accounts.clone();
-            let selected_tabs = selected_tabs.clone();
-            let selected_ids = ids.clone();
-            let control_busy = control_busy.clone();
-            let render = render.clone();
-            let feedback = feedback.clone();
-            if let Some(feedback) = feedback.upgrade() {
-                feedback.set_label("");
-            }
-            gtk::glib::spawn_future_local(async move {
-                let result = gtk::gio::spawn_blocking(move || {
-                    if session.diagnostics().delivery
-                        == Some(drivesync_engine::detectors::DeliveryState::Paused)
-                    {
-                        session.resume_delivery()
-                    } else {
-                        session.pause_delivery()
-                    }
-                })
-                .await;
-                control_busy.set(false);
-                let selected = selected_accounts.upgrade().and_then(|accounts| {
-                    selected_ids
-                        .borrow()
-                        .get(accounts.selected() as usize)
-                        .cloned()
-                });
-                let same_source = selected_tabs.upgrade().is_some_and(|tabs| {
-                    (tabs.visible_child_name().as_deref() == Some("remote")) == remote
-                });
-                if let Some(feedback) = feedback
-                    .upgrade()
-                    .filter(|_| selected == action_id && same_source)
-                {
-                    match result {
-                        Ok(Ok(())) => (),
-                        Ok(Err(error)) => feedback.set_label(&error.to_string()),
-                        Err(_) => feedback.set_label("Could not change detector delivery"),
-                    }
-                }
-                render();
-            });
         }
     });
     accounts.connect_selected_notify({

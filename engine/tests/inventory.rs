@@ -80,12 +80,13 @@ fn open_reopen_identity_and_initial_materialization_are_persistent() {
 fn occupied_roots_and_incompatible_databases_are_never_rebuilt() {
     let tree = Tree::new();
     std::fs::write(tree.0.join("user-file"), b"untouched").unwrap();
-    assert!(
-        matches!(InventoryManager::open(tree.request()),Err(error)if error.kind==InventoryError::AlreadyExists)
+    let created = InventoryManager::open(tree.request()).unwrap();
+    assert!(created.created);
+    assert_eq!(
+        std::fs::read(tree.0.join("user-file")).unwrap(),
+        b"untouched"
     );
-    assert!(!tree.0.join(".drivesync").exists());
-    std::fs::remove_file(tree.0.join("user-file")).unwrap();
-    drop(InventoryManager::open(tree.request()).unwrap());
+    drop(created);
     let path = tree.0.join(".drivesync/inventory.sqlite3");
     let db = rusqlite::Connection::open(&path).unwrap();
     db.pragma_update(None, "user_version", 900).unwrap();

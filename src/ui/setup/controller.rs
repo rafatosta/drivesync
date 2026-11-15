@@ -938,6 +938,7 @@ impl Controller {
             owner.finishing.set(false);
             match result {
                 Ok(value) => {
+                    crate::application::detectors::schedule_refresh(&owner.context);
                     let close = owner.state.borrow().closing;
                     owner
                         .provisional_accounts

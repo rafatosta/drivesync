@@ -40,3 +40,15 @@ pub(super) fn summarize(file: File) -> DetectorEventSummary {
         },
     }
 }
+
+pub(super) fn local_error(error: DetectorFailure) -> LocalDetectorFailure {
+    LocalDetectorFailure {
+        kind: match error.source {
+            Some(DetectorSourceError::Local(kind)) => kind,
+            _ => LocalDetectorError::Internal,
+        },
+        message: error.to_string(),
+        retryable: error.retryable,
+        progress: None,
+    }
+}

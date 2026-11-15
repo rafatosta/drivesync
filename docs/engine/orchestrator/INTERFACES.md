@@ -156,14 +156,36 @@ Apenas erros de coordenação devem ser próprios (`InvalidSyncScope`, `Dependen
 **Estado:** contrato interno proposto para TDD; nenhum Rust compilado.
 
 
-## Etapa mínima compilada — Detector unificado e conector
+## Inicialização compilada com Scanner
 
-`Orchestrator::observe_detector(DetectorCreateRequest, DeliveryState)` é o único construtor. Compõe a fachada `Detector` e um consumidor terminal diagnóstico, sem executar sincronização. Os construtores locais anteriores e `attach_remote` foram removidos; não há adaptação de versões antigas.
+`Orchestrator::new(OrchestratorCreateRequest { detector })` abre somente a fila e
+os produtores parados, sempre com entrega suspensa. O modo de consumidor terminal
+de diagnóstico foi removido; não há alias de observe_detector nem modo legado.
 
-- `start_detector(DetectorStartMode)` e `stop_detector(DetectorStopMode)` controlam ambas as origens pela fachada.
-- `detector()` retorna `&Detector`; `detector_status()` retorna o estado agregado tipado.
-- `local_status()`, `diagnostics()` e `remote_diagnostics()` projetam caches por origem.
-- `pause_delivery()` e `resume_delivery()` controlam uma única política por conta, sem parar os produtores.
-- `connector()` mantém o acesso ao serviço de conexão, inclusive por clones após a parada.
+`prepare().await` inicia Local e Remote com Paused, aguarda a captura local sair
+de Starting, abre/valida o Inventory e executa o Scanner. O resultado é
+Arc<ScanReport>. A montagem e o descarte de recursos SQLite ficam fora de GTK.
+Não exige runtime Tokio no chamador. Uma segunda preparação concorrente é
+rejeitada; cancelamento e parada invalidam resultados antigos. Se a captura
+local falhou, a repetição para/reinicia a fonte antes de tentar a varredura.
 
-A política inicial só vale para banco novo; reabertura do mesmo formato restaura a política persistida. Não se trata de migração. O consumidor confirma lotes apenas para diagnóstico; não comprova ingestão no Inventário ou sincronização. Todos os comandos que realizam I/O devem ocorrer fora da thread gráfica. A validação completa do coordenador acima permanece posterior.
+`preparation_status()` retorna snapshot sem SQL: estado, ScannerStatus opcional,
+Arc do relatório e erro tipado opcional. Estados: Idle, Starting, Scanning,
+ReadyForAnalyzer, Partial, Failed, Cancelled e Stopped. ReadyForAnalyzer comprova
+somente o pré-requisito local, não saúde remota ou sincronização completa.
+
+Partial mantém o Analisador suspenso, conforme decisão do usuário. Mesmo em
+ReadyForAnalyzer a entrega continua Paused enquanto Analyzer/ingestão durável
+não estiverem conectados. Nenhum lote é reservado, confirmado ou descartado.
+Não existe mais botão de retomar o consumidor diagnóstico na aplicação.
+
+`stop_detector` invalida a preparação antes de parar ambas as fontes; o dono
+cancela primeiro o future de preparação. `detector`, `detector_status`,
+`local_status`, `diagnostics`, `remote_diagnostics` e `connector` continuam sendo
+consultas/acesso às dependências reais. Não há novos comandos de transferência.
+
+A aplicação usa uma sessão por configuração de conta, reutilizada por páginas
+Developer. A restauração inicial e a conclusão de setup solicitam a preparação
+sem precisar abrir o console. Alteração de escopo/desconexão cancela a tarefa e
+encerra as fontes fora da thread gráfica. A coordenação completa de ingestão,
+Analyzer e resolução continua separada das seções conceituais anteriores.

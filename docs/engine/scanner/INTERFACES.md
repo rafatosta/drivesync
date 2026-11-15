@@ -4,7 +4,7 @@
 
 A interface pública do Scanner contém **construção, varredura local e consulta de estado**. É invocada pelo Orquestrador; todos os acessos ao Inventário utilizam sua API pública. A varredura produz observações locais, nunca comandos de sincronização.
 
-As assinaturas Rust são **contratos propostos para implementação orientada a testes**, não tipos ou métodos já implementados.
+As assinaturas estão implementadas em `engine/src/scanner/`. Veja [IMPLEMENTATION.md](IMPLEMENTATION.md) para as decisões e os limites atuais.
 
 ```rust
 pub type ScannerResult<T> = Result<T, ScannerError>;
@@ -35,7 +35,7 @@ Usar, sem redefinir:
 
 ```rust
 pub struct ScannerConfig {
-    pub inventory: InventoryAccess,
+    pub inventory: Arc<InventoryManager>,
     pub root: LocalRoot,
 }
 
@@ -49,7 +49,7 @@ pub struct ScanRequest {
 }
 ```
 
-**`inventory`:** dependência já configurada de acesso público ao `InventoryManager`. `InventoryAccess` é um identificador conceitual para o wrapper/trait de injeção a definir no Rust; não significa acesso SQL.
+**`inventory`:** Arc<InventoryManager> já aberto e configurado. O Scanner só usa métodos públicos. GetSyncInfoResult inclui local_root em bytes Unix, para verificar a raiz exata.
 
 **`root`:** raiz local autorizada e identidade de sincronização. Seu caminho precisa ser validado e protegido de escapes por caminhos relativos, symlinks e corridas de filesystem. É responsabilidade de `new` preparar essa configuração, sem realizar varredura.
 
@@ -126,6 +126,7 @@ pub enum ScanIssueKind {
     SymlinkProblem,
     ResourceExhausted,
     InventoryRecordFailed,
+    MountBoundary,
 }
 
 pub enum ScanIssueImpact {
@@ -235,7 +236,7 @@ Quando uma leitura falha, distinguir:
 
 **Lacuna atual de integração:** a API documentada do Inventário possui `record_local`, `ObservationProof` e `PresenceState`, mas ainda **não define método/campo específico para persistir `ScanIssue` por item nem um marcador de geração/escopo da varredura**. A implementação precisa acordar essa representação no contrato do Inventário antes de afirmar que o Analisador consegue recuperar todos os diagnósticos após reinício. Não armazenar as questões apenas em memória e declarar recuperação durável.
 
-O Detector Local mantém sua fila própria e não escreve no Inventário através do Scanner. O Orquestrador inicia/aguarda o Scanner e, após conclusão, volta a consumir os eventos persistidos pelos Detectores. Não cabe ao Scanner ordenar ou reconciliar essas ocorrências.
+O Detector Local mantém sua fila própria e não escreve no Inventário através do Scanner. O Orquestrador inicia/aguarda o Scanner; uma conclusão completa satisfaz o pré-requisito local para análise. Enquanto Analyzer/ingestão não estiverem conectados, a entrega continua pausada e nenhum evento é confirmado. Não cabe ao Scanner ordenar ou reconciliar essas ocorrências.
 
 ## 9. Concorrência e segurança
 
@@ -246,4 +247,20 @@ O Detector Local mantém sua fila própria e não escreve no Inventário atravé
 - Não ler conteúdo integral ou calcular hash obrigatório na varredura por padrão: metadados e presença são suficientes para o levantamento inicial. Ausência de hash não prova igualdade de conteúdo.
 - Não executar remoções, atualizações físicas, uploads, downloads, reparaços ou decisões automáticas de conflito.
 
-**Estado:** contrato documental. A persistência de diagnósticos por item e a semântica de geração/cobertura exigem alinhamento posterior com o Inventário.
+**Estado:** módulo Rust implementado. Cobertura e geração estão detalhadas em IMPLEMENTATION.md; a persistência de todo ScanIssue continua pendente de contrato com o Inventário.
+
+## Decisões compiladas
+
+O relatório expõe ready_for_analysis(), verdadeiro somente em Completed, conforme
+a decisão do usuário. Partial mantém análise/consumo suspensos. A coordenação inicial está conectada à abertura, mas o Analisador ainda não. O
+consumidor diagnóstico foi removido; não confirmar eventos como substituto de análise.
+
+Cada observação aceita deixa o item PendingReconciliation. Os contadores de
+items_recorded contam record_local aceito; falha na marca posterior torna o
+resultado Partial/erro. A prova tem um identificador por scan. ScanIssue não é
+persistido como histórico de operações, e a lacuna SC-20 permanece BLOCKED.
+
+Dropar o future solicita cancelamento cooperativo. Cada execução usa um worker
+finito independente do runtime do chamador. Montagens são recusadas por identidade
+Linux; caminhos e root são validados por descritores. Renomeação sem identidade
+persistente não é correlacionada. Veja IMPLEMENTATION.md para detalhes.
