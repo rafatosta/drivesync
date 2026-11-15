@@ -31,5 +31,5 @@ revisões, retry, reinício, concorrência, rollback e limpeza de status. A suí
 pura de cada algoritmo é complementar. Executar Rust exclusivamente no Flatpak
 definido pelo projeto e registrar comandos/resultados reais.
 
-**Estado:** análise/persistência implementadas; execução, resolução e integração
-com Orquestrador/GUI permanecem pendentes.
+**Estado:** análise/persistência implementadas e chamadas pelo Orchestrator após
+Scanner completo. Execução e resolução permanecem pendentes.

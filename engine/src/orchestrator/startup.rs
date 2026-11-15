@@ -1,4 +1,4 @@
-//! Paused capture and local inventory preparation; no terminal event consumer exists here.
+//! Paused capture, local scanning and a finite decision pass over the persisted inventory.
 use super::*;
 use crate::{inventory::*, scanner::*};
 use std::sync::{
@@ -15,6 +15,7 @@ pub enum PreparationState {
     Idle,
     Starting,
     Scanning,
+    Analyzing,
     ReadyForAnalyzer,
     Partial,
     Failed,
@@ -26,6 +27,7 @@ pub enum PreparationFailure {
     Detector(DetectorFailure),
     Inventory(InventoryFailure),
     Scanner(ScannerError),
+    Analyzer(crate::analyzer::AnalyzerError),
     AlreadyRunning,
     Internal,
 }
@@ -35,6 +37,7 @@ impl std::fmt::Display for PreparationFailure {
             Self::Detector(e) => write!(f, "Detector: {e}"),
             Self::Inventory(e) => write!(f, "Inventory: {e}"),
             Self::Scanner(e) => write!(f, "Scanner: {e}"),
+            Self::Analyzer(e) => write!(f, "Analyzer: {e}"),
             Self::AlreadyRunning => f.write_str("Preparation is already running"),
             Self::Internal => f.write_str("Could not prepare synchronization"),
         }
@@ -109,7 +112,8 @@ impl Orchestrator {
     }
     /// Starts both sources with delivery paused before creating/opening Inventory and scanning.
     /// Every blocking setup operation is delegated to a finite worker. The caller needs no Tokio runtime.
-    /// Completion never acknowledges events or enables delivery: Analyzer ingestion is not connected yet.
+    /// A complete scan is followed by persisted Analyzer decisions. Delivery stays paused;
+    /// completion never acknowledges events, executes work or confirms synchronization.
     pub async fn prepare(&self) -> Result<Arc<ScanReport>, PreparationFailure> {
         if self
             .preparation_status()
@@ -226,22 +230,22 @@ impl Orchestrator {
                         .inventory,
                     );
                     Scanner::new(ScannerConfig {
-                        inventory,
+                        inventory: inventory.clone(),
                         root: LocalRoot {
                             sync_id: scope.sync_id.clone(),
                             path: scope.local_root.clone(),
                         },
                     })
-                    .map(Arc::new)
+                    .map(|scanner| (Arc::new(scanner), inventory))
                     .map_err(PreparationFailure::Scanner)
                 })();
                 let _ = tx.send(work);
             });
         let result = async {
             spawned.map_err(|_| PreparationFailure::Internal)?;
-            let scanner = rx.await.map_err(|_| PreparationFailure::Internal)??;
+            let (scanner, inventory) = rx.await.map_err(|_| PreparationFailure::Internal)??;
             if self.preparation.epoch.load(Ordering::Acquire) != epoch {
-                std::thread::spawn(move || drop(scanner));
+                std::thread::spawn(move || drop((scanner, inventory)));
                 return Err(PreparationFailure::Internal);
             }
             {
@@ -266,7 +270,26 @@ impl Orchestrator {
             if self.preparation.epoch.load(Ordering::Acquire) != epoch {
                 return Err(PreparationFailure::Internal);
             }
-            Ok::<_, PreparationFailure>(Arc::new(report))
+            let report = Arc::new(report);
+            if report.ready_for_analysis() {
+                {
+                    let mut snapshot = self
+                        .preparation
+                        .snapshot
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if self.preparation.epoch.load(Ordering::Acquire) != epoch {
+                        return Err(PreparationFailure::Internal);
+                    }
+                    snapshot.state = PreparationState::Analyzing;
+                    snapshot.report = Some(report.clone());
+                }
+                self.analyze_inventory(inventory, epoch).await?;
+                if self.preparation.epoch.load(Ordering::Acquire) != epoch {
+                    return Err(PreparationFailure::Internal);
+                }
+            }
+            Ok::<_, PreparationFailure>(report)
         }
         .await;
         {

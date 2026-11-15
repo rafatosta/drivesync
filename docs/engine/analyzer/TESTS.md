@@ -33,7 +33,8 @@ independentes e são executadas junto ao workspace.
 Execução de comandos, progresso de transferência, confirmação após efeitos,
 opções de resolução e recuperação de efeitos físicos continuam fora do escopo.
 Aprovar estes testes não comprova essas funcionalidades ou integração real com
-Google, aplicativo instalado, Orquestrador ou GUI.
+Google, aplicativo instalado ou GUI. A integração pós-scan do Orchestrator possui
+suíte própria em `engine/tests/orchestrator.rs`.
 
 ## Validação executada nesta entrega
 

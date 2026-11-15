@@ -154,7 +154,7 @@ fn startup_without_console_and_scanner_page_share_real_account_preparation() {
     assert_eq!(view.files.text(), "2");
     assert_eq!(view.directories.text(), "2");
     assert_eq!(view.recorded.text(), "3");
-    assert!(view.gate.text().contains("Analyzer is not connected"));
+    assert!(view.gate.text().contains("analysis decisions recorded"));
     capture(&window, "scanner-complete");
     let inventory = InventoryManager::open(OpenInventoryRequest {
         local_root: base.join(ids[0]),

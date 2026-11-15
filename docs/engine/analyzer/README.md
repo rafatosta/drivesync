@@ -34,8 +34,8 @@ transações do Inventory. Cancelamento do future não garante cancelamento do w
 
 **Estado:** integração de análise/persistência implementada. O esquema Inventory
 é 4; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
-Execução de comandos, opções/ações de resolução e ligação com o Orquestrador/GUI
-permanecem fora desta entrega.
+O Orchestrator chama esta fachada após Scanner completo, para produzir decisões
+sem executar operações. Execução de comandos e opções/ações de resolução permanecem pendentes.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
 [Persistência](../inventory/ANALYSIS.md) · [Orientações](AGENTS.md)

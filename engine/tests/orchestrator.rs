@@ -1,4 +1,4 @@
-//! The minimal orchestrator consumes only the unified detector facade.
+//! Scan and decision coordination uses only public module facades.
 use drivesync_engine::{
     detectors::*, models::*, Engine, EngineConfig, ListAccountsRequest, Orchestrator,
 };
@@ -277,4 +277,487 @@ async fn preparation_can_retry_after_local_capture_failed_to_start() {
     );
     assert_eq!(session.diagnostics().confirmed_events, Some(0));
     assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
+}
+
+fn inventory(tree: &Tree, id: &str) -> drivesync_engine::inventory::InventoryManager {
+    use drivesync_engine::inventory::*;
+    InventoryManager::open(OpenInventoryRequest {
+        local_root: tree.0.join(id),
+        expected: SyncIdentity {
+            sync_id: SyncId(format!("sync-{id}")),
+            account_id: AccountId(id.into()),
+            remote_root_id: "root".into(),
+        },
+        create_if_missing: false,
+    })
+    .unwrap()
+    .inventory
+}
+fn analyses(
+    inventory: &drivesync_engine::inventory::InventoryManager,
+) -> Vec<drivesync_engine::inventory::RecordedAnalysis> {
+    use drivesync_engine::inventory::*;
+    inventory
+        .list_analyses(ListAnalysesRequest {
+            filter: AnalysisFilter::default(),
+            pagination: Pagination::default(),
+        })
+        .unwrap()
+        .page
+        .entries
+}
+fn items(
+    inventory: &drivesync_engine::inventory::InventoryManager,
+) -> Vec<drivesync_engine::inventory::SyncItem> {
+    use drivesync_engine::inventory::*;
+    inventory
+        .list_items(ListItemsRequest {
+            filter: ItemFilter::default(),
+            pagination: Pagination::default(),
+        })
+        .unwrap()
+        .page
+        .entries
+}
+fn remote_observation(
+    inventory: &drivesync_engine::inventory::InventoryManager,
+    item: &drivesync_engine::inventory::SyncItem,
+    event: &str,
+    name: &str,
+) -> drivesync_engine::inventory::RecordRemoteObservation {
+    use drivesync_engine::inventory::*;
+    let account = inventory
+        .get_sync_info(GetSyncInfoRequest {})
+        .unwrap()
+        .info
+        .account_id;
+    let reference = RemoteFileRef {
+        account_id: account,
+        file_id: RemoteFileId("remote-file".into()),
+    };
+    let remote = RemoteFile {
+        reference: reference.clone(),
+        provider: ProviderId("google".into()),
+        name: MetadataValue::Known(name.into()),
+        kind: MetadataValue::Known(RemoteEntryKind::File),
+        mime_type: MetadataValue::NotCollected,
+        parent_ids: MetadataValue::Known(vec![RemoteFileId("root".into())]),
+        trashed: MetadataValue::Known(false),
+        version: MetadataValue::Known("1".into()),
+        created_time: MetadataValue::NotCollected,
+        modified_time: MetadataValue::NotCollected,
+        size: MetadataValue::NotCollected,
+        md5_checksum: MetadataValue::NotCollected,
+        sha256_checksum: MetadataValue::NotCollected,
+        provider_data: MetadataValue::NotCollected,
+    };
+    let observed = File {
+        id: FileId(event.into()),
+        sync_id: SyncId("sync-first".into()),
+        observed_at: Timestamp { unix_millis: 10 },
+        coverage: ObservationCoverage::Partial,
+        scope: FileScope::Remote(reference.clone()),
+        data: Some(FileData::Remote(remote)),
+        event: FileEvent {
+            kind: FileEventKind::Observed,
+            local: None,
+            remote: Some(drivesync_engine::models::RemoteObservation {
+                source: RemoteObservationSource::Changes,
+                removed: Some(false),
+                time: None,
+                change_type: None,
+                drive_id: None,
+            }),
+            uncertainty: None,
+            previous: None,
+            current: Some(FileLocation::Remote {
+                reference,
+                parent_id: Some(RemoteFileId("root".into())),
+                name: Some(name.into()),
+            }),
+        },
+    };
+    RecordRemoteObservation {
+        selector: ObservationTarget::Existing(item.id.clone()),
+        expected_revision: Some(item.revision),
+        observation: drivesync_engine::inventory::RemoteObservation {
+            observed,
+            presence: PresenceState::Present,
+            proof: ObservationProof {
+                source: ObservationSource::RemoteChange,
+                observed_at: Timestamp { unix_millis: 10 },
+                scan_or_generation: None,
+                complete_scope: false,
+            },
+        },
+    }
+}
+#[tokio::test]
+async fn complete_scan_records_decisions_for_every_item_without_consuming_events_or_executing() {
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    std::fs::create_dir(tree.0.join("first/folder")).unwrap();
+    std::fs::write(tree.0.join("first/folder/file"), b"unchanged").unwrap();
+    let session = tree.open(connector, "first");
+    let report = session.prepare().await.unwrap();
+    assert!(report.ready_for_analysis());
+    let inventory = inventory(&tree, "first");
+    let entries = items(&inventory);
+    let records = analyses(&inventory);
+    assert_eq!(records.len(), entries.len());
+    assert_eq!(records.len(), 2);
+    for record in records {
+        assert!(!record.stale);
+        assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+        assert!(record
+            .requirements
+            .contains(&AnalysisRequirement::ObserveRemote));
+        assert_eq!(record.evidence.local_content, EvidenceRelation::Unknown);
+        assert_eq!(record.evidence.current_content, EvidenceRelation::Unknown);
+        assert!(record.decisions.is_empty());
+    }
+    assert!(entries.iter().all(|item| item.baseline.is_none()));
+    assert_eq!(
+        std::fs::read(tree.0.join("first/folder/file")).unwrap(),
+        b"unchanged"
+    );
+    assert_eq!(session.diagnostics().delivery, Some(DeliveryState::Paused));
+    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+#[tokio::test]
+async fn persisted_remote_rename_produces_only_a_blocked_decision_and_preserves_baseline_and_file()
+{
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/file"), b"local-content").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    let inventory = inventory(&tree, "first");
+    let item = items(&inventory).remove(0);
+    let item = inventory
+        .record_remote(remote_observation(
+            &inventory,
+            &item,
+            "remote-initial",
+            "file",
+        ))
+        .unwrap()
+        .item;
+    let side = BaselineSide {
+        presence: PresenceState::Present,
+        name: None,
+        local_name_bytes: None,
+        parent_identity: None,
+        version: None,
+        checksum: None,
+        size: None,
+        modified_at: None,
+    };
+    let mut local = side.clone();
+    local.local_name_bytes = Some(b"file".to_vec());
+    let mut remote = side;
+    remote.name = Some("file".into());
+    let item = inventory
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: item.id.clone(),
+            expected_item_revision: item.revision,
+            confirmed: ConfirmedState {
+                baseline: SyncBaseline {
+                    local,
+                    remote,
+                    confirmed_at: Timestamp { unix_millis: 20 },
+                },
+                status: SyncStatus::Synced,
+                verified_at: Timestamp { unix_millis: 20 },
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+    let changed = inventory
+        .record_remote(remote_observation(
+            &inventory,
+            &item,
+            "remote-rename",
+            "remote-renamed",
+        ))
+        .unwrap()
+        .item;
+    assert_eq!(changed.status, SyncStatus::Synced);
+    session.prepare().await.unwrap();
+    let record = inventory
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id.clone()),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert!(!record.stale);
+    assert_eq!(record.decisions.len(), 1);
+    assert_eq!(
+        record.decisions[0].intent,
+        AnalysisIntent {
+            direction: OperationDirection::Download,
+            kind: OperationKind::Rename
+        }
+    );
+    assert!(record
+        .requirements
+        .contains(&AnalysisRequirement::VerifyContent));
+    let op = inventory
+        .list_operations(ListOperationsRequest {
+            filter: OperationFilter::default(),
+            pagination: Pagination::default(),
+        })
+        .unwrap()
+        .page
+        .entries
+        .remove(0);
+    assert_eq!(op.state, OperationState::Blocked);
+    assert_eq!(op.attempt_count, 0);
+    assert!(op.started_at.is_none());
+    assert_eq!(
+        std::fs::read(tree.0.join("first/file")).unwrap(),
+        b"local-content"
+    );
+    assert!(!tree.0.join("first/remote-renamed").exists());
+    assert_eq!(items(&inventory)[0].baseline, changed.baseline);
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+    drop(session);
+    drop(inventory);
+    let reopened = self::inventory(&tree, "first");
+    assert_eq!(analyses(&reopened).last().unwrap(), &record);
+}
+#[tokio::test]
+async fn known_remote_absence_creates_an_upload_intent_without_uploading() {
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/file"), b"stay-local").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    let inventory = inventory(&tree, "first");
+    let item = items(&inventory).remove(0);
+    let item = inventory
+        .record_remote(remote_observation(
+            &inventory,
+            &item,
+            "remote-initial",
+            "file",
+        ))
+        .unwrap()
+        .item;
+    let mut absent = remote_observation(&inventory, &item, "remote-absent", "file");
+    absent.observation.observed.data = None;
+    absent.observation.observed.event.current = None;
+    absent.observation.presence = PresenceState::AbsentConfirmed;
+    absent.observation.proof = ObservationProof {
+        source: ObservationSource::RemoteListing,
+        observed_at: Timestamp { unix_millis: 11 },
+        scan_or_generation: Some("observed-listing".into()),
+        complete_scope: true,
+    };
+    inventory.record_remote(absent).unwrap();
+    session.prepare().await.unwrap();
+    let record = inventory
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert_eq!(
+        record.decisions[0].intent,
+        AnalysisIntent {
+            direction: OperationDirection::Upload,
+            kind: OperationKind::Create
+        }
+    );
+    assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+    let ops = inventory
+        .list_operations(ListOperationsRequest {
+            filter: OperationFilter::default(),
+            pagination: Pagination::default(),
+        })
+        .unwrap()
+        .page
+        .entries;
+    assert!(ops
+        .iter()
+        .all(|op| op.state == OperationState::Blocked && op.attempt_count == 0));
+    assert_eq!(
+        std::fs::read(tree.0.join("first/file")).unwrap(),
+        b"stay-local"
+    );
+    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+#[tokio::test]
+async fn partial_scan_does_not_publish_new_analyses_until_coverage_is_restored() {
+    use drivesync_engine::orchestrator::PreparationState;
+    let (tree, connector) = Tree::new().await;
+    std::fs::create_dir(tree.0.join("first/locked")).unwrap();
+    std::fs::write(tree.0.join("first/locked/file"), b"data").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    let inventory = inventory(&tree, "first");
+    let before = analyses(&inventory).len();
+    std::fs::set_permissions(
+        tree.0.join("first/locked"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    let result = session.prepare().await;
+    std::fs::set_permissions(
+        tree.0.join("first/locked"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    assert!(!result.unwrap().ready_for_analysis());
+    assert_eq!(
+        session.preparation_status().state,
+        PreparationState::Partial
+    );
+    assert_eq!(analyses(&inventory).len(), before);
+    session.prepare().await.unwrap();
+    assert!(analyses(&inventory).len() > before);
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+#[tokio::test]
+async fn analysis_persistence_failure_is_visible_and_preparation_can_retry() {
+    use drivesync_engine::orchestrator::{PreparationFailure, PreparationState};
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/file"), b"data").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    let inventory = inventory(&tree, "first");
+    let before = analyses(&inventory).len();
+    let db = rusqlite::Connection::open(tree.0.join("first/.drivesync/inventory.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_analysis BEFORE INSERT ON analyses BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(matches!(
+        session.prepare().await,
+        Err(PreparationFailure::Analyzer(_))
+    ));
+    assert_eq!(session.preparation_status().state, PreparationState::Failed);
+    assert!(session
+        .preparation_status()
+        .report
+        .unwrap()
+        .ready_for_analysis());
+    assert_eq!(analyses(&inventory).len(), before);
+    assert_eq!(session.diagnostics().confirmed_events, Some(0));
+    db.execute_batch("DROP TRIGGER reject_analysis;").unwrap();
+    assert!(session.prepare().await.unwrap().ready_for_analysis());
+    assert!(analyses(&inventory).len() > before);
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+#[tokio::test]
+async fn decision_passes_are_isolated_between_accounts_and_survive_reopening() {
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/first-file"), b"first").unwrap();
+    std::fs::write(tree.0.join("second/second-file"), b"second").unwrap();
+    let first = tree.open(connector.clone(), "first");
+    let second = tree.open(connector.clone(), "second");
+    let (a, b) = tokio::join!(first.prepare(), second.prepare());
+    assert!(a.unwrap().ready_for_analysis());
+    assert!(b.unwrap().ready_for_analysis());
+    let first_inv = inventory(&tree, "first");
+    let second_inv = inventory(&tree, "second");
+    let first_record = analyses(&first_inv).remove(0);
+    let second_record = analyses(&second_inv).remove(0);
+    assert_ne!(first_record.item_id, second_record.item_id);
+    assert!(items(&first_inv).iter().all(|i| i
+        .local
+        .as_ref()
+        .is_some_and(|l| l.relative_path.as_bytes() == b"first-file")));
+    assert!(items(&second_inv).iter().all(|i| i
+        .local
+        .as_ref()
+        .is_some_and(|l| l.relative_path.as_bytes() == b"second-file")));
+    first.stop_detector(DetectorStopMode::StopNow).unwrap();
+    second.stop_detector(DetectorStopMode::StopNow).unwrap();
+    drop(first);
+    drop(second);
+    drop(first_inv);
+    drop(second_inv);
+    let reopened = tree.open(connector, "first");
+    reopened.prepare().await.unwrap();
+    assert!(analyses(&inventory(&tree, "first"))
+        .iter()
+        .any(|a| a.id == first_record.id));
+    assert_eq!(analyses(&inventory(&tree, "second")), vec![second_record]);
+    reopened.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+
+#[test]
+fn scan_and_decision_preparation_supports_callers_without_a_tokio_runtime() {
+    use std::{
+        future::Future,
+        sync::Arc,
+        task::{Context, Poll, Wake, Waker},
+    };
+    struct WakeThread(std::thread::Thread);
+    impl Wake for WakeThread {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(WakeThread(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park_timeout(Duration::from_secs(2)),
+            }
+        }
+    }
+    let (tree, connector) = block_on(Tree::new());
+    std::fs::write(tree.0.join("first/file"), b"unchanged").unwrap();
+    let session = tree.open(connector, "first");
+    assert!(block_on(session.prepare()).unwrap().ready_for_analysis());
+    assert_eq!(analyses(&inventory(&tree, "first")).len(), 1);
+    assert_eq!(
+        std::fs::read(tree.0.join("first/file")).unwrap(),
+        b"unchanged"
+    );
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
+}
+
+#[tokio::test]
+async fn configured_root_alias_mismatch_does_not_invent_different_parent_evidence() {
+    use drivesync_engine::inventory::*;
+    let (tree, connector) = Tree::new().await;
+    std::fs::write(tree.0.join("first/file"), b"data").unwrap();
+    let session = tree.open(connector, "first");
+    session.prepare().await.unwrap();
+    let inventory = inventory(&tree, "first");
+    let item = items(&inventory).remove(0);
+    let mut observed = remote_observation(&inventory, &item, "canonical-root", "file");
+    if let Some(FileData::Remote(remote)) = &mut observed.observation.observed.data {
+        remote.parent_ids = MetadataValue::Known(vec![RemoteFileId("canonical-root-id".into())]);
+    }
+    if let Some(FileLocation::Remote { parent_id, .. }) =
+        &mut observed.observation.observed.event.current
+    {
+        *parent_id = Some(RemoteFileId("canonical-root-id".into()));
+    }
+    inventory.record_remote(observed).unwrap();
+    session.prepare().await.unwrap();
+    let record = inventory
+        .get_analysis(GetAnalysisRequest {
+            selector: AnalysisSelector::LatestForItem(item.id),
+        })
+        .unwrap()
+        .analysis
+        .unwrap();
+    assert_eq!(record.evidence.current_parents, EvidenceRelation::Unknown);
+    assert!(record
+        .decisions
+        .iter()
+        .all(|d| d.intent.kind != OperationKind::Move));
+    session.stop_detector(DetectorStopMode::StopNow).unwrap();
 }

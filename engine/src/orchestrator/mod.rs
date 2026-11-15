@@ -1,4 +1,5 @@
-//! Coordinates paused detection and local Scanner preparation, without consuming events.
+//! Coordinates paused detection, Scanner observation and durable Analyzer decisions.
+mod analysis;
 mod diagnostics;
 mod startup;
 use crate::{detectors::*, Engine};
@@ -6,7 +7,7 @@ pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
 pub use startup::*;
 use std::sync::Arc;
 
-/// Owns capture and the preparation barrier. No Analyzer or diagnostic consumer is attached.
+/// Owns capture and the scan/analysis barrier; no event or operation consumer is attached.
 pub struct Orchestrator {
     connector: Engine,
     detector: Arc<Detector>,
