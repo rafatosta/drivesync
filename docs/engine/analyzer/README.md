@@ -37,7 +37,7 @@ transações do Inventory. Cancelamento do future não garante cancelamento do w
 O Orchestrator chama esta fachada após Scanner completo e continua entregando
 itens observados pelos detectores durante a sessão, sem executar operações. Execução de comandos e opções/ações de resolução permanecem pendentes.
 
-[Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
+[Mapa de ações](ACTIONS.md) · [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
 [Persistência](../inventory/ANALYSIS.md) · [Orientações](AGENTS.md)
 
 ## Decisão de direção no fluxo real
@@ -54,3 +54,12 @@ manual. Dados inconclusivos sem direção identificável permanecem pendência d
 evidência, sem escolher uma versão arbitrária nem fabricar conflito. Dois lados
 já vinculados continuam usando baseline e comparações confiáveis para propagar
 mudanças. A classificação não confirma sincronização nem executa comandos.
+
+## Regra de associação
+
+Nome, caminho semelhante e conteúdo igual nunca estabelecem identidade entre
+itens independentes. Associar recursos preexistentes exige definição explícita do
+usuário; uma futura criação por upload/download registra o vínculo pela identidade
+do recurso efetivamente criado e verificado. Nenhum desses vínculos confirma
+baseline por presunção. O [mapa de ações](ACTIONS.md) detalha as condições, limites
+e pendências antes da implementação do Operator.

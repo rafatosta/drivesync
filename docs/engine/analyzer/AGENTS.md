@@ -15,6 +15,13 @@ e o [AGENTS da raiz](../../../AGENTS.md) antes de alterar a integração.
   converter explicitamente os resultados dos algoritmos para os fatos duráveis.
 - Verificar escopo e snapshot integral, não apenas ID/revisão. A transação revalida
   esses fatos antes de persistir para impedir decisões baseadas em observação antiga.
+- Nome/caminho semelhante e conteúdo/hash igual nunca estabelecem identidade entre
+  itens independentes. Não criar pareamento automático, mesmo por nome+hash.
+  Associação de recursos preexistentes exige definição explícita do usuário.
+  Vínculos de futuras réplicas vêm da identidade criada/verificada pelo Operator;
+  nenhum vínculo confirma baseline ou autoriza sobrescrita automaticamente.
+- Consultar [ACTIONS.md](ACTIONS.md) antes de ampliar decisões ou implementar o
+  Operator; distinguir ações implementadas, requisitos e políticas ainda propostas.
 - Não apagar baseline existente para tratar estado incerto como primeira criação.
 - Persistir decisões, conflitos e requisitos sem afirmar execução. Operações
   vinculadas permanecem `Blocked`, sem liberação por claim/requeue genéricos.
