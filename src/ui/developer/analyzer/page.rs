@@ -81,6 +81,8 @@ fn requirement_name(requirement: &AnalysisRequirement) -> &'static str {
         AnalysisRequirement::VerifySurvivingState => "Reobserve remaining version",
         AnalysisRequirement::AuthorizeDeletion => "Confirm deletion policy",
         AnalysisRequirement::ResolveDestination => "Identify destination folder",
+        AnalysisRequirement::VerifyPreconditions => "Verify execution preconditions",
+        AnalysisRequirement::VerifyCapabilities => "Verify operation support",
         AnalysisRequirement::VerifyKind => "Verify file type",
     }
 }

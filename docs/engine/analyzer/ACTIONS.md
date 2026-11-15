@@ -51,12 +51,12 @@ com direção identificada pode continuar pendente de identidade, destino ou evi
 | --- | --- | --- | --- | --- |
 | Criar arquivo | Criar réplica no Drive; futuro upload | Criar réplica local; futuro download | Origem suportada e observada; item novo sem baseline ou histórico compatível de ausência | Intenção `Create` implementada nos dois sentidos; destino/identidade ainda podem bloquear |
 | Criar pasta | Criar diretório remoto | Criar diretório local | Mesmas condições de criação; sem transferência de conteúdo de diretório | Implementada como `Create` com `ItemKind::Directory` |
-| Atualizar conteúdo | Atualizar recurso remoto vinculado | Atualizar arquivo local vinculado | Vínculo existente, baseline confirmado e mudança unilateral comprovada; conteúdo atual não convergiu | Núcleo e persistência implementados; fluxo real ainda não fornece comparações de conteúdo |
+| Atualizar conteúdo | Atualizar recurso remoto vinculado | Atualizar arquivo local vinculado | Vínculo existente, baseline confirmado e mudança unilateral comprovada; conteúdo atual não convergiu | Núcleo, persistência e comparações SHA-256 observadas implementados; falta de checksum permanece requisito |
 | Renomear | Renomear o recurso remoto vinculado | Renomear o recurso local vinculado | Mudança de nome unilateral em relação ao baseline, preservando identidade | Núcleo e persistência implementados; dependem do vínculo correto |
 | Mover | Alterar pasta do recurso remoto vinculado | Alterar pasta do recurso local vinculado | Mudança unilateral de pai lógico, com vínculo e evidências de localização | Núcleo e persistência implementados; mapeamento dos pais pode continuar pendente |
-| Enviar à lixeira | Destino remoto | Destino local, se suportado | Identidade, ausência/exclusão comprovada, política e autorização específicas | Vocabulário geral do Inventory/Operator; Analyzer não gera esta intenção |
+| Enviar à lixeira | Destino remoto | Destino local, se suportado | Identidade, ausência/exclusão comprovada, política e autorização específicas | Intenção Trash implementada, bloqueada por autorização e evidências |
 | Excluir definitivamente | Proibido | Proibido | Nenhuma autorização deve liberar exclusão permanente; toda exclusão deve ir para a lixeira | Analyzer não deve gerar esta intenção; métodos destrutivos da API permanecem chamáveis, mas bloqueados sem execução |
-| Restaurar | Restaurar recurso remoto | Restaurar recurso local, se suportado | Recurso recuperável identificado e política/escolha explícita | Analyzer não gera esta intenção |
+| Restaurar | Restaurar recurso remoto | Restaurar recurso local, se suportado | Recurso recuperável identificado e política/escolha explícita | Pedido explícito RestoreSelection produz plano; recuperação não comprovada permanece bloqueada |
 
 Na primeira observação sem vínculo oposto, `Create` indica **replicação desejada**,
 não prova que o destino está livre. `Unknown` permanece desconhecido, com
@@ -85,8 +85,8 @@ execução: dependências e precondições do futuro plano ainda precisam ser de
 | Nomes alterados nos dois lados para valores distintos, no mesmo item vinculado | Conflito `ConcurrentChanges` | Não escolher nome vencedor |
 | Pais alterados nos dois lados para destinos distintos, com prova do mapeamento | Conflito `ConcurrentChanges` | Não escolher pasta vencedora |
 | Exclusão comprovada contra alteração do sobrevivente | Conflito `DeleteVsChange` | Não recriar, excluir ou descartar alteração automaticamente |
-| Destino efetivamente ocupado por outro item independente | Detecção transversal ainda não implementada | Bloquear a criação/movimentação; encaminhar colisão para decisão do usuário, sem associar os itens |
-| Usuário deseja associar dois itens preexistentes | Fluxo de associação explícita ainda não implementado | Selecionar as identidades, validar escopo/revisões e registrar a escolha; sem baseline presumido |
+| Destino efetivamente ocupado por outro item independente | Colisão local e disputa pelo mesmo destino identificadas no plano | Bloquear a criação/movimentação; encaminhar colisão para decisão do usuário, sem associar os itens |
+| Usuário deseja associar dois itens preexistentes | API explícita transacional implementada no Inventory; nenhuma associação automática | Selecionar as identidades, validar escopo/revisões e registrar a escolha; sem baseline presumido |
 
 Nome igual sozinho não é conflito de sincronização. Colisão exige comprovar que
 uma ação tenta ocupar um destino incompatível; nomes repetidos permitidos pelo
@@ -116,7 +116,7 @@ completo no fluxo real deve ser implementado antes de liberar a ação dependent
 | `ResolveDestination` | Destino e dependências identificados, incluindo pai ainda não criado e colisões |
 | `VerifyKind` | Tipo suportado; links, tipos especiais e capacidades/formatos sem tratamento não autorizam operação |
 
-O coordenador atual mantém as três comparações de conteúdo como `Unknown`.
+O coordenador compara SHA-256 medido e checksums remotos/baseline qualificados; evidências ausentes permanecem `Unknown`.
 Implementar medição de conteúdo não autorizará associação automática entre itens.
 A evidência de ausência precisa distinguir remoção de perda de acesso, falha de
 coleta e cobertura parcial.
@@ -166,3 +166,5 @@ nas suítes atuais; esta lista não declara funcionalidades futuras implementada
 
 O futuro Operator executará comandos autorizados; não decidirá identidade,
 resolução de conflito ou qual versão deve prevalecer por conta própria.
+
+O estado implementado e os limites de cada plano estão detalhados em [PLANNING.md](PLANNING.md); a matriz acima também contém cenários de execução futura, ainda indisponível.

@@ -279,7 +279,8 @@ fn reconcile_presence(request: &ReconciliationRequest, out: &mut ReconciliationA
     } else if changes.contains(&Change::Unknown) {
         out.require(Requirement::VerifySurvivingState);
     } else {
-        // No deletion policy is part of this request. Never invent authorization.
+        // Identify trash intent without inventing authorization or execution.
+        out.decisions.push(Decision::Trash { target: source });
         out.require(Requirement::AuthorizeDeletion);
     }
 }

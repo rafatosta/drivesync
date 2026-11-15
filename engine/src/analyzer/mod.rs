@@ -14,7 +14,7 @@
 //!     identity: identity.clone(),
 //!     dependencies: AnalyzerDependencies { inventory },
 //! })?;
-//! let outcome = analyzer.analyze(AnalyzeRequest {
+//! let outcome = analyzer.analyze(AnalyzeRequest { directive: None,
 //!     sync_id: identity.sync_id, item, evidence, recorded_at,
 //! }).await?;
 //! let durable_receipt = outcome.analysis.id;
@@ -33,6 +33,7 @@
 mod conflicts;
 mod models;
 mod persistence;
+mod planning;
 mod reconciliation;
 pub use models::*;
 
@@ -207,6 +208,11 @@ fn analyze_one(
             if receipt.analyzed_item_revision == request.item.revision
                 && receipt.input_fingerprint == Sha256::digest(bytes)[..]
                 && receipt.evidence == request.evidence
+                && receipt
+                    .plan
+                    .as_ref()
+                    .and_then(|p| p.restore_request.as_ref())
+                    == request.directive.as_ref()
             {
                 return Ok(AnalysisOutcome { analysis: receipt });
             }
@@ -217,7 +223,22 @@ fn analyze_one(
     let reconciliation = persistence::reconcile(&request)?;
     guard.phase(AnalysisPhase::EvaluatingConflict);
     let conflicts = persistence::conflicts(&request)?;
-    let assessment = persistence::assessment(reconciliation, conflicts)?;
+    let mut assessment = persistence::assessment(reconciliation, conflicts)?;
+    guard.phase(AnalysisPhase::Planning);
+    let info = inventory
+        .get_sync_info(GetSyncInfoRequest {})
+        .map_err(inventory_error)?
+        .info;
+    planning::build(
+        inventory,
+        &SyncIdentity {
+            sync_id: info.sync_id,
+            account_id: info.account_id,
+            remote_root_id: info.remote_root_id,
+        },
+        &request,
+        &mut assessment,
+    )?;
     guard.phase(AnalysisPhase::Recording);
     let analysis = inventory
         .record_analysis(RecordAnalysisRequest {

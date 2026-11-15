@@ -210,6 +210,13 @@ pub(super) fn assessment(
         .into_iter()
         .map(|decision| {
             let (source, kind) = match decision {
+                r::Decision::Trash { target } => (
+                    match target {
+                        r::Side::Local => r::Side::Remote,
+                        r::Side::Remote => r::Side::Local,
+                    },
+                    OperationKind::Trash,
+                ),
                 r::Decision::Create { source, .. } => (source, OperationKind::Create),
                 r::Decision::Propagate { dimension, source } => (
                     source,

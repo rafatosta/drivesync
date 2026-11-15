@@ -33,4 +33,6 @@ CREATE TABLE analysis_plan_manual(analysis INTEGER NOT NULL REFERENCES analyses(
 CREATE TABLE analysis_plan_resources(analysis INTEGER NOT NULL,issue INTEGER NOT NULL,position INTEGER NOT NULL,resource TEXT NOT NULL,PRIMARY KEY(analysis,issue,position),FOREIGN KEY(analysis,issue) REFERENCES analysis_plan_manual(analysis,position));
 CREATE TABLE analysis_plans(analysis INTEGER PRIMARY KEY REFERENCES analyses(seq));
 CREATE TABLE analysis_plan_namespaces(analysis INTEGER NOT NULL REFERENCES analyses(seq),position INTEGER NOT NULL,directory TEXT NOT NULL,fingerprint BLOB NOT NULL,PRIMARY KEY(analysis,position));
+CREATE TABLE analysis_plan_order(analysis INTEGER NOT NULL,step INTEGER NOT NULL,prior INTEGER NOT NULL,PRIMARY KEY(analysis,step,prior),FOREIGN KEY(analysis,step) REFERENCES analysis_plan_steps(analysis,position));
+CREATE TABLE analysis_plan_requests(analysis INTEGER PRIMARY KEY REFERENCES analyses(seq),request TEXT NOT NULL);
 PRAGMA user_version=5;

@@ -33,11 +33,11 @@ na mesma instância; instâncias distintas preservam consistência por revisão 
 transações do Inventory. Cancelamento do future não garante cancelamento do worker.
 
 **Estado:** integração de análise/persistência implementada. O esquema Inventory
-é 4; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
+é 5; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
 O Orchestrator chama esta fachada após Scanner completo e continua entregando
 itens observados pelos detectores durante a sessão, sem executar operações. Execução de comandos e opções/ações de resolução permanecem pendentes.
 
-[Mapa de ações](ACTIONS.md) · [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
+[Planos implementados](PLANNING.md) · [Mapa de ações](ACTIONS.md) · [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
 [Persistência](../inventory/ANALYSIS.md) · [Orientações](AGENTS.md)
 
 ## Decisão de direção no fluxo real
@@ -63,3 +63,8 @@ usuário; uma futura criação por upload/download registra o vínculo pela iden
 do recurso efetivamente criado e verificado. Nenhum desses vínculos confirma
 baseline por presunção. O [mapa de ações](ACTIONS.md) detalha as condições, limites
 e pendências antes da implementação do Operator.
+
+A etapa de planejamento materializa dados dos comandos do Operator, bloqueios,
+dependências e recursos para intervenção manual, sem instanciar um executor.
+Lixeira produz intenção condicionada à autorização; restauração exige pedido
+explícito. Consulte [PLANNING.md](PLANNING.md) e [EVIDENCE.md](EVIDENCE.md).

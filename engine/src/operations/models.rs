@@ -310,3 +310,10 @@ pub enum OperationCommand {
         preconditions: Preconditions,
     },
 }
+
+/// Explicit user request, bound by AnalyzeRequest to the exact item snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreSelection {
+    pub decision_id: String,
+    pub target: ResourceRef,
+}

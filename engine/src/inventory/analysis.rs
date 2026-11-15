@@ -39,6 +39,7 @@ pub enum AnalysisDisposition {
 pub enum AnalysisOrigin {
     Reconciliation,
     Conflicts,
+    Planning,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnalysisDimension {
@@ -66,6 +67,8 @@ pub enum AnalysisReason {
     IdentityAmbiguous,
     IncompatibleStates,
     InconsistentEvidence,
+    DestinationOccupied,
+    UserRequested,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisFinding {
@@ -87,6 +90,8 @@ pub enum AnalysisRequirement {
     AuthorizeDeletion,
     ResolveDestination,
     VerifyKind,
+    VerifyCapabilities,
+    VerifyPreconditions,
 }
 /// An incomplete semantic intent. Only creation/content/name/location are accepted.
 /// No destination, execution command or permission to run is implied.

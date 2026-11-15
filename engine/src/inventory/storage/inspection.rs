@@ -26,6 +26,8 @@ pub enum InventoryTable {
     AnalysisFindings,
     AnalysisRequirements,
     AnalysisDecisions,
+    AnalysisPlanOrder,
+    AnalysisPlanRequests,
     AnalysisPlanNamespaces,
     ItemAssociations,
     AnalysisPlans,
@@ -38,7 +40,7 @@ pub enum InventoryTable {
 }
 impl InventoryTable {
     /// All supported tables in presentation order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::SyncInfo,
         Self::Items,
         Self::LocalFiles,
@@ -54,6 +56,8 @@ impl InventoryTable {
         Self::AnalysisFindings,
         Self::AnalysisRequirements,
         Self::AnalysisDecisions,
+        Self::AnalysisPlanOrder,
+        Self::AnalysisPlanRequests,
         Self::AnalysisPlanNamespaces,
         Self::ItemAssociations,
         Self::AnalysisPlans,
@@ -82,6 +86,8 @@ impl InventoryTable {
             Self::AnalysisFindings => "analysis_findings",
             Self::AnalysisRequirements => "analysis_requirements",
             Self::AnalysisDecisions => "analysis_decisions",
+            Self::AnalysisPlanOrder => "analysis_plan_order",
+            Self::AnalysisPlanRequests => "analysis_plan_requests",
             Self::AnalysisPlanNamespaces => "analysis_plan_namespaces",
             Self::ItemAssociations => "item_associations",
             Self::AnalysisPlans => "analysis_plans",

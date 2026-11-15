@@ -95,12 +95,17 @@ fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
     {
         return Err(failure(InventoryError::InvalidArgument));
     }
-    let conflict = a.findings.iter().any(|f| {
-        f.origin == AnalysisOrigin::Conflicts && f.status == AnalysisFindingStatus::Divergent
-    });
+    let conflict = a
+        .findings
+        .iter()
+        .any(|f| f.status == AnalysisFindingStatus::Divergent);
     let expected = if conflict {
         AnalysisDisposition::PendingUserDecision
-    } else if !a.requirements.is_empty() {
+    } else if !a.requirements.is_empty()
+        || a.plan
+            .as_ref()
+            .is_some_and(|p| p.steps.iter().any(|s| !s.blocked_by.is_empty()))
+    {
         AnalysisDisposition::PendingEvidence
     } else if !a.intents.is_empty() {
         AnalysisDisposition::PendingOperations
@@ -134,6 +139,11 @@ fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
     {
         return Err(failure(InventoryError::InvalidArgument));
     }
+    if let Some(plan) = &a.plan {
+        if plan.steps.len() != a.intents.len() {
+            return Err(failure(InventoryError::InvalidArgument));
+        }
+    }
     for intent in &a.intents {
         if !matches!(
             intent.kind,
@@ -141,6 +151,8 @@ fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
                 | OperationKind::UpdateContent
                 | OperationKind::Rename
                 | OperationKind::Move
+                | OperationKind::Trash
+                | OperationKind::Restore
         ) {
             return Err(failure(InventoryError::InvalidArgument));
         }
@@ -148,6 +160,27 @@ fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
             && request.expected_item.kind != ItemKind::File
         {
             return Err(failure(InventoryError::InvalidArgument));
+        }
+        if intent.kind == OperationKind::Trash
+            && !a
+                .requirements
+                .contains(&AnalysisRequirement::AuthorizeDeletion)
+        {
+            return Err(failure(InventoryError::InvalidArgument));
+        }
+        if intent.kind == OperationKind::Restore
+            && a.plan
+                .as_ref()
+                .and_then(|p| p.restore_request.as_ref())
+                .is_none_or(|r| r.decision_id.trim().is_empty())
+        {
+            return Err(failure(InventoryError::InvalidArgument));
+        }
+        if matches!(intent.kind, OperationKind::Trash | OperationKind::Restore) {
+            if request.assessment.plan.is_none() {
+                return Err(failure(InventoryError::InvalidArgument));
+            }
+            continue;
         }
         let present = match intent.direction {
             OperationDirection::Upload => &request.expected_item.local_presence,

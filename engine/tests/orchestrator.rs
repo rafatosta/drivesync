@@ -603,7 +603,7 @@ async fn known_remote_absence_creates_an_upload_intent_without_uploading() {
             kind: OperationKind::Create
         }
     );
-    assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+    assert_eq!(record.disposition, AnalysisDisposition::PendingOperations);
     let ops = inventory
         .list_operations(ListOperationsRequest {
             filter: OperationFilter::default(),

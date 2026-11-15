@@ -513,12 +513,14 @@ fn typed_plan_is_atomic_durable_and_invalidated_by_related_observations() {
         .item;
     let mut req = request(item.clone());
     req.assessment.plan = Some(AnalysisPlan {
+        restore_request: None,
         namespaces: vec![],
         guards: vec![
             ItemGuard::for_item(&item).unwrap(),
             ItemGuard::for_item(&related).unwrap(),
         ],
         steps: vec![PlannedStep {
+            depends_on_steps: vec![],
             method: PlannedMethod::Download,
             command: None,
             blocked_by: vec![PlanBlock::Parent],
@@ -584,13 +586,20 @@ fn a_new_destination_child_invalidates_a_plan_without_changing_its_source() {
     };
     let mut req = request(item.clone());
     req.assessment.plan = Some(AnalysisPlan {
+        restore_request: None,
         namespaces: vec![
             inv.get_namespace(GetNamespaceRequest { directory })
                 .unwrap()
                 .guard,
         ],
         guards: vec![ItemGuard::for_item(&item).unwrap()],
-        steps: vec![],
+        steps: vec![PlannedStep {
+            method: PlannedMethod::Download,
+            command: None,
+            blocked_by: vec![PlanBlock::Evidence],
+            depends_on: vec![],
+            depends_on_steps: vec![],
+        }],
         manual: vec![],
     });
     let receipt = inv.record_analysis(req).unwrap().analysis;
@@ -616,4 +625,47 @@ fn a_new_destination_child_invalidates_a_plan_without_changing_its_source() {
         current(&inv, &item.id).revision,
         receipt.resulting_item_revision
     );
+}
+
+#[test]
+fn cross_account_commands_and_cyclic_step_dependencies_never_persist() {
+    use drivesync_engine::operations::*;
+    let (_tree, inv, item) = setup();
+    let mut req = request(item.clone());
+    req.assessment.plan = Some(AnalysisPlan {
+        restore_request: None,
+        namespaces: vec![],
+        guards: vec![ItemGuard::for_item(&item).unwrap()],
+        steps: vec![PlannedStep {
+            method: PlannedMethod::Download,
+            command: Some(OperationCommand::Download {
+                source: ResourceRef::Remote {
+                    provider_id: m::ProviderId("google".into()),
+                    reference: m::RemoteFileRef {
+                        account_id: AccountId("other-account".into()),
+                        file_id: m::RemoteFileId("remote".into()),
+                    },
+                },
+                destination: DirectoryRef::LocalRoot,
+                name: ItemName::Local("file".into()),
+            }),
+            blocked_by: vec![PlanBlock::Evidence],
+            depends_on: vec![],
+            depends_on_steps: vec![],
+        }],
+        manual: vec![],
+    });
+    assert_eq!(
+        inv.record_analysis(req.clone()).unwrap_err().kind,
+        InventoryError::InvalidIdentity
+    );
+    let step = &mut req.assessment.plan.as_mut().unwrap().steps[0];
+    step.command = None;
+    step.depends_on_steps = vec![0];
+    assert_eq!(
+        inv.record_analysis(req).unwrap_err().kind,
+        InventoryError::InvalidArgument
+    );
+    assert_eq!(current(&inv, &item.id), item);
+    assert!(analyses(&inv, false).is_empty());
 }

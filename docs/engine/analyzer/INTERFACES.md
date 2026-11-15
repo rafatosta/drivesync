@@ -39,6 +39,7 @@ pub async fn Analyzer::analyze(
 ) -> AnalyzerResult<AnalysisOutcome>;
 
 pub struct AnalyzeRequest {
+    pub directive: Option<operations::RestoreSelection>,
     pub sync_id: SyncId,
     pub item: SyncItem,
     pub evidence: AnalysisEvidence,
@@ -151,9 +152,11 @@ categoria do Inventory no campo opcional.
 
 ## Funcionalidades adiadas
 
-Execução pelo Operador, comandos completos com precondições/dependências,
+Execução pelo Operador, renovação de comandos após dependências satisfeitas,
 `Completed/Pending/Failed` relativos a efeitos físicos, `PendingAction` com opções,
 validação de escolhas, resolução e recuperação de efeitos indeterminados não estão
 implementados. A API atual devolve **recibo de análise**, não relatório de execução.
 Os contratos dessas funcionalidades deverão ser definidos quando implementados,
 sem expor os algoritmos privados nem permitir SQL fora do Inventory.
+
+O recibo agora contém plano opcional: [PLANNING.md](PLANNING.md). O fluxo do Analyzer sempre o produz; persistência direta de avaliações isoladas pode usar `None`.

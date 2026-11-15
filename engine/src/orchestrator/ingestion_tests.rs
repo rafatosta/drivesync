@@ -132,6 +132,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     };
     let first = analyzer
         .analyze(AnalyzeRequest {
+            directive: None,
             sync_id: identity.sync_id.clone(),
             item: item(&inventory, id.clone()),
             evidence: evidence.clone(),
@@ -148,6 +149,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     );
     let second = analyzer
         .analyze(AnalyzeRequest {
+            directive: None,
             sync_id: identity.sync_id.clone(),
             item: item(&inventory, id),
             evidence,

@@ -46,6 +46,7 @@ pub enum PlanBlock {
     Conflict,
     Capabilities,
     UserAuthorization,
+    PriorStep,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlannedMethod {
@@ -65,6 +66,7 @@ pub struct PlannedStep {
     pub command: Option<OperationCommand>,
     pub blocked_by: Vec<PlanBlock>,
     pub depends_on: Vec<SyncItemId>,
+    pub depends_on_steps: Vec<u32>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ManualReason {
@@ -82,6 +84,7 @@ pub struct ManualIssue {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisPlan {
+    pub restore_request: Option<crate::operations::RestoreSelection>,
     pub namespaces: Vec<NamespaceGuard>,
     pub steps: Vec<PlannedStep>,
     pub guards: Vec<ItemGuard>,

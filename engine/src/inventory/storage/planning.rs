@@ -41,7 +41,34 @@ pub(super) fn validate_plan(db: &Connection, plan: Option<&AnalysisPlan>) -> Inv
     {
         return Err(failure(InventoryError::VersionMismatch));
     }
-    for step in &p.steps {
+    let account = sync_info(db)?.account_id;
+    for (position, step) in p.steps.iter().enumerate() {
+        if let Some(c) = &step.command {
+            command_scope(c, &account)?;
+            use crate::operations::OperationCommand as C;
+            let matches = matches!(
+                (&step.method, c),
+                (PlannedMethod::CreateFile, C::CreateFile { .. })
+                    | (PlannedMethod::CreateDirectory, C::CreateDirectory { .. })
+                    | (PlannedMethod::Upload, C::Upload { .. })
+                    | (PlannedMethod::Download, C::Download { .. })
+                    | (PlannedMethod::UpdateContent, C::UpdateContent { .. })
+                    | (PlannedMethod::Rename, C::Rename { .. })
+                    | (PlannedMethod::Move, C::Move { .. })
+                    | (PlannedMethod::Trash, C::Trash { .. })
+                    | (PlannedMethod::Restore, C::Restore { .. })
+            );
+            if !matches {
+                return Err(failure(InventoryError::InvalidArgument));
+            }
+        }
+        if step
+            .depends_on_steps
+            .iter()
+            .any(|i| *i as usize >= position)
+        {
+            return Err(failure(InventoryError::InvalidArgument));
+        }
         if step.command.is_none() && step.blocked_by.is_empty() {
             return Err(failure(InventoryError::InvalidArgument));
         }
@@ -56,6 +83,13 @@ pub(super) fn save_plan(
     let Some(p) = plan else { return Ok(()) };
     db.execute("INSERT INTO analysis_plans VALUES(?1)", [id])
         .map_err(sql)?;
+    if let Some(r) = &p.restore_request {
+        db.execute(
+            "INSERT INTO analysis_plan_requests VALUES(?1,?2)",
+            params![id, enc(r)?],
+        )
+        .map_err(sql)?;
+    }
     for (i, g) in p.namespaces.iter().enumerate() {
         db.execute(
             "INSERT INTO analysis_plan_namespaces VALUES(?1,?2,?3,?4)",
@@ -81,6 +115,13 @@ pub(super) fn save_plan(
             ],
         )
         .map_err(sql)?;
+        for prior in &s.depends_on_steps {
+            db.execute(
+                "INSERT INTO analysis_plan_order VALUES(?1,?2,?3)",
+                params![id, i as i64, i64::from(*prior)],
+            )
+            .map_err(sql)?;
+        }
         for (j, b) in s.blocked_by.iter().enumerate() {
             db.execute(
                 "INSERT INTO analysis_plan_blocks VALUES(?1,?2,?3,?4)",
@@ -132,7 +173,19 @@ pub(super) fn load_plan(db: &Connection, id: i64) -> InventoryResult<Option<Anal
     if !exists {
         return Ok(None);
     }
-    let mut p = AnalysisPlan::default();
+    let mut p = AnalysisPlan {
+        restore_request: db
+            .query_row(
+                "SELECT request FROM analysis_plan_requests WHERE analysis=?1",
+                [id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sql)?
+            .map(dec)
+            .transpose()?,
+        ..Default::default()
+    };
     let mut namespaces=db.prepare("SELECT directory,fingerprint FROM analysis_plan_namespaces WHERE analysis=?1 ORDER BY position").map_err(sql)?;
     for row in namespaces
         .query_map([id], |r| {
@@ -174,7 +227,10 @@ pub(super) fn load_plan(db: &Connection, id: i64) -> InventoryResult<Option<Anal
         .map_err(sql)?
     {
         let (i, m, c) = row.map_err(sql)?;
-        p.steps.push(PlannedStep{method:enum_value(m)?,command:c.map(dec).transpose()?,blocked_by:texts(db,"SELECT kind FROM analysis_plan_blocks WHERE analysis=?1 AND step=?2 ORDER BY position",id,i)?.into_iter().map(enum_value).collect::<InventoryResult<_>>()?,depends_on:texts(db,"SELECT item FROM analysis_plan_dependencies WHERE analysis=?1 AND step=?2 ORDER BY position",id,i)?.into_iter().map(SyncItemId).collect()});
+        p.steps.push(PlannedStep{depends_on_steps: {
+            let mut stmt=db.prepare("SELECT prior FROM analysis_plan_order WHERE analysis=?1 AND step=?2 ORDER BY prior").map_err(sql)?;
+            let v=stmt.query_map(params![id,i],|r|r.get::<_,u32>(0)).map_err(sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?; v
+        },method:enum_value(m)?,command:c.map(dec).transpose()?,blocked_by:texts(db,"SELECT kind FROM analysis_plan_blocks WHERE analysis=?1 AND step=?2 ORDER BY position",id,i)?.into_iter().map(enum_value).collect::<InventoryResult<_>>()?,depends_on:texts(db,"SELECT item FROM analysis_plan_dependencies WHERE analysis=?1 AND step=?2 ORDER BY position",id,i)?.into_iter().map(SyncItemId).collect()});
     }
     let mut stmt = db
         .prepare(
@@ -297,4 +353,125 @@ impl InventoryManager {
             })
         })
     }
+}
+
+/// Structural validation of persisted command references; policy remains Analyzer-owned.
+fn command_scope(
+    command: &crate::operations::OperationCommand,
+    account: &AccountId,
+) -> InventoryResult<()> {
+    use crate::operations::*;
+    fn resource(r: &ResourceRef, account: &AccountId) -> InventoryResult<()> {
+        match r {
+            ResourceRef::Local { relative_path, .. }
+                if relative_path.as_bytes().split(|b| *b == b'/').next()
+                    == Some(b".drivesync".as_slice()) =>
+            {
+                Err(failure(InventoryError::InvalidIdentity))
+            }
+            ResourceRef::Remote {
+                provider_id,
+                reference,
+            } if reference.account_id != *account
+                || reference.file_id.0.trim().is_empty()
+                || provider_id.0.trim().is_empty() =>
+            {
+                Err(failure(InventoryError::InvalidIdentity))
+            }
+            _ => Ok(()),
+        }
+    }
+    fn directory(d: &DirectoryRef, a: &AccountId) -> InventoryResult<()> {
+        match d {
+            DirectoryRef::LocalRoot => Ok(()),
+            DirectoryRef::Local {
+                relative_path,
+                local_id,
+            } => resource(
+                &ResourceRef::Local {
+                    relative_path: relative_path.clone(),
+                    local_id: local_id.clone(),
+                },
+                a,
+            ),
+            DirectoryRef::Remote {
+                provider_id,
+                reference,
+            } => resource(
+                &ResourceRef::Remote {
+                    provider_id: provider_id.clone(),
+                    reference: reference.clone(),
+                },
+                a,
+            ),
+        }
+    }
+    fn source(s: &ContentSource, a: &AccountId) -> InventoryResult<()> {
+        match s {
+            ContentSource::RemoteFile { resource: r } => resource(r, a),
+            ContentSource::LocalFile {
+                relative_path,
+                local_id,
+            } => resource(
+                &ResourceRef::Local {
+                    relative_path: relative_path.clone(),
+                    local_id: local_id.clone(),
+                },
+                a,
+            ),
+            _ => Ok(()),
+        }
+    }
+    match command {
+        OperationCommand::CreateFile {
+            parent, content, ..
+        } => {
+            directory(parent, account)?;
+            if let Some(c) = content {
+                source(c, account)?
+            }
+        }
+        OperationCommand::CreateDirectory { parent, .. } => directory(parent, account)?,
+        OperationCommand::Upload {
+            source: s,
+            destination,
+            ..
+        }
+        | OperationCommand::Download {
+            source: s,
+            destination,
+            ..
+        } => {
+            resource(s, account)?;
+            directory(destination, account)?
+        }
+        OperationCommand::UpdateContent {
+            target, source: s, ..
+        } => {
+            resource(target, account)?;
+            source(s, account)?
+        }
+        OperationCommand::Rename { target, .. } | OperationCommand::Trash { target, .. } => {
+            resource(target, account)?
+        }
+        OperationCommand::Move {
+            target,
+            destination,
+            ..
+        } => {
+            resource(target, account)?;
+            directory(destination, account)?
+        }
+        OperationCommand::Restore {
+            target,
+            destination,
+            ..
+        } => {
+            resource(target, account)?;
+            if let Some(d) = destination {
+                directory(d, account)?
+            }
+        }
+    }
+    Ok(())
 }

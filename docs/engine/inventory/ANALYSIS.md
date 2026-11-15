@@ -79,3 +79,7 @@ incertos continuam fora deste contrato. Um registro persistente de conflito não
 um `PendingAction` público com opções de resolução implementadas.
 
 Vínculos explícitos e planos: [PLANNING.md](PLANNING.md).
+
+O Analyzer persiste planos tipados na mesma transação. `Trash` exige autorização
+pendente; `Restore` exige escolha explícita persistida. Delete continua recusado.
+A obsolescência inclui guardas de itens relacionados e namespaces de destino.

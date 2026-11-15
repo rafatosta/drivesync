@@ -54,6 +54,7 @@ pub(in crate::analyzer) enum Dimension {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::analyzer) enum Decision {
     Create { source: Side, kind: ItemKind },
+    Trash { target: Side },
     Propagate { dimension: Dimension, source: Side },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

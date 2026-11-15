@@ -157,7 +157,8 @@ pub(super) fn ingest(
     Ok(Ingested {
         item: Some(result.item.id),
         scan_local,
-        analyze_all: false,
+        // Namespace and parent changes can invalidate another item's plan.
+        analyze_all: true,
     })
 }
 

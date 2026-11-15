@@ -31,7 +31,9 @@ e o [AGENTS da raiz](../../../AGENTS.md) antes de alterar a integração.
 - Status lê apenas a atividade local em memória, sem SQL. A reserva pertence ao
   worker mesmo se o future aguardado for cancelado; o worker ainda pode gravar.
 - Preservar retry idempotente e tornar visível a obsolescência do registro.
-- Não introduzir Operador/Provider/GUI ou comandos fictícios para preencher lacunas.
+- Usar somente modelos do Operator para planos; não instanciar executor nem chamar
+  execução ou Providers. Comandos incompletos exigem bloqueios/dependências explícitos.
+- Consulte PLANNING.md para lixeira condicionada e restauração explicitamente solicitada.
 
 ## Validação
 

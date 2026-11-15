@@ -229,6 +229,7 @@ async fn analyze_item(
     current(epoch, expected)?;
     analyzer
         .analyze(AnalyzeRequest {
+            directive: None,
             sync_id: identity.sync_id.clone(),
             item,
             evidence,

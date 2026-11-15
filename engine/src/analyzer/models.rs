@@ -21,6 +21,7 @@ pub struct AnalyzerConfig {
 /// New evidence or observation requires a new analysis; stale effects are never replayed.
 #[derive(Debug, Clone)]
 pub struct AnalyzeRequest {
+    pub directive: Option<crate::operations::RestoreSelection>,
     pub sync_id: SyncId,
     pub item: SyncItem,
     pub evidence: AnalysisEvidence,
@@ -36,6 +37,7 @@ pub enum AnalysisPhase {
     Validating,
     Reconciling,
     EvaluatingConflict,
+    Planning,
     Recording,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

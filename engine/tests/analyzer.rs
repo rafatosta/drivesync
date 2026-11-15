@@ -248,6 +248,7 @@ fn analyzer(tree: &Tree, inventory: Arc<InventoryManager>) -> Analyzer {
 }
 fn request(item: SyncItem) -> AnalyzeRequest {
     AnalyzeRequest {
+        directive: None,
         sync_id: SyncId("sync".into()),
         item,
         evidence: AnalysisEvidence {
@@ -638,7 +639,7 @@ async fn confirmed_absence_and_new_remote_file_persist_a_blocked_creation() {
     req.evidence.remote_content = EvidenceRelation::Unknown;
     req.evidence.current_content = EvidenceRelation::Unknown;
     let out = analyzer.analyze(req).await.unwrap().analysis;
-    assert_eq!(out.disposition, AnalysisDisposition::PendingEvidence);
+    assert_eq!(out.disposition, AnalysisDisposition::PendingOperations);
     assert_eq!(
         out.decisions[0].intent,
         AnalysisIntent {
@@ -646,9 +647,11 @@ async fn confirmed_absence_and_new_remote_file_persist_a_blocked_creation() {
             kind: OperationKind::Create
         }
     );
-    assert!(out
-        .requirements
-        .contains(&AnalysisRequirement::ResolveDestination));
+    assert!(out.requirements.is_empty());
+    assert!(matches!(
+        out.plan.as_ref().unwrap().steps[0].command,
+        Some(drivesync_engine::operations::OperationCommand::Download { .. })
+    ));
     assert_eq!(operations(&inventory)[0].state, OperationState::Blocked);
 }
 #[tokio::test]
@@ -828,4 +831,251 @@ fn homonyms_remain_distinct_until_an_explicit_user_association_is_committed() {
         .unwrap()
         .association
         .is_some());
+}
+
+fn fresh_request(item: SyncItem) -> AnalyzeRequest {
+    let mut req = request(item);
+    req.evidence.baseline_confirmed = false;
+    req.evidence.local_scope_complete = req.item.local_presence != PresenceState::Unknown;
+    req.evidence.remote_scope_complete = req.item.remote_presence != PresenceState::Unknown;
+    req.evidence.local_content = EvidenceRelation::Unknown;
+    req.evidence.remote_content = EvidenceRelation::Unknown;
+    req.evidence.current_content = EvidenceRelation::Unknown;
+    req
+}
+#[tokio::test]
+async fn independent_remote_homonyms_produce_manual_collision_without_association() {
+    let tree = Tree::new();
+    let inv = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let first = inv
+        .record_remote(remote_request(
+            remote_file("a", "a", m::MetadataValue::Known("same".into())),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let second = inv
+        .record_remote(remote_request(
+            remote_file("b", "b", m::MetadataValue::Known("same".into())),
+            ObservationTarget::NewItem,
+            None,
+        ))
+        .unwrap()
+        .item;
+    let a = analyzer(&tree, inv.clone());
+    for item in [first.clone(), second.clone()] {
+        let record = a.analyze(fresh_request(item)).await.unwrap().analysis;
+        assert_eq!(record.disposition, AnalysisDisposition::PendingUserDecision);
+        let plan = record.plan.unwrap();
+        assert!(plan.steps[0].blocked_by.contains(&PlanBlock::Collision));
+        assert_eq!(plan.manual[0].reason, ManualReason::DestinationOccupied);
+        assert_eq!(plan.manual[0].resources.len(), 2);
+        assert!(matches!(
+            plan.steps[0].command,
+            Some(drivesync_engine::operations::OperationCommand::Download { .. })
+        ));
+    }
+    assert_ne!(
+        current(&inv, &first.id).remote_ref,
+        current(&inv, &second.id).remote_ref
+    );
+    assert!(inv
+        .get_association(GetAssociationRequest { item_id: first.id })
+        .unwrap()
+        .association
+        .is_none());
+    assert!(!tree.0.join("same").exists());
+    assert!(operations(&inv)
+        .iter()
+        .all(|o| o.state == OperationState::Blocked && o.attempt_count == 0));
+}
+#[tokio::test]
+async fn missing_parent_replica_is_an_explicit_identity_dependency() {
+    let tree = Tree::new();
+    let inv = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let mut parent = remote_file("p", "parent", m::MetadataValue::Known("folder".into()));
+    if let Some(m::FileData::Remote(r)) = &mut parent.data {
+        r.kind = m::MetadataValue::Known(m::RemoteEntryKind::Directory)
+    }
+    let parent = inv
+        .record_remote(remote_request(parent, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let mut child = remote_file("c", "child", m::MetadataValue::Known("child".into()));
+    if let Some(m::FileData::Remote(r)) = &mut child.data {
+        r.parent_ids = m::MetadataValue::Known(vec![m::RemoteFileId("parent".into())])
+    }
+    if let Some(m::FileLocation::Remote { parent_id, .. }) = &mut child.event.current {
+        *parent_id = Some(m::RemoteFileId("parent".into()));
+    }
+    let child = inv
+        .record_remote(remote_request(child, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let record = analyzer(&tree, inv.clone())
+        .analyze(fresh_request(child))
+        .await
+        .unwrap()
+        .analysis;
+    let plan = record.plan.unwrap();
+    assert_eq!(plan.steps[0].depends_on, vec![parent.id]);
+    assert!(plan.steps[0].blocked_by.contains(&PlanBlock::Parent));
+    assert!(plan.steps[0].command.is_none());
+}
+#[tokio::test]
+async fn unchanged_survivor_produces_only_authorization_blocked_trash_never_delete() {
+    let (tree, inv, item) = setup();
+    let mut baseline = item.baseline.clone().unwrap();
+    baseline.confirmed_at = m::Timestamp { unix_millis: 21 };
+    baseline.remote.parent_identity = Some(BaselineParent::Remote(m::RemoteFileRef {
+        account_id: AccountId("account".into()),
+        file_id: m::RemoteFileId("root".into()),
+    }));
+    let item = inv
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: item.id.clone(),
+            expected_item_revision: item.revision,
+            confirmed: ConfirmedState {
+                baseline,
+                status: SyncStatus::Synced,
+                verified_at: m::Timestamp { unix_millis: 21 },
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+    let mut observed = local_file("gone", b"file");
+    observed.data = None;
+    observed.event.current = None;
+    let item = inv
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(item.id.clone()),
+            expected_revision: Some(item.revision),
+            observation: LocalObservation {
+                observed,
+                presence: PresenceState::AbsentConfirmed,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalScan,
+                    observed_at: m::Timestamp { unix_millis: 30 },
+                    scan_or_generation: Some("scan".into()),
+                    complete_scope: true,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    let mut req = request(item);
+    req.evidence.current_content = EvidenceRelation::Unknown;
+    let record = analyzer(&tree, inv.clone())
+        .analyze(req)
+        .await
+        .unwrap()
+        .analysis;
+    assert_eq!(record.decisions.len(), 1);
+    assert_eq!(record.decisions[0].intent.kind, OperationKind::Trash);
+    let step = &record.plan.as_ref().unwrap().steps[0];
+    assert!(matches!(
+        step.command,
+        Some(drivesync_engine::operations::OperationCommand::Trash { .. })
+    ));
+    assert!(step.blocked_by.contains(&PlanBlock::UserAuthorization));
+    assert!(operations(&inv)
+        .iter()
+        .all(|o| o.kind != OperationKind::Delete && o.state == OperationState::Blocked));
+}
+#[tokio::test]
+async fn restore_is_explicit_scoped_and_persisted_without_executing() {
+    use drivesync_engine::operations::*;
+    let tree = Tree::new();
+    let inv = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let mut observed = remote_file("trashed", "remote", m::MetadataValue::Known("file".into()));
+    if let Some(m::FileData::Remote(r)) = &mut observed.data {
+        r.trashed = m::MetadataValue::Known(true)
+    }
+    let item = inv
+        .record_remote(remote_request(observed, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let target = ResourceRef::Remote {
+        provider_id: m::ProviderId("google".into()),
+        reference: item.remote_ref.clone().unwrap(),
+    };
+    let a = analyzer(&tree, inv.clone());
+    let mut req = fresh_request(item.clone());
+    let initial = a.analyze(req.clone()).await.unwrap().analysis;
+    assert!(initial.decisions.is_empty());
+    req.item = current(&inv, &item.id);
+    req.directive = Some(RestoreSelection {
+        decision_id: "user-restore-1".into(),
+        target: target.clone(),
+    });
+    let record = a.analyze(req.clone()).await.unwrap().analysis;
+    assert_eq!(record.decisions[0].intent.kind, OperationKind::Restore);
+    assert_eq!(record.plan.as_ref().unwrap().restore_request, req.directive);
+    assert!(
+        matches!(&record.plan.as_ref().unwrap().steps[0].command,Some(OperationCommand::Restore{target:t,..}) if *t==target)
+    );
+    assert_eq!(a.analyze(req).await.unwrap().analysis.id, record.id);
+    assert!(current(&inv, &item.id).baseline.is_none());
+    assert_eq!(
+        current(&inv, &item.id).remote.unwrap().trashed,
+        m::MetadataValue::Known(true)
+    );
+}
+
+#[tokio::test]
+async fn multiple_mutations_preserve_commands_but_require_revalidation_after_prior_step() {
+    use drivesync_engine::operations::OperationCommand;
+    let (tree, inv, item) = setup();
+    let item = record_local(&inv, &item, "renamed", b"new-name");
+    let mut req = request(item);
+    req.evidence.local_content = EvidenceRelation::Different;
+    req.evidence.remote_content = EvidenceRelation::Equal;
+    req.evidence.current_content = EvidenceRelation::Different;
+    let record = analyzer(&tree, inv.clone())
+        .analyze(req)
+        .await
+        .unwrap()
+        .analysis;
+    let steps = &record.plan.unwrap().steps;
+    assert_eq!(steps.len(), 2);
+    assert!(matches!(
+        steps[0].command,
+        Some(OperationCommand::UpdateContent { .. })
+    ));
+    assert!(matches!(
+        steps[1].command,
+        Some(OperationCommand::Rename { .. })
+    ));
+    assert_eq!(steps[1].depends_on_steps, vec![0]);
+    assert!(steps[1].blocked_by.contains(&PlanBlock::PriorStep));
+    assert!(!steps[0].blocked_by.contains(&PlanBlock::PriorStep));
+    assert_eq!(record.disposition, AnalysisDisposition::PendingEvidence);
+}
+#[tokio::test]
+async fn native_documents_are_never_given_an_implicit_binary_download() {
+    let tree = Tree::new();
+    let inv = Arc::new(InventoryManager::open(tree.request()).unwrap().inventory);
+    let mut observed = remote_file("native", "doc", m::MetadataValue::Known("document".into()));
+    if let Some(m::FileData::Remote(r)) = &mut observed.data {
+        r.mime_type = m::MetadataValue::Known("application/vnd.google-apps.document".into())
+    }
+    let item = inv
+        .record_remote(remote_request(observed, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let out = analyzer(&tree, inv.clone())
+        .analyze(fresh_request(item))
+        .await
+        .unwrap()
+        .analysis;
+    assert!(out
+        .requirements
+        .contains(&AnalysisRequirement::VerifyCapabilities));
+    assert!(out.plan.unwrap().steps[0]
+        .blocked_by
+        .contains(&PlanBlock::Capabilities));
 }
