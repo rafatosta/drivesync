@@ -66,3 +66,11 @@ reabertura SQLite, fila bloqueada, baseline ausente e nenhum arquivo criado.
 A suíte do Orchestrator verifica uploads após scan e após criação de arquivo/pasta
 com a sessão aberta, sem chamar análise manualmente. Conflitos continuam cobertos
 pelos cenários públicos de mudanças concorrentes.
+
+## Aceitação posterior com Google Drive real
+
+A validação autorizada de 2026-11-15 incluiu 23 verificações sobre arquivos reais,
+SQLite real, Accounts/Secret Service, captura remota Google e um teste gráfico do
+hook de restauração. Resultados, comandos de repetição e limites concretos em
+[LIVE_VALIDATION.md](LIVE_VALIDATION.md). Os números históricos acima descrevem
+as entregas anteriores, não essa rodada de aceitação.

@@ -835,3 +835,154 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
     );
     window.close();
 }
+
+/// Opt-in acceptance against a real account; no fake Provider and no Operator.
+#[test]
+#[ignore = "requires explicit live account, private GTK profile and Secret Service access"]
+fn real_account_startup_observes_drive_and_local_file_in_analyzer() {
+    use drivesync_engine::detectors::{DeliveryState, RemoteCoverage};
+    use std::io::Write;
+    let required = |name| std::env::var(name).unwrap_or_else(|_| panic!("missing {name}"));
+    assert_eq!(required("DRIVESYNC_LIVE_OBSERVATION"), "1");
+    assert!(required("XDG_DATA_HOME").starts_with("/tmp/drivesync-ui-test-real-"));
+    let id = required("DRIVESYNC_LIVE_ACCOUNT");
+    let root = PathBuf::from(required("DRIVESYNC_LIVE_ROOT"));
+    let configuration = crate::services::configuration::Configuration {
+        account_id: AccountId(id.clone()),
+        local_uri: gtk::gio::File::for_path(&root).uri().into(),
+        remote_id: required("DRIVESYNC_LIVE_REMOTE_ROOT"),
+        remote_path: "Live acceptance root".into(),
+    };
+    adw::init().unwrap();
+    gtk::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
+    gtk::glib::MainContext::default().block_on(crate::services::configuration::seed_for_test(
+        &configuration,
+    ));
+    let context = Context::default();
+    let app = adw::Application::builder()
+        .application_id("com.rtosta.DriveSync.LiveAcceptance")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    app.register(None::<&gtk::gio::Cancellable>).unwrap();
+    let navigation = adw::NavigationView::new();
+    let toasts = adw::ToastOverlay::new();
+    toasts.set_child(Some(&navigation));
+    let window = adw::ApplicationWindow::builder()
+        .application(&app)
+        .default_width(1100)
+        .default_height(900)
+        .content(&toasts)
+        .build();
+    let config = drivesync_engine::EngineConfig {
+        data_directory: PathBuf::from(required("DRIVESYNC_LIVE_ACCOUNTS")),
+        application_id: required("DRIVESYNC_LIVE_APPLICATION"),
+        google_oauth_file: std::env::var_os("DRIVESYNC_GOOGLE_OAUTH_FILE").map(PathBuf::from),
+    };
+    // Reject a multi-account profile before the restoration hook can start it.
+    let engine = gtk::glib::MainContext::default()
+        .block_on(drivesync_engine::Engine::open(config.clone()))
+        .unwrap();
+    let accounts = gtk::glib::MainContext::default()
+        .block_on(engine.list_accounts(drivesync_engine::ListAccountsRequest { provider: None }))
+        .unwrap()
+        .accounts;
+    assert_eq!(
+        accounts.len(),
+        1,
+        "supply a private single-account metadata profile"
+    );
+    assert_eq!(accounts[0].id.0, id);
+    *context.engine.borrow_mut() = Some(engine);
+    navigation.add(&crate::ui::dashboard::restoration::build(
+        config,
+        &context,
+        &navigation,
+        &toasts,
+    ));
+
+    window.present();
+    let until = |test: &dyn Fn() -> bool| {
+        let main = gtk::glib::MainContext::default();
+        let end = Instant::now() + Duration::from_secs(60);
+        while !test() {
+            assert!(Instant::now() < end, "live account acceptance timed out");
+            while main.pending() {
+                main.iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(&|| {
+        context.detectors.borrow().get(&id).is_some_and(|s| {
+            s.orchestrator
+                .detector_status()
+                .is_ok_and(|s| s.delivery == DeliveryState::Enabled)
+                && s.orchestrator.remote_diagnostics().is_some_and(|r| {
+                    r.status.coverage == RemoteCoverage::Complete && r.status.last_error.is_none()
+                })
+        })
+    });
+    assert_eq!(
+        context.detectors.borrow().len(),
+        1,
+        "only the selected test account may run"
+    );
+    let (page, view) = create(&context);
+    let retained = view.clone();
+    page.connect_map(move |_| retained.reload());
+    window.set_content(Some(&page));
+    until(&|| {
+        !view.loading_accounts.get()
+            && !view.state.borrow().loading
+            && view.accounts.model().is_some()
+    });
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("drivesync-e2e-ui-{stamp}.txt");
+    let file = root.join(&name);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file)
+        .unwrap()
+        .write_all(b"real account GUI acceptance fixture\n")
+        .unwrap();
+    fn text(widget: &gtk::Widget) -> String {
+        let mut result = widget
+            .downcast_ref::<gtk::Label>()
+            .map(|l| l.text().to_string())
+            .unwrap_or_default();
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            result.push_str(&text(&node));
+            child = node.next_sibling();
+        }
+        result
+    }
+    until(&|| !view.state.borrow().loading && text(view.list.upcast_ref()).contains(&name));
+    let rows = text(view.list.upcast_ref());
+    assert!(rows.contains("Upload"));
+    assert!(rows.contains("Download"));
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"real account GUI acceptance fixture\n"
+    );
+    capture(&window, "analyzer-real-account");
+    let owner = context
+        .detectors
+        .borrow()
+        .get(&id)
+        .unwrap()
+        .orchestrator
+        .clone();
+    assert!(owner.preparation_status().events_processed > 0);
+    owner
+        .stop_detector(drivesync_engine::detectors::DetectorStopMode::StopNow)
+        .unwrap();
+    window.close();
+}
