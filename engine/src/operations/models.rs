@@ -21,6 +21,9 @@ pub struct VerifiedSource {
 }
 #[derive(Clone)]
 pub struct VerifySourceRequest {
+    /// Permit a newer numeric version only when the observed SHA-256 and all
+    /// other identity/content/location guards still match a newly created replica.
+    pub allow_version_advance: bool,
     pub source: super::SourceEvidence,
     pub options: ExecutionOptions,
 }

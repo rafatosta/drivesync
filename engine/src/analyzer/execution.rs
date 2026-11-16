@@ -448,6 +448,7 @@ async fn verify_both(
         .operator
         .verify_source(VerifySourceRequest {
             source,
+            allow_version_advance: false,
             options: e.options.clone(),
         })
         .await?;
@@ -465,6 +466,7 @@ async fn verify_both(
         .operator
         .verify_source(VerifySourceRequest {
             source: evidence,
+            allow_version_advance: true,
             options: e.options.clone(),
         })
         .await?;

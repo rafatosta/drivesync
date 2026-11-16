@@ -6,6 +6,13 @@ impl GoogleOperator {
         &self,
         r: VerifyCreationRequest,
     ) -> OperationFuture<'_, VerifyCreationResult> {
+        self.probe_versioned(r, false)
+    }
+    pub(super) fn probe_versioned(
+        &self,
+        r: VerifyCreationRequest,
+        allow_version_advance: bool,
+    ) -> OperationFuture<'_, VerifyCreationResult> {
         let scope = self.scope.clone();
         let host = self.host.clone();
         let journal = self.journal.clone();
@@ -43,7 +50,7 @@ impl GoogleOperator {
                             .context
                             .source
                             .as_ref()
-                            .map(|s| worker.inspect_source(s));
+                            .map(|s| worker.inspect_source_versioned(s, allow_version_advance));
                         let source = if let Some(future) = source {
                             Some(future.await?)
                         } else {
@@ -108,6 +115,13 @@ impl Worker {
         &self,
         source: &SourceEvidence,
     ) -> OperatorResult<VerifiedSource> {
+        self.inspect_source_versioned(source, false).await
+    }
+    async fn inspect_source_versioned(
+        &self,
+        source: &SourceEvidence,
+        allow_version_advance: bool,
+    ) -> OperatorResult<VerifiedSource> {
         self.check()?;
         match source {
             SourceEvidence::Local { metadata, sha256 } => {
@@ -148,7 +162,29 @@ impl Worker {
                     .within_root(&metadata.reference.file_id.0, directory)
                     .await?;
                 if !directory {
-                    self.check_remote_source(&actual, metadata)?;
+                    let mut expected = metadata.as_ref().clone();
+                    if allow_version_advance {
+                        if let (MetadataValue::Known(old), Some(new), MetadataValue::Known(hash)) = (
+                            &expected.version,
+                            &actual.version,
+                            &expected.sha256_checksum,
+                        ) {
+                            let advanced = old
+                                .parse::<u64>()
+                                .ok()
+                                .zip(new.parse::<u64>().ok())
+                                .is_some_and(|(old, new)| new > old);
+                            if advanced
+                                && actual
+                                    .sha256_checksum
+                                    .as_ref()
+                                    .is_some_and(|value| value.eq_ignore_ascii_case(hash))
+                            {
+                                expected.version = MetadataValue::Known(new.clone());
+                            }
+                        }
+                    }
+                    self.check_remote_source(&actual, &expected)?;
                 } else if actual
                     .version
                     .as_ref()

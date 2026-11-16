@@ -43,3 +43,12 @@ SQLite e filesystem temporários: upload/download, pastas, interrupção, confir
 sem baseline prematura e manutenção do ID. Google real e Flatpak instalado exigem
 aceitação separada. Atualizações, renomes, movimentos, lixeira, restauração e formatos
 nativos Google continuam fora da execução automática.
+
+## Verificação de réplica recém-criada
+
+A origem continua exigindo versão exata. A réplica remota recém-criada pode ter
+um avanço numérico de versão entre a conclusão do upload e a confirmação, mas
+somente com SHA-256 conhecido e idêntico, mantendo todas as demais verificações
+de identidade, tamanho, nome, MIME, pais e capacidade de leitura. Versão reduzida,
+hash ausente ou conteúdo/localização divergentes continuam bloqueados. A baseline
+usa os metadados efetivamente reobservados, nunca a versão antiga do resultado.

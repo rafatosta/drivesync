@@ -2701,3 +2701,41 @@ async fn contradictory_source_content_is_rejected_before_metadata_writes() {
         .iter()
         .any(|(method, _)| method == "PATCH"));
 }
+
+#[tokio::test]
+async fn replica_verification_allows_version_advance_only_with_unchanged_content_and_location() {
+    let f = Fixture::new(b"unchanged".to_vec(), Faults::default());
+    let original = f.download("evidence").execution.source.unwrap();
+    f.server.state.lock().unwrap().version = "3".into();
+    let op = f.operator();
+    let request = VerifySourceRequest {
+        source: original.clone(),
+        allow_version_advance: false,
+        options: ExecutionOptions::default(),
+    };
+    assert_eq!(
+        op.verify_source(request.clone()).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+    let mut request = request;
+    request.allow_version_advance = true;
+    let verified = op.verify_source(request.clone()).await.unwrap();
+    let FileData::Remote(remote) = verified.metadata else {
+        panic!()
+    };
+    assert_eq!(remote.version, MetadataValue::Known("3".into()));
+    f.server.state.lock().unwrap().source = b"different".to_vec();
+    assert_eq!(
+        op.verify_source(request.clone()).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+    f.server.state.lock().unwrap().source = b"unchanged".to_vec();
+    let SourceEvidence::Remote { metadata, .. } = &mut request.source else {
+        panic!()
+    };
+    metadata.name = MetadataValue::Known("other.bin".into());
+    assert_eq!(
+        op.verify_source(request).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+}

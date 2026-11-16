@@ -240,19 +240,22 @@ impl Operator for GoogleOperator {
     fn verify_source(&self, r: VerifySourceRequest) -> OperationFuture<'_, VerifiedSource> {
         Box::pin(async move {
             let result = self
-                .probe(VerifyCreationRequest {
-                    context: ExecutionContext {
-                        id: ExecutionId::new("source-inspection".into())
-                            .map_err(|_| fs::fail(OperatorError::Internal))?,
-                        source: Some(r.source),
+                .probe_versioned(
+                    VerifyCreationRequest {
+                        context: ExecutionContext {
+                            id: ExecutionId::new("source-inspection".into())
+                                .map_err(|_| fs::fail(OperatorError::Internal))?,
+                            source: Some(r.source),
+                        },
+                        command: OperationCommand::CreateFile {
+                            parent: DirectoryRef::LocalRoot,
+                            name: ItemName::Local("source-inspection".into()),
+                            content: None,
+                        },
+                        options: r.options,
                     },
-                    command: OperationCommand::CreateFile {
-                        parent: DirectoryRef::LocalRoot,
-                        name: ItemName::Local("source-inspection".into()),
-                        content: None,
-                    },
-                    options: r.options,
-                })
+                    r.allow_version_advance,
+                )
                 .await?;
             result
                 .source
