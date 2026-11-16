@@ -150,7 +150,19 @@ pub(super) fn reconcile(
     compare_dimension(
         &mut out,
         Dimension::Location,
-        delta(local_parent.as_ref(), base.local.parent_identity.as_ref()),
+        // A root-level path has a known root parent, represented by None.
+        // For nested paths, None still means that parent mapping is missing.
+        if !local.relative_path.as_bytes().contains(&b'/') {
+            if base.local.parent_identity.is_none() {
+                Change::Unchanged
+            } else {
+                Change::Changed
+            }
+        } else if local_parent.is_some() && base.local.parent_identity.is_none() {
+            Change::Changed
+        } else {
+            delta(local_parent.as_ref(), base.local.parent_identity.as_ref())
+        },
         delta(remote_parent.as_ref(), base.remote.parent_identity.as_ref()),
         request.evidence.parent_comparison,
     );

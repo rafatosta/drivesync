@@ -640,3 +640,24 @@ fn unbound_initial_observations_identify_direction_without_fabricating_absence()
         assert!(outcome(partial).decisions.is_empty());
     }
 }
+
+#[test]
+fn moves_between_root_and_nested_parent_are_known_changes() {
+    let mut r = request();
+    r.item.baseline.as_mut().unwrap().local.parent_identity = None;
+    r.evidence.parent_comparison = Comparison::Different;
+    assert_eq!(
+        outcome(r).decisions,
+        vec![propagate(Dimension::Location, Side::Local)]
+    );
+
+    let mut r = request();
+    r.item.local.as_mut().unwrap().relative_path =
+        LocalRelativePath::new(b"file".to_vec()).unwrap();
+    r.evidence.local_parent = None;
+    r.evidence.parent_comparison = Comparison::Different;
+    assert_eq!(
+        outcome(r).decisions,
+        vec![propagate(Dimension::Location, Side::Local)]
+    );
+}
