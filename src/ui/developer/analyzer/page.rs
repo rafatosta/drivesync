@@ -505,7 +505,7 @@ impl View {
             self.list.append(&body);
         }
         self.state.borrow_mut().next = page.next_cursor;
-        self.message.set_label(if count==0{"No analyses to show yet. Decisions appear after preparation and as new observations are processed."}else{"File names reflect the current inventory. Actions below are decisions, not executed operations."});
+        self.message.set_label(if count==0{"No analyses to show yet. Decisions appear after preparation and as new observations are processed."}else{"File names reflect the current inventory. Actions below are recorded decisions. Inspect Operator for execution progress and verified completion."});
         if let Some(problem) = self.flow_problem() {
             self.message.set_label(&problem);
         }
@@ -673,7 +673,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     let title = label("Analyzer decisions");
     title.add_css_class("title-1");
     body.append(&title);
-    let explanation=label("Inspect the file and the action identified by analysis. Actions identify creation, content updates, renames, moves or manual intervention. Upload/Download indicates direction. Operations are not executed.");
+    let explanation=label("Inspect the file and the action identified by analysis. Actions identify creation, content updates, renames, moves or manual intervention. Upload/Download indicates direction. Supported new creations are executed after verification; inspect Operator for progress.");
     explanation.add_css_class("dim-label");
     body.append(&explanation);
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 12);

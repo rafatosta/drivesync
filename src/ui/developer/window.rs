@@ -46,8 +46,12 @@ fn build(
         ("scanner", "Scanner", super::scanner::build(context)),
         ("inventory", "Inventory", super::inventory::build(context)),
         ("analyzer", "Analyzer", super::analyzer::build(context)),
-        ("operator", "Operator", super::operator::build()),
-        ("orchestrator", "Orchestrator", super::orchestrator::build()),
+        ("operator", "Operator", super::operator::build(context)),
+        (
+            "orchestrator",
+            "Orchestrator",
+            super::orchestrator::build(context),
+        ),
         ("logs", "Logs", super::logs::build()),
     ] {
         page.set_widget_name(&format!("developer-{name}"));
