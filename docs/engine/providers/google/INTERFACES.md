@@ -2524,3 +2524,15 @@ serializa o campo. `files_update` e `start_resumable_update` recusam qualquer ID
 no body antes de HTTP: a identidade de atualização continua no path. O Provider
 não reserva, persiste ou repete operações automaticamente.
 Referência: [upload com ID pré-gerado](https://developers.google.com/workspace/drive/api/guides/manage-uploads#use_a_pre-generated_id_to_upload_files).
+
+
+## Metadados e gravações condicionais
+
+`files_get_snapshot` retorna `GoogleFileSnapshot { file, etag }` da mesma resposta.
+ETag ausente ou fraco permanece `None`; não inventar validador a partir de `version`.
+`files_update_conditional` e `start_resumable_update_conditional` enviam `If-Match`
+com ETag forte explícito, rejeitam `*`, valores vazios/fracos/injeção e preservam
+HTTP 412 como `PreconditionFailed`, sem retry ou fallback incondicional.
+Os testes HTTP cobrem snapshot, cabeçalho enviado e rejeição por versão divergente.
+O envio do cabeçalho não comprova suporte de um servidor que não o respeite;
+a operação exige validador emitido pelo endpoint e validação de efeito posterior.

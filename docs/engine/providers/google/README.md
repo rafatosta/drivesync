@@ -32,3 +32,15 @@ Timeout, quota, `Retry-After`, autenticação expirada e efeitos remotos incerto
 ## Documentação
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
+
+
+## Metadados e gravações condicionais
+
+`files_get_snapshot` retorna `GoogleFileSnapshot { file, etag }` da mesma resposta.
+ETag ausente ou fraco permanece `None`; não inventar validador a partir de `version`.
+`files_update_conditional` e `start_resumable_update_conditional` enviam `If-Match`
+com ETag forte explícito, rejeitam `*`, valores vazios/fracos/injeção e preservam
+HTTP 412 como `PreconditionFailed`, sem retry ou fallback incondicional.
+Os testes HTTP cobrem snapshot, cabeçalho enviado e rejeição por versão divergente.
+O envio do cabeçalho não comprova suporte de um servidor que não o respeite;
+a operação exige validador emitido pelo endpoint e validação de efeito posterior.

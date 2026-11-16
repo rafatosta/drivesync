@@ -1251,3 +1251,15 @@ ou removido para ocultá-la.
 Consultas vazias de retomada devem enviar `Content-Length: 0`; blocos de upload
 informam o tamanho exato, inclusive arquivos vazios. Os testes HTTP verificam os
 cabeçalhos efetivamente recebidos, além de `Content-Range` e dos estados 308/final.
+
+
+## Metadados e gravações condicionais
+
+`files_get_snapshot` retorna `GoogleFileSnapshot { file, etag }` da mesma resposta.
+ETag ausente ou fraco permanece `None`; não inventar validador a partir de `version`.
+`files_update_conditional` e `start_resumable_update_conditional` enviam `If-Match`
+com ETag forte explícito, rejeitam `*`, valores vazios/fracos/injeção e preservam
+HTTP 412 como `PreconditionFailed`, sem retry ou fallback incondicional.
+Os testes HTTP cobrem snapshot, cabeçalho enviado e rejeição por versão divergente.
+O envio do cabeçalho não comprova suporte de um servidor que não o respeite;
+a operação exige validador emitido pelo endpoint e validação de efeito posterior.

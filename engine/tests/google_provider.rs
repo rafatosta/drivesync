@@ -3,6 +3,7 @@
 mod google_provider {
     pub mod api;
     pub mod collaboration;
+    pub mod conditional;
     pub mod downloads;
     pub mod files;
     pub mod mutations;

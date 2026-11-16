@@ -61,7 +61,7 @@ impl GoogleDriveClient {
                 "fields",
             ],
         )?;
-        self.start_upload(session, None, request, query, total_bytes)
+        self.start_upload(session, None, request, query, total_bytes, None)
             .await
     }
     /// Begins replacement content for the same remote file identity.
@@ -85,8 +85,34 @@ impl GoogleDriveClient {
                 "fields",
             ],
         )?;
-        self.start_upload(session, Some(file_id), request, query, total_bytes)
+        self.start_upload(session, Some(file_id), request, query, total_bytes, None)
             .await
+    }
+    /// Starts replacement of an existing file only if its HTTP validator matches.
+    pub async fn start_resumable_update_conditional(
+        &self,
+        session: &GoogleSession,
+        file_id: &FileId,
+        request: GoogleFileWrite,
+        options: FileUpdateOptions,
+        total_bytes: Option<u64>,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadSession> {
+        super::conditional::strong_etag(etag)?;
+        request.validate_update()?;
+        let query = query_for(
+            &options,
+            &["supportsAllDrives", "keepRevisionForever", "fields"],
+        )?;
+        self.start_upload(
+            session,
+            Some(file_id),
+            request,
+            query,
+            total_bytes,
+            Some(etag),
+        )
+        .await
     }
     /// Sends one block, validating totals and non-final 256 KiB alignment.
     /// A lost response leaves effects unknown: this method never repeats it.
@@ -235,6 +261,7 @@ impl GoogleDriveClient {
         request: GoogleFileWrite,
         mut query: Vec<(String, String)>,
         total_bytes: Option<u64>,
+        etag: Option<&str>,
     ) -> GoogleResult<GoogleUploadSession> {
         let mut url = self.upload_base.clone();
         {
@@ -253,6 +280,10 @@ impl GoogleDriveClient {
         let mut headers = vec![("X-Upload-Content-Type", "application/octet-stream".into())];
         if let Some(total) = total_bytes {
             headers.push(("X-Upload-Content-Length", total.to_string()));
+        }
+        if let Some(etag) = etag {
+            super::conditional::strong_etag(etag)?;
+            headers.push(("If-Match", etag.into()));
         }
         let response = self
             .send(
