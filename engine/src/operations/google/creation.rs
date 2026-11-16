@@ -315,6 +315,7 @@ impl Worker {
                     next.effect = ExecutionEffect::Unknown;
                     self.save(next)?;
                     let session = self.access.session().await?;
+                    self.check()?;
                     self.access
                         .client
                         .files_create(

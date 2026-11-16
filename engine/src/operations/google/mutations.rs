@@ -320,6 +320,15 @@ impl Worker {
             .await
             .map_err(|e| self.provider_error(e))?;
         let actual = snapshot.file;
+        if let Some(SourceEvidence::Remote {
+            revision: Some(revision),
+            ..
+        }) = &self.checkpoint.intent.context.source
+        {
+            if actual.head_revision_id.as_ref().map(|id| &id.0) != Some(revision) {
+                return Err(self.error(OperatorError::PreconditionFailed));
+            }
+        }
         let actual_kind = if actual.mime_type.as_ref().is_some_and(|m| m.0 == FOLDER) {
             RemoteEntryKind::Directory
         } else {
@@ -456,6 +465,7 @@ impl Worker {
         next.effect = ExecutionEffect::Unknown;
         self.save(next)?;
         let session = self.access.session().await?;
+        self.check()?;
         self.access
             .client
             .files_update_conditional(

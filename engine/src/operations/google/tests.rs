@@ -2641,3 +2641,33 @@ async fn cancelled_retry_preserves_an_already_applied_effect_and_identity() {
     assert!(f.root.join("created").is_file());
     assert!(f.server.state.lock().unwrap().requests.is_empty());
 }
+#[tokio::test]
+async fn metadata_mutations_honor_the_explicit_source_revision() {
+    let f = Fixture::new(vec![], Faults::default());
+    let item = remote_item(&f);
+    let mut execution = context_for("source-revision", item.metadata.unwrap());
+    let Some(SourceEvidence::Remote { revision, .. }) = &mut execution.source else {
+        panic!()
+    };
+    *revision = Some("not-current".into());
+    let error = f
+        .operator()
+        .rename(RenameRequest {
+            execution,
+            target: item.resource,
+            new_name: ItemName::Remote("new".into()),
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, OperatorError::PreconditionFailed);
+    assert!(!f
+        .server
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(method, _)| method == "PATCH"));
+}
