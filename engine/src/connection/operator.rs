@@ -31,7 +31,13 @@ impl OperatorAccess {
             .get(GetAccountRequest {
                 account_id: self.account.clone(),
             })
-            .map_err(|_| denied())?
+            .map_err(|error| {
+                eprintln!(
+                    "DriveSync Operator: account lookup failed: {:?}",
+                    error.kind
+                );
+                denied()
+            })?
             .account;
         if account.provider.0 != "google" || account.state == AccountState::ReauthorizationRequired
         {
@@ -42,7 +48,20 @@ impl OperatorAccess {
                 account_id: self.account.clone(),
             })
             .await
-            .map_err(|_| denied())?;
+            .map_err(|error| {
+                eprintln!(
+                    "DriveSync Operator: session acquisition failed: {:?}",
+                    error.kind
+                );
+                OperatorFailure {
+                    kind: if error.retryable {
+                        OperatorError::Network
+                    } else {
+                        OperatorError::PermissionDenied
+                    },
+                    ..denied()
+                }
+            })?;
         Ok(session.session.google().clone())
     }
     #[cfg(test)]
