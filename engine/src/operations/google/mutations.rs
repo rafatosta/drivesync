@@ -329,7 +329,11 @@ impl Worker {
                 return Err(self.error(OperatorError::PreconditionFailed));
             }
         }
-        let actual_kind = if actual.mime_type.as_ref().is_some_and(|m| m.0 == FOLDER) {
+        let actual_mime = actual
+            .mime_type
+            .as_ref()
+            .ok_or_else(|| self.error(OperatorError::PreconditionFailed))?;
+        let actual_kind = if actual_mime.0 == FOLDER {
             RemoteEntryKind::Directory
         } else {
             RemoteEntryKind::File
@@ -491,29 +495,7 @@ impl Worker {
         else {
             return Err(self.error(OperatorError::InvalidRequest));
         };
-        if let MetadataValue::Known(mime) = &expected.mime_type {
-            if file.mime_type.as_ref().map(|m| &m.0) != Some(mime) {
-                return Err(self.error(OperatorError::PreconditionFailed));
-            }
-        }
-        if let MetadataValue::Known(size) = expected.size {
-            if file.size.as_ref().and_then(|s| s.parse::<u64>().ok()) != Some(size) {
-                return Err(self.error(OperatorError::PreconditionFailed));
-            }
-        }
-        for (expected, actual) in [
-            (&expected.md5_checksum, &file.md5_checksum),
-            (&expected.sha256_checksum, &file.sha256_checksum),
-        ] {
-            if let MetadataValue::Known(hash) = expected {
-                if actual
-                    .as_ref()
-                    .is_none_or(|value| !value.eq_ignore_ascii_case(hash))
-                {
-                    return Err(self.error(OperatorError::PreconditionFailed));
-                }
-            }
-        }
+        check_content_unchanged(file, expected).map_err(|e| self.error(e.kind))?;
         let metadata =
             self.remote_metadata(file, file.mime_type.as_ref().is_some_and(|m| m.0 == FOLDER))?;
         self.finish_item(ItemResult {
@@ -563,6 +545,12 @@ pub(super) fn check_remote_conditions(
     expected: &RemoteFile,
     p: &Preconditions,
 ) -> OperatorResult<()> {
+    check_content_unchanged(actual, expected)?;
+    if let MetadataValue::Known(name) = &expected.name {
+        if actual.name.as_ref() != Some(name) {
+            return Err(fs::fail(OperatorError::PreconditionFailed));
+        }
+    }
     let valid = actual
         .id
         .as_ref()
@@ -582,6 +570,33 @@ pub(super) fn check_remote_conditions(
         });
     if !valid {
         return Err(fs::fail(OperatorError::PreconditionFailed));
+    }
+    Ok(())
+}
+
+fn check_content_unchanged(file: &g::GoogleFile, expected: &RemoteFile) -> OperatorResult<()> {
+    if let MetadataValue::Known(mime) = &expected.mime_type {
+        if file.mime_type.as_ref().map(|m| &m.0) != Some(mime) {
+            return Err(fs::fail(OperatorError::PreconditionFailed));
+        }
+    }
+    if let MetadataValue::Known(size) = expected.size {
+        if file.size.as_ref().and_then(|s| s.parse::<u64>().ok()) != Some(size) {
+            return Err(fs::fail(OperatorError::PreconditionFailed));
+        }
+    }
+    for (expected, actual) in [
+        (&expected.md5_checksum, &file.md5_checksum),
+        (&expected.sha256_checksum, &file.sha256_checksum),
+    ] {
+        if let MetadataValue::Known(hash) = expected {
+            if actual
+                .as_ref()
+                .is_none_or(|value| !value.eq_ignore_ascii_case(hash))
+            {
+                return Err(fs::fail(OperatorError::PreconditionFailed));
+            }
+        }
     }
     Ok(())
 }

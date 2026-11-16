@@ -2671,3 +2671,33 @@ async fn metadata_mutations_honor_the_explicit_source_revision() {
         .iter()
         .any(|(method, _)| method == "PATCH"));
 }
+#[tokio::test]
+async fn contradictory_source_content_is_rejected_before_metadata_writes() {
+    let f = Fixture::new(vec![], Faults::default());
+    let item = remote_item(&f);
+    f.server.state.lock().unwrap().files.insert(
+        "target".into(),
+        blob("target", "target.bin", b"different", "1", false),
+    );
+    let error = f
+        .operator()
+        .rename(RenameRequest {
+            execution: context_for("source-content", item.metadata.unwrap()),
+            target: item.resource,
+            new_name: ItemName::Remote("new".into()),
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, OperatorError::PreconditionFailed);
+    assert_eq!(error.effect, ExecutionEffect::NotApplied);
+    assert!(!f
+        .server
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(method, _)| method == "PATCH"));
+}
