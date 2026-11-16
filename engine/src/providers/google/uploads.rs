@@ -127,6 +127,7 @@ impl GoogleDriveClient {
         };
         let headers = [
             ("Content-Range", content_range),
+            ("Content-Length", chunk.bytes.len().to_string()),
             ("Content-Type", "application/octet-stream".into()),
         ];
         let response = self
@@ -142,6 +143,7 @@ impl GoogleDriveClient {
     ) -> GoogleResult<GoogleUploadProgress> {
         let url = self.upload_url(&upload.session_uri)?;
         let headers = [
+            ("Content-Length", "0".into()),
             (
                 "Content-Range",
                 format!(

@@ -148,6 +148,7 @@ async fn progress_queries_accept_missing_range_but_never_call_it_complete() {
         ));
         let reqs = server.recorded();
         assert!(reqs[0].body.is_empty());
+        assert_eq!(reqs[0].header("content-length"), Some("0"));
         assert_eq!(
             reqs[0].header("content-range"),
             Some(if total.is_some() {
@@ -359,6 +360,7 @@ async fn empty_files_and_unknown_totals_preserve_protocol_states() {
         .await
         .unwrap();
     assert!(matches!(result, GoogleUploadProgress::Complete { .. }));
+    assert_eq!(server.recorded()[0].header("content-length"), Some("0"));
     assert_eq!(
         server.recorded()[0].header("content-range"),
         Some("bytes */0")
@@ -381,6 +383,10 @@ async fn empty_files_and_unknown_totals_preserve_protocol_states() {
     assert_eq!(
         server.recorded()[0].header("content-range"),
         Some("bytes 0-262143/*")
+    );
+    assert_eq!(
+        server.recorded()[0].header("content-length"),
+        Some("262144")
     );
 }
 

@@ -92,6 +92,11 @@ O harness `observe_account` só habilita execução real com
 `DRIVESYNC_LIVE_OBSERVATION=1` **e** `DRIVESYNC_LIVE_EXECUTION=1`, além da conta e raiz
 explícitas. Na conta de testes, houve download e criação de pastas reais; análise
 posterior confirmou 12 itens como sincronizados. A validação real revelou HTTP 411
-na consulta de retomada de upload, por falta de `Content-Length: 0`; corrigir esse
-mapeamento do Provider requer a orientação solicitada ao usuário. Isso não equivale
-a validar upload real completo nem instalação do Flatpak.
+na consulta de retomada de upload, por falta de `Content-Length: 0`. Com autorização
+do usuário, o Provider passou a enviar o comprimento explícito das consultas e
+blocos, inclusive vazios. O teste de cabeçalho falhou antes e passou após a correção.
+Na nova execução real, a sessão original concluiu o envio do arquivo vazio com o
+mesmo ID e checkpoint `Completed/Applied`, sem HTTP 411. A confirmação de baseline
+permaneceu bloqueada porque a versão remota avançou de 1 para 2 na reobservação;
+o upload físico concluído não foi apresentado como sincronização confirmada.
+Isso não equivale a validar instalação do Flatpak.

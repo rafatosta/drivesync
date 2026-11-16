@@ -1246,3 +1246,8 @@ ou removido para ocultá-la.
 - [Download e exportação](https://developers.google.com/workspace/drive/api/guides/manage-downloads).
 - [RFC 7636 — PKCE, incluindo o vetor S256 do apêndice B](https://www.rfc-editor.org/rfc/rfc7636).
 - [API de verificação JWT usada](https://docs.rs/jsonwebtoken/9.3.1/jsonwebtoken/struct.Validation.html).
+
+
+Consultas vazias de retomada devem enviar `Content-Length: 0`; blocos de upload
+informam o tamanho exato, inclusive arquivos vazios. Os testes HTTP verificam os
+cabeçalhos efetivamente recebidos, além de `Content-Range` e dos estados 308/final.

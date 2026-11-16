@@ -528,7 +528,7 @@ pub trait GoogleTransferApi {
 | `export_file_bytes` | `GET /files/{fileId}/export?mimeType=…`, resposta binária |
 | `start_resumable_create` | `POST /upload/drive/v3/files?uploadType=resumable` |
 | `start_resumable_update` | `PATCH /upload/drive/v3/files/{fileId}?uploadType=resumable` |
-| `upload_chunk`, `query_upload_progress` | URI opaca da sessão de upload, `PUT` com `Content-Range`; retorno `308` incompleto ou sucesso final |
+| `upload_chunk`, `query_upload_progress` | URI opaca da sessão de upload, `PUT` com `Content-Range` e `Content-Length` explícito (inclusive `0` para consulta vazia); retorno `308` incompleto ou sucesso final |
 | `trash_file` | `files.update`, `trashed=true`; **não é** `files.delete` |
 | `rename_file` | `files.update`, alteração de `name` |
 | `move_file` | `files.update`, `addParents` / `removeParents`, sem reupload |
