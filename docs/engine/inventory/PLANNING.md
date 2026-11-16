@@ -1,6 +1,6 @@
 # Inventory — vínculos explícitos e planos duráveis
 
-O esquema é **5**. Bancos anteriores são preservados e recusados com
+O esquema é **6**. Bancos anteriores são preservados e recusados com
 `UnsupportedSchema`, sem migração, limpeza ou reconstrução automática.
 
 `associate_items(AssociateItemsRequest)` associa dois itens presentes sem vínculo
@@ -31,7 +31,9 @@ novas aparecem na inspeção somente leitura do Inventory.
 
 `ItemGuard` protege o estado observado e o baseline, sem invalidar plano por mera
 mudança do diagnóstico/revisão durante outra análise. `get_namespace` fornece
-uma guarda do conjunto de filhos de um destino por identidade: inserções novas
-invalidam o plano mesmo sem alterar o item de origem. Guardas são revalidadas na
+uma guarda conservadora por destino e época de observação do escopo, mantida
+transacionalmente em `planning_clock`: mudanças nos fatos de qualquer item
+invalidam o plano, inclusive inserções sem alteração da origem. Alterações apenas
+diagnósticas não avançam essa época. Guardas são revalidadas na
 transação; consultas de histórico e filtro atual calculam obsolescência novamente.
 Nenhuma guarda elimina a necessidade de revalidação antes da execução futura.

@@ -144,3 +144,12 @@ Ficam para implementação posterior: validação concreta, despacho, sessão re
 Providers, filesystem privado seguro, cancelamento/progresso, transferência,
 retomada e verificação de efeitos. Não há fila, lifecycle, `status`, confirmação
 de baseline, política de conflito ou acesso a Inventory no módulo.
+
+## Dados de planejamento do Analyzer
+
+`OperationCommand` descreve nove ações permitidas como dados serializáveis:
+criação de arquivo/pasta, upload, download, atualização de conteúdo, renomeação,
+movimentação, lixeira e restauração. Não contém variante de exclusão permanente,
+executor, callback ou credencial. `DirectoryRef::LocalRoot` identifica a raiz local
+configurada. O Inventory persiste esses dados e seus bloqueios; nenhum comando
+é despachado ao Operator nesta fase.

@@ -3,8 +3,10 @@
 use super::*;
 use crate::{inventory::*, models::*, operations::*};
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     os::unix::ffi::{OsStrExt, OsStringExt},
+    sync::{Arc, Mutex},
 };
 fn known<T>(v: &MetadataValue<T>) -> Option<&T> {
     if let MetadataValue::Known(v) = v {
@@ -95,8 +97,108 @@ fn all(inventory: &InventoryManager) -> AnalyzerResult<Vec<SyncItem>> {
         }
     }
 }
+/// Shared immutable context for one observation epoch. Diagnostic-only analysis
+/// writes do not invalidate it; changed facts force a fresh indexed snapshot.
+pub(super) struct Snapshot {
+    guard: NamespaceGuard,
+    items: Vec<SyncItem>,
+    locals: BTreeMap<Vec<u8>, usize>,
+    remotes: BTreeMap<(AccountId, String), usize>,
+    homonyms: BTreeMap<(AccountId, String, String), Vec<usize>>,
+}
+pub(super) type Cache = Mutex<Option<Arc<Snapshot>>>;
+fn snapshot(
+    inventory: &InventoryManager,
+    provider: &ProviderId,
+    cache: &Cache,
+) -> AnalyzerResult<Arc<Snapshot>> {
+    let mut cached = cache
+        .lock()
+        .map_err(|_| error(AnalyzerErrorKind::Internal))?;
+    for _ in 0..3 {
+        let before = inventory
+            .get_namespace(GetNamespaceRequest {
+                directory: DirectoryRef::LocalRoot,
+            })
+            .map_err(inventory_error)?
+            .guard;
+        if let Some(current) = cached.as_ref().filter(|c| c.guard == before) {
+            return Ok(current.clone());
+        }
+        let items = all(inventory)?;
+        let after = inventory
+            .get_namespace(GetNamespaceRequest {
+                directory: DirectoryRef::LocalRoot,
+            })
+            .map_err(inventory_error)?
+            .guard;
+        if before != after {
+            continue;
+        }
+        let mut data = Snapshot {
+            guard: before,
+            items,
+            locals: BTreeMap::new(),
+            remotes: BTreeMap::new(),
+            homonyms: BTreeMap::new(),
+        };
+        for (index, item) in data.items.iter().enumerate() {
+            if let Some(f) = local(item) {
+                data.locals
+                    .insert(f.relative_path.as_bytes().to_vec(), index);
+            }
+            if let Some(r) = remote(item) {
+                if r.provider != *provider {
+                    return Err(error(AnalyzerErrorKind::WrongSyncScope));
+                }
+                data.remotes.insert(
+                    (
+                        r.reference.account_id.clone(),
+                        r.reference.file_id.0.clone(),
+                    ),
+                    index,
+                );
+                if item.local.is_none()
+                    && item.local_presence == PresenceState::Unknown
+                    && item.remote_presence == PresenceState::Present
+                {
+                    if let (Some(parents), Some(n)) = (
+                        known(&r.parent_ids).filter(|ids| ids.len() == 1),
+                        known(&r.name),
+                    ) {
+                        data.homonyms
+                            .entry((
+                                r.reference.account_id.clone(),
+                                parents[0].0.clone(),
+                                n.clone(),
+                            ))
+                            .or_default()
+                            .push(index);
+                    }
+                }
+            }
+        }
+        let data = Arc::new(data);
+        *cached = Some(data.clone());
+        return Ok(data);
+    }
+    Err(error(AnalyzerErrorKind::StaleItem))
+}
+fn local_destination(directory: &DirectoryRef, n: &ItemName) -> Option<Vec<u8>> {
+    let ItemName::Local(n) = n else { return None };
+    let mut path = match directory {
+        DirectoryRef::LocalRoot => vec![],
+        DirectoryRef::Local { relative_path, .. } => relative_path.as_bytes().to_vec(),
+        _ => return None,
+    };
+    if !path.is_empty() {
+        path.push(b'/')
+    }
+    path.extend(n.as_bytes());
+    Some(path)
+}
 struct World<'a> {
-    items: &'a [SyncItem],
+    data: &'a Snapshot,
     identity: &'a SyncIdentity,
     provider: &'a ProviderId,
 }
@@ -125,13 +227,18 @@ impl World<'_> {
                 }));
             }
             if let Some(parent) = self
-                .items
-                .iter()
-                .find(|p| local(p).is_some_and(|f| f.relative_path.as_bytes() == path))
+                .data
+                .locals
+                .get(&path)
+                .map(|index| &self.data.items[*index])
             {
                 add_guard(plan, parent)?;
                 if parent.kind == ItemKind::Directory
                     && parent.remote_presence == PresenceState::Present
+                    && remote(parent).is_some_and(|r| {
+                        r.kind == MetadataValue::Known(RemoteEntryKind::Directory)
+                            && r.trashed == MetadataValue::Known(false)
+                    })
                 {
                     if let Some(ResourceRef::Remote {
                         provider_id,
@@ -156,14 +263,17 @@ impl World<'_> {
             if ids[0].0 == self.identity.remote_root_id {
                 return Ok(Some(DirectoryRef::LocalRoot));
             }
-            if let Some(parent) = self.items.iter().find(|p| {
-                p.remote_ref.as_ref().is_some_and(|r| {
-                    r.account_id == self.identity.account_id && r.file_id == ids[0]
-                })
-            }) {
+            if let Some(parent) = self
+                .data
+                .remotes
+                .get(&(self.identity.account_id.clone(), ids[0].0.clone()))
+                .map(|index| &self.data.items[*index])
+            {
                 add_guard(plan, parent)?;
                 if parent.kind == ItemKind::Directory
                     && parent.local_presence == PresenceState::Present
+                    && local(parent)
+                        .is_some_and(|l| l.kind == MetadataValue::Known(LocalEntryKind::Directory))
                 {
                     if let Some(f) = local(parent) {
                         return Ok(Some(DirectoryRef::Local {
@@ -184,23 +294,54 @@ impl World<'_> {
         directory: &DirectoryRef,
         n: &ItemName,
     ) -> Vec<&SyncItem> {
-        let ItemName::Local(n) = n else { return vec![] };
-        let mut bytes = match directory {
-            DirectoryRef::LocalRoot => vec![],
-            DirectoryRef::Local { relative_path, .. } => relative_path.as_bytes().to_vec(),
-            _ => return vec![],
+        let Some(path) = local_destination(directory, n) else {
+            return vec![];
         };
-        if !bytes.is_empty() {
-            bytes.push(b'/')
+        let mut result = Vec::new();
+        if let Some(other) = self.data.locals.get(&path).map(|i| &self.data.items[*i]) {
+            if other.id != item.id && other.local_presence == PresenceState::Present {
+                result.push(other)
+            }
         }
-        bytes.extend(n.as_bytes());
-        self.items.iter().filter(|other|other.id!=item.id && (
-            other.local_presence==PresenceState::Present && local(other).is_some_and(|f|f.relative_path.as_bytes()==bytes)
-            // Independent remote homonyms competing for the same local path are
-            // a destination collision, never a proposed identity association.
-            || other.local.is_none() && other.local_presence==PresenceState::Unknown && other.remote_presence==PresenceState::Present
-                && remote(other).zip(remote(item)).is_some_and(|(a,b)|a.parent_ids==b.parent_ids && a.name==b.name)
-        )).collect()
+        if let Some(r) = remote(item) {
+            if let (Some(parents), ItemName::Local(n)) =
+                (known(&r.parent_ids).filter(|ids| ids.len() == 1), n)
+            {
+                if let Some(n) = n.to_str() {
+                    let parent_path = if parents[0].0 == self.identity.remote_root_id {
+                        Some(vec![])
+                    } else {
+                        self.data
+                            .remotes
+                            .get(&(r.reference.account_id.clone(), parents[0].0.clone()))
+                            .and_then(|i| local(&self.data.items[*i]))
+                            .map(|l| l.relative_path.as_bytes().to_vec())
+                    };
+                    let expected = parent_path.map(|mut p| {
+                        if !p.is_empty() {
+                            p.push(b'/')
+                        }
+                        p.extend(n.as_bytes());
+                        p
+                    });
+                    if expected.as_ref() == Some(&path) {
+                        if let Some(indices) = self.data.homonyms.get(&(
+                            r.reference.account_id.clone(),
+                            parents[0].0.clone(),
+                            n.to_string(),
+                        )) {
+                            for index in indices {
+                                let other = &self.data.items[*index];
+                                if other.id != item.id && !result.iter().any(|i| i.id == other.id) {
+                                    result.push(other)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result
     }
 }
 fn preconditions(i: &SyncItem, upload: bool) -> AnalyzerResult<Preconditions> {
@@ -243,13 +384,15 @@ pub(super) fn build(
     inventory: &InventoryManager,
     identity: &SyncIdentity,
     provider: &ProviderId,
+    cache: &Cache,
     request: &AnalyzeRequest,
     assessment: &mut NewAnalysisAssessment,
 ) -> AnalyzerResult<()> {
     let item = &request.item;
-    let items = all(inventory)?;
+    let context = snapshot(inventory, provider, cache)?;
+    let items = &context.items;
     let world = World {
-        items: &items,
+        data: &context,
         identity,
         provider,
     };
@@ -257,6 +400,7 @@ pub(super) fn build(
         restore_request: request.directive.clone(),
         ..Default::default()
     };
+    plan.namespaces.push(context.guard.clone());
     add_guard(&mut plan, item)?;
     // The configured remote root is a scope binding, not a folder to download.
     if item.local.is_none()
@@ -515,7 +659,7 @@ pub(super) fn build(
                                 .guard,
                         );
                     }
-                    for child in &items {
+                    for child in items {
                         let local_child = !upload
                             && local(item)
                                 .zip(local(child))
@@ -573,30 +717,18 @@ pub(super) fn build(
                     .map_err(inventory_error)?
                     .guard,
             );
-            if let Some(n) = new_name.as_ref() {
-                let path = match (directory, n) {
-                    (DirectoryRef::LocalRoot, ItemName::Local(n)) => Some(n.as_bytes().to_vec()),
-                    (DirectoryRef::Local { relative_path, .. }, ItemName::Local(n)) => {
-                        let mut p = relative_path.as_bytes().to_vec();
-                        p.push(b'/');
-                        p.extend(n.as_bytes());
-                        Some(p)
-                    }
-                    _ => None,
-                };
-                if let Some(path) = path {
-                    for other in &items {
-                        if other.id != item.id
-                            && other.local_presence == PresenceState::Unknown
-                            && local(other).is_some_and(|f| f.relative_path.as_bytes() == path)
-                        {
-                            add_guard(&mut plan, other)?;
-                            push(&mut step.blocked_by, PlanBlock::Evidence);
-                            push(
-                                &mut assessment.requirements,
-                                AnalysisRequirement::ObserveLocal,
-                            );
-                        }
+            if let Some(n) = new_name.as_ref().filter(|_| position == 0) {
+                if let Some(other) = local_destination(directory, n)
+                    .and_then(|p| context.locals.get(&p))
+                    .map(|i| &context.items[*i])
+                {
+                    if other.id != item.id && other.local_presence == PresenceState::Unknown {
+                        add_guard(&mut plan, other)?;
+                        push(&mut step.blocked_by, PlanBlock::Evidence);
+                        push(
+                            &mut assessment.requirements,
+                            AnalysisRequirement::ObserveLocal,
+                        );
                     }
                 }
                 for other in world.collisions(item, directory, n) {
@@ -606,13 +738,20 @@ pub(super) fn build(
                     for r in refs(other) {
                         push(&mut resources, r)
                     }
-                    push(
-                        &mut plan.manual,
-                        ManualIssue {
+                    if let Some(issue) = plan
+                        .manual
+                        .iter_mut()
+                        .find(|issue| issue.reason == ManualReason::DestinationOccupied)
+                    {
+                        for resource in resources {
+                            push(&mut issue.resources, resource);
+                        }
+                    } else {
+                        plan.manual.push(ManualIssue {
                             reason: ManualReason::DestinationOccupied,
                             resources,
-                        },
-                    );
+                        });
+                    }
                     let f = AnalysisFinding {
                         origin: AnalysisOrigin::Planning,
                         dimension: AnalysisDimension::Location,
@@ -674,4 +813,39 @@ pub(super) fn build(
     };
     assessment.plan = Some(plan);
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    #[test]
+    fn indexed_context_is_reused_until_the_observation_epoch_changes() {
+        let root =
+            std::env::temp_dir().join(format!("analyzer-context-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let inventory = InventoryManager::open(OpenInventoryRequest {
+            local_root: root.clone(),
+            expected: SyncIdentity {
+                sync_id: SyncId("cache".into()),
+                account_id: AccountId("account".into()),
+                remote_root_id: "root".into(),
+            },
+            create_if_missing: true,
+        })
+        .unwrap()
+        .inventory;
+        let cache = Cache::default();
+        let provider = ProviderId("google".into());
+        let first = snapshot(&inventory, &provider, &cache).unwrap();
+        let second = snapshot(&inventory, &provider, &cache).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        let sql = rusqlite::Connection::open(root.join(".drivesync/inventory.sqlite3")).unwrap();
+        sql.execute("UPDATE planning_clock SET epoch=epoch+1 WHERE id=1", [])
+            .unwrap();
+        let third = snapshot(&inventory, &provider, &cache).unwrap();
+        assert!(!Arc::ptr_eq(&first, &third));
+        drop(inventory);
+        drop(sql);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -1378,3 +1378,35 @@ async fn unknown_old_destination_is_evidence_pending_not_a_proven_collision() {
         .iter()
         .any(|m| m.reason == ManualReason::DestinationOccupied));
 }
+
+#[tokio::test]
+async fn many_remote_homonyms_remain_one_manual_collision_without_association() {
+    let (tree, inv, _) = setup();
+    let mut first = None;
+    for n in 0..80 {
+        let id = format!("homonym-{n}");
+        let item = inv
+            .record_remote(remote_request(
+                remote_file(&id, &id, m::MetadataValue::Known("same-name".into())),
+                ObservationTarget::NewItem,
+                None,
+            ))
+            .unwrap()
+            .item;
+        first.get_or_insert(item);
+    }
+    let record = analyzer(&tree, inv.clone())
+        .analyze(fresh_request(first.unwrap()))
+        .await
+        .unwrap()
+        .analysis;
+    let plan = record.plan.unwrap();
+    let issues: Vec<_> = plan
+        .manual
+        .iter()
+        .filter(|issue| issue.reason == ManualReason::DestinationOccupied)
+        .collect();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].resources.len(), 80);
+    assert!(plan.steps[0].blocked_by.contains(&PlanBlock::Collision));
+}

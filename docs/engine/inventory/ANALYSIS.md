@@ -63,7 +63,7 @@ Não existe exclusividade transacional entre SQLite e efeitos físicos/remotos.
 
 ## Esquema e limites
 
-Esquema SQLite **5**, com tabelas relacionais `analyses`, `analysis_findings`,
+Esquema SQLite **6**, com tabelas relacionais `analyses`, `analysis_findings`,
 `analysis_requirements` e `analysis_decisions`, ligadas a `items`/`operations` por
 chaves estrangeiras, incluindo associação item/operação. Não há blob genérico de
 avaliação ou cópia serializada integral de `SyncItem`; o snapshot integral só é

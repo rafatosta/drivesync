@@ -669,3 +669,41 @@ fn cross_account_commands_and_cyclic_step_dependencies_never_persist() {
     assert_eq!(current(&inv, &item.id), item);
     assert!(analyses(&inv, false).is_empty());
 }
+
+#[test]
+fn conservative_context_epoch_changes_for_facts_but_not_analysis_diagnostics() {
+    use drivesync_engine::operations::DirectoryRef;
+    let (_tree, inv, item) = setup();
+    let context = || {
+        inv.get_namespace(GetNamespaceRequest {
+            directory: DirectoryRef::LocalRoot,
+        })
+        .unwrap()
+        .guard
+    };
+    let before = context();
+    let receipt = inv.record_analysis(request(item.clone())).unwrap().analysis;
+    assert_eq!(context(), before);
+    inv.update_item_status(UpdateItemStatusRequest {
+        item_id: item.id.clone(),
+        expected_revision: receipt.resulting_item_revision,
+        change: ItemStatusChange {
+            status: SyncStatus::Error,
+            conflict_reason: FieldUpdate::Keep,
+        },
+    })
+    .unwrap();
+    assert_eq!(context(), before);
+    let item = current(&inv, &item.id);
+    inv.record_remote(remote_request(
+        remote_file(
+            "new-metadata",
+            "remote",
+            m::MetadataValue::Known("renamed".into()),
+        ),
+        ObservationTarget::Existing(item.id),
+        Some(item.revision),
+    ))
+    .unwrap();
+    assert_ne!(context(), before);
+}

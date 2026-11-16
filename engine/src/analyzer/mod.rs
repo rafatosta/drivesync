@@ -53,6 +53,7 @@ pub struct Analyzer {
     inventory: Arc<InventoryManager>,
     identity: SyncIdentity,
     provider: crate::models::ProviderId,
+    planning_cache: Arc<planning::Cache>,
     active: Arc<Mutex<BTreeMap<SyncItemId, ActiveAnalysis>>>,
 }
 fn error(kind: AnalyzerErrorKind) -> AnalyzerError {
@@ -124,6 +125,7 @@ impl Analyzer {
             inventory: config.dependencies.inventory,
             identity: config.identity,
             provider: config.provider,
+            planning_cache: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -143,8 +145,11 @@ impl Analyzer {
         let guard = self.reserve(&request.item.id, request.item.revision)?;
         let inventory = self.inventory.clone();
         let provider = self.provider.clone();
+        let planning_cache = self.planning_cache.clone();
         runtime
-            .spawn_blocking(move || analyze_one(&inventory, &provider, request, guard))
+            .spawn_blocking(move || {
+                analyze_one(&inventory, &provider, &planning_cache, request, guard)
+            })
             .await
             .map_err(|_| error(AnalyzerErrorKind::Internal))?
     }
@@ -188,6 +193,7 @@ impl Analyzer {
 fn analyze_one(
     inventory: &InventoryManager,
     provider: &crate::models::ProviderId,
+    planning_cache: &planning::Cache,
     request: AnalyzeRequest,
     guard: Reservation,
 ) -> AnalyzerResult<AnalysisOutcome> {
@@ -251,6 +257,7 @@ fn analyze_one(
             remote_root_id: info.remote_root_id,
         },
         provider,
+        planning_cache,
         &request,
         &mut assessment,
     )?;

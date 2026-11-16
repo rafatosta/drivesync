@@ -300,51 +300,24 @@ fn namespace(
     db: &Connection,
     directory: &crate::operations::DirectoryRef,
 ) -> InventoryResult<NamespaceGuard> {
-    use crate::operations::DirectoryRef;
-    let ids: Vec<SyncItemId> = match directory {
-        DirectoryRef::LocalRoot | DirectoryRef::Local { .. } => {
-            let path = match directory {
-                DirectoryRef::Local { relative_path, .. } => relative_path.as_bytes(),
-                _ => b"",
-            };
-            let mut stmt = db
-                .prepare("SELECT item FROM local_files WHERE parent_path=?1 ORDER BY item")
-                .map_err(sql)?;
-            let result = stmt
-                .query_map([path], |r| r.get::<_, String>(0))
-                .map_err(sql)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql)?;
-            result.into_iter().map(SyncItemId).collect()
+    if let crate::operations::DirectoryRef::Remote { reference, .. } = directory {
+        if reference.account_id != sync_info(db)?.account_id {
+            return Err(failure(InventoryError::InvalidIdentity));
         }
-        DirectoryRef::Remote { reference, .. } => {
-            if reference.account_id != sync_info(db)?.account_id {
-                return Err(failure(InventoryError::InvalidIdentity));
-            }
-            let mut stmt = db
-                .prepare(
-                    "SELECT item FROM remote_parents WHERE account=?1 AND parent=?2 ORDER BY item",
-                )
-                .map_err(sql)?;
-            let result = stmt
-                .query_map(params![reference.account_id.0, reference.file_id.0], |r| {
-                    r.get::<_, String>(0)
-                })
-                .map_err(sql)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql)?;
-            result.into_iter().map(SyncItemId).collect()
-        }
-    };
-    let guards = ids
-        .iter()
-        .map(|id| ItemGuard::for_item(&items::load(db, id)?))
-        .collect::<InventoryResult<Vec<_>>>()?;
+    }
+    // A conservative scope epoch covers new children, metadata, identity and
+    // baseline changes without rescanning every child for each planned file.
+    let epoch: i64 = db
+        .query_row("SELECT epoch FROM planning_clock WHERE id=1", [], |r| {
+            r.get(0)
+        })
+        .map_err(sql)?;
     Ok(NamespaceGuard {
         directory: directory.clone(),
-        fingerprint: Sha256::digest(enc(&guards)?).to_vec(),
+        fingerprint: Sha256::digest(enc(&(directory, epoch))?).to_vec(),
     })
 }
+
 impl InventoryManager {
     /// A new child invalidates a prepared destination even if old item revisions stay unchanged.
     pub fn get_namespace(&self, r: GetNamespaceRequest) -> InventoryResult<GetNamespaceResult> {

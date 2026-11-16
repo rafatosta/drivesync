@@ -22,10 +22,14 @@ réplicas remotas independentes que competiriam pelo mesmo caminho. Recursos
 homônimos nunca são associados. Duplicatas de nome permitidas no Drive não são
 tratadas como identidade nem automaticamente como colisão remota.
 
-`ItemGuard` e guardas do conjunto de filhos do destino são validadas na gravação e
+`ItemGuard` e guardas conservadoras da época de observação do escopo são validadas na gravação e
 nas consultas. Nova observação que afete origem, pai ou destino torna o plano
 obsoleto. O consumidor da sessão reanalisa o Inventory por lote, inclusive planos
 de outros itens afetados. Revisões apenas diagnósticas não invalidam as guardas.
+O contexto é carregado uma vez por época, com índices de identidades, caminhos e
+possíveis colisões. As análises reutilizam esse snapshot; leituras concorrentes
+são verificadas antes e depois, e a persistência revalida a época. Não há uma
+varredura SQL completa do Inventory para cada arquivo.
 
 Uma segunda mutação sobre o mesmo item depende do passo anterior e fica bloqueada
 por `PriorStep`: após seu resultado verificado será necessário reanalisar e renovar

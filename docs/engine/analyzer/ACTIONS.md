@@ -144,27 +144,25 @@ nas suítes atuais; esta lista não declara funcionalidades futuras implementada
 
 | Grupo | Cenários obrigatórios | Situação |
 | --- | --- | --- |
-| Identidade | Mesmo nome/conteúdo sem vínculo permanece como itens distintos; homônimos em contas/pastas diferentes; associação explícita não implica baseline | Regra obrigatória; fluxo da escolha e cobertura transversal ainda pendentes |
-| Criação | Arquivo e pasta, nos dois sentidos; origem parcial; lado oposto desconhecido; destino ocupado | Intenções básicas cobertas; colisões/dependências pendentes |
-| Conteúdo | Mudança unilateral em ambos os sentidos; convergência; mudanças concorrentes distintas; arquivo mudando durante medição | Algoritmos com evidência sintética cobertos; aquisição real pendente |
-| Nome/localização | Rename, move, combinações compatíveis e conflito; pai ausente; identidade preservada após mudança | Núcleo coberto; identidade local e dependências precisam de validação integrada completa |
-| Exclusão | Ausência comprovada, perda de acesso, scan parcial, exclusão×edição, descendentes | Proteções/requisitos existentes; política de envio à lixeira pendente; exclusão permanente proibida |
+| Identidade | Mesmo nome/conteúdo sem vínculo permanece como itens distintos; homônimos em contas/pastas diferentes; associação explícita não implica baseline | Associação explícita com proveniência e snapshots validada; sem associação automática |
+| Criação | Arquivo e pasta, nos dois sentidos; origem parcial; lado oposto desconhecido; destino ocupado | Planos, colisões e dependências persistidos e cobertos |
+| Conteúdo | Mudança unilateral em ambos os sentidos; convergência; mudanças concorrentes distintas; arquivo mudando durante medição | Medição SHA-256 real e corrida durante leitura cobertas; ausência de evidência bloqueia |
+| Nome/localização | Rename, move, combinações compatíveis e conflito; pai ausente; identidade preservada após mudança | Identidade local estável, mudanças de localização e dependências cobertas |
+| Exclusão | Ausência comprovada, perda de acesso, scan parcial, exclusão×edição, descendentes | Lixeira planejada com autorização obrigatória e proteção de descendentes; execução ausente |
 | Persistência | Retry, reentrega, reinício, obsolescência, isolamento, falha transacional | Suítes atuais cobrem análise e ingestão; efeitos do Operator ainda inexistentes |
 | Manual | Identificação, escolhas com revisões antigas, revalidação e preservação das duas versões | Identificação implementada; escolhas e resolução pendentes |
-| Interface | Arquivo, múltiplas ações, direção, requisitos, detalhes e análise obsoleta | Painel implementado; ações do usuário ainda não implementadas |
+| Interface | Arquivo, múltiplas ações, direção, requisitos, detalhes e análise obsoleta | Detalhes e associação explícita implementados; resolução de conflitos ausente |
 
-## 8. Ordem proposta para fechar o Analyzer
+## 8. Limite atual e próximo passo
 
-1. Validar este catálogo e fechar as políticas pendentes de colisão, exclusão e
-   resolução, sem ampliar silenciosamente as ações autorizadas.
-2. Definir o vínculo explícito e sua proveniência; cobrir homônimos sem associação
-   automática e a distinção entre identidade, conteúdo e baseline.
-3. Fornecer evidências reais de conteúdo/presença e resolver destinos/dependências.
-4. Completar as decisões e a matriz de testes, mantendo tudo sem efeitos físicos.
-5. Só então definir os comandos do Operator: identidades, recursos de origem e
-   destino, revisões, capacidades, dependências, autorização e resultado verificável.
+O Analyzer já materializa decisões, comandos tipados quando os dados permitem,
+requisitos, colisões e dependências persistentes. O painel permite inspecionar o
+plano e associar explicitamente identidades existentes. Evidência insuficiente
+continua bloqueando decisões dependentes; não se inventam identidade ou baseline.
 
-O futuro Operator executará comandos autorizados; não decidirá identidade,
-resolução de conflito ou qual versão deve prevalecer por conta própria.
+O próximo componente é a execução pelo Operator, com revalidação de recursos,
+precondições, capacidades e autorizações, seguida de resultado verificável.
+Escolhas de vencedor e resolução de conflitos continuam fora desta implementação.
+O futuro Operator não decidirá identidade nem qual versão deve prevalecer.
 
-O estado implementado e os limites de cada plano estão detalhados em [PLANNING.md](PLANNING.md); a matriz acima também contém cenários de execução futura, ainda indisponível.
+O estado implementado e os limites estão detalhados em [PLANNING.md](PLANNING.md).

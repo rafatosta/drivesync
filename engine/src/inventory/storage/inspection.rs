@@ -11,6 +11,7 @@ const PREVIEW_BYTES: usize = 4096;
 /// Explicit allowlist excludes SQLite internals and prevents arbitrary SQL identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InventoryTable {
+    PlanningClock,
     SyncInfo,
     Items,
     LocalFiles,
@@ -40,7 +41,8 @@ pub enum InventoryTable {
 }
 impl InventoryTable {
     /// All supported tables in presentation order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
+        Self::PlanningClock,
         Self::SyncInfo,
         Self::Items,
         Self::LocalFiles,
@@ -71,6 +73,7 @@ impl InventoryTable {
     /// Physical name for diagnostic presentation; not a caller-controlled SQL fragment.
     pub fn name(self) -> &'static str {
         match self {
+            Self::PlanningClock => "planning_clock",
             Self::SyncInfo => "sync_info",
             Self::Items => "items",
             Self::LocalFiles => "local_files",
@@ -213,7 +216,7 @@ pub fn inspect(request: InspectInventoryRequest) -> InventoryResult<InspectionPa
     let version: u32 = tx
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 5 {
+    if version != 6 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(&tx)?;
