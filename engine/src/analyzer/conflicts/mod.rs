@@ -176,14 +176,7 @@ fn identify(request: &ConflictRequest, out: &mut ConflictAssessment) {
                     Some(local_name(file)),
                     base.local.local_name_bytes.as_deref(),
                 ),
-                compare(
-                    evidence
-                        .local_parent
-                        .clone()
-                        .map(BaselineParent::Local)
-                        .as_ref(),
-                    base.local.parent_identity.as_ref(),
-                ),
+                local_parent_comparison(file, evidence.local_parent.as_ref(), Some(&base.local)),
             )
         } else {
             let file = remote.unwrap();
@@ -273,13 +266,10 @@ fn identify(request: &ConflictRequest, out: &mut ConflictAssessment) {
     assess_dimension(
         out,
         ConflictDimension::Location,
-        compare(
-            evidence
-                .local_parent
-                .clone()
-                .map(BaselineParent::Local)
-                .as_ref(),
-            base.and_then(|b| b.local.parent_identity.as_ref()),
+        local_parent_comparison(
+            local,
+            evidence.local_parent.as_ref(),
+            base.map(|b| &b.local),
         ),
         compare(
             remote_parent(remote).as_ref(),
@@ -485,4 +475,29 @@ fn validate(request: &ConflictRequest) -> Result<(), ConflictError> {
         return Err(ConflictError::InvalidEvidence);
     }
     Ok(())
+}
+
+/// Root is a known location, whereas an unmapped nested parent is unknown.
+fn local_parent_comparison(
+    file: &crate::models::LocalFile,
+    current: Option<&crate::inventory::SyncItemId>,
+    baseline: Option<&crate::inventory::BaselineSide>,
+) -> EvidenceComparison {
+    let Some(baseline) = baseline else {
+        return EvidenceComparison::Unknown;
+    };
+    if !file.relative_path.as_bytes().contains(&b'/') {
+        if baseline.parent_identity.is_none() {
+            EvidenceComparison::Equal
+        } else {
+            EvidenceComparison::Different
+        }
+    } else if current.is_some() && baseline.parent_identity.is_none() {
+        EvidenceComparison::Different
+    } else {
+        compare(
+            current.cloned().map(BaselineParent::Local).as_ref(),
+            baseline.parent_identity.as_ref(),
+        )
+    }
 }

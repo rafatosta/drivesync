@@ -554,3 +554,13 @@ fn invalid_latest_provider_kind_and_parent_mapping_are_rejected() {
     r.evidence.local_parent = Some(SyncItemId("".into()));
     assert_eq!(evaluate(r), Err(ConflictError::WrongItemIdentity));
 }
+
+#[test]
+fn root_to_nested_move_does_not_require_parent_evidence() {
+    let mut r = request();
+    r.item.baseline.as_mut().unwrap().local.parent_identity = None;
+    r.evidence.current_parents = Different;
+    let a = assessment(r);
+    assert!(!a.requirements.contains(&EvidenceRequirement::VerifyParent));
+    assert!(!a.requires_user_intervention());
+}
