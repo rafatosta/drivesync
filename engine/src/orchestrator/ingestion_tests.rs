@@ -118,6 +118,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),
+            execution: None,
         },
     })
     .unwrap();

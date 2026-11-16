@@ -14,11 +14,12 @@ impl ReviewPage {
         let bytes = gtk::glib::Bytes::from_static(include_bytes!(
             "../../../../data/illustrations/cloud-sync-success.svg"
         ));
+        // Match the wide artwork to the 120px header slot without enlarging it.
         let icon = gtk::gio::BytesIcon::new(&bytes);
         let paintable = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap())
             .lookup_by_gicon(
                 &icon,
-                340,
+                224,
                 1,
                 gtk::TextDirection::None,
                 gtk::IconLookupFlags::empty(),
@@ -26,8 +27,7 @@ impl ReviewPage {
         let illustration = gtk::Picture::for_paintable(&paintable);
         illustration.set_size_request(224, 120);
         illustration.set_can_shrink(true);
-        // Crop the square icon canvas to the artwork's native wide aspect ratio.
-        illustration.set_content_fit(gtk::ContentFit::Cover);
+        illustration.set_content_fit(gtk::ContentFit::Contain);
         illustration.set_halign(gtk::Align::Center);
         let header = super::PageHeader::new(
             "review",

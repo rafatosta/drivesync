@@ -1,6 +1,8 @@
 //! Application connection lifecycle, independent of GTK and synchronization.
 mod detector;
 mod models;
+mod operator;
+pub(crate) use operator::OperatorAccess;
 mod remote_folders;
 mod sign_in;
 use crate::{accounts::*, providers::google::*};
@@ -100,7 +102,7 @@ impl Engine {
                                 "openid".into(),
                                 "email".into(),
                                 "profile".into(),
-                                "https://www.googleapis.com/auth/drive.metadata.readonly".into(),
+                                "https://www.googleapis.com/auth/drive".into(),
                             ];
                             Some(config)
                         }

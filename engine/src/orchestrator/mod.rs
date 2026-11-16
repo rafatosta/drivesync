@@ -1,7 +1,9 @@
 //! Coordinates paused detection, Scanner observation and durable Analyzer decisions.
 mod analysis;
 mod diagnostics;
+mod execution;
 mod flow;
+pub use execution::ExecutionStatus;
 mod ingestion;
 mod startup;
 use crate::{detectors::*, Engine};
@@ -15,8 +17,13 @@ pub struct Orchestrator {
     detector: Arc<Detector>,
     preparation: startup::Preparation,
     flow: flow::Flow,
+    execution: Arc<execution::ExecutionControl>,
 }
 impl Orchestrator {
+    /// Reads account-scoped cached progress; never opens Inventory or starts work.
+    pub fn execution_status(&self) -> ExecutionStatus {
+        self.execution.snapshot()
+    }
     /// Borrows the single public detection facade without exposing its children.
     pub fn detector(&self) -> &Detector {
         &self.detector

@@ -528,7 +528,7 @@ pub trait GoogleTransferApi {
 | `export_file_bytes` | `GET /files/{fileId}/export?mimeType=…`, resposta binária |
 | `start_resumable_create` | `POST /upload/drive/v3/files?uploadType=resumable` |
 | `start_resumable_update` | `PATCH /upload/drive/v3/files/{fileId}?uploadType=resumable` |
-| `upload_chunk`, `query_upload_progress` | URI opaca da sessão de upload, `PUT` com `Content-Range`; retorno `308` incompleto ou sucesso final |
+| `upload_chunk`, `query_upload_progress` | URI opaca da sessão de upload, `PUT` com `Content-Range` e `Content-Length` explícito (inclusive `0` para consulta vazia); retorno `308` incompleto ou sucesso final |
 | `trash_file` | `files.update`, `trashed=true`; **não é** `files.delete` |
 | `rename_file` | `files.update`, alteração de `name` |
 | `move_file` | `files.update`, `addParents` / `removeParents`, sem reupload |
@@ -2515,3 +2515,35 @@ Existing typed methods remain used by metadata/picker consumers.
 References: https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get,
 https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list,
 https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list.
+
+## ID reservado em criação — 2026-11-16
+
+`GoogleFileWrite.id: Option<FileId>` permite transmitir um ID obtido por
+`files_generate_ids` em criação, inclusive `start_resumable_create`. Ausência não
+serializa o campo. `files_update` e `start_resumable_update` recusam qualquer ID
+no body antes de HTTP: a identidade de atualização continua no path. O Provider
+não reserva, persiste ou repete operações automaticamente.
+Referência: [upload com ID pré-gerado](https://developers.google.com/workspace/drive/api/guides/manage-uploads#use_a_pre-generated_id_to_upload_files).
+
+
+## Metadados e gravações condicionais
+
+`files_get_snapshot` retorna `GoogleFileSnapshot { file, etag }` da mesma resposta.
+ETag ausente ou fraco permanece `None`; não inventar validador a partir de `version`.
+`files_update_conditional` e `start_resumable_update_conditional` enviam `If-Match`
+com ETag forte explícito, rejeitam `*`, valores vazios/fracos/injeção e preservam
+HTTP 412 como `PreconditionFailed`, sem retry ou fallback incondicional.
+Os testes HTTP cobrem snapshot, cabeçalho enviado e rejeição por versão divergente.
+O envio do cabeçalho não comprova suporte de um servidor que não o respeite;
+a operação exige validador emitido pelo endpoint e validação de efeito posterior.
+
+## Escritas condicionais
+
+Os métodos explicitamente condicionais usam os endpoints Drive v2 para preservar
+If-Match, pois o endpoint v3 não rejeitou a condição inválida no teste real.
+files_get_snapshot conserva os dados v3 e lê o ETag v2 do mesmo ID/version quando
+é usado o endpoint condicional v2 em produção. As escritas traduzem somente nome, estado de
+lixeira, MIME e descrição; demais campos retornam UnsupportedOperation antes de HTTP.
+Substituição resumível condicional usa PUT v2; criação continua POST v3.
+Os resultados v2 são normalizados (title, fileSize, labels e pais) para GoogleFile.
+Contrato oficial: https://developers.google.com/workspace/drive/api/reference/rest/v2/files

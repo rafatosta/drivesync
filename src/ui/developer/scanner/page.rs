@@ -132,13 +132,14 @@ impl View {
         self.status.set_label(state);
         if snapshot.state == PreparationState::ReadyForAnalyzer {
             self.status.add_css_class("success");
-            self.gate.set_label("Local scan complete. New observations are delivered to the Analyzer; file operations are not executed.");
+            self.gate.set_label("Local scan complete. The Analyzer receives observations and calls the Operator for supported, verified creations.");
         } else if matches!(
             snapshot.state,
             PreparationState::Analyzing | PreparationState::ProcessingEvents
         ) {
-            self.gate
-                .set_label("Recording analysis decisions. No file operations are executed.");
+            self.gate.set_label(
+                "Analyzing observations and executing supported creations after verification.",
+            );
         } else {
             self.gate.set_label("Analysis suspended. A complete local scan is required; events remain stored in the detector queue.");
         }

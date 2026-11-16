@@ -22,7 +22,7 @@ fn assessment(record: &RecordedAnalysis) -> NewAnalysisAssessment {
         intents: record.decisions.iter().map(|d| d.intent.clone()).collect(),
     }
 }
-fn load(db: &Connection, id: i64) -> InventoryResult<RecordedAnalysis> {
+pub(super) fn load(db: &Connection, id: i64) -> InventoryResult<RecordedAnalysis> {
     let mut record = db.query_row(
         "SELECT item,item_kind,base_revision,result_revision,input_digest,recorded,disposition,baseline_confirmed,local_complete,remote_complete,local_content,remote_content,current_content,local_parent,current_parents FROM analyses WHERE seq=?1", [id], |r| {
             Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u64>(2)?,r.get::<_,u64>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,i64>(5)?,r.get::<_,String>(6)?,r.get::<_,bool>(7)?,r.get::<_,bool>(8)?,r.get::<_,bool>(9)?,r.get::<_,String>(10)?,r.get::<_,String>(11)?,r.get::<_,String>(12)?,r.get::<_,Option<String>>(13)?,r.get::<_,String>(14)?))
@@ -219,7 +219,7 @@ impl InventoryManager {
             if running {return Err(failure(InventoryError::InvalidTransition));}
             items::bump(db,&item.id)?;
             let revision=item.revision+1;
-            let status=if request.assessment.disposition==AnalysisDisposition::PendingUserDecision {SyncStatus::Conflict} else {SyncStatus::PendingReconciliation};
+            let status=if request.assessment.disposition==AnalysisDisposition::PendingUserDecision {SyncStatus::Conflict} else if request.assessment.disposition==AnalysisDisposition::NoChanges && item.status==SyncStatus::Synced && item.baseline.is_some() {SyncStatus::Synced} else {SyncStatus::PendingReconciliation};
             db.execute("UPDATE items SET status=?2,conflict_reason=?3 WHERE id=?1",params![item.id.0,enum_text(&status)?,if status==SyncStatus::Conflict{Some("AnalyzerUserDecisionRequired")}else{None}]).map_err(sql)?;
             let evidence=&request.evidence;
             db.execute("INSERT INTO analyses(item,item_kind,base_revision,result_revision,input_digest,request_digest,recorded,disposition,baseline_confirmed,local_complete,remote_complete,local_content,remote_content,current_content,local_parent,current_parents) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",params![item.id.0,enum_text(&item.kind)?,item.revision,revision,digest(&item)?,request_digest,request.recorded_at.unix_millis,enum_text(&request.assessment.disposition)?,evidence.baseline_confirmed,evidence.local_scope_complete,evidence.remote_scope_complete,enum_text(&evidence.local_content)?,enum_text(&evidence.remote_content)?,enum_text(&evidence.current_content)?,evidence.local_parent.as_ref().map(|p|&p.0),enum_text(&evidence.current_parents)?]).map_err(sql)?;
@@ -281,8 +281,9 @@ impl InventoryManager {
         })
     }
 }
-/// Semantic intents cannot be released via the generic retry API: there is no
-/// persisted executable command. Keep this invariant across all queue entrypoints.
+/// Analysis-linked operations cannot be released through generic queue APIs,
+/// even when a plan has a command or an execution checkpoint exists. Eligibility
+/// and execution authorization require a separate future integration protocol.
 pub(super) fn ensure_executable(db: &Connection, id: &OperationId) -> InventoryResult<()> {
     let incomplete: bool = db
         .query_row(

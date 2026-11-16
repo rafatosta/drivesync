@@ -1,4 +1,4 @@
-//! Explicitly opted-in live observation harness; never creates user files or executes operations.
+//! Opted-in live harness. DRIVESYNC_LIVE_EXECUTION=1 additionally enables new replicas.
 //! Supply account/root configuration through environment variables. Uses the same public
 //! Orchestrator and account identity as the application. Commands: status, prepare, associate LOCAL_ID REMOTE_ID, quit.
 use drivesync_engine::{
@@ -23,6 +23,7 @@ fn status(session: &Orchestrator) {
         println!("REMOTE {:?}", r.status);
     }
     println!("QUEUE {:?}", session.diagnostics().delivery);
+    println!("EXECUTION {:?}", session.execution_status());
     io::stdout().flush().unwrap();
 }
 #[tokio::main]
@@ -41,6 +42,7 @@ async fn main() {
     .await
     .expect("open configured account store");
     let session = Orchestrator::new(OrchestratorCreateRequest {
+        execute_creations: std::env::var("DRIVESYNC_LIVE_EXECUTION").as_deref() == Ok("1"),
         detector: DetectorCreateRequest {
             connector,
             scope: DetectorScope {

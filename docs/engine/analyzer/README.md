@@ -1,3 +1,6 @@
+> Integração atual: a aplicação habilita novas réplicas por `AnalyzerExecution`.
+> Analyzer chama Operator e confirma somente após reobservação. Ver [EXECUTION.md](EXECUTION.md).
+
 # Analyzer
 
 Coordena Reconciler e Conflicts para **um item do Inventory por chamada**, registra
@@ -33,7 +36,7 @@ na mesma instância; instâncias distintas preservam consistência por revisão 
 transações do Inventory. Cancelamento do future não garante cancelamento do worker.
 
 **Estado:** integração de análise/persistência implementada. O esquema Inventory
-é 6; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
+é 8; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
 O Orchestrator chama esta fachada após Scanner completo e continua entregando
 itens observados pelos detectores durante a sessão, sem executar operações. Execução de comandos e opções/ações de resolução permanecem pendentes.
 

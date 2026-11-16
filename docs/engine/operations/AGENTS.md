@@ -18,7 +18,13 @@ Implementar a API pública de execução segura de comandos de manipulação e t
 - [TESTS.md](TESTS.md): verificações funcionais e critérios de aceite.
 - [AGENTS.md da raiz](../../../AGENTS.md): padrões gerais do repositório.
 
-O contrato público está compilado em `engine/src/operations/`: traits `Operator`, `OperatorFactory`, ports e modelos. Não há implementação de operações, factories ou seleção. A etapa atual foi explicitamente limitada pelo usuário a contratos sem implementação; não criar stubs, executores ou corpos de operações.
+O contrato público está compilado em `engine/src/operations/`. A implementação
+atual de [transferências](TRANSFERS.md) contém `DefaultOperatorFactory` e
+`GoogleOperator`, com upload/download de criação e journal técnico no Inventory.
+O usuário solicitou Operator completo: as nove ações permitidas estão implementadas,
+com limites descritos em MUTATIONS.md. Não criar capacidades fora do contrato.
+A execução automática do Analyzer continua limitada às políticas autorizadas. Ler [RECOVERY.md](RECOVERY.md) antes de alterar
+checkpoints, estados ou recuperação de sessão.
 
 ## Diretrizes de implementação
 

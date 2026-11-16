@@ -5,8 +5,9 @@
 `engine/tests/operator_contract.rs` verifica consumo público, object safety,
 ports Send/Sync e assinaturas das dez operações com futures Send, sem criar
 executor, mock ou executar chamadas. O doctest demonstra consumo por
-`Arc<dyn Operator>`. Os cenários funcionais abaixo são requisitos futuros;
-nenhuma execução real do Operator é validada nesta etapa.
+`Arc<dyn Operator>`. A matriz abaixo define os requisitos por capacidade.
+A suíte de execução de upload/download está descrita em
+[TRANSFERS.md](TRANSFERS.md); as mutações adicionais estão cobertas conforme [MUTATIONS.md](MUTATIONS.md).
 
 
 ## Objetivo
@@ -87,7 +88,7 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de IN
 | OPR-L-08 | `atomic_replace` | Publicar temporário completo sobre arquivo conhecido | Novo conteúdo aparece integralmente, referência final correta; versão anterior não é visível parcialmente | Revisão/identidade divergente e falha pré-publicação preservam destino anterior; verificar efeitos de interrupção |
 | OPR-L-09 | `rename_local` | Renomear arquivo e diretório no mesmo pai | Nome antigo desaparece, novo nome aparece, conteúdo e identidade são preservados quando suportado | Colisão, nome inválido e troca concorrente não sobrescrevem terceiros |
 | OPR-L-10 | `move_local` | Mover arquivo e diretório entre pastas temporárias | Entrada sai da pasta anterior e surge no destino com conteúdo correto | Destino ocupado, movimento de diretório para descendente, escopo externo e filesystem incompatível falham sem perdas |
-| OPR-L-11 | `delete_local` | Excluir recurso identificado em árvore com vizinhos | Apenas a entrada identificada desaparece; resultado corresponde ao efeito observado | Referência obsoleta, precondição divergente, recurso ausente e diretório não vazio preservam recursos não autorizados |
+| OPR-L-11 | `delete_local` | Solicitar exclusão permanente de recurso em árvore com vizinhos | Recusa com `PermanentDeletionProhibited` e `NotApplied`, sem I/O ou autenticação | Recurso existente, ausente, referência obsoleta e diretório não vazio: nenhuma entrada muda; sem fallback ou redirecionamento para lixeira |
 | OPR-L-12 | `verify_local_integrity` | Comparar conteúdo com tamanho/hash conhecidos | `Verified` quando evidência corresponde; bytes originais permanecem intactos | Divergência gera erro de integridade; evidência insuficiente produz `NotAvailable`, sem sucesso fictício |
 
 ### Cenários transversais de segurança
@@ -106,7 +107,7 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de IN
 
 ### Critérios para validar a implementação privada
 
-1. Cada caso `OPR-L-01` a `OPR-L-12` possui ao menos um teste positivo e um teste de falha com asserções sobre o estado real do filesystem.
+1. Cada caso `OPR-L-01` a `OPR-L-12` possui ao menos um teste positivo e um teste de falha (em `OPR-L-11`, sucesso significa recusa sem efeitos) com asserções sobre o estado real do filesystem.
 2. Verificações de integridade e identidade usam valores esperados independentes da função testada.
 3. Testes que necessitam simular falha, concorrência ou crash explicam o ponto de injeção e distinguem o que foi realmente executado do que foi apenas modelado.
 4. Todo comportamento não definido suficientemente pela interface é marcado `BLOCKED`, com a definição técnica pendente registrada; não atribuir `PASS` com base em mocks que apenas repetem resultados esperados.
@@ -163,3 +164,28 @@ Executar esta suíte com cada implementação real do contrato `Operator`, usand
 | OPR-E-12 | Interrupções de transferência preservam os dados e informam o progresso verificado |
 
 O executor concreto deve ser exercitado; um mock que só reproduz a resposta esperada não comprova conformidade.
+
+## Contratos de recuperação — etapa 1
+
+`engine/tests/operator_recovery.rs` usa Inventory SQLite real temporário para
+identidades distintas com o mesmo comando, retry após reabertura, vínculo imutável
+de escopo/comando/origem, CAS concorrente, resposta de gravação perdida, rollback,
+resultado verificado e recusa de estado corrompido/esquema incompatível. A suíte
+verifica que preparar checkpoints não cria operações ou baselines e não publica
+arquivos. São testes de persistência; ainda não executam upload/download.
+
+O [contrato de recuperação](RECOVERY.md) define a porta e as pendências dos Providers.
+
+## Transferências de criação — implementação
+
+`engine/src/operations/google/tests.rs` usa a fachada `Operator`, HTTP loopback com
+estado e Provider de produção para upload/download.
+`operations/filesystem.rs` cobre primitivas locais reais;
+`connection::tests::operator_factory_uses_the_persisted_account_and_accounts_owned_session`
+valida a composição por conta e sessão Accounts com cofre sintético.
+
+Há testes de interrupção de subprocesso antes/depois de publicação e após bloco
+de upload, além de falha de confirmação SQLite, cancelamento, reentrega, versão
+remota alterada, corrupção, metadados MD5, fontes substituídas e colisões. Nenhum
+teste usa Google real ou arquivos pessoais. Casos de outras mutações não passam
+a ser declarados aprovados por causa dessa cobertura.

@@ -9,6 +9,9 @@ fn analyzer_can_hold_object_safe_send_sync_ports() {
     send_sync::<Arc<dyn OperatorFactory>>();
     send_sync::<Arc<dyn CancellationSignal>>();
     send_sync::<Arc<dyn ProgressReporter>>();
+    send_sync::<Arc<dyn ExecutionJournal>>();
+    send_sync::<ExecutionIntent>();
+    send_sync::<ExecutionCheckpoint>();
     send_sync::<OperatorConfig>();
 }
 

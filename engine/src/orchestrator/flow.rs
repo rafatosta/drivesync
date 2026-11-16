@@ -129,6 +129,7 @@ impl Drop for Flow {
 }
 pub(super) struct Context {
     pub connector: crate::Engine,
+    pub execution: Arc<super::execution::ExecutionControl>,
     pub detector: Arc<Detector>,
     pub scanner: Arc<Scanner>,
     pub inventory: Arc<InventoryManager>,
@@ -279,6 +280,16 @@ fn consume(
                 return Ok(());
             }
             None => {
+                if context.execution.snapshot().enabled {
+                    runtime.block_on(analysis::retry_pending(
+                        context.inventory.clone(),
+                        context.identity.clone(),
+                        context.epoch.clone(),
+                        context.expected,
+                        context.connector.clone(),
+                        context.execution.clone(),
+                    ))?;
+                }
                 context.state(PreparationState::ReadyForAnalyzer, None);
                 wake.wait(version, stop);
             }
@@ -345,6 +356,7 @@ async fn process(
             context.epoch.clone(),
             context.expected,
             context.connector.clone(),
+            context.execution.clone(),
         )
         .await?;
     } else {
@@ -355,6 +367,7 @@ async fn process(
             context.expected,
             ids,
             context.connector.clone(),
+            context.execution.clone(),
         )
         .await?;
     }

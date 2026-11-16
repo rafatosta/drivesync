@@ -8,6 +8,8 @@
 mod api;
 mod client;
 mod collaboration;
+mod conditional;
+pub use conditional::GoogleFileSnapshot;
 mod downloads;
 mod errors;
 mod models;

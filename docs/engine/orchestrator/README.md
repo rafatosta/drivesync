@@ -20,10 +20,10 @@ flowchart TD
   K --> R
 ```
 
-**Este fluxo não executa sincronização física.** O Analyzer identifica e registra
-upload, download e conflitos para intervenção manual; o Operator não é chamado,
-operações ficam bloqueadas e o Orchestrator não confirma baseline. Requisitos
-faltantes permanecem explícitos, sem transformar incerteza em conflito.
+O Orchestrator entrega snapshots atuais ao Analyzer. Com `execute_creations`
+habilitado pela aplicação, o **Analyzer chama o Operator**, verifica os dois lados
+e confirma baseline somente após execução comprovada. Orchestrator não escolhe
+comandos nem executa transferências diretamente. Ver [execução](../analyzer/EXECUTION.md).
 
 ## Funcionamento contínuo
 
@@ -65,12 +65,15 @@ confirmar o lote. A parada normal libera o lease e aguarda o trabalho local ativ
 
 ## Limites preservados
 
-As interfaces e esquemas de Detector, Scanner e Inventory não foram alterados.
-Tipos públicos do Analyzer permanecem intactos; suas políticas de decisão pertencem
-exclusivamente ao Analyzer. Itens inicialmente sem vínculo já identificam direção
-Upload/Download com requisitos pendentes, sem promover `Unknown` a ausência.
-Não há cálculo de hash, pareamento por nome, transferência, resolução automática
-ou confirmação de sincronização. Eventos remotos sem snapshot e sem item conhecido
-são preservados como erro explícito, aguardando recuperação/evidência adequada.
+Os esquemas existentes permanecem intactos. A configuração do Orchestrator inclui
+`execute_creations`; consumidores de inspeção usam `false`. A aplicação usa `true`.
+Criações interrompidas são retomadas com o ID original, antes de tratar observações
+novas das réplicas. Novos passes após criação de diretórios liberam dependências dos
+filhos. O heartbeat revisita tentativas pendentes respeitando backoff e limite.
+Conflitos, colisões e operações ainda não suportadas permanecem bloqueados.
+
+`execution_status` publica somente cache da sessão: fases, bytes observados,
+conclusões verificadas, falhas e últimos 64 eventos. Developer apenas consulta esse
+cache; não inicia outro consumidor nem faz SQL no loop GTK.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações](AGENTS.md)

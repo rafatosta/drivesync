@@ -42,6 +42,7 @@ impl Tree {
     }
     fn open(&self, connector: Engine, id: &str) -> Orchestrator {
         Orchestrator::new(drivesync_engine::orchestrator::OrchestratorCreateRequest {
+            execute_creations: false,
             detector: DetectorCreateRequest {
                 connector,
                 scope: DetectorScope {

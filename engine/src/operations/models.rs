@@ -1,5 +1,5 @@
 //! Owned command data; no I/O, provider protocol or Analyzer/Inventory dependencies.
-use super::{CancellationSignal, ProgressReporter};
+use super::{CancellationSignal, ExecutionContext, ProgressReporter};
 use crate::{
     models::{
         AccountId, FileData, LocalFileId, LocalRelativePath, ProviderId, RemoteFileId,
@@ -13,12 +13,40 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc};
 /// A typed failure, never a synthetic successful execution result.
 pub type OperatorResult<T> = Result<T, OperatorFailure>;
 
+/// Live observations obtained by Operator, with a measured local-file SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedSource {
+    pub metadata: FileData,
+    pub sha256: Option<super::Sha256Digest>,
+}
+#[derive(Clone)]
+pub struct VerifySourceRequest {
+    /// Permit a newer numeric version only when the observed SHA-256 and all
+    /// other identity/content/location guards still match a newly created replica.
+    pub allow_version_advance: bool,
+    pub source: super::SourceEvidence,
+    pub options: ExecutionOptions,
+}
+#[derive(Clone)]
+pub struct VerifyCreationRequest {
+    pub context: ExecutionContext,
+    pub command: OperationCommand,
+    pub options: ExecutionOptions,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyCreationResult {
+    pub command: OperationCommand,
+    pub source: Option<VerifiedSource>,
+}
+
 /// The factory resolves the provider from this persisted account through Engine.
 /// No credential, public concrete executor or user-chosen provider is injected.
 #[derive(Clone)]
 pub struct OperatorConfig {
     pub connector: Engine,
     pub scope: OperatorScope,
+    /// Blocking Inventory-owned persistence, called only on a blocking worker.
+    pub journal: Arc<dyn super::ExecutionJournal>,
 }
 
 /// Authority boundary for every local and remote reference in a command.
@@ -124,6 +152,7 @@ pub enum ProgressDelivery {
 
 #[derive(Clone)]
 pub struct CreateFileRequest {
+    pub execution: ExecutionContext,
     pub parent: DirectoryRef,
     pub name: ItemName,
     pub content: Option<ContentSource>,
@@ -131,6 +160,7 @@ pub struct CreateFileRequest {
 }
 #[derive(Clone)]
 pub struct CreateDirectoryRequest {
+    pub execution: ExecutionContext,
     pub parent: DirectoryRef,
     pub name: ItemName,
     pub options: ExecutionOptions,
@@ -138,6 +168,7 @@ pub struct CreateDirectoryRequest {
 /// Source must be local and destination remote in the executor's account.
 #[derive(Clone)]
 pub struct UploadRequest {
+    pub execution: ExecutionContext,
     pub source: ResourceRef,
     pub destination: DirectoryRef,
     pub name: ItemName,
@@ -146,6 +177,7 @@ pub struct UploadRequest {
 /// Source must be remote and destination local inside the configured scope.
 #[derive(Clone)]
 pub struct DownloadRequest {
+    pub execution: ExecutionContext,
     pub source: ResourceRef,
     pub destination: DirectoryRef,
     pub name: ItemName,
@@ -153,6 +185,7 @@ pub struct DownloadRequest {
 }
 #[derive(Clone)]
 pub struct UpdateContentRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub source: ContentSource,
     pub preconditions: Preconditions,
@@ -160,6 +193,7 @@ pub struct UpdateContentRequest {
 }
 #[derive(Clone)]
 pub struct RenameRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub new_name: ItemName,
     pub preconditions: Preconditions,
@@ -167,6 +201,7 @@ pub struct RenameRequest {
 }
 #[derive(Clone)]
 pub struct MoveRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub destination: DirectoryRef,
     pub preconditions: Preconditions,
@@ -175,44 +210,50 @@ pub struct MoveRequest {
 /// Kept callable by the contract, but permanent deletion is prohibited everywhere.
 #[derive(Clone)]
 pub struct DeleteRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub preconditions: Preconditions,
     pub options: ExecutionOptions,
 }
 #[derive(Clone)]
 pub struct TrashRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub preconditions: Preconditions,
     pub options: ExecutionOptions,
 }
 #[derive(Clone)]
 pub struct RestoreRequest {
+    pub execution: ExecutionContext,
     pub target: ResourceRef,
     pub destination: Option<DirectoryRef>,
     pub preconditions: Preconditions,
     pub options: ExecutionOptions,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationStatus {
     Verified,
     Unverified,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IntegrityStatus {
     Verified,
     NotAvailable,
 }
 
+/// Reports the identity actually observed after publication, including a changed
+/// local physical identity after staging replacement. Never copies an old inode
+/// identity to manufacture preservation or confirms a logical association.
 /// Identity and observed metadata from Models; never fabricates a baseline,
 /// SyncItem, association or fields not actually returned by the execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemResult {
     pub resource: ResourceRef,
     pub metadata: Option<FileData>,
     pub verification: VerificationStatus,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferResult {
     pub item: ItemResult,
     pub bytes_transferred: u64,
@@ -226,7 +267,7 @@ pub struct DeleteResult {
 }
 
 /// A cancelled or failed call must distinguish no effect from uncertain effects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionEffect {
     NotApplied,
     Applied,
@@ -250,6 +291,8 @@ pub enum OperatorError {
     Network,
     Cancelled,
     IndeterminateEffect,
+    CheckpointConflict,
+    CheckpointUnavailable,
     Internal,
 }
 
@@ -316,4 +359,16 @@ pub enum OperationCommand {
 pub struct RestoreSelection {
     pub decision_id: String,
     pub target: ResourceRef,
+}
+
+/// A version of the complete collected local metadata, independent of Inventory
+/// item revisions. A live executor still rechecks the descriptor before effects.
+pub fn local_revision(metadata: &crate::models::LocalFile) -> OperatorResult<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(metadata).map_err(|_| OperatorFailure {
+        kind: OperatorError::InvalidRequest,
+        effect: ExecutionEffect::NotApplied,
+        resource: None,
+    })?;
+    Ok(format!("local-metadata-sha256:{:x}", Sha256::digest(bytes)))
 }

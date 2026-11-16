@@ -1,4 +1,4 @@
-//! Public analysis-only coordination contracts. Execution and resolution are deferred.
+//! Analysis coordination with optional verified initial-creation execution.
 use crate::{
     inventory::{
         AnalysisEvidence, InventoryError, InventoryManager, RecordedAnalysis, SyncIdentity,
@@ -9,9 +9,10 @@ use crate::{
 use std::sync::Arc;
 
 pub type AnalyzerResult<T> = Result<T, AnalyzerError>;
-/// The Inventory handle is scoped and shared; no SQL, Provider or Operator leaks.
+/// Scoped persistence and optional account-scoped execution dependencies.
 pub struct AnalyzerDependencies {
     pub inventory: Arc<InventoryManager>,
+    pub execution: Option<AnalyzerExecution>,
 }
 pub struct AnalyzerConfig {
     pub provider: crate::models::ProviderId,
@@ -40,6 +41,8 @@ pub enum AnalysisPhase {
     EvaluatingConflict,
     Planning,
     Recording,
+    Executing,
+    Verifying,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveAnalysis {
@@ -78,3 +81,33 @@ impl std::fmt::Display for AnalyzerError {
     }
 }
 impl std::error::Error for AnalyzerError {}
+
+/// Optional execution policy for an account's live pipeline. Analysis-only
+/// consumers omit it; the Analyzer, not Orchestrator, dispatches the command.
+#[derive(Clone)]
+pub struct AnalyzerExecution {
+    pub operator: Arc<dyn crate::operations::Operator>,
+    pub options: crate::operations::ExecutionOptions,
+    pub observer: Arc<dyn CreationObserver>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreationStage {
+    Checking,
+    Blocked,
+    Executing,
+    Verifying,
+    Completed,
+    Failed,
+}
+#[derive(Debug, Clone)]
+pub struct CreationEvent {
+    pub item_id: SyncItemId,
+    pub command: Option<crate::operations::OperationCommand>,
+    pub operation_id: Option<crate::inventory::OperationId>,
+    pub stage: CreationStage,
+    pub error: Option<crate::operations::OperatorError>,
+}
+/// Fast in-memory diagnostics port; events never authorize or confirm an effect.
+pub trait CreationObserver: Send + Sync {
+    fn notify(&self, event: CreationEvent);
+}

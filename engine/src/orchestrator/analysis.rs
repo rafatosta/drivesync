@@ -1,5 +1,5 @@
 //! Post-scan decision coordination through public Inventory and Analyzer contracts.
-//! No event leases, execution commands, SQL, hashes or filesystem writes live here.
+//! No execution policy, direct Operator dispatch or SQL lives here.
 use super::{Orchestrator, PreparationFailure};
 use crate::{
     analyzer::{AnalyzeRequest, Analyzer, AnalyzerConfig, AnalyzerDependencies},
@@ -169,6 +169,7 @@ pub(super) async fn analyze_all(
     epoch: Arc<AtomicU64>,
     expected: u64,
     connector: crate::Engine,
+    execution: Arc<super::execution::ExecutionControl>,
 ) -> Result<(), PreparationFailure> {
     current(&epoch, expected)?;
     let provider = account_provider(&connector, &identity).await?;
@@ -177,27 +178,50 @@ pub(super) async fn analyze_all(
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),
+            execution: super::execution::configure(
+                execution.clone(),
+                inventory.clone(),
+                connector.clone(),
+                epoch.clone(),
+                expected,
+            )?,
         },
     })
     .map_err(PreparationFailure::Analyzer)?;
-    let mut pagination = Pagination::default();
     loop {
-        current(&epoch, expected)?;
-        let page = inventory
-            .list_items(ListItemsRequest {
-                filter: ItemFilter::default(),
-                pagination: pagination.clone(),
-            })
-            .map_err(PreparationFailure::Inventory)?
-            .page;
-        for item in page.entries {
+        let completed = execution.snapshot().completed;
+        let mut pagination = Pagination::default();
+        let mut items = Vec::new();
+        loop {
             current(&epoch, expected)?;
-            analyze_item(&analyzer, &inventory, &identity, &epoch, expected, item.id).await?;
+            let page = inventory
+                .list_items(ListItemsRequest {
+                    filter: ItemFilter::default(),
+                    pagination: pagination.clone(),
+                })
+                .map_err(PreparationFailure::Inventory)?
+                .page;
+            for item in page.entries {
+                let bound = inventory
+                    .get_creation(GetCreationRequest {
+                        item_id: item.id.clone(),
+                    })
+                    .map_err(PreparationFailure::Inventory)?
+                    .is_some();
+                items.push((!bound, item.kind != ItemKind::Directory, item.id));
+            }
+            let Some(after) = page.next_cursor else {
+                break;
+            };
+            pagination.after = Some(after);
         }
-        let Some(after) = page.next_cursor else {
+        items.sort();
+        for (_, _, id) in items {
+            analyze_item(&analyzer, &inventory, &identity, &epoch, expected, id).await?;
+        }
+        if execution.snapshot().completed == completed {
             return Ok(());
-        };
-        pagination.after = Some(after);
+        }
     }
 }
 pub(super) async fn analyze_selected(
@@ -207,6 +231,7 @@ pub(super) async fn analyze_selected(
     expected: u64,
     ids: std::collections::BTreeSet<SyncItemId>,
     connector: crate::Engine,
+    execution: Arc<super::execution::ExecutionControl>,
 ) -> Result<(), PreparationFailure> {
     let provider = account_provider(&connector, &identity).await?;
     let analyzer = Analyzer::new(AnalyzerConfig {
@@ -214,9 +239,19 @@ pub(super) async fn analyze_selected(
         identity: identity.clone(),
         dependencies: AnalyzerDependencies {
             inventory: inventory.clone(),
+            execution: super::execution::configure(
+                execution.clone(),
+                inventory.clone(),
+                connector.clone(),
+                epoch.clone(),
+                expected,
+            )?,
         },
     })
     .map_err(PreparationFailure::Analyzer)?;
+    if execution.snapshot().enabled {
+        return analyze_all(inventory, identity, epoch, expected, connector, execution).await;
+    }
     for id in ids {
         analyze_item(&analyzer, &inventory, &identity, &epoch, expected, id).await?;
     }
@@ -238,6 +273,12 @@ async fn analyze_item(
         .map_err(PreparationFailure::Inventory)?
         .item
         .ok_or(PreparationFailure::Internal)?;
+    if matches!(
+        item.conflict_reason.as_deref(),
+        Some("ReplicaObservationRetired" | "AssociationRetired")
+    ) {
+        return Ok(());
+    }
     let evidence = evidence(inventory, &item, identity, epoch, expected)?;
     current(epoch, expected)?;
     analyzer
@@ -269,11 +310,14 @@ impl Orchestrator {
         let epoch = self.preparation.epoch.clone();
         let control = self.preparation.control.clone();
         let connector = self.connector.clone();
+        let execution = self.execution.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::Builder::new()
             .name("sync-analysis".into())
             .spawn(move || {
-                let result = run_pass(inventory, identity, epoch, expected, control, connector);
+                let result = run_pass(
+                    inventory, identity, epoch, expected, control, connector, execution,
+                );
                 let _ = tx.send(result);
             })
             .map_err(|_| PreparationFailure::Internal)?;
@@ -287,6 +331,7 @@ fn run_pass(
     expected: u64,
     control: Arc<Mutex<()>>,
     connector: crate::Engine,
+    execution: Arc<super::execution::ExecutionControl>,
 ) -> Result<(), PreparationFailure> {
     let _control = control.lock().map_err(|_| PreparationFailure::Internal)?;
     current(&epoch, expected)?;
@@ -294,7 +339,9 @@ fn run_pass(
         .enable_all()
         .build()
         .map_err(|_| PreparationFailure::Internal)?;
-    runtime.block_on(analyze_all(inventory, identity, epoch, expected, connector))
+    runtime.block_on(analyze_all(
+        inventory, identity, epoch, expected, connector, execution,
+    ))
 }
 
 /// Resolves local persisted account metadata, without credentials or Provider calls.
@@ -311,4 +358,28 @@ async fn account_provider(
         .find(|a| a.id == identity.account_id)
         .map(|a| a.provider)
         .ok_or(PreparationFailure::Internal)
+}
+
+/// Revisit only identity-bound interrupted operations; no new intent is dispatched here.
+pub(super) async fn retry_pending(
+    inventory: Arc<InventoryManager>,
+    identity: SyncIdentity,
+    epoch: Arc<AtomicU64>,
+    expected: u64,
+    connector: crate::Engine,
+    execution: Arc<super::execution::ExecutionControl>,
+) -> Result<(), PreparationFailure> {
+    current(&epoch, expected)?;
+    let due = !inventory
+        .due_creations(DueCreationsRequest {
+            at: now(),
+            limit: 64,
+        })
+        .map_err(PreparationFailure::Inventory)?
+        .is_empty()
+        || execution.probe_retry_due();
+    if due {
+        analyze_all(inventory, identity, epoch, expected, connector, execution).await?;
+    }
+    Ok(())
 }

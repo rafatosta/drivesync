@@ -1,6 +1,7 @@
 # Inventory — vínculos explícitos e planos duráveis
 
-O esquema é **6**. Bancos anteriores são preservados e recusados com
+O esquema é **8**; checkpoints técnicos estão descritos em
+[RECOVERY.md](../operations/RECOVERY.md). Bancos anteriores são preservados e recusados com
 `UnsupportedSchema`, sem migração, limpeza ou reconstrução automática.
 
 `associate_items(AssociateItemsRequest)` associa dois itens presentes sem vínculo

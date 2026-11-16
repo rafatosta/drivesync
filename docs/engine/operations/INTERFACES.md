@@ -1,16 +1,12 @@
-# Operador — interfaces compiladas, sem execução
+# Operador — interfaces de execução
 
 ## 1. Escopo entregue
 
-O módulo público `drivesync_engine::operations` contém somente modelos e traits,
-sem implementação de operações, construtor concreto, executor, fábrica concreta,
-registro de provedores, filesystem, autenticação, HTTP ou integração de execução
-com Analyzer/Orchestrator. Não há stubs com `Ok`, `todo!`, panic ou retornos fictícios.
-
-A interface de consumo é `Operator`, um **trait**, não uma instância concreta já
-construível. O Analyzer poderá receber `Arc<dyn Operator>` quando existir executor.
-`OperatorFactory` declara a composição futura; ainda não resolve contas nem
-seleciona provedores em runtime. Código-fonte: `engine/src/operations/`.
+O módulo público `drivesync_engine::operations` fornece modelos/traits,
+`DefaultOperatorFactory` e `GoogleOperator`, com as nove ações permitidas
+implementadas. `delete` recusa exclusão permanente sem efeitos. Ver
+[MUTATIONS.md](MUTATIONS.md) e [TRANSFERS.md](TRANSFERS.md) para pré-condições,
+recuperação, integridade e limites. Operator não confirma baseline e não possui fila.
 
 ## 2. Interface pública
 
@@ -39,7 +35,8 @@ o Analyzer consome um handle já composto, sem construir especialista Google.
 
 ## 3. Configuração e seleção por provedor
 
-`OperatorConfig` contém `connector: Engine` e `scope: OperatorScope`. O escopo
+`OperatorConfig` contém `connector: Engine`, `scope: OperatorScope` e
+`journal: Arc<dyn ExecutionJournal>`, porta bloqueante implementada pelo Inventory. O escopo
 contém `sync_id: SyncId`, `account_id: AccountId`, `local_root: PathBuf` e
 `remote_root_id: RemoteFileId`, reutilizando IDs de Models. Não recebe token,
 sessão Google, factory concreta ou provedor arbitrário informado pelo chamador.
@@ -50,9 +47,9 @@ sessão Google, factory concreta ou provedor arbitrário informado pelo chamador
 fn create(&self, config: OperatorConfig) -> OperatorResult<Arc<dyn Operator>>;
 ```
 
-A futura composição segue o detector remoto: resolver a conta persistida via
+A composição segue o detector remoto: resolver a conta persistida via
 Engine, obter seu provedor e selecionar o especialista compatível. Provedor
-incompatível deve falhar explicitamente, sem fallback. O especialista acessará
+incompatível deve falhar explicitamente, sem fallback. O especialista acessa
 serviços externos somente pelo respectivo Provider e fará o trabalho local
 necessário dentro do escopo, inclusive publicação de downloads. A seleção deve
 validar conta/provedor das referências, não confiar somente nos campos recebidos.
@@ -68,7 +65,7 @@ validar conta/provedor das referências, não confiar somente nos campos recebid
 | `Preconditions` | `expected_version: Option<String>`, `expected_revision: Option<String>` |
 
 Referências locais são relativas à raiz autorizada e reutilizam Models. O nome
-local preserva bytes Unix não UTF-8. A implementação futura deve validar nomes,
+local preserva bytes Unix não UTF-8. A implementação deve validar nomes,
 identidades, tipos, caminhos e ambiente de origem/destino; o contrato de dados
 não executa essa validação nem garante proteção TOCTOU por si só. `ResourceRef`
 não é um handle aberto de filesystem. O campo `provider_id` remoto precisa ser
@@ -80,7 +77,9 @@ réplicas vem da identidade realmente criada/verificada. Nenhuma confirma baseli
 
 ## 5. Campos das requisições
 
-Todas as dez requisições contêm `options: ExecutionOptions`.
+Todas as dez requisições contêm `execution: ExecutionContext` obrigatório e
+`options: ExecutionOptions`. O contexto vincula ID e evidência de origem; ele não
+é autorização. `delete` recusa antes de consultar contexto, journal ou credenciais.
 
 | Requisição | Demais campos |
 | --- | --- |
@@ -129,21 +128,11 @@ Efeito desconhecido exige verificação antes de repetir, não retry presumidame
 
 ## 7. Contrato de implementação especializada
 
-Cada futuro especialista implementará diretamente `Operator`, sem duplicar os dez
-métodos em um segundo contrato de execução. `OperatorFactory` será a fronteira
-comum de seleção, como a composição comum do detector remoto. Google e Example
-continuam documentais: não existem executores ou registry compilados nesta etapa.
-
-**Exclusão permanente é proibida.** O método `delete` permanece declarado e futuro
-executor deve emitir aviso e retornar `PermanentDeletionProhibited` com efeito
-`NotApplied`, sem autenticação, I/O ou mutação. Não há corpo de método nesta entrega.
-Toda exclusão deve usar `trash` explicitamente; ausência de lixeira exige bloqueio,
-sem fallback destrutivo. Esvaziar lixeira e apagar revisões também são proibidos.
-
-Ficam para implementação posterior: validação concreta, despacho, sessão remota,
-Providers, filesystem privado seguro, cancelamento/progresso, transferência,
-retomada e verificação de efeitos. Não há fila, lifecycle, `status`, confirmação
-de baseline, política de conflito ou acesso a Inventory no módulo.
+O especialista implementa diretamente o trait `Operator`, sem segundo contrato
+redundante. Google possui implementação compilada; Example permanece ilustrativo.
+Exclusão permanente é proibida: `delete` retorna `PermanentDeletionProhibited` sem
+I/O, autenticação ou fallback. As demais ações validam capacidade da plataforma,
+escopo e precondições; um método implementado pode recusar uma capacidade ausente.
 
 ## Dados de planejamento do Analyzer
 
@@ -151,5 +140,10 @@ de baseline, política de conflito ou acesso a Inventory no módulo.
 criação de arquivo/pasta, upload, download, atualização de conteúdo, renomeação,
 movimentação, lixeira e restauração. Não contém variante de exclusão permanente,
 executor, callback ou credencial. `DirectoryRef::LocalRoot` identifica a raiz local
-configurada. O Inventory persiste esses dados e seus bloqueios; nenhum comando
-é despachado ao Operator nesta fase.
+configurada. O Inventory persiste esses dados e seus bloqueios; o Analyzer despacha novas criações conforme sua política de execução.
+
+## Recuperação durável — etapa 1
+
+Veja [RECOVERY.md](RECOVERY.md) para identidade imutável, evidência de origem,
+checkpoints com CAS, efeitos incertos e identidade após publicação. Upload/download possuem executor e seleção concreta; não há liberação de operações
+de análise nesta entrega. Consulte [TRANSFERS.md](TRANSFERS.md).

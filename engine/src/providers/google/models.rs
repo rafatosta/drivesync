@@ -183,6 +183,8 @@ pub struct GoogleFileCapabilities {
     pub can_download: Option<bool>,
     pub can_delete: Option<bool>,
     pub can_rename: Option<bool>,
+    pub can_trash: Option<bool>,
+    pub can_untrash: Option<bool>,
     pub can_move_item_within_drive: Option<bool>,
     pub can_move_item_out_of_drive: Option<bool>,
     pub can_add_children: Option<bool>,

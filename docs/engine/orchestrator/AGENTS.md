@@ -4,8 +4,8 @@
 
 O usuário solicitou fluxo real e contínuo da aplicação: iniciar os detectores,
 aguardar Scanner, entregar itens ao Analyzer e continuar consumindo eventos.
-O Analyzer identifica e persiste direções de upload/download e conflitos para
-intervenção manual; a execução pelo Operator permanece fora do escopo.
+O usuário ampliou o escopo: Analyzer deve chamar Operator para novas réplicas,
+com reobservação, retomada e baseline comprovado; Orchestrator coordena o ciclo.
 Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
 [AGENTS raiz](../../../AGENTS.md).
 
@@ -22,9 +22,8 @@ Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
 - Confirmar o lote somente após ingestão, rechecagem necessária e análise duráveis.
   Falha/Partial/cancelamento preserva o lote por release/expiração, sem Discarded.
 - Testar reentrega entre os bancos, cuja gravação não é uma transação distribuída.
-- O Analyzer apenas produz decisões. As políticas pertencem ao Analyzer, nunca
-  ao consumidor ou à GUI. Não liberar operações, confirmar baseline, transferir
-  conteúdo ou implementar Operator nesta demanda.
+- As políticas e chamadas ao Operator pertencem ao Analyzer, nunca ao consumidor
+  ou à GUI. Orchestrator compõe dependências, cancela por epoch e entrega itens.
 - Manter GTK livre de I/O, preservar chamadores sem Tokio externo, epoch de sessão,
   wakeup sem perda de sinal, worker único, desligamento e substituição seguros.
 - Expor estado real de ingestão, erros e contagem de eventos processados, sem

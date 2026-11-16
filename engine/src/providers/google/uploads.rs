@@ -1,6 +1,6 @@
 //! Single-request resumable operations and metadata-only conveniences.
 //! No queue, file reader, retry or automatic recovery query is created here.
-use super::client::{decode, invalid_argument, query_for};
+use super::client::{invalid_argument, query_for};
 use super::*;
 use reqwest::{Method, Url};
 
@@ -61,7 +61,7 @@ impl GoogleDriveClient {
                 "fields",
             ],
         )?;
-        self.start_upload(session, None, request, query, total_bytes)
+        self.start_upload(session, None, request, query, total_bytes, None)
             .await
     }
     /// Begins replacement content for the same remote file identity.
@@ -85,8 +85,34 @@ impl GoogleDriveClient {
                 "fields",
             ],
         )?;
-        self.start_upload(session, Some(file_id), request, query, total_bytes)
+        self.start_upload(session, Some(file_id), request, query, total_bytes, None)
             .await
+    }
+    /// Starts replacement of an existing file only if its HTTP validator matches.
+    pub async fn start_resumable_update_conditional(
+        &self,
+        session: &GoogleSession,
+        file_id: &FileId,
+        request: GoogleFileWrite,
+        options: FileUpdateOptions,
+        total_bytes: Option<u64>,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadSession> {
+        super::conditional::strong_etag(etag)?;
+        request.validate_update()?;
+        let query = query_for(
+            &options,
+            &["supportsAllDrives", "keepRevisionForever", "fields"],
+        )?;
+        self.start_upload(
+            session,
+            Some(file_id),
+            request,
+            query,
+            total_bytes,
+            Some(etag),
+        )
+        .await
     }
     /// Sends one block, validating totals and non-final 256 KiB alignment.
     /// A lost response leaves effects unknown: this method never repeats it.
@@ -95,6 +121,28 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         upload: &GoogleUploadSession,
         chunk: GoogleUploadChunk,
+    ) -> GoogleResult<GoogleUploadProgress> {
+        self.upload_chunk_request(session, upload, chunk, None)
+            .await
+    }
+    /// Sends an upload block with the same strong validator as its replacement.
+    pub async fn upload_chunk_conditional(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        chunk: GoogleUploadChunk,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadProgress> {
+        super::conditional::strong_etag(etag)?;
+        self.upload_chunk_request(session, upload, chunk, Some(etag))
+            .await
+    }
+    async fn upload_chunk_request(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        chunk: GoogleUploadChunk,
+        etag: Option<&str>,
     ) -> GoogleResult<GoogleUploadProgress> {
         let url = self.upload_url(&upload.session_uri)?;
         if upload
@@ -125,10 +173,14 @@ impl GoogleDriveClient {
                 total.map(|v| v.to_string()).unwrap_or_else(|| "*".into())
             )
         };
-        let headers = [
+        let mut headers = vec![
             ("Content-Range", content_range),
+            ("Content-Length", chunk.bytes.len().to_string()),
             ("Content-Type", "application/octet-stream".into()),
         ];
+        if let Some(etag) = etag {
+            headers.push(("If-Match", etag.into()));
+        }
         let response = self
             .send(session, Method::PUT, url, Some(chunk.bytes), &headers)
             .await?;
@@ -140,8 +192,29 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         upload: &GoogleUploadSession,
     ) -> GoogleResult<GoogleUploadProgress> {
+        self.query_upload_progress_request(session, upload, None)
+            .await
+    }
+    /// Conditional empty PUT, including zero-length replacement sessions.
+    pub async fn query_upload_progress_conditional(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadProgress> {
+        super::conditional::strong_etag(etag)?;
+        self.query_upload_progress_request(session, upload, Some(etag))
+            .await
+    }
+    async fn query_upload_progress_request(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        etag: Option<&str>,
+    ) -> GoogleResult<GoogleUploadProgress> {
         let url = self.upload_url(&upload.session_uri)?;
-        let headers = [
+        let mut headers = vec![
+            ("Content-Length", "0".into()),
             (
                 "Content-Range",
                 format!(
@@ -154,6 +227,9 @@ impl GoogleDriveClient {
             ),
             ("Content-Type", "application/octet-stream".into()),
         ];
+        if let Some(etag) = etag {
+            headers.push(("If-Match", etag.into()));
+        }
         let response = self
             .send(session, Method::PUT, url, Some(Vec::new()), &headers)
             .await?;
@@ -233,8 +309,16 @@ impl GoogleDriveClient {
         request: GoogleFileWrite,
         mut query: Vec<(String, String)>,
         total_bytes: Option<u64>,
+        etag: Option<&str>,
     ) -> GoogleResult<GoogleUploadSession> {
         let mut url = self.upload_base.clone();
+        let conditional = etag.is_some();
+        if conditional {
+            let path = url.path().replace("/drive/v3", "/drive/v2");
+            url.set_path(&path);
+            query.retain(|(key, _)| key != "fields");
+            query.push(("fields".into(), "*".into()));
+        }
         {
             let mut path = url.path_segments_mut().map_err(|_| invalid_argument())?;
             path.pop_if_empty().push("files");
@@ -247,15 +331,25 @@ impl GoogleDriveClient {
         }
         query.push(("uploadType".into(), "resumable".into()));
         url.query_pairs_mut().extend_pairs(query);
-        let body = serde_json::to_vec(&request).map_err(|_| invalid_argument())?;
+        let body = if conditional {
+            super::conditional::conditional_body(&request)?
+        } else {
+            serde_json::to_vec(&request).map_err(|_| invalid_argument())?
+        };
         let mut headers = vec![("X-Upload-Content-Type", "application/octet-stream".into())];
         if let Some(total) = total_bytes {
             headers.push(("X-Upload-Content-Length", total.to_string()));
         }
+        if let Some(etag) = etag {
+            super::conditional::strong_etag(etag)?;
+            headers.push(("If-Match", etag.into()));
+        }
         let response = self
             .send(
                 session,
-                if file_id.is_some() {
+                if conditional {
+                    Method::PUT
+                } else if file_id.is_some() {
                     Method::PATCH
                 } else {
                     Method::POST
@@ -290,11 +384,15 @@ impl GoogleDriveClient {
     fn upload_url(&self, raw: &str) -> GoogleResult<Url> {
         let url = Url::parse(raw).map_err(|_| invalid_argument())?;
         let prefix = format!("{}/files", self.upload_base.path().trim_end_matches('/'));
+        let conditional_prefix = prefix.replace("/drive/v3/", "/drive/v2/");
         if url.origin() != self.upload_base.origin()
             || !url.username().is_empty()
             || url.password().is_some()
             || url.fragment().is_some()
-            || !(url.path() == prefix || url.path().starts_with(&format!("{prefix}/")))
+            || !(url.path() == prefix
+                || url.path().starts_with(&format!("{prefix}/"))
+                || url.path() == conditional_prefix
+                || url.path().starts_with(&format!("{conditional_prefix}/")))
         {
             return Err(invalid_argument());
         }
@@ -347,10 +445,11 @@ impl GoogleDriveClient {
                 return Err(invalid_response());
             }
             let body = self.response_body(response, status).await?;
-            let file: GoogleFile = decode(&body).map_err(|mut failure| {
-                failure.http_status = Some(status);
-                failure
-            })?;
+            let file: GoogleFile =
+                super::conditional::conditional_file(&body).map_err(|mut failure| {
+                    failure.http_status = Some(status);
+                    failure
+                })?;
             if let (Some(total), Some(size)) = (total, file.size.as_deref()) {
                 if size.parse::<u64>().ok() != Some(total) {
                     return Err(invalid_response());

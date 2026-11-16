@@ -1,6 +1,5 @@
-//! Blank Orchestrator page; no engine operations are connected.
+//! Cached diagnostics from the application's shared synchronization session.
 use adw::gtk;
-
-pub(in crate::ui::developer) fn build() -> gtk::Box {
-    gtk::Box::new(gtk::Orientation::Vertical, 0)
+pub(in crate::ui::developer) fn build(context: &crate::application::Context) -> gtk::Box {
+    super::super::pipeline::build(context, false)
 }

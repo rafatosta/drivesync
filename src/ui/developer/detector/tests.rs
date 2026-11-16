@@ -78,6 +78,18 @@ fn live_account_selection_and_detector_layout() {
     let base = std::path::PathBuf::from(profile).join("detector-fixture");
     std::fs::create_dir_all(&base).unwrap();
     let context = Context::default();
+    let empty = crate::ui::developer::pipeline::build(&context, true);
+    assert!(texts(empty.upcast_ref()).contains("No active account session"));
+    assert!(context.detectors.borrow().is_empty());
+    drop(empty);
+    context
+        .preparation_errors
+        .borrow_mut()
+        .insert("fixture".into(), "Synthetic root unavailable".into());
+    let unavailable = crate::ui::developer::pipeline::build(&context, false);
+    assert!(texts(unavailable.upcast_ref()).contains("Synthetic root unavailable"));
+    drop(unavailable);
+    context.preparation_errors.borrow_mut().clear();
     // Independently synthetic account metadata; no real profile or keyring is consulted.
     use std::os::unix::fs::PermissionsExt;
     let account_directory = base.join("accounts");
@@ -114,6 +126,7 @@ fn live_account_selection_and_detector_layout() {
         std::fs::create_dir(&root).unwrap();
         let session =
             Orchestrator::new(drivesync_engine::orchestrator::OrchestratorCreateRequest {
+                execute_creations: false,
                 detector: DetectorCreateRequest {
                     connector: engine.clone(),
                     scope: DetectorScope {
@@ -142,6 +155,39 @@ fn live_account_selection_and_detector_layout() {
                 preparation: None,
             },
         );
+    }
+    for operator in [true, false] {
+        let pipeline = crate::ui::developer::pipeline::build(&context, operator);
+        let preview = adw::Window::builder()
+            .default_width(1000)
+            .default_height(720)
+            .content(&pipeline)
+            .build();
+        preview.present();
+        settle();
+        let rendered = texts(pipeline.upcast_ref());
+        assert!(rendered.contains("Execution: disabled"));
+        assert!(rendered.contains("Verified creations: 0"));
+        assert!(rendered.contains("personal@example.invalid"));
+        capture(
+            &preview,
+            if operator {
+                "operator-wide"
+            } else {
+                "orchestrator-wide"
+            },
+        );
+        preview.set_default_size(480, 640);
+        settle();
+        capture(
+            &preview,
+            if operator {
+                "operator-narrow"
+            } else {
+                "orchestrator-narrow"
+            },
+        );
+        preview.close();
     }
     let page = build_inner(&context, false);
     let window = adw::Window::builder()
