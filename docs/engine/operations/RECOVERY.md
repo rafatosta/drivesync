@@ -1,10 +1,11 @@
 # Operador — contratos de recuperação
 
-## Entrega da etapa 1
+## Contratos e execução atual
 
-Há contratos compilados e persistência técnica no Inventory. Não há executor,
-factory concreta, autenticação nova, transferência, worker, liberação de fila ou
-confirmação de baseline. O Analyzer continua produzindo planos bloqueados.
+Os contratos da etapa 1 foram ampliados para a execução de upload/download de
+criação descrita em [TRANSFERS.md](TRANSFERS.md). Há factory, especialista Google
+e workers delimitados por chamada. O Analyzer continua produzindo planos
+bloqueados; não há liberação de fila ou confirmação de baseline.
 
 ## Identidade e origem
 
@@ -33,15 +34,15 @@ O ID técnico não é `SyncItemId`, nem o Operator recebe itens do Inventory.
   evidência de um recurso externo. Comando sem origem não aceita origem avulsa.
 
 Essas verificações preservam a expectativa, mas não medem arquivo nem fecham
-corridas. O executor futuro deve revalidar origem, raiz/pais, alvo, capacidades e
+corridas. O executor deve revalidar origem, raiz/pais, alvo, capacidades e
 precondições antes dos efeitos/publicação. SHA-256 local isolado não prova
 igualdade com conteúdo remoto. Evidência insuficiente bloqueia a preparação.
 
 ## Porta de persistência
 
 `ExecutionJournal: Send + Sync` é object-safe e **bloqueante**. O Inventory
-implementa o trait e os três métodos públicos correspondentes, usando transações
-SQLite reais. O Operator futuro deve chamar essa porta em worker bloqueante;
+implementa o trait e os quatro métodos públicos correspondentes, usando transações
+SQLite reais. O Operator chama essa porta em worker bloqueante;
 nenhum SQL pertence a Operations e nenhuma chamada roda no loop GTK.
 
 | Método | Entrada | Retorno e regra |
@@ -49,6 +50,7 @@ nenhum SQL pertence a Operations e nenhuma chamada roda no loop GTK.
 | `prepare_execution` | `PrepareExecutionRequest { intent }` | `ExecutionCheckpoint` na revisão 1, ou checkpoint atual no retry exato; ID com outro vínculo falha |
 | `get_execution` | `GetExecutionRequest { id }` | Checkpoint persistido, sem requeue, reset ou mudança de revisão |
 | `save_execution` | `SaveExecutionRequest { id, expected_revision, state }` | CAS atômico; gravação divergente com revisão antiga falha; retry exato da gravação imediatamente anterior recupera seu resultado |
+| `reset_expired_upload` | `ResetExpiredUploadRequest { id, expected_revision, expired_session, reserved_remote }` | Reconciliação explícita de sessão expirada; conserva snapshot e ID remoto, incrementa geração e revisão e retira apenas sessão/offset |
 
 Os métodos do Inventory retornam `InventoryResult`; o trait traduz falhas para
 `OperatorFailure` sanitizada. `CheckpointConflict` indica conflito de revisão/ID;
@@ -78,19 +80,28 @@ o retry de sua gravação usa a revisão anterior, não abre nova execução.
 
 Staging, ID remoto reservado e sessão já persistidos não podem ser trocados ou
 apagados; offset só avança e não pode superar o tamanho da origem. Criação remota
-precisa reservar o ID antes de sair de Prepared. Origem local exige staging
+precisa reservar o ID antes de sair de Prepared. O executor também persiste
+`LocalExecutionScope` com identidades físicas de raiz, pai e diretório de staging;
+retries não podem trocar esse vínculo. Origem local exige staging
 verificado antes de Executing. Token só aparece com identidade remota e fora de
 Prepared. O vínculo e os dados persistidos são revalidados nas leituras; corrupção
 falha explicitamente, sem reset. A gravação de intenção e primeiro checkpoint é
 uma transação única.
 
-Este contrato inicial é conservador: **não há transição para descartar/reiniciar
-sessão expirada nem para reexecutar efeito incerto**. Antes da etapa de upload,
-acrescentar protocolo explícito de reconciliação com evidência do recurso e da
-sessão anterior. Não substituir token/resetar offset com uma gravação genérica.
-A etapa 1 valida recuperação do registro, não retomada física de transferência.
+A retirada de sessão expirada não passa por `save_execution`. O especialista
+consulta o ID reservado e o estado da sessão pelo Provider; se o recurso já
+existe, verifica seu resultado sem reenvio. Se a sessão expirou e o recurso não
+foi encontrado, chama `reset_expired_upload` com revisão, token antigo e ID
+reservado exatos. A operação só aceita upload em Executing/Unknown, preserva
+staging/ID/escopo, incrementa `session_generation` e retira token/offset. Uma
+consulta 404 não vira afirmação geral de ausência: a nova sessão usa o mesmo ID
+pré-gerado, nunca uma identidade substituta. Falha de acesso não autoriza adotar
+homônimo ou criar outro recurso. Gravações genéricas não podem trocar geração,
+token persistido ou fazer offset regredir. Resposta perdida dessa transação é
+recuperada por leitura do checkpoint, sem reset cego de uma sessão posterior.
 CAS protege gravações, não é lease de worker e não autoriza dois executores a
-produzir efeitos; elegibilidade e exclusão mútua pertencem à integração futura.
+produzir efeitos; elegibilidade dos planos pertence à integração futura. O
+especialista atual usa bloqueio físico do escopo, sem liberar a fila.
 
 ## Resultado e identidade após publicação
 
@@ -108,7 +119,7 @@ baseline. O Operator nunca confirma associação ou baseline por conta própria.
 
 ## Privacidade e esquema
 
-O esquema do Inventory é **7**. Esquemas anteriores são preservados e recusados,
+O esquema do Inventory é **8** (inclui escopo físico e geração da sessão). Esquemas anteriores são preservados e recusados,
 sem migração, exclusão ou recriação automática. `execution_intents` conserva o
 vínculo e `execution_checkpoints` conserva as colunas de recuperação. O token é
 BLOB privado de até 8192 bytes, com Debug redigido. Ele não deve conter OAuth e
@@ -124,7 +135,8 @@ interna. Serialização é persistência sensível, não formato para logs.
 O Provider atual possui upload resumable de criação/atualização, consulta de
 sessão e download por range/revisão. Não há contrato de escrita condicional
 `If-Match` na interface inspecionada. Leitura de versão seguida de escrita não
-impede alteração concorrente. Nenhum Provider foi alterado nesta etapa.
+impede alteração concorrente. A única extensão autorizada do Provider foi `GoogleFileWrite.id` para criação,
+recusado em atualizações. Não foi adicionada escrita condicional nesta entrega.
 
 Antes de implementar mutação remota dependente de precondição, apresentar a
 limitação e verificar o suporte efetivo da API. Propor uma extensão tipada mínima
@@ -132,6 +144,7 @@ que transporte a condição e diferencie rejeição, efeito confirmado e respost
 perdida. Se a plataforma não oferecer a proteção necessária, manter bloqueado.
 A validação do protocolo remoto será feita nessa etapa, não presumida aqui.
 
-Lixeira local, publicação/recuperação física, substituição atômica e retomada de
-sessão ainda não estão implementadas. `delete` permanece proibido e deve recusar
+Publicação sem substituição, recuperação de criação e retomada de upload estão
+implementadas conforme [TRANSFERS.md](TRANSFERS.md). Lixeira e atualização de
+conteúdo existente permanecem pendentes. `delete` permanece proibido e deve recusar
 antes de I/O, journal ou autenticação; `OPR-L-11` foi corrigido para exigir isso.

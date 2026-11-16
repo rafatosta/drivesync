@@ -8,11 +8,12 @@ Implementar e testar a execução das operações sobre recursos do Google Drive
 
 [README](README.md) · [INTERFACES](INTERFACES.md) · [TESTS](TESTS.md) · [Operador](../AGENTS.md)
 
-## Implementação futura
+## Implementação atual e próximas capacidades
 
-A etapa atual entrega somente o contrato compilado comum. Não criar implementação
-Google, stubs ou dispatcher sem nova solicitação. Exclusão permanente é proibida;
-`delete` deve recusar sem efeitos quando o executor for implementado.
+Upload e download de criação estão implementados em `operations/google.rs` e
+especialistas privados. Ver [TRANSFERS.md](../TRANSFERS.md). As outras mutações
+retornam capacidade não suportada; `delete` recusa localmente, sem efeitos.
+Não liberar automaticamente a fila do Analyzer ou inventar confirmação de baseline.
 
 - Implementar os dez métodos da interface `Operator`, utilizando os tipos comuns definidos pelo Operador.
 - Selecionar e validar a sessão Google associada à requisição e preservar identidades remotas.
@@ -25,4 +26,5 @@ Google, stubs ou dispatcher sem nova solicitação. Exclusão permanente é proi
 
 Implementar os cenários de [TESTS.md](TESTS.md), executar a [suíte comum](../TESTS.md#conformidade-dos-executores-especializados) e utilizar Provider Google simulado e filesystem temporário real. Registrar os testes executados e os resultados. Seguir as instruções gerais do repositório e executar verificações Rust no ambiente Flatpak estabelecido.
 
-**Estado:** orientação documental; a implementação e os testes Rust dependem de trabalho futuro.
+**Estado:** criação por upload/download implementada e testada com Provider real
+contra HTTP local; demais mutações pendentes. Google real não foi usado.

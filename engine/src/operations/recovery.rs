@@ -200,6 +200,21 @@ pub struct StagingEvidence {
     pub sha256: Sha256Digest,
 }
 
+/// Descriptor-observed identity; birth time prevents inode reuse when available.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhysicalIdentity {
+    pub device: u64,
+    pub inode: u64,
+    pub birth: Option<crate::models::LocalTimestamp>,
+}
+/// Physical directories pinned before staging or publication, and compared on retry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalExecutionScope {
+    pub root: PhysicalIdentity,
+    pub parent: PhysicalIdentity,
+    pub staging_directory: PhysicalIdentity,
+}
+
 /// Sensitive provider recovery bytes, stored only in the private Inventory DB.
 /// Debug is redacted. This is not an OAuth credential or a caller-selected URL;
 /// Providers must validate server-issued session destinations on every use.
@@ -266,6 +281,9 @@ impl ExecutionResult {
 /// server-confirmed cumulative bytes, not bytes transferred by the current call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionState {
+    pub local_scope: Option<LocalExecutionScope>,
+    /// Changes only through explicit expired-session reconciliation in Inventory.
+    pub session_generation: u32,
     pub phase: CheckpointPhase,
     pub effect: ExecutionEffect,
     pub staging: Option<StagingEvidence>,
@@ -277,6 +295,8 @@ pub struct ExecutionState {
 impl ExecutionState {
     pub fn prepared() -> Self {
         Self {
+            local_scope: None,
+            session_generation: 0,
             phase: CheckpointPhase::Prepared,
             effect: ExecutionEffect::NotApplied,
             staging: None,
@@ -320,8 +340,8 @@ impl ExecutionState {
                 .is_none_or(|s| stable_local(&s.metadata))
     }
     /// Conservative monotonic transition: uncertainty cannot be erased by retry.
-    /// Replacing an expired session needs explicit reconciliation in a later step;
-    /// this initial contract deliberately cannot reset an existing session/offset.
+    /// Replacing an expired session requires reset_expired_upload; generic saves
+    /// deliberately cannot reset an existing session, generation or offset.
     pub fn can_follow(&self, previous: &Self) -> bool {
         use CheckpointPhase::*;
         self.is_valid()
@@ -347,6 +367,11 @@ impl ExecutionState {
                 .as_ref()
                 .is_none_or(|t| self.resume_token.as_ref() == Some(t))
             && self.confirmed_offset >= previous.confirmed_offset
+            && self.session_generation == previous.session_generation
+            && previous
+                .local_scope
+                .as_ref()
+                .is_none_or(|s| self.local_scope.as_ref() == Some(s))
     }
 }
 
@@ -388,6 +413,17 @@ pub struct SaveExecutionRequest {
     pub state: ExecutionState,
 }
 
+/// Supplied only after Providers confirmed this exact session expired AND a
+/// fresh lookup did not find the reserved creation ID. No new remote ID is made.
+/// Missing access is never sufficient evidence for recreating an existing item.
+#[derive(Debug, Clone)]
+pub struct ResetExpiredUploadRequest {
+    pub id: ExecutionId,
+    pub expected_revision: u64,
+    pub expired_session: ResumeToken,
+    pub reserved_remote: ResourceRef,
+}
+
 /// Blocking technical persistence port, implemented by Inventory. Run off GTK
 /// and async runtime threads. No queue, SQL, worker, authorization or baseline
 /// belongs to the Operator. A failed save forbids dependent effects. Matching
@@ -399,4 +435,8 @@ pub trait ExecutionJournal: Send + Sync {
     ) -> OperatorResult<ExecutionCheckpoint>;
     fn get_execution(&self, request: GetExecutionRequest) -> OperatorResult<ExecutionCheckpoint>;
     fn save_execution(&self, request: SaveExecutionRequest) -> OperatorResult<ExecutionCheckpoint>;
+    fn reset_expired_upload(
+        &self,
+        request: ResetExpiredUploadRequest,
+    ) -> OperatorResult<ExecutionCheckpoint>;
 }

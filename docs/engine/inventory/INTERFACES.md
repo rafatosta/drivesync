@@ -881,15 +881,16 @@ consultar SQLite diretamente. O acréscimo não muda o esquema.
 ## Integração de análises
 
 Foram adicionados `record_analysis`, `get_analysis` e `list_analyses` às 17
-operações originais. O esquema atual 7 persiste avaliações e decisões com operações
+operações originais. O esquema atual 8 persiste avaliações e decisões com operações
 bloqueadas, controle de revisão, retry idempotente e consulta após reinício.
 Veja [Persistência de análises](ANALYSIS.md) para contratos e limites.
 
 ## Checkpoints de execução
 
-O esquema 7 acrescenta `execution_intents` e `execution_checkpoints`, sem migração
+O esquema 8 acrescenta `execution_intents` e `execution_checkpoints`, sem migração
 e sem exclusão de bancos existentes. `InventoryManager` oferece
-`prepare_execution`, `get_execution` e `save_execution`, com as requisições e os
+`prepare_execution`, `get_execution`, `save_execution` e
+`reset_expired_upload`, com as requisições e os
 resultados de `operations`; implementa também a porta bloqueante `ExecutionJournal`.
 Veja [recuperação do Operador](../operations/RECOVERY.md). Esses métodos não
 alteram fila, itens, época de planejamento, associações ou baseline. Operações

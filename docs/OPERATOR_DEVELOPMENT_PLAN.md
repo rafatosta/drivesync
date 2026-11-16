@@ -2,7 +2,9 @@
 
 Data: 16/11/2026. Etapa 1 implementada: contratos de segurança e checkpoints
 técnicos no Inventory; detalhes em [RECOVERY.md](engine/operations/RECOVERY.md).
-As etapas 2–10 permanecem propostas. Sem executor ou liberação de operações.
+O marco de upload/download de novos blobs foi implementado, incluindo primitivas
+locais e composição por conta. Veja [TRANSFERS.md](engine/operations/TRANSFERS.md).
+As demais mutações e a integração automática dos planos permanecem pendentes.
 
 ## 1. Referências inspecionadas
 

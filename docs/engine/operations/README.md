@@ -9,7 +9,8 @@
 
 ## Objetivo
 
-Definir a API pública para futuramente executar comandos de manipulação e transferência de arquivos e diretórios em ambientes locais e remotos.
+Executar comandos delimitados de arquivos locais/remotos, com contratos para as
+demais capacidades. A implementação atual cobre upload/download de novos blobs.
 
 ## Funcionamento
 
@@ -32,7 +33,7 @@ As manipulações de nome e localização preservam a identidade do recurso semp
 | `update_content` | Substituir conteúdo de arquivo existente |
 | `rename` | Renomear arquivo ou diretório |
 | `move_item` | Mover arquivo ou diretório no mesmo ambiente |
-| `delete` | Proibido: futuro executor deve recusar sem efeitos |
+| `delete` | Proibido: recusa local sem efeitos |
 | `trash` | Enviar recurso à lixeira quando suportado |
 | `restore` | Restaurar recurso quando suportado |
 
@@ -57,5 +58,8 @@ Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementaç�
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** contrato Rust compilado em `engine/src/operations/`, modelos, traits e validações puras. O Inventory implementa a porta de checkpoints
-descrita em [RECOVERY.md](RECOVERY.md), sem autorização ou execução. Nenhum executor, fábrica concreta, seleção ou operação implementado. O Analyzer ainda não chama execução.
+**Estado:** `DefaultOperatorFactory` e `GoogleOperator` executam upload/download
+de novos blobs com staging privado, verificação de integridade e recuperação
+durável. Veja [TRANSFERS.md](TRANSFERS.md). Outras mutações retornam capacidade não
+suportada; exclusão permanente recusa sem efeitos. A execução automática no
+Analyzer/Orchestrator e confirmação de baseline permanecem pendentes.

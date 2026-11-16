@@ -1,13 +1,12 @@
-//! Contracts for provider-selected operations consumed by the Analyzer.
+//! Provider-selected operations, durable recovery and safe create-only transfers.
 //!
-//! This module declares data, interfaces and pure recovery validation only. There is no concrete Operator,
-//! factory, provider registry, filesystem helper or execution implementation.
-//! In particular, an operation cannot report success without an executor.
+//! `DefaultOperatorFactory` resolves the persisted account and constructs a
+//! `GoogleOperator`. New blob upload/download execute on owned blocking workers,
+//! using Providers, private staging and Inventory checkpoints. Other mutations
+//! report unsupported capabilities; permanent deletion refuses locally.
 //!
-//! Future composition follows the remote detector boundary: resolve the provider
-//! from the persisted account through Engine, then select its specialist. Only
-//! specialists access Providers; they may also perform scoped local work for
-//! downloads. Names and matching content never establish resource association.
+//! Names and matching bytes never associate preexisting resources. No execution
+//! releases Analyzer queue entries, confirms a baseline or drives a GUI.
 //!
 //! ```no_run
 //! use std::sync::Arc;
@@ -20,6 +19,9 @@
 //!     Ok(())
 //! }
 //! ```
+mod filesystem;
+mod google;
+pub use google::{DefaultOperatorFactory, GoogleOperator};
 mod interfaces;
 mod models;
 mod recovery;

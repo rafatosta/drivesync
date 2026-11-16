@@ -631,3 +631,76 @@ fn save_failure_preserves_the_previous_checkpoint_and_retry_uses_same_revision()
     tree.sql().execute_batch("DROP TRIGGER injected").unwrap();
     assert_eq!(save(&inv, &cp, executing()).unwrap().revision, 2);
 }
+
+#[test]
+fn explicit_expired_session_reconciliation_retains_identity_and_rejects_stale_or_foreign_proof() {
+    let tree = Tree::new();
+    let inv = tree.open();
+    let cp = prepare(&inv, upload_intent(&tree, "expired"));
+    let reserved = ResourceRef::Remote {
+        provider_id: ProviderId("google".into()),
+        reference: RemoteFileRef {
+            account_id: AccountId("account".into()),
+            file_id: RemoteFileId("reserved".into()),
+        },
+    };
+    let state = ExecutionState {
+        staging: Some(StagingEvidence {
+            metadata: Box::new(local_file(b".drivesync/staging/expired.snapshot")),
+            sha256: Sha256Digest::new("a".repeat(64)).unwrap(),
+        }),
+        reserved_remote: Some(reserved.clone()),
+        ..ExecutionState::prepared()
+    };
+    let cp = save(&inv, &cp, state).unwrap();
+    let cp = save(
+        &inv,
+        &cp,
+        ExecutionState {
+            phase: CheckpointPhase::Executing,
+            effect: ExecutionEffect::Unknown,
+            ..cp.state.clone()
+        },
+    )
+    .unwrap();
+    let token = ResumeToken::new(b"expired-session".to_vec()).unwrap();
+    let cp = save(
+        &inv,
+        &cp,
+        ExecutionState {
+            resume_token: Some(token.clone()),
+            confirmed_offset: 2,
+            ..cp.state.clone()
+        },
+    )
+    .unwrap();
+    let request = ResetExpiredUploadRequest {
+        id: cp.intent.context.id.clone(),
+        expected_revision: cp.revision,
+        expired_session: token,
+        reserved_remote: reserved,
+    };
+    let mut bad = request.clone();
+    bad.expired_session = ResumeToken::new(b"foreign-session".to_vec()).unwrap();
+    assert!(inv.reset_expired_upload(bad).is_err());
+    let result = inv.reset_expired_upload(request.clone()).unwrap();
+    assert_eq!(result.state.session_generation, 1);
+    assert_eq!(result.state.confirmed_offset, 0);
+    assert!(result.state.resume_token.is_none());
+    assert_eq!(result.state.reserved_remote, cp.state.reserved_remote);
+    assert_eq!(result.state.staging, cp.state.staging);
+    assert_eq!(result.state.effect, ExecutionEffect::Unknown);
+    assert_eq!(
+        inv.reset_expired_upload(request).unwrap_err().kind,
+        InventoryError::VersionMismatch
+    );
+    drop(inv);
+    assert_eq!(
+        tree.open()
+            .get_execution(GetExecutionRequest {
+                id: result.intent.context.id.clone()
+            })
+            .unwrap(),
+        result
+    );
+}

@@ -55,5 +55,5 @@ CREATE TRIGGER planning_remote_insert AFTER INSERT ON remote_files BEGIN UPDATE 
 CREATE TRIGGER planning_remote_update AFTER UPDATE ON remote_files WHEN old.item IS NOT new.item OR old.provider IS NOT new.provider BEGIN UPDATE planning_clock SET epoch=epoch+1 WHERE id=1; END;
 CREATE TRIGGER planning_remote_delete AFTER DELETE ON remote_files BEGIN UPDATE planning_clock SET epoch=epoch+1 WHERE id=1; END;
 CREATE TABLE execution_intents(id TEXT PRIMARY KEY,intent TEXT NOT NULL);
-CREATE TABLE execution_checkpoints(execution TEXT PRIMARY KEY REFERENCES execution_intents(id),revision INTEGER NOT NULL CHECK(revision>0),phase TEXT NOT NULL,effect TEXT NOT NULL,staging TEXT,reserved_remote TEXT,resume_token BLOB,confirmed_offset TEXT NOT NULL,result TEXT);
-PRAGMA user_version=7;
+CREATE TABLE execution_checkpoints(execution TEXT PRIMARY KEY REFERENCES execution_intents(id),revision INTEGER NOT NULL CHECK(revision>0),phase TEXT NOT NULL,effect TEXT NOT NULL,staging TEXT,reserved_remote TEXT,resume_token BLOB,confirmed_offset TEXT NOT NULL,result TEXT,local_scope TEXT,session_generation INTEGER NOT NULL CHECK(session_generation>=0));
+PRAGMA user_version=8;

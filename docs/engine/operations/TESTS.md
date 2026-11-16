@@ -5,8 +5,9 @@
 `engine/tests/operator_contract.rs` verifica consumo público, object safety,
 ports Send/Sync e assinaturas das dez operações com futures Send, sem criar
 executor, mock ou executar chamadas. O doctest demonstra consumo por
-`Arc<dyn Operator>`. Os cenários funcionais abaixo são requisitos futuros;
-nenhuma execução real do Operator é validada nesta etapa.
+`Arc<dyn Operator>`. A matriz abaixo define os requisitos por capacidade.
+A suíte de execução de upload/download está descrita em
+[TRANSFERS.md](TRANSFERS.md); os cenários das outras mutações continuam futuros.
 
 
 ## Objetivo
@@ -174,3 +175,17 @@ verifica que preparar checkpoints não cria operações ou baselines e não publ
 arquivos. São testes de persistência; ainda não executam upload/download.
 
 O [contrato de recuperação](RECOVERY.md) define a porta e as pendências dos Providers.
+
+## Transferências de criação — implementação
+
+`engine/src/operations/google/tests.rs` usa a fachada `Operator`, HTTP loopback com
+estado e Provider de produção para upload/download.
+`operations/filesystem.rs` cobre primitivas locais reais;
+`connection::tests::operator_factory_uses_the_persisted_account_and_accounts_owned_session`
+valida a composição por conta e sessão Accounts com cofre sintético.
+
+Há testes de interrupção de subprocesso antes/depois de publicação e após bloco
+de upload, além de falha de confirmação SQLite, cancelamento, reentrega, versão
+remota alterada, corrupção, metadados MD5, fontes substituídas e colisões. Nenhum
+teste usa Google real ou arquivos pessoais. Casos de outras mutações não passam
+a ser declarados aprovados por causa dessa cobertura.

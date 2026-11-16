@@ -270,11 +270,13 @@ fn load(db: &Connection, id: &ExecutionId) -> InventoryResult<ExecutionCheckpoin
         .ok_or_else(|| failure(InventoryError::NotFound))?;
     let intent: ExecutionIntent = decode(&intent)?;
     let checkpoint = db.query_row(
-        "SELECT revision,phase,effect,staging,reserved_remote,resume_token,confirmed_offset,result FROM execution_checkpoints WHERE execution=?1", [id.as_str()], |r| {
-            Ok((r.get::<_, u64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<Vec<u8>>>(5)?, r.get::<_, String>(6)?, r.get::<_, Option<String>>(7)?))
+        "SELECT revision,phase,effect,staging,reserved_remote,resume_token,confirmed_offset,result,local_scope,session_generation FROM execution_checkpoints WHERE execution=?1", [id.as_str()], |r| {
+            Ok((r.get::<_, u64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<Vec<u8>>>(5)?, r.get::<_, String>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<String>>(8)?, r.get::<_, u32>(9)?))
         }).optional().map_err(sql)?.ok_or_else(|| failure(InventoryError::CorruptDatabase))?;
     let corrupt = || failure(InventoryError::CorruptDatabase);
     let state = ExecutionState {
+        local_scope: checkpoint.8.as_deref().map(decode).transpose()?,
+        session_generation: checkpoint.9,
         phase: decode(&checkpoint.1)?,
         effect: decode(&checkpoint.2)?,
         staging: checkpoint.3.as_deref().map(decode).transpose()?,
@@ -307,8 +309,8 @@ fn write(
     revision: u64,
     state: &ExecutionState,
 ) -> InventoryResult<()> {
-    db.execute("INSERT INTO execution_checkpoints(execution,revision,phase,effect,staging,reserved_remote,resume_token,confirmed_offset,result) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(execution) DO UPDATE SET revision=excluded.revision,phase=excluded.phase,effect=excluded.effect,staging=excluded.staging,reserved_remote=excluded.reserved_remote,resume_token=excluded.resume_token,confirmed_offset=excluded.confirmed_offset,result=excluded.result",
-        params![id.as_str(), revision, encode(&state.phase)?, encode(&state.effect)?, state.staging.as_ref().map(encode).transpose()?, state.reserved_remote.as_ref().map(encode).transpose()?, state.resume_token.as_ref().map(|t| t.as_bytes()), state.confirmed_offset.to_string(), state.result.as_ref().map(encode).transpose()?]).map_err(sql)?;
+    db.execute("INSERT INTO execution_checkpoints(execution,revision,phase,effect,staging,reserved_remote,resume_token,confirmed_offset,result,local_scope,session_generation) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(execution) DO UPDATE SET revision=excluded.revision,phase=excluded.phase,effect=excluded.effect,staging=excluded.staging,reserved_remote=excluded.reserved_remote,resume_token=excluded.resume_token,confirmed_offset=excluded.confirmed_offset,result=excluded.result,local_scope=excluded.local_scope,session_generation=excluded.session_generation",
+        params![id.as_str(), revision, encode(&state.phase)?, encode(&state.effect)?, state.staging.as_ref().map(encode).transpose()?, state.reserved_remote.as_ref().map(encode).transpose()?, state.resume_token.as_ref().map(|t| t.as_bytes()), state.confirmed_offset.to_string(), state.result.as_ref().map(encode).transpose()?, state.local_scope.as_ref().map(encode).transpose()?, state.session_generation]).map_err(sql)?;
     Ok(())
 }
 impl InventoryManager {
@@ -349,6 +351,43 @@ impl InventoryManager {
                 revision: 1,
                 state,
             })
+        })
+    }
+    /// Retires only an expired create-upload session after explicit remote
+    /// reconciliation. The reserved ID, snapshot and Unknown effect survive.
+    /// A lost response is recovered by get_execution, never by guessing an offset.
+    pub fn reset_expired_upload(
+        &self,
+        request: ResetExpiredUploadRequest,
+    ) -> InventoryResult<ExecutionCheckpoint> {
+        self.run(true, |db| {
+            let mut current = load(db, &request.id)?;
+            if current.revision != request.expected_revision {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            if !matches!(current.intent.command, OperationCommand::Upload { .. })
+                || current.state.phase != CheckpointPhase::Executing
+                || current.state.effect != ExecutionEffect::Unknown
+                || current.state.resume_token.as_ref() != Some(&request.expired_session)
+                || current.state.reserved_remote.as_ref() != Some(&request.reserved_remote)
+            {
+                return Err(failure(InventoryError::InvalidTransition));
+            }
+            current.state.resume_token = None;
+            current.state.confirmed_offset = 0;
+            current.state.session_generation = current
+                .state
+                .session_generation
+                .checked_add(1)
+                .ok_or_else(|| failure(InventoryError::InvalidTransition))?;
+            current.revision = current
+                .revision
+                .checked_add(1)
+                .filter(|n| *n <= i64::MAX as u64)
+                .ok_or_else(|| failure(InventoryError::InvalidTransition))?;
+            validate_state(&current.intent, &current.state)?;
+            write(db, &request.id, current.revision, &current.state)?;
+            Ok(current)
         })
     }
     /// Reads recovery facts without changing state, offset, revision or eligibility.
@@ -413,6 +452,13 @@ fn port_error(error: InventoryFailure) -> OperatorFailure {
     }
 }
 impl ExecutionJournal for InventoryManager {
+    fn reset_expired_upload(
+        &self,
+        request: ResetExpiredUploadRequest,
+    ) -> OperatorResult<ExecutionCheckpoint> {
+        InventoryManager::reset_expired_upload(self, request).map_err(port_error)
+    }
+
     fn prepare_execution(
         &self,
         request: PrepareExecutionRequest,

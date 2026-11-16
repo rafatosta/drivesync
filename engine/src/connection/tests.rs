@@ -146,7 +146,7 @@ async fn valid_callback_persists_via_accounts_and_pkce_stays_internal() {
     let params: HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(
         params["scope"],
-        "openid email profile https://www.googleapis.com/auth/drive.metadata.readonly"
+        "openid email profile https://www.googleapis.com/auth/drive"
     );
     assert_eq!(params["code_challenge_method"], "S256");
     assert!(!params.contains_key("code_verifier"));
@@ -806,4 +806,107 @@ async fn final_folder_validation_checks_exact_id_and_rejects_files_and_missing_f
         f.server.requests.lock().unwrap()[2].path(),
         "/drive/v3/files/chosen-folder"
     );
+}
+
+#[tokio::test]
+async fn operator_factory_uses_the_persisted_account_and_accounts_owned_session() {
+    use crate::{inventory::*, models::*, operations::*};
+    let metadata = r#"{"id":"source","name":"source.bin","mimeType":"application/octet-stream","parents":["root"],"trashed":false,"version":"1","size":"3","sha256Checksum":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","capabilities":{"canDownload":true}}"#;
+    let root = r#"{"id":"root","mimeType":"application/vnd.google-apps.folder","trashed":false}"#;
+    let mut responses = replies("operator-user");
+    for body in [metadata, root, "abc", metadata, root, metadata, root] {
+        responses.push(Reply::json(200, body));
+    }
+    let f = Fixture::new(responses).await;
+    let begin = f.begin(None).await;
+    let engine = f.engine.clone();
+    let connection_id = begin.connection_id.clone();
+    let finishing = tokio::spawn(async move {
+        engine
+            .finish_google_sign_in(FinishGoogleSignInRequest { connection_id })
+            .await
+    });
+    assert!(Fixture::callback(&begin, None)
+        .await
+        .starts_with("HTTP/1.1 200"));
+    let account = finishing.await.unwrap().unwrap().account;
+    let local = f.directory.join("sync");
+    std::fs::create_dir(&local).unwrap();
+    let inventory = Arc::new(
+        InventoryManager::open(OpenInventoryRequest {
+            local_root: local.clone(),
+            expected: SyncIdentity {
+                sync_id: SyncId("operator-sync".into()),
+                account_id: account.id.clone(),
+                remote_root_id: "root".into(),
+            },
+            create_if_missing: true,
+        })
+        .unwrap()
+        .inventory,
+    );
+    let scope = OperatorScope {
+        sync_id: SyncId("operator-sync".into()),
+        account_id: account.id.clone(),
+        local_root: local.clone(),
+        remote_root_id: RemoteFileId("root".into()),
+    };
+    let operator = DefaultOperatorFactory
+        .create(OperatorConfig {
+            connector: f.engine.clone(),
+            scope: scope.clone(),
+            journal: inventory.clone(),
+        })
+        .unwrap();
+    let remote = RemoteFile {
+        reference: RemoteFileRef {
+            account_id: account.id.clone(),
+            file_id: RemoteFileId("source".into()),
+        },
+        provider: ProviderId("google".into()),
+        name: MetadataValue::Known("source.bin".into()),
+        kind: MetadataValue::Known(RemoteEntryKind::File),
+        mime_type: MetadataValue::Known("application/octet-stream".into()),
+        parent_ids: MetadataValue::Known(vec![RemoteFileId("root".into())]),
+        trashed: MetadataValue::Known(false),
+        version: MetadataValue::Known("1".into()),
+        created_time: MetadataValue::NotCollected,
+        modified_time: MetadataValue::NotCollected,
+        size: MetadataValue::Known(3),
+        md5_checksum: MetadataValue::NotCollected,
+        sha256_checksum: MetadataValue::Known(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
+        ),
+        provider_data: MetadataValue::NotCollected,
+    };
+    let result = operator
+        .download(DownloadRequest {
+            execution: ExecutionContext {
+                id: ExecutionId::new("factory-download".into()).unwrap(),
+                source: Some(SourceEvidence::Remote {
+                    metadata: Box::new(remote.clone()),
+                    revision: None,
+                }),
+            },
+            source: ResourceRef::Remote {
+                provider_id: ProviderId("google".into()),
+                reference: remote.reference,
+            },
+            destination: DirectoryRef::LocalRoot,
+            name: ItemName::Local("download.bin".into()),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.bytes_transferred, 3);
+    assert_eq!(std::fs::read(local.join("download.bin")).unwrap(), b"abc");
+    let mut foreign = scope;
+    foreign.account_id = AccountId("missing".into());
+    assert!(DefaultOperatorFactory
+        .create(OperatorConfig {
+            connector: f.engine.clone(),
+            scope: foreign,
+            journal: inventory
+        })
+        .is_err());
 }

@@ -2,15 +2,12 @@
 
 ## 1. Escopo entregue
 
-O módulo público `drivesync_engine::operations` contém modelos, traits e validações puras dos contratos de recuperação,
-sem implementação de operações, construtor concreto, executor, fábrica concreta,
-registro de provedores, filesystem, autenticação, HTTP ou integração de execução
-com Analyzer/Orchestrator. Não há stubs com `Ok`, `todo!`, panic ou retornos fictícios.
-
-A interface de consumo é `Operator`, um **trait**, não uma instância concreta já
-construível. O Analyzer poderá receber `Arc<dyn Operator>` quando existir executor.
-`OperatorFactory` declara a composição futura; ainda não resolve contas nem
-seleciona provedores em runtime. Código-fonte: `engine/src/operations/`.
+O módulo público `drivesync_engine::operations` fornece modelos/traits, a
+`DefaultOperatorFactory` e `GoogleOperator`. O especialista executa somente
+upload/download de criação; outros métodos recusam capacidade não suportada e
+`delete` recusa exclusão permanente sem efeitos. Consulte [TRANSFERS.md](TRANSFERS.md)
+para fluxo físico, precondições, recuperação e limites. Não há fila privada,
+execução automática de planos, confirmação de baseline ou dependência de GTK.
 
 ## 2. Interface pública
 
@@ -51,9 +48,9 @@ sessão Google, factory concreta ou provedor arbitrário informado pelo chamador
 fn create(&self, config: OperatorConfig) -> OperatorResult<Arc<dyn Operator>>;
 ```
 
-A futura composição segue o detector remoto: resolver a conta persistida via
+A composição segue o detector remoto: resolver a conta persistida via
 Engine, obter seu provedor e selecionar o especialista compatível. Provedor
-incompatível deve falhar explicitamente, sem fallback. O especialista acessará
+incompatível deve falhar explicitamente, sem fallback. O especialista acessa
 serviços externos somente pelo respectivo Provider e fará o trabalho local
 necessário dentro do escopo, inclusive publicação de downloads. A seleção deve
 validar conta/provedor das referências, não confiar somente nos campos recebidos.
@@ -69,7 +66,7 @@ validar conta/provedor das referências, não confiar somente nos campos recebid
 | `Preconditions` | `expected_version: Option<String>`, `expected_revision: Option<String>` |
 
 Referências locais são relativas à raiz autorizada e reutilizam Models. O nome
-local preserva bytes Unix não UTF-8. A implementação futura deve validar nomes,
+local preserva bytes Unix não UTF-8. A implementação deve validar nomes,
 identidades, tipos, caminhos e ambiente de origem/destino; o contrato de dados
 não executa essa validação nem garante proteção TOCTOU por si só. `ResourceRef`
 não é um handle aberto de filesystem. O campo `provider_id` remoto precisa ser
@@ -160,5 +157,5 @@ configurada. O Inventory persiste esses dados e seus bloqueios; nenhum comando
 ## Recuperação durável — etapa 1
 
 Veja [RECOVERY.md](RECOVERY.md) para identidade imutável, evidência de origem,
-checkpoints com CAS, efeitos incertos e identidade após publicação. Não há
-executor, seleção concreta nem liberação de operações de análise nesta entrega.
+checkpoints com CAS, efeitos incertos e identidade após publicação. Upload/download possuem executor e seleção concreta; não há liberação de operações
+de análise nesta entrega. Consulte [TRANSFERS.md](TRANSFERS.md).

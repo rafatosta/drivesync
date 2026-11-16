@@ -6,14 +6,15 @@ use std::{future::Future, pin::Pin, sync::Arc};
 /// requests are owned and Send, so consumers can use `Arc<dyn Operator>` on Tokio.
 pub type OperationFuture<'a, T> = Pin<Box<dyn Future<Output = OperatorResult<T>> + Send + 'a>>;
 
-/// Public Analyzer-facing contract implemented by a future provider specialist.
+/// Public contract implemented by account-scoped provider specialists.
 ///
 /// Implementations must validate scope, identities, destination and preconditions,
 /// access remote services only through Providers, and preserve uncertain effects.
 /// Every call binds its required ExecutionContext to the exact intent in the
 /// Inventory journal before effects. Checkpoints do not authorize execution.
 /// No method schedules other items, resolves conflicts or confirms a baseline.
-/// There is no implementation or default successful/unsupported placeholder here.
+/// The trait supplies no default operation bodies. The Google specialist
+/// supports create-only upload/download and explicitly rejects other mutations.
 pub trait Operator: Send + Sync {
     /// Constructs one specialist with an account-scoped Engine handle.
     /// The factory must resolve the persisted provider before selecting a type;
@@ -49,10 +50,10 @@ pub trait Operator: Send + Sync {
 
 /// Composition boundary mirroring remote detector provider selection.
 ///
-/// A future implementation resolves config.scope.account_id via config.connector,
+/// The implementation resolves config.scope.account_id via config.connector,
 /// checks scope/account/provider compatibility and selects the specialist. The
 /// provider is never inferred from names or supplied as an arbitrary selector.
-/// No implementation, registry or fallback executor is provided in this module.
+/// `DefaultOperatorFactory` provides this composition for the Google specialist.
 pub trait OperatorFactory: Send + Sync {
     /// Builds an account-scoped handle; unsupported providers must fail explicitly.
     fn create(&self, config: OperatorConfig) -> OperatorResult<Arc<dyn Operator>>;

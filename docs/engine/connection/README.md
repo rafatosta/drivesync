@@ -29,3 +29,12 @@ A configuração OAuth é carregada exclusivamente pelo método existente de Pro
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações](AGENTS.md)
 
 **Estado:** implementado; os resultados e limites da validação estão em [TESTS.md](TESTS.md#execução--2026-11-10).
+
+## Autorização para transferências — 2026-11-16
+
+Novos consentimentos/reautorizações solicitam openid/email/profile e o escopo
+Drive completo para ler e criar conteúdo nas pastas existentes escolhidas.
+Credenciais continuam em Accounts; contas antigas com acesso apenas a metadados
+precisam de novo consentimento. O Operator usa sessão renovável e guarda que
+impede remoção da conta durante a transferência; não cancela mutações por drop
+do future do chamador. Ver [TRANSFERS.md](../operations/TRANSFERS.md).

@@ -1,6 +1,6 @@
 # Inventory — vínculos explícitos e planos duráveis
 
-O esquema é **7**; checkpoints técnicos estão descritos em
+O esquema é **8**; checkpoints técnicos estão descritos em
 [RECOVERY.md](../operations/RECOVERY.md). Bancos anteriores são preservados e recusados com
 `UnsupportedSchema`, sem migração, limpeza ou reconstrução automática.
 
