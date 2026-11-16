@@ -281,8 +281,9 @@ impl InventoryManager {
         })
     }
 }
-/// Semantic intents cannot be released via the generic retry API: there is no
-/// persisted executable command. Keep this invariant across all queue entrypoints.
+/// Analysis-linked operations cannot be released through generic queue APIs,
+/// even when a plan has a command or an execution checkpoint exists. Eligibility
+/// and execution authorization require a separate future integration protocol.
 pub(super) fn ensure_executable(db: &Connection, id: &OperationId) -> InventoryResult<()> {
     let incomplete: bool = db
         .query_row(

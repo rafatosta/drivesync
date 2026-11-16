@@ -216,7 +216,7 @@ pub fn inspect(request: InspectInventoryRequest) -> InventoryResult<InspectionPa
     let version: u32 = tx
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 6 {
+    if version != 7 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(&tx)?;

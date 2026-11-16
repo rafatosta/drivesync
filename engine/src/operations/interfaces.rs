@@ -3,13 +3,15 @@ use super::*;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 /// One bounded asynchronous call. The future may borrow its scoped executor;
-/// requests are owned and Send, so consumers can use Arc<dyn Operator> on Tokio.
+/// requests are owned and Send, so consumers can use `Arc<dyn Operator>` on Tokio.
 pub type OperationFuture<'a, T> = Pin<Box<dyn Future<Output = OperatorResult<T>> + Send + 'a>>;
 
 /// Public Analyzer-facing contract implemented by a future provider specialist.
 ///
 /// Implementations must validate scope, identities, destination and preconditions,
 /// access remote services only through Providers, and preserve uncertain effects.
+/// Every call binds its required ExecutionContext to the exact intent in the
+/// Inventory journal before effects. Checkpoints do not authorize execution.
 /// No method schedules other items, resolves conflicts or confirms a baseline.
 /// There is no implementation or default successful/unsupported placeholder here.
 pub trait Operator: Send + Sync {

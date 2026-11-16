@@ -18,7 +18,9 @@ Implementar a API pública de execução segura de comandos de manipulação e t
 - [TESTS.md](TESTS.md): verificações funcionais e critérios de aceite.
 - [AGENTS.md da raiz](../../../AGENTS.md): padrões gerais do repositório.
 
-O contrato público está compilado em `engine/src/operations/`: traits `Operator`, `OperatorFactory`, ports e modelos. Não há implementação de operações, factories ou seleção. A etapa atual foi explicitamente limitada pelo usuário a contratos sem implementação; não criar stubs, executores ou corpos de operações.
+O contrato público está compilado em `engine/src/operations/`: traits `Operator`, `OperatorFactory`, ports e modelos, incluindo os contratos
+de [recuperação](RECOVERY.md). O Inventory implementa a persistência técnica de
+checkpoints; isso não libera operações nem cria executor. Não há implementação de operações, factories ou seleção. A etapa atual foi explicitamente limitada pelo usuário a contratos sem implementação; não criar stubs, executores ou corpos de operações.
 
 ## Diretrizes de implementação
 

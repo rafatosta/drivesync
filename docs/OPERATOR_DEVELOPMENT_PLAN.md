@@ -1,6 +1,8 @@
 # Operador: análise e plano de desenvolvimento
 
-Data: 16/11/2026. Plano proposto, sem implementação de executor ou liberação de operações.
+Data: 16/11/2026. Etapa 1 implementada: contratos de segurança e checkpoints
+técnicos no Inventory; detalhes em [RECOVERY.md](engine/operations/RECOVERY.md).
+As etapas 2–10 permanecem propostas. Sem executor ou liberação de operações.
 
 ## 1. Referências inspecionadas
 
@@ -27,7 +29,7 @@ O Analisador está suficientemente estruturado para desenvolver a execução iso
 - Trash continua condicionado à autorização e à verificação dos sobreviventes/descendentes. Restore exige solicitação explícita.
 - O Orchestrator já faz análise inicial após Scanner completo e ingestão contínua. Não transfere conteúdo.
 
-**Barreira efetiva:** operações vinculadas a decisões do Analisador nascem `Blocked`. `ensure_executable` recusa claim/transições genéricas para essas operações, inclusive quando já existe comando no plano. O comentário dessa função ainda menciona ausência de comando persistido; o comportamento real é bloquear qualquer operação vinculada à análise. Atualizar essa explicação ao implementar a integração, sem simplesmente retirar a proteção.
+**Barreira efetiva:** operações vinculadas a decisões do Analisador nascem `Blocked`. `ensure_executable` recusa claim/transições genéricas para essas operações, inclusive quando já existe comando no plano. O comentário dessa função foi corrigido na etapa 1: a proteção permanece mesmo com comando e checkpoint persistidos.
 
 Nem `NoChanges`, nem `PendingOperations`, nem `Verified` isoladamente autorizam marcar o item como sincronizado. Associação e baseline precisam de evidência própria após o efeito.
 
@@ -83,9 +85,9 @@ Não fazer cherry-pick amplo do motor arquivado. Extrair unidades pequenas com t
 4. **Sessão e revogação.** Reutilizar Accounts/Engine para obter sessão validada. O helper atual de observação cancela o future HTTP por `select!`; não transplantar essa semântica para mutações como prova de `NotApplied`. Depois do despacho, resposta perdida ou cancelamento pode significar `Unknown`.
 5. **Publicação e identidade locais.** Distinguir ID do item lógico e identidade física do arquivo. Substituir por temporário pode trocar inode; registrar identidade realmente publicada e renovar a associação com evidência. Definir estratégia para atualização concorrente, preservação e recuperação, sem prometer compare-and-swap de pathname que o filesystem não oferece.
 6. **Lixeira/restauração local.** Há contratos, mas não evidência aqui de implementação atual segura e completa. Definir backend, escopo, identidade recuperável, destino ocupado e comportamento entre filesystems. Sem capacidade, recusar. `delete` sempre recusa localmente, sem autenticação ou I/O.
-7. **Documentação contraditória.** `docs/engine/operations/TESTS.md` ainda descreve `OPR-L-11/delete_local` como remoção efetiva. Corrigir esse critério antes dos testes funcionais para exigir recusa; a política da raiz e do contrato compilado prevalece.
+7. **Documentação contraditória — corrigida na etapa 1.** `OPR-L-11/delete_local` agora exige recusa sem efeitos, I/O ou autenticação; a política da raiz e do contrato compilado prevalece.
 
-Essas são decisões propostas para implementação, não alterações de contrato já aplicadas. A política atual dispensa retrocompatibilidade; isso não autoriza apagar bancos ou arquivos existentes. Formatos incompatíveis devem ser preservados e recusados.
+As lacunas acima descrevem o diagnóstico inicial. A etapa 1 implementou identidade, vínculo de origem e checkpoints; atualização remota condicional, recuperação física e backend de lixeira continuam pendentes. A política atual dispensa retrocompatibilidade; isso não autoriza apagar bancos ou arquivos existentes. Formatos incompatíveis devem ser preservados e recusados.
 
 ## 6. Distribuição de responsabilidades proposta
 

@@ -1,6 +1,6 @@
 //! Contracts for provider-selected operations consumed by the Analyzer.
 //!
-//! This module declares data and interfaces only. There is no concrete Operator,
+//! This module declares data, interfaces and pure recovery validation only. There is no concrete Operator,
 //! factory, provider registry, filesystem helper or execution implementation.
 //! In particular, an operation cannot report success without an executor.
 //!
@@ -22,6 +22,8 @@
 //! ```
 mod interfaces;
 mod models;
+mod recovery;
 
 pub use interfaces::*;
 pub use models::*;
+pub use recovery::*;

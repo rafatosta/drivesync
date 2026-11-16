@@ -11,7 +11,8 @@ Implementar e manter o armazenamento persistente do estado de uma pasta sincroni
 - [TESTS.md](TESTS.md): cenários de conformidade e persistência.
 - Os submódulos `items`, `metadata`, `baseline`, `operations`, `activity` e `storage` possuem seus próprios contratos.
 
-A interface pública é `InventoryManager`, com as 17 operações originais e três métodos de persistência de análises documentados em [ANALYSIS.md](ANALYSIS.md). Cada método recebe uma requisição tipada e retorna `InventoryResult<T>`. A organização interna do código será definida conforme a implementação.
+A interface pública é `InventoryManager`, com as 17 operações originais e três métodos de persistência de análises documentados em [ANALYSIS.md](ANALYSIS.md)
+e os métodos de checkpoint de [RECOVERY.md](../operations/RECOVERY.md). Cada método recebe uma requisição tipada e retorna `InventoryResult<T>`. A organização interna do código será definida conforme a implementação.
 
 ## Disponibilidade e recuperação
 

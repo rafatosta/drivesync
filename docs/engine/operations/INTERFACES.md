@@ -2,7 +2,7 @@
 
 ## 1. Escopo entregue
 
-O módulo público `drivesync_engine::operations` contém somente modelos e traits,
+O módulo público `drivesync_engine::operations` contém modelos, traits e validações puras dos contratos de recuperação,
 sem implementação de operações, construtor concreto, executor, fábrica concreta,
 registro de provedores, filesystem, autenticação, HTTP ou integração de execução
 com Analyzer/Orchestrator. Não há stubs com `Ok`, `todo!`, panic ou retornos fictícios.
@@ -39,7 +39,8 @@ o Analyzer consome um handle já composto, sem construir especialista Google.
 
 ## 3. Configuração e seleção por provedor
 
-`OperatorConfig` contém `connector: Engine` e `scope: OperatorScope`. O escopo
+`OperatorConfig` contém `connector: Engine`, `scope: OperatorScope` e
+`journal: Arc<dyn ExecutionJournal>`, porta bloqueante implementada pelo Inventory. O escopo
 contém `sync_id: SyncId`, `account_id: AccountId`, `local_root: PathBuf` e
 `remote_root_id: RemoteFileId`, reutilizando IDs de Models. Não recebe token,
 sessão Google, factory concreta ou provedor arbitrário informado pelo chamador.
@@ -80,7 +81,9 @@ réplicas vem da identidade realmente criada/verificada. Nenhuma confirma baseli
 
 ## 5. Campos das requisições
 
-Todas as dez requisições contêm `options: ExecutionOptions`.
+Todas as dez requisições contêm `execution: ExecutionContext` obrigatório e
+`options: ExecutionOptions`. O contexto vincula ID e evidência de origem; ele não
+é autorização. `delete` recusa antes de consultar contexto, journal ou credenciais.
 
 | Requisição | Demais campos |
 | --- | --- |
@@ -153,3 +156,9 @@ movimentação, lixeira e restauração. Não contém variante de exclusão perm
 executor, callback ou credencial. `DirectoryRef::LocalRoot` identifica a raiz local
 configurada. O Inventory persiste esses dados e seus bloqueios; nenhum comando
 é despachado ao Operator nesta fase.
+
+## Recuperação durável — etapa 1
+
+Veja [RECOVERY.md](RECOVERY.md) para identidade imutável, evidência de origem,
+checkpoints com CAS, efeitos incertos e identidade após publicação. Não há
+executor, seleção concreta nem liberação de operações de análise nesta entrega.

@@ -330,7 +330,7 @@ impl InventoryManager {
 }
 
 /// Structural validation of persisted command references; policy remains Analyzer-owned.
-fn command_scope(
+pub(super) fn command_scope(
     command: &crate::operations::OperationCommand,
     account: &AccountId,
 ) -> InventoryResult<()> {

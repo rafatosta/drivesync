@@ -57,4 +57,5 @@ Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementaç�
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** contrato Rust compilado em `engine/src/operations/`, somente modelos e traits. Nenhum executor, fábrica concreta, seleção ou operação implementado. O Analyzer ainda não chama execução.
+**Estado:** contrato Rust compilado em `engine/src/operations/`, modelos, traits e validações puras. O Inventory implementa a porta de checkpoints
+descrita em [RECOVERY.md](RECOVERY.md), sem autorização ou execução. Nenhum executor, fábrica concreta, seleção ou operação implementado. O Analyzer ainda não chama execução.
