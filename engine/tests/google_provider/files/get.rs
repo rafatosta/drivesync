@@ -186,10 +186,10 @@ async fn invalid_json_on_success_status_is_invalid_response() {
 /// FG-C08: unreachable server yields `Network` without a status.
 #[tokio::test]
 async fn connection_failure_is_network_error() {
-    let server = Server::start(vec![]);
-    let client = server.client();
-    drop(server);
-    let err = client
+    let endpoint = crate::google_provider::support::RefusedEndpoint::new();
+    assert!(std::net::TcpListener::bind(endpoint.base.trim_start_matches("http://")).is_err());
+    let err = endpoint
+        .client()
         .files_get(&session(), &id("x"), FileGetOptions::default())
         .await
         .unwrap_err();

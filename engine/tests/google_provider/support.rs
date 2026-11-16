@@ -227,3 +227,62 @@ fn handle(mut stream: TcpStream, reply: Reply, log: &Mutex<Vec<Recorded>>) -> Op
     let _ = stream.shutdown(Shutdown::Both);
     Some(())
 }
+
+/// Keeps a TCP port bound but not listening, so connection refusal cannot hit
+/// another test server after an ephemeral port is released and reused.
+pub struct RefusedEndpoint {
+    _socket: std::os::fd::OwnedFd,
+    pub base: String,
+}
+impl RefusedEndpoint {
+    pub fn new() -> Self {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        // SAFETY: socket returns a fresh descriptor; OwnedFd takes its sole ownership.
+        let raw = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+        assert!(raw >= 0);
+        let socket = unsafe { OwnedFd::from_raw_fd(raw) };
+        let mut address = libc::sockaddr_in {
+            sin_family: libc::AF_INET as _,
+            sin_port: 0,
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+            },
+            sin_zero: [0; 8],
+        };
+        let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+        // SAFETY: pointers reference a valid sockaddr_in with its exact size.
+        assert_eq!(
+            unsafe {
+                libc::bind(
+                    socket.as_raw_fd(),
+                    (&address as *const libc::sockaddr_in).cast(),
+                    length,
+                )
+            },
+            0
+        );
+        // SAFETY: getsockname writes at most length bytes into this sockaddr_in.
+        assert_eq!(
+            unsafe {
+                libc::getsockname(
+                    socket.as_raw_fd(),
+                    (&mut address as *mut libc::sockaddr_in).cast(),
+                    &mut length,
+                )
+            },
+            0
+        );
+        let base = format!("http://127.0.0.1:{}", u16::from_be(address.sin_port));
+        Self {
+            _socket: socket,
+            base,
+        }
+    }
+    pub fn client(&self) -> GoogleDriveClient {
+        GoogleDriveClient::with_base_urls(
+            format!("{}/drive/v3", self.base),
+            format!("{}/upload/drive/v3", self.base),
+        )
+        .unwrap()
+    }
+}
