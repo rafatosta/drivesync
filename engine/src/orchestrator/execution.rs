@@ -24,14 +24,16 @@ impl ExecutionControl {
             ..Default::default()
         })))
     }
+    /// Consume expired wakeups; a failed probe schedules its own next check.
+    /// Items retired or confirmed in the meantime must not cause a hot loop.
     pub fn probe_retry_due(&self) -> bool {
         let now = super::analysis::now().unix_millis;
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        let mut snapshot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let count = snapshot.prerequisite_retries.len();
+        snapshot
             .prerequisite_retries
-            .values()
-            .any(|at| at.unix_millis <= now)
+            .retain(|_, at| at.unix_millis > now);
+        snapshot.prerequisite_retries.len() != count
     }
     pub fn snapshot(&self) -> ExecutionStatus {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -122,4 +124,19 @@ pub(super) fn configure(
         },
         observer: control,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn expired_prerequisite_retry_is_consumed_once() {
+        let control = ExecutionControl::new(true);
+        control.0.lock().unwrap().prerequisite_retries.insert(
+            crate::inventory::SyncItemId("retired-item".into()),
+            crate::models::Timestamp { unix_millis: 0 },
+        );
+        assert!(control.probe_retry_due());
+        assert!(!control.probe_retry_due());
+    }
 }
