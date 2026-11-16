@@ -133,7 +133,13 @@ impl Worker {
                 } else {
                     self.workspace.source(metadata)?
                 };
-                fs::matches_observation(&file, metadata)?;
+                let directory = metadata.kind == MetadataValue::Known(LocalEntryKind::Directory);
+                // Child changes alter directory timestamps/link counts without
+                // replacing the directory itself. The held directory identity
+                // above remains authoritative when a physical ID is known.
+                if !directory || metadata.local_id.is_none() {
+                    fs::matches_observation(&file, metadata)?;
+                }
                 let hash = if metadata.kind == MetadataValue::Known(LocalEntryKind::Regular) {
                     Some(fs::hash(&mut file, &self.options)?)
                 } else {
@@ -145,7 +151,9 @@ impl Worker {
                 {
                     return Err(self.error(OperatorError::IntegrityMismatch));
                 }
-                fs::matches_observation(&file, metadata)?;
+                if !directory || metadata.local_id.is_none() {
+                    fs::matches_observation(&file, metadata)?;
+                }
                 Ok(VerifiedSource {
                     metadata: FileData::Local(fs::observe(&file, metadata.relative_path.clone())?),
                     sha256: hash,
@@ -161,35 +169,35 @@ impl Worker {
                 let actual = self
                     .within_root(&metadata.reference.file_id.0, directory)
                     .await?;
-                if !directory {
-                    let mut expected = metadata.as_ref().clone();
-                    if allow_version_advance {
-                        if let (MetadataValue::Known(old), Some(new), MetadataValue::Known(hash)) = (
-                            &expected.version,
-                            &actual.version,
-                            &expected.sha256_checksum,
-                        ) {
-                            let advanced = old
-                                .parse::<u64>()
-                                .ok()
-                                .zip(new.parse::<u64>().ok())
-                                .is_some_and(|(old, new)| new > old);
-                            if advanced
-                                && actual
-                                    .sha256_checksum
-                                    .as_ref()
-                                    .is_some_and(|value| value.eq_ignore_ascii_case(hash))
-                            {
-                                expected.version = MetadataValue::Known(new.clone());
-                            }
+                let mut expected = metadata.as_ref().clone();
+                if allow_version_advance {
+                    if let (MetadataValue::Known(old), Some(new)) =
+                        (&expected.version, &actual.version)
+                    {
+                        let advanced = old
+                            .parse::<u64>()
+                            .ok()
+                            .zip(new.parse::<u64>().ok())
+                            .is_some_and(|(old, new)| new > old);
+                        let content_unchanged = directory
+                            || match (&expected.sha256_checksum, &actual.sha256_checksum) {
+                                (MetadataValue::Known(hash), Some(actual)) => {
+                                    actual.eq_ignore_ascii_case(hash)
+                                }
+                                _ => false,
+                            };
+                        if advanced && content_unchanged {
+                            expected.version = MetadataValue::Known(new.clone());
                         }
                     }
+                }
+                if !directory {
                     self.check_remote_source(&actual, &expected)?;
                 } else if actual
                     .version
                     .as_ref()
                     .map(|v| MetadataValue::Known(v.clone()))
-                    != Some(metadata.version.clone())
+                    != Some(expected.version.clone())
                     || directory
                         && (actual
                             .name

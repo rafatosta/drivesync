@@ -144,3 +144,15 @@ ID e snapshot. Referências privadas de lixeira têm validação específica e n
 admitidas por outros comandos. O esquema SQLite não é alterado.
 
 Exclusão permanente permanece proibida antes de qualquer I/O.
+
+## Endpoint condicional validado
+
+A aceitação real mostrou que PATCH v3 aceitou um If-Match deliberadamente inválido.
+As mutações condicionais usam PATCH /drive/v2/files e a substituição resumível usa
+PUT /upload/drive/v2/files. O Provider traduz o subconjunto suportado de metadados
+(nome/title e trashed/labels) e normaliza as respostas para os modelos existentes.
+Campos fora desse subconjunto são recusados, nunca descartados silenciosamente.
+O snapshot v3 é vinculado ao ETag v2 apenas quando ID e version coincidem.
+ETag ausente, fraco ou snapshot divergente continuam bloqueados. A aceitação real
+exige HTTP 412 com validador inválido antes de exercitar as mutações válidas.
+Referência: https://developers.google.com/workspace/drive/api/reference/rest/v2/files

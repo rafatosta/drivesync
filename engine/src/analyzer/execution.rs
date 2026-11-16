@@ -1,4 +1,4 @@
-//! The Analyzer fulfills initial-creation requirements, then calls Operator.
+//! The Analyzer fulfills guarded plans and calls Operator with durable ownership.
 //! No Provider, SQL, local traversal, name-based association or conflict resolution.
 use super::*;
 use crate::{inventory::*, models::*, operations::*};
@@ -62,15 +62,100 @@ fn new_id() -> Option<ExecutionId> {
     ))
     .ok()
 }
-/// Only the missing replica's observation/identity requirements may be fulfilled
-/// by this read-only creation probe. All conflicts and other requirements stay.
+/// Existing resources require a complete current plan and strict source proof.
+/// Only initial creation probes may discharge missing-replica identity/evidence
+/// requirements. Conflicts and unresolved mutation requirements remain blocked.
 pub(super) async fn verify_candidate(
     e: &AnalyzerExecution,
     item: &SyncItem,
     a: &mut NewAnalysisAssessment,
 ) -> Option<(ExecutionContext, OperationCommand)> {
-    let source = source(item)?;
     let plan = a.plan.as_ref()?;
+    if item.baseline.is_some() {
+        if !plan.manual.is_empty()
+            || plan.steps.is_empty()
+            || a.intents.is_empty()
+            || !a.requirements.is_empty()
+            || !plan.steps[0].blocked_by.is_empty()
+            || !plan.steps[0].depends_on.is_empty()
+        {
+            return None;
+        }
+        let command = plan.steps[0].command.clone()?;
+        let evidence = match &command {
+            OperationCommand::Rename { target, .. } | OperationCommand::Move { target, .. } => {
+                match target {
+                    ResourceRef::Local { .. } => SourceEvidence::Local {
+                        metadata: Box::new(
+                            item.local_latest.as_ref().or(item.local.as_ref())?.clone(),
+                        ),
+                        sha256: None,
+                    },
+                    ResourceRef::Remote { .. } => SourceEvidence::Remote {
+                        metadata: Box::new(
+                            item.remote_latest
+                                .as_ref()
+                                .or(item.remote.as_ref())?
+                                .clone(),
+                        ),
+                        revision: None,
+                    },
+                }
+            }
+            OperationCommand::UpdateContent { source, .. } => match source {
+                ContentSource::LocalFile { .. } => SourceEvidence::Local {
+                    metadata: Box::new(item.local_latest.as_ref().or(item.local.as_ref())?.clone()),
+                    sha256: None,
+                },
+                ContentSource::RemoteFile { .. } => SourceEvidence::Remote {
+                    metadata: Box::new(
+                        item.remote_latest
+                            .as_ref()
+                            .or(item.remote.as_ref())?
+                            .clone(),
+                    ),
+                    revision: None,
+                },
+                _ => return None,
+            },
+            _ => return None,
+        };
+        notify(
+            e,
+            item,
+            Some(command.clone()),
+            None,
+            CreationStage::Checking,
+            None,
+        );
+        if let Err(error) = e
+            .operator
+            .verify_source(VerifySourceRequest {
+                source: evidence.clone(),
+                allow_version_advance: false,
+                options: e.options.clone(),
+            })
+            .await
+        {
+            notify(
+                e,
+                item,
+                Some(command),
+                None,
+                CreationStage::Blocked,
+                Some(error.kind),
+            );
+            return None;
+        }
+        return Some((
+            ExecutionContext {
+                id: new_id()?,
+                source: Some(evidence),
+            },
+            command,
+        ));
+    }
+    let source = source(item)?;
     if !plan.manual.is_empty()
         || plan.steps.len() != 1
         || a.intents.len() != 1
@@ -211,12 +296,20 @@ pub(super) async fn resume(
     at: Timestamp,
     guard: &Reservation,
 ) -> AnalyzerResult<()> {
+    let completed = inventory
+        .get_execution(GetExecutionRequest {
+            id: binding.intent.context.id.clone(),
+        })
+        .map_err(inventory_error)?
+        .state
+        .phase
+        == CheckpointPhase::Completed;
     if binding
         .operation
         .next_attempt_at
         .is_some_and(|t| t.unix_millis > at.unix_millis)
         || binding.operation.attempt_count >= 5
-        || binding.operation.state == OperationState::Blocked
+        || (binding.operation.state == OperationState::Blocked && !completed)
     {
         return Ok(());
     }
@@ -315,6 +408,70 @@ async fn run(
     match verification {
         Ok(confirmed) => {
             let verified_at = confirmed.verified_at;
+            let b = &confirmed.baseline;
+            let mapped_parent = match &b.local.parent_identity {
+                None => Some(binding.intent.scope.remote_root_id.clone()),
+                Some(BaselineParent::Local(id)) => inventory
+                    .get_item(GetItemRequest {
+                        selector: ItemSelector::Id(id.clone()),
+                    })
+                    .map_err(inventory_error)?
+                    .item
+                    .and_then(|parent| parent.remote_ref.map(|r| r.file_id)),
+                _ => None,
+            };
+            let remote_parent = match &b.remote.parent_identity {
+                Some(BaselineParent::Remote(r)) => Some(r.file_id.clone()),
+                _ => None,
+            };
+            let aligned = b.local.local_name_bytes.as_deref()
+                == b.remote.name.as_ref().map(|n| n.as_bytes())
+                && mapped_parent.is_some()
+                && mapped_parent == remote_parent;
+            if !aligned {
+                let analysis = inventory
+                    .get_analysis(GetAnalysisRequest {
+                        selector: AnalysisSelector::LatestForItem(current.id.clone()),
+                    })
+                    .map_err(inventory_error)?
+                    .analysis;
+                if analysis
+                    .and_then(|a| a.plan)
+                    .is_some_and(|p| p.steps.len() > 1)
+                {
+                    inventory
+                        .complete_execution_step(CompleteExecutionStepRequest {
+                            binding: binding.clone(),
+                            at: verified_at,
+                        })
+                        .map_err(inventory_error)?;
+                    notify(
+                        e,
+                        item,
+                        Some(binding.intent.command),
+                        Some(binding.operation.id),
+                        CreationStage::Completed,
+                        None,
+                    );
+                    return Ok(());
+                }
+                inventory
+                    .fail_creation(FailCreationRequest {
+                        binding: binding.clone(),
+                        error: OperatorError::PreconditionFailed,
+                        at: verified_at,
+                    })
+                    .map_err(inventory_error)?;
+                notify(
+                    e,
+                    item,
+                    Some(binding.intent.command),
+                    Some(binding.operation.id),
+                    CreationStage::Blocked,
+                    Some(OperatorError::PreconditionFailed),
+                );
+                return Ok(());
+            }
             inventory
                 .confirm_sync(ConfirmSyncRequest {
                     item_id: current.id.clone(),
@@ -325,7 +482,11 @@ async fn run(
                     activity: Some(NewActivity {
                         item_id: current.id.clone(),
                         operation_id: Some(binding.operation.id.clone()),
-                        event_type: if binding.operation.direction == OperationDirection::Upload {
+                        event_type: if binding.operation.kind == OperationKind::Rename {
+                            ActivityType::Rename
+                        } else if binding.operation.kind == OperationKind::Move {
+                            ActivityType::Move
+                        } else if binding.operation.direction == OperationDirection::Upload {
                             ActivityType::Upload
                         } else {
                             ActivityType::Download
@@ -333,7 +494,7 @@ async fn run(
                         origin: ActivityOrigin::System,
                         outcome: ActivityOutcome::Completed,
                         occurred_at: verified_at,
-                        description: Some("New replica verified by Operator".into()),
+                        description: Some("Operation result verified by Operator".into()),
                         error_kind: None,
                         item_name: None,
                         item_remote_id: current.remote_ref.as_ref().map(|r| r.file_id.0.clone()),
@@ -417,6 +578,51 @@ async fn execute(e: &AnalyzerExecution, binding: &CreationBinding) -> OperatorRe
                 })
                 .await
         }
+        OperationCommand::Rename {
+            target,
+            new_name,
+            preconditions,
+        } => {
+            e.operator
+                .rename(RenameRequest {
+                    execution: context,
+                    target,
+                    new_name,
+                    preconditions,
+                    options,
+                })
+                .await
+        }
+        OperationCommand::Move {
+            target,
+            destination,
+            preconditions,
+        } => {
+            e.operator
+                .move_item(MoveRequest {
+                    execution: context,
+                    target,
+                    destination,
+                    preconditions,
+                    options,
+                })
+                .await
+        }
+        OperationCommand::UpdateContent {
+            target,
+            source,
+            preconditions,
+        } => e
+            .operator
+            .update_content(UpdateContentRequest {
+                execution: context,
+                target,
+                source,
+                preconditions,
+                options,
+            })
+            .await
+            .map(|r| r.item),
         _ => Err(OperatorFailure {
             kind: OperatorError::UnsupportedOperation,
             effect: ExecutionEffect::NotApplied,
@@ -443,7 +649,35 @@ async fn verify_both(
         effect: ExecutionEffect::Applied,
         resource: Some(result.resource.clone()),
     };
-    let source = binding.intent.context.source.clone().ok_or_else(failure)?;
+    let source = if matches!(
+        binding.intent.command,
+        OperationCommand::Rename { .. } | OperationCommand::Move { .. }
+    ) {
+        match result.resource {
+            ResourceRef::Remote { .. } => SourceEvidence::Local {
+                metadata: Box::new(
+                    item.local_latest
+                        .as_ref()
+                        .or(item.local.as_ref())
+                        .ok_or_else(failure)?
+                        .clone(),
+                ),
+                sha256: None,
+            },
+            ResourceRef::Local { .. } => SourceEvidence::Remote {
+                metadata: Box::new(
+                    item.remote_latest
+                        .as_ref()
+                        .or(item.remote.as_ref())
+                        .ok_or_else(failure)?
+                        .clone(),
+                ),
+                revision: None,
+            },
+        }
+    } else {
+        binding.intent.context.source.clone().ok_or_else(failure)?
+    };
     let source = e
         .operator
         .verify_source(VerifySourceRequest {
@@ -481,7 +715,16 @@ async fn verify_both(
                 id: binding.intent.context.id.clone(),
             })
             .map_err(|_| failure())?;
-        if hash != checkpoint.state.staging.as_ref().map(|s| &s.sha256) {
+        let expected = checkpoint.state.staging.as_ref().map(|s| &s.sha256);
+        let metadata_mutation = matches!(
+            binding.intent.command,
+            OperationCommand::Rename { .. } | OperationCommand::Move { .. }
+        );
+        if (!metadata_mutation && hash != expected)
+            || (metadata_mutation
+                && hash.map(|h| MetadataValue::Known(h.as_str().to_owned()))
+                    != Some(remote.sha256_checksum.clone()))
+        {
             return Err(failure());
         }
     }

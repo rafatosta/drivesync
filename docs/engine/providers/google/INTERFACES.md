@@ -2536,3 +2536,14 @@ HTTP 412 como `PreconditionFailed`, sem retry ou fallback incondicional.
 Os testes HTTP cobrem snapshot, cabeçalho enviado e rejeição por versão divergente.
 O envio do cabeçalho não comprova suporte de um servidor que não o respeite;
 a operação exige validador emitido pelo endpoint e validação de efeito posterior.
+
+## Escritas condicionais
+
+Os métodos explicitamente condicionais usam os endpoints Drive v2 para preservar
+If-Match, pois o endpoint v3 não rejeitou a condição inválida no teste real.
+files_get_snapshot conserva os dados v3 e lê o ETag v2 do mesmo ID/version quando
+é usado o endpoint condicional v2 em produção. As escritas traduzem somente nome, estado de
+lixeira, MIME e descrição; demais campos retornam UnsupportedOperation antes de HTTP.
+Substituição resumível condicional usa PUT v2; criação continua POST v3.
+Os resultados v2 são normalizados (title, fileSize, labels e pais) para GoogleFile.
+Contrato oficial: https://developers.google.com/workspace/drive/api/reference/rest/v2/files

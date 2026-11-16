@@ -1,6 +1,6 @@
 //! Single-request resumable operations and metadata-only conveniences.
 //! No queue, file reader, retry or automatic recovery query is created here.
-use super::client::{decode, invalid_argument, query_for};
+use super::client::{invalid_argument, query_for};
 use super::*;
 use reqwest::{Method, Url};
 
@@ -312,6 +312,13 @@ impl GoogleDriveClient {
         etag: Option<&str>,
     ) -> GoogleResult<GoogleUploadSession> {
         let mut url = self.upload_base.clone();
+        let conditional = etag.is_some();
+        if conditional {
+            let path = url.path().replace("/drive/v3", "/drive/v2");
+            url.set_path(&path);
+            query.retain(|(key, _)| key != "fields");
+            query.push(("fields".into(), "*".into()));
+        }
         {
             let mut path = url.path_segments_mut().map_err(|_| invalid_argument())?;
             path.pop_if_empty().push("files");
@@ -324,7 +331,11 @@ impl GoogleDriveClient {
         }
         query.push(("uploadType".into(), "resumable".into()));
         url.query_pairs_mut().extend_pairs(query);
-        let body = serde_json::to_vec(&request).map_err(|_| invalid_argument())?;
+        let body = if conditional {
+            super::conditional::conditional_body(&request)?
+        } else {
+            serde_json::to_vec(&request).map_err(|_| invalid_argument())?
+        };
         let mut headers = vec![("X-Upload-Content-Type", "application/octet-stream".into())];
         if let Some(total) = total_bytes {
             headers.push(("X-Upload-Content-Length", total.to_string()));
@@ -336,7 +347,9 @@ impl GoogleDriveClient {
         let response = self
             .send(
                 session,
-                if file_id.is_some() {
+                if conditional {
+                    Method::PUT
+                } else if file_id.is_some() {
                     Method::PATCH
                 } else {
                     Method::POST
@@ -371,11 +384,15 @@ impl GoogleDriveClient {
     fn upload_url(&self, raw: &str) -> GoogleResult<Url> {
         let url = Url::parse(raw).map_err(|_| invalid_argument())?;
         let prefix = format!("{}/files", self.upload_base.path().trim_end_matches('/'));
+        let conditional_prefix = prefix.replace("/drive/v3/", "/drive/v2/");
         if url.origin() != self.upload_base.origin()
             || !url.username().is_empty()
             || url.password().is_some()
             || url.fragment().is_some()
-            || !(url.path() == prefix || url.path().starts_with(&format!("{prefix}/")))
+            || !(url.path() == prefix
+                || url.path().starts_with(&format!("{prefix}/"))
+                || url.path() == conditional_prefix
+                || url.path().starts_with(&format!("{conditional_prefix}/")))
         {
             return Err(invalid_argument());
         }
@@ -428,10 +445,11 @@ impl GoogleDriveClient {
                 return Err(invalid_response());
             }
             let body = self.response_body(response, status).await?;
-            let file: GoogleFile = decode(&body).map_err(|mut failure| {
-                failure.http_status = Some(status);
-                failure
-            })?;
+            let file: GoogleFile =
+                super::conditional::conditional_file(&body).map_err(|mut failure| {
+                    failure.http_status = Some(status);
+                    failure
+                })?;
             if let (Some(total), Some(size)) = (total, file.size.as_deref()) {
                 if size.parse::<u64>().ok() != Some(total) {
                     return Err(invalid_response());

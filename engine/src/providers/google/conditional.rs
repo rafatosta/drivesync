@@ -45,19 +45,54 @@ impl GoogleDriveClient {
         id: &FileId,
         options: FileGetOptions,
     ) -> GoogleResult<GoogleFileSnapshot> {
+        let mut options = options;
+        options.fields = Some(FieldMask(match options.fields {
+            Some(mask) => format!("{},version", mask.0),
+            None => "*".into(),
+        }));
         let url = self.file_url(id, super::file_get_query(&options))?;
         let response = self.send(session, Method::GET, url, None, &[]).await?;
-        let etag = response
+        let mut etag = response
             .headers()
             .get("etag")
             .and_then(|v| v.to_str().ok())
             .filter(|v| strong_etag(v).is_ok())
             .map(str::to_owned);
         let bytes = self.response_body(response, 200).await?;
-        Ok(GoogleFileSnapshot {
-            file: super::parse_file(&bytes)?,
-            etag,
-        })
+        let file = super::parse_file(&bytes)?;
+        // Drive v3 metadata may omit HTTP validators. Read the official v2
+        // validator for the same identity and version; never derive one from a
+        // version counter or accept a validator for a different snapshot.
+        if self.drive_base.host_str() == Some("www.googleapis.com") {
+            let mut validator_url = self.drive_base.clone();
+            validator_url.set_path("/drive/v2/files/");
+            validator_url
+                .path_segments_mut()
+                .map_err(|_| invalid_argument())?
+                .pop_if_empty()
+                .push(&id.0);
+            validator_url.set_query(Some("fields=id,etag,version&supportsAllDrives=true"));
+            let response = self
+                .send(session, Method::GET, validator_url, None, &[])
+                .await?;
+            let body = self.response_body(response, 200).await?;
+            let validator: serde_json::Value = decode(&body)?;
+            if validator.get("id").and_then(|v| v.as_str()) != Some(id.0.as_str())
+                || validator.get("version").and_then(|v| v.as_str()) != file.version.as_deref()
+                || file.version.is_none()
+            {
+                return Err(GoogleApiFailure::new(
+                    GoogleApiError::PreconditionFailed,
+                    None,
+                ));
+            }
+            etag = validator
+                .get("etag")
+                .and_then(|v| v.as_str())
+                .filter(|v| strong_etag(v).is_ok())
+                .map(str::to_owned);
+        }
+        Ok(GoogleFileSnapshot { file, etag })
     }
     /// PATCH with an explicit strong If-Match validator. HTTP 412 remains a
     /// precondition failure; this call never retries or falls back unconditionally.
@@ -82,8 +117,14 @@ impl GoogleDriveClient {
                 "fields",
             ],
         )?;
-        let url = self.file_url(id, query)?;
-        let bytes = serde_json::to_vec(&request).map_err(|_| invalid_argument())?;
+        let mut url = self.file_url(
+            id,
+            query.into_iter().filter(|(k, _)| k != "fields").collect(),
+        )?;
+        let path = url.path().replace("/drive/v3/", "/drive/v2/");
+        url.set_path(&path);
+        url.query_pairs_mut().append_pair("fields", "*");
+        let bytes = conditional_body(&request)?;
         let response = self
             .send(
                 session,
@@ -93,6 +134,62 @@ impl GoogleDriveClient {
                 &[("If-Match", etag.into())],
             )
             .await?;
-        decode(&self.response_body(response, 200).await?)
+        conditional_file(&self.response_body(response, 200).await?)
     }
+}
+
+/// Translate only the conditional mutation subset used by Operator. Unsupported
+/// v3 fields must never be silently dropped when talking to the v2 endpoint.
+pub(super) fn conditional_body(request: &GoogleFileWrite) -> GoogleResult<Vec<u8>> {
+    let value = serde_json::to_value(request).map_err(|_| invalid_argument())?;
+    let mut out = serde_json::Map::new();
+    for (key, value) in value.as_object().ok_or_else(invalid_argument)? {
+        match key.as_str() {
+            "name" => {
+                out.insert("title".into(), value.clone());
+            }
+            "trashed" => {
+                out.insert("labels".into(), serde_json::json!({"trashed": value}));
+            }
+            "mimeType" | "description" => {
+                out.insert(key.clone(), value.clone());
+            }
+            _ => {
+                return Err(GoogleApiFailure::new(
+                    GoogleApiError::UnsupportedOperation,
+                    None,
+                ))
+            }
+        }
+    }
+    serde_json::to_vec(&out).map_err(|_| invalid_argument())
+}
+pub(super) fn conditional_file(bytes: &[u8]) -> GoogleResult<GoogleFile> {
+    let mut file: serde_json::Value = decode(bytes)?;
+    if let Some(object) = file.as_object_mut() {
+        for (old, new) in [
+            ("title", "name"),
+            ("fileSize", "size"),
+            ("createdDate", "createdTime"),
+            ("modifiedDate", "modifiedTime"),
+        ] {
+            if let Some(value) = object.remove(old) {
+                object.insert(new.into(), value);
+            }
+        }
+        if let Some(labels) = object.remove("labels") {
+            if let Some(value) = labels.get("trashed") {
+                object.insert("trashed".into(), value.clone());
+            }
+        }
+        if let Some(parents) = object.get_mut("parents").and_then(|v| v.as_array_mut()) {
+            for parent in parents {
+                if let Some(id) = parent.get("id").cloned() {
+                    *parent = id;
+                }
+            }
+        }
+    }
+    serde_json::from_value(file)
+        .map_err(|_| GoogleApiFailure::new(GoogleApiError::InvalidResponse, None))
 }

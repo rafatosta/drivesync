@@ -75,5 +75,58 @@ async fn conditional_upload_start_rejects_stale_validator() {
         .unwrap_err();
     assert_eq!(error.kind, GoogleApiError::PreconditionFailed);
     assert_eq!(server.recorded()[0].header("if-match"), Some("\"old\""));
-    assert_eq!(server.recorded()[0].method, "PATCH");
+    assert_eq!(server.recorded()[0].method, "PUT");
+}
+
+#[tokio::test]
+async fn conditional_metadata_translates_v2_fields_without_losing_identity() {
+    let server = Server::start(vec![Reply::json(
+        200,
+        r#"{"id":"file","title":"renamed","labels":{"trashed":false},"parents":[{"id":"parent"}],"fileSize":"3","version":"9"}"#,
+    )]);
+    let file = server
+        .client()
+        .files_update_conditional(
+            &session(),
+            &FileId("file".into()),
+            GoogleFileWrite {
+                name: GooglePatch::Set("renamed".into()),
+                ..Default::default()
+            },
+            FileUpdateOptions::default(),
+            "\"revision-8\"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(file.id, Some(FileId("file".into())));
+    assert_eq!(file.name.as_deref(), Some("renamed"));
+    assert_eq!(file.size.as_deref(), Some("3"));
+    assert_eq!(file.parents, Some(vec![FileId("parent".into())]));
+    assert_eq!(file.trashed, Some(false));
+    let request = &server.recorded()[0];
+    assert!(request.path().contains("/drive/v2/files/file"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&request.body).unwrap(),
+        serde_json::json!({"title":"renamed"})
+    );
+}
+#[tokio::test]
+async fn unsupported_conditional_fields_are_rejected_without_silently_dropping_them() {
+    let server = Server::start(vec![]);
+    let error = server
+        .client()
+        .files_update_conditional(
+            &session(),
+            &FileId("file".into()),
+            GoogleFileWrite {
+                starred: GooglePatch::Set(true),
+                ..Default::default()
+            },
+            FileUpdateOptions::default(),
+            "\"revision-8\"",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, GoogleApiError::UnsupportedOperation);
+    assert!(server.recorded().is_empty());
 }

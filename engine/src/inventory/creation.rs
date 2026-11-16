@@ -1,4 +1,4 @@
-//! Analyzer-owned initial creation claims and verified replica provenance.
+//! Analyzer-owned execution claims and verified replica provenance.
 use super::*;
 use crate::{models::Timestamp, operations::*};
 
@@ -31,4 +31,11 @@ pub struct FailCreationRequest {
 pub struct DueCreationsRequest {
     pub at: Timestamp,
     pub limit: u32,
+}
+
+/// Completes an applied step while leaving the previous baseline unchanged.
+/// Used only when another planned dimension still needs reconciliation.
+pub struct CompleteExecutionStepRequest {
+    pub binding: CreationBinding,
+    pub at: Timestamp,
 }

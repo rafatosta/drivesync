@@ -17,7 +17,7 @@ Esta política prevalece sobre descrições históricas dos endpoints abaixo.
 
 ## Escopo
 
-Implementar e testar **exclusivamente** o módulo independente `providers/google/` da engine Rust, que abstrai a integração com **Google Drive REST API v3, Google OAuth 2.0 e OpenID Connect**. Os tipos, as operações e os erros públicos devem encapsular URLs, respostas JSON, endpoints e constantes específicas do protocolo Google.
+Implementar e testar **exclusivamente** o módulo independente `providers/google/` da engine Rust, que abstrai a integração com **Google Drive REST API v3, endpoints condicionais Drive v2 necessários para If-Match, Google OAuth 2.0 e OpenID Connect**. Os tipos, as operações e os erros públicos devem encapsular URLs, respostas JSON, endpoints e constantes específicas do protocolo Google.
 
 **Referências obrigatórias, nesta ordem:**
 

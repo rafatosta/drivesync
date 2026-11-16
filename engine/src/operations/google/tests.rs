@@ -36,6 +36,7 @@ struct Faults {
     corrupt_ack: bool,
     no_download: bool,
     metadata_failure: Option<u16>,
+    fail_confirmation: bool,
 }
 struct Session {
     id: String,
@@ -250,7 +251,7 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
                 json!({"error":{"code":404}})
             }
         }
-    } else if method == "PATCH" && path.starts_with("/drive/v3/files/") {
+    } else if method == "PATCH" && path.starts_with("/drive/v2/files/") {
         let id = path.rsplit('/').next().unwrap();
         let tag = header.lines().find_map(|line| {
             line.split_once(':')
@@ -264,7 +265,13 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
             code = 412;
             json!({"error":{"code":412}})
         } else {
-            let patch: Value = serde_json::from_slice(bytes).unwrap();
+            let mut patch: Value = serde_json::from_slice(bytes).unwrap();
+            if let Some(title) = patch.get("title").cloned() {
+                patch["name"] = title;
+            }
+            if let Some(trashed) = patch.get("labels").and_then(|v| v.get("trashed")).cloned() {
+                patch["trashed"] = trashed;
+            }
             for key in ["name", "trashed"] {
                 if let Some(value) = patch.get(key) {
                     file[key] = value.clone();
@@ -291,10 +298,10 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
         state.files.insert(id, metadata.clone());
         metadata
     } else if (method == "POST" && path == "/upload/drive/v3/files")
-        || (method == "PATCH" && path.starts_with("/upload/drive/v3/files/"))
+        || (method == "PUT" && path.starts_with("/upload/drive/v2/files/"))
     {
         let metadata: Value = serde_json::from_slice(bytes).unwrap();
-        let replacing = method == "PATCH";
+        let replacing = method == "PUT";
         let id = if replacing {
             path.rsplit('/').next().unwrap().to_owned()
         } else {
@@ -1416,9 +1423,21 @@ impl Fixture {
 }
 
 #[derive(Default)]
-struct Events(Mutex<Vec<crate::analyzer::CreationEvent>>);
+struct Events(
+    Mutex<Vec<crate::analyzer::CreationEvent>>,
+    Option<Arc<Mutex<State>>>,
+);
 impl crate::analyzer::CreationObserver for Events {
     fn notify(&self, event: crate::analyzer::CreationEvent) {
+        if event.stage == crate::analyzer::CreationStage::Verifying {
+            if let Some(state) = &self.1 {
+                let mut state = state.lock().unwrap();
+                if state.faults.fail_confirmation {
+                    state.faults.fail_confirmation = false;
+                    state.faults.metadata_failure = Some(503);
+                }
+            }
+        }
         self.0.lock().unwrap().push(event);
     }
 }
@@ -1568,7 +1587,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                 .unwrap()
                 .item
         };
-        let events = Arc::new(Events::default());
+        let events = Arc::new(Events(Mutex::new(vec![]), Some(f.server.state.clone())));
         let analyzer = Analyzer::new(AnalyzerConfig {
             provider: ProviderId("google".into()),
             identity: SyncIdentity {
@@ -1752,6 +1771,249 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
             SyncStatus::Synced
         );
         assert_eq!(f.server.state.lock().unwrap().started, started);
+
+        if upload && !directory && !interrupted {
+            for (event_id, name, contents_changed) in [
+                ("renamed", "renamed.bin", false),
+                ("edited", "renamed.bin", true),
+                ("combined", "combined.bin", true),
+            ] {
+                if event_id == "combined" {
+                    std::fs::rename(f.root.join("renamed.bin"), f.root.join(name)).unwrap();
+                }
+                if contents_changed {
+                    std::fs::write(f.root.join(name), format!("updated by analyzer {event_id}"))
+                        .unwrap();
+                } else {
+                    std::fs::rename(f.root.join("source.bin"), f.root.join(name)).unwrap();
+                }
+                let current = f
+                    .inventory
+                    .get_item(GetItemRequest {
+                        selector: ItemSelector::Id(item.id.clone()),
+                    })
+                    .unwrap()
+                    .item
+                    .unwrap();
+                let path = LocalRelativePath::new(name.as_bytes().to_vec()).unwrap();
+                let metadata = fs::observe(
+                    &std::fs::File::open(f.root.join(name)).unwrap(),
+                    path.clone(),
+                )
+                .unwrap();
+                let at = Timestamp {
+                    unix_millis: current.baseline.as_ref().unwrap().confirmed_at.unix_millis + 1,
+                };
+                let observed = crate::models::File {
+                    id: crate::models::FileId(event_id.into()),
+                    sync_id: SyncId("sync".into()),
+                    observed_at: at,
+                    scope: FileScope::Local(path.clone()),
+                    coverage: ObservationCoverage::Partial,
+                    event: crate::models::FileEvent {
+                        kind: FileEventKind::Observed,
+                        local: Some(crate::models::LocalObservation {
+                            capture_id: "mutation".into(),
+                            mask: libc::IN_MODIFY,
+                            cookie: 0,
+                        }),
+                        remote: None,
+                        uncertainty: None,
+                        previous: None,
+                        current: Some(FileLocation::Local(path)),
+                    },
+                    data: Some(FileData::Local(metadata)),
+                };
+                let updated = f
+                    .inventory
+                    .record_local(RecordLocalObservation {
+                        selector: ObservationTarget::Existing(item.id.clone()),
+                        expected_revision: Some(current.revision),
+                        observation: crate::inventory::LocalObservation {
+                            observed,
+                            presence: PresenceState::Present,
+                            proof: ObservationProof {
+                                source: ObservationSource::LocalEvent,
+                                observed_at: at,
+                                scan_or_generation: None,
+                                complete_scope: false,
+                            },
+                        },
+                    })
+                    .unwrap()
+                    .item;
+                if event_id == "renamed" {
+                    f.server.state.lock().unwrap().faults.fail_confirmation = true;
+                }
+                analyzer
+                    .analyze(AnalyzeRequest {
+                        directive: None,
+                        sync_id: SyncId("sync".into()),
+                        item: updated,
+                        evidence: AnalysisEvidence {
+                            baseline_confirmed: true,
+                            local_scope_complete: true,
+                            remote_scope_complete: true,
+                            local_content: if contents_changed {
+                                EvidenceRelation::Different
+                            } else {
+                                EvidenceRelation::Equal
+                            },
+                            remote_content: EvidenceRelation::Equal,
+                            current_content: if contents_changed {
+                                EvidenceRelation::Different
+                            } else {
+                                EvidenceRelation::Equal
+                            },
+                            local_parent: None,
+                            current_parents: EvidenceRelation::Equal,
+                        },
+                        recorded_at: at,
+                    })
+                    .await
+                    .unwrap();
+                let updated = f
+                    .inventory
+                    .get_item(GetItemRequest {
+                        selector: ItemSelector::Id(item.id.clone()),
+                    })
+                    .unwrap()
+                    .item
+                    .unwrap();
+                let updated = if event_id == "renamed" {
+                    let binding = f
+                        .inventory
+                        .get_creation(GetCreationRequest {
+                            item_id: item.id.clone(),
+                        })
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(binding.operation.state, OperationState::RetryWait);
+                    // Exercise the real backoff clock instead of passing a future
+                    // start timestamp that predates the subsequent confirmation.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64;
+                    let delay = binding
+                        .operation
+                        .next_attempt_at
+                        .as_ref()
+                        .unwrap()
+                        .unix_millis
+                        .saturating_sub(now)
+                        .max(0) as u64;
+                    tokio::time::sleep(Duration::from_millis(delay + 10)).await;
+                    let patches = f
+                        .server
+                        .state
+                        .lock()
+                        .unwrap()
+                        .requests
+                        .iter()
+                        .filter(|(method, _)| method == "PATCH")
+                        .count();
+                    analyzer
+                        .analyze(AnalyzeRequest {
+                            directive: None,
+                            sync_id: SyncId("sync".into()),
+                            item: updated,
+                            evidence: AnalysisEvidence {
+                                baseline_confirmed: true,
+                                local_scope_complete: true,
+                                remote_scope_complete: true,
+                                local_content: EvidenceRelation::Equal,
+                                remote_content: EvidenceRelation::Equal,
+                                current_content: EvidenceRelation::Equal,
+                                local_parent: None,
+                                current_parents: EvidenceRelation::Equal,
+                            },
+                            recorded_at: binding.operation.next_attempt_at.unwrap(),
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        f.server
+                            .state
+                            .lock()
+                            .unwrap()
+                            .requests
+                            .iter()
+                            .filter(|(method, _)| method == "PATCH")
+                            .count(),
+                        patches
+                    );
+                    f.inventory
+                        .get_item(GetItemRequest {
+                            selector: ItemSelector::Id(item.id.clone()),
+                        })
+                        .unwrap()
+                        .item
+                        .unwrap()
+                } else {
+                    updated
+                };
+                let updated = if event_id == "combined" {
+                    assert_eq!(updated.status, SyncStatus::PendingReconciliation);
+                    let previous_baseline = updated.baseline.clone();
+                    analyzer
+                        .analyze(AnalyzeRequest {
+                            directive: None,
+                            sync_id: SyncId("sync".into()),
+                            item: updated,
+                            evidence: AnalysisEvidence {
+                                baseline_confirmed: true,
+                                local_scope_complete: true,
+                                remote_scope_complete: true,
+                                local_content: EvidenceRelation::Different,
+                                remote_content: EvidenceRelation::Different,
+                                current_content: EvidenceRelation::Equal,
+                                local_parent: None,
+                                current_parents: EvidenceRelation::Equal,
+                            },
+                            recorded_at: Timestamp {
+                                unix_millis: at.unix_millis + 1,
+                            },
+                        })
+                        .await
+                        .unwrap();
+                    let updated = f
+                        .inventory
+                        .get_item(GetItemRequest {
+                            selector: ItemSelector::Id(item.id.clone()),
+                        })
+                        .unwrap()
+                        .item
+                        .unwrap();
+                    assert_ne!(updated.baseline, previous_baseline);
+                    updated
+                } else {
+                    updated
+                };
+                assert_eq!(
+                    updated.status,
+                    SyncStatus::Synced,
+                    "mutation {event_id}: {:?}",
+                    events.0.lock().unwrap()
+                );
+                let binding = f
+                    .inventory
+                    .get_creation(GetCreationRequest {
+                        item_id: item.id.clone(),
+                    })
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(binding.operation.state, OperationState::Completed);
+                assert_eq!(
+                    binding.operation.kind,
+                    if contents_changed && event_id != "combined" {
+                        OperationKind::UpdateContent
+                    } else {
+                        OperationKind::Rename
+                    }
+                );
+            }
+        }
         if !upload && !directory {
             assert_eq!(
                 std::fs::read(f.root.join("source.bin")).unwrap(),
@@ -2734,6 +2996,87 @@ async fn replica_verification_allows_version_advance_only_with_unchanged_content
         panic!()
     };
     metadata.name = MetadataValue::Known("other.bin".into());
+    assert_eq!(
+        op.verify_source(request).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+}
+
+#[tokio::test]
+async fn directory_verification_preserves_identity_while_children_change() {
+    let f = Fixture::new(vec![], Faults::default());
+    std::fs::create_dir(f.root.join("folder")).unwrap();
+    let path = LocalRelativePath::new(b"folder".to_vec()).unwrap();
+    let metadata = fs::observe(&std::fs::File::open(f.root.join("folder")).unwrap(), path).unwrap();
+    let request = VerifySourceRequest {
+        source: SourceEvidence::Local {
+            metadata: Box::new(metadata),
+            sha256: None,
+        },
+        allow_version_advance: false,
+        options: ExecutionOptions::default(),
+    };
+    std::fs::write(f.root.join("folder/child"), b"child").unwrap();
+    f.operator().verify_source(request.clone()).await.unwrap();
+    std::fs::rename(f.root.join("folder"), f.root.join("old-folder")).unwrap();
+    std::fs::create_dir(f.root.join("folder")).unwrap();
+    assert_eq!(
+        f.operator().verify_source(request).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+}
+
+#[tokio::test]
+async fn directory_replica_version_can_advance_without_authorizing_a_move_or_rename() {
+    let f = Fixture::new(vec![], Faults::default());
+    let op = f.operator();
+    let item = op
+        .create_directory(CreateDirectoryRequest {
+            execution: ExecutionContext {
+                id: ExecutionId::new("directory-version".into()).unwrap(),
+                source: None,
+            },
+            parent: DirectoryRef::Remote {
+                provider_id: ProviderId("google".into()),
+                reference: RemoteFileRef {
+                    account_id: AccountId("account".into()),
+                    file_id: RemoteFileId("root".into()),
+                },
+            },
+            name: ItemName::Remote("folder".into()),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap();
+    let ResourceRef::Remote { reference, .. } = &item.resource else {
+        panic!()
+    };
+    f.server
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .get_mut(&reference.file_id.0)
+        .unwrap()["version"] = json!("3");
+    let request = VerifySourceRequest {
+        source: match item.metadata.unwrap() {
+            FileData::Remote(metadata) => SourceEvidence::Remote {
+                metadata: Box::new(metadata),
+                revision: None,
+            },
+            _ => panic!(),
+        },
+        allow_version_advance: true,
+        options: ExecutionOptions::default(),
+    };
+    op.verify_source(request.clone()).await.unwrap();
+    f.server
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .get_mut(&reference.file_id.0)
+        .unwrap()["name"] = json!("other-folder");
     assert_eq!(
         op.verify_source(request).await.unwrap_err().kind,
         OperatorError::PreconditionFailed

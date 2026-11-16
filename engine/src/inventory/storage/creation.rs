@@ -1,10 +1,10 @@
-//! Initial creation ownership. Existing generic claim/requeue guards stay intact.
+//! Analyzer execution ownership. Generic claim/requeue guards stay intact.
 use super::*;
 use crate::{inventory::creation::*, operations::*};
 use rusqlite::{params, OptionalExtension};
 
 fn binding(db: &Connection, item: &SyncItemId) -> InventoryResult<Option<CreationBinding>> {
-    let row:Option<(i64,String)>=db.query_row("SELECT o.seq,o.dedup FROM operations o JOIN analysis_decisions d ON d.operation=o.seq WHERE o.item=?1 AND o.kind='Create' AND o.dedup LIKE 'execution:%' ORDER BY o.seq LIMIT 1",[&item.0],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
+    let row:Option<(i64,String)>=db.query_row("SELECT o.seq,o.dedup FROM operations o JOIN analysis_decisions d ON d.operation=o.seq WHERE o.item=?1 AND o.dedup LIKE 'execution:%' ORDER BY o.seq DESC LIMIT 1",[&item.0],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
     row.map(|(op, key)| {
         let id = ExecutionId::new(key.trim_start_matches("execution:").to_owned())
             .map_err(|_| failure(InventoryError::CorruptDatabase))?;
@@ -16,7 +16,14 @@ fn binding(db: &Connection, item: &SyncItemId) -> InventoryResult<Option<Creatio
     .transpose()
 }
 fn same_source(item: &SyncItem, intent: &ExecutionIntent) -> bool {
-    if item.baseline.is_some() {
+    if item.baseline.is_some()
+        && matches!(
+            intent.command,
+            OperationCommand::Upload { .. }
+                | OperationCommand::Download { .. }
+                | OperationCommand::CreateDirectory { .. }
+        )
+    {
         return false;
     }
     match &intent.context.source {
@@ -47,26 +54,29 @@ impl InventoryManager {
     pub fn get_creation(&self, r: GetCreationRequest) -> InventoryResult<Option<CreationBinding>> {
         self.run(false, |db| binding(db, &r.item_id))
     }
-    /// Exact current plans alone may start a creation. Resumption keeps the old
-    /// intent/ID and requires the source observation to remain unchanged.
+    /// Exact current plans alone may start execution. Resumption keeps its
+    /// intent/ID and source proof; completed effects are only reverified.
     pub fn begin_creation(&self, r: BeginCreationRequest) -> InventoryResult<CreationBinding> {
         self.run(true,|db|{
             let analysis=super::analysis::load(db,r.analysis_id.0)?;
             let item=super::items::load(db,&analysis.item_id)?;
             super::items::revision(&item,r.expected_item_revision)?;
-            let existing=binding(db,&item.id)?;
+            let existing=binding(db,&item.id)?.filter(|b| b.operation.state!=OperationState::Completed || b.intent.context.id==r.intent.context.id);
             let op=if let Some(existing)=existing {
-                if existing.intent!=r.intent || !same_source(&item,&r.intent) {return Err(failure(InventoryError::VersionMismatch));}
+                if existing.intent!=r.intent {return Err(failure(InventoryError::VersionMismatch));}
+                let dispatched=super::execution::load(db,&existing.intent.context.id)?.state.phase!=CheckpointPhase::Prepared;
+                if !dispatched && !same_source(&item,&r.intent) {return Err(failure(InventoryError::VersionMismatch));}
                 if existing.operation.state==OperationState::Completed {return Ok(existing);}
                 if existing.operation.next_attempt_at.is_some_and(|t|t.unix_millis>r.started_at.unix_millis)||existing.operation.attempt_count>=5 {return Err(failure(InventoryError::InvalidTransition));}
                 existing.operation
             } else {
-                if analysis.stale || !analysis.requirements.is_empty() || analysis.disposition!=AnalysisDisposition::PendingOperations || !same_source(&item,&r.intent) {return Err(failure(InventoryError::InvalidTransition));}
+                if analysis.stale || !analysis.requirements.is_empty() || !matches!(analysis.disposition,AnalysisDisposition::PendingOperations|AnalysisDisposition::PendingEvidence) || !same_source(&item,&r.intent) {return Err(failure(InventoryError::InvalidTransition));}
                 let plan=analysis.plan.as_ref().ok_or_else(||failure(InventoryError::InvalidTransition))?;
-                if !plan.manual.is_empty()||plan.steps.len()!=1||!plan.steps[0].blocked_by.is_empty()||plan.steps[0].command.as_ref()!=Some(&r.intent.command)||!super::planning::plan_current(db,Some(plan))? {return Err(failure(InventoryError::VersionMismatch));}
-                let decision=analysis.decisions.first().filter(|d|d.intent.kind==OperationKind::Create).ok_or_else(||failure(InventoryError::InvalidTransition))?;
+                if !plan.manual.is_empty()||plan.steps.is_empty()||!plan.steps[0].blocked_by.is_empty()||plan.steps[0].command.as_ref()!=Some(&r.intent.command)||!super::planning::plan_current(db,Some(plan))? {return Err(failure(InventoryError::VersionMismatch));}
+                let decision=analysis.decisions.first().ok_or_else(||failure(InventoryError::InvalidTransition))?;
                 let unbound=match decision.intent.direction {OperationDirection::Upload=>item.remote_ref.is_none()&&item.remote.is_none()&&item.remote_latest.is_none(),OperationDirection::Download=>item.local_file_id.is_none()&&item.local.is_none()&&item.local_latest.is_none()};
-                if !unbound {return Err(failure(InventoryError::DuplicateAssociation));}
+                if decision.intent.kind==OperationKind::Create && !unbound {return Err(failure(InventoryError::DuplicateAssociation));}
+                if decision.intent.kind!=OperationKind::Create && (!matches!(decision.intent.kind,OperationKind::Rename|OperationKind::Move|OperationKind::UpdateContent)||item.baseline.is_none()) {return Err(failure(InventoryError::InvalidTransition));}
                 super::execution::prepare(db,PrepareExecutionRequest {intent:r.intent.clone()})?;
                 db.execute("UPDATE operations SET dedup=?2 WHERE seq=?1 AND dedup IS NULL",params![decision.operation_id.0,format!("execution:{}",r.intent.context.id.as_str())]).map_err(sql)?;
                 super::operations::load(db,&decision.operation_id)?
@@ -76,7 +86,35 @@ impl InventoryManager {
             Ok(CreationBinding {operation:super::operations::load(db,&op.id)?,intent:r.intent})
         })
     }
-    /// Attaches only the exact identity created and verified by this execution.
+    /// Completes one verified physical step without confirming a partially
+    /// converged baseline. Subsequent observations must produce a fresh plan.
+    pub fn complete_execution_step(&self, r: CompleteExecutionStepRequest) -> InventoryResult<()> {
+        self.run(true, |db| {
+            let current = binding(db, &r.binding.operation.item_id)?.ok_or_else(|| failure(InventoryError::NotFound))?;
+            if current.intent != r.binding.intent || current.operation.attempt_count != r.binding.operation.attempt_count {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            if current.operation.state == OperationState::Completed { return Ok(()); }
+            let checkpoint = super::execution::load(db, &current.intent.context.id)?;
+            if current.operation.state != OperationState::Running || checkpoint.state.phase != CheckpointPhase::Completed {
+                return Err(failure(InventoryError::InvalidTransition));
+            }
+            db.execute("UPDATE operations SET state='Completed',completed=?2,next_attempt=NULL,last_error=NULL WHERE seq=?1", params![current.operation.id.0,r.at.unix_millis]).map_err(sql)?;
+            super::activity::append(db, &NewActivity {
+                item_id: current.operation.item_id.clone(), operation_id: Some(current.operation.id),
+                event_type: match current.operation.kind {
+                    OperationKind::Rename => ActivityType::Rename,
+                    OperationKind::Move => ActivityType::Move,
+                    _ => if current.operation.direction == OperationDirection::Upload { ActivityType::Upload } else { ActivityType::Download },
+                }, origin: ActivityOrigin::System, outcome: ActivityOutcome::Completed, occurred_at: r.at,
+                description: Some("Verified execution step; reconciliation still pending".into()),
+                error_kind: None,item_name: None,item_remote_id: None,item_local_path: None,
+            })?;
+            super::items::bump(db, &current.operation.item_id)?;
+            Ok(())
+        })
+    }
+    /// Records only the exact resulting identity verified by this execution.
     /// A duplicate observation of that identity may be retired; unrelated items,
     /// active executions and preexisting baselines are never merged or overwritten.
     pub fn record_created_replica(
@@ -111,8 +149,8 @@ impl InventoryManager {
             }
             match data {
                 FileData::Local(local)=>{
-                    if item.local_file_id.as_ref().is_some_and(|id|Some(id)!=local.local_id.as_ref()) {return Err(failure(InventoryError::DuplicateAssociation));}
-                    if item.local.as_ref().is_some_and(|old|old.relative_path!=local.relative_path) {return Err(failure(InventoryError::DuplicateAssociation));}
+                    let mutation=matches!(current.intent.command,OperationCommand::Rename {..}|OperationCommand::Move {..}|OperationCommand::UpdateContent {..});
+                    if !mutation && (item.local_file_id.as_ref().is_some_and(|id|Some(id)!=local.local_id.as_ref()) || item.local.as_ref().is_some_and(|old|old.relative_path!=local.relative_path)) {return Err(failure(InventoryError::DuplicateAssociation));}
                     super::metadata::local_apply(db,&item.id.0,local)?;
                     db.execute("UPDATE items SET local_id=?2,local_presence='Present' WHERE id=?1",params![item.id.0,local.local_id.as_ref().map(|id|&id.0)]).map_err(sql)?;
                 },

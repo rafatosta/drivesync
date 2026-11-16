@@ -41,8 +41,10 @@ de sessão é cooperativo e não desfaz um efeito já enviado.
 Testes combinam fachada Analyzer, Operator/Provider reais, HTTP loopback com estado,
 SQLite e filesystem temporários: upload/download, pastas, interrupção, confirmação
 sem baseline prematura e manutenção do ID. Google real e Flatpak instalado exigem
-aceitação separada. Atualizações, renomes, movimentos, lixeira, restauração e formatos
-nativos Google continuam fora da execução automática.
+aceitação separada. Atualizações, renomes e movimentos de recursos vinculados também são executados
+quando há baseline confirmado, evidências completas, plano atual e nenhuma escolha
+manual. Lixeira continua condicionada à autorização da política; restauração exige
+pedido explícito. Formatos nativos Google não recebem substituição binária automática.
 
 ## Verificação de réplica recém-criada
 
@@ -52,3 +54,29 @@ somente com SHA-256 conhecido e idêntico, mantendo todas as demais verificaçõ
 de identidade, tamanho, nome, MIME, pais e capacidade de leitura. Versão reduzida,
 hash ausente ou conteúdo/localização divergentes continuam bloqueados. A baseline
 usa os metadados efetivamente reobservados, nunca a versão antiga do resultado.
+
+## Mutações e planos com várias dimensões
+
+A reserva durável valida o comando e as guardas do primeiro passo elegível. A API
+histórica de vínculos de criação também conserva essas execuções; não há nova fila
+ou banco. Cada novo comando recebe um ID próprio; repetição mantém o ID original.
+Atualização, renomeação e movimento usam o executor especializado e suas condições.
+
+Se conteúdo, nome e pai ainda não convergiram após um passo, somente esse passo é
+concluído, com histórico, conservando o baseline anterior e PendingReconciliation.
+A observação seguinte produz um plano novo para as dimensões restantes. Synced só
+é confirmado com conteúdo, nome e pai correspondentes. Nenhuma etapa posterior
+usa cegamente os metadados ou precondições de um plano anterior.
+
+Falha após checkpoint Completed recupera o resultado já aplicado, sem exigir que
+o alvo ainda tenha os metadados anteriores à própria mutação. A verificação da
+contraparte e do resultado continua obrigatória antes da confirmação do baseline.
+
+A verificação de diretório local com ID físico conhecido compara sua identidade,
+não tamanho, contagem de links ou timestamps que mudam com os filhos. Uma troca
+do diretório continua rejeitada. Sem ID físico conhecido, a observação completa
+permanece exigida.
+
+Diretórios remotos também podem avançar sua versão na verificação somente de
+réplica, preservando ID, tipo, nome e pai. O conteúdo dos filhos tem reconciliação
+própria. Provas de origem e precondições de mutação permanecem estritas.
