@@ -1,4 +1,4 @@
-//! Paused capture and local inventory preparation; no terminal event consumer exists here.
+//! Paused capture, local scanning and a finite decision pass over the persisted inventory.
 use super::*;
 use crate::{inventory::*, scanner::*};
 use std::sync::{
@@ -15,6 +15,8 @@ pub enum PreparationState {
     Idle,
     Starting,
     Scanning,
+    Analyzing,
+    ProcessingEvents,
     ReadyForAnalyzer,
     Partial,
     Failed,
@@ -26,6 +28,8 @@ pub enum PreparationFailure {
     Detector(DetectorFailure),
     Inventory(InventoryFailure),
     Scanner(ScannerError),
+    Analyzer(crate::analyzer::AnalyzerError),
+    InvalidObservation(crate::models::FileId),
     AlreadyRunning,
     Internal,
 }
@@ -35,6 +39,10 @@ impl std::fmt::Display for PreparationFailure {
             Self::Detector(e) => write!(f, "Detector: {e}"),
             Self::Inventory(e) => write!(f, "Inventory: {e}"),
             Self::Scanner(e) => write!(f, "Scanner: {e}"),
+            Self::Analyzer(e) => write!(f, "Analyzer: {e}"),
+            Self::InvalidObservation(_) => {
+                f.write_str("Observation could not be safely associated with an inventory item")
+            }
             Self::AlreadyRunning => f.write_str("Preparation is already running"),
             Self::Internal => f.write_str("Could not prepare synchronization"),
         }
@@ -48,11 +56,13 @@ pub struct PreparationStatus {
     pub scanner: Option<ScannerStatus>,
     pub report: Option<Arc<ScanReport>>,
     pub error: Option<PreparationFailure>,
+    /// Events acknowledged after durable ingestion and analysis by this Orchestrator.
+    pub events_processed: u64,
 }
 pub(super) struct Preparation {
     pub scanner: Mutex<Option<Arc<Scanner>>>,
-    pub snapshot: Mutex<PreparationStatus>,
-    pub busy: AtomicBool,
+    pub snapshot: Arc<Mutex<PreparationStatus>>,
+    pub busy: Arc<AtomicBool>,
     pub epoch: Arc<std::sync::atomic::AtomicU64>,
     pub control: Arc<Mutex<()>>,
 }
@@ -60,13 +70,14 @@ impl Preparation {
     pub fn new() -> Self {
         Self {
             scanner: Mutex::new(None),
-            snapshot: Mutex::new(PreparationStatus {
+            snapshot: Arc::new(Mutex::new(PreparationStatus {
                 state: PreparationState::Idle,
                 scanner: None,
                 report: None,
                 error: None,
-            }),
-            busy: AtomicBool::new(false),
+                events_processed: 0,
+            })),
+            busy: Arc::new(AtomicBool::new(false)),
             epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             control: Arc::new(Mutex::new(())),
         }
@@ -92,31 +103,31 @@ impl Drop for CancelPreparation<'_> {
             }
         }
         self.owner.preparation.busy.store(false, Ordering::Release);
+        self.owner.flow.wake.signal();
     }
 }
 impl Orchestrator {
     /// Opens the durable detection queue without capture, consumption or Inventory initialization.
     /// Blocking: construct off the GTK thread. Existing delivery settings cannot enable a consumer.
-    pub fn new(request: OrchestratorCreateRequest) -> DetectorResult<Self> {
+    pub fn new(mut request: OrchestratorCreateRequest) -> DetectorResult<Self> {
         let connector = request.detector.connector.clone();
+        let wake = flow::Wake::new(request.detector.event_available_sink.take());
+        request.detector.event_available_sink = Some(wake.clone());
         let detector = Arc::new(Detector::new(request.detector)?.detector);
         detector.pause(DetectorPauseRequest {})?;
         Ok(Self {
             connector,
             detector,
             preparation: Preparation::new(),
+            flow: flow::Flow::new(wake),
         })
     }
     /// Starts both sources with delivery paused before creating/opening Inventory and scanning.
     /// Every blocking setup operation is delegated to a finite worker. The caller needs no Tokio runtime.
-    /// Completion never acknowledges events or enables delivery: Analyzer ingestion is not connected yet.
+    /// A complete scan is followed by initial analysis and continuous event delivery.
+    /// Acknowledgement means durable observation processing, never physical synchronization.
     pub async fn prepare(&self) -> Result<Arc<ScanReport>, PreparationFailure> {
-        if self
-            .preparation_status()
-            .scanner
-            .is_some_and(|s| s.state == ScannerState::Running)
-            || self.preparation.busy.swap(true, Ordering::AcqRel)
-        {
+        if self.preparation.busy.swap(true, Ordering::AcqRel) {
             return Err(PreparationFailure::AlreadyRunning);
         }
         let mut guard = CancelPreparation {
@@ -138,7 +149,7 @@ impl Orchestrator {
             let report = snapshot.report.take();
             snapshot.state = PreparationState::Starting;
             snapshot.error = None;
-            (scanner, report)
+            (scanner, report, self.flow.retire())
         };
         let detector = self.detector.clone();
         let epoch = self.preparation.epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -149,7 +160,16 @@ impl Orchestrator {
             .name("sync-local-preparation".into())
             .spawn(move || {
                 // Closing old SQLite handles and freeing large reports must also stay off GTK.
-                drop(retired);
+                let (scanner, report, worker) = retired;
+                if let Some(worker) = worker {
+                    worker.join();
+                }
+                if let Some(scanner) = &scanner {
+                    while scanner.status().state == ScannerState::Running {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
+                drop((scanner, report));
                 let work = (|| {
                     let _control = control.lock().map_err(|_| PreparationFailure::Internal)?;
                     if epoch_token.load(Ordering::Acquire) != epoch {
@@ -226,22 +246,22 @@ impl Orchestrator {
                         .inventory,
                     );
                     Scanner::new(ScannerConfig {
-                        inventory,
+                        inventory: inventory.clone(),
                         root: LocalRoot {
                             sync_id: scope.sync_id.clone(),
                             path: scope.local_root.clone(),
                         },
                     })
-                    .map(Arc::new)
+                    .map(|scanner| (Arc::new(scanner), inventory))
                     .map_err(PreparationFailure::Scanner)
                 })();
                 let _ = tx.send(work);
             });
         let result = async {
             spawned.map_err(|_| PreparationFailure::Internal)?;
-            let scanner = rx.await.map_err(|_| PreparationFailure::Internal)??;
+            let (scanner, inventory) = rx.await.map_err(|_| PreparationFailure::Internal)??;
             if self.preparation.epoch.load(Ordering::Acquire) != epoch {
-                std::thread::spawn(move || drop(scanner));
+                std::thread::spawn(move || drop((scanner, inventory)));
                 return Err(PreparationFailure::Internal);
             }
             {
@@ -266,7 +286,45 @@ impl Orchestrator {
             if self.preparation.epoch.load(Ordering::Acquire) != epoch {
                 return Err(PreparationFailure::Internal);
             }
-            Ok::<_, PreparationFailure>(Arc::new(report))
+            let report = Arc::new(report);
+            if report.ready_for_analysis() {
+                {
+                    let mut snapshot = self
+                        .preparation
+                        .snapshot
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if self.preparation.epoch.load(Ordering::Acquire) != epoch {
+                        return Err(PreparationFailure::Internal);
+                    }
+                    snapshot.state = PreparationState::Analyzing;
+                    snapshot.report = Some(report.clone());
+                }
+                self.analyze_inventory(inventory.clone(), epoch).await?;
+                let scope = self.detector.scope();
+                self.flow
+                    .start(flow::Context {
+                        connector: self.connector.clone(),
+                        detector: self.detector.clone(),
+                        scanner,
+                        inventory,
+                        identity: SyncIdentity {
+                            sync_id: scope.sync_id.clone(),
+                            account_id: scope.account_id.clone(),
+                            remote_root_id: scope.remote_root_id.clone(),
+                        },
+                        epoch: self.preparation.epoch.clone(),
+                        expected: epoch,
+                        control: self.preparation.control.clone(),
+                        snapshot: self.preparation.snapshot.clone(),
+                        busy: self.preparation.busy.clone(),
+                    })
+                    .await?;
+                if self.preparation.epoch.load(Ordering::Acquire) != epoch {
+                    return Err(PreparationFailure::Internal);
+                }
+            }
+            Ok::<_, PreparationFailure>(report)
         }
         .await;
         {

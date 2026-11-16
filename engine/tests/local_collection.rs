@@ -61,7 +61,11 @@ fn public_consumer_constructs_queries_scope_and_collects_without_internal_traits
     assert_eq!(file.kind, MetadataValue::Known(LocalEntryKind::Regular));
     assert_eq!(file.storage.size_bytes, MetadataValue::Known(17));
     assert_eq!(file.relative_path.as_bytes(), b"file");
-    assert_eq!(file.local_id, None);
+    if matches!(file.times.created_at, MetadataValue::Known(_)) {
+        assert!(file.local_id.is_some());
+    } else {
+        assert!(file.local_id.is_none());
+    }
     assert_eq!(file.validate(), Ok(()));
 }
 

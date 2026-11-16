@@ -63,6 +63,12 @@ impl GoogleApiFailure {
     }
 }
 
+/// Reject destructive endpoints locally without exposing caller data or faking success.
+pub(super) fn permanent_deletion_disabled() -> GoogleApiFailure {
+    eprintln!("DriveSync: permanent deletion is prohibited. Move items to trash instead. Nothing was executed.");
+    GoogleApiFailure::new(GoogleApiError::UnsupportedOperation, None)
+}
+
 /// Translates a bounded error body without retaining messages or metadata.
 /// The supplied clock makes HTTP-date conversion deterministic in tests.
 pub(crate) fn failure_from_response(

@@ -1,49 +1,31 @@
 # Conflitos
 
-## Objetivo
+Identifica situações que exigem intervenção do usuário para **um item lógico**,
+comparando baseline confirmado, estado local e remoto. É um algoritmo puro,
+determinístico, privado ao Analyzer e independente do Reconciler.
 
-Avaliar **uma divergência entre duas representações de um mesmo item lógico** e determinar, a partir de evidências disponíveis, se existe conflito e qual encaminhamento é seguro.
+A implementação atual **apenas identifica**: não define ações, opções de
+resolução ou escolhas automáticas, não executa comandos e não solicita interação.
 
-O módulo é um algoritmo independente e fechado, utilizado internamente pelo [Analisador](../README.md). Cada chamada recebe os estados local e remoto, o baseline confirmado quando existir e a informação pertinente à situação; devolve **uma avaliação única e estruturada**. Não executa comandos nem aguarda interação humana.
-
-## Funcionamento
-
-1. Recebe o mesmo item lógico representado nos estados local e remoto, com as presenças observadas, um possível baseline e evidências associadas.
-2. Valida se há informações suficientes para comparar identidade, conteúdo, nome, localização, presença e mudanças relevantes.
-3. Identifica se as alterações são compatíveis, incompatíveis ou não comprováveis.
-4. Retorna a classificação do conflito, as evidências, uma solução segura quando determinável ou as alternativas que exigem decisão externa.
-
-**Conflito não é sinônimo de qualquer alteração nos dois lados.** Alterações simultâneas podem ser compatíveis (por exemplo, renomeação de um lado e edição de conteúdo do outro). Ausência de um snapshot não comprova exclusão. Igualdade de tamanho ou timestamp, isoladamente, não comprova igualdade de conteúdo.
-
-## Resultados possíveis
-
-| Situação | Resultado |
+| Resultado | Significado |
 | --- | --- |
-| Comparação segura sem incompatibilidade | `NoConflict`, com justificativa |
-| Divergência resolvível por algoritmo comprovado | `Conflict` com `Automatic` e operações propostas |
-| Divergência que exige escolha externa | `Conflict` com `RequiresDecision` e opções fundamentadas |
-| Observações insuficientes ou inconclusivas | `Undetermined` com informações necessárias para nova avaliação |
+| `NoConflict` | Nenhuma incompatibilidade comprovada nas dimensões avaliadas; o item ainda pode exigir sincronização |
+| `Conflict` | Incompatibilidade comprovada; exige intervenção do usuário |
+| `Undetermined` | Falta evidência para concluir; exige reavaliação após obter os dados faltantes |
 
-Cada operação proposta é **apenas uma recomendação**. O [Analisador](../INTERFACES.md) decide como coordená-la e, quando autorizada e segura, executá-la pelo Operador. Um resultado `RequiresDecision` é convertido pelo Analisador no objeto público `PendingAction`.
+O retorno conserva identidade, revisão, findings por dimensão e requisitos de
+evidência. São conflitos comprovados as alterações concorrentes de conteúdo,
+nome ou pasta com resultados distintos e a exclusão de um lado contra alteração
+do outro. Mudanças unilaterais, alterações equivalentes e mudanças compatíveis
+em dimensões diferentes não exigem decisão por si só.
 
-## Contrato e propriedade dos dados
+`Unknown`, metadados não coletados e ausência de snapshots não provam exclusão.
+Tamanho, timestamp e versão remota não provam igualdade de conteúdo. A avaliação
+usa os tipos reais do Inventário/Models e comparações explícitas fornecidas pelo
+coordenador, sem acessar banco, filesystem ou rede.
 
-O módulo reutiliza `SyncItemId`, `SyncBaseline`, `PresenceState`, `LocalFile` e `RemoteFile` dos respectivos contratos proprietários. A entrada é **um par de estados referente ao mesmo item**, não um lote.
-
-A interface de [INTERFACES.md](INTERFACES.md) define os objetos de entrada e saída, classificação, evidências, opções, erros e invariantes. Os algoritmos podem evoluir sem alterar a interface pública do Analisador.
-
-## Invariantes
-
-- Cada chamada produz avaliação de um item lógico, confrontando os dois lados; nunca agrupa itens distintos.
-- A conclusão sempre indica a presença ou indeterminação de conflito, com evidências que sustentem o resultado.
-- `Unknown`, `NotCollected`, `Unavailable` e ausência de baseline não equivalem a `AbsentConfirmed`.
-- Nunca propor descarte de conteúdo sem decisão explícita e precondições compatíveis.
-- Uma solução automática precisa ser demonstravelmente segura; diante de dúvida, solicitar decisão ou reobservação.
-- Não escrever no Inventário, no filesystem, em serviços remotos ou em filas.
-- Não incorporar política de escolha do usuário como se fosse observação factual.
-
-## Documentação
+**Estado:** identificação implementada em `engine/src/analyzer/conflicts/`.
+A fachada Analyzer persiste esta identificação no Inventory. Resolução de
+conflitos, ações e metadados específicos permanecem fora desta etapa.
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
-
-**Estado:** especificação de contrato para a primeira versão documental; não corresponde a código Rust implementado.

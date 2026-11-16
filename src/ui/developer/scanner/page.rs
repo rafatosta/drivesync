@@ -106,7 +106,10 @@ impl View {
         let snapshot = session.orchestrator.preparation_status();
         let working = matches!(
             snapshot.state,
-            PreparationState::Starting | PreparationState::Scanning
+            PreparationState::Starting
+                | PreparationState::Scanning
+                | PreparationState::Analyzing
+                | PreparationState::ProcessingEvents
         ) || snapshot
             .scanner
             .as_ref()
@@ -118,6 +121,8 @@ impl View {
             PreparationState::Idle => "Waiting to start",
             PreparationState::Starting => "Starting capture",
             PreparationState::Scanning => "Scanning",
+            PreparationState::Analyzing => "Recording decisions",
+            PreparationState::ProcessingEvents => "Processing changes",
             PreparationState::ReadyForAnalyzer => "Scan complete",
             PreparationState::Partial => "Partial scan",
             PreparationState::Failed => "Preparation failed",
@@ -127,7 +132,13 @@ impl View {
         self.status.set_label(state);
         if snapshot.state == PreparationState::ReadyForAnalyzer {
             self.status.add_css_class("success");
-            self.gate.set_label("Local inventory ready for analysis. Event delivery remains paused: Analyzer is not connected yet.");
+            self.gate.set_label("Local scan complete. New observations are delivered to the Analyzer; file operations are not executed.");
+        } else if matches!(
+            snapshot.state,
+            PreparationState::Analyzing | PreparationState::ProcessingEvents
+        ) {
+            self.gate
+                .set_label("Recording analysis decisions. No file operations are executed.");
         } else {
             self.gate.set_label("Analysis suspended. A complete local scan is required; events remain stored in the detector queue.");
         }

@@ -1,5 +1,6 @@
 //! Application composition; all engine requests use its public root API.
 pub(crate) mod accounts;
+pub(crate) mod analyzer;
 mod background;
 pub(crate) mod detectors;
 pub(crate) mod inventory;

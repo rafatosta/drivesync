@@ -88,110 +88,6 @@ async fn drives_create_remote_errors_are_sanitized() {
 }
 
 #[tokio::test]
-async fn drives_delete_wire_contract() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .drives_delete(
-            &session(),
-            &DriveId("d".into()),
-            DriveDeleteOptions::default(),
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].method, "DELETE");
-    assert_eq!(requests[0].path(), "/drive/v3/drives/d");
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer tok-A-secret")
-    );
-    assert!(requests[0].body.is_empty());
-    assert_eq!(
-        requests[0]
-            .decoded_query()
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        serde_json::from_str::<std::collections::BTreeMap<String, String>>(r#"{}"#).unwrap()
-    );
-}
-
-#[tokio::test]
-async fn drives_delete_remote_errors_are_sanitized() {
-    let server = Server::start(vec![Reply::json(
-        403,
-        r#"{"error":{"message":"private-body","errors":[{"reason":"insufficientFilePermissions"}]}}"#,
-    )]);
-    let client = server.client();
-    let failure = client
-        .drives_delete(
-            &session(),
-            &DriveId("d".into()),
-            DriveDeleteOptions::default(),
-        )
-        .await
-        .expect_err("remote error");
-    assert_eq!(failure.kind, GoogleApiError::PermissionDenied);
-    assert_eq!(failure.http_status, Some(403));
-    assert!(!failure.retryable);
-    assert!(!format!("{failure:?}").contains("private-body"));
-    assert!(!format!("{failure:?}").contains("tok-A-secret"));
-}
-
-#[tokio::test]
-async fn drives_delete_option_allow_item_deletion() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .drives_delete(
-            &session(),
-            &DriveId("d".into()),
-            DriveDeleteOptions {
-                allow_item_deletion: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    let query = requests[0].decoded_query();
-    assert_eq!(
-        query
-            .iter()
-            .find(|(key, _)| key == "allowItemDeletion")
-            .map(|(_, value)| value.as_str()),
-        Some("false")
-    );
-}
-
-#[tokio::test]
-async fn drives_delete_option_use_domain_admin_access() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .drives_delete(
-            &session(),
-            &DriveId("d".into()),
-            DriveDeleteOptions {
-                use_domain_admin_access: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    let query = requests[0].decoded_query();
-    assert_eq!(
-        query
-            .iter()
-            .find(|(key, _)| key == "useDomainAdminAccess")
-            .map(|(_, value)| value.as_str()),
-        Some("false")
-    );
-}
-
-#[tokio::test]
 async fn drives_hide_wire_contract() {
     let server = Server::start(vec![Reply::json(200, r#"{"id":"d","name":"sample"}"#)]);
     let client = server.client();
@@ -746,110 +642,6 @@ async fn files_create_option_fields() {
 }
 
 #[tokio::test]
-async fn files_delete_wire_contract() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .files_delete(
-            &session(),
-            &FileId("f".into()),
-            FileDeleteOptions::default(),
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].method, "DELETE");
-    assert_eq!(requests[0].path(), "/drive/v3/files/f");
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer tok-A-secret")
-    );
-    assert!(requests[0].body.is_empty());
-    assert_eq!(
-        requests[0]
-            .decoded_query()
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        serde_json::from_str::<std::collections::BTreeMap<String, String>>(r#"{}"#).unwrap()
-    );
-}
-
-#[tokio::test]
-async fn files_delete_remote_errors_are_sanitized() {
-    let server = Server::start(vec![Reply::json(
-        403,
-        r#"{"error":{"message":"private-body","errors":[{"reason":"insufficientFilePermissions"}]}}"#,
-    )]);
-    let client = server.client();
-    let failure = client
-        .files_delete(
-            &session(),
-            &FileId("f".into()),
-            FileDeleteOptions::default(),
-        )
-        .await
-        .expect_err("remote error");
-    assert_eq!(failure.kind, GoogleApiError::PermissionDenied);
-    assert_eq!(failure.http_status, Some(403));
-    assert!(!failure.retryable);
-    assert!(!format!("{failure:?}").contains("private-body"));
-    assert!(!format!("{failure:?}").contains("tok-A-secret"));
-}
-
-#[tokio::test]
-async fn files_delete_option_supports_all_drives() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .files_delete(
-            &session(),
-            &FileId("f".into()),
-            FileDeleteOptions {
-                supports_all_drives: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    let query = requests[0].decoded_query();
-    assert_eq!(
-        query
-            .iter()
-            .find(|(key, _)| key == "supportsAllDrives")
-            .map(|(_, value)| value.as_str()),
-        Some("false")
-    );
-}
-
-#[tokio::test]
-async fn files_delete_option_enforce_single_parent() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .files_delete(
-            &session(),
-            &FileId("f".into()),
-            FileDeleteOptions {
-                enforce_single_parent: Some(false),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    let query = requests[0].decoded_query();
-    assert_eq!(
-        query
-            .iter()
-            .find(|(key, _)| key == "enforceSingleParent")
-            .map(|(_, value)| value.as_str()),
-        Some("false")
-    );
-}
-
-#[tokio::test]
 async fn files_download_wire_contract() {
     let server = Server::start(vec![Reply::json(
         200,
@@ -962,74 +754,6 @@ async fn files_download_option_revision_id() {
         query
             .iter()
             .find(|(key, _)| key == "revisionId")
-            .map(|(_, value)| value.as_str()),
-        Some("value")
-    );
-}
-
-#[tokio::test]
-async fn files_empty_trash_wire_contract() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .files_empty_trash(&session(), EmptyTrashOptions::default())
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].method, "DELETE");
-    assert_eq!(requests[0].path(), "/drive/v3/files/trash");
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer tok-A-secret")
-    );
-    assert!(requests[0].body.is_empty());
-    assert_eq!(
-        requests[0]
-            .decoded_query()
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        serde_json::from_str::<std::collections::BTreeMap<String, String>>(r#"{}"#).unwrap()
-    );
-}
-
-#[tokio::test]
-async fn files_empty_trash_remote_errors_are_sanitized() {
-    let server = Server::start(vec![Reply::json(
-        403,
-        r#"{"error":{"message":"private-body","errors":[{"reason":"insufficientFilePermissions"}]}}"#,
-    )]);
-    let client = server.client();
-    let failure = client
-        .files_empty_trash(&session(), EmptyTrashOptions::default())
-        .await
-        .expect_err("remote error");
-    assert_eq!(failure.kind, GoogleApiError::PermissionDenied);
-    assert_eq!(failure.http_status, Some(403));
-    assert!(!failure.retryable);
-    assert!(!format!("{failure:?}").contains("private-body"));
-    assert!(!format!("{failure:?}").contains("tok-A-secret"));
-}
-
-#[tokio::test]
-async fn files_empty_trash_option_drive_id() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .files_empty_trash(
-            &session(),
-            EmptyTrashOptions {
-                drive_id: Some(DriveId("value".into())),
-            },
-        )
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    let query = requests[0].decoded_query();
-    assert_eq!(
-        query
-            .iter()
-            .find(|(key, _)| key == "driveId")
             .map(|(_, value)| value.as_str()),
         Some("value")
     );
@@ -1523,5 +1247,72 @@ async fn parent_replacement_in_update_body_is_rejected_instead_of_ignored() {
         .await
         .unwrap_err();
     assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+    assert!(server.recorded().is_empty());
+}
+
+fn assert_permanent_deletion_blocked(result: GoogleResult<()>) {
+    let failure = result.expect_err("permanent deletion must never report success");
+    assert_eq!(failure.kind, GoogleApiError::UnsupportedOperation);
+    assert_eq!(failure.http_status, None);
+    assert_eq!(failure.provider_reason, None);
+    assert!(!failure.retryable);
+    assert!(!format!("{failure:?}").contains("tok-A-secret"));
+}
+
+#[tokio::test]
+async fn permanent_deletion_calls_and_traits_never_send_http_even_with_destructive_options() {
+    // A closed loopback listener also prevents an accidental network attempt
+    // from hanging: it would return Network instead of the expected local error.
+    let server = Server::start(vec![]);
+    let client = server.client();
+    let session = session();
+    let file = FileId("private-file".into());
+    let drive = DriveId("private-drive".into());
+    assert_permanent_deletion_blocked(
+        client
+            .files_delete(&session, &file, FileDeleteOptions::default())
+            .await,
+    );
+    assert_permanent_deletion_blocked(
+        client
+            .files_empty_trash(&session, EmptyTrashOptions::default())
+            .await,
+    );
+    assert_permanent_deletion_blocked(
+        client
+            .drives_delete(
+                &session,
+                &drive,
+                DriveDeleteOptions {
+                    allow_item_deletion: Some(true),
+                    use_domain_admin_access: Some(true),
+                },
+            )
+            .await,
+    );
+    assert_permanent_deletion_blocked(
+        client
+            .revisions_delete(&session, &file, &RevisionId("revision".into()))
+            .await,
+    );
+    assert_permanent_deletion_blocked(
+        GoogleFilesApi::files_delete(&client, &session, &file, FileDeleteOptions::default()).await,
+    );
+    assert_permanent_deletion_blocked(
+        GoogleFilesApi::files_empty_trash(&client, &session, EmptyTrashOptions::default()).await,
+    );
+    assert_permanent_deletion_blocked(
+        GoogleDrivesApi::drives_delete(&client, &session, &drive, DriveDeleteOptions::default())
+            .await,
+    );
+    assert_permanent_deletion_blocked(
+        GoogleRevisionsApi::revisions_delete(
+            &client,
+            &session,
+            &file,
+            &RevisionId("revision".into()),
+        )
+        .await,
+    );
     assert!(server.recorded().is_empty());
 }

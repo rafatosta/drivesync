@@ -174,3 +174,11 @@ de iniciar o aplicativo. A inspeção somente leitura continua sem criar bancos.
 Validação no SDK: os 17 testes públicos de Inventory passaram, incluindo a
 criação em pasta ocupada com preservação do conteúdo e a recusa de banco com
 esquema incompatível sem alteração dos bytes.
+
+
+## Integração de análises
+
+Foram adicionados `record_analysis`, `get_analysis` e `list_analyses` às 17
+operações originais. O esquema 4 persiste avaliações e decisões com operações
+bloqueadas, controle de revisão, retry idempotente e consulta após reinício.
+Veja [Persistência de análises](ANALYSIS.md) para contratos e limites.

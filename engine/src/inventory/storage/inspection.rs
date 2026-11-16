@@ -11,6 +11,7 @@ const PREVIEW_BYTES: usize = 4096;
 /// Explicit allowlist excludes SQLite internals and prevents arbitrary SQL identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InventoryTable {
+    PlanningClock,
     SyncInfo,
     Items,
     LocalFiles,
@@ -22,10 +23,26 @@ pub enum InventoryTable {
     Baselines,
     Activities,
     Confirmations,
+    Analyses,
+    AnalysisFindings,
+    AnalysisRequirements,
+    AnalysisDecisions,
+    AnalysisPlanOrder,
+    AnalysisPlanRequests,
+    AnalysisPlanNamespaces,
+    ItemAssociations,
+    AnalysisPlans,
+    AnalysisPlanSteps,
+    AnalysisPlanBlocks,
+    AnalysisPlanDependencies,
+    AnalysisPlanGuards,
+    AnalysisPlanManual,
+    AnalysisPlanResources,
 }
 impl InventoryTable {
     /// All supported tables in presentation order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 27] = [
+        Self::PlanningClock,
         Self::SyncInfo,
         Self::Items,
         Self::LocalFiles,
@@ -37,10 +54,26 @@ impl InventoryTable {
         Self::Baselines,
         Self::Activities,
         Self::Confirmations,
+        Self::Analyses,
+        Self::AnalysisFindings,
+        Self::AnalysisRequirements,
+        Self::AnalysisDecisions,
+        Self::AnalysisPlanOrder,
+        Self::AnalysisPlanRequests,
+        Self::AnalysisPlanNamespaces,
+        Self::ItemAssociations,
+        Self::AnalysisPlans,
+        Self::AnalysisPlanSteps,
+        Self::AnalysisPlanBlocks,
+        Self::AnalysisPlanDependencies,
+        Self::AnalysisPlanGuards,
+        Self::AnalysisPlanManual,
+        Self::AnalysisPlanResources,
     ];
     /// Physical name for diagnostic presentation; not a caller-controlled SQL fragment.
     pub fn name(self) -> &'static str {
         match self {
+            Self::PlanningClock => "planning_clock",
             Self::SyncInfo => "sync_info",
             Self::Items => "items",
             Self::LocalFiles => "local_files",
@@ -52,6 +85,21 @@ impl InventoryTable {
             Self::Baselines => "baselines",
             Self::Activities => "activities",
             Self::Confirmations => "confirmations",
+            Self::Analyses => "analyses",
+            Self::AnalysisFindings => "analysis_findings",
+            Self::AnalysisRequirements => "analysis_requirements",
+            Self::AnalysisDecisions => "analysis_decisions",
+            Self::AnalysisPlanOrder => "analysis_plan_order",
+            Self::AnalysisPlanRequests => "analysis_plan_requests",
+            Self::AnalysisPlanNamespaces => "analysis_plan_namespaces",
+            Self::ItemAssociations => "item_associations",
+            Self::AnalysisPlans => "analysis_plans",
+            Self::AnalysisPlanSteps => "analysis_plan_steps",
+            Self::AnalysisPlanBlocks => "analysis_plan_blocks",
+            Self::AnalysisPlanDependencies => "analysis_plan_dependencies",
+            Self::AnalysisPlanGuards => "analysis_plan_guards",
+            Self::AnalysisPlanManual => "analysis_plan_manual",
+            Self::AnalysisPlanResources => "analysis_plan_resources",
         }
     }
 }
@@ -168,7 +216,7 @@ pub fn inspect(request: InspectInventoryRequest) -> InventoryResult<InspectionPa
     let version: u32 = tx
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 3 {
+    if version != 6 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(&tx)?;

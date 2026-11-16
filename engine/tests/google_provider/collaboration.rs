@@ -2037,50 +2037,6 @@ async fn replies_update_option_include_deleted() {
 }
 
 #[tokio::test]
-async fn revisions_delete_wire_contract() {
-    let server = Server::start(vec![Reply::json(204, r#""#)]);
-    let client = server.client();
-    client
-        .revisions_delete(&session(), &FileId("f".into()), &RevisionId("v".into()))
-        .await
-        .unwrap();
-    let requests = server.recorded();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].method, "DELETE");
-    assert_eq!(requests[0].path(), "/drive/v3/files/f/revisions/v");
-    assert_eq!(
-        requests[0].header("authorization"),
-        Some("Bearer tok-A-secret")
-    );
-    assert!(requests[0].body.is_empty());
-    assert_eq!(
-        requests[0]
-            .decoded_query()
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        serde_json::from_str::<std::collections::BTreeMap<String, String>>(r#"{}"#).unwrap()
-    );
-}
-
-#[tokio::test]
-async fn revisions_delete_remote_errors_are_sanitized() {
-    let server = Server::start(vec![Reply::json(
-        403,
-        r#"{"error":{"message":"private-body","errors":[{"reason":"insufficientFilePermissions"}]}}"#,
-    )]);
-    let client = server.client();
-    let failure = client
-        .revisions_delete(&session(), &FileId("f".into()), &RevisionId("v".into()))
-        .await
-        .expect_err("remote error");
-    assert_eq!(failure.kind, GoogleApiError::PermissionDenied);
-    assert_eq!(failure.http_status, Some(403));
-    assert!(!failure.retryable);
-    assert!(!format!("{failure:?}").contains("private-body"));
-    assert!(!format!("{failure:?}").contains("tok-A-secret"));
-}
-
-#[tokio::test]
 async fn revisions_update_wire_contract() {
     let server = Server::start(vec![Reply::json(200, r#"{}"#)]);
     let client = server.client();

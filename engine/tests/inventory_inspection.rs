@@ -69,7 +69,10 @@ fn missing_inventory_remains_missing_and_existing_readonly_tables_remain_unchang
         let page = inspect(fixture.request(table)).unwrap();
         assert!(!page.columns.is_empty());
         assert_eq!(page.info.sync_id, SyncId("actual-inventory-sync".into()));
-        if table == InventoryTable::SyncInfo {
+        if matches!(
+            table,
+            InventoryTable::SyncInfo | InventoryTable::PlanningClock
+        ) {
             assert_eq!(page.rows.len(), 1);
         } else {
             assert!(page.rows.is_empty());

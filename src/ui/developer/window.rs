@@ -45,7 +45,7 @@ fn build(
         ("detector", "Detector", super::detector::build(context)),
         ("scanner", "Scanner", super::scanner::build(context)),
         ("inventory", "Inventory", super::inventory::build(context)),
-        ("analyzer", "Analyzer", super::analyzer::build()),
+        ("analyzer", "Analyzer", super::analyzer::build(context)),
         ("operator", "Operator", super::operator::build()),
         ("orchestrator", "Orchestrator", super::orchestrator::build()),
         ("logs", "Logs", super::logs::build()),

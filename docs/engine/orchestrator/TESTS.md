@@ -1,78 +1,76 @@
-# Orchestrator — TESTS (contratos internos)
+# Orchestrator — testes do fluxo contínuo
 
-## Escopo
+A suíte `engine/tests/orchestrator.rs` usa Detector/Scanner/Analyzer/Inventory reais,
+contas sintéticas e SQLite temporário. A aplicação não usa SQL no coordenador;
+conexões SQL adicionais existem somente nos testes de injeção de falha.
 
-Plano **não executado** de integração por contratos dos módulos. Usar implementações concretas do Orchestrator quando existirem, dependências fakes com rastros de chamadas e SQLite real temporário para fronteiras duráveis. Separar cenários verificáveis dos **BLOCKED** por ausência de API nos outros módulos.
+## Casos verificáveis
 
-## Matriz de integração
+- Início de Local e Remote antes do scan, barreira de Scanner completo e entrega
+  Enabled somente depois da preparação/análise inicial.
+- Criação real de pasta e arquivo depois de `prepare`: ingestão e recibos atuais
+  aparecem sem rescan manual, sem cruzar contas e sem executar sincronização.
+- Rename e remoção locais: observações/rechecagens atualizam Inventory/Analyzer,
+  sem atribuir ao Orchestrator uma política física de rename/delete.
+- Stop/restart e criação durante parada: Scanner recupera o estado, seguido por
+  consumo contínuo; eventos em captura permanecem duráveis.
+- Falhas em `receipts` e `analyses` durante processamento ao vivo: pausa visível,
+  lease liberada, zero ack antecipado e recuperação sem duplicar File.id.
+- Scan parcial: entrega continua pausada e nenhuma análise é liberada indevidamente.
+- Esquema incompatível preservado, configuração por conta, alias de raiz remoto,
+  caller sem Tokio, preparação concorrente e parada sem Ready posterior.
+- Intenções de upload/rename ficam Blocked com zero tentativas; bytes e baseline
+  permanecem intactos. A interpretação atual do Analyzer não foi alterada.
 
-| ID | Cenário | Resultado esperado |
-| --- | --- | --- |
-| ORC-01 | Abrir contexto de `SyncId` e conta corretos | Portas apontam para escopo correto; conta/sync divergentes rejeitados |
-| ORC-02 | Iniciar sincronização | `Detector.start(delivery=Paused)` **antes** de `Scanner.scan`; duas origens iniciadas pelo Detector |
-| ORC-03 | Scanner local com arquivos existentes | Scanner registra observações via Inventory; Orchestrator não duplica as gravações |
-| ORC-04 | Evento durante Scanner | Detector persiste mesmo com entrega pausada; evento fica disponível após `resume` |
-| ORC-05 | Scanner Partial / falha estrutural | Não marcar cobertura completa nem inferir exclusões; status/erro preservado |
-| ORC-06 | Remoto não concluiu observação inicial | Não declarar sincronização inteira coberta só por Scanner local |
-| ORC-07 | `take_events` entrega lote misto | Orquestrador registra cada `File` integral em `record_local` ou `record_remote` |
-| ORC-08 | Evento sem identidade inequívoca | Não escolher `SyncItem` por nome; reobservar ou encaminhar indeterminação segura |
-| ORC-09 | `Deleted`, `data=None` ou escopo incompleto | Não produzir `AbsentConfirmed` automaticamente |
-| ORC-10 | Todos eventos persistidos e item afetado retornado | Somente então `acknowledge(Processed)`; análise recebe `SyncItem`, não `FileBatch` |
-| ORC-11 | Falha do Inventory no meio do lote | Sem ack global; `release_events`/lease preserva possibilidade de reentrega |
-| ORC-12 | Crash entre `record_*` e `acknowledge` | Redelivery exige deduplicação persistente por `File.id`; **BLOCKED até contrato no Inventory** |
-| ORC-12A | Crash após ack do Detector, antes de `analyze` | Inventory precisa manter trabalho pendente recuperável; **BLOCKED até contrato de marcação durável** |
-| ORC-13 | Mesmo item aparece várias vezes em lote | Preservar eventos; planejar reanálise sem perder mudanças; não coalescer observações persistidas |
-| ORC-14 | Analyzer devolve `Completed` | Não repetir Operator nem confirmar baseline no Orchestrator |
-| ORC-15 | Analyzer devolve `Pending` | Não bloquear outros itens, não acionar Operator; persistência da pendência **BLOCKED** |
-| ORC-16 | Resolução externa válida | Chamar novamente Analyzer com `Resolution`, não interpretar a opção; recuperação durável **BLOCKED** |
-| ORC-17 | Resolução com revision/fingerprint obsoletos | Não executar decisão antiga; Analyzer valida e devolve pendência ou erro |
-| ORC-18 | `Analyzer::Failed` após efeito remoto incerto | Não retry cego; preservar falha e solicitar reobservação |
-| ORC-19 | `Detector.pause` | Observação continua, claims suspensos; Orchestrator sem segunda fila |
-| ORC-20 | `Detector.stop` e posterior início | Observação interrompida; exigir verificação da lacuna sem culpar Detector por política externa |
-| ORC-21 | Uma origem do Detector falha | Status agregado degradado com causa da origem; outra mantém atividade |
-| ORC-22 | Restoration/Rebuilt do Inventory ou Detector Store | Não converter perda de histórico em ausência; bloqueio de mutações perigosas até cobertura |
-| ORC-23 | Configuration não disponível | Defaults dos módulos mantêm execução segura |
-| ORC-24 | Consulta de status durante scan/analyze lento | Não esperar fim do trabalho; preservar escopo, atividade e erros |
-| ORC-25 | Duas sincronizações/contas distintas | Sem mistura de AccountId/SyncId/File.id, fila, inventory ou resolução |
-| ORC-26 | Chamada `Detector.request_scan` | Observação extra não é tratada como reconstrução por Scanner |
-| ORC-27 | Parada durante lote leased | Não confirmar eventos implicitamente; preservar possibilidade de release/redelivery |
-| ORC-28 | Fila Inventory `Running` após crash | Não reexecutar comando por conta própria; reavaliação de plano **BLOCKED** até contrato |
+Os testes privados `orchestrator::ingestion::tests` exercitam observações remotas
+com metadados reais dos modelos: ingestão → Analyzer → recibo, reentrega idempotente,
+remoção indeterminada, aviso de raiz sem arquivo fictício e rejeição de escopo ou
+recurso desconhecido sem snapshot. Não requerem OAuth ou rede.
 
-## Testes de fronteiras
+## Aplicação e interface
 
-Verificar com rastros que **não há chamadas diretas** do Orchestrator a Operator, Providers, Storage interno, Detector Local/Remote, algoritmos Reconciliation/Conflicts ou SQL. O único caminho de execução física é Orchestrator → Analyzer → Operator → Provider/filesystem. Scanner usa a própria API de Inventory para gravar observações locais.
+O teste gráfico `application_startup_delivers_live_files_to_the_visible_analyzer_without_manual_refresh`
+usa o mesmo hook de restauração da aplicação. Antes de existir página Developer,
+a conta é restaurada e o pipeline começa. Depois de abrir o Analyzer, o teste cria
+pasta/arquivo e aguarda a linha correspondente sem chamar prepare/scan/analyze ou
+Refresh. Também verifica ack, contador da sessão, preservação dos bytes e parada
+na remoção da conta. Perfil XDG/Wayland e conta são sintéticos.
 
-Não aceitar um mock do Detector que sempre retorna `Ok` como comprovação de fila durável: para ORC-04, ORC-11 e ORC-12 é necessário testar integração com armazenamento real isolado (quando implementado).
+Os testes gráficos anteriores de Detector/Scanner foram ajustados para entrega
+ativa e consumo, mantendo pausa somente nos casos Partial/parada. Capturar e
+confirmar eventos não comprova upload/download ou integração com Google real.
 
-## Pendências contratuais de aceitação
+## Limites
 
-| Contrato ainda faltante | Impacto |
-| --- | --- |
-| `Inventory` — marcar/listar análise pendente de maneira durável ao ingerir observações | Recuperação de itens após ack do Detector e crash antes do Analyzer |
-| `Inventory` — idempotência por `File.id`/identidade de ocorrência | Reentrega de lote não produz efeitos duplicados de observação |
-| `Inventory` — persistência/consulta de `PendingAction` e `Resolution` | Recuperar conflito após reinício |
-| `Inventory/Scanner` — cobertura, geração e diagnóstico persistente | Decidir segurança da observação inicial |
-| `Detector Remoto` — evidência de cobertura remota inicial | Não confundir polling com snapshot completo |
-| Proprietário de conexões — cadastro e escopos | Preparação de contextos por conta/sync |
-| `Inventory/Analyzer` — plano de comando durável completo/recovery | Tratar operações em resultado incerto ou Running |
+Leases antigas aguardam expiração pela API do Detector; não há renovação ou acesso
+SQL para roubar lease. Eventos remotos sem snapshot e sem associação conhecida
+continuam pendentes com erro explícito. A segurança entre bancos depende de
+idempotência/reentrega e do guard de release, não de transação distribuída.
+Não declarar validação de Operator, política final do Analyzer ou contas reais.
 
-Registrar `BLOCKED` para esses casos até contratos efetivos, sem declarar arquitetura fechada. Nunca alterar API proprietária de outro módulo para fazer teste passar sem decisão explícita.
+## Validação executada nesta entrega
 
-**Estado:** plano TDD, nenhum teste Rust executado.
+SDK `org.gnome.Sdk//50`, extensão rust-stable do manifesto e cache
+`CARGO_HOME=/home/tosta/.cargo`:
 
+```sh
+cargo fmt --all --check
+cargo clippy --offline --workspace --all-targets -- -D warnings
+cargo build --offline --bin drivesync
+cargo test --offline -p drivesync-engine --test orchestrator
+cargo test --offline -p drivesync-engine orchestrator::ingestion --lib
+cargo test --offline --workspace
+cargo doc --offline --workspace --no-deps --document-private-items
+cargo test --offline --workspace --doc
+```
 
-## Inicialização compilada
+Passaram 17 testes públicos do Orchestrator, três testes privados de ingestão,
+792 testes no workspace e 9 doctests; 12 testes dependentes de ambiente ficaram
+ignorados por padrão. Formatação, Clippy, build e rustdoc passaram sem avisos Rust.
+O teste gráfico de abertura real/atualização ao vivo foi executado explicitamente
+com `--ignored --exact --test-threads=1` em Wayland/Mutter headless, perfil XDG
+sintético e renderer Cairo, e passou. A captura resultante foi inspecionada.
 
-engine/tests/orchestrator.rs usa Detector/Scanner/SQLite reais e contas sintéticas
-sem OAuth para verificar sete cenários: início de ambas as fontes e conector;
-fila pausada/reabertura/isolamento sem ack; varredura parcial e repetição; esquema
-incompatível preservado; parada durante preparação sem publicar Ready depois;
-rejeição de preparação concorrente enquanto a abertura do inventário aguarda;
-e repetição depois que a captura local falhou inicialmente.
-
-O teste gráfico da página Scanner exercita o hook real de restauração da abertura
-antes de construir qualquer console Developer, acompanha duas contas, verifica
-reuso de sessão, contagens, problema de acesso, rescan, captura enquanto pausado,
-janela estreita e remoção com preparação pendente. Perfis XDG/Wayland e arquivos
-são sintéticos e isolados. Não comprova ingestão no Inventory de eventos da fila
-nem execução de Analyzer/transferências.
+`git diff --exit-code HEAD -- engine/src/detectors engine/src/scanner engine/src/inventory engine/src/analyzer`
+confirmou que as interfaces/esquemas dos módulos e as regras do Analyzer não foram
+alterados. Não houve instalação de aplicativo nem teste com conta Google real.

@@ -490,7 +490,7 @@ fn build_inner(context: &Context, load_accounts: bool) -> gtk::Box {
     events.set_margin_end(20);
     events.set_margin_bottom(16);
     events.append(&stream);
-    events.append(&label("Capture only · Delivery paused; Analyzer not connected · Shared queue for Local and Remote · Initial observations are counted separately · Last 100 observations per source · No file synchronization is performed.", "dim-label"));
+    events.append(&label("Observations are delivered to Inventory and Analyzer after scanning. Confirmed means processed observations, not file synchronization. Local and Remote share the queue; initial observations are counted separately. Last 100 observations per source.", "dim-label"));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)

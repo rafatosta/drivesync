@@ -1,5 +1,18 @@
 # Google — TESTS
 
+## Política obrigatória: nenhuma exclusão permanente
+
+Por determinação explícita do usuário, exclusão de arquivos e pastas deve usar
+somente lixeira. `files_delete`, `files_empty_trash`, `revisions_delete` e
+`drives_delete` conservam suas assinaturas e traits, mas estão desativados:
+registram aviso estático e retornam `UnsupportedOperation` local, sem HTTP,
+autenticação ou alteração. O erro não é repetível, não tem status HTTP e não
+representa sucesso nem envio à lixeira. Usar `trash_file`/`trashed=true` para
+lixeira; não redirecionar silenciosamente uma chamada de exclusão permanente.
+A remoção de comentários/permissões não é exclusão de arquivo e não foi alterada.
+Esta política prevalece sobre descrições históricas dos endpoints abaixo.
+
+
 > **Escopo:** testes técnicos do mapeamento direto da API Google; não separam um módulo `api/` nem testam gerenciamento de transferências da aplicação.
 
 ## 1. Objetivo e limites
@@ -427,13 +440,16 @@ Esta seção é a **descrição executável dos cenários** que complementa as t
 
 #### API-25 — `drives_delete`
 
-**Contrato testado:** `DELETE /drives/{driveId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
 
-**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `drives`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+**Contrato testado:** método e trait continuam chamáveis com a assinatura original.
 
-**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que exclusão de drive é diferente de ocultação.
+**Bloqueio obrigatório:** retorna `UnsupportedOperation` local, sem status HTTP,
+sem razão remota e sem retry. Não pode haver requisição, exclusão ou envio implícito
+à lixeira, inclusive com opções administrativas/destrutivas habilitadas.
 
-**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar permissões administrativas, restrições, ocultação, reexibição, exclusão protegida, request ID e paginação. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+**Cobertura:** `permanent_deletion_calls_and_traits_never_send_http_even_with_destructive_options`
+usa endpoint loopback, testa chamadas concretas e traits e verifica erro local e
+zero requisições. Testes de lixeira continuam verificando `trashed=true` por PATCH.
 
 #### API-26 — `drives_get`
 
@@ -507,13 +523,16 @@ Esta seção é a **descrição executável dos cenários** que complementa as t
 
 #### API-33 — `files_delete`
 
-**Contrato testado:** `DELETE /files/{fileId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
 
-**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+**Contrato testado:** método e trait continuam chamáveis com a assinatura original.
 
-**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que exclusão permanente não é equivalente a `trashed=true`.
+**Bloqueio obrigatório:** retorna `UnsupportedOperation` local, sem status HTTP,
+sem razão remota e sem retry. Não pode haver requisição, exclusão ou envio implícito
+à lixeira, inclusive com opções administrativas/destrutivas habilitadas.
 
-**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+**Cobertura:** `permanent_deletion_calls_and_traits_never_send_http_even_with_destructive_options`
+usa endpoint loopback, testa chamadas concretas e traits e verifica erro local e
+zero requisições. Testes de lixeira continuam verificando `trashed=true` por PATCH.
 
 #### API-34 — `files_download`
 
@@ -527,13 +546,16 @@ Esta seção é a **descrição executável dos cenários** que complementa as t
 
 #### API-35 — `files_empty_trash`
 
-**Contrato testado:** `DELETE /files/trash`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
 
-**Sucesso:** criar sessão fictícia autorizada e simular a **esvaziamento da lixeira** do recurso `files`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+**Contrato testado:** método e trait continuam chamáveis com a assinatura original.
 
-**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  Confirmar especialmente que esvaziar lixeira pode afetar vários recursos e exige cenário de autorização.
+**Bloqueio obrigatório:** retorna `UnsupportedOperation` local, sem status HTTP,
+sem razão remota e sem retry. Não pode haver requisição, exclusão ou envio implícito
+à lixeira, inclusive com opções administrativas/destrutivas habilitadas.
 
-**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. exercitar IDs, `q`, `corpora`, `fields`, estruturas de pais, nomes, MIME e opções; distinguir PATCH parcial, renomeação/movimentação de metadados, lixeira e exclusão permanente. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+**Cobertura:** `permanent_deletion_calls_and_traits_never_send_http_even_with_destructive_options`
+usa endpoint loopback, testa chamadas concretas e traits e verifica erro local e
+zero requisições. Testes de lixeira continuam verificando `trashed=true` por PATCH.
 
 #### API-36 — `files_export`
 
@@ -737,13 +759,16 @@ Esta seção é a **descrição executável dos cenários** que complementa as t
 
 #### API-56 — `revisions_delete`
 
-**Contrato testado:** `DELETE /files/{fileId}/revisions/{revisionId}`, retorno `GoogleResult<()>`, segundo a assinatura e as opções de `INTERFACES.md`.
 
-**Sucesso:** criar sessão fictícia autorizada e simular a **exclusão** do recurso `revisions`. Confirmar que o cliente usa exatamente o verbo e o caminho descritos, IDs codificados corretamente e apenas os parâmetros permitidos; para métodos com body, comparar o JSON/corpo exato, distinguindo omissão de limpeza explícita. Validar uma resposta mínima e outra completa conforme a especificação do recurso.
+**Contrato testado:** método e trait continuam chamáveis com a assinatura original.
 
-**Negativos e opcionais:** repetir omitindo cada opção facultativa e depois fornecendo-a; campos `fields` ausentes não devem virar valores falsos. Simular acesso negado, recurso inexistente, parâmetros inválidos conforme o contrato, quota/rede/timeout e resposta malformada.  
+**Bloqueio obrigatório:** retorna `UnsupportedOperation` local, sem status HTTP,
+sem razão remota e sem retry. Não pode haver requisição, exclusão ou envio implícito
+à lixeira, inclusive com opções administrativas/destrutivas habilitadas.
 
-**Retorno e invariantes:** confirmar o status HTTP de sucesso e a ausência de corpo de recurso, sem tentar desserializar um objeto. testar revisão ausente, atualizável/não atualizável, export links e restrições conforme tipo de arquivo. Em todos os casos, conferir `GoogleApiFailure` com status/reason apropriado, isolamento da `GoogleSession` e ausência de segredos em erro ou log; não executar chamadas externas.
+**Cobertura:** `permanent_deletion_calls_and_traits_never_send_http_even_with_destructive_options`
+usa endpoint loopback, testa chamadas concretas e traits e verifica erro local e
+zero requisições. Testes de lixeira continuam verificando `trashed=true` por PATCH.
 
 #### API-57 — `revisions_get`
 

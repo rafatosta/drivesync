@@ -19,29 +19,17 @@ impl GoogleDriveClient {
         )
     }
 
-    /// drive.drives.delete: DELETE /drives/{driveId}. No automatic retry.
+    /// Disabled: permanent deletion is prohibited. Move items to trash instead.
+    /// Keeps the public call intact, emits a static warning and returns local
+    /// `UnsupportedOperation` without authentication, HTTP or mutation.
     pub async fn drives_delete(
         &self,
         session: &GoogleSession,
         drive_id: &DriveId,
         options: DriveDeleteOptions,
     ) -> GoogleResult<()> {
-        let query = super::client::query_for(
-            &options,
-            &["useDomainAdminAccess", "allowItemDeletion", "fields"],
-        )?;
-        let body = None;
-        let _ = self
-            .rest(
-                session,
-                reqwest::Method::DELETE,
-                &["drives", &drive_id.0],
-                "",
-                query,
-                body,
-            )
-            .await?;
-        Ok(())
+        let _ = (session, drive_id, options);
+        Err(super::errors::permanent_deletion_disabled())
     }
 
     /// drive.drives.hide: POST /drives/{driveId}/hide. No automatic retry.
@@ -183,34 +171,17 @@ impl GoogleDriveClient {
         )
     }
 
-    /// drive.files.delete: DELETE /files/{fileId}. No automatic retry.
+    /// Disabled: permanent deletion is prohibited. Move items to trash instead.
+    /// Keeps the public call intact, emits a static warning and returns local
+    /// `UnsupportedOperation` without authentication, HTTP or mutation.
     pub async fn files_delete(
         &self,
         session: &GoogleSession,
         file_id: &FileId,
         options: FileDeleteOptions,
     ) -> GoogleResult<()> {
-        let query = super::client::query_for(
-            &options,
-            &[
-                "supportsAllDrives",
-                "enforceSingleParent",
-                "supportsTeamDrives",
-                "fields",
-            ],
-        )?;
-        let body = None;
-        let _ = self
-            .rest(
-                session,
-                reqwest::Method::DELETE,
-                &["files", &file_id.0],
-                "",
-                query,
-                body,
-            )
-            .await?;
-        Ok(())
+        let _ = (session, file_id, options);
+        Err(super::errors::permanent_deletion_disabled())
     }
 
     /// drive.files.download: POST /files/{fileId}/download. No automatic retry.
@@ -236,26 +207,16 @@ impl GoogleDriveClient {
         )
     }
 
-    /// drive.files.emptyTrash: DELETE /files/trash. No automatic retry.
+    /// Disabled: permanent deletion is prohibited. Move items to trash instead.
+    /// Keeps the public call intact, emits a static warning and returns local
+    /// `UnsupportedOperation` without authentication, HTTP or mutation.
     pub async fn files_empty_trash(
         &self,
         session: &GoogleSession,
         options: EmptyTrashOptions,
     ) -> GoogleResult<()> {
-        let query =
-            super::client::query_for(&options, &["driveId", "enforceSingleParent", "fields"])?;
-        let body = None;
-        let _ = self
-            .rest(
-                session,
-                reqwest::Method::DELETE,
-                &["files", "trash"],
-                "",
-                query,
-                body,
-            )
-            .await?;
-        Ok(())
+        let _ = (session, options);
+        Err(super::errors::permanent_deletion_disabled())
     }
 
     /// drive.files.modifyLabels: POST /files/{fileId}/modifyLabels. No automatic retry.

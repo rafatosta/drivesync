@@ -1,5 +1,18 @@
 # Instruções para agentes — Google (DriveSync)
 
+## Política obrigatória: nenhuma exclusão permanente
+
+Por determinação explícita do usuário, exclusão de arquivos e pastas deve usar
+somente lixeira. `files_delete`, `files_empty_trash`, `revisions_delete` e
+`drives_delete` conservam suas assinaturas e traits, mas estão desativados:
+registram aviso estático e retornam `UnsupportedOperation` local, sem HTTP,
+autenticação ou alteração. O erro não é repetível, não tem status HTTP e não
+representa sucesso nem envio à lixeira. Usar `trash_file`/`trashed=true` para
+lixeira; não redirecionar silenciosamente uma chamada de exclusão permanente.
+A remoção de comentários/permissões não é exclusão de arquivo e não foi alterada.
+Esta política prevalece sobre descrições históricas dos endpoints abaixo.
+
+
 > **Fronteira técnica:** este submódulo é diretamente o mapeamento técnico da API Google, sem camada `api/` intermediária e sem lógica de negócio.
 
 ## Escopo

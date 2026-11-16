@@ -57,7 +57,7 @@ pub(crate) fn from_statx(
 ) -> ModelResult<LocalFile> {
     let kind = field(s.stx_mask, libc::STATX_TYPE, entry_kind(s.stx_mode as u32));
     let target = non_link_target(&kind);
-    Ok(LocalFile {
+    let mut file = LocalFile {
         local_id: None,
         relative_path: path,
         kind,
@@ -89,7 +89,23 @@ pub(crate) fn from_statx(
             statx_attributes_mask: MetadataValue::Known(s.stx_attributes_mask),
         },
         symlink: LocalSymlink { target },
-    })
+    };
+    // Bind local identity to birth time as well as device/inode; inode reuse or
+    // multiple hardlink names must not silently become the same logical entry.
+    if let (MetadataValue::Known(created), MetadataValue::Known(inode)) =
+        (&file.times.created_at, &file.storage.inode)
+    {
+        if before.is_dir() || before.is_file() && before.nlink() == 1 {
+            file.local_id = Some(LocalFileId(format!(
+                "linux:{}:{}:{}:{}",
+                before.dev(),
+                inode,
+                created.unix_seconds,
+                created.nanoseconds
+            )));
+        }
+    }
+    Ok(file)
 }
 pub(crate) fn from_fstat(
     m: &Metadata,

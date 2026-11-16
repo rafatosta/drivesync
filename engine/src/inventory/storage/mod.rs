@@ -1,4 +1,5 @@
 //! Private SQLite ownership and transaction boundary for the inventory.
+use super::analysis::*;
 use super::models::*;
 use crate::models::*;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
@@ -30,11 +31,13 @@ pub(super) fn sql(error: rusqlite::Error) -> InventoryFailure {
 }
 const SCHEMA: &str = include_str!("schema.sql");
 mod activity;
+mod analysis;
 mod baseline;
 mod items;
 mod metadata;
 mod operations;
 mod pagination;
+mod planning;
 impl InventoryManager {
     /// Opens the private database, rejecting incompatible identity/schema without replacement.
     /// Creation is explicit and preserves user entries in an existing configured root.
@@ -230,7 +233,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 3 {
+    if version != 6 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

@@ -531,3 +531,12 @@ Registrar no PR/commit de implementação:
 - Cada teste que não puder ser automatizado deve ter justificativa técnica e procedimento manual explicitado.
 
 **Estado deste documento:** plano de testes, não implementação nem resultado de execução. A execução começa somente quando os respectivos testes e código forem criados e efetivamente rodados.
+
+
+## Persistência de análises
+
+`engine/tests/inventory_analysis.rs` cobre gravação/reabertura, associação entre
+recibo e operações bloqueadas, retry exato, reavaliação idêntica, obsolescência,
+controle de escopo/snapshot/revisão, rollback por trigger SQLite, duas conexões
+concorrentes, recusa durante execução Running, conflito sem ações, paginação e
+bloqueio de Requeue/claim para intenções sem comando. Ver [ANALYSIS.md](ANALYSIS.md).

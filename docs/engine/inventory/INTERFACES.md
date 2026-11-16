@@ -12,7 +12,7 @@
 
 **Dados do inventário:** `SyncItem`, baseline, fila de operações e histórico são persistidos nas estruturas definidas neste contrato.
 
-**Estado:** as 17 operações públicas estão implementadas em `engine/src/inventory/`. Os exemplos abaixo resumem os tipos; o código Rust e [IMPLEMENTATION.md](IMPLEMENTATION.md) registram o contrato executável e seus limites. A alimentação pelo Analisador e o mecanismo comum de backup/restauração continuam fora desta entrega. A consulta de tabelas no Developer Console usa a API separada de diagnóstico `inventory::inspection`, sem ampliar os métodos da fachada de domínio.
+**Estado:** as 17 operações públicas estão implementadas em `engine/src/inventory/`. Os exemplos abaixo resumem os tipos; o código Rust e [IMPLEMENTATION.md](IMPLEMENTATION.md) registram o contrato executável e seus limites. O mecanismo comum de backup/restauração continua pendente; a persistência das avaliações está descrita em [ANALYSIS.md](ANALYSIS.md). A consulta de tabelas no Developer Console usa a API separada de diagnóstico `inventory::inspection`, sem ampliar os métodos da fachada de domínio.
 
 ## 1. Objetivo e princípio das interfaces
 
@@ -876,3 +876,11 @@ sem informar restauração ou reconstrução que não aconteceu.
 GetSyncInfoResult expõe local_root como bytes Unix da raiz absoluta persistida,
 além de info. O Scanner valida esse vínculo antes de qualquer observação, sem
 consultar SQLite diretamente. O acréscimo não muda o esquema.
+
+
+## Integração de análises
+
+Foram adicionados `record_analysis`, `get_analysis` e `list_analyses` às 17
+operações originais. O esquema 4 persiste avaliações e decisões com operações
+bloqueadas, controle de revisão, retry idempotente e consulta após reinício.
+Veja [Persistência de análises](ANALYSIS.md) para contratos e limites.

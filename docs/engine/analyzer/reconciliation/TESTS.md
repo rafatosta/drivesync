@@ -67,4 +67,40 @@ Fonte de verdade: [INTERFACES.md](INTERFACES.md). Os casos descrevem testes unit
 6. Onde tipos ou políticas externos ainda não estiverem definidos, marcar o cenário `BLOCKED` com a lacuna explícita, não inventar capacidades.
 7. Testes Rust futuros serão executados exclusivamente no ambiente Flatpak do projeto; registrar comandos e resultados reais.
 
-**Estado:** plano de testes documental, sem testes Rust executados.
+## Cobertura da implementação atual
+
+A suíte unitária em `engine/src/analyzer/reconciliation/tests.rs` cobre o núcleo
+sem I/O: comparações de conteúdo, nomes em bytes, pais, criações semânticas,
+exclusão versus alteração, cobertura/presença, ausência de baseline, snapshots
+recentes desconhecidos, identidades qualificadas e repetibilidade.
+
+RC-01, RC-12, RC-13, RC-15, RC-16, RC-18 e RC-19 possuem verificações diretas.
+RC-02 a RC-10 e RC-14 validam **decisões semânticas**, sem comprovar requisições do
+Operador. RC-11 valida bloqueio seguro sem autorização de exclusão; RC-17 valida
+mapeamento insuficiente. RC-20 e RC-S07/RC-S08 estão **BLOCKED** na integração de
+comandos tipados, precondições e dependências. Os demais invariantes transversais
+são exercitados no núcleo; RC-S06 não abrange propagação de metadados específicos,
+que permanece pendente de política e baseline suficientes.
+
+Os vinte casos originais continuam como critérios de integração; a aprovação dos
+testes do núcleo não significa conformidade com todos os comandos previstos.
+
+## Validação executada nesta entrega
+
+No SDK `org.gnome.Sdk//50`, com a extensão `rust-stable` definida no manifesto
+Flatpak e dependências locais em `CARGO_HOME=/home/tosta/.cargo`:
+
+```sh
+cargo fmt --all --check
+cargo clippy --offline --workspace --all-targets -- -D warnings
+cargo test --offline --workspace
+cargo doc --offline --workspace --no-deps --document-private-items
+cargo test --offline --workspace --doc
+```
+
+Resultado: 20 testes do núcleo aprovados; 731 testes do workspace aprovados,
+10 ignorados, além de 6 doctests aprovados. Formatação, Clippy e rustdoc passaram.
+Links relativos e `git diff --check` também passaram. A tentativa inicial sem
+cache explícito não conseguiu resolver crates.io; a validação final usou o cache
+local em modo offline. Nenhuma integração com Google ou aplicativo instalado foi
+exercitada; o Reconciler não acessa esses serviços.

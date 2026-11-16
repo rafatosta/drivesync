@@ -1,43 +1,38 @@
 # Orchestrator — orientações para agentes
 
-## Objetivo
+## Escopo autorizado
 
-Implementar **apenas a coordenação de sincronização** por meio das interfaces públicas já documentadas. Não reimplementar Scanner, Detector, Inventory, Analyzer, Operator, Providers ou Configuration.
+O usuário solicitou fluxo real e contínuo da aplicação: iniciar os detectores,
+aguardar Scanner, entregar itens ao Analyzer e continuar consumindo eventos.
+O Analyzer identifica e persiste direções de upload/download e conflitos para
+intervenção manual; a execução pelo Operator permanece fora do escopo.
+Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
+[AGENTS raiz](../../../AGENTS.md).
 
-## Leitura obrigatória
+- Preservar interfaces de Detector, Scanner, Inventory e Analyzer. Usar somente
+  métodos públicos; não acessar SQL, storages internos, Providers ou algoritmos privados.
+- Iniciar captura com entrega pausada antes do scan. Somente scan completo e análise
+  inicial bem-sucedida liberam o consumidor da sessão.
+- A fila pertence ao Detector. O sinal de disponibilidade não é entrega nem ack;
+  não criar backlog paralelo de File ou um consumidor por página GTK.
+- Preservar File.id e payload ao registrar observações associáveis. Não inventar
+  ausência confirmada, identidade local/remota por nome ou SyncItem sem dados.
+- Usar Scanner para lacunas locais; não implementar outro coletor. Avisos técnicos
+  não equivalem a arquivos e permanecem observáveis no Detector.
+- Confirmar o lote somente após ingestão, rechecagem necessária e análise duráveis.
+  Falha/Partial/cancelamento preserva o lote por release/expiração, sem Discarded.
+- Testar reentrega entre os bancos, cuja gravação não é uma transação distribuída.
+- O Analyzer apenas produz decisões. As políticas pertencem ao Analyzer, nunca
+  ao consumidor ou à GUI. Não liberar operações, confirmar baseline, transferir
+  conteúdo ou implementar Operator nesta demanda.
+- Manter GTK livre de I/O, preservar chamadores sem Tokio externo, epoch de sessão,
+  wakeup sem perda de sinal, worker único, desligamento e substituição seguros.
+- Expor estado real de ingestão, erros e contagem de eventos processados, sem
+  apresentar ack de observação como sincronização concluída.
 
-1. [README.md](README.md) — fluxos e divisão de responsabilidades.
-2. [INTERFACES.md](INTERFACES.md) — portas e contratos internos conceituais.
-3. [TESTS.md](TESTS.md) — invariantes, lacunas e casos bloqueados.
-4. [Detector](../detectors/INTERFACES.md) e [Scanner](../scanner/INTERFACES.md).
-5. [Inventory](../inventory/INTERFACES.md) e [Analyzer](../analyzer/INTERFACES.md).
-6. [Accounts](../accounts/INTERFACES.md) e [Configuration](../configuration/INTERFACES.md), quando usados para composição.
-7. [AGENTS.md raiz](../../../AGENTS.md) para convenções gerais.
+## Validação
 
-## Regras
-
-- O caminho lógico é `Detector → Inventory → Analyzer`, com `Scanner → Inventory` durante a inicialização; nunca `Detector → Analyzer` por evento bruto.
-- `Detector.start(delivery=Paused)` deve iniciar Local e Remoto **antes** do Scanner, para não perder mudanças concorrentes à varredura.
-- `pause` suspende **apenas entrega**, não observação. `stop` encerra observação; o Orchestrator assume consequências de gaps, sem delegar reconstrução automática ao Detector.
-- Consumir `FileBatch` e usar `Inventory.record_local/record_remote` com evidência adequada; não inventar `AbsentConfirmed` nem vínculo pela igualdade de nomes.
-- **Não confirmar o lote** antes que toda sua ingestão esteja duravelmente aceita. Não descartar eventos por falha. Reconhecer que commit entre Detector/Inventory não é atômico e exigir idempotência por `File.id` antes de prometer recuperação pós-crash.
-- Obter `SyncItem` atual do Inventory e chamar `Analyzer.analyze` para decisões e execução. Não chamar Operator/Providers nem subalgoritmos internos.
-- `Pending` é desfecho da chamada e requer recuperação durável ainda não definida; não criar fila paralela de conflitos em memória como fonte oficial.
-- Não interpretar `Completed` como sucesso sem Inventory atualizado; `Failed`/efeito incerto requer reobservação e não replay cego.
-- Status agregados combinam snapshots existentes e escopos reais; não inventar métricas, percentuais, estados globais de Analyzer nem conectividade de Accounts.
-- Instanciamento de módulos, compartilhamento entre contas, limites de concorrência, workers e runtime ficam deliberadamente **abertos**. Não adicionar defaults arbitrários para esses conceitos.
-- `Configuration` é opcional para preferências; não deve se tornar escalonador. Recovery SQLite usa seu mecanismo comum através dos respectivos Storages.
-- API externa `facade/` é outro limite: **não** alterar métodos públicos existentes no Rust ou inventar API de UI para completar a documentação interna.
-- Testes com SQLite real temporário, fakes de módulo e ambientes Flatpak; identificar casos `BLOCKED`, testes não executados e decisões pendentes sem mascarar lacunas.
-
-## Escopo compilado autorizado
-
-O usuário solicitou integrar Scanner à abertura e expor sua visualização no
-Developer Console. A etapa atual compõe Detector pausado, Inventory e Scanner,
-com snapshots e cancelamento por escopo. O consumidor terminal diagnóstico foi
-removido, sem alias ou caminho de retrocompatibilidade.
-
-Até conectar Analyzer/ingestão, não reservar nem confirmar eventos. Partial
-mantém a análise suspensa; ReadyForAnalyzer é só um pré-requisito local e não
-autoriza retomar entrega para um consumidor inexistente. A coordenação completa
-das seções conceituais permanece pendente.
+Usar módulos reais, SQLite e contas/arquivos sintéticos para fluxo pós-abertura,
+isolamento, falhas injetadas, reentrega, stop/restart e ausência de efeitos físicos.
+Testar também o hook real de restauração da aplicação e atualização da UI sem
+refresh manual, em perfil gráfico isolado. Rust somente no Flatpak do manifesto.

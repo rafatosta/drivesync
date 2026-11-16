@@ -12,6 +12,10 @@ Estas regras se aplicam a alterações realizadas por agentes de IA neste reposi
 
 - Trabalhar em tarefas pequenas, com mudanças justificadas e verificáveis.
 - Preservar isolamento por conta, credenciais, dados locais e garantias contra operações destrutivas.
+- Exclusão permanente de arquivos/pastas é proibida: toda exclusão deve ir para
+  a lixeira. Sem suporte à lixeira, bloquear; nunca fazer fallback destrutivo.
+  Métodos públicos de exclusão permanente devem conservar a chamada, emitir aviso
+  e recusar localmente sem executar nem declarar sucesso.
 - Não desenvolver funcionalidades adicionais, criar dependências ou refatorar módulos alheios sem necessidade demonstrável.
 
 ## Retrocompatibilidade entre versões
