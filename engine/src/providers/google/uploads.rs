@@ -122,6 +122,28 @@ impl GoogleDriveClient {
         upload: &GoogleUploadSession,
         chunk: GoogleUploadChunk,
     ) -> GoogleResult<GoogleUploadProgress> {
+        self.upload_chunk_request(session, upload, chunk, None)
+            .await
+    }
+    /// Sends an upload block with the same strong validator as its replacement.
+    pub async fn upload_chunk_conditional(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        chunk: GoogleUploadChunk,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadProgress> {
+        super::conditional::strong_etag(etag)?;
+        self.upload_chunk_request(session, upload, chunk, Some(etag))
+            .await
+    }
+    async fn upload_chunk_request(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        chunk: GoogleUploadChunk,
+        etag: Option<&str>,
+    ) -> GoogleResult<GoogleUploadProgress> {
         let url = self.upload_url(&upload.session_uri)?;
         if upload
             .total_bytes
@@ -151,11 +173,14 @@ impl GoogleDriveClient {
                 total.map(|v| v.to_string()).unwrap_or_else(|| "*".into())
             )
         };
-        let headers = [
+        let mut headers = vec![
             ("Content-Range", content_range),
             ("Content-Length", chunk.bytes.len().to_string()),
             ("Content-Type", "application/octet-stream".into()),
         ];
+        if let Some(etag) = etag {
+            headers.push(("If-Match", etag.into()));
+        }
         let response = self
             .send(session, Method::PUT, url, Some(chunk.bytes), &headers)
             .await?;
@@ -167,8 +192,28 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         upload: &GoogleUploadSession,
     ) -> GoogleResult<GoogleUploadProgress> {
+        self.query_upload_progress_request(session, upload, None)
+            .await
+    }
+    /// Conditional empty PUT, including zero-length replacement sessions.
+    pub async fn query_upload_progress_conditional(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        etag: &str,
+    ) -> GoogleResult<GoogleUploadProgress> {
+        super::conditional::strong_etag(etag)?;
+        self.query_upload_progress_request(session, upload, Some(etag))
+            .await
+    }
+    async fn query_upload_progress_request(
+        &self,
+        session: &GoogleSession,
+        upload: &GoogleUploadSession,
+        etag: Option<&str>,
+    ) -> GoogleResult<GoogleUploadProgress> {
         let url = self.upload_url(&upload.session_uri)?;
-        let headers = [
+        let mut headers = vec![
             ("Content-Length", "0".into()),
             (
                 "Content-Range",
@@ -182,6 +227,9 @@ impl GoogleDriveClient {
             ),
             ("Content-Type", "application/octet-stream".into()),
         ];
+        if let Some(etag) = etag {
+            headers.push(("If-Match", etag.into()));
+        }
         let response = self
             .send(session, Method::PUT, url, Some(Vec::new()), &headers)
             .await?;

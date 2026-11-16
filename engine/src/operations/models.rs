@@ -357,3 +357,15 @@ pub struct RestoreSelection {
     pub decision_id: String,
     pub target: ResourceRef,
 }
+
+/// A version of the complete collected local metadata, independent of Inventory
+/// item revisions. A live executor still rechecks the descriptor before effects.
+pub fn local_revision(metadata: &crate::models::LocalFile) -> OperatorResult<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(metadata).map_err(|_| OperatorFailure {
+        kind: OperatorError::InvalidRequest,
+        effect: ExecutionEffect::NotApplied,
+        resource: None,
+    })?;
+    Ok(format!("local-metadata-sha256:{:x}", Sha256::digest(bytes)))
+}

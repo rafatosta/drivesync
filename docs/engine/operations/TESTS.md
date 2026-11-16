@@ -7,7 +7,7 @@ ports Send/Sync e assinaturas das dez operações com futures Send, sem criar
 executor, mock ou executar chamadas. O doctest demonstra consumo por
 `Arc<dyn Operator>`. A matriz abaixo define os requisitos por capacidade.
 A suíte de execução de upload/download está descrita em
-[TRANSFERS.md](TRANSFERS.md); os cenários das outras mutações continuam futuros.
+[TRANSFERS.md](TRANSFERS.md); as mutações adicionais estão cobertas conforme [MUTATIONS.md](MUTATIONS.md).
 
 
 ## Objetivo

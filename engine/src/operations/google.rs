@@ -1,4 +1,4 @@
-//! Create-only blob transfers through Providers, with Inventory-owned recovery.
+//! Scoped file operations through Providers, with Inventory-owned recovery.
 use super::{filesystem as fs, *};
 use crate::{connection::OperatorAccess, models::*, providers::google as g, Engine};
 use std::sync::Arc;
@@ -7,8 +7,13 @@ use std::sync::Arc;
 /// or caller-supplied provider selection and never enables Analyzer queue work.
 #[derive(Default)]
 pub struct DefaultOperatorFactory;
+mod content;
 mod creation;
 mod download;
+mod files;
+#[cfg(test)]
+mod live_tests;
+mod mutations;
 #[cfg(test)]
 mod tests;
 mod upload;
@@ -17,8 +22,8 @@ impl OperatorFactory for DefaultOperatorFactory {
         Ok(Arc::new(GoogleOperator::new(config)?))
     }
 }
-/// Google supports new-file upload/download here. Other mutations explicitly
-/// report UnsupportedOperation; permanent deletion always refuses locally.
+/// Google file/directory operations with identity/version guards and recovery.
+/// Missing platform capabilities fail explicitly; permanent deletion refuses locally.
 pub struct GoogleOperator {
     scope: OperatorScope,
     journal: Arc<dyn ExecutionJournal>,
@@ -106,10 +111,21 @@ impl GoogleOperator {
                             OperationCommand::Upload { .. } => {
                                 worker.upload().await.map(ExecutionResult::Transfer)
                             }
+                            OperationCommand::CreateFile { .. } => {
+                                worker.create_file().await.map(ExecutionResult::Item)
+                            }
+                            OperationCommand::UpdateContent { .. } => {
+                                worker.update_content().await.map(ExecutionResult::Transfer)
+                            }
                             OperationCommand::CreateDirectory { .. } => {
                                 worker.create_directory().await.map(ExecutionResult::Item)
                             }
-                            _ => Err(fs::fail(OperatorError::UnsupportedOperation)),
+                            OperationCommand::Rename { .. }
+                            | OperationCommand::Move { .. }
+                            | OperationCommand::Trash { .. }
+                            | OperationCommand::Restore { .. } => {
+                                worker.mutate().await.map(ExecutionResult::Item)
+                            }
                         };
                         result.map_err(|mut e| {
                             if let Some(effect) = worker.publication_effect {
@@ -152,9 +168,7 @@ impl GoogleOperator {
         }
     }
 }
-fn unsupported<T: Send + 'static>() -> OperationFuture<'static, T> {
-    Box::pin(async { Err(fs::fail(OperatorError::UnsupportedOperation)) })
-}
+
 impl Operator for GoogleOperator {
     fn new(config: OperatorConfig) -> OperatorResult<Self> {
         if !config.scope.local_root.is_absolute()
@@ -243,8 +257,24 @@ impl Operator for GoogleOperator {
                 .ok_or_else(|| fs::fail(OperatorError::InvalidRequest))
         })
     }
-    fn create_file(&self, _: CreateFileRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn create_file(&self, r: CreateFileRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::CreateFile {
+                        parent: r.parent,
+                        name: r.name,
+                        content: r.content,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
     fn create_directory(&self, r: CreateDirectoryRequest) -> OperationFuture<'_, ItemResult> {
         Box::pin(async move {
@@ -264,20 +294,99 @@ impl Operator for GoogleOperator {
             }
         })
     }
-    fn update_content(&self, _: UpdateContentRequest) -> OperationFuture<'_, TransferResult> {
-        unsupported()
+    fn update_content(&self, r: UpdateContentRequest) -> OperationFuture<'_, TransferResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::UpdateContent {
+                        target: r.target,
+                        source: r.source,
+                        preconditions: r.preconditions,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Transfer(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
-    fn rename(&self, _: RenameRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn rename(&self, r: RenameRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Rename {
+                        target: r.target,
+                        new_name: r.new_name,
+                        preconditions: r.preconditions,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
-    fn move_item(&self, _: MoveRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn move_item(&self, r: MoveRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Move {
+                        target: r.target,
+                        destination: r.destination,
+                        preconditions: r.preconditions,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
-    fn trash(&self, _: TrashRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn trash(&self, r: TrashRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Trash {
+                        target: r.target,
+                        preconditions: r.preconditions,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
-    fn restore(&self, _: RestoreRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn restore(&self, r: RestoreRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Restore {
+                        target: r.target,
+                        destination: r.destination,
+                        preconditions: r.preconditions,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(result) => Ok(result),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
     fn delete(&self, _: DeleteRequest) -> OperationFuture<'_, DeleteResult> {
         eprintln!("DriveSync: permanent deletion is prohibited. Nothing was executed.");
@@ -512,6 +621,11 @@ impl Worker {
                 r.bytes_transferred = 0;
                 Some(r)
             }
+            Some(ExecutionResult::Item(item)) => Some(TransferResult {
+                item: item.clone(),
+                bytes_transferred: 0,
+                integrity: IntegrityStatus::Verified,
+            }),
             _ => None,
         }
     }
@@ -529,7 +643,16 @@ impl Worker {
         let mut next = self.checkpoint.state.clone();
         next.phase = CheckpointPhase::Completed;
         next.effect = ExecutionEffect::Applied;
-        next.result = Some(ExecutionResult::Transfer(result.clone()));
+        next.result = Some(
+            if matches!(
+                self.checkpoint.intent.command,
+                OperationCommand::CreateFile { .. }
+            ) {
+                ExecutionResult::Item(result.item.clone())
+            } else {
+                ExecutionResult::Transfer(result.clone())
+            },
+        );
         self.save(next).map_err(|mut e| {
             e.effect = ExecutionEffect::Applied;
             e.resource = Some(result.item.resource.clone());
@@ -539,4 +662,4 @@ impl Worker {
     }
 }
 const FOLDER: &str = "application/vnd.google-apps.folder";
-const FIELDS: &str = "id,name,mimeType,parents,trashed,version,size,md5Checksum,sha256Checksum,createdTime,modifiedTime,headRevisionId,capabilities(canDownload,canAddChildren)";
+const FIELDS: &str = "id,name,mimeType,parents,trashed,version,size,md5Checksum,sha256Checksum,createdTime,modifiedTime,headRevisionId,capabilities(canDownload,canAddChildren,canEdit,canRename,canMoveItemWithinDrive,canTrash,canUntrash)";

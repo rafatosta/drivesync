@@ -14,7 +14,7 @@ pub type OperationFuture<'a, T> = Pin<Box<dyn Future<Output = OperatorResult<T>>
 /// Inventory journal before effects. Checkpoints do not authorize execution.
 /// No method schedules other items, resolves conflicts or confirms a baseline.
 /// The trait supplies no default operation bodies. The Google specialist
-/// supports create-only upload/download and explicitly rejects other mutations.
+/// implements all allowed operations and rejects unavailable platform capabilities.
 pub trait Operator: Send + Sync {
     /// Rechecks a creation's source, capabilities and free destination without
     /// creating a user resource. The executor repeats these checks before effects.

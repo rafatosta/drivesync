@@ -21,9 +21,9 @@ Implementar a API pública de execução segura de comandos de manipulação e t
 O contrato público está compilado em `engine/src/operations/`. A implementação
 atual de [transferências](TRANSFERS.md) contém `DefaultOperatorFactory` e
 `GoogleOperator`, com upload/download de criação e journal técnico no Inventory.
-As demais mutações continuam explicitamente não suportadas; não implementar
-novas capacidades fora da solicitação. A execução automática dos planos do
-Analyzer permanece bloqueada. Ler [RECOVERY.md](RECOVERY.md) antes de alterar
+O usuário solicitou Operator completo: as nove ações permitidas estão implementadas,
+com limites descritos em MUTATIONS.md. Não criar capacidades fora do contrato.
+A execução automática do Analyzer continua limitada às políticas autorizadas. Ler [RECOVERY.md](RECOVERY.md) antes de alterar
 checkpoints, estados ou recuperação de sessão.
 
 ## Diretrizes de implementação

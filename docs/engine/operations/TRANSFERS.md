@@ -4,7 +4,7 @@ Implementação: `engine/src/operations/google.rs`, especialistas privados em
 `google/{download,upload}.rs`, primitivas locais em `filesystem.rs` e journal no
 Inventory. Esta entrega executa transferências de **criação de blobs** nos dois
 sentidos. Não substitui conteúdo existente, não exporta documentos Workspace e
-não implementa as demais mutações do contrato.
+as demais mutações estão descritas em [MUTATIONS.md](MUTATIONS.md).
 
 ## Composição e chamada
 
@@ -132,11 +132,11 @@ prometido ou autorização para gerar outro ID.
 - A aplicação integra o Analyzer à execução de novas réplicas com reobservação e
   guardas atuais; ver [EXECUTION.md](../analyzer/EXECUTION.md). Operator não confirma
   baseline nem escolhe a próxima operação.
-- Upload, download e criação de diretórios estão implementados. Os outros métodos retornam `UnsupportedOperation`; `delete`
+- As nove ações permitidas estão implementadas; ver [MUTATIONS.md](MUTATIONS.md). `delete`
   emite aviso estático e retorna `PermanentDeletionProhibited/NotApplied`, sem
   journal, autenticação ou HTTP.
 - Documentos nativos Workspace/conversões, atualização de conteúdo, criação de
-  lixeira e restauração permanecem fora desta entrega. Pais são criados como
+  exigem capacidades próprias; lixeira/restauração estão em MUTATIONS.md. Pais são criados como
   operações separadas, verificadas antes de executar seus filhos.
 - Publicação precisa do suporte Linux a rename sem substituição e de staging e
   destino no mesmo filesystem. Submount diferente, falta de locks ou capacidade

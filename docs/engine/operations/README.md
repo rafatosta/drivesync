@@ -58,8 +58,7 @@ Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementaç�
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** `DefaultOperatorFactory` e `GoogleOperator` executam upload/download
-de novos blobs com staging privado, verificação de integridade e recuperação
-durável. Veja [TRANSFERS.md](TRANSFERS.md). Outras mutações retornam capacidade não
-suportada; exclusão permanente recusa sem efeitos. A execução automática no
-Analyzer/Orchestrator e confirmação de baseline permanecem pendentes.
+**Estado:** o especialista implementa as nove ações permitidas sobre arquivos e
+diretórios locais/remotos. Exclusão permanente recusa sem efeitos. Ver
+[MUTATIONS.md](MUTATIONS.md), [TRANSFERS.md](TRANSFERS.md) e os limites de capacidade.
+Novas réplicas são chamadas pelo Analyzer; baseline depende de reobservação.

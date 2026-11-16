@@ -4,8 +4,7 @@
 
 Os contratos da etapa 1 foram ampliados para a execução de upload/download de
 criação descrita em [TRANSFERS.md](TRANSFERS.md). Há factory, especialista Google
-e workers delimitados por chamada. O Analyzer continua produzindo planos
-bloqueados; não há liberação de fila ou confirmação de baseline.
+e workers delimitados por chamada. O Analyzer despacha novas réplicas e confirma baseline somente após reobservação.
 
 ## Identidade e origem
 
@@ -130,21 +129,18 @@ As novas tabelas não são expostas pela allowlist do inspetor SQL da GUI, para
 não apresentar tokens de retomada. A API tipada é destinada à recuperação
 interna. Serialização é persistência sensível, não formato para logs.
 
-## Pendências dos Providers e limites
+## Escritas condicionais e mutações
 
-O Provider atual possui upload resumable de criação/atualização, consulta de
-sessão e download por range/revisão. Não há contrato de escrita condicional
-`If-Match` na interface inspecionada. Leitura de versão seguida de escrita não
-impede alteração concorrente. A única extensão autorizada do Provider foi `GoogleFileWrite.id` para criação,
-recusado em atualizações. Não foi adicionada escrita condicional nesta entrega.
+O usuário autorizou extensão mínima do Provider para snapshots com ETag e escrita
+condicional. Não converter `version` em ETag. Exigir validador forte e preservar 412;
+sem validador ou capacidade efetiva, bloquear. Ler versão antes de escrever não é
+CAS. Os blocos e consultas de substituição também enviam a condição.
 
-Antes de implementar mutação remota dependente de precondição, apresentar a
-limitação e verificar o suporte efetivo da API. Propor uma extensão tipada mínima
-que transporte a condição e diferencie rejeição, efeito confirmado e resposta
-perdida. Se a plataforma não oferecer a proteção necessária, manter bloqueado.
-A validação do protocolo remoto será feita nessa etapa, não presumida aqui.
+As nove ações permitidas estão implementadas; ver [MUTATIONS.md](MUTATIONS.md).
+Metadados de origem de rename/move/trash/restore descrevem o próprio alvo, inclusive
+diretórios. `CreateFile` conclui com resultado Item; atualização continua Transfer.
+Recuperação de sessão expirada contempla upload de criação e substituição, mantendo
+ID e snapshot. Referências privadas de lixeira têm validação específica e não são
+admitidas por outros comandos. O esquema SQLite não é alterado.
 
-Publicação sem substituição, recuperação de criação e retomada de upload estão
-implementadas conforme [TRANSFERS.md](TRANSFERS.md). Lixeira e atualização de
-conteúdo existente permanecem pendentes. `delete` permanece proibido e deve recusar
-antes de I/O, journal ou autenticação; `OPR-L-11` foi corrigido para exigir isso.
+Exclusão permanente permanece proibida antes de qualquer I/O.

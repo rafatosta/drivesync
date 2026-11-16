@@ -104,7 +104,10 @@ impl Worker {
             }
         }
     }
-    async fn inspect_source(&self, source: &SourceEvidence) -> OperatorResult<VerifiedSource> {
+    pub(super) async fn inspect_source(
+        &self,
+        source: &SourceEvidence,
+    ) -> OperatorResult<VerifiedSource> {
         self.check()?;
         match source {
             SourceEvidence::Local { metadata, sha256 } => {
@@ -353,7 +356,7 @@ impl Worker {
                 metadata: Some(FileData::Remote(self.remote_metadata(&actual, true)?)),
                 verification: VerificationStatus::Verified,
             };
-            return self.finish_directory(result);
+            return self.finish_item(result);
         }
         let n = fs::local_name(&name)?;
         let directory = self.workspace.directory(&parent)?;
@@ -384,7 +387,7 @@ impl Worker {
                     return Err(self.error(OperatorError::DestinationOccupied));
                 }
                 let observed = fs::observe(&file, path.clone())?;
-                return self.finish_directory(ItemResult {
+                return self.finish_item(ItemResult {
                     resource: ResourceRef::Local {
                         relative_path: path,
                         local_id: observed.local_id.clone(),
@@ -441,7 +444,7 @@ impl Worker {
         self.publication_effect = Some(ExecutionEffect::Applied);
         let file = self.workspace.directory(&target)?;
         let observed = fs::observe(&file, path.clone())?;
-        self.finish_directory(ItemResult {
+        self.finish_item(ItemResult {
             resource: ResourceRef::Local {
                 relative_path: path,
                 local_id: observed.local_id.clone(),
@@ -450,11 +453,17 @@ impl Worker {
             verification: VerificationStatus::Verified,
         })
     }
-    fn finish_directory(&mut self, result: ItemResult) -> OperatorResult<ItemResult> {
+    pub(super) fn finish_item(&mut self, result: ItemResult) -> OperatorResult<ItemResult> {
         if self.checkpoint.state.phase == CheckpointPhase::Completed {
             return Ok(result);
         }
         self.publication_effect = Some(ExecutionEffect::Applied);
+        if self.checkpoint.state.phase == CheckpointPhase::Prepared {
+            let mut next = self.checkpoint.state.clone();
+            next.phase = CheckpointPhase::Executing;
+            next.effect = ExecutionEffect::Unknown;
+            self.save(next)?;
+        }
         if self.checkpoint.state.phase != CheckpointPhase::Verifying {
             let mut next = self.checkpoint.state.clone();
             next.phase = CheckpointPhase::Verifying;

@@ -1,5 +1,6 @@
-//! Descriptor-relative transfer staging and exclusive publication. No user entry
-//! is removed or replaced. Private snapshots remain available for crash recovery.
+//! Descriptor-relative staging, exclusive publication and recoverable mutations.
+//! Replacements preserve displaced bytes; no permanent deletion is implemented.
+mod mutations;
 use super::*;
 use crate::{filesystem::metadata, models::*};
 use sha2::{Digest, Sha256};

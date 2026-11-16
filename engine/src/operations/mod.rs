@@ -1,9 +1,10 @@
-//! Provider-selected operations, durable recovery and safe create-only transfers.
+//! Provider-selected file operations, durable recovery and verified effects.
 //!
 //! `DefaultOperatorFactory` resolves the persisted account and constructs a
 //! `GoogleOperator`. New blob upload/download execute on owned blocking workers,
-//! using Providers, private staging and Inventory checkpoints. Other mutations
-//! report unsupported capabilities; permanent deletion refuses locally.
+//! using Providers, private staging and Inventory checkpoints. Metadata changes,
+//! replacement, trash and restore verify identity and reject unavailable capabilities;
+//! permanent deletion refuses locally.
 //!
 //! Names and matching bytes never associate preexisting resources. No execution
 //! releases Analyzer queue entries, confirms a baseline or drives a GUI.

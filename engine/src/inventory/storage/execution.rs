@@ -24,7 +24,43 @@ fn scope(db: &Connection, intent: &ExecutionIntent) -> InventoryResult<()> {
     {
         return Err(failure(InventoryError::InvalidIdentity));
     }
+    if let OperationCommand::Restore {
+        target: ResourceRef::Local { relative_path, .. },
+        ..
+    } = &intent.command
+    {
+        if local_trash_path(relative_path, None) {
+            if let OperationCommand::Restore {
+                destination: Some(destination),
+                ..
+            } = &intent.command
+            {
+                super::planning::command_scope(
+                    &OperationCommand::CreateDirectory {
+                        parent: destination.clone(),
+                        name: ItemName::Local("restore-validation".into()),
+                    },
+                    &info.account_id,
+                )?;
+            }
+            return Ok(());
+        }
+    }
     super::planning::command_scope(&intent.command, &info.account_id)
+}
+fn local_trash_path(
+    path: &crate::models::LocalRelativePath,
+    expected: Option<&ExecutionId>,
+) -> bool {
+    let p: Vec<_> = path.as_bytes().split(|b| *b == b'/').collect();
+    p.len() == 4
+        && p[0] == b".drivesync"
+        && p[1] == b"trash"
+        && p[3] == b"item"
+        && std::str::from_utf8(p[2])
+            .ok()
+            .and_then(|id| ExecutionId::new(id.to_owned()).ok())
+            .is_some_and(|id| expected.is_none_or(|expected| *expected == id))
 }
 fn validate_intent(intent: &ExecutionIntent) -> InventoryResult<()> {
     let direction = match &intent.command {
@@ -76,6 +112,11 @@ fn validate_state(intent: &ExecutionIntent, state: &ExecutionState) -> Inventory
         .iter()
         .chain(state.result.iter().map(|r| &r.item().resource))
     {
+        if matches!(intent.command, OperationCommand::Trash { .. })
+            && matches!(resource,ResourceRef::Local {relative_path,..} if local_trash_path(relative_path,Some(&intent.context.id)))
+        {
+            continue;
+        }
         super::planning::command_scope(
             &OperationCommand::Trash {
                 target: resource.clone(),
@@ -134,6 +175,7 @@ fn validate_state(intent: &ExecutionIntent, state: &ExecutionState) -> Inventory
             _ => None,
         },
         None => match &intent.command {
+            OperationCommand::CreateFile { content: None, .. } => Some(0),
             OperationCommand::CreateFile {
                 content: Some(ContentSource::Bytes { data }),
                 ..
@@ -149,7 +191,13 @@ fn validate_state(intent: &ExecutionIntent, state: &ExecutionState) -> Inventory
         return Err(failure(InventoryError::InvalidArgument));
     }
     if matches!(intent.context.source, Some(SourceEvidence::Local { .. }))
-        && !matches!(intent.command, OperationCommand::CreateDirectory { .. })
+        && matches!(
+            intent.command,
+            OperationCommand::CreateFile { .. }
+                | OperationCommand::Upload { .. }
+                | OperationCommand::Download { .. }
+                | OperationCommand::UpdateContent { .. }
+        )
         && state.phase != CheckpointPhase::Prepared
         && state.staging.is_none()
     {
@@ -337,8 +385,18 @@ impl InventoryManager {
             if current.revision != request.expected_revision {
                 return Err(failure(InventoryError::VersionMismatch));
             }
-            if !matches!(current.intent.command, OperationCommand::Upload { .. })
-                || current.state.phase != CheckpointPhase::Executing
+            if !matches!(
+                current.intent.command,
+                OperationCommand::Upload { .. }
+                    | OperationCommand::CreateFile {
+                        parent: DirectoryRef::Remote { .. },
+                        ..
+                    }
+                    | OperationCommand::UpdateContent {
+                        target: ResourceRef::Remote { .. },
+                        ..
+                    }
+            ) || current.state.phase != CheckpointPhase::Executing
                 || current.state.effect != ExecutionEffect::Unknown
                 || current.state.resume_token.as_ref() != Some(&request.expired_session)
                 || current.state.reserved_remote.as_ref() != Some(&request.reserved_remote)

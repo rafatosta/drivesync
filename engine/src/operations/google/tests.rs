@@ -5,6 +5,7 @@ use crate::inventory::*;
 use md5::{Digest, Md5};
 use serde_json::{json, Value};
 use sha2::Sha256;
+use std::os::unix::ffi::OsStrExt;
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -26,6 +27,10 @@ struct Faults {
     lose_final: bool,
     expire: bool,
     lose_start: bool,
+    lose_metadata: bool,
+    stale_metadata: bool,
+    race_on_chunk: bool,
+    omit_etag: bool,
     occupied: bool,
     omit_sha: bool,
     corrupt_ack: bool,
@@ -36,6 +41,8 @@ struct Session {
     id: String,
     name: String,
     bytes: Vec<u8>,
+    version: String,
+    parent: String,
 }
 struct State {
     source: Vec<u8>,
@@ -109,7 +116,7 @@ impl Drop for Server {
     }
 }
 fn blob(id: &str, name: &str, bytes: &[u8], version: &str, omit_sha: bool) -> Value {
-    let mut result = json!({"id":id,"name":name,"mimeType":"application/octet-stream","parents":["root"],"trashed":false,"version":version,"size":bytes.len().to_string(),"md5Checksum":format!("{:x}",Md5::digest(bytes)),"capabilities":{"canDownload":true}});
+    let mut result = json!({"id":id,"name":name,"mimeType":"application/octet-stream","parents":["root"],"trashed":false,"version":version,"size":bytes.len().to_string(),"md5Checksum":format!("{:x}",Md5::digest(bytes)),"capabilities":{"canDownload":true,"canEdit":true,"canRename":true,"canMoveItemWithinDrive":true,"canTrash":true,"canUntrash":true}});
     if !omit_sha {
         result["sha256Checksum"] = json!(format!("{:x}", Sha256::digest(bytes)));
     }
@@ -243,6 +250,38 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
                 json!({"error":{"code":404}})
             }
         }
+    } else if method == "PATCH" && path.starts_with("/drive/v3/files/") {
+        let id = path.rsplit('/').next().unwrap();
+        let tag = header.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case("if-match"))
+                .map(|(_, v)| v.trim())
+        });
+        let stale = state.faults.stale_metadata;
+        let file = state.files.get_mut(id).unwrap();
+        let expected = format!("\"v{}\"", file["version"].as_str().unwrap());
+        if stale || tag != Some(expected.as_str()) {
+            code = 412;
+            json!({"error":{"code":412}})
+        } else {
+            let patch: Value = serde_json::from_slice(bytes).unwrap();
+            for key in ["name", "trashed"] {
+                if let Some(value) = patch.get(key) {
+                    file[key] = value.clone();
+                }
+            }
+            if let Some(parent) = query.get("addParents") {
+                file["parents"] = json!([parent]);
+            }
+            let v = file["version"].as_str().unwrap().parse::<u64>().unwrap() + 1;
+            file["version"] = json!(v.to_string());
+            let result = file.clone();
+            if state.faults.lose_metadata {
+                state.faults.lose_metadata = false;
+                return;
+            }
+            result
+        }
     } else if method == "POST" && path == "/drive/v3/files" {
         let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
         let id = metadata["id"].as_str().unwrap().to_owned();
@@ -251,21 +290,55 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
         metadata["capabilities"] = json!({"canAddChildren":true});
         state.files.insert(id, metadata.clone());
         metadata
-    } else if method == "POST" && path == "/upload/drive/v3/files" {
+    } else if (method == "POST" && path == "/upload/drive/v3/files")
+        || (method == "PATCH" && path.starts_with("/upload/drive/v3/files/"))
+    {
         let metadata: Value = serde_json::from_slice(bytes).unwrap();
-        let id = metadata["id"].as_str().unwrap().to_owned();
-        if state.files.contains_key(&id) {
+        let replacing = method == "PATCH";
+        let id = if replacing {
+            path.rsplit('/').next().unwrap().to_owned()
+        } else {
+            metadata["id"].as_str().unwrap().to_owned()
+        };
+        let old = state.files.get(&id).cloned();
+        let tag = header.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case("if-match"))
+                .map(|(_, v)| v.trim())
+        });
+        let etag = old
+            .as_ref()
+            .map(|f| format!("\"v{}\"", f["version"].as_str().unwrap()));
+        if replacing && (state.faults.stale_metadata || tag != etag.as_deref()) {
+            code = 412;
+            json!({"error":{"code":412}})
+        } else if !replacing && old.is_some() {
             code = 409;
             json!({"error":{"code":409}})
         } else {
             state.started += 1;
             let token = format!("session-{}", state.started);
+            let (name, version, parent) = if let Some(old) = old {
+                (
+                    old["name"].as_str().unwrap().to_owned(),
+                    (old["version"].as_str().unwrap().parse::<u64>().unwrap() + 1).to_string(),
+                    old["parents"][0].as_str().unwrap().to_owned(),
+                )
+            } else {
+                (
+                    metadata["name"].as_str().unwrap().to_owned(),
+                    "1".into(),
+                    metadata["parents"][0].as_str().unwrap().to_owned(),
+                )
+            };
             state.sessions.insert(
                 token.clone(),
                 Session {
                     id,
-                    name: metadata["name"].as_str().unwrap().into(),
+                    name,
                     bytes: vec![],
+                    version,
+                    parent,
                 },
             );
             headers.push((
@@ -280,6 +353,31 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
         }
     } else if method == "PUT" && path == "/upload/drive/v3/files" {
         let token = query.get("upload_id").unwrap();
+        let tag = header.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case("if-match"))
+                .map(|(_, v)| v.trim())
+        });
+        if let Some(tag) = tag {
+            let id = state.sessions.get(token).map(|s| s.id.clone());
+            if let Some(id) = id {
+                if state.faults.race_on_chunk {
+                    state.faults.race_on_chunk = false;
+                    state.files.insert(
+                        id.clone(),
+                        blob(&id, "target.bin", b"foreign edit", "2", false),
+                    );
+                }
+                let etag = state
+                    .files
+                    .get(&id)
+                    .map(|f| format!("\"v{}\"", f["version"].as_str().unwrap()));
+                if etag.as_deref() != Some(tag) {
+                    respond(&mut stream, 412, &[], br#"{"error":{"code":412}}"#, None);
+                    return;
+                }
+            }
+        }
         if !state.sessions.contains_key(token) {
             code = 404;
             json!({"error":{"code":404}})
@@ -316,9 +414,12 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
                     let id = session.id.clone();
                     let name = session.name.clone();
                     let content = session.bytes.clone();
+                    let version = session.version.clone();
+                    let parent = session.parent.clone();
                     state.chunks.push(offset as u64);
                     if content.len() == total {
-                        let file = blob(&id, &name, &content, "1", state.faults.omit_sha);
+                        let mut file = blob(&id, &name, &content, &version, state.faults.omit_sha);
+                        file["parents"] = json!([parent]);
                         state.files.insert(id, file.clone());
                         if state.faults.lose_final {
                             state.faults.lose_final = false;
@@ -361,6 +462,12 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
         code = 404;
         json!({"error":{"code":404}})
     };
+    if method == "GET" && response.get("version").is_some() && !state.faults.omit_etag {
+        headers.push((
+            "ETag",
+            format!("\"v{}\"", response["version"].as_str().unwrap()),
+        ));
+    }
     respond(
         &mut stream,
         code,
@@ -1652,4 +1759,863 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
             );
         }
     }
+}
+
+fn context_for(key: &str, metadata: FileData) -> ExecutionContext {
+    ExecutionContext {
+        id: ExecutionId::new(key.into()).unwrap(),
+        source: Some(match metadata {
+            FileData::Local(metadata) => SourceEvidence::Local {
+                metadata: Box::new(metadata),
+                sha256: None,
+            },
+            FileData::Remote(metadata) => SourceEvidence::Remote {
+                metadata: Box::new(metadata),
+                revision: None,
+            },
+        }),
+    }
+}
+fn local_item(f: &Fixture, path: &str) -> ItemResult {
+    let path = LocalRelativePath::new(path.as_bytes().to_vec()).unwrap();
+    let metadata = fs::observe(
+        &std::fs::File::open(f.root.join(std::ffi::OsStr::from_bytes(path.as_bytes()))).unwrap(),
+        path.clone(),
+    )
+    .unwrap();
+    ItemResult {
+        resource: ResourceRef::Local {
+            relative_path: path,
+            local_id: metadata.local_id.clone(),
+        },
+        metadata: Some(FileData::Local(metadata)),
+        verification: VerificationStatus::Verified,
+    }
+}
+#[tokio::test]
+async fn local_files_and_directories_rename_move_trash_restore_without_replacement() {
+    for directory in [false, true] {
+        let f = Fixture::new(vec![], Faults::default());
+        if directory {
+            std::fs::create_dir(f.root.join("original")).unwrap();
+            std::fs::write(f.root.join("original/child"), b"keep").unwrap();
+        } else {
+            std::fs::write(f.root.join("original"), b"keep").unwrap();
+        }
+        std::fs::create_dir(f.root.join("destination")).unwrap();
+        let original = local_item(&f, "original");
+        let operator = f.operator();
+        let rename = RenameRequest {
+            execution: context_for("rename", original.metadata.clone().unwrap()),
+            target: original.resource.clone(),
+            new_name: ItemName::Local("renamed".into()),
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        };
+        let renamed = operator.rename(rename.clone()).await.unwrap();
+        assert_eq!(
+            operator.rename(rename.clone()).await.unwrap().resource,
+            renamed.resource
+        );
+        let moved = operator
+            .move_item(MoveRequest {
+                execution: context_for("move", renamed.metadata.clone().unwrap()),
+                target: renamed.resource.clone(),
+                destination: DirectoryRef::Local {
+                    relative_path: LocalRelativePath::new(b"destination".to_vec()).unwrap(),
+                    local_id: None,
+                },
+                preconditions: Preconditions::default(),
+                options: ExecutionOptions::default(),
+            })
+            .await
+            .unwrap();
+        let trash = TrashRequest {
+            execution: context_for("trash", moved.metadata.clone().unwrap()),
+            target: moved.resource.clone(),
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        };
+        let trashed = operator.trash(trash.clone()).await.unwrap();
+        assert!(!f.root.join("destination/renamed").exists());
+        assert_eq!(
+            operator.trash(trash).await.unwrap().resource,
+            trashed.resource
+        );
+        let restore = RestoreRequest {
+            execution: context_for("restore", trashed.metadata.clone().unwrap()),
+            target: trashed.resource.clone(),
+            destination: None,
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        };
+        let restored = operator.restore(restore.clone()).await.unwrap();
+        assert_eq!(
+            operator.restore(restore).await.unwrap().resource,
+            restored.resource
+        );
+        assert_eq!(restored.resource, moved.resource);
+        assert_eq!(
+            std::fs::read(f.root.join(if directory {
+                "destination/renamed/child"
+            } else {
+                "destination/renamed"
+            }))
+            .unwrap(),
+            b"keep"
+        );
+        assert!(operator.rename(rename).await.is_err());
+        assert!(f.server.state.lock().unwrap().requests.is_empty());
+    }
+}
+#[tokio::test]
+async fn local_mutations_reject_collisions_stale_metadata_and_directory_cycles() {
+    let f = Fixture::new(vec![], Faults::default());
+    std::fs::write(f.root.join("source"), b"old").unwrap();
+    std::fs::write(f.root.join("occupied"), b"other").unwrap();
+    let item = local_item(&f, "source");
+    let rename = RenameRequest {
+        execution: context_for("collision", item.metadata.clone().unwrap()),
+        target: item.resource.clone(),
+        new_name: ItemName::Local("occupied".into()),
+        preconditions: Preconditions::default(),
+        options: ExecutionOptions::default(),
+    };
+    assert_eq!(
+        f.operator().rename(rename).await.unwrap_err().kind,
+        OperatorError::DestinationOccupied
+    );
+    std::fs::write(f.root.join("source"), b"changed").unwrap();
+    assert_eq!(
+        f.operator()
+            .trash(TrashRequest {
+                execution: context_for("stale", item.metadata.unwrap()),
+                target: item.resource,
+                preconditions: Preconditions::default(),
+                options: ExecutionOptions::default()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        OperatorError::PreconditionFailed
+    );
+    std::fs::create_dir_all(f.root.join("tree/child")).unwrap();
+    let item = local_item(&f, "tree");
+    assert_eq!(
+        f.operator()
+            .move_item(MoveRequest {
+                execution: context_for("cycle", item.metadata.unwrap()),
+                target: item.resource,
+                destination: DirectoryRef::Local {
+                    relative_path: LocalRelativePath::new(b"tree/child".to_vec()).unwrap(),
+                    local_id: None
+                },
+                preconditions: Preconditions::default(),
+                options: ExecutionOptions::default()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        OperatorError::InvalidRequest
+    );
+    assert_eq!(std::fs::read(f.root.join("occupied")).unwrap(), b"other");
+}
+fn remote_item(f: &Fixture) -> ItemResult {
+    let Some(SourceEvidence::Remote { mut metadata, .. }) = f.download("unused").execution.source
+    else {
+        panic!()
+    };
+    metadata.reference.file_id = RemoteFileId("target".into());
+    metadata.name = MetadataValue::Known("target.bin".into());
+    f.server.state.lock().unwrap().files.insert(
+        "target".into(),
+        blob("target", "target.bin", &[], "1", false),
+    );
+    ItemResult {
+        resource: ResourceRef::Remote {
+            provider_id: ProviderId("google".into()),
+            reference: metadata.reference.clone(),
+        },
+        metadata: Some(FileData::Remote(*metadata)),
+        verification: VerificationStatus::Verified,
+    }
+}
+#[tokio::test]
+async fn remote_metadata_mutations_recover_lost_responses_and_preserve_identity() {
+    let f = Fixture::new(
+        vec![],
+        Faults {
+            lose_metadata: true,
+            ..Default::default()
+        },
+    );
+    let item = remote_item(&f);
+    let r = RenameRequest {
+        execution: context_for("remote-rename", item.metadata.unwrap()),
+        target: item.resource.clone(),
+        new_name: ItemName::Remote("renamed.bin".into()),
+        preconditions: Preconditions {
+            expected_version: Some("1".into()),
+            expected_revision: None,
+        },
+        options: ExecutionOptions::default(),
+    };
+    assert_eq!(
+        f.operator().rename(r.clone()).await.unwrap_err().kind,
+        OperatorError::Network
+    );
+    let renamed = f.operator().rename(r).await.unwrap();
+    assert_eq!(renamed.resource, item.resource);
+    let trash = TrashRequest {
+        execution: context_for("remote-trash", renamed.metadata.unwrap()),
+        target: renamed.resource,
+        preconditions: Preconditions::default(),
+        options: ExecutionOptions::default(),
+    };
+    let trashed = f.operator().trash(trash.clone()).await.unwrap();
+    assert_eq!(
+        f.operator().trash(trash).await.unwrap().resource,
+        trashed.resource
+    );
+    let restored = f
+        .operator()
+        .restore(RestoreRequest {
+            execution: context_for("remote-restore", trashed.metadata.unwrap()),
+            target: trashed.resource,
+            destination: None,
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(restored.resource, item.resource);
+    assert_eq!(
+        f.server
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter(|(method, _)| method == "PATCH")
+            .count(),
+        3
+    );
+}
+#[tokio::test]
+async fn remote_metadata_mutation_cannot_override_a_stale_etag() {
+    let f = Fixture::new(
+        vec![],
+        Faults {
+            stale_metadata: true,
+            ..Default::default()
+        },
+    );
+    let item = remote_item(&f);
+    assert_eq!(
+        f.operator()
+            .rename(RenameRequest {
+                execution: context_for("conditional", item.metadata.unwrap()),
+                target: item.resource,
+                new_name: ItemName::Remote("new".into()),
+                preconditions: Preconditions::default(),
+                options: ExecutionOptions::default()
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        OperatorError::PreconditionFailed
+    );
+    assert_eq!(
+        f.server.state.lock().unwrap().files["target"]["name"],
+        "target.bin"
+    );
+}
+#[tokio::test]
+async fn creates_files_from_empty_inline_local_and_remote_content_in_both_environments() {
+    for remote in [false, true] {
+        for content_kind in 0..4 {
+            let f = Fixture::new(b"contents".to_vec(), Faults::default());
+            std::fs::write(f.root.join("source.bin"), b"contents").unwrap();
+            let (content, source) = match content_kind {
+                0 => (None, None),
+                1 => (
+                    Some(ContentSource::Bytes {
+                        data: b"contents".to_vec(),
+                    }),
+                    None,
+                ),
+                2 => {
+                    let request = f.upload("unused");
+                    let ResourceRef::Local {
+                        relative_path,
+                        local_id,
+                    } = request.source
+                    else {
+                        panic!()
+                    };
+                    (
+                        Some(ContentSource::LocalFile {
+                            relative_path,
+                            local_id,
+                        }),
+                        request.execution.source,
+                    )
+                }
+                _ => {
+                    let request = f.download("unused");
+                    (
+                        Some(ContentSource::RemoteFile {
+                            resource: request.source,
+                        }),
+                        request.execution.source,
+                    )
+                }
+            };
+            let request = CreateFileRequest {
+                execution: ExecutionContext {
+                    id: ExecutionId::new("create-file".into()).unwrap(),
+                    source,
+                },
+                parent: if remote {
+                    f.upload_parent()
+                } else {
+                    DirectoryRef::LocalRoot
+                },
+                name: if remote {
+                    ItemName::Remote("created.bin".into())
+                } else {
+                    ItemName::Local("created.bin".into())
+                },
+                content,
+                options: ExecutionOptions::default(),
+            };
+            let result = f.operator().create_file(request.clone()).await.unwrap();
+            assert_eq!(
+                result.resource,
+                f.operator().create_file(request).await.unwrap().resource
+            );
+            let expected = if content_kind == 0 {
+                &b""[..]
+            } else {
+                &b"contents"[..]
+            };
+            if remote {
+                let state = f.server.state.lock().unwrap();
+                assert_eq!(state.generated, 1);
+                assert_eq!(state.sessions.values().next().unwrap().bytes, expected);
+            } else {
+                assert_eq!(std::fs::read(f.root.join("created.bin")).unwrap(), expected);
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn local_content_replacement_preserves_old_bytes_and_never_replays_completed_work() {
+    let f = Fixture::new(vec![], Faults::default());
+    std::fs::write(f.root.join("target"), b"old").unwrap();
+    let item = local_item(&f, "target");
+    let Some(FileData::Local(metadata)) = item.metadata else {
+        panic!()
+    };
+    let r = UpdateContentRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("replace".into()).unwrap(),
+            source: None,
+        },
+        target: item.resource,
+        source: ContentSource::Bytes {
+            data: b"new contents".to_vec(),
+        },
+        preconditions: Preconditions {
+            expected_version: None,
+            expected_revision: Some(local_revision(&metadata).unwrap()),
+        },
+        options: ExecutionOptions::default(),
+    };
+    let result = f.operator().update_content(r.clone()).await.unwrap();
+    assert_eq!(
+        std::fs::read(f.root.join("target")).unwrap(),
+        b"new contents"
+    );
+    assert_eq!(
+        std::fs::read(f.root.join(".drivesync/transfers/replace.part")).unwrap(),
+        b"old"
+    );
+    assert_eq!(
+        f.operator()
+            .update_content(r.clone())
+            .await
+            .unwrap()
+            .item
+            .resource,
+        result.item.resource
+    );
+    std::fs::write(f.root.join("target"), b"user edit").unwrap();
+    assert!(f.operator().update_content(r).await.is_err());
+    assert_eq!(std::fs::read(f.root.join("target")).unwrap(), b"user edit");
+}
+#[tokio::test]
+async fn remote_replacement_keeps_target_id_and_recovers_lost_final_response() {
+    let f = Fixture::new(
+        vec![],
+        Faults {
+            lose_final: true,
+            ..Default::default()
+        },
+    );
+    let item = remote_item(&f);
+    let r = UpdateContentRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("replace-remote".into()).unwrap(),
+            source: None,
+        },
+        target: item.resource.clone(),
+        source: ContentSource::Bytes {
+            data: b"updated bytes".to_vec(),
+        },
+        preconditions: Preconditions {
+            expected_version: Some("1".into()),
+            expected_revision: None,
+        },
+        options: ExecutionOptions::default(),
+    };
+    assert_eq!(
+        f.operator()
+            .update_content(r.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        OperatorError::Network
+    );
+    assert_eq!(
+        f.operator()
+            .update_content(r.clone())
+            .await
+            .unwrap()
+            .item
+            .resource,
+        item.resource
+    );
+    assert_eq!(
+        f.operator()
+            .update_content(r)
+            .await
+            .unwrap()
+            .bytes_transferred,
+        0
+    );
+    let state = f.server.state.lock().unwrap();
+    assert_eq!(state.generated, 0);
+    assert_eq!(state.started, 1);
+    assert_eq!(state.files.len(), 1);
+    assert_eq!(
+        state.sessions.values().next().unwrap().bytes,
+        b"updated bytes"
+    );
+}
+#[tokio::test]
+async fn remote_move_preserves_bytes_and_rejects_foreign_accounts_and_collisions() {
+    let f = Fixture::new(vec![], Faults::default());
+    let item = remote_item(&f);
+    f.server.state.lock().unwrap().files.insert("folder".into(),json!({"id":"folder","name":"folder","mimeType":FOLDER,"parents":["root"],"version":"1","trashed":false,"capabilities":{"canAddChildren":true}}));
+    let destination = DirectoryRef::Remote {
+        provider_id: ProviderId("google".into()),
+        reference: RemoteFileRef {
+            account_id: AccountId("account".into()),
+            file_id: RemoteFileId("folder".into()),
+        },
+    };
+    let r = MoveRequest {
+        execution: context_for("move-remote", item.metadata.unwrap()),
+        target: item.resource.clone(),
+        destination,
+        preconditions: Preconditions::default(),
+        options: ExecutionOptions::default(),
+    };
+    let result = f.operator().move_item(r.clone()).await.unwrap();
+    assert_eq!(result.resource, item.resource);
+    assert_eq!(
+        f.operator().move_item(r).await.unwrap().resource,
+        item.resource
+    );
+    assert_eq!(
+        f.server.state.lock().unwrap().files["target"]["parents"],
+        json!(["folder"])
+    );
+    assert!(f.server.state.lock().unwrap().sessions.is_empty());
+}
+#[tokio::test]
+async fn replacements_accept_each_content_source_and_resume_expired_sessions() {
+    for remote in [false, true] {
+        for source_kind in 0..3 {
+            let bytes = vec![5; 2 * 1024 * 1024 + 3];
+            let f = Fixture::new(
+                bytes.clone(),
+                Faults {
+                    fail_chunk: remote,
+                    expire: remote,
+                    ..Default::default()
+                },
+            );
+            std::fs::write(f.root.join("source.bin"), &bytes).unwrap();
+            std::fs::write(f.root.join("target"), b"old").unwrap();
+            let item = if remote {
+                remote_item(&f)
+            } else {
+                local_item(&f, "target")
+            };
+            // The target is independent of the remote content fixture.
+            if remote {
+                let mut state = f.server.state.lock().unwrap();
+                state.files.insert(
+                    "target".into(),
+                    blob("target", "target.bin", b"old", "1", false),
+                );
+            }
+            let (source, evidence) = match source_kind {
+                0 => (
+                    ContentSource::Bytes {
+                        data: bytes.clone(),
+                    },
+                    None,
+                ),
+                1 => {
+                    let u = f.upload("unused");
+                    let ResourceRef::Local {
+                        relative_path,
+                        local_id,
+                    } = u.source
+                    else {
+                        panic!()
+                    };
+                    (
+                        ContentSource::LocalFile {
+                            relative_path,
+                            local_id,
+                        },
+                        u.execution.source,
+                    )
+                }
+                _ => {
+                    let d = f.download("unused");
+                    (
+                        ContentSource::RemoteFile { resource: d.source },
+                        d.execution.source,
+                    )
+                }
+            };
+            let preconditions = if remote {
+                Preconditions {
+                    expected_version: Some("1".into()),
+                    expected_revision: None,
+                }
+            } else {
+                let Some(FileData::Local(m)) = &item.metadata else {
+                    panic!()
+                };
+                Preconditions {
+                    expected_version: None,
+                    expected_revision: Some(local_revision(m).unwrap()),
+                }
+            };
+            let r = UpdateContentRequest {
+                execution: ExecutionContext {
+                    id: ExecutionId::new("replacement-sources".into()).unwrap(),
+                    source: evidence,
+                },
+                target: item.resource,
+                source,
+                preconditions,
+                options: ExecutionOptions::default(),
+            };
+            if remote {
+                assert!(f.operator().update_content(r.clone()).await.is_err());
+            }
+            f.operator().update_content(r.clone()).await.unwrap();
+            assert_eq!(
+                f.operator()
+                    .update_content(r)
+                    .await
+                    .unwrap()
+                    .bytes_transferred,
+                0
+            );
+            if remote {
+                let state = f.server.state.lock().unwrap();
+                assert_eq!(state.sessions.values().next().unwrap().bytes, bytes);
+                assert_eq!(state.started, 2);
+            } else {
+                assert_eq!(std::fs::read(f.root.join("target")).unwrap(), bytes);
+                assert_eq!(
+                    std::fs::read(f.root.join(".drivesync/transfers/replacement-sources.part"))
+                        .unwrap(),
+                    b"old"
+                );
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn remote_replacement_rejects_a_concurrent_edit_before_empty_put() {
+    let f = Fixture::new(
+        vec![],
+        Faults {
+            race_on_chunk: true,
+            ..Default::default()
+        },
+    );
+    let item = remote_item(&f);
+    let r = UpdateContentRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("conditional-race".into()).unwrap(),
+            source: None,
+        },
+        target: item.resource,
+        source: ContentSource::Bytes { data: vec![] },
+        preconditions: Preconditions {
+            expected_version: Some("1".into()),
+            expected_revision: None,
+        },
+        options: ExecutionOptions::default(),
+    };
+    assert_eq!(
+        f.operator().update_content(r).await.unwrap_err().kind,
+        OperatorError::PreconditionFailed
+    );
+    let state = f.server.state.lock().unwrap();
+    assert_eq!(state.files["target"]["size"], "12");
+    assert_eq!(state.files["target"]["version"], "2");
+}
+#[tokio::test]
+async fn metadata_mutations_never_accept_forged_remote_parent_evidence() {
+    let f = Fixture::new(vec![], Faults::default());
+    let item = remote_item(&f);
+    f.server
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .get_mut("target")
+        .unwrap()["parents"] = json!(["outside"]);
+    let error = f
+        .operator()
+        .trash(TrashRequest {
+            execution: context_for("forged-parent", item.metadata.unwrap()),
+            target: item.resource,
+            preconditions: Preconditions::default(),
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, OperatorError::WrongScope);
+    assert!(!f
+        .server
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(m, _)| m == "PATCH"));
+}
+#[tokio::test]
+async fn local_rename_trash_and_replacement_recover_after_confirmation_failure() {
+    for action in ["rename", "trash", "replace"] {
+        let f = Fixture::new(vec![], Faults::default());
+        std::fs::write(f.root.join("original"), b"old bytes").unwrap();
+        let item = local_item(&f, "original");
+        let sql = rusqlite::Connection::open(f.root.join(".drivesync/inventory.sqlite3")).unwrap();
+        sql.execute_batch("CREATE TRIGGER fail_completed BEFORE UPDATE ON execution_checkpoints WHEN NEW.phase='\"Completed\"' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+        let operator = f.operator();
+        let result = if action == "rename" {
+            operator
+                .rename(RenameRequest {
+                    execution: context_for("recover", item.metadata.clone().unwrap()),
+                    target: item.resource.clone(),
+                    new_name: ItemName::Local("renamed".into()),
+                    preconditions: Preconditions::default(),
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .map(|r| r.resource)
+        } else if action == "trash" {
+            operator
+                .trash(TrashRequest {
+                    execution: context_for("recover", item.metadata.clone().unwrap()),
+                    target: item.resource.clone(),
+                    preconditions: Preconditions::default(),
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .map(|r| r.resource)
+        } else {
+            let Some(FileData::Local(metadata)) = &item.metadata else {
+                panic!()
+            };
+            operator
+                .update_content(UpdateContentRequest {
+                    execution: ExecutionContext {
+                        id: ExecutionId::new("recover".into()).unwrap(),
+                        source: None,
+                    },
+                    target: item.resource.clone(),
+                    source: ContentSource::Bytes {
+                        data: b"new bytes".to_vec(),
+                    },
+                    preconditions: Preconditions {
+                        expected_version: None,
+                        expected_revision: Some(local_revision(metadata).unwrap()),
+                    },
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .map(|r| r.item.resource)
+        };
+        assert_eq!(result.unwrap_err().effect, ExecutionEffect::Applied);
+        sql.execute_batch("DROP TRIGGER fail_completed").unwrap();
+        if action == "rename" {
+            operator
+                .rename(RenameRequest {
+                    execution: context_for("recover", item.metadata.clone().unwrap()),
+                    target: item.resource.clone(),
+                    new_name: ItemName::Local("renamed".into()),
+                    preconditions: Preconditions::default(),
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(std::fs::read(f.root.join("renamed")).unwrap(), b"old bytes");
+        } else if action == "trash" {
+            operator
+                .trash(TrashRequest {
+                    execution: context_for("recover", item.metadata.clone().unwrap()),
+                    target: item.resource.clone(),
+                    preconditions: Preconditions::default(),
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                std::fs::read(f.root.join(".drivesync/trash/recover/item")).unwrap(),
+                b"old bytes"
+            );
+        } else {
+            let Some(FileData::Local(metadata)) = &item.metadata else {
+                panic!()
+            };
+            operator
+                .update_content(UpdateContentRequest {
+                    execution: ExecutionContext {
+                        id: ExecutionId::new("recover".into()).unwrap(),
+                        source: None,
+                    },
+                    target: item.resource.clone(),
+                    source: ContentSource::Bytes {
+                        data: b"new bytes".to_vec(),
+                    },
+                    preconditions: Preconditions {
+                        expected_version: None,
+                        expected_revision: Some(local_revision(metadata).unwrap()),
+                    },
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                std::fs::read(f.root.join("original")).unwrap(),
+                b"new bytes"
+            );
+            assert_eq!(
+                std::fs::read(f.root.join(".drivesync/transfers/recover.part")).unwrap(),
+                b"old bytes"
+            );
+        }
+    }
+}
+#[tokio::test]
+async fn mutations_without_a_server_validator_never_fall_back_to_unconditional_writes() {
+    for update in [false, true] {
+        let f = Fixture::new(
+            vec![],
+            Faults {
+                omit_etag: true,
+                ..Default::default()
+            },
+        );
+        let item = remote_item(&f);
+        let error = if update {
+            f.operator()
+                .update_content(UpdateContentRequest {
+                    execution: ExecutionContext {
+                        id: ExecutionId::new("missing-etag".into()).unwrap(),
+                        source: None,
+                    },
+                    target: item.resource,
+                    source: ContentSource::Bytes {
+                        data: b"new".to_vec(),
+                    },
+                    preconditions: Preconditions {
+                        expected_version: Some("1".into()),
+                        expected_revision: None,
+                    },
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .unwrap_err()
+        } else {
+            f.operator()
+                .rename(RenameRequest {
+                    execution: context_for("missing-etag", item.metadata.unwrap()),
+                    target: item.resource,
+                    new_name: ItemName::Remote("new".into()),
+                    preconditions: Preconditions::default(),
+                    options: ExecutionOptions::default(),
+                })
+                .await
+                .unwrap_err()
+        };
+        assert_eq!(error.kind, OperatorError::UnsupportedOperation);
+        assert!(!f
+            .server
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|(method, _)| method == "PATCH" || method == "PUT"));
+        assert_eq!(
+            f.server.state.lock().unwrap().files["target"]["name"],
+            "target.bin"
+        );
+    }
+}
+#[tokio::test]
+async fn replacement_cannot_turn_a_directory_into_a_file() {
+    let f = Fixture::new(vec![], Faults::default());
+    std::fs::create_dir(f.root.join("target")).unwrap();
+    std::fs::write(f.root.join("target/child"), b"keep").unwrap();
+    let item = local_item(&f, "target");
+    let Some(FileData::Local(metadata)) = &item.metadata else {
+        panic!()
+    };
+    let error = f
+        .operator()
+        .update_content(UpdateContentRequest {
+            execution: ExecutionContext {
+                id: ExecutionId::new("directory-update".into()).unwrap(),
+                source: None,
+            },
+            target: item.resource,
+            source: ContentSource::Bytes {
+                data: b"bad".to_vec(),
+            },
+            preconditions: Preconditions {
+                expected_version: None,
+                expected_revision: Some(local_revision(metadata).unwrap()),
+            },
+            options: ExecutionOptions::default(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, OperatorError::InvalidRequest);
+    assert_eq!(std::fs::read(f.root.join("target/child")).unwrap(), b"keep");
 }

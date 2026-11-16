@@ -353,15 +353,10 @@ fn preconditions(i: &SyncItem, upload: bool) -> AnalyzerResult<Preconditions> {
     } else {
         Preconditions {
             expected_version: None,
-            expected_revision: Some(format!(
-                "snapshot-sha256:{}",
-                ItemGuard::for_item(i)
-                    .map_err(inventory_error)?
-                    .fingerprint
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            )),
+            expected_revision: local(i)
+                .map(local_revision)
+                .transpose()
+                .map_err(|_| error(AnalyzerErrorKind::InvalidEvidence))?,
         }
     })
 }

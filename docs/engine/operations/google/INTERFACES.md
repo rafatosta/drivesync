@@ -1,8 +1,8 @@
 # Operador Google — INTERFACES
 
-## Interface prevista, sem executor implementado
+## Interface compilada
 
-O futuro executor Google implementará as dez funções da [interface `Operator`](../INTERFACES.md#7-contrato-de-implementação-especializada), utilizando os mesmos tipos de requisição, resultados e erros do Operador. A API de execução permanece única e as funções específicas do Google ficam encapsuladas nesta implementação.
+O executor Google implementa as dez funções da [interface `Operator`](../INTERFACES.md#7-contrato-de-implementação-especializada), utilizando os mesmos tipos de requisição, resultados e erros do Operador. A API de execução permanece única e as funções específicas do Google ficam encapsuladas nesta implementação.
 
 ## Execução dos comandos
 

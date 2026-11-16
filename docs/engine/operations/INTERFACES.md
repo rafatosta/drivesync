@@ -1,13 +1,12 @@
-# Operador — interfaces compiladas, sem execução
+# Operador — interfaces de execução
 
 ## 1. Escopo entregue
 
-O módulo público `drivesync_engine::operations` fornece modelos/traits, a
-`DefaultOperatorFactory` e `GoogleOperator`. O especialista executa somente
-upload/download de criação; outros métodos recusam capacidade não suportada e
-`delete` recusa exclusão permanente sem efeitos. Consulte [TRANSFERS.md](TRANSFERS.md)
-para fluxo físico, precondições, recuperação e limites. Não há fila privada,
-execução automática de planos, confirmação de baseline ou dependência de GTK.
+O módulo público `drivesync_engine::operations` fornece modelos/traits,
+`DefaultOperatorFactory` e `GoogleOperator`, com as nove ações permitidas
+implementadas. `delete` recusa exclusão permanente sem efeitos. Ver
+[MUTATIONS.md](MUTATIONS.md) e [TRANSFERS.md](TRANSFERS.md) para pré-condições,
+recuperação, integridade e limites. Operator não confirma baseline e não possui fila.
 
 ## 2. Interface pública
 
@@ -129,21 +128,11 @@ Efeito desconhecido exige verificação antes de repetir, não retry presumidame
 
 ## 7. Contrato de implementação especializada
 
-Cada futuro especialista implementará diretamente `Operator`, sem duplicar os dez
-métodos em um segundo contrato de execução. `OperatorFactory` será a fronteira
-comum de seleção, como a composição comum do detector remoto. Google e Example
-continuam documentais: não existem executores ou registry compilados nesta etapa.
-
-**Exclusão permanente é proibida.** O método `delete` permanece declarado e futuro
-executor deve emitir aviso e retornar `PermanentDeletionProhibited` com efeito
-`NotApplied`, sem autenticação, I/O ou mutação. Não há corpo de método nesta entrega.
-Toda exclusão deve usar `trash` explicitamente; ausência de lixeira exige bloqueio,
-sem fallback destrutivo. Esvaziar lixeira e apagar revisões também são proibidos.
-
-Ficam para implementação posterior: validação concreta, despacho, sessão remota,
-Providers, filesystem privado seguro, cancelamento/progresso, transferência,
-retomada e verificação de efeitos. Não há fila, lifecycle, `status`, confirmação
-de baseline, política de conflito ou acesso a Inventory no módulo.
+O especialista implementa diretamente o trait `Operator`, sem segundo contrato
+redundante. Google possui implementação compilada; Example permanece ilustrativo.
+Exclusão permanente é proibida: `delete` retorna `PermanentDeletionProhibited` sem
+I/O, autenticação ou fallback. As demais ações validam capacidade da plataforma,
+escopo e precondições; um método implementado pode recusar uma capacidade ausente.
 
 ## Dados de planejamento do Analyzer
 
@@ -151,8 +140,7 @@ de baseline, política de conflito ou acesso a Inventory no módulo.
 criação de arquivo/pasta, upload, download, atualização de conteúdo, renomeação,
 movimentação, lixeira e restauração. Não contém variante de exclusão permanente,
 executor, callback ou credencial. `DirectoryRef::LocalRoot` identifica a raiz local
-configurada. O Inventory persiste esses dados e seus bloqueios; nenhum comando
-é despachado ao Operator nesta fase.
+configurada. O Inventory persiste esses dados e seus bloqueios; o Analyzer despacha novas criações conforme sua política de execução.
 
 ## Recuperação durável — etapa 1
 

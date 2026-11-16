@@ -6,30 +6,80 @@ use std::io::{Read, Seek, SeekFrom};
 
 impl Worker {
     pub(super) async fn upload(&mut self) -> OperatorResult<TransferResult> {
-        let OperationCommand::Upload {
-            source,
-            destination,
-            name,
-        } = self.checkpoint.intent.command.clone()
-        else {
-            return Err(self.error(OperatorError::InvalidRequest));
+        let command = self.checkpoint.intent.command.clone();
+        let mut replacement = None;
+        let (content, destination, name) = match command {
+            OperationCommand::Upload {
+                source:
+                    ResourceRef::Local {
+                        relative_path,
+                        local_id,
+                    },
+                destination,
+                name,
+            } => (
+                ContentSource::LocalFile {
+                    relative_path,
+                    local_id,
+                },
+                destination,
+                name,
+            ),
+            OperationCommand::CreateFile {
+                parent,
+                name,
+                content,
+            } => (
+                content.unwrap_or(ContentSource::Bytes { data: vec![] }),
+                parent,
+                name,
+            ),
+            OperationCommand::UpdateContent {
+                target:
+                    ResourceRef::Remote {
+                        provider_id,
+                        reference,
+                    },
+                source,
+                preconditions,
+            } => {
+                if provider_id.0 != "google"
+                    || reference.account_id != self.scope.account_id
+                    || reference.file_id == self.scope.remote_root_id
+                {
+                    return Err(self.error(OperatorError::WrongScope));
+                }
+                let snapshot = self
+                    .replacement_snapshot(&reference, &preconditions)
+                    .await?;
+                let file = &snapshot.file;
+                let parent = file
+                    .parents
+                    .as_ref()
+                    .filter(|p| p.len() == 1)
+                    .ok_or_else(|| self.error(OperatorError::WrongScope))?;
+                let name = file
+                    .name
+                    .clone()
+                    .ok_or_else(|| self.error(OperatorError::PreconditionFailed))?;
+                let destination = DirectoryRef::Remote {
+                    provider_id: provider_id.clone(),
+                    reference: RemoteFileRef {
+                        account_id: reference.account_id.clone(),
+                        file_id: RemoteFileId(parent[0].0.clone()),
+                    },
+                };
+                replacement = Some((reference, preconditions, snapshot));
+                (source, destination, ItemName::Remote(name))
+            }
+            _ => return Err(self.error(OperatorError::InvalidRequest)),
         };
-        let Some(SourceEvidence::Local {
-            metadata: expected,
-            sha256: expected_hash,
-        }) = self.checkpoint.intent.context.source.clone()
-        else {
-            return Err(self.error(OperatorError::InvalidRequest));
-        };
-        if !matches!(source, ResourceRef::Local { .. }) {
-            return Err(self.error(OperatorError::InvalidRequest));
-        }
         let DirectoryRef::Remote {
             provider_id,
             reference: parent_ref,
         } = destination
         else {
-            return Err(self.error(OperatorError::InvalidRequest));
+            return Err(self.error(OperatorError::WrongScope));
         };
         if provider_id.0 != "google" || parent_ref.account_id != self.scope.account_id {
             return Err(self.error(OperatorError::WrongScope));
@@ -44,15 +94,18 @@ impl Worker {
         {
             return Err(self.error(OperatorError::InvalidRequest));
         }
-        let (local_parent, _) = self.workspace.parent(&expected.relative_path)?;
-        self.bind_scope(&local_parent)?;
-        let id = self.checkpoint.intent.context.id.clone();
-        let size = match expected.storage.size_bytes {
-            MetadataValue::Known(n) => n,
-            _ => return Err(self.error(OperatorError::InvalidRequest)),
+        let source_parent = match &self.checkpoint.intent.context.source {
+            Some(SourceEvidence::Local { metadata, .. }) => {
+                self.workspace.parent(&metadata.relative_path)?.0
+            }
+            _ => self.workspace.root.try_clone().map_err(fs::io)?,
         };
+        self.bind_scope(&source_parent)?;
+        let id = self.checkpoint.intent.context.id.clone();
+        let size = self.content_size(&content)?;
         let parent = self.within_root(&parent_ref.file_id.0, true).await?;
-        if self.checkpoint.state.phase != CheckpointPhase::Completed
+        if replacement.is_none()
+            && self.checkpoint.state.phase != CheckpointPhase::Completed
             && parent
                 .capabilities
                 .as_ref()
@@ -73,10 +126,7 @@ impl Worker {
         }
         if self.checkpoint.state.staging.is_none() {
             fs::report(&self.options, ExecutionPhase::Preparing, 0, size);
-            let evidence =
-                self.workspace
-                    .snapshot(&id, &expected, expected_hash.as_ref(), &self.options)?;
-            self.local_source(&expected)?;
+            let evidence = self.materialize(&content).await?;
             let mut next = self.checkpoint.state.clone();
             next.staging = Some(evidence);
             self.save(next)?;
@@ -88,9 +138,21 @@ impl Worker {
             .clone()
             .ok_or_else(|| self.error(OperatorError::CheckpointUnavailable))?;
         let mut snapshot = self.workspace.verify_stage(&id, &staged, &self.options)?;
+        if let Some((reference, _, _)) = &replacement {
+            if self.checkpoint.state.reserved_remote.is_none() {
+                let mut next = self.checkpoint.state.clone();
+                next.reserved_remote = Some(ResourceRef::Remote {
+                    provider_id: ProviderId("google".into()),
+                    reference: reference.clone(),
+                });
+                self.save(next)?;
+            }
+        }
         if self.checkpoint.state.reserved_remote.is_none() {
-            self.local_source(&expected)?;
-            self.no_homonym(&parent_ref.file_id.0, &name).await?;
+            self.validate_content_source().await?;
+            if replacement.is_none() {
+                self.no_homonym(&parent_ref.file_id.0, &name).await?;
+            }
             let session = self
                 .access
                 .session()
@@ -132,17 +194,29 @@ impl Worker {
             });
             self.save(next)?;
         }
-        if let Some(remote) = self.remote_creation().await? {
-            if self.checkpoint.state.phase == CheckpointPhase::Prepared {
-                return Err(self.error(OperatorError::PreconditionFailed));
+        if let Some((_, _, snapshot)) = &replacement {
+            if self.checkpoint.state.phase != CheckpointPhase::Prepared
+                && self
+                    .verified_upload(&snapshot.file, &name, &parent_ref.file_id.0, size)
+                    .is_ok()
+            {
+                let result =
+                    self.verified_upload(&snapshot.file, &name, &parent_ref.file_id.0, size)?;
+                return self.finish(result);
             }
-            let result = self.verified_upload(&remote, &name, &parent_ref.file_id.0, size)?;
-            return self.finish(result);
+        } else {
+            if let Some(remote) = self.remote_creation().await? {
+                if self.checkpoint.state.phase == CheckpointPhase::Prepared {
+                    return Err(self.error(OperatorError::PreconditionFailed));
+                }
+                let result = self.verified_upload(&remote, &name, &parent_ref.file_id.0, size)?;
+                return self.finish(result);
+            }
         }
         if self.checkpoint.state.phase == CheckpointPhase::Verifying {
             return Err(self.error(OperatorError::IndeterminateEffect));
         }
-        self.local_source(&expected)?;
+        self.validate_content_source().await?;
         if self.checkpoint.state.phase == CheckpointPhase::Prepared {
             let mut next = self.checkpoint.state.clone();
             next.phase = CheckpointPhase::Executing;
@@ -154,14 +228,17 @@ impl Worker {
             self.check()?;
             if self.checkpoint.state.resume_token.is_none() {
                 self.workspace.verify_stage(&id, &staged, &self.options)?;
-                self.local_source(&expected)?;
-                self.no_homonym(&parent_ref.file_id.0, &name).await?;
+                self.validate_content_source().await?;
+                if replacement.is_none() {
+                    self.no_homonym(&parent_ref.file_id.0, &name).await?;
+                }
                 let parent = self.within_root(&parent_ref.file_id.0, true).await?;
-                if parent
-                    .capabilities
-                    .as_ref()
-                    .and_then(|c| c.can_add_children)
-                    != Some(true)
+                if replacement.is_none()
+                    && parent
+                        .capabilities
+                        .as_ref()
+                        .and_then(|c| c.can_add_children)
+                        != Some(true)
                 {
                     return Err(self.error(OperatorError::PermissionDenied));
                 }
@@ -171,31 +248,53 @@ impl Worker {
                     .await
                     .map_err(|e| self.error(e.kind))?;
                 let remote_id = self.reserved_id()?;
-                let upload = self
-                    .access
-                    .client
-                    .start_resumable_create(
-                        &session,
-                        g::GoogleFileWrite {
-                            id: Some(g::FileId(remote_id)),
-                            name: g::GooglePatch::Set(name.clone()),
-                            parents: g::GooglePatch::Set(vec![g::FileId(
-                                parent_ref.file_id.0.clone(),
-                            )]),
-                            mime_type: g::GooglePatch::Set(g::MimeType(
-                                "application/octet-stream".into(),
-                            )),
-                            ..Default::default()
-                        },
-                        g::FileCreateOptions {
-                            supports_all_drives: Some(true),
-                            fields: Some(g::FieldMask(FIELDS.into())),
-                            ..Default::default()
-                        },
-                        Some(size),
-                    )
-                    .await
-                    .map_err(|e| self.provider_error(e))?;
+                let upload = if let Some((reference, conditions, _)) = &replacement {
+                    let current = self.replacement_snapshot(reference, conditions).await?;
+                    let etag = current
+                        .etag
+                        .ok_or_else(|| self.error(OperatorError::UnsupportedOperation))?;
+                    self.access
+                        .client
+                        .start_resumable_update_conditional(
+                            &session,
+                            &g::FileId(reference.file_id.0.clone()),
+                            g::GoogleFileWrite::default(),
+                            g::FileUpdateOptions {
+                                supports_all_drives: Some(true),
+                                fields: Some(g::FieldMask(FIELDS.into())),
+                                ..Default::default()
+                            },
+                            Some(size),
+                            &etag,
+                        )
+                        .await
+                        .map_err(|e| self.provider_error(e))?
+                } else {
+                    self.access
+                        .client
+                        .start_resumable_create(
+                            &session,
+                            g::GoogleFileWrite {
+                                id: Some(g::FileId(remote_id)),
+                                name: g::GooglePatch::Set(name.clone()),
+                                parents: g::GooglePatch::Set(vec![g::FileId(
+                                    parent_ref.file_id.0.clone(),
+                                )]),
+                                mime_type: g::GooglePatch::Set(g::MimeType(
+                                    "application/octet-stream".into(),
+                                )),
+                                ..Default::default()
+                            },
+                            g::FileCreateOptions {
+                                supports_all_drives: Some(true),
+                                fields: Some(g::FieldMask(FIELDS.into())),
+                                ..Default::default()
+                            },
+                            Some(size),
+                        )
+                        .await
+                        .map_err(|e| self.provider_error(e))?
+                };
                 let mut next = self.checkpoint.state.clone();
                 next.resume_token = Some(
                     ResumeToken::new(upload.session_uri.into_bytes())
@@ -209,18 +308,34 @@ impl Worker {
                 .session()
                 .await
                 .map_err(|e| self.error(e.kind))?;
-            let progress = self
-                .access
-                .client
-                .query_upload_progress(&session, &upload)
-                .await;
+            let progress = if let Some((reference, conditions, _)) = &replacement {
+                let current = self.replacement_snapshot(reference, conditions).await?;
+                let etag = current
+                    .etag
+                    .ok_or_else(|| self.error(OperatorError::UnsupportedOperation))?;
+                self.access
+                    .client
+                    .query_upload_progress_conditional(&session, &upload, &etag)
+                    .await
+            } else {
+                self.access
+                    .client
+                    .query_upload_progress(&session, &upload)
+                    .await
+            };
             let mut progress = match progress {
                 Ok(progress) => progress,
                 Err(e) if e.kind == g::GoogleApiError::ExpiredUploadSession => {
                     if let Some(remote) = self.remote_creation().await? {
-                        let result =
-                            self.verified_upload(&remote, &name, &parent_ref.file_id.0, size)?;
-                        return self.finish(result);
+                        if replacement.is_none()
+                            || self
+                                .verified_upload(&remote, &name, &parent_ref.file_id.0, size)
+                                .is_ok()
+                        {
+                            let result =
+                                self.verified_upload(&remote, &name, &parent_ref.file_id.0, size)?;
+                            return self.finish(result);
+                        }
                     }
                     // The same reserved ID is retained even if a 404 concealed a
                     // lost completion. Google rejects recreation of a used ID.
@@ -289,7 +404,7 @@ impl Worker {
                         next.confirmed_offset = offset;
                         self.save(next)?;
                         self.check()?;
-                        self.local_source(&expected)?;
+                        self.validate_content_source().await?;
                         fs::matches_observation(&snapshot, &staged.metadata)?;
                         let count = (size - offset).min(1024 * 1024) as usize;
                         snapshot.seek(SeekFrom::Start(offset)).map_err(fs::io)?;
@@ -298,17 +413,20 @@ impl Worker {
                         fs::matches_observation(&snapshot, &staged.metadata)?;
                         if offset + count as u64 == size {
                             self.workspace.verify_stage(&id, &staged, &self.options)?;
-                            self.local_source(&expected)?;
+                            self.validate_content_source().await?;
                             let parent = self.within_root(&parent_ref.file_id.0, true).await?;
-                            if parent
-                                .capabilities
-                                .as_ref()
-                                .and_then(|c| c.can_add_children)
-                                != Some(true)
+                            if replacement.is_none()
+                                && parent
+                                    .capabilities
+                                    .as_ref()
+                                    .and_then(|c| c.can_add_children)
+                                    != Some(true)
                             {
                                 return Err(self.error(OperatorError::PermissionDenied));
                             }
-                            self.no_homonym(&parent_ref.file_id.0, &name).await?;
+                            if replacement.is_none() {
+                                self.no_homonym(&parent_ref.file_id.0, &name).await?;
+                            }
                         }
                         self.check()?;
                         let session = self
@@ -322,20 +440,27 @@ impl Worker {
                             .transferred
                             .checked_add(count as u64)
                             .ok_or_else(|| self.error(OperatorError::Internal))?;
-                        let next = self
-                            .access
-                            .client
-                            .upload_chunk(
-                                &session,
-                                &upload,
-                                g::GoogleUploadChunk {
-                                    start: offset,
-                                    bytes,
-                                    total_bytes: Some(size),
-                                },
-                            )
-                            .await
-                            .map_err(|e| self.provider_error(e))?;
+                        let chunk = g::GoogleUploadChunk {
+                            start: offset,
+                            bytes,
+                            total_bytes: Some(size),
+                        };
+                        let next = if let Some((reference, conditions, _)) = &replacement {
+                            let current = self.replacement_snapshot(reference, conditions).await?;
+                            let etag = current
+                                .etag
+                                .ok_or_else(|| self.error(OperatorError::UnsupportedOperation))?;
+                            self.access
+                                .client
+                                .upload_chunk_conditional(&session, &upload, chunk, &etag)
+                                .await
+                        } else {
+                            self.access
+                                .client
+                                .upload_chunk(&session, &upload, chunk)
+                                .await
+                        }
+                        .map_err(|e| self.provider_error(e))?;
                         if let g::GoogleUploadProgress::Incomplete {
                             received_range: range,
                         } = &next
@@ -392,9 +517,6 @@ impl Worker {
         }
     }
     pub(super) async fn no_homonym(&self, parent: &str, name: &str) -> OperatorResult<()> {
-        let quote = |s: &str| s.replace('\\', "\\\\").replace('\'', "\\'");
-        let mut cursor = None;
-        let mut seen = std::collections::HashSet::new();
         let reserved = self
             .checkpoint
             .state
@@ -404,6 +526,17 @@ impl Worker {
                 ResourceRef::Remote { reference, .. } => Some(reference.file_id.0.as_str()),
                 _ => None,
             });
+        self.no_homonym_for(parent, name, reserved).await
+    }
+    pub(super) async fn no_homonym_for(
+        &self,
+        parent: &str,
+        name: &str,
+        reserved: Option<&str>,
+    ) -> OperatorResult<()> {
+        let quote = |s: &str| s.replace('\\', "\\\\").replace('\'', "\\'");
+        let mut cursor = None;
+        let mut seen = std::collections::HashSet::new();
         for _ in 0..256 {
             self.check()?;
             let session = self
@@ -452,7 +585,7 @@ impl Worker {
         }
         Err(self.error(OperatorError::PreconditionFailed))
     }
-    fn verified_upload(
+    pub(super) fn verified_upload(
         &self,
         remote: &g::GoogleFile,
         name: &str,

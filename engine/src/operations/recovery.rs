@@ -147,6 +147,52 @@ impl ExecutionIntent {
                 _ => false,
             };
         }
+        if let OperationCommand::Rename { target, .. }
+        | OperationCommand::Move { target, .. }
+        | OperationCommand::Trash { target, .. }
+        | OperationCommand::Restore { target, .. } = &self.command
+        {
+            return match (target, &self.context.source) {
+                (
+                    ResourceRef::Local {
+                        relative_path,
+                        local_id: Some(id),
+                    },
+                    Some(SourceEvidence::Local { metadata, .. }),
+                ) => {
+                    metadata.validate().is_ok()
+                        && metadata.relative_path == *relative_path
+                        && metadata.local_id.as_ref() == Some(id)
+                        && matches!(
+                            metadata.kind,
+                            MetadataValue::Known(
+                                LocalEntryKind::Regular | LocalEntryKind::Directory
+                            )
+                        )
+                        && matches!(metadata.storage.inode, MetadataValue::Known(_))
+                        && matches!(metadata.storage.filesystem_device, MetadataValue::Known(_))
+                }
+                (
+                    ResourceRef::Remote {
+                        provider_id,
+                        reference,
+                    },
+                    Some(SourceEvidence::Remote { metadata, .. }),
+                ) => {
+                    metadata.validate().is_ok()
+                        && metadata.provider == *provider_id
+                        && metadata.reference == *reference
+                        && matches!(
+                            metadata.kind,
+                            MetadataValue::Known(
+                                RemoteEntryKind::File | RemoteEntryKind::Directory
+                            )
+                        )
+                        && matches!(&metadata.version,MetadataValue::Known(v) if !v.is_empty())
+                }
+                _ => false,
+            };
+        }
         let source = match &self.command {
             OperationCommand::Upload { source, .. } | OperationCommand::Download { source, .. } => {
                 Some(source.clone())
