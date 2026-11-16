@@ -1,40 +1,29 @@
-//! Account authorization and folder configuration engine.
-//!
-//! Initial download is explicit and separate from ongoing synchronization.
-mod accounts;
-mod activity_history;
-mod auth;
-mod configuration;
-mod download;
-mod error;
-mod facade;
-mod local_detector;
-mod local_state;
-mod models;
-mod remote;
-mod remote_detector;
+//! DriveSync engine library.
 
-pub use activity_history::{
-    ActivityHistory, ActivityPage, ActivityRecord, DownloadIntegrity, RemoteActivity,
-};
-pub use auth::{AuthError, Cancellation, VaultFailure, VaultOperation};
-pub use configuration::{DriveFolder, FolderConfiguration};
-pub use download::{DownloadProgress, InitialDownload};
-pub use error::EngineError;
-pub use facade::DriveSyncEngine;
-pub use local_detector::{
-    LocalActivity, LocalBatch, LocalCoverageGap, LocalItemKind, LocalNotice, LocalScope,
-    LocalWatchError, LocalWatchOptions, LocalWatchState, LocalWatcher,
-};
-pub use models::{AccountId, AccountSummary, RestoredAccount};
-pub use remote::FolderPage;
-pub use remote_detector::{
-    DetectionCheck, DetectionCorpus, DetectionError, DetectionFailureKind, RemoteCheckProgress,
-    RemoteDelivery, RemoteEvent, RemoteEventKind, RemoteFileCapabilities, RemoteFileMetadata,
-    RemoteMembership,
-};
+pub mod providers;
 
-pub use local_state::{
-    InvestigationReason, ItemId, ItemSnapshot, ItemState, LocalConnectivity, LocalStateCheckpoint,
-    LocalStateError, LocalStateStore, PendingInvestigation, TrackedItem, WorkPriority,
+pub mod accounts;
+pub mod models;
+pub use models::{AccountId, ProviderId, Timestamp};
+
+mod connection;
+pub use accounts::{
+    Account, AccountState, AccountsError, ListAccountsRequest, ListAccountsResult,
+    RemoveAccountRequest, RemoveAccountResult, UpdateAccountRequest, UpdateAccountResult,
 };
+pub use connection::*;
+
+pub mod detectors;
+
+pub mod orchestrator;
+pub use orchestrator::Orchestrator;
+
+pub mod inventory;
+
+mod filesystem;
+
+pub mod scanner;
+
+pub mod analyzer;
+
+pub mod operations;

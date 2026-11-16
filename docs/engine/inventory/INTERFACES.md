@@ -12,13 +12,13 @@
 
 **Dados do inventário:** `SyncItem`, baseline, fila de operações e histórico são persistidos nas estruturas definidas neste contrato.
 
-**Estado:** revisão conceitual documentada. As estruturas e assinaturas ainda não representam Rust implementado; não foram executados testes.
+**Estado:** as 17 operações públicas estão implementadas em `engine/src/inventory/`. Os exemplos abaixo resumem os tipos; o código Rust e [IMPLEMENTATION.md](IMPLEMENTATION.md) registram o contrato executável e seus limites. O mecanismo comum de backup/restauração continua pendente; a persistência das avaliações está descrita em [ANALYSIS.md](ANALYSIS.md). A consulta de tabelas no Developer Console usa a API separada de diagnóstico `inventory::inspection`, sem ampliar os métodos da fachada de domínio.
 
 ## 1. Objetivo e princípio das interfaces
 
 **Contrato Rust inicial para implementação orientada a testes (TDD).** O Inventário é proprietário do `SyncItem` e de seu banco por pasta sincronizada, descrito em [README.md](README.md). Todos os consumidores acessam os dados por **métodos públicos com objetos de entrada e objetos de resultado**; nenhum consumidor recebe `Connection`, `Transaction`, `Row`, SQL, nome de tabela ou estrutura de armazenamento.
 
-**Regra principal:** quando três informações pertencem à mesma ação, elas formam um **objeto de requisição**; não são três argumentos independentes. Adicionar um campo opcional ao objeto não exige alterar a assinatura do método, **mas em Rust pode exigir alterações nos construtores com literais de struct**. Para oferecer evolução compatível aos consumidores, preferir construtores ou `Default`/builder para requisições com muitos campos opcionais e manter as invariantes de validação. Não prometer compatibilidade binária ou de código apenas por encapsular parâmetros. Usar tipos semanticamente relacionados, e não um único objeto genérico com dezenas de propriedades desconexas.
+**Regra principal:** quando três informações pertencem à mesma ação, elas formam um **objeto de requisição**; não são três argumentos independentes. Adicionar um campo opcional ao objeto não exige alterar a assinatura do método, **mas em Rust pode exigir alterações nos construtores com literais de struct**. Nesta fase não há retrocompatibilidade entre versões: atualizar consumidores junto ao contrato, sem aliases, migrações ou adaptadores legados. Usar tipos semanticamente relacionados, e não um único objeto genérico com dezenas de propriedades desconexas.
 
 ```rust
 // Evitar:
@@ -33,14 +33,14 @@ Essa convenção é aplicada **inclusive a buscas, filtros, fila de operações 
 ### Dependências externas e limites
 
 - `RemoteFile`, `LocalFile`, `FileData`, `FileEvent`, `File` e identidades comuns são tipos utilizados nas entradas e respostas do contrato.
-- `LocalFile` será importado do componente responsável pelos metadados locais. O contrato conceitual de Models já define os grupos de metadados; a seleção final dos campos para persistência é pendente de revisão pré-implementação.
+- `LocalFile` é importado de Models; os campos do perfil existente são persistidos individualmente, conforme IMPLEMENTATION.md.
 - As estruturas de consulta representam **modelos de domínio**. Persistir ou reconstruir um `RemoteFile` completo dependerá do mapeamento dos campos e relacionamentos documentados. Atributos não persistidos não podem ser fabricados ao reconstruir o objeto.
 - O Inventário não conhece autenticação, GUI, regras de conflito ou operadores físicos.
 - Esta API trata **um inventário por instância**, validado por `sync_id`.
 
 ## 2. Tipos fundamentais
 
-Os tipos abaixo são **propostas públicas Rust**; os identificadores compartilhados e modelos de arquivos são importados de Models. Os snippets expressam a forma e semântica do contrato; os imports definitivos dos tipos externos e detalhes de ownership serão fixados ao integrar os módulos.
+Os tipos públicos estão em `engine/src/inventory/models.rs`; os identificadores compartilhados e modelos de arquivos são importados de Models. Os exemplos omitem derives e parte da documentação Rust.
 
 ```rust
 pub type InventoryResult<T> = Result<T, InventoryFailure>;
@@ -89,6 +89,10 @@ pub enum FieldUpdate<T> { Keep, Set(T), Clear }
 pub struct SyncItem {
     pub id: SyncItemId,
     pub kind: ItemKind,
+    pub local_file_id: Option<LocalFileId>,
+    pub remote_ref: Option<RemoteFileRef>,
+    pub local_latest: Option<LocalFile>,
+    pub remote_latest: Option<RemoteFile>,
     pub local: Option<LocalFile>,
     pub remote: Option<RemoteFile>,
     pub baseline: Option<SyncBaseline>,
@@ -110,12 +114,14 @@ pub struct BaselineSide {
     pub presence: PresenceState,
     pub name: Option<String>,       // nome remoto, ou textual quando aplicável
     pub local_name_bytes: Option<Vec<u8>>, // bytes exatos do nome local
-    pub parent_identity: Option<String>, // baseline histórico tipado será definido antes de implementar
+    pub parent_identity: Option<BaselineParent>,
     pub version: Option<String>,
     pub checksum: Option<String>,
     pub size: Option<u64>,
     pub modified_at: Option<Timestamp>,
 }
+
+pub enum BaselineParent { Local(SyncItemId), Remote(RemoteFileRef) }
 
 pub struct SyncInfo {
     pub sync_id: SyncId,
@@ -208,7 +214,7 @@ pub struct OpenInventoryResult {
     pub recovery: InventoryRecoveryOutcome,
 }
 pub struct GetSyncInfoRequest {}
-pub struct GetSyncInfoResult { pub info: SyncInfo }
+pub struct GetSyncInfoResult { pub info: SyncInfo, pub local_root: Vec<u8> }
 pub struct MarkInitialDownloadCompleteRequest {
     pub expected_generation: u64,
     pub expected_complete: bool,
@@ -313,6 +319,7 @@ pub struct ConfirmSyncRequest {
     pub expected_item_revision: u64,
     pub confirmed: ConfirmedState,
     pub completed_operation: Option<OperationId>,
+    pub expected_operation_attempt: Option<u32>,
     pub activity: Option<NewActivity>, // opcional somente quando não há atividade relevante
 }
 pub struct ConfirmedState {
@@ -367,6 +374,7 @@ pub struct ClaimOperationResult { pub operation: SyncOperation }
 
 pub struct UpdateOperationRequest {
     pub operation_id: OperationId,
+    pub expected_attempt_count: u32,
     pub expected_state: OperationState,
     pub transition: OperationTransition,
 }
@@ -635,7 +643,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Retorno:** `info`: novo estado persistido após a transição.
 
-**Limites e erros:** Não transfere arquivos; rejeita transição sem confirmação dos pré-requisitos ou versão incompatível.
+**Limites e erros:** Não transfere arquivos. Exige geração/estado anterior corretos e ausência de operações Download não concluídas ou itens PendingDownload. A cobertura e a equivalência física continuam sob responsabilidade do chamador.
 
 ### 4. `get_item`
 
@@ -763,7 +771,7 @@ As assinaturas completas estão na seção 9. Esta seção explica **cada métod
 
 **Finalidade:** Registra transições de retry, bloqueio, falha ou retorno à fila.
 
-**Parâmetros:** `operation_id`/`expected_state`: alvo/precondição; `transition`: enum com os campos exigidos pela variante (`next_attempt_at`, `error_kind`, `failed_at` ou `reason`).
+**Parâmetros:** `operation_id`/`expected_state`/`expected_attempt_count`: alvo/precondições; `transition`: enum com os campos exigidos pela variante (`next_attempt_at`, `error_kind`, `failed_at` ou `reason`).
 
 **Retorno:** `operation`: novo estado, tentativas e diagnósticos pertinentes.
 
@@ -814,19 +822,76 @@ A identidade do `File` (ocorrência) não deve ser persistida como chave do `Syn
 
 1. **Assinatura estável:** novos atributos entram em `RecordLocalObservation`, `ItemFilter`, `NewSyncOperation` etc.; não acrescentar parâmetros posicionais.
 2. **Objetos coesos:** estruturas de entrada descrevem uma operação; dados de observação são agrupados em `LocalObservation`/`RemoteObservation`; não usar `HashMap<String, Value>` como API genérica.
-3. **Comportamento opcional explícito:** novas propriedades de entrada devem preservar o comportamento quando não fornecidas. Se a semântica mudar, atualizar o contrato e testar deliberadamente.
+3. **Comportamento opcional explícito:** definir a semântica de campos opcionais; alterações nesta fase atualizam contrato e consumidores juntos, sem fallback legado.
 4. **Contrato separado da persistência:** alterar colunas, índices e tabelas não muda automaticamente `SyncItem` nem as assinaturas públicas.
 5. **TDD:** testar primeiro casos mínimos, opcionais, erros, idempotência, rollback, paginação, FKs, revisão/concorrência, reinício e dados parciais.
 6. **Banco real isolado:** testes de Inventário usam SQLite real em diretório temporário, com `LocalFile` e `RemoteFile` sintéticos, com dados sintéticos e dependências isoladas.
 7. **Segurança:** atividades vinculadas a item, nenhum dado pessoal/segredo em erro, ausência observada versus desconhecida sempre diferenciadas.
 8. **Sem compatibilidade legada:** não adicionar adaptadores/migração para estados antigos por padrão; proteger arquivos do usuário e falhar com erro explícito quando esquema incompatível.
 
-### Pontos ainda dependentes de outra especificação
+## Contrato compilado e decisões de implementação
 
-- Campos definitivos de `LocalFile` e como reconstruir fielmente `LocalFile` de colunas.
-- Projeção relacional e reconstrução de `RemoteFile` completo, inclusive campos não retornados pelo Drive.
-- Semântica exata de `ObservationProof.complete_scope`, chaves de deduplicação, paginação e política de retenção.
-- Tipo concreto de tempo e de bytes locais no projeto.
-- Definição de operações simultâneas sobre um mesmo item e estratégias de lock. Estes detalhes devem ser fechados antes de implementar os respectivos métodos, **sem mudar a orientação a objetos da API**.
+As 17 operações estão implementadas. O usuário aprovou manter último valor
+conhecido e condição recente separadamente: local/remote e local_latest/remote_latest.
+Vínculos existem independentemente da disponibilidade de metadados. O esquema 3
+não migra esquemas anteriores nem os substitui; retorna UnsupportedSchema.
 
-**Importante:** este documento é o contrato de projeto para implementação e seus invariantes, não comprova compilação Rust nem implementação. O próximo passo é descrever `TESTS.md` e criar testes que falhem antes de implementar o módulo.
+- Fila: claim verifica revisão-base e, quando fornecida, versão remota da coleta
+  mais recente. No máximo uma operação Running por item. RetryWait é elegível no
+  horário informado; Running permanece desconhecido após reinício. Requeue é
+  explícito, após o chamador verificar o efeito. A revisão-base não é reescrita:
+  se mudou, o consumidor precisa registrar uma nova intenção.
+- Tentativas: update_operation exige expected_attempt_count; confirm_sync exige
+  expected_operation_attempt exatamente quando conclui uma operação. Uma resposta
+  de tentativa anterior é rejeitada mesmo que o estado volte a ser Running.
+- Confirmação: status Synced, presença conhecida e igual nos dois lados, compatível
+  com a presença registrada. Present exige ambos os metadados. Ausência em ambos
+  os lados exige as observações de ausência previamente comprovadas. Pais são
+  tipados e qualificados; dados opcionais são fatos verificados pelo chamador.
+  Checksums/tamanhos fornecidos nos dois lados precisam coincidir. O inventário
+  não faz uma nova leitura física para certificar esses fatos.
+- Conclusão de fila exige atividade Completed compatível com a ação, item,
+  operação e instante verificado. Sem operação, atividade é escolha explícita do
+  chamador. Baseline, estado, operação, atividade e recibo de replay são atômicos.
+- Repetir a mesma confirmação (item + revisão anterior + conteúdo idêntico)
+  devolve o item atual e os registros originais, sem duplicar histórico. Conteúdo
+  divergente falha. Enqueue com chave repete somente a intenção idêntica por item;
+  sem chave cada chamada é uma nova intenção. record_activity independente sempre
+  acrescenta um fato; não deduplica por texto ou data.
+- Histórico: ordem crescente (occurred_at, id), filtros e limite de inserção da
+  primeira página. Inserções posteriores não entram na continuação, inclusive
+  retroativas. Não há expurgo: atividades, operações e tombstones são preservados.
+- Diagnósticos de operação são códigos de até 128 bytes (letras ASCII, números,
+  ponto, sublinhado e hífen). Descrições de atividades têm limite e rejeitam
+  controles; o chamador deve remover dados sensíveis antes de enviá-las. Não
+  existe filtro capaz de reconhecer qualquer segredo arbitrário no texto.
+
+Veja [IMPLEMENTATION.md](IMPLEMENTATION.md) e [TESTS.md](TESTS.md) para verificações
+executadas e lacunas de integração. Backup/restauração comum de Configuration
+continua indisponível: a implementação preserva o banco e falha explicitamente,
+sem informar restauração ou reconstrução que não aconteceu.
+
+## Vínculo de produtores locais
+
+GetSyncInfoResult expõe local_root como bytes Unix da raiz absoluta persistida,
+além de info. O Scanner valida esse vínculo antes de qualquer observação, sem
+consultar SQLite diretamente. O acréscimo não muda o esquema.
+
+
+## Integração de análises
+
+Foram adicionados `record_analysis`, `get_analysis` e `list_analyses` às 17
+operações originais. O esquema atual 8 persiste avaliações e decisões com operações
+bloqueadas, controle de revisão, retry idempotente e consulta após reinício.
+Veja [Persistência de análises](ANALYSIS.md) para contratos e limites.
+
+## Checkpoints de execução
+
+O esquema 8 acrescenta `execution_intents` e `execution_checkpoints`, sem migração
+e sem exclusão de bancos existentes. `InventoryManager` oferece
+`prepare_execution`, `get_execution`, `save_execution` e
+`reset_expired_upload`, com as requisições e os
+resultados de `operations`; implementa também a porta bloqueante `ExecutionJournal`.
+Veja [recuperação do Operador](../operations/RECOVERY.md). Esses métodos não
+alteram fila, itens, época de planejamento, associações ou baseline. Operações
+vinculadas a análises continuam bloqueadas pelos caminhos genéricos da fila.

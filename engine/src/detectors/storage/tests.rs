@@ -1,0 +1,933 @@
+//! Durable queue contracts use real SQLite files, actual metadata and a controlled lease clock.
+use super::*;
+use crate::{detectors::*, models::*};
+use std::{
+    fs,
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{symlink, DirBuilderExt},
+    },
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicI64, AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+struct Tree(PathBuf);
+impl Tree {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        loop {
+            let path = std::env::temp_dir().join(format!(
+                "drivesync-queue-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => {
+                    fs::create_dir(path.join("root")).unwrap();
+                    return Self(path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => panic!("fixture: {e}"),
+            }
+        }
+    }
+    fn scope(&self) -> LocalDetectorScope {
+        LocalDetectorScope {
+            account_id: AccountId("account".into()),
+            sync_id: SyncId("sync".into()),
+            local_root: self.0.join("root"),
+        }
+    }
+    fn store(&self, clock: &Arc<AtomicI64>) -> Store {
+        let clock = clock.clone();
+        let store = Store::open_clock(
+            &self.0.join("state"),
+            &self.scope(),
+            Arc::new(move || clock.load(Ordering::SeqCst)),
+        )
+        .unwrap();
+        store.set_delivery(DeliveryState::Enabled).unwrap();
+        store
+    }
+    fn event(&self, id: &str) -> File {
+        File {
+            id: FileId(id.into()),
+            sync_id: self.scope().sync_id,
+            observed_at: Timestamp { unix_millis: -10 },
+            scope: FileScope::WholeSync,
+            coverage: ObservationCoverage::Partial,
+            data: None,
+            event: FileEvent {
+                local: None,
+                remote: None,
+                kind: FileEventKind::RecheckRequired,
+                previous: None,
+                current: None,
+                uncertainty: Some(ObservationUncertainty::CaptureStarted),
+            },
+        }
+    }
+    fn db(&self) -> PathBuf {
+        fs::read_dir(self.0.join("state"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("detector.sqlite3")
+    }
+}
+impl Drop for Tree {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+fn request() -> TakeEventsRequest {
+    TakeEventsRequest {
+        max_events: 64,
+        lease_duration: Duration::from_millis(200),
+    }
+}
+#[test]
+fn enqueue_reopen_complete_payload_bytes_order_and_idempotent_ack() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let name = b"link-\xff";
+    symlink(
+        std::ffi::OsStr::from_bytes(b"missing-\xfe"),
+        tree.0.join("root").join(std::ffi::OsStr::from_bytes(name)),
+    )
+    .unwrap();
+    let result = LocalMetadataCollector::new(tree.scope())
+        .unwrap()
+        .collect(LocalMetadataRequest {
+            relative_path: LocalRelativePath::new(name.to_vec()).unwrap(),
+            cancellation: LocalCancellation::new(),
+        })
+        .unwrap();
+    let mut local = result.file.unwrap();
+    local.storage.inode = MetadataValue::Known(u64::MAX);
+    let mut file = tree.event("one");
+    file.scope = FileScope::Local(local.relative_path.clone());
+    file.coverage = match result.coverage {
+        LocalScanCoverage::Complete => ObservationCoverage::Complete,
+        LocalScanCoverage::Partial => ObservationCoverage::Partial,
+        LocalScanCoverage::Unavailable => ObservationCoverage::Unavailable,
+    };
+    file.event = FileEvent {
+        local: None,
+        remote: None,
+        kind: FileEventKind::Renamed,
+        previous: Some(FileLocation::Local(
+            LocalRelativePath::new(b"old".to_vec()).unwrap(),
+        )),
+        current: Some(FileLocation::Local(local.relative_path.clone())),
+        uncertainty: None,
+    };
+    file.data = Some(FileData::Local(local));
+    let store = tree.store(&clock);
+    assert!(store.enqueue(&file).unwrap());
+    assert!(!store.enqueue(&file).unwrap());
+    let second = tree.event("two");
+    store.enqueue(&second).unwrap();
+    drop(store);
+    let store = tree.store(&clock);
+    let batch = store.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone(), second]);
+    let id = batch.batch_id.unwrap();
+    assert_eq!(
+        store.acknowledge(&id, EventDisposition::Processed).unwrap(),
+        2
+    );
+    assert_eq!(
+        store.acknowledge(&id, EventDisposition::Processed).unwrap(),
+        2
+    );
+    drop(store);
+    let store = tree.store(&clock);
+    assert_eq!(store.snapshot().confirmed, 2);
+    assert_eq!(store.snapshot().pending, 0);
+    assert!(!store.enqueue(&file).unwrap());
+    let mut divergent = file;
+    divergent.observed_at.unix_millis += 1;
+    assert_eq!(
+        store.enqueue(&divergent).unwrap_err().kind,
+        QueueError::Conflict
+    );
+    assert_eq!(store.claim(request()).unwrap().files.len(), 0);
+}
+#[test]
+fn leases_survive_reopen_expire_release_and_reject_foreign_or_wrong_ack() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    let file = tree.event("event");
+    store.enqueue(&file).unwrap();
+    let batch = store.claim(request()).unwrap();
+    let old = batch.batch_id.unwrap();
+    drop(store);
+    let store = tree.store(&clock);
+    assert!(store.claim(request()).unwrap().files.is_empty());
+    clock.store(1300, Ordering::SeqCst);
+    assert_eq!(
+        store
+            .acknowledge(&old, EventDisposition::Processed)
+            .unwrap_err()
+            .kind,
+        QueueError::LeaseExpired
+    );
+    let batch = store.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone()]);
+    let id = batch.batch_id.unwrap();
+    assert_ne!(old, id);
+    assert_eq!(store.release(&id).unwrap(), 1);
+    assert_eq!(store.release(&id).unwrap(), 1);
+    let next = store.claim(request()).unwrap().batch_id.unwrap();
+    assert_eq!(
+        store
+            .acknowledge(&id, EventDisposition::Processed)
+            .unwrap_err()
+            .kind,
+        QueueError::InvalidLease
+    );
+    assert_eq!(
+        store
+            .acknowledge(&BatchId("foreign".into()), EventDisposition::Processed)
+            .unwrap_err()
+            .kind,
+        QueueError::InvalidLease
+    );
+    assert_eq!(
+        store
+            .acknowledge(&next, EventDisposition::Discarded)
+            .unwrap(),
+        1
+    );
+    assert!(store
+        .acknowledge(&next, EventDisposition::Processed)
+        .is_err());
+}
+#[test]
+fn independent_connections_cannot_claim_the_same_ordered_batch() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let first = Arc::new(tree.store(&clock));
+    first.enqueue(&tree.event("event")).unwrap();
+    let second = Arc::new(tree.store(&clock));
+    let gate = Arc::new(std::sync::Barrier::new(3));
+    let joins: Vec<_> = [first, second]
+        .into_iter()
+        .map(|store| {
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                store.claim(request()).unwrap().files.len()
+            })
+        })
+        .collect();
+    gate.wait();
+    assert_eq!(
+        joins
+            .into_iter()
+            .map(|join| join.join().unwrap())
+            .sum::<usize>(),
+        1
+    );
+}
+#[test]
+fn payload_corruption_and_future_schema_are_not_replaced() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    store.enqueue(&tree.event("event")).unwrap();
+    let connection = rusqlite::Connection::open(tree.db()).unwrap();
+    connection
+        .execute("UPDATE events SET payload=?1", [b"damaged".as_slice()])
+        .unwrap();
+    assert_eq!(
+        store.claim(request()).unwrap_err().kind,
+        QueueError::Corrupt
+    );
+    assert_eq!(store.snapshot().pending, 1);
+    drop(store);
+    connection.pragma_update(None, "user_version", 900).unwrap();
+    drop(connection);
+    assert_eq!(
+        Store::open(&tree.0.join("state"), &tree.scope())
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::SchemaUnsupported
+    );
+    let connection = rusqlite::Connection::open(tree.db()).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM events", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+#[test]
+fn private_paths_identity_and_rollback_are_enforced() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    let mut wrong = tree.event("wrong");
+    wrong.sync_id = SyncId("other".into());
+    assert_eq!(
+        store.enqueue(&wrong).unwrap_err().kind,
+        QueueError::IdentityMismatch
+    );
+    let connection = rusqlite::Connection::open(tree.db()).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_insert BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(store.enqueue(&tree.event("event")).is_err());
+    assert_eq!(store.snapshot().pending, 0);
+    connection
+        .execute_batch("DROP TRIGGER fail_insert;")
+        .unwrap();
+    store.enqueue(&tree.event("event")).unwrap();
+    drop(store);
+    connection
+        .execute("UPDATE identity SET account='different'", [])
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        Store::open(&tree.0.join("state"), &tree.scope())
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    symlink(tree.0.join("state"), tree.0.join("alias")).unwrap();
+    assert!(Store::open(&tree.0.join("alias"), &tree.scope()).is_err());
+}
+
+#[test]
+fn codec_rejects_unvalidated_paths_unknown_fields_and_incompatible_versions() {
+    let tree = Tree::new();
+    let file = tree.event("event");
+    let bytes = codec::encode(&file).unwrap();
+    let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    wire["record"]["Common"]["scope"] = serde_json::json!({"Local": [46,46,47,102]});
+    assert_eq!(
+        codec::decode(&serde_json::to_vec(&wire).unwrap())
+            .unwrap_err()
+            .kind,
+        QueueError::Corrupt
+    );
+    let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    wire["unexpected"] = serde_json::json!(true);
+    assert_eq!(
+        codec::decode(&serde_json::to_vec(&wire).unwrap())
+            .unwrap_err()
+            .kind,
+        QueueError::Corrupt
+    );
+    let mut extra: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    extra["record"]["Common"]["unexpected"] = serde_json::json!(true);
+    assert_eq!(
+        codec::decode(&serde_json::to_vec(&extra).unwrap())
+            .unwrap_err()
+            .kind,
+        QueueError::Corrupt
+    );
+    for version in [0, 1, 2, 3, 900] {
+        let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        wire["version"] = serde_json::json!(version);
+        assert_eq!(
+            codec::decode(&serde_json::to_vec(&wire).unwrap())
+                .unwrap_err()
+                .kind,
+            QueueError::SchemaUnsupported,
+            "incompatible codec version {version} must not be adapted"
+        );
+    }
+}
+
+#[test]
+fn corruption_during_a_reservation_blocks_ack_without_confirming_the_batch() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    store.enqueue(&tree.event("event")).unwrap();
+    let batch = store.claim(request()).unwrap();
+    let connection = rusqlite::Connection::open(tree.db()).unwrap();
+    connection
+        .execute(
+            "UPDATE events SET digest=?1",
+            [b"wrong checksum".as_slice()],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .acknowledge(&batch.batch_id.unwrap(), EventDisposition::Processed)
+            .unwrap_err()
+            .kind,
+        QueueError::Corrupt
+    );
+    assert_eq!(store.snapshot().confirmed, 0);
+    assert!(
+        store.refresh().is_err(),
+        "corruption must remain unavailable, not clear on a status query"
+    );
+}
+
+#[test]
+fn unified_queue_uses_reserved_directory_and_preserves_inventory() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let state = tree.scope().local_root.join(".drivesync");
+    let store = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    assert!(state.join("detector.sqlite3").is_file());
+    assert_eq!(
+        fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(state.join("detector.sqlite3"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert!(!tree.0.join("state").exists());
+    let inventory = state.join("inventory.sqlite3");
+    fs::write(&inventory, b"independent inventory owner").unwrap();
+    store
+        .enqueue_from(&tree.event("durable"), DetectorOrigin::Local)
+        .unwrap();
+    drop(store);
+    let reopened = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    assert_eq!(reopened.snapshot().pending, 1);
+    assert_eq!(fs::read(inventory).unwrap(), b"independent inventory owner");
+}
+
+#[test]
+fn root_queue_refuses_different_accounts_roots_or_syncs_without_replacement() {
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();
+    store
+        .enqueue_from(&tree.event("owned"), DetectorOrigin::Local)
+        .unwrap();
+    drop(store);
+    let mut scope = tree.scope();
+    scope.account_id = AccountId("other".into());
+    assert_eq!(
+        Store::open_unified(&scope, "google", "remote-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    scope = tree.scope();
+    scope.sync_id = SyncId("other-sync".into());
+    assert_eq!(
+        Store::open_unified(&scope, "google", "remote-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    assert_eq!(
+        Store::open_unified(&tree.scope(), "google", "other-root")
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::IdentityMismatch
+    );
+    assert_eq!(
+        Store::open_unified(&tree.scope(), "google", "remote-root")
+            .unwrap()
+            .snapshot()
+            .pending,
+        1
+    );
+}
+
+#[test]
+fn reserved_state_never_follows_symlinks_or_creates_a_missing_user_root() {
+    let tree = Tree::new();
+    let mut scope = tree.scope();
+    scope.local_root = tree.0.join("missing/root");
+    assert!(Store::open_unified(&scope, "google", "root").is_err());
+    assert!(!tree.0.join("missing").exists());
+    fs::create_dir(tree.0.join("outside")).unwrap();
+    symlink(
+        tree.0.join("outside"),
+        tree.scope().local_root.join(".drivesync"),
+    )
+    .unwrap();
+    assert!(Store::open_unified(&tree.scope(), "google", "root").is_err());
+    assert!(fs::read_dir(tree.0.join("outside"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+#[test]
+fn reserved_database_rejects_old_schema_without_migration() {
+    for version in [0, 1, 2, 3, 4, 5, 900] {
+        let tree = Tree::new();
+        drop(Store::open_unified(&tree.scope(), "google", "root").unwrap());
+        let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        drop(db);
+        let before = fs::read(&path).unwrap();
+        assert_eq!(
+            Store::open_unified(&tree.scope(), "google", "root")
+                .err()
+                .unwrap()
+                .kind,
+            QueueError::SchemaUnsupported,
+            "incompatible schema {version} must not be migrated"
+        );
+        assert_eq!(
+            fs::read(path).unwrap(),
+            before,
+            "rejection must preserve the database"
+        );
+    }
+}
+
+#[test]
+fn native_local_evidence_and_history_survive_sqlite_reopen_release_and_ack() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    let mut file = tree.event("native-move-half");
+    file.scope = FileScope::Local(LocalRelativePath::new(b"before-\xff".to_vec()).unwrap());
+    file.event.kind = FileEventKind::Observed;
+    file.event.uncertainty = None;
+    file.event.local = Some(LocalObservation {
+        capture_id: "capture-session".into(),
+        mask: libc::IN_MOVED_FROM,
+        cookie: 71,
+    });
+    assert!(store.enqueue(&file).unwrap());
+    drop(store);
+    let reopened = tree.store(&clock);
+    let request = || TakeEventsRequest {
+        max_events: 4,
+        lease_duration: Duration::from_secs(30),
+    };
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone()]);
+    reopened.release(batch.batch_id.as_ref().unwrap()).unwrap();
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file.clone()]);
+    reopened
+        .acknowledge(
+            batch.batch_id.as_ref().unwrap(),
+            EventDisposition::Processed,
+        )
+        .unwrap();
+    assert_eq!(reopened.recent().unwrap(), vec![file.clone()]);
+    assert!(
+        !reopened.enqueue(&file).unwrap(),
+        "replay is idempotent after ack"
+    );
+}
+
+#[test]
+fn traversal_delta_and_checkpoint_are_atomic_ordered_and_reopenable() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(
+            None,
+            b"first",
+            &RemoteScanUpdate {
+                reset: true,
+                discovered: vec!["root".into(), "child".into(), "root".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let root = store.next_remote_scan().unwrap().unwrap();
+    assert_eq!(root.folder, "root");
+    store
+        .save_remote_page(
+            Some(b"first"),
+            b"second",
+            &RemoteScanUpdate {
+                finished: Some(root.clone()),
+                continuation: Some("page2".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store.next_remote_scan().unwrap().unwrap().token.as_deref(),
+        Some("page2")
+    );
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"first"),
+                b"stale",
+                &RemoteScanUpdate {
+                    reset: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::Conflict
+    );
+    let before = store.remote_state().unwrap();
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"second"),
+                b"invalid",
+                &RemoteScanUpdate {
+                    finished: Some(root),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::Conflict
+    );
+    assert_eq!(store.remote_state().unwrap(), before);
+    drop(store);
+    let reopened = tree.store(&clock);
+    let root = reopened.next_remote_scan().unwrap().unwrap();
+    reopened
+        .save_remote_page(
+            Some(b"second"),
+            b"third",
+            &RemoteScanUpdate {
+                finished: Some(root),
+                discovered: vec!["child".into(), "last".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        reopened.next_remote_scan().unwrap().unwrap().folder,
+        "child"
+    );
+}
+
+#[test]
+fn large_traversal_updates_only_affected_rows_and_rolls_back_on_checkpoint_failure() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(None, b"seed", &RemoteScanUpdate::default())
+        .unwrap();
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute_batch("BEGIN;
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20000)
+        INSERT INTO remote_scan(folder,done) SELECT 'folder-'||x,0 FROM n;
+        UPDATE remote_scan_control SET total=20000,pending=20000;
+        CREATE TABLE audit(n INTEGER NOT NULL);
+        INSERT INTO audit VALUES(0);
+        CREATE TRIGGER audit_work_update AFTER UPDATE ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        CREATE TRIGGER audit_work_insert AFTER INSERT ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        CREATE TRIGGER audit_work_delete AFTER DELETE ON remote_scan BEGIN UPDATE audit SET n=n+1; END;
+        COMMIT;").unwrap();
+    drop(store);
+    let store = tree.store(&clock);
+    let head = store.next_remote_scan().unwrap().unwrap();
+    store
+        .save_remote_page(
+            Some(b"seed"),
+            b"page",
+            &RemoteScanUpdate {
+                finished: Some(head),
+                discovered: vec!["new-child".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        db.query_row("SELECT n FROM audit", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    let plan: String = db.query_row("EXPLAIN QUERY PLAN SELECT folder,token FROM remote_scan WHERE done=0 ORDER BY seq LIMIT 1", [], |row| row.get(3)).unwrap();
+    assert!(plan.contains("remote_scan_pending"), "{plan}");
+    db.execute_batch("CREATE TRIGGER reject_checkpoint BEFORE UPDATE ON remote_progress BEGIN SELECT RAISE(ABORT,'fault'); END;").unwrap();
+    let head = store.next_remote_scan().unwrap().unwrap();
+    assert!(store
+        .save_remote_page(
+            Some(b"page"),
+            b"must-rollback",
+            &RemoteScanUpdate {
+                finished: Some(head.clone()),
+                discovered: vec!["must-not-exist".into()],
+                ..Default::default()
+            }
+        )
+        .is_err());
+    assert_eq!(store.remote_state().unwrap(), Some(b"page".to_vec()));
+    assert_eq!(store.next_remote_scan().unwrap(), Some(head));
+    assert_eq!(
+        db.query_row("SELECT n FROM audit", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM remote_scan WHERE folder='must-not-exist'",
+            [],
+            |row| row.get::<_, u64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn traversal_capacity_failure_preserves_checkpoint_and_all_pending_work() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    store
+        .save_remote_page(None, b"seed", &RemoteScanUpdate::default())
+        .unwrap();
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute_batch(
+        "BEGIN;
+        WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000)
+        INSERT INTO remote_scan(folder,done) SELECT 'folder-'||x,0 FROM n;
+        UPDATE remote_scan_control SET total=100000,pending=100000;
+        COMMIT;",
+    )
+    .unwrap();
+    let head = store.next_remote_scan().unwrap();
+    assert_eq!(
+        store
+            .save_remote_page(
+                Some(b"seed"),
+                b"too-large",
+                &RemoteScanUpdate {
+                    discovered: vec!["extra".into()],
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .kind,
+        QueueError::CapacityExceeded
+    );
+    assert_eq!(store.remote_state().unwrap(), Some(b"seed".to_vec()));
+    assert_eq!(store.next_remote_scan().unwrap(), head);
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM remote_scan", [], |row| row
+            .get::<_, u64>(0))
+            .unwrap(),
+        100000
+    );
+}
+
+#[test]
+fn traversal_is_isolated_by_account_and_provider_and_corrupt_counters_fail_without_repair() {
+    let tree = Tree::new();
+    let base = tree.0.join("isolated-work");
+    let first = Store::open_remote(&base, "google", "a", "sync", "root").unwrap();
+    let second = Store::open_remote(&base, "google", "b", "sync", "root").unwrap();
+    let other = Store::open_remote(&base, "other", "a", "sync", "root").unwrap();
+    first
+        .save_remote_page(
+            None,
+            b"a",
+            &RemoteScanUpdate {
+                discovered: vec!["only-a".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(second.next_remote_scan().unwrap().is_none());
+    assert!(other.next_remote_scan().unwrap().is_none());
+    assert_eq!(first.next_remote_scan().unwrap().unwrap().folder, "only-a");
+    drop((first, second, other));
+    let clock = Arc::new(AtomicI64::new(100));
+    let store = tree.store(&clock);
+    drop(store);
+    let db = rusqlite::Connection::open(tree.db()).unwrap();
+    db.execute("UPDATE remote_scan_control SET total=1,pending=0", [])
+        .unwrap();
+    drop(db);
+    let before = fs::read(tree.db()).unwrap();
+    assert_eq!(
+        Store::open(&tree.0.join("state"), &tree.scope())
+            .err()
+            .unwrap()
+            .kind,
+        QueueError::Corrupt
+    );
+    assert_eq!(fs::read(tree.db()).unwrap(), before);
+}
+
+#[test]
+fn original_remote_json_survives_reopen_delivery_and_ack_without_rewriting() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let original = serde_json::json!({
+        "fileId":"f", "removed":false, "time":null,
+        "file":{"id":"f","name":null,"parents":["root"],"size":"9","unknown":{"values":[null,false,0,"x"]}},
+        "newField":{"nested":null}
+    });
+    let raw = RawRemoteObservation {
+        id: FileId("original-item".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 13 },
+        account_id: AccountId("account".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Changes,
+        original: original.clone(),
+    };
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    assert!(store.enqueue_original(&raw).unwrap());
+    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let bytes: Vec<u8> = db
+        .query_row(
+            "SELECT payload FROM events WHERE id='original-item'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(wire["record"]["Remote"]["original"], original);
+    assert!(
+        wire["record"]["Remote"].get("data").is_none(),
+        "normalized metadata must not be stored"
+    );
+    drop(store);
+    let reopened = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    reopened.set_delivery(DeliveryState::Enabled).unwrap();
+    let request = || TakeEventsRequest {
+        max_events: 4,
+        lease_duration: Duration::from_secs(30),
+    };
+    let batch = reopened.claim(request()).unwrap();
+    let file = batch.files[0].clone();
+    assert_eq!(file.id, raw.id);
+    assert_eq!(file.observed_at, raw.observed_at);
+    let Some(FileData::Remote(metadata)) = &file.data else {
+        panic!()
+    };
+    assert_eq!(metadata.name, MetadataValue::NotCollected);
+    assert_eq!(metadata.size, MetadataValue::Known(9));
+    reopened.release(batch.batch_id.as_ref().unwrap()).unwrap();
+    let batch = reopened.claim(request()).unwrap();
+    assert_eq!(batch.files, vec![file]);
+    reopened
+        .acknowledge(
+            batch.batch_id.as_ref().unwrap(),
+            EventDisposition::Processed,
+        )
+        .unwrap();
+    assert!(!reopened.enqueue_original(&raw).unwrap());
+    let after: Vec<u8> = db
+        .query_row(
+            "SELECT payload FROM events WHERE id='original-item'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        bytes, after,
+        "delivery and ack must retain the original record"
+    );
+    let mut changed = raw;
+    changed.original["newField"] = serde_json::json!("changed");
+    assert_eq!(
+        reopened.enqueue_original(&changed).unwrap_err().kind,
+        QueueError::Conflict,
+        "raw fields participate in idempotence even when the adapter ignores them"
+    );
+}
+
+#[test]
+fn original_is_durable_before_extraction_and_invalid_metadata_is_not_discarded() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    let raw = RawRemoteObservation {
+        id: FileId("malformed-metadata".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 1 },
+        account_id: AccountId("account".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Capture,
+        original: serde_json::json!({"id":"f","size":"not-a-number","unknown":null}),
+    };
+    let path = tree.scope().local_root.join(".drivesync/detector.sqlite3");
+    let calls = Arc::new(AtomicU64::new(0));
+    let captured = calls.clone();
+    store.set_notification(Arc::new(move |file, _| {
+        assert!(
+            file.is_none(),
+            "unextractable data must not become fabricated File metadata"
+        );
+        let db = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM events", [], |row| row
+                .get::<_, u64>(0))
+                .unwrap(),
+            1,
+            "notification/extraction occurs after durable insertion"
+        );
+        captured.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert!(
+        store.enqueue_original(&raw).unwrap(),
+        "raw collection must not require RemoteFile adaptation"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    store.set_delivery(DeliveryState::Enabled).unwrap();
+    assert_eq!(
+        store
+            .claim(TakeEventsRequest {
+                max_events: 4,
+                lease_duration: Duration::from_secs(30)
+            })
+            .unwrap_err()
+            .kind,
+        QueueError::InvalidRequest
+    );
+    assert_eq!(store.snapshot().pending, 1);
+    assert_eq!(store.snapshot().leased, 0);
+}
+
+#[test]
+fn original_remote_records_reject_wrong_accounts_and_oversize_without_truncation() {
+    use crate::detectors::record::RawRemoteObservation;
+    let tree = Tree::new();
+    let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
+    let mut raw = RawRemoteObservation {
+        id: FileId("bounded-original".into()),
+        sync_id: SyncId("sync".into()),
+        observed_at: Timestamp { unix_millis: 1 },
+        account_id: AccountId("other".into()),
+        provider: ProviderId("google".into()),
+        resource_id: RemoteFileId("f".into()),
+        source: RemoteObservationSource::Capture,
+        original: serde_json::json!({"id":"f"}),
+    };
+    assert_eq!(
+        store.enqueue_original(&raw).unwrap_err().kind,
+        QueueError::IdentityMismatch
+    );
+    raw.account_id = AccountId("account".into());
+    raw.original["extra"] = serde_json::Value::String("x".repeat(1024 * 1024));
+    assert_eq!(
+        store.enqueue_original(&raw).unwrap_err().kind,
+        QueueError::CapacityExceeded
+    );
+    assert_eq!(store.snapshot().detected, 0);
+    assert_eq!(raw.original["extra"].as_str().unwrap().len(), 1024 * 1024);
+}

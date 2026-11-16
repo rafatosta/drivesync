@@ -45,8 +45,13 @@ Exercitar os cenários `SC-01` a `SC-20` e `SC-S01` a `SC-S12` de [TESTS.md](TES
 
 Testes de compilação e de integração Rust devem ser executados no Flatpak configurado pelo projeto. Reportar somente os resultados efetivamente obtidos, incluindo casos `BLOCKED` por lacunas de interface.
 
-## Escopo documental
+## Estado da implementação autorizada
 
-Esta etapa envolve **somente** `docs/engine/scanner/README.md`, `INTERFACES.md`, `TESTS.md` e `AGENTS.md`. Não modificar Scanner Rust, Inventário, Detectores, Orquestrador ou Analisador sem solicitação posterior.
+O usuário solicitou construir o Scanner e confirmou que Partial mantém o
+Analisador suspenso. O módulo Rust, seus testes e decisões estão descritos em
+IMPLEMENTATION.md. A exposição dos bytes da raiz em GetSyncInfoResult foi a
+dependência explícita para validar configuração, sem SQL dentro do Scanner.
 
-**Estado:** especificação documental, sem código Rust implementado.
+A inicialização automática/coordenação completa e o Analisador não estão
+implementados. SC-20 (ScanIssue durável) e SC-05 (renomeação com identidade
+persistente) continuam BLOCKED; não apresentar esses cenários como aceitos.

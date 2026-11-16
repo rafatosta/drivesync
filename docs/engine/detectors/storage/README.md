@@ -8,7 +8,7 @@ Armazenar de forma durável as ocorrências detectadas e disponibilizá-las para
 
 Persiste cada evento `File` integralmente, preservando identidade, dados observados e ordem de enfileiramento. A entrega utiliza reservas temporárias (leases): eventos reservados podem ser confirmados ou devolvidos à fila; reservas não concluídas podem ser recuperadas após interrupções.
 
-O armazenamento deve preservar a integridade dos registros, tratar falhas explicitamente e evitar perda silenciosa de eventos. A tecnologia e a localização física são detalhes de implementação do próprio componente.
+O armazenamento deve preservar a integridade dos registros, tratar falhas explicitamente e evitar perda silenciosa de eventos. O Storage deriva `<raiz-local>/.drivesync/detector.sqlite3`; compartilha o diretório reservado com `inventory.sqlite3`, mas não acessa esse outro banco.
 
 ## Interface
 
@@ -23,7 +23,7 @@ O armazenamento deve preservar a integridade dos registros, tratar falhas explic
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; não comprova implementação Rust.
+**Estado:** fila unificada local/remota implementada e testada; ver INTERFACES §§ 7–9. Backup/restauração central permanece futuro. Não há compatibilidade nem migração de formatos antigos.
 
 ## Proteção e recuperação
 

@@ -1,6 +1,6 @@
 # Baseline — contrato interno
 
-**Estado:** proposta de porta interna, sem implementação. `inventory/baseline/` armazena `SyncBaseline` e `BaselineSide` já definidos em [Inventário](../INTERFACES.md). Seu conteúdo representa o **último estado efetivamente confirmado** nos dois lados, não o último evento detectado.
+**Estado:** implementado em `engine/src/inventory/storage/baseline.rs`; as assinaturas internas abaixo são ilustrações de responsabilidades, não traits públicos. `inventory/baseline/` armazena `SyncBaseline` e `BaselineSide` já definidos em [Inventário](../INTERFACES.md). Seu conteúdo representa o **último estado efetivamente confirmado** nos dois lados, não o último evento detectado.
 
 ## Responsabilidades e invariantes
 
@@ -34,4 +34,4 @@ pub(crate) trait BaselineRepository {
 5. Reinício preserva exatamente a última confirmação; timestamps não são preenchidos artificialmente.
 6. Ausência de hash para diretório/documento nativo remoto é válida.
 
-**Pendente:** tipagem final de `BaselineSide.parent_identity` (hoje `Option<String>`), critérios de validade do estado confirmado e política de baselines para itens tombstone.
+**Decisões implementadas:** consulte [contrato compilado](../INTERFACES.md#contrato-compilado-e-decisões-de-implementação) para precondições, tipagem, retomada, deduplicação e retenção. A integração com executores e backup/restauração permanece separada.

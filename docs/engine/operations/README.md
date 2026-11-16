@@ -1,8 +1,16 @@
 # Operador
 
+> Política obrigatória: toda exclusão deve ir para a lixeira. Exclusão permanente
+> é proibida. O método conceitual `delete` não autoriza execução e, se preservado
+> no contrato futuro, deve recusar localmente sem efeitos. Nunca usar delete como
+> fallback quando lixeira não estiver disponível. No Provider Google, os métodos
+> destrutivos já retornam `UnsupportedOperation` sem HTTP.
+
+
 ## Objetivo
 
-Disponibilizar uma API pública para executar comandos de manipulação e transferência de arquivos e diretórios em ambientes locais e remotos.
+Executar comandos delimitados de arquivos locais/remotos, com contratos para as
+demais capacidades. A implementação atual cobre upload/download de novos blobs.
 
 ## Funcionamento
 
@@ -25,7 +33,7 @@ As manipulações de nome e localização preservam a identidade do recurso semp
 | `update_content` | Substituir conteúdo de arquivo existente |
 | `rename` | Renomear arquivo ou diretório |
 | `move_item` | Mover arquivo ou diretório no mesmo ambiente |
-| `delete` | Excluir recurso definitivamente |
+| `delete` | Proibido: recusa local sem efeitos |
 | `trash` | Enviar recurso à lixeira quando suportado |
 | `restore` | Restaurar recurso quando suportado |
 
@@ -50,4 +58,7 @@ Cada executor segue o [contrato comum](INTERFACES.md#7-contrato-de-implementaç�
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Orientações para agentes](AGENTS.md)
 
-**Estado:** contrato arquitetural proposto; não implica implementação Rust existente.
+**Estado:** o especialista implementa as nove ações permitidas sobre arquivos e
+diretórios locais/remotos. Exclusão permanente recusa sem efeitos. Ver
+[MUTATIONS.md](MUTATIONS.md), [TRANSFERS.md](TRANSFERS.md) e os limites de capacidade.
+Novas réplicas são chamadas pelo Analyzer; baseline depende de reobservação.

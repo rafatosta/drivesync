@@ -1,0 +1,16 @@
+.setup-provider-choice {
+    border: 1px solid alpha(currentColor, 0.15);
+}
+.setup-provider-choice.selected {
+    border-color: @accent_color;
+    background-color: alpha(@accent_color, 0.10);
+}
+.setup-google-sign-in {
+    background-color: @card_bg_color;
+    background-image: none;
+    border: 1px solid alpha(currentColor, 0.15);
+    box-shadow: 0 1px 3px alpha(black, 0.12);
+}
+.setup-google-sign-in:hover {
+    background-image: linear-gradient(alpha(currentColor, 0.04), alpha(currentColor, 0.04));
+}

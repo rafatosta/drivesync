@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="900" height="1180" viewBox="0 0 450 590" role="img" aria-label="Cloud synchronization with laptop and folder" version="1.1" id="svg23" xmlns="http://www.w3.org/2000/svg">
+  <defs id="defs13">
+    <linearGradient id="cloud" x1=".2" y1="0" x2=".8" y2="1" objectboundingbox="true">
+      <stop stop-color="#c8defb" id="stop3"/>
+      <stop offset="1" stop-color="#edf5ff" id="stop4"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#d5e6fd" id="stop5"/>
+      <stop offset="1" stop-color="#f4f8ff" id="stop6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#52a5ff" id="stop7"/>
+      <stop offset="0.55" stop-color="#2787f6" id="stop8"/>
+      <stop offset="1" stop-color="#2c80e7" id="stop9"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#b6d6ff" id="stop10"/>
+      <stop offset="1" stop-color="#e5f0ff" id="stop11"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#7ea9e2" id="stop12"/>
+      <stop offset="1" stop-color="#4f78b5" id="stop13"/>
+    </linearGradient>
+    <filter id="shadow" x="-0.02364532" y="-0.6" width="1.0472906" height="2.2">
+      <feGaussianBlur stdDeviation="4" id="feGaussianBlur13"/>
+    </filter>
+  </defs>
+  <path d="M 88 290 C 47 288 18 255 18 209 C 18 157 56 117 105 117 C 110 117 114 117 119 118 C 136 72 176 40 223 40 C 286 40 334 85 335 143 C 343 140 350 139 359 139 C 403 139 434 173 434 216 C 434 258 405 289 366 292 L 88 290 Z" fill="url(#cloud)" id="path13"/>
+  <path d="M 92 291 C 44 292 9 327 9 378 C 9 431 45 469 97 469 L 361 469 C 411 469 443 431 443 383 C 443 336 409 298 360 294 L 92 291 Z" fill="url(#lower)" opacity=".82" id="path14"/>
+  <path d="M 166 303 C 140 303 119 284 119 258 C 119 231 140 211 166 211 C 171 211 176 212 181 213 C 188 188 210 171 236 171 C 263 171 283 187 289 210 C 293 208 298 208 303 208 C 328 208 346 228 346 254 C 346 282 327 303 301 303 L 257 303 C 245 311 228 312 213 303 L 166 303 Z" fill="url(#blue)" stroke="#b7d9ff" stroke-width="3" stroke-linejoin="round" id="path15"/>
+  <path d="M 204.559 246.439 C 206.965 232.834 218.997 222.631 235.841 222.631 C 245.466 222.631 253.487 226.032 259.102 231.474 L 259.102 223.991 L 264.717 224.671 L 263.915 244.398 L 240.653 243.718 L 241.456 238.956 L 251.883 238.276 C 247.872 233.514 242.258 230.794 235.039 230.794 C 223.809 230.794 214.986 237.596 212.58 246.439 L 204.559 246.439 Z" fill="#ffffff" stroke="#eaf4ff" stroke-width="0.987151" id="path16"/>
+  <path d="M 260.706 251.881 C 258.3 266.166 246.268 276.369 229.424 276.369 C 219.799 276.369 211.778 272.968 206.163 267.526 L 206.163 275.009 L 200.548 274.329 L 201.35 254.602 L 224.611 255.282 L 223.809 260.044 L 213.382 260.724 C 217.392 265.486 223.007 268.206 230.226 268.206 C 241.456 268.206 250.279 261.404 252.685 251.881 L 260.706 251.881 Z" fill="#ffffff" stroke="#eaf4ff" stroke-width="0.987151" id="path17"/>
+  <rect x="97" y="364" width="255" height="176" rx="13" fill="#456fae" id="rect17"/>
+  <rect x="101" y="368" width="247" height="170" rx="10" fill="url(#metal)" stroke="#9abce8" stroke-width="2" id="rect18"/>
+  <rect x="110" y="377" width="229" height="153" rx="3" fill="url(#screen)" stroke="#e0eeff" stroke-width="2" id="rect19"/>
+  <rect x="115" y="382" width="219" height="145" fill="#c4ddfc" opacity=".28" id="rect20"/>
+  <path d="M 170 418 C 170 411.333 173.333 408 180 408 L 211 408 C 215.667 408 219 410.333 221 415 L 224 421 L 271 421 C 278.333 421 282 424.667 282 432 L 282 484 C 282 491.333 278.333 495 271 495 L 180 495 C 173.333 495 170 491.667 170 485 L 170 418 Z" fill="url(#blue)" stroke="#c3dfff" stroke-width="3" id="path20"/>
+  <path d="M 173 425 L 275 425 C 279 425 281 427.333 281 432 L 281 485 C 281 490.333 278 493 272 493 L 181 493 C 175.667 493 173 490.333 173 485 L 173 425 Z" fill="#2c8bef" opacity=".72" id="path21"/>
+  <path d="M 77 532 L 373 532 C 379 532 382.333 534.667 383 540 L 384 545 C 384 551.667 379 555 369 555 L 81 555 C 72.333 555 68 551.667 68 545 L 69 540 C 69.667 534.667 72.333 532 77 532 Z" fill="url(#metal)" stroke="#517db8" stroke-width="2" id="path22"/>
+  <path d="M 193 533 L 259 533 L 255 540 L 198 540 L 193 533 Z" fill="#436b9f" opacity=".8" id="path23"/>
+  <ellipse cx="226" cy="563" rx="203" ry="8" fill="#b9d2f3" opacity=".5" filter="url(#shadow)" id="ellipse23"/>
+</svg>

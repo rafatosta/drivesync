@@ -121,3 +121,14 @@ Exercitar SQLite isolado e falhas injetadas, incluindo reabertura e efeito sobre
 - Reabrir banco restaurado não comprova que eventos do intervalo posterior ao backup foram processados.
 
 **Testes documentais; ainda não executados.**
+
+
+## Implementação compilada — evidência atual
+
+Sete testes privados usam SQLite real temporário: reabertura e igualdade integral de File com nome/alvo não UTF-8, inode u64::MAX e timestamps assinados; duplicação e conflito; ack repetido; lease ativo após reopen, expiração com relógio controlado, release e IDs estrangeiros; duas conexões concorrentes sem claims duplicados; payload corrompido/schema futuro; identidade, caminhos privados e rollback por erro SQL; codec inválido/futuro; corrupção durante reserva recusando confirmação e mantendo indisponibilidade.
+
+A API pública tem testes de captura durante pause, reentrega após reopen com IDs/payload iguais, ack persistido e retomada sem perda. Um subprocesso encerra sem executar destrutores após commits; a reabertura recupera os eventos. Há também um teste de SQLITE_BUSY: depois de liberar a transação externa, o mesmo evento chega à fila sem outra mudança na pasta. O helper de subprocesso retorna sem trabalho quando não recebe o ambiente de fixture; sua execução efetiva é comandada pelo teste pai.
+
+O Orchestrator diagnóstico testa pause persistido entre instâncias, histórico recuperado e consumo após resume. A UI exercita o botão real, pendentes e isolamento entre contas. Não se declara a matriz inteira concluída: backup/restauração, falta real de energia, disco realmente cheio, todos os ataques concorrentes de mesmo UID e todos os editores não foram testados. Nenhum teste confirma sincronização com Google ou Inventory.
+
+Validação atual usa a fachada Detector e SQLite real isolado. Inclui recuperação após encerramento abrupto, lotes mistos, pausa, identidade por conta/raízes e os quatro cenários de localização: banco em `.drivesync/detector.sqlite3` com permissões privadas e Inventário intacto; rejeição de outra identidade; recusa de symlink e raiz ausente; formato antigo rejeitado sem migração ou alteração do arquivo. O teste de captura nativa verifica que gravações dos bancos internos não produzem eventos de usuário.

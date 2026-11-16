@@ -1,6 +1,8 @@
-# Arquitetura atual do DriveSync
+# Registro da arquitetura do DriveSync
 
-Registro descritivo do código presente no repositório em 2026-11-07. A
+**Atualização de 2026-11-10:** o front-end foi reduzido a contas e conectado à nova API pública. Consulte [GUI_ARCHITECTURE.md](GUI_ARCHITECTURE.md) e [Connection](../engine/connection/README.md). Os demais levantamentos abaixo representam a versão anterior e não comprovam a disponibilidade atual dos fluxos de sincronização.
+
+Registro descritivo histórico do código presente no repositório em 2026-11-07. A
 implementação foi tratada como fonte principal; a documentação existente foi
 confrontada com ela. Cada afirmação técnica remete a arquivos e símbolos
 verificáveis.

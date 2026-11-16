@@ -18,4 +18,4 @@ Implementa as operações de observação definidas para o [Detector Remoto](../
 
 [Interfaces](INTERFACES.md) · [Testes](TESTS.md) · [Agentes](AGENTS.md)
 
-**Estado:** especificação documental; não comprova implementação Rust.
+**Estado:** especialista Google implementado exclusivamente sobre Providers. Ver [perfil selecionado e validação](../IMPLEMENTATION.md).

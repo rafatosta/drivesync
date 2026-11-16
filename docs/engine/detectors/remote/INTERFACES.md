@@ -163,7 +163,7 @@ impl RemoteDetector {
 ## 6. Eventos tipados e encapsulamento em Models
 
 - Um sinal por `RemoteEventSink.emit(File)`; quando há metadados seguros, `File.data=Some(FileData::Remote(remote_file))` preserva o objeto integral.
-- `File.event.kind` utiliza `FileEventKind` de Models: Created, Modified, Deleted, Renamed, Moved, MetadataChanged, RecheckRequired ou ScopeUnavailable. Não inventar uma categoria sem evidência.
+- Observações de recursos remotos usam `FileEventKind::Observed`, com evidência original em `File.event.remote`. Avisos técnicos usam RecheckRequired ou ScopeUnavailable. O Detector não classifica ações sobre arquivos.
 - Para renomeação/movimento preservar `File.event.previous/current` quando correlacionados com segurança; `FileLocation::Remote` identifica conta/ID, pai e nome quando conhecidos.
 - `GoogleChange.removed=true`, perda de acesso, HTTP 403/404, cursor inválido ou paginação incompleta não comprovam exclusão; solicitar reavaliação ou registrar escopo indisponível.
 - O adaptador especializado sabe converter `GoogleFile` em `RemoteFile`; o Detector não acessa seus atributos internos nem muda com sua evolução.
@@ -182,3 +182,67 @@ A confirmação do checkpoint de leitura remota é independente da confirmação
 ## Integração com controle de entrega
 
 O Remoto **não possui `pause()` de entrega**: continua consultando e emitindo eventos pelo sink enquanto o Detector pai estiver com entrega externa suspensa. O sink deve persistir `File` antes de confirmar recebimento, e o checkpoint remoto só avança após aceite durável. `stop` interrompe efetivamente polling, mas preserva checkpoint e eventos aceitos. **O Orquestrador decide** se e quando solicitar varredura ou recuperação de cobertura depois de um período sem detecção; o Remoto não coordena Scanner/Analisador nem decide consequências da interrupção. `status` deve ser rápido e não disparar HTTP.
+
+## 8. API compilada
+
+A aplicação acessa somente a fachada `drivesync_engine::detectors::Detector`. O especialista remoto é construído internamente:
+
+- A fábrica recebe conector, escopo, settings e a fila já aberta pela fachada em `<raiz-local>/.drivesync/detector.sqlite3`, sem abrir banco remoto separado. A instância nasce parada, sem HTTP.
+- Scope contém conta, SyncId e ID **canônico** da raiz remota; settings usa intervalo padrão de 30 segundos e orçamento padrão de 20 páginas. Orçamento/intervalo inválidos são rejeitados.
+- `start`, `stop` e `status` são controles internos do especialista. Start agenda sem HTTP na thread chamadora; stop cancela inclusive HTTP em andamento e aguarda os workers. Rodadas isoladas são exercitadas por helpers exclusivos de teste.
+- `RemotePollResult` acrescenta `observed`; `RemoteStatusResult` informa cobertura, intervalo, horários de consulta/próxima consulta, duração, contadores ativos, falhas consecutivas e tentativas de recuperação. `checkpoint_confirmed`/`cursor` são fingerprints SHA-256 truncados de diagnóstico; tokens reais permanecem privados. Falhas são tipadas e sanitizadas, sem mensagens externas.
+- `pause/resume`, `take_events`, `acknowledge` e `release_events` pertencem somente à fachada Detector, sem pausar o especialista Google/scheduler. Diagnósticos usam apenas snapshots e eventos resumidos, sem payload do provedor.
+
+O especialista recebe portas internas de Provider e persistência. Não conhece
+SQLite, Inventory ou Orquestrador. O backend armazena uma página preparada e
+cursor pequeno e delta de percurso com compare-and-swap; a emissão individual precede a
+confirmação do cursor. Não mantém snapshots anteriores nem índice de arquivos
+conhecidos. Initial retoma a coleta existente; Recovery reinicia a captura sem
+concluir remoções por ausência. O estado é limitado a 16 MiB e o trabalho de
+percurso inicial a 100.000 diretórios/trabalhos pendentes.
+
+O Google Changes fornece metadados atuais e sinais da alteração, podendo reunir
+mudanças entre consultas. O Detector repassa esses dados, inclusive alterações
+fora da raiz inicial, sem consultas de ancestralidade ou supressão de snapshots
+iguais. O Analisador é responsável pela interpretação e pelo uso do Inventory.
+Consultas usam somente Providers; nenhuma mutação remota é executada aqui.
+
+
+## 9. Seleção por provedor e contrato dos especialistas
+
+`remote/mod.rs` declara os especialistas e resolve `AccountId → ProviderId → factory` a partir dos metadados persistidos de Accounts. O request público não aceita um provedor informado pela interface. Conta inexistente falha antes de abrir a fila; provedor sem registro retorna `UnsupportedProvider`, sem fallback para Google.
+
+`remote/interfaces.rs` define a porta interna `RemoteObserver` (`validate_progress` e `poll_once`) e a persistência opaca `RemoteBackend`. Cada especialista implementa a observação pelo contrato comum; `RemoteDetector` oferece `new/start/poll_once/stop/status` e compartilha agendamento, cancelamento, entrega e diagnóstico entre implementações. Não há scheduler duplicado por provedor nem dependência do runtime genérico em tipos Google.
+
+A implementação concreta `google::GoogleRemoteDetector` fica em `google/mod.rs`, com chamadas Google em `google/api.rs` e adaptação dos metadados em `google/metadata.rs`. `Connection` fornece contexto validado e execução com sessão renovada, sem interpretar endpoints ou alterações Google. Antes de cada consulta, a conta/provedor são revalidados. A sessão Google existente em Accounts continua sendo obtida somente pelo especialista selecionado; novos provedores exigirão o respectivo suporte real em Accounts/Providers e registro no módulo remoto.
+
+A identidade da fila inclui o ProviderId validado. A localização é sempre `.drivesync/detector.sqlite3` na raiz local; não há preservação de namespaces ou migração de versões antigas. O armazenamento também rejeita payload cujo provedor não corresponda à fila.
+
+## Issue 94 — percurso incremental e confirmação de página
+
+A interface privada de persistência fornece load/save de checkpoint limitado à
+página e next_scan para a única pasta na cabeça. save recebe um delta tipado de
+percurso; SQL e transações permanecem exclusivos do Storage. Não há load/save
+de uma coleção de pastas nem adaptador que reconstrua o antigo Progress.
+
+Preparação persistida precede qualquer enqueue. Após todos os eventos aceitos,
+a confirmação grava cursor e delta de percurso atomicamente; conflito ou erro
+faz rollback de ambos. Cancelamento antes da confirmação conserva a página
+preparada. Replay reutiliza IDs, horários e payloads inclusive quando parte dos
+eventos já está confirmada pelo consumidor externo. A confirmação de coleta
+continua independente de ack, pausa ou decisão de sincronização.
+
+Checkpoint Google 4 e esquema SQLite 6 são os únicos formatos aceitos, sem
+migração ou conversão. A interface pública do Detector e o formato File não
+mudam nesta etapa. O conjunto de pastas visitadas é controle de percurso em
+disco; não é inventário nem histórico de metadados.
+
+## Persistência original e adaptação na entrega
+
+A porta privada emit_original recebe RawRemoteObservation. Captura e preparação
+persistem o item JSON recebido, sem construir RemoteFile. emit(File) permanece
+para avisos técnicos e observadores de outros provedores com contrato comum;
+não é leitura de formato antigo. A extração Google fica no especialista e é
+chamada pelo Storage na leitura, após a persistência. O formato público FileBatch
+não muda. Valores desconhecidos/null do original permanecem no registro, embora
+a projeção comum use somente o perfil selecionado de metadados.

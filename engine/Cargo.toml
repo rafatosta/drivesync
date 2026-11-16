@@ -2,7 +2,6 @@
 name = "drivesync-engine"
 version = "0.1.0"
 edition = "2021"
-description = "DriveSync core engine facade and module contracts"
 license = "GPL-3.0-only"
 
 [lib]
@@ -10,20 +9,30 @@ name = "drivesync_engine"
 path = "src/lib.rs"
 
 [dependencies]
-dbus = { version = "0.9", features = ["vendored"] }
-oauth2 = { version = "5", default-features = false, features = ["timing-resistant-secret-traits"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-rusqlite = "0.37"
-dbus-secret-service = { version = "4.1", features = ["crypto-rust", "vendored"] }
-keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+# Async HTTP client; rustls only, no default features (no cookies, proxy discovery disabled by the client).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-url = "2"
+# Durable local event queue; link the SQLite library supplied by the GNOME SDK.
+rusqlite = "=0.37.0"
+httpdate = "1"
+base64 = "0.22"
 sha2 = "0.10"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+# Drive blob integrity must support existing files that expose MD5 but not SHA-256.
+md-5 = "0.10"
+# Refuse symlinks and special files when opening private account metadata.
+libc = "0.2"
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "rt-multi-thread", "net", "time", "macros"] }
+jsonwebtoken = "9.3"
+# Private Accounts backend; all blocking D-Bus access runs on account workers.
+secret-service = { version = "=4.0.0", features = ["rt-async-io-crypto-rust"] }
 
-rustix = { version = "1.1", features = ["fs"] }
+[features]
+# Allows tests to point the Google provider at a local HTTP server.
+# Never enabled in production builds.
+test-endpoints = []
 
-[build-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+[dev-dependencies]
+# Self dev-dependency: enables `test-endpoints` for unit and integration tests only.
+drivesync-engine = { path = ".", features = ["test-endpoints"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }

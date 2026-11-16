@@ -1,9 +1,8 @@
-//! DriveSync binary entry point; application composition lives in `app`.
-mod app;
+//! Native account-management application entry point.
+mod application;
 mod core;
-mod features;
+mod services;
 mod ui;
-
 fn main() -> adw::gtk::glib::ExitCode {
-    app::run()
+    application::run()
 }

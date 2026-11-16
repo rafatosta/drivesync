@@ -1,5 +1,15 @@
 # Operador — TESTS
 
+## Cobertura compilada atual
+
+`engine/tests/operator_contract.rs` verifica consumo público, object safety,
+ports Send/Sync e assinaturas das dez operações com futures Send, sem criar
+executor, mock ou executar chamadas. O doctest demonstra consumo por
+`Arc<dyn Operator>`. A matriz abaixo define os requisitos por capacidade.
+A suíte de execução de upload/download está descrita em
+[TRANSFERS.md](TRANSFERS.md); as mutações adicionais estão cobertas conforme [MUTATIONS.md](MUTATIONS.md).
+
+
 ## Objetivo
 
 Verificar que cada método público executa o comando solicitado no recurso e destino corretos, respeita suas precondições e informa o resultado observável com segurança.
@@ -27,7 +37,7 @@ Os testes seguem [INTERFACES.md](INTERFACES.md) e [README.md](README.md). Cada m
 | OPR-06 | `update_content` | Atualiza conteúdo preservando identidade do destino | Precondição divergente, falha de escrita/rede, destino inexistente |
 | OPR-07 | `rename` | Altera somente o nome do recurso | Nome inválido, conflito, revisão divergente, identidade preservada |
 | OPR-08 | `move_item` | Altera localização no mesmo ambiente | Ciclo de diretórios, destino incompatível, conflito, identidade preservada |
-| OPR-09 | `delete` | Remove exclusivamente recurso identificado | Identidade errada, permissão negada, precondição divergente |
+| OPR-09 | `delete` | Recusa com `PermanentDeletionProhibited`, sem efeitos | Nenhum I/O, autenticação ou fallback; exclusão permanente proibida |
 | OPR-10 | `trash` | Envia recurso à lixeira e retorna resultado disponível | Lixeira indisponível, acesso negado, conflito de versão |
 | OPR-11 | `restore` | Restaura o recurso com identidade e localização observadas | Recurso não restaurável, destino ocupado, falta de permissão |
 
@@ -78,7 +88,7 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de IN
 | OPR-L-08 | `atomic_replace` | Publicar temporário completo sobre arquivo conhecido | Novo conteúdo aparece integralmente, referência final correta; versão anterior não é visível parcialmente | Revisão/identidade divergente e falha pré-publicação preservam destino anterior; verificar efeitos de interrupção |
 | OPR-L-09 | `rename_local` | Renomear arquivo e diretório no mesmo pai | Nome antigo desaparece, novo nome aparece, conteúdo e identidade são preservados quando suportado | Colisão, nome inválido e troca concorrente não sobrescrevem terceiros |
 | OPR-L-10 | `move_local` | Mover arquivo e diretório entre pastas temporárias | Entrada sai da pasta anterior e surge no destino com conteúdo correto | Destino ocupado, movimento de diretório para descendente, escopo externo e filesystem incompatível falham sem perdas |
-| OPR-L-11 | `delete_local` | Excluir recurso identificado em árvore com vizinhos | Apenas a entrada identificada desaparece; resultado corresponde ao efeito observado | Referência obsoleta, precondição divergente, recurso ausente e diretório não vazio preservam recursos não autorizados |
+| OPR-L-11 | `delete_local` | Solicitar exclusão permanente de recurso em árvore com vizinhos | Recusa com `PermanentDeletionProhibited` e `NotApplied`, sem I/O ou autenticação | Recurso existente, ausente, referência obsoleta e diretório não vazio: nenhuma entrada muda; sem fallback ou redirecionamento para lixeira |
 | OPR-L-12 | `verify_local_integrity` | Comparar conteúdo com tamanho/hash conhecidos | `Verified` quando evidência corresponde; bytes originais permanecem intactos | Divergência gera erro de integridade; evidência insuficiente produz `NotAvailable`, sem sucesso fictício |
 
 ### Cenários transversais de segurança
@@ -97,7 +107,7 @@ A biblioteca privada possui uma matriz própria, vinculada à seção [8.4 de IN
 
 ### Critérios para validar a implementação privada
 
-1. Cada caso `OPR-L-01` a `OPR-L-12` possui ao menos um teste positivo e um teste de falha com asserções sobre o estado real do filesystem.
+1. Cada caso `OPR-L-01` a `OPR-L-12` possui ao menos um teste positivo e um teste de falha (em `OPR-L-11`, sucesso significa recusa sem efeitos) com asserções sobre o estado real do filesystem.
 2. Verificações de integridade e identidade usam valores esperados independentes da função testada.
 3. Testes que necessitam simular falha, concorrência ou crash explicam o ponto de injeção e distinguem o que foi realmente executado do que foi apenas modelado.
 4. Todo comportamento não definido suficientemente pela interface é marcado `BLOCKED`, com a definição técnica pendente registrada; não atribuir `PASS` com base em mocks que apenas repetem resultados esperados.
@@ -131,11 +141,12 @@ Testes documentais devem usar execução controlada e fakes de IO para observar 
 5. Testes comprovam comportamento por evidências independentes da própria implementação.
 6. Resultados executados são relatados como PASS/FAIL/BLOCKED, identificando cenários não validados.
 
-**Estado:** plano de testes documental; nenhum teste foi executado pela criação deste arquivo.
+**Estado:** o contrato compilado possui testes de consumo público sem execução.
+Os cenários funcionais deste plano permanecem pendentes até existir executor.
 
 ## Conformidade dos executores especializados
 
-Executar esta suíte com cada implementação real do contrato `OperationExecutor`, usando um provedor simulado e filesystem temporário. Validar a saída e os efeitos reais capturados pelo ambiente de teste.
+Executar esta suíte com cada implementação real do contrato `Operator`, usando um provedor simulado e filesystem temporário. Validar a saída e os efeitos reais capturados pelo ambiente de teste.
 
 | Caso | Validação |
 | --- | --- |
@@ -146,10 +157,35 @@ Executar esta suíte com cada implementação real do contrato `OperationExecuto
 | OPR-E-05 | `download` publica arquivo local íntegro |
 | OPR-E-06 | `update_content` preserva a identidade do recurso existente |
 | OPR-E-07 | `rename` e `move_item` alteram metadados preservando a identidade |
-| OPR-E-08 | `delete`, `trash` e `restore` aplicam somente o efeito requisitado |
+| OPR-E-08 | `delete` recusa sem efeito; `trash` e `restore` aplicam somente o efeito requisitado |
 | OPR-E-09 | Capacidade ausente retorna erro tipado, sem falso sucesso |
 | OPR-E-10 | Conflitos, permissão negada, falha parcial e resultado indeterminado são tratados |
 | OPR-E-11 | Operações sobre arquivos locais respeitam as garantias da biblioteca privada |
 | OPR-E-12 | Interrupções de transferência preservam os dados e informam o progresso verificado |
 
 O executor concreto deve ser exercitado; um mock que só reproduz a resposta esperada não comprova conformidade.
+
+## Contratos de recuperação — etapa 1
+
+`engine/tests/operator_recovery.rs` usa Inventory SQLite real temporário para
+identidades distintas com o mesmo comando, retry após reabertura, vínculo imutável
+de escopo/comando/origem, CAS concorrente, resposta de gravação perdida, rollback,
+resultado verificado e recusa de estado corrompido/esquema incompatível. A suíte
+verifica que preparar checkpoints não cria operações ou baselines e não publica
+arquivos. São testes de persistência; ainda não executam upload/download.
+
+O [contrato de recuperação](RECOVERY.md) define a porta e as pendências dos Providers.
+
+## Transferências de criação — implementação
+
+`engine/src/operations/google/tests.rs` usa a fachada `Operator`, HTTP loopback com
+estado e Provider de produção para upload/download.
+`operations/filesystem.rs` cobre primitivas locais reais;
+`connection::tests::operator_factory_uses_the_persisted_account_and_accounts_owned_session`
+valida a composição por conta e sessão Accounts com cofre sintético.
+
+Há testes de interrupção de subprocesso antes/depois de publicação e após bloco
+de upload, além de falha de confirmação SQLite, cancelamento, reentrega, versão
+remota alterada, corrupção, metadados MD5, fontes substituídas e colisões. Nenhum
+teste usa Google real ou arquivos pessoais. Casos de outras mutações não passam
+a ser declarados aprovados por causa dessa cobertura.

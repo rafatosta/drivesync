@@ -2,6 +2,8 @@
 
 ## 1. Contrato público e visibilidade
 
+**API disponível agora:** `drivesync_engine::detectors::Detector` oferece a fachada unificada com captura Local/Remota, fila mista, controle de entrega, reobservação e status individual. As APIs anteriores continuam compatíveis com as filas já criadas. Os exemplos conceituais abaixo são complementados pela superfície compilada da seção 11 e pelo [fechamento da etapa](CLOSURE.md).
+
 `Detector` disponibiliza uma interface pública única para observar alterações, reservar eventos e confirmar sua entrega. As observações locais e remotas chegam individualmente e podem ser entregues em lotes mistos.
 
 O código Rust apresentado é **contrato conceitual** sujeito a ajuste de ownership/assincronicidade antes da implementação, não API já compilada. Tipos de identidade devem ser reutilizados de seus módulos proprietários.
@@ -217,3 +219,93 @@ Os produtores entregam `models::File` por sinks internos, sem criar uma segunda 
 **Decisões a fechar na implementação:** ownership Rust dos tipos comuns, fábrica interna das dependências, meios de sinalização, async e semântica de parada em trânsito, política de limites/backpressure e tipos temporais. Sem quebrar o isolamento dos submódulos.
 
 **Estado:** documentação contratual, não código compilado ou testes executados.
+
+
+## 8. API pública compilada — coleta local
+
+O namespace `drivesync_engine::detectors` é público. O tipo `LocalMetadataCollector` é uma reexportação com nome público do coletor concreto existente; o caminho e os módulos de implementação permanecem privados. Não há wrapper que reconstrua LocalFile, duplicação de coleta ou necessidade de importar a trait interna.
+
+### Tipos exportados
+
+| Tipo público em detectors | Finalidade |
+| --- | --- |
+| LocalMetadataCollector | Coletor concreto, com campos privados, somente new/scope/collect públicos |
+| LocalDetectorScope | Conta, SyncId e raiz absoluta usados na construção |
+| LocalMetadataRequest | LocalRelativePath validado e token de cancelamento da chamada |
+| LocalMetadataResult | LocalFile opcional integral e cobertura da coleta daquela entrada |
+| LocalCancellation | new/default, clone, cancel e is_cancelled; cada new/default cria token independente |
+| LocalScanCoverage | Complete/Partial/Unavailable; não comprova ausência nem percurso recursivo |
+| LocalDetectorError, LocalDetectorFailure, LocalDetectorResult | Erros tipados e mensagem sanitizada; variantes compartilhadas não habilitam métodos ainda não implementados |
+| LocalScanResult | Tipo nomeável de progress em LocalDetectorFailure; collect sempre retorna progress=None e não executa scan |
+
+LocalFile, LocalRelativePath, AccountId e SyncId continuam em `drivesync_engine::models`; não são redefinidos ou copiados na fachada. Os nomes operacionais existentes foram preservados para não criar um segundo contrato de dados equivalente.
+
+### `LocalMetadataCollector::new`
+
+**Assinatura:** `pub fn new(scope: LocalDetectorScope) -> LocalDetectorResult<Self>`.
+
+**Finalidade:** construir o coletor vinculado à raiz, sem iniciar watcher ou sincronização.
+
+**Parâmetros:** conta/SyncId não vazios e raiz absoluta válida. Scope não valida associação consultando Accounts; configura a vinculação fornecida pelo consumidor.
+
+**Retorno:** coletor utilizável externamente sem traits internas, preservando integralmente as regras físicas de [Local § 11](local/INTERFACES.md#11-adaptador-físico-de-coleta--etapa-de-implementação).
+
+**Limites e erros:** construção é síncrona e abre descritores; executar fora da thread da GUI. InvalidScope, RootUnavailable, PermissionDenied ou ResourceLimit são sanitizados. Não cria raiz, arquivo, banco, sessão Google ou fila.
+
+### `LocalMetadataCollector::scope`
+
+**Assinatura:** `pub fn scope(&self) -> LocalDetectorScope`.
+
+**Finalidade:** consultar a configuração original de conta, sincronização e raiz.
+
+**Parâmetros:** nenhum.
+
+**Retorno:** cópia do escopo, sem I/O, inclusive quando a raiz foi removida ou substituída.
+
+**Limites e erros:** não revalida a raiz nem consulta Accounts; sem erro ou efeito externo. Alterar a cópia não altera o coletor.
+
+### `LocalMetadataCollector::collect`
+
+**Assinatura:** `pub fn collect(&self, request: LocalMetadataRequest) -> LocalDetectorResult<LocalMetadataResult>`.
+
+**Finalidade:** obter metadados selecionados de uma entrada abaixo da raiz, sem leitura de conteúdo ou acompanhamento contínuo.
+
+**Parâmetros:** caminho de entrada já validado por Models e token criado/controlado pelo consumidor; cancel é irreversível e compartilhado pelos clones daquele token. O cancelamento não remove dados nem desfaz observações anteriores.
+
+**Retorno:** mesmo objeto LocalFile produzido pelo adaptador e cobertura explícita; ausência é inconclusiva, não prova de exclusão. O token não é acionado pelo coletor. Chamadas independentes podem ocorrer concorrentemente.
+
+**Limites e erros:** síncrono, sem tocar GUI. Mantém proteção de raiz/ancestrais, paths reservados, máscaras statx, fallback e cancelamento já testados no Local; o contrato físico não foi alterado pela publicação. Não emite File ou evento, não percorre filhos de diretório, não executa upload/download. Falhas seguem os erros tipados existentes, com progress=None.
+
+### `LocalCancellation::new`, `default`, `cancel` e `is_cancelled`
+
+**Assinaturas:** `pub fn new() -> Self`, `Default::default() -> Self`, `pub fn cancel(&self)` e `pub fn is_cancelled(&self) -> bool`.
+
+**Finalidade:** permitir que o consumidor controle uma ou mais coletas cooperativas pelo mesmo token clonado.
+
+**Parâmetros:** nenhum; cada operação usa o próprio token. Clone compartilha estado; new/default criam outro estado independente.
+
+**Retorno:** new/default produzem token não cancelado, cancel retorna unidade, is_cancelled devolve o estado atual sem I/O.
+
+**Limites e erros:** cancel é idempotente e não cancela syscall já iniciada de forma insegura. As consultas seguintes respeitam o sinal em pontos seguros. Nenhuma operação acessa filesystem ou tem erro; não há efeito global sobre outros tokens/coletores.
+
+### Encapsulamento e limites desta publicação
+
+Não são públicos `detectors::local`, seus módulos collector/filesystem/metadata/models, a trait interna de composição, MetadataReader, os descritores, hooks de corrida ou injeção de syscalls. O escopo externo escolhe somente raiz e requisições da coleta real; não injeta backend nem eventos.
+
+Não existem Detector::new/start/pause/resume/stop/request_scan/status/take_events/acknowledge/release_events públicos nesta entrega. Isso evita expor métodos que apenas falham ou tipos remotos fictícios. Não há integração nova com a aplicação. A interface futura unificada continua sendo o contrato das seções anteriores, com controle local autorizado posteriormente, descrito abaixo.
+
+
+## 9. Controle local público autorizado posteriormente
+
+Além do coletor da seção 8, o módulo detectors reexporta LocalDetector e os tipos LocalDetectorCreateRequest/Result, LocalDetectorSettings, LocalDetectorState, LocalActivity, LocalNotificationSink, LocalStartMode/Request/Result, LocalStopReason/Request/Result e LocalStatusRequest/Result. Contratos, concorrência e limites estão em [Local § 12](local/INTERFACES.md#12-controle-local-compilado). Não se trata da fachada unificada Detector: não oferece fila, polling remoto ou integração automática com Orquestrador. Os submódulos e o backend nativo permanecem privados.
+
+
+## 11. Fachada unificada compilada
+
+`Detector::new(DetectorCreateRequest)` retorna `DetectorCreateResult { detector, state }`. O request contém `connector: Engine`, `scope: DetectorScope { account_id, sync_id, local_root, remote_root_id }`, settings locais/remotos e `event_available_sink: Option<Arc<dyn EventAvailableSink>>`. Não exige objetos de Local/Remote/Storage. O Storage deriva `<raiz-local>/.drivesync/detector.sqlite3`, sem parâmetro de localização pública. Construção faz I/O privado, sem HTTP; executar fora da thread gráfica.
+
+Os dez métodos da seção 4 estão implementados. `status()` retorna `DetectorStatus` com estado, entrega, `local`/`remote: DetectorSourceStatus` e `queue: QueueStats`. O status de cada origem conserva o DTO específico de atividade/rodada e `DetectorSourceError`, sem consultar o provedor. Os erros de fachada mantêm categoria, retryability e erro tipado de origem ou fila, sem mensagens externas.
+
+`take_events` retorna `TakeEventsResult { batch: FileBatch }`, com File integrais e limites opcionais de tempo observado; máximo compilado de 64 eventos e 8 MiB por lote, lease positivo de até uma hora. Ack/release usam os requests/resultados acima e permanecem funcionais durante pausa/parada para leases válidos. `refresh_queue`, `source_queue_status`, `recent_events` e `remote_diagnostics` dão suporte aos diagnósticos; somente getters de snapshot/cache são livres de I/O.
+
+Ver [CLOSURE.md](CLOSURE.md) para semântica dos modos de parada, reobservação, identidade nova da fila unificada, ausência de migração de versões anteriores e limites de aceite.

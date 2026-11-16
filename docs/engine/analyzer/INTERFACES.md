@@ -1,361 +1,168 @@
-# Analisador — INTERFACES
+# Analyzer — interfaces implementadas
 
-## 1. Contrato público e tipos proprietários
+## Escopo atual
 
-O Analisador oferece **construção, processamento individual e consulta de execução em andamento por item**. A API pública recebe um `SyncItem` e uma resolução opcional; não recebe lotes nem delega ao chamador a execução das operações.
+A fachada pública `drivesync_engine::analyzer::Analyzer` coordena a análise de **um
+`SyncItem` por chamada** e registra avaliações, decisões e operações pendentes no
+Inventory. A primeira integração é de **análise e persistência**. Não executa
+comandos, resolve conflitos, espera escolhas do usuário ou confirma baseline.
 
-Os tipos importados abaixo **não devem ser redefinidos**:
-- De [Inventário](../inventory/INTERFACES.md): `SyncItem`, `SyncItemId`, `SyncBaseline`, `PresenceState`, `SyncStatus`, `OperationId`, `SyncOperation`, `InventoryManager`, estruturas de operações, confirmação e atividades.
-- De [Operador](../operations/INTERFACES.md): `Operator`, `OperatorError`, `CreateFileRequest`, `CreateDirectoryRequest`, `UploadRequest`, `DownloadRequest`, `UpdateContentRequest`, `RenameRequest`, `MoveRequest`, `DeleteRequest`, `TrashRequest`, `RestoreRequest`, `ItemResult`, `TransferResult`, `DeleteResult`, `VerificationStatus`.
-- De Models, indiretamente via Inventário: `LocalFile`, `RemoteFile`, identidades e metadados observados.
+Os únicos métodos públicos são `new`, `analyze` e `status`. Reconciliação, Conflitos
+e o mapeamento para os modelos duráveis são privados. Nenhum desses algoritmos
+acessa SQL, Inventory concreto, filesystem, Provider, Operador ou GUI.
 
-O código Rust abaixo representa a **assinatura-alvo para TDD**, não uma implementação existente. `AnalyzerDependencies` e demais tipos próprios serão definidos no módulo, preservando os contratos já documentados.
-
-```rust
-pub type AnalyzerResult<T> = Result<T, AnalyzerError>;
-
-impl Analyzer {
-    pub fn new(config: AnalyzerConfig) -> AnalyzerResult<Self>;
-
-    pub async fn analyze(
-        &self,
-        request: AnalyzeRequest,
-    ) -> AnalyzerResult<AnalysisOutcome>;
-
-    pub fn status(&self, request: AnalysisStatusRequest)
-        -> AnalyzerResult<AnalysisStatusResult>;
-}
-```
-
-## 2. Estado consultável de análises em andamento
+## Construção
 
 ```rust
-pub enum AnalysisPhase {
-    Validating,
-    Reconciling,
-    EvaluatingConflict,
-    Executing,
-    Verifying,
-    Confirming,
-}
+pub fn Analyzer::new(config: AnalyzerConfig) -> AnalyzerResult<Analyzer>;
 
-pub struct AnalysisStatusRequest {
-    pub item_id: SyncItemId,
-}
-
-pub struct AnalysisStatusResult {
-    pub active: Option<ActiveAnalysis>,
-}
-
-pub struct ActiveAnalysis {
-    pub item_id: SyncItemId,
-    pub item_revision: u64,
-    pub phase: AnalysisPhase,
-    pub started_at: Timestamp,
-    pub current_operation: Option<OperationKind>,
-    pub completed_operations: u32,
-    pub planned_operations: Option<u32>,
-    pub transfer: Option<TransferProgressSnapshot>,
-}
-
-pub struct TransferProgressSnapshot {
-    pub bytes_transferred: u64,
-    pub total_bytes: Option<u64>,
-}
-```
-
-O Analisador é **assíncrono por chamada**, não um serviço contínuo: `analyze()` executa um item e termina com `Completed`, `Pending` ou `Failed`. `status(item_id)` consulta **apenas uma execução ativa**, não uma fila de trabalho e não um histórico permanente. `active=None` significa que não há chamada ativa para aquele item **nesta instância**, não que ele está sincronizado, ausente ou livre de conflitos. O resultado terminal é sempre devolvido por `analyze()`, e o estado durável dos itens/operações pertence ao Inventário.
-
-`status()` deve ler uma fotografia interna coerente, rápida e sem I/O remoto, SQLite ou bloqueio até o final da tarefa. `phase` identifica a etapa corrente, não a conclusão do algoritmo; `current_operation` usa a categoria `OperationKind` já pertencente ao Inventário, sem inventar enum paralelo. A classificação deverá distinguir comandos como criação de diretório quando necessário na implementação; se não houver correspondência fiel, **não fabricar uma categoria**, deixando `current_operation=None` e usando a etapa `Executing`. `planned_operations=None` quando a lista ainda não foi construída. `transfer` só é preenchido quando existe progresso real reportado pelo Operador; não calcular porcentagens ou ETA sem total comprovado.
-
-**Concorrência:** permitir execuções de itens independentes, mas recusar imediatamente outra `analyze()` para o **mesmo `SyncItemId`** na mesma instância com `AnalyzerErrorKind::AlreadyRunning`, sem iniciar operação duplicada. Além dessa proteção local, toda execução mantém revisão e precondições do Inventário para prevenir concorrência entre instâncias. Não introduzir `pause`, `resume`, `stop` ou fila própria no Analyzer. Ao devolver `Pending`, não reter tarefa ativa aguardando usuário; uma nova invocação com `Resolution` revalida as evidências.
-
-## 3. Configuração e entrada
-
-```rust
 pub struct AnalyzerConfig {
+    pub provider: ProviderId,
+    pub identity: SyncIdentity,
     pub dependencies: AnalyzerDependencies,
 }
-
-// Contêiner conceitual: dependências por interfaces injetadas.
-// A representação concreta (Arc, lifetimes, traits) é definida em Rust.
 pub struct AnalyzerDependencies {
-    pub inventory: InventoryAccess,
-    pub operator: OperatorAccess,
+    pub inventory: Arc<InventoryManager>,
 }
+```
+
+`SyncIdentity`/`InventoryManager` pertencem ao Inventory. `new` verifica
+sincronização, conta e raiz remota pela API pública do Inventory já aberto. Não
+abre/cria banco nem executa operações físicas. É bloqueante e deve ser chamado
+fora do loop GTK. Não exige dependência de execução do `Operator`: seu contrato já está compilado,
+mas ainda não há executor nem integração de execução nesta fachada.
+
+## Entrada e processamento individual
+
+```rust
+pub async fn Analyzer::analyze(
+    &self, request: AnalyzeRequest,
+) -> AnalyzerResult<AnalysisOutcome>;
 
 pub struct AnalyzeRequest {
+    pub directive: Option<operations::RestoreSelection>,
+    pub sync_id: SyncId,
     pub item: SyncItem,
-    pub resolution: Option<Resolution>,
+    pub evidence: AnalysisEvidence,
+    pub recorded_at: Timestamp,
 }
-
-pub struct Resolution {
-    pub pending_id: PendingId,
-    pub selected_option: ResolutionOptionId,
-    pub expected_item_revision: u64,
-    pub expected_state: StateFingerprint,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PendingId(pub String);
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ResolutionOptionId(pub String);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StateFingerprint {
-    pub baseline: StateToken,
-    pub local: StateToken,
-    pub remote: StateToken,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StateToken {
-    Verified(String),
-    Unknown,
+pub struct AnalysisOutcome {
+    pub analysis: RecordedAnalysis,
 }
 ```
 
-**`AnalyzerConfig.dependencies`:** recebe os acessos já configurados ao inventário e ao operador, vinculados ao contexto da sincronização. Não entrega conexões SQLite, tokens de autenticação ou clientes HTTP ao Analisador. As interfaces injetadas permitem substituir as dependências por fakes em testes.
+`SyncId` e `Timestamp` pertencem a Models. `SyncItem`, `AnalysisEvidence` e
+`RecordedAnalysis` pertencem ao Inventory; seus tipos não são duplicados ou
+reexportados genericamente pela fachada. Os modelos concretos estão em
+`engine/src/analyzer/models.rs` e `engine/src/inventory/analysis.rs`.
 
-**`AnalyzeRequest.item` (obrigatório):** fotografia de um único `SyncItem`, com ID lógico, revisão otimista, snapshots `local` e `remote`, presenças e baseline opcionais. A ausência de `local` ou `remote` não prova exclusão: consultar também `local_presence` e `remote_presence`. Um baseline `None` significa que não há estado confirmado anterior; não fabricar uma versão de referência.
+A requisição usa o snapshot integral obtido do Inventory e evidências vinculadas
+à sua revisão. `recorded_at` vem do chamador e não influencia o resultado dos
+algoritmos. A API exige runtime Tokio; todo acesso SQLite ocorre em
+`spawn_blocking`, preservando o executor assíncrono e o loop de interface.
 
-**`AnalyzeRequest.resolution` (opcional):** `None` inicia ou reavalia o item sem intervenção externa; `Some` corresponde à resposta a uma pendência identificada anteriormente. A resolução deve apontar para `PendingId` e para uma opção oferecida para aquele mesmo item, além da revisão e evidências que embasaram a escolha. Resposta obsoleta não autoriza executar comandos.
+Fluxo:
 
-**`StateFingerprint`:** identifica o conjunto de evidências verificado na análise anterior. `StateToken::Verified` é um identificador determinístico de evidência do estado (não um hash inventado); `Unknown` representa insuficiência de prova. A estratégia de composição e persistência é decisão de implementação; o token nunca substitui o controle de revisão do Inventário.
+1. Validar sincronização/identidade/revisão e reservar atividade transitória local.
+2. Carregar o item pela API pública e comparar o snapshot integral; mesmo ID e
+   revisão com conteúdo adulterado não são suficientes.
+3. Chamar Reconciler com comparações explícitas. Baseline existente não confirmado
+   impede geração de decisões históricas e registra `VerifyBaseline`; não é apagado
+   para reinterpretar uma exclusão como criação inicial.
+4. Chamar Conflicts de forma independente. O módulo apenas identifica conflitos e
+   evidências insuficientes, sem opções ou ações de resolução.
+5. Mapear avaliações para findings e requisitos duráveis, preservando a origem e
+   a ordem. Converter intenções de criação/conteúdo/nome/localização em tipos do
+   Inventory, sem inventar comandos do Operador.
+6. Gravar pelo `InventoryManager::record_analysis`, que revalida escopo, snapshot
+   e revisão na transação que registra a avaliação e sua fila vinculada.
 
-## 3. Retorno principal
+## Evidências e retorno durável
+
+`AnalysisEvidence` conserva confirmação do baseline, cobertura dos dois lados,
+comparações de conteúdo contra baseline e entre lados, mapeamento do pai local e
+comparação dos pais atuais. `EvidenceRelation::{Equal,Different,Unknown}` descreve
+comparações confiáveis fornecidas pelo coordenador. A fachada não coleta hashes
+nem autentica essas evidências. Tamanho e timestamps não comprovam conteúdo.
+
+`AnalysisOutcome.analysis` contém um recibo durável com ID, revisão analisada,
+revisão resultante, fingerprint de entrada, data, evidências, findings, requisitos,
+decisões vinculadas a `OperationId` e obsolescência calculada. As disposições são:
+
+| Disposição | Significado |
+| --- | --- |
+| `NoChanges` | Nenhuma transformação/requisito identificado nesta análise; não confirma baseline |
+| `PendingOperations` | Intenções persistidas aguardam comandos executáveis |
+| `PendingEvidence` | Há evidência, autorização ou destino faltante |
+| `PendingUserDecision` | Conflicts comprovou incompatibilidade que exige intervenção futura |
+
+Conflito comprovado prevalece sobre requisitos pendentes, sem ocultá-los.
+Cada intenção gera uma operação **Blocked**, vinculada à decisão no mesmo commit
+SQLite. Isso não é plano executável nem autorização de transferência. As APIs
+públicas de claim/requeue não liberam essas intenções incompletas.
+
+O Inventory preserva baseline e atividades de execução. Gravar uma avaliação nova
+avança uma vez a revisão do item e atualiza seu diagnóstico; nunca o marca `Synced`.
+Leia [Persistência de análises](../inventory/ANALYSIS.md) para atomicidade,
+paginação, consulta após reinício e esquema 4 sem migração.
+
+## Retry, concorrência e cancelamento
+
+- Chamadas simultâneas do mesmo item nesta instância retornam `AlreadyRunning`.
+  Itens distintos podem progredir independentemente; não existe fila privada.
+- Entre instâncias, a transação do Inventory usa snapshot/revisão e recibo único
+  por item/revisão; não há efeitos físicos a proteger nesta integração.
+- Retry idêntico reutiliza o recibo sem duplicar decisões/fila. Se o snapshot
+  solicitado já não é atual, a fachada só recupera a última análise quando revisão,
+  fingerprint integral e evidências correspondem ao pedido original; caso contrário
+  retorna `StaleItem`. O recibo pode estar `stale=true` após observação posterior.
+- Reanalisar o item na revisão resultante com a mesma evidência/avaliação também
+  reutiliza o recibo. Novas observações/evidências podem exigir outro registro.
+- Cancelar o future depois do despacho não cancela `spawn_blocking`: a gravação
+  pode terminar. A reserva permanece com o worker até seu término; retry/consulta
+  recupera o registro. Não prometer interrupção instantânea ou rollback por cancelamento.
+- Falha técnica sem gravação retorna erro; a transação impede avaliação ou fila
+  parcialmente registradas. Incerteza sobre recebimento da resposta exige consulta,
+  sem repetição de efeitos físicos, que não são executados nesta fase.
+
+## Status transitório
 
 ```rust
-pub enum AnalysisOutcome {
-    Completed(CompletionReport),
-    Pending(PendingAction),
-    Failed(AnalysisFailure),
-}
-
-pub enum CompletionKind {
-    Unchanged,
-    OperationsApplied,
-}
-
-pub struct CompletionReport {
-    pub item_id: SyncItemId,
-    pub final_item_revision: u64,
-    pub kind: CompletionKind,
-    pub operations: Vec<ExecutedOperation>,
-}
-
-pub struct ExecutedOperation {
-    pub command: OperationCommand,
-    pub result: OperationExecutionResult,
-    pub operation_id: Option<OperationId>,
-}
-
-pub enum OperationExecutionResult {
-    Item(ItemResult),
-    Transfer(TransferResult),
-    Delete(DeleteResult),
-}
+pub fn Analyzer::status(&self, request: AnalysisStatusRequest)
+    -> AnalyzerResult<AnalysisStatusResult>;
 ```
 
-**`Completed`:** o item já estava consistente (`Unchanged`, lista vazia) ou todas as operações requeridas foram aplicadas, verificadas e confirmadas no Inventário (`OperationsApplied`, lista não vazia). `final_item_revision` é a revisão realmente obtida após persistência, não uma revisão prevista.
+`AnalysisStatusRequest` contém `item_id`; o retorno contém `active: Option<ActiveAnalysis>`.
+`ActiveAnalysis` contém item, revisão e fase real: `Validating`, `Reconciling`,
+`EvaluatingConflict` ou `Recording`. Não há fase de execução fictícia, bytes ou
+porcentagem inventados. `status` consulta somente memória local, rapidamente e sem
+I/O. ID sintaticamente válido inativo retorna `None`, sem provar escopo ou estado
+sincronizado. A atividade termina com o worker, inclusive em erro ou cancelamento
+do chamador. Não criar `pause`, `resume`, `stop` ou histórico privado.
 
-**`ExecutedOperation.command`:** comando completo efetivamente solicitado, na ordem de execução. **`result`:** retorno tipado emitido pelo Operador e validado antes da confirmação. **`operation_id`:** identidade persistida quando a operação foi registrada em fila; `None` não permite inferir ausência de histórico.
+## Erros sanitizados
 
-**Semântica da verificação:** `OperatorResult::Ok` com `VerificationStatus::Unverified` não autoriza tratar a sincronização como confirmada. O Analisador deve obter evidência suficiente antes de avançar o baseline.
+`AnalyzerError { kind, inventory_error: Option<InventoryError> }` preserva somente
+categorias tipadas, sem SQL, caminhos, credenciais ou payloads.
 
-## 4. Comandos de operação
+`AnalyzerErrorKind`: `InvalidConfiguration`, `InvalidRequest`, `WrongSyncScope`,
+`AlreadyRunning`, `StaleItem`, `InvalidEvidence`, `InventoryFailure`,
+`RuntimeUnavailable`, `Internal`. Revisão divergente no Inventory vira `StaleItem`;
+escopo divergente vira `WrongSyncScope`. Outros erros de persistência conservam a
+categoria do Inventory no campo opcional.
 
-```rust
-pub enum OperationCommand {
-    CreateFile(CreateFileRequest),
-    CreateDirectory(CreateDirectoryRequest),
-    Upload(UploadRequest),
-    Download(DownloadRequest),
-    UpdateContent(UpdateContentRequest),
-    Rename(RenameRequest),
-    Move(MoveRequest),
-    Delete(DeleteRequest),
-    Trash(TrashRequest),
-    Restore(RestoreRequest),
-}
-```
+## Funcionalidades adiadas
 
-O `OperationCommand` **pertence conceitualmente à integração com o Operador** e reutiliza seus dez tipos de requisição. A definição Rust pode ser atribuída ao próprio módulo Operador na integração, para evitar ciclo de dependências; o Analisador não criará uma segunda cópia dos comandos. Cada variante exige exatamente a requisição tipada correspondente.
+Execução pelo Operador, renovação de comandos após dependências satisfeitas,
+`Completed/Pending/Failed` relativos a efeitos físicos, `PendingAction` com opções,
+validação de escolhas, resolução e recuperação de efeitos indeterminados não estão
+implementados. A API atual devolve **recibo de análise**, não relatório de execução.
+Os contratos dessas funcionalidades deverão ser definidos quando implementados,
+sem expor os algoritmos privados nem permitir SQL fora do Inventory.
 
-A ordem de operações e suas dependências são definidas no plano produzido pelo algoritmo de reconciliação. O Analisador deve respeitá-las. Uma solicitação sem precondições suficientes para uma ação potencialmente destrutiva retorna `Pending` ou falha segura; não completar precondições por adivinhação.
+O recibo agora contém plano opcional: [PLANNING.md](PLANNING.md). O fluxo do Analyzer sempre o produz; persistência direta de avaliações isoladas pode usar `None`.
 
-## 5. Pendência e resolução
-
-```rust
-pub struct PendingAction {
-    pub id: PendingId,
-    pub item_id: SyncItemId,
-    pub item_revision: u64,
-    pub reason: PendingReason,
-    pub context: PendingContext,
-    pub options: Vec<ResolutionOption>,
-    pub operations: Vec<ExecutedOperation>,
-}
-
-pub enum PendingReason {
-    Conflict,
-    InsufficientEvidence,
-    ExternalDecisionRequired,
-}
-
-pub struct PendingContext {
-    pub baseline: Option<SyncBaseline>,
-    pub local: Option<LocalFile>,
-    pub remote: Option<RemoteFile>,
-    pub local_presence: PresenceState,
-    pub remote_presence: PresenceState,
-    pub fingerprint: StateFingerprint,
-    pub explanation: String,
-}
-
-pub struct ResolutionOption {
-    pub id: ResolutionOptionId,
-    pub label: String,
-    pub meaning: ResolutionMeaning,
-}
-
-pub enum ResolutionMeaning {
-    KeepLocal,
-    KeepRemote,
-    KeepBoth,
-    RetryAfterObservation,
-    Defer,
-}
-```
-
-**`PendingAction.id`:** identifica uma pendência concreta e precisa ser estável durante sua apresentação e recuperação. **`item_revision`:** versão do item na criação da pendência. **`operations`:** efeitos já verificados durante a chamada, se ocorreram, para permitir retomada sem repetição. **`reason`:** distingue conflito, observação insuficiente e decisão externa.
-
-**`context`:** snapshots e presenças usados para explicar a pendência; campos ausentes permanecem desconhecidos. **`options`:** somente alternativas efetivamente seguras naquele estado e suportadas pelas capacidades do recurso. Se a única alternativa é coletar evidências, devolver `RetryAfterObservation`; uma pendência pode conter uma ou mais opções e não deve oferecer uma escolha que implique perda silenciosa de dados.
-
-**`ResolutionMeaning`:** representa a intenção da escolha; os comandos físicos derivados continuam responsabilidade do Analisador. `KeepBoth` exige plano que preserve os dois conteúdos com nomes/identidades não conflitantes e confirmação antes de apagar qualquer cópia. `Defer` conserva a pendência sem executar operações.
-
-**Reanálise:** `Resolution` não é comando de execução. O Analisador revalida `PendingId`, opção, identidade, revisão e evidências correntes, só então produz os comandos aplicáveis. Se as condições mudaram, retorna uma nova pendência ou falha tipada; não aplica uma decisão antiga ao estado novo. O armazenamento durável da pendência e de suas opções precisa ser acordado na integração com o Inventário; o contrato atual de `InventoryManager` não declara uma tabela/API específica para `PendingAction`.
-
-## 6. Falha de análise e erros
-
-```rust
-pub struct AnalysisFailure {
-    pub item_id: SyncItemId,
-    pub stage: AnalysisStage,
-    pub reason: AnalysisFailureReason,
-    pub operations: Vec<ExecutedOperation>,
-    pub interrupted_command: Option<OperationCommand>,
-    pub retry: RetryAdvice,
-}
-
-pub enum AnalysisStage {
-    Validation,
-    Reconciliation,
-    ConflictEvaluation,
-    Execution,
-    Confirmation,
-}
-
-pub enum AnalysisFailureReason {
-    InvalidState,
-    InconsistentEvidence,
-    OperationFailed,
-    OperationOutcomeUnknown,
-    InventoryUpdateFailed,
-    Internal,
-}
-
-pub enum RetryAdvice {
-    RetryAnalysis,
-    ReobserveBeforeRetry,
-    WaitForExternalRecovery,
-    DoNotRetryAutomatically,
-}
-
-pub struct AnalyzerError {
-    pub kind: AnalyzerErrorKind,
-    pub message: String,
-}
-
-pub enum AnalyzerErrorKind {
-    InvalidConfiguration,
-    InvalidRequest,
-    AlreadyRunning,
-    WrongSyncScope,
-    DependencyUnavailable,
-    StaleResolution,
-    Internal,
-}
-```
-
-**`AnalysisOutcome::Failed`** é um desfecho válido de processamento que precisa preservar o histórico de efeitos já observados. `interrupted_command` identifica a operação cujo resultado foi falho ou incerto. Se seu efeito remoto for indeterminado, informar `OperationOutcomeUnknown` e `ReobserveBeforeRetry`, nunca iniciar replay automático.
-
-**`AnalyzerResult::Err`** representa erro de construção ou impossibilidade de iniciar a chamada com um contrato válido, como configuração inválida, `SyncItem` de outra sincronização ou resolução obsoleta. Após iniciar o processamento, falhas operacionais com efeitos conhecidos ou incertos devem preferir `AnalysisOutcome::Failed`, que preserva as operações executadas.
-
-A mensagem de erro é sanitizada e não inclui tokens, credenciais, conteúdo do usuário ou caminhos desnecessários. Tipos técnicos subjacentes permanecem disponíveis ao diagnóstico em um mecanismo seguro, sem vazar detalhes sensíveis na API de apresentação.
-
-## 7. Métodos públicos — contrato funcional
-
-### `Analyzer::status`
-
-**Assinatura:** `pub fn status(&self, request: AnalysisStatusRequest) -> AnalyzerResult<AnalysisStatusResult>`.
-
-**Finalidade:** oferecer o estado transitório da execução atual de um `SyncItem` sem interferir na análise. Pode ser chamado enquanto `analyze()` está em andamento. Não emite decisões, não reserva eventos, não consulta Inventário nem executa operações.
-
-**Resultado:** `ActiveAnalysis` quando o item está ativo nesta instância; `None` em caso contrário. A resposta é uma fotografia temporal, não um evento durável. Para o desfecho e histórico, utilizar `AnalysisOutcome` e o Inventário, respectivamente.
-
-**Limites:** rejeitar requisições inválidas ou de escopo incorreto. A implementação deve assegurar progresso observável durante I/O longo, inclusive quando o Operador fornece `ProgressReporter`. Para comandos que ainda não oferecem progresso, informar etapa e contador de comandos, sem simular bytes ou porcentagem.
-
-
-### `Analyzer::new`
-
-**Assinatura:** `pub fn new(config: AnalyzerConfig) -> AnalyzerResult<Self>`.
-
-**Finalidade:** construir o Analisador com as interfaces necessárias para leitura/confirmação do Inventário e execução pelo Operador.
-
-**Parâmetros:** `config.dependencies.inventory` identifica o inventário da sincronização; `config.dependencies.operator` disponibiliza o executor da sessão correspondente. Ambos são obrigatórios e devem estar em contextos compatíveis.
-
-**Retorno:** instância `Analyzer` pronta para receber chamadas individuais.
-
-**Limites e erros:** valida dependências e identidade de sincronização quando verificável; retorna `InvalidConfiguration`, `WrongSyncScope` ou `DependencyUnavailable` conforme aplicável. Construir a instância não executa upload, download, exclusão ou reconciliação.
-
-### `Analyzer::analyze`
-
-**Assinatura:** `pub async fn analyze(&self, request: AnalyzeRequest) -> AnalyzerResult<AnalysisOutcome>`.
-
-**Finalidade:** analisar um `SyncItem`, coordenar os algoritmos privados e executar as operações autorizadas em ordem, terminando em conclusão, pendência ou falha.
-
-**Parâmetros:** `request.item` é obrigatório, com `id`, `revision`, snapshots, estados de presença e baseline. `request.resolution=None` solicita análise comum; `Some(resolution)` retoma pendência, exigindo `pending_id`, opção selecionada, revisão e evidências compatíveis.
-
-**Retorno:**
-- `Completed`: ausência de ação ou execução inteiramente verificada e confirmada, incluindo relatórios e revisão final.
-- `Pending`: decisão externa ou reobservação necessária; devolve evidências, opções e operações já verificadas sem aguardar usuário.
-- `Failed`: falha operacional ou de persistência durante processamento, com etapa, operações concluídas, comando interrompido e orientação de retry.
-
-**Limites e erros:** solicitações sem identidade válida, fora do escopo ou com resolução inválida falham por `AnalyzerResult::Err`. Conflito não resolvido e evidência insuficiente normalmente produzem `Pending`, não erro técnico. Falhas de operação ou confirmação após início produzem `Failed`.
-
-**Observabilidade:** atualizar fase, contadores e progresso interno durante a execução sem exigir que o Orquestrador conheça algoritmos privados. Reutilizar o progresso efetivo que o Operador fornece quando existir; nenhuma etapa de reconciliação/conflitos precisa produzir callbacks próprios. O estado ativo é retirado ao terminar a chamada, seja `Completed`, `Pending`, `Failed` ou `Err`.
-
-**Efeitos colaterais:** pode executar **várias operações para um item**, mas nunca processa um lote. Antes de executar, deve verificar que a decisão permanece compatível com o estado e a revisão. A confirmação deve seguir as regras de `InventoryManager::confirm_sync`. Se uma operação foi aplicada e a confirmação falhou, a próxima chamada deve reobservar o efeito, não simplesmente repetir o comando.
-
-**Concorrência:** análises simultâneas do mesmo `SyncItem` precisam ser serializadas por item ou rejeitadas por revisão/precondições, sem bloquear itens independentes. A forma concreta de sincronização é detalhe interno.
-
-## 8. Coordenação interna e integração com Inventário
-
-O Reconciliador e o algoritmo de Conflitos são **independentes** e retornam dados. Seus contratos serão detalhados em suas próprias documentações posteriormente; o Analisador não fixa nesta etapa a assinatura interna deles.
-
-A saída do Reconciliador é uma **lista de transformações propostas** com ordem/dependências. O algoritmo de Conflitos avalia uma divergência contextualizada entre versões, devolvendo ausência de conflito, solução possível ou necessidade de decisão. O Analisador coordena ambos e transforma decisões aprovadas em comandos do Operador.
-
-O Inventário é proprietário da fila, `SyncItem.revision`, status, baseline e atividades. O Analisador utiliza os métodos do `InventoryManager` e não executa SQL diretamente. Para comandos que serão persistidos, a ordem segura é registrar/reservar a intenção, executar, verificar efeitos e confirmar os estados em transação, respeitando os contratos vigentes. A API de `NewSyncOperation` atualmente expressa direção e tipo, mas **não carrega todos os parâmetros de `OperationCommand`**; persistência/reconstrução segura do plano concreto permanece questão explícita de integração, não uma capacidade já existente.
-
-## 9. Garantias e decisões de implementação
-
-1. A interface pública contém somente `new`, `analyze` e `status`; a análise continua por item, sem lote ou fila própria.
-2. A resolução não congela a chamada nem dá autorização irrestrita para sobrescrita.
-3. Nenhuma alteração destrutiva sem identidade, estado e precondições suficientes.
-4. Desfechos parciais preservam as operações realmente executadas e verificadas.
-5. `Completed` exige confirmação do baseline no Inventário; `OperatorResult::Ok` isolado não é suficiente.
-6. `PendingAction` não é uma mera string de erro; contém identidade, evidências e alternativas aplicáveis.
-7. A modelagem precisa resolver a persistência de pendências e comandos completos antes de prometer retomada após reinício.
-8. Tipos e contratos acima são previstos para a primeira implementação; modelos externos seguem suas fontes proprietárias, sem duplicações.
+O provedor é resolvido pelo Orchestrator a partir da conta persistida via Engine,
+sem credenciais ou HTTP, e passado na configuração. Não é inferido de nomes ou
+da existência de arquivos remotos; uma pasta remota vazia continua tendo provedor.
+Metadata de outro provedor é recusada. A fase transitória inclui `Planning`.

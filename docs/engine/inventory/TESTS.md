@@ -1,3 +1,18 @@
+# Verificação da implementação
+
+Os cenários abaixo continuam um catálogo de requisitos, não uma afirmação de que
+todos foram executados. A cobertura atual está em `engine/tests/inventory.rs`,
+`engine/tests/inventory_errors.rs` e no teste interno de status. Inclui SQLite
+real, contas sintéticas, relações/rollback, metadados conhecidos versus recentes,
+paginação, disputa de claim por duas conexões, retry/reinício, tentativa antiga,
+confirmação idempotente, erro SQL injetado e tombstones com histórico.
+
+Não foram validados GUI, contas reais, executores de transferência, escala de
+80 mil itens ou backup/restauração. Veja IMPLEMENTATION.md para comandos e
+resultados da validação integrada. As lacunas de política listadas historicamente
+no catálogo foram resolvidas no contrato compilado de INTERFACES.md; lacunas de
+integração permanecem abertas.
+
 # Inventário — TESTS
 
 ## 1. Objetivo, fonte de verdade e limites
@@ -516,3 +531,12 @@ Registrar no PR/commit de implementação:
 - Cada teste que não puder ser automatizado deve ter justificativa técnica e procedimento manual explicitado.
 
 **Estado deste documento:** plano de testes, não implementação nem resultado de execução. A execução começa somente quando os respectivos testes e código forem criados e efetivamente rodados.
+
+
+## Persistência de análises
+
+`engine/tests/inventory_analysis.rs` cobre gravação/reabertura, associação entre
+recibo e operações bloqueadas, retry exato, reavaliação idêntica, obsolescência,
+controle de escopo/snapshot/revisão, rollback por trigger SQLite, duas conexões
+concorrentes, recusa durante execução Running, conflito sem ações, paginação e
+bloqueio de Requeue/claim para intenções sem comando. Ver [ANALYSIS.md](ANALYSIS.md).

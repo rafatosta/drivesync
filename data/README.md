@@ -7,6 +7,21 @@ This folder holds desktop integration assets for development (`com.rtosta.DriveS
 - `com.rtosta.DriveSync.Devel.metainfo.xml`: initial AppStream metadata. The source license is still a placeholder and **must be replaced before publication**.
 - `../flatpak/com.rtosta.DriveSync.Devel.yml`: **GNOME Builder development-only manifest**. It uses the Rust SDK extension and allows Cargo to download crates *while compiling*.
 
+## Visual asset organization
+
+- `icons/`: interface icons, including `google-sign-in.svg` and the folder tile
+  artwork `folder.png` embedded by the remote folder picker.
+- `icons/hicolor/`: application icons used by desktop integration and packaging.
+- `icons/source/`: editable artwork sources, including `drivesync.svg` and
+  `folder.svg`; these are not loaded directly by the interface.
+- `illustrations/`: larger interface illustrations, including the setup artwork.
+
+Provider-owned branding remains with its provider:
+`engine/src/providers/google/assets/drive.svg`. The provider catalog embeds and
+returns its SVG source; the interface renders it without copying it into `data/`.
+Interface code embeds these assets at build time, so their original paths are
+not required at runtime.
+
 ## First run from GNOME Builder
 
 1. Install the GNOME SDK for the selected runtime and the matching Rust SDK extension. The extension is declared in the manifest but Builder/Flatpak still needs to resolve and install its compatible branch.

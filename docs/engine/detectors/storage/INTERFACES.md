@@ -144,3 +144,86 @@ Se não houver recuperação válida, informar erro e **não** reconstruir banco
 Falhas transitórias, indisponibilidade, `Conflict`, `CapacityExceeded`, identidade divergente, `SQLITE_BUSY`, disco cheio e incompatibilidade de esquema não autorizam restauração automática. Não chamar diretamente ferramentas de cópia do banco em uso, nem depender de arquivo `.sqlite3` isolado sem tratamento WAL. O resultado técnico e as falhas devem permanecer testáveis com SQLite real isolado.
 
 **Estado:** documentação proposta; API interna de registro e exclusividade será integrada antes da implementação.
+
+## 7. Implementação local compilada
+
+A solicitação de fila persistente autoriza a implementação em `engine/src/detectors/storage/` e a composição pública `Detector`. O Storage continua privado. A API compilada usa QueueError/QueueFailure/QueueStats, BatchId, FileBatch, EventDisposition e TakeEventsRequest; o contrato conceitual anterior orienta as operações, não impõe uma trait pública ou modelos remotos não revisados.
+
+Cada banco é identificado por AccountId, SyncId, bytes da raiz local, provedor e raiz remota. A fábrica deriva `<raiz-local>/.drivesync/detector.sqlite3`; não recebe base XDG ou localização da UI. A raiz existente é validada sem criar diretórios do usuário. Diretórios novos usam 0700 e o banco 0600; symlinks, hardlinks do banco, donos incorretos e diretório-base compartilhado são recusados. Conexões são protegidas por mutex; SQLite coordena processos e transações concorrentes. Há apenas um lease ativo por fila, para impedir ultrapassar um lote reservado na ordem de inserção.
+
+O codec local v1 serializa todos os sete campos de File, o FileEvent com motivo e o LocalFile completo, sem projetar seus atributos. Preserva bytes não UTF-8, u64, timestamps assinados e estados MetadataValue. O payload e seu SHA-256 são conferidos na leitura, repetição e confirmação. Cada registro tem limite de 1 MiB; o lote tem até 64 eventos/8 MiB. IDs iguais com dados diferentes são Conflict, inclusive após confirmação. O mesmo codec aceita RemoteFile validado, sem payload fictício.
+
+SQLite usa journal DELETE e synchronous EXTRA, transações IMMEDIATE, foreign keys e quick_check na abertura. Identidade e schema são validados antes de alterar um banco existente; uma falha não recria o arquivo. Reserva e confirmação são transacionais. Leases usam tokens aleatórios e prazo UTC de 1 ms a 1 hora; a ordem usa sequência SQLite, não relógio da observação. Expiração permite reentrega dos mesmos File/IDs. Um salto para trás no relógio pode atrasar a expiração; não elimina os dados.
+
+A política Enabled/Paused também é persistida. Pause impede claims novos de forma transacional; lotes já reservados continuam confirmáveis/liberáveis. Uma fila nova começa pausada; reabertura restaura a política salva. Stats expõe pendentes, reservados, confirmados, total e erro; a apresentação lê cache, enquanto o worker atualiza SQLite fora da thread gráfica. Confirmed é consumo explícito do evento, não sincronização concluída.
+
+Retenção nesta versão: registros completos, inclusive confirmados, são mantidos para idempotência e diagnóstico; 100000 registros e 131072 páginas SQLite limitam a base. Ao atingir capacidade, o enqueue falha sem truncar ou apagar pendências; não há limpeza automática. Os últimos 100 eventos são recuperados para o histórico. A infraestrutura técnica de backup de Configuration ainda não está implementada: não se simula registro nem restauração; corrupção permanece indisponível até recuperação externa e reabertura validada. Isso substitui, nesta entrega, a dependência documental de registrar previamente o banco numa API de Configuration inexistente. Não copiar banco ativo ou reconstruir fila vazia como recuperação.
+
+## 8. Payload e checkpoint remotos
+
+O codec versão 2 admite `Remote(RemoteFile)` e Local, incluindo a evidência remota sem classificação. Bancos anteriores não são adaptados. O backend remoto usa a mesma fila que a origem local; a identidade validada impede misturar contas e raízes. Enqueue e leitura validam a conta do payload remoto e o SyncId da fila.
+
+O backend remoto usa uma extensão privada `remote_progress` no mesmo armazenamento privado. O especialista acessa apenas portas de carregar/salvar/emitir. Página preparada contém os File completos, com IDs e horários estáveis; após falha entre enqueue e checkpoint, o replay é idempotente pela identidade/payload. Compare-and-swap impede sobrescrever progresso concorrente. Checkpoint ilegível falha sem descarte ou reconstrução silenciosa. A confirmação de progresso remoto não depende de ack externo nem da política de entrega.
+
+
+A abertura remota recebe explicitamente o provedor selecionado pela fachada. Identidades isoladas dos especialistas existem apenas nas fixtures de teste; o caminho de produção é exclusivamente o banco unificado na raiz local. Enqueue/leitura rejeitam payload remoto de outro provedor, mesmo com conta e SyncId iguais.
+
+
+## 9. Composição unificada
+
+`Store::open_unified` é privado à composição da fachada. Valida identidade com conta, SyncId, raiz local, provedor e raiz remota; aceita ambas as origens na mesma conexão/transação e verifica a proveniência atribuída pelo sink. O índice auxiliar `observations` registra origem e bootstrap no mesmo commit do File. O índice é criado junto ao esquema atual (SQLite versão 3). Não existe backfill nem migração de versões anteriores. `FileBatch` contém limites de tempo observado e o ack de um lote misto é uma única transação. Não existe caminho alternativo para filas antigas nem adaptação de SyncIds.
+
+## 10. Revisão de observações remotas sem classificação
+
+O esquema SQLite passa à versão 3 e o codec File à versão 2, para persistir
+`File.event.remote` integralmente. Abertura de esquema anterior falha com
+`SchemaUnsupported`: sem migração, adaptação, descarte ou sobrescrita automática.
+O histórico distingue captura inicial (`RemoteObservationSource::Capture`) de
+alterações recebidas (`Changes`), sem classificar ações sobre arquivos.
+Os contratos de leases, ordenação, confirmação e retenção continuam vigentes.
+
+## 11. Evidência nativa local
+
+O esquema SQLite versão 4 e codec File versão 3 preservam também
+`File.event.local` integralmente. Esquemas anteriores são recusados explicitamente,
+sem migração ou exclusão. Fila, digest, leases, confirmação e histórico continuam
+com as mesmas responsabilidades. Não há índice de caminhos conhecidos no Storage.
+
+## 12. Percurso remoto incremental
+
+O esquema SQLite 5 acrescenta remote_scan (fila ordenada e diretórios já visitados)
+e remote_scan_control (contadores). Não há metadados ou catálogo de arquivos.
+A consulta do próximo trabalho usa índice (done,seq); cada pasta tem identidade
+única dentro do banco isolado por conta/sincronização/provedor/raízes.
+
+Um delta contém no máximo 200 pastas descobertas, o trabalho concluído e seu
+token de continuação opcional, ou um reset explícito para nova captura. Storage
+aplica o delta e o checkpoint sob a mesma transação IMMEDIATE com compare-and-swap.
+O DAO não faz commits próprios. Continuação mantém o trabalho na cabeça da fila;
+novas pastas são inseridas no fim, ignorando somente IDs já visitados/agendados.
+Contadores são incrementais; sua integridade é conferida na abertura.
+Limite: 100.000 diretórios por captura, com erro e rollback ao exceder.
+Esquemas anteriores falham sem migração, conversão ou remoção de dados.
+
+## 13. Registro remoto original e extração na leitura
+
+No esquema SQLite 6, o payload usa codec de registros 4. ObservationRecord tem
+Common(File) para observações locais/avisos técnicos e Remote para item remoto
+original com contexto mínimo. No Google, original é o objeto recebido de File
+(captura) ou Change (incremental), não a página com tokens. O campo original é
+um objeto JSON aninhado, não uma string JSON escapada nem um RemoteFile pré-montado.
+Limite por registro permanece 1 MiB: exceder recusa a gravação sem truncar dados.
+
+Enqueue original valida identidade, objeto e proveniência, sem adaptar metadados.
+SQL, digest e índice de origem continuam transacionais. A adaptação é invocada
+somente após commit para diagnóstico ou na leitura para entrega/histórico.
+O consumidor recebe File com ID/horário estáveis. Original e digest permanecem
+iguais após claim, release, ack, reabertura e replay; não há normalização em disco.
+Campos desconhecidos e nulls recebidos são preservados e participam da comparação
+idempotente. A duplicata com mesmo ID e original divergente é Conflict.
+
+Falha de extração é InvalidRequest e não equivale a corrupção física SQLite;
+claim não cria lease e conserva o registro pendente. A notificação de disponibilidade
+não depende do sucesso da projeção de metadados em memória. A fila não descarta
+um original que o extrator não consegue interpretar. Versões antigas são recusadas,
+sem codecs paralelos, migração ou conversores.
