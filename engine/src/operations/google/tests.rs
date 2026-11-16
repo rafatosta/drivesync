@@ -2619,3 +2619,25 @@ async fn replacement_cannot_turn_a_directory_into_a_file() {
     assert_eq!(error.kind, OperatorError::InvalidRequest);
     assert_eq!(std::fs::read(f.root.join("target/child")).unwrap(), b"keep");
 }
+#[tokio::test]
+async fn cancelled_retry_preserves_an_already_applied_effect_and_identity() {
+    let f = Fixture::new(vec![], Faults::default());
+    let mut r = CreateFileRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("cancel-completed".into()).unwrap(),
+            source: None,
+        },
+        parent: DirectoryRef::LocalRoot,
+        name: ItemName::Local("created".into()),
+        content: None,
+        options: ExecutionOptions::default(),
+    };
+    let item = f.operator().create_file(r.clone()).await.unwrap();
+    r.options.cancellation = Some(Arc::new(Cancel(AtomicBool::new(true))));
+    let error = f.operator().create_file(r).await.unwrap_err();
+    assert_eq!(error.kind, OperatorError::Cancelled);
+    assert_eq!(error.effect, ExecutionEffect::Applied);
+    assert_eq!(error.resource, Some(item.resource));
+    assert!(f.root.join("created").is_file());
+    assert!(f.server.state.lock().unwrap().requests.is_empty());
+}

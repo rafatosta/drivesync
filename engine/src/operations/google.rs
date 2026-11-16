@@ -84,7 +84,6 @@ impl GoogleOperator {
             runtime
                 .spawn_blocking(move || {
                     worker_runtime.block_on(async move {
-                        fs::check(&options)?;
                         let workspace = fs::Workspace::open(&scope.local_root)?;
                         let access = host.access(scope.account_id.clone()).await?;
                         let intent = ExecutionIntent {
@@ -104,6 +103,9 @@ impl GoogleOperator {
                             transferred: 0,
                             publication_effect: None,
                         };
+                        // Loading the checkpoint first preserves a prior Applied
+                        // effect when this invocation is cancelled before dispatch.
+                        worker.check()?;
                         let result = match worker.checkpoint.intent.command {
                             OperationCommand::Download { .. } => {
                                 worker.download().await.map(ExecutionResult::Transfer)
@@ -425,7 +427,13 @@ impl Worker {
         OperatorFailure {
             kind,
             effect: self.effect(),
-            resource: self.checkpoint.state.reserved_remote.clone(),
+            resource: self.checkpoint.state.reserved_remote.clone().or_else(|| {
+                self.checkpoint
+                    .state
+                    .result
+                    .as_ref()
+                    .map(|result| result.item().resource.clone())
+            }),
         }
     }
     fn check(&self) -> OperatorResult<()> {
