@@ -361,7 +361,7 @@ impl Worker {
             }
         }
     }
-    fn reserved_id(&self) -> OperatorResult<String> {
+    pub(super) fn reserved_id(&self) -> OperatorResult<String> {
         match &self.checkpoint.state.reserved_remote {
             Some(ResourceRef::Remote { reference, .. }) => Ok(reference.file_id.0.clone()),
             _ => Err(self.error(OperatorError::CheckpointUnavailable)),
@@ -391,7 +391,7 @@ impl Worker {
             Err(e) => Err(e),
         }
     }
-    async fn no_homonym(&self, parent: &str, name: &str) -> OperatorResult<()> {
+    pub(super) async fn no_homonym(&self, parent: &str, name: &str) -> OperatorResult<()> {
         let quote = |s: &str| s.replace('\\', "\\\\").replace('\'', "\\'");
         let mut cursor = None;
         let mut seen = std::collections::HashSet::new();

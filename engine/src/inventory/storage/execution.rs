@@ -149,6 +149,7 @@ fn validate_state(intent: &ExecutionIntent, state: &ExecutionState) -> Inventory
         return Err(failure(InventoryError::InvalidArgument));
     }
     if matches!(intent.context.source, Some(SourceEvidence::Local { .. }))
+        && !matches!(intent.command, OperationCommand::CreateDirectory { .. })
         && state.phase != CheckpointPhase::Prepared
         && state.staging.is_none()
     {
@@ -258,7 +259,7 @@ fn validate_state(intent: &ExecutionIntent, state: &ExecutionState) -> Inventory
     }
     Ok(())
 }
-fn load(db: &Connection, id: &ExecutionId) -> InventoryResult<ExecutionCheckpoint> {
+pub(super) fn load(db: &Connection, id: &ExecutionId) -> InventoryResult<ExecutionCheckpoint> {
     let intent: String = db
         .query_row(
             "SELECT intent FROM execution_intents WHERE id=?1",
@@ -321,38 +322,9 @@ impl InventoryManager {
         &self,
         request: PrepareExecutionRequest,
     ) -> InventoryResult<ExecutionCheckpoint> {
-        self.run(true, |db| {
-            scope(db, &request.intent)?;
-            validate_intent(&request.intent)?;
-            let id = &request.intent.context.id;
-            let exists: bool = db
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM execution_intents WHERE id=?1)",
-                    [id.as_str()],
-                    |r| r.get(0),
-                )
-                .map_err(sql)?;
-            if exists {
-                let previous = load(db, id)?;
-                if previous.intent != request.intent {
-                    return Err(failure(InventoryError::AlreadyExists));
-                }
-                return Ok(previous);
-            }
-            db.execute(
-                "INSERT INTO execution_intents(id,intent) VALUES(?1,?2)",
-                params![id.as_str(), encode(&request.intent)?],
-            )
-            .map_err(sql)?;
-            let state = ExecutionState::prepared();
-            write(db, id, 1, &state)?;
-            Ok(ExecutionCheckpoint {
-                intent: request.intent,
-                revision: 1,
-                state,
-            })
-        })
+        self.run(true, |db| prepare(db, request))
     }
+
     /// Retires only an expired create-upload session after explicit remote
     /// reconciliation. The reserved ID, snapshot and Unknown effect survive.
     /// A lost response is recovered by get_execution, never by guessing an offset.
@@ -471,4 +443,39 @@ impl ExecutionJournal for InventoryManager {
     fn save_execution(&self, request: SaveExecutionRequest) -> OperatorResult<ExecutionCheckpoint> {
         InventoryManager::save_execution(self, request).map_err(port_error)
     }
+}
+
+pub(super) fn prepare(
+    db: &Connection,
+    request: PrepareExecutionRequest,
+) -> InventoryResult<ExecutionCheckpoint> {
+    scope(db, &request.intent)?;
+    validate_intent(&request.intent)?;
+    let id = &request.intent.context.id;
+    let exists: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_intents WHERE id=?1)",
+            [id.as_str()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if exists {
+        let previous = load(db, id)?;
+        if previous.intent != request.intent {
+            return Err(failure(InventoryError::AlreadyExists));
+        }
+        return Ok(previous);
+    }
+    db.execute(
+        "INSERT INTO execution_intents(id,intent) VALUES(?1,?2)",
+        params![id.as_str(), encode(&request.intent)?],
+    )
+    .map_err(sql)?;
+    let state = ExecutionState::prepared();
+    write(db, id, 1, &state)?;
+    Ok(ExecutionCheckpoint {
+        intent: request.intent,
+        revision: 1,
+        state,
+    })
 }

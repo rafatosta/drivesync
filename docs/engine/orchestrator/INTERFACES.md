@@ -2,11 +2,11 @@
 
 ## API e composição
 
-Os métodos existentes `new`, `prepare`, `preparation_status`, `stop_detector`,
-`detector_status`, `local_status`, `remote_diagnostics`, `diagnostics` e `connector`
-mantêm as assinaturas. `OrchestratorCreateRequest` continua recebendo somente
-`DetectorCreateRequest`. Detector, Scanner, Inventory e Analyzer são utilizados
-pelas suas fachadas públicas, sem alteração de suas interfaces ou esquemas.
+`OrchestratorCreateRequest` recebe `detector: DetectorCreateRequest` e
+`execute_creations: bool`. A aplicação habilita criação; testes de observação e
+ferramentas de inspeção mantêm `false`. `execution_status()` retorna o cache
+`ExecutionStatus` sem I/O. A composição fornece um Operator de escopo à dependência
+opcional do Analyzer, que decide e realiza suas chamadas.
 
 O callback existente `EventAvailableSink` é composto com um sinal interno de
 condvar: o sink configurado pelo chamador continua recebendo disponibilidade.

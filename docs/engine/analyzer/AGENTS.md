@@ -24,15 +24,17 @@ e o [AGENTS da raiz](../../../AGENTS.md) antes de alterar a integração.
   Operator; distinguir ações implementadas, requisitos e políticas ainda propostas.
 - Não apagar baseline existente para tratar estado incerto como primeira criação.
 - Persistir decisões, conflitos e requisitos sem afirmar execução. Operações
-  vinculadas permanecem `Blocked`, sem liberação por claim/requeue genéricos.
+  vinculadas não podem ser liberadas por claim/requeue genéricos. Criações usam
+  a reserva específica e a identidade durável descritas em EXECUTION.md.
 - Exclusão permanente é proibida. Toda exclusão deve ir para a lixeira;
   ausência de suporte exige bloqueio, nunca fallback para delete definitivo.
 - Não confirmar baseline nem fabricar `Synced` a partir do retorno da análise.
 - Status lê apenas a atividade local em memória, sem SQL. A reserva pertence ao
   worker mesmo se o future aguardado for cancelado; o worker ainda pode gravar.
 - Preservar retry idempotente e tornar visível a obsolescência do registro.
-- Usar somente modelos do Operator para planos; não instanciar executor nem chamar
-  execução ou Providers. Comandos incompletos exigem bloqueios/dependências explícitos.
+- O usuário autorizou execução completa de novas réplicas. Analyzer recebe Operator
+  pela composição e chama suas interfaces; não chama Providers ou filesystem.
+  Comandos incompletos exigem bloqueios/dependências explícitos.
 - Consulte PLANNING.md para lixeira condicionada e restauração explicitamente solicitada.
 
 ## Validação
@@ -43,5 +45,5 @@ pura de cada algoritmo é complementar. Executar Rust exclusivamente no Flatpak
 definido pelo projeto e registrar comandos/resultados reais.
 
 **Estado:** análise/persistência implementadas e chamadas pelo Orchestrator após
-Scanner completo e durante o consumo contínuo de observações. Execução e
-resolução permanecem pendentes.
+Scanner completo e durante o consumo contínuo de observações. Novas réplicas
+são executadas e verificadas; resolução e mutações de recursos existentes pendem.

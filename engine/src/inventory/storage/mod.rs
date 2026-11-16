@@ -33,6 +33,7 @@ const SCHEMA: &str = include_str!("schema.sql");
 mod activity;
 mod analysis;
 mod baseline;
+mod creation;
 mod execution;
 mod items;
 mod metadata;

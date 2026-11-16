@@ -243,6 +243,14 @@ fn handle(mut stream: TcpStream, base: &str, data: &Arc<Mutex<State>>) {
                 json!({"error":{"code":404}})
             }
         }
+    } else if method == "POST" && path == "/drive/v3/files" {
+        let mut metadata: Value = serde_json::from_slice(bytes).unwrap();
+        let id = metadata["id"].as_str().unwrap().to_owned();
+        metadata["trashed"] = json!(false);
+        metadata["version"] = json!("1");
+        metadata["capabilities"] = json!({"canAddChildren":true});
+        state.files.insert(id, metadata.clone());
+        metadata
     } else if method == "POST" && path == "/upload/drive/v3/files" {
         let metadata: Value = serde_json::from_slice(bytes).unwrap();
         let id = metadata["id"].as_str().unwrap().to_owned();
@@ -1245,4 +1253,403 @@ async fn lost_verifying_checkpoint_after_confirmed_upload_reports_applied() {
         0
     );
     assert_eq!(f.server.state.lock().unwrap().files.len(), 1);
+}
+
+#[tokio::test]
+async fn directory_creation_is_identity_bound_recoverable_and_never_merges_homonyms() {
+    let f = Fixture::new(vec![], Faults::default());
+    let operator = f.operator();
+    let r = CreateDirectoryRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("local-directory".into()).unwrap(),
+            source: None,
+        },
+        parent: DirectoryRef::LocalRoot,
+        name: ItemName::Local("folder".into()),
+        options: ExecutionOptions::default(),
+    };
+    let result = operator.create_directory(r.clone()).await.unwrap();
+    assert!(f.root.join("folder").is_dir());
+    assert_eq!(
+        result.resource,
+        operator.create_directory(r.clone()).await.unwrap().resource
+    );
+    let mut other = r.clone();
+    other.execution.id = ExecutionId::new("other-directory".into()).unwrap();
+    assert_eq!(
+        operator.create_directory(other).await.unwrap_err().kind,
+        OperatorError::DestinationOccupied
+    );
+    let remote = CreateDirectoryRequest {
+        execution: ExecutionContext {
+            id: ExecutionId::new("remote-directory".into()).unwrap(),
+            source: None,
+        },
+        parent: f.upload_parent(),
+        name: ItemName::Remote("folder".into()),
+        options: ExecutionOptions::default(),
+    };
+    let result = operator.create_directory(remote.clone()).await.unwrap();
+    assert_eq!(
+        result.resource,
+        operator.create_directory(remote).await.unwrap().resource
+    );
+    assert_eq!(f.server.state.lock().unwrap().generated, 1);
+}
+impl Fixture {
+    fn upload_parent(&self) -> DirectoryRef {
+        DirectoryRef::Remote {
+            provider_id: ProviderId("google".into()),
+            reference: RemoteFileRef {
+                account_id: AccountId("account".into()),
+                file_id: RemoteFileId("root".into()),
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+struct Events(Mutex<Vec<crate::analyzer::CreationEvent>>);
+impl crate::analyzer::CreationObserver for Events {
+    fn notify(&self, event: crate::analyzer::CreationEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+/// Exercise Analyzer decisions, real Operator/Provider HTTP, SQLite claims,
+/// physical replicas and baseline confirmation together, without personal data.
+#[tokio::test]
+async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines() {
+    use crate::analyzer::*;
+    for (upload, directory, interrupted) in [
+        (false, false, false),
+        (true, false, false),
+        (false, false, true),
+        (true, false, true),
+        (false, true, false),
+        (true, true, false),
+    ] {
+        let f = Fixture::new(
+            b"verified contents".to_vec(),
+            Faults {
+                truncate_download: interrupted && !upload,
+                lose_final: interrupted && upload,
+                ..Default::default()
+            },
+        );
+        let mut data = if upload {
+            std::fs::write(f.root.join("source.bin"), b"verified contents").unwrap();
+            let Some(SourceEvidence::Local { metadata, .. }) = f.upload("unused").execution.source
+            else {
+                panic!()
+            };
+            FileData::Local(*metadata)
+        } else {
+            let Some(SourceEvidence::Remote { metadata, .. }) =
+                f.download("unused").execution.source
+            else {
+                panic!()
+            };
+            FileData::Remote(*metadata)
+        };
+        if directory {
+            match &mut data {
+                FileData::Local(l) => {
+                    std::fs::create_dir(f.root.join("folder")).unwrap();
+                    *l = fs::observe(
+                        &std::fs::File::open(f.root.join("folder")).unwrap(),
+                        LocalRelativePath::new(b"folder".to_vec()).unwrap(),
+                    )
+                    .unwrap();
+                }
+                FileData::Remote(r) => {
+                    r.reference.file_id = RemoteFileId("directory-source".into());
+                    r.name = MetadataValue::Known("folder".into());
+                    r.kind = MetadataValue::Known(RemoteEntryKind::Directory);
+                    r.mime_type = MetadataValue::Known(FOLDER.into());
+                    r.size = MetadataValue::NotApplicable;
+                    r.md5_checksum = MetadataValue::NotApplicable;
+                    r.sha256_checksum = MetadataValue::NotApplicable;
+                    f.server.state.lock().unwrap().files.insert("directory-source".into(),json!({"id":"directory-source","name":"folder","mimeType":FOLDER,"parents":["root"],"trashed":false,"version":"1","capabilities":{"canAddChildren":true}}));
+                }
+            }
+        }
+        let at = Timestamp { unix_millis: 100 };
+        let location = match &data {
+            FileData::Local(l) => FileLocation::Local(l.relative_path.clone()),
+            FileData::Remote(r) => FileLocation::Remote {
+                reference: r.reference.clone(),
+                parent_id: Some(RemoteFileId("root".into())),
+                name: if directory {
+                    Some("folder".into())
+                } else {
+                    Some("source.bin".into())
+                },
+            },
+        };
+        let file = crate::models::File {
+            id: crate::models::FileId("observed".into()),
+            sync_id: SyncId("sync".into()),
+            observed_at: at,
+            scope: match &data {
+                FileData::Local(l) => FileScope::Local(l.relative_path.clone()),
+                FileData::Remote(r) => FileScope::Remote(r.reference.clone()),
+            },
+            coverage: ObservationCoverage::Partial,
+            event: crate::models::FileEvent {
+                kind: FileEventKind::Observed,
+                local: if upload {
+                    Some(crate::models::LocalObservation {
+                        capture_id: "test".into(),
+                        mask: libc::IN_MODIFY,
+                        cookie: 0,
+                    })
+                } else {
+                    None
+                },
+                remote: if upload {
+                    None
+                } else {
+                    Some(crate::models::RemoteObservation {
+                        source: RemoteObservationSource::Changes,
+                        removed: Some(false),
+                        time: None,
+                        change_type: None,
+                        drive_id: None,
+                    })
+                },
+                uncertainty: None,
+                previous: None,
+                current: Some(location),
+            },
+            data: Some(data),
+        };
+        let proof = ObservationProof {
+            source: if upload {
+                ObservationSource::LocalEvent
+            } else {
+                ObservationSource::RemoteChange
+            },
+            observed_at: at,
+            scan_or_generation: None,
+            complete_scope: false,
+        };
+        let item = if upload {
+            f.inventory
+                .record_local(RecordLocalObservation {
+                    selector: ObservationTarget::NewItem,
+                    expected_revision: None,
+                    observation: crate::inventory::LocalObservation {
+                        observed: file,
+                        presence: PresenceState::Present,
+                        proof,
+                    },
+                })
+                .unwrap()
+                .item
+        } else {
+            f.inventory
+                .record_remote(RecordRemoteObservation {
+                    selector: ObservationTarget::NewItem,
+                    expected_revision: None,
+                    observation: crate::inventory::RemoteObservation {
+                        observed: file,
+                        presence: PresenceState::Present,
+                        proof,
+                    },
+                })
+                .unwrap()
+                .item
+        };
+        let events = Arc::new(Events::default());
+        let analyzer = Analyzer::new(AnalyzerConfig {
+            provider: ProviderId("google".into()),
+            identity: SyncIdentity {
+                sync_id: SyncId("sync".into()),
+                account_id: AccountId("account".into()),
+                remote_root_id: "root".into(),
+            },
+            dependencies: AnalyzerDependencies {
+                inventory: f.inventory.clone(),
+                execution: Some(AnalyzerExecution {
+                    operator: Arc::new(f.operator()),
+                    options: ExecutionOptions::default(),
+                    observer: events.clone(),
+                }),
+            },
+        })
+        .unwrap();
+        let evidence = AnalysisEvidence {
+            baseline_confirmed: false,
+            local_scope_complete: upload,
+            remote_scope_complete: !upload,
+            local_content: EvidenceRelation::Unknown,
+            remote_content: EvidenceRelation::Unknown,
+            current_content: EvidenceRelation::Unknown,
+            local_parent: None,
+            current_parents: EvidenceRelation::Unknown,
+        };
+        analyzer
+            .analyze(AnalyzeRequest {
+                directive: None,
+                sync_id: SyncId("sync".into()),
+                item: item.clone(),
+                evidence: evidence.clone(),
+                recorded_at: at,
+            })
+            .await
+            .unwrap();
+        if interrupted {
+            let binding = f
+                .inventory
+                .get_creation(GetCreationRequest {
+                    item_id: item.id.clone(),
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                binding.operation.state,
+                OperationState::RetryWait,
+                "upload={upload}, operation={:?}, events={:?}",
+                binding.operation,
+                events.0.lock().unwrap()
+            );
+            assert!(f
+                .inventory
+                .get_item(GetItemRequest {
+                    selector: ItemSelector::Id(item.id.clone())
+                })
+                .unwrap()
+                .item
+                .unwrap()
+                .baseline
+                .is_none());
+            let next = binding.operation.next_attempt_at.unwrap();
+            assert!(f
+                .inventory
+                .due_creations(DueCreationsRequest { at, limit: 64 })
+                .unwrap()
+                .is_empty());
+            assert_eq!(
+                f.inventory
+                    .due_creations(DueCreationsRequest {
+                        at: next,
+                        limit: 64
+                    })
+                    .unwrap(),
+                vec![item.id.clone()]
+            );
+            analyzer
+                .analyze(AnalyzeRequest {
+                    directive: None,
+                    sync_id: SyncId("sync".into()),
+                    item: f
+                        .inventory
+                        .get_item(GetItemRequest {
+                            selector: ItemSelector::Id(item.id.clone()),
+                        })
+                        .unwrap()
+                        .item
+                        .unwrap(),
+                    evidence: evidence.clone(),
+                    recorded_at: next,
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                f.inventory
+                    .get_creation(GetCreationRequest {
+                        item_id: item.id.clone()
+                    })
+                    .unwrap()
+                    .unwrap()
+                    .intent
+                    .context
+                    .id,
+                binding.intent.context.id
+            );
+        }
+        let current = f
+            .inventory
+            .get_item(GetItemRequest {
+                selector: ItemSelector::Id(item.id.clone()),
+            })
+            .unwrap()
+            .item
+            .unwrap();
+        assert_eq!(
+            current.status,
+            SyncStatus::Synced,
+            "events: {:?}",
+            events.0.lock().unwrap()
+        );
+        assert!(current.baseline.is_some());
+        assert_eq!(
+            f.inventory
+                .get_creation(GetCreationRequest {
+                    item_id: item.id.clone()
+                })
+                .unwrap()
+                .unwrap()
+                .operation
+                .state,
+            OperationState::Completed
+        );
+        assert_eq!(
+            events.0.lock().unwrap().last().unwrap().stage,
+            CreationStage::Completed
+        );
+        let started = f.server.state.lock().unwrap().started;
+        analyzer
+            .analyze(AnalyzeRequest {
+                directive: None,
+                sync_id: SyncId("sync".into()),
+                item: current.clone(),
+                evidence: AnalysisEvidence {
+                    baseline_confirmed: true,
+                    local_scope_complete: true,
+                    remote_scope_complete: true,
+                    local_content: if directory {
+                        EvidenceRelation::Unknown
+                    } else {
+                        EvidenceRelation::Equal
+                    },
+                    remote_content: if directory {
+                        EvidenceRelation::Unknown
+                    } else {
+                        EvidenceRelation::Equal
+                    },
+                    current_content: if directory {
+                        EvidenceRelation::Unknown
+                    } else {
+                        EvidenceRelation::Equal
+                    },
+                    local_parent: None,
+                    current_parents: EvidenceRelation::Equal,
+                },
+                recorded_at: Timestamp {
+                    unix_millis: current.baseline.as_ref().unwrap().confirmed_at.unix_millis + 1,
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            f.inventory
+                .get_item(GetItemRequest {
+                    selector: ItemSelector::Id(item.id.clone())
+                })
+                .unwrap()
+                .item
+                .unwrap()
+                .status,
+            SyncStatus::Synced
+        );
+        assert_eq!(f.server.state.lock().unwrap().started, started);
+        if !upload && !directory {
+            assert_eq!(
+                std::fs::read(f.root.join("source.bin")).unwrap(),
+                b"verified contents"
+            );
+        }
+    }
 }

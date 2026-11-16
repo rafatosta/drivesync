@@ -243,7 +243,10 @@ fn analyzer(tree: &Tree, inventory: Arc<InventoryManager>) -> Analyzer {
     Analyzer::new(AnalyzerConfig {
         provider: drivesync_engine::models::ProviderId("google".into()),
         identity: tree.request().expected,
-        dependencies: AnalyzerDependencies { inventory },
+        dependencies: AnalyzerDependencies {
+            inventory,
+            execution: None,
+        },
     })
     .unwrap()
 }
@@ -496,7 +499,7 @@ fn constructor_rejects_a_different_inventory_identity() {
     let mut identity = tree.request().expected;
     identity.account_id = AccountId("other".into());
     assert!(
-        matches!(Analyzer::new(AnalyzerConfig{ provider: drivesync_engine::models::ProviderId("google".into()),identity,dependencies:AnalyzerDependencies{inventory}}),Err(e)if e.kind==AnalyzerErrorKind::WrongSyncScope)
+        matches!(Analyzer::new(AnalyzerConfig{ provider: drivesync_engine::models::ProviderId("google".into()),identity,dependencies:AnalyzerDependencies{inventory,execution:None}}),Err(e)if e.kind==AnalyzerErrorKind::WrongSyncScope)
     );
 }
 #[test]
@@ -1202,6 +1205,7 @@ async fn configured_provider_mismatch_cannot_reuse_a_google_plan() {
         identity: tree.request().expected,
         dependencies: AnalyzerDependencies {
             inventory: inv.clone(),
+            execution: None,
         },
     })
     .unwrap();

@@ -123,6 +123,30 @@ impl ExecutionIntent {
     /// Executors must still revalidate live scope, source, destination, capabilities
     /// and target preconditions immediately before effects/publication.
     pub fn validate_source(&self) -> bool {
+        if matches!(self.command, OperationCommand::CreateDirectory { .. }) {
+            return match &self.context.source {
+                None => true,
+                Some(SourceEvidence::Local {
+                    metadata,
+                    sha256: None,
+                }) => {
+                    metadata.validate().is_ok()
+                        && metadata.kind == MetadataValue::Known(LocalEntryKind::Directory)
+                        && matches!(metadata.storage.inode, MetadataValue::Known(_))
+                        && matches!(metadata.storage.filesystem_device, MetadataValue::Known(_))
+                }
+                Some(SourceEvidence::Remote {
+                    metadata,
+                    revision: None,
+                }) => {
+                    metadata.validate().is_ok()
+                        && metadata.kind == MetadataValue::Known(RemoteEntryKind::Directory)
+                        && metadata.trashed == MetadataValue::Known(false)
+                        && matches!(&metadata.version, MetadataValue::Known(v) if !v.is_empty())
+                }
+                _ => false,
+            };
+        }
         let source = match &self.command {
             OperationCommand::Upload { source, .. } | OperationCommand::Download { source, .. } => {
                 Some(source.clone())

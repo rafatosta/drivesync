@@ -64,7 +64,7 @@ impl InventoryManager {
     ) -> InventoryResult<EnqueueOperationResult> {
         self.run(true,|db|{
             let spec=&request.spec;
-            if spec.deduplication_key.as_ref().is_some_and(|v|v.trim().is_empty() || v.len()>256)
+            if spec.deduplication_key.as_ref().is_some_and(|v|v.trim().is_empty() || v.len()>256 || v.starts_with("execution:"))
                 || spec.expected_remote_version.as_ref().is_some_and(|v|v.is_empty() || v.len()>4096) {
                 return Err(failure(InventoryError::InvalidArgument));
             }

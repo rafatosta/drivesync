@@ -74,3 +74,24 @@ sintético e renderer Cairo, e passou. A captura resultante foi inspecionada.
 `git diff --exit-code HEAD -- engine/src/detectors engine/src/scanner engine/src/inventory engine/src/analyzer`
 confirmou que as interfaces/esquemas dos módulos e as regras do Analyzer não foram
 alterados. Não houve instalação de aplicativo nem teste com conta Google real.
+
+
+## Integração de criação de réplicas
+
+A suíte do Operator combina Analyzer real, Inventory SQLite, filesystem temporário e
+Provider real contra HTTP loopback: download/upload, pastas, falha na resposta,
+backoff, recuperação do mesmo ID e baseline somente após reobservação. Nova análise
+sem mudanças conserva `Synced` e não repete a transferência. Os testes antigos de
+observação usam `execute_creations: false` explicitamente.
+
+As páginas Operator/Orchestrator foram verificadas no teste gráfico isolado
+`ui::developer::detector::page::tests::live_account_selection_and_detector_layout`,
+em 1000×720 e 480×640, usando a mesma sessão sintética e sem iniciar outro pipeline.
+
+O harness `observe_account` só habilita execução real com
+`DRIVESYNC_LIVE_OBSERVATION=1` **e** `DRIVESYNC_LIVE_EXECUTION=1`, além da conta e raiz
+explícitas. Na conta de testes, houve download e criação de pastas reais; análise
+posterior confirmou 12 itens como sincronizados. A validação real revelou HTTP 411
+na consulta de retomada de upload, por falta de `Content-Length: 0`; corrigir esse
+mapeamento do Provider requer a orientação solicitada ao usuário. Isso não equivale
+a validar upload real completo nem instalação do Flatpak.

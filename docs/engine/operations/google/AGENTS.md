@@ -11,7 +11,7 @@ Implementar e testar a execução das operações sobre recursos do Google Drive
 ## Implementação atual e próximas capacidades
 
 Upload e download de criação estão implementados em `operations/google.rs` e
-especialistas privados. Ver [TRANSFERS.md](../TRANSFERS.md). As outras mutações
+especialistas privados, além de criação segura de diretórios e provas de origem/destino. Ver [TRANSFERS.md](../TRANSFERS.md). As demais mutações
 retornam capacidade não suportada; `delete` recusa localmente, sem efeitos.
 Não liberar automaticamente a fila do Analyzer ou inventar confirmação de baseline.
 

@@ -111,7 +111,10 @@ pub(super) fn identity(file: &File) -> OperatorResult<PhysicalIdentity> {
     })
 }
 pub(super) fn observe(file: &File, path: LocalRelativePath) -> OperatorResult<LocalFile> {
-    let m = regular(file)?;
+    let m = file.metadata().map_err(io)?;
+    if !m.is_dir() {
+        regular(file)?;
+    }
     match metadata::statx(file) {
         Ok(s) => metadata::from_statx(&s, &m, path),
         Err(e) => metadata::from_fstat(&m, path, &e),
@@ -403,8 +406,31 @@ impl Workspace {
         self.stages.sync_all().map_err(io)
     }
     pub fn publish(&self, id: &ExecutionId, parent: &File, n: &OsStr) -> OperatorResult<()> {
+        self.publish_named(&Self::stage_name(id), parent, n)
+    }
+    pub fn directory_stage(&self, id: &ExecutionId, create: bool) -> OperatorResult<File> {
+        let n = OsString::from(format!("{}.directory", id.as_str()));
+        if create {
+            private_directory(&self.stages, &n)
+        } else {
+            directory_at(&self.stages, &n)
+        }
+    }
+    pub fn publish_directory(
+        &self,
+        id: &ExecutionId,
+        parent: &File,
+        n: &OsStr,
+    ) -> OperatorResult<()> {
+        self.publish_named(
+            &OsString::from(format!("{}.directory", id.as_str())),
+            parent,
+            n,
+        )
+    }
+    fn publish_named(&self, old: &OsStr, parent: &File, n: &OsStr) -> OperatorResult<()> {
         self.validate()?;
-        let old = name(&Self::stage_name(id))?;
+        let old = name(old)?;
         let new = name(n)?;
         // SAFETY: held directory descriptors and names; NOREPLACE never removes
         // a destination inserted after the earlier collision check.

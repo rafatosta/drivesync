@@ -13,6 +13,29 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc};
 /// A typed failure, never a synthetic successful execution result.
 pub type OperatorResult<T> = Result<T, OperatorFailure>;
 
+/// Live observations obtained by Operator, with a measured local-file SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedSource {
+    pub metadata: FileData,
+    pub sha256: Option<super::Sha256Digest>,
+}
+#[derive(Clone)]
+pub struct VerifySourceRequest {
+    pub source: super::SourceEvidence,
+    pub options: ExecutionOptions,
+}
+#[derive(Clone)]
+pub struct VerifyCreationRequest {
+    pub context: ExecutionContext,
+    pub command: OperationCommand,
+    pub options: ExecutionOptions,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyCreationResult {
+    pub command: OperationCommand,
+    pub source: Option<VerifiedSource>,
+}
+
 /// The factory resolves the provider from this persisted account through Engine.
 /// No credential, public concrete executor or user-chosen provider is injected.
 #[derive(Clone)]

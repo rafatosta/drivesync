@@ -16,6 +16,14 @@ pub type OperationFuture<'a, T> = Pin<Box<dyn Future<Output = OperatorResult<T>>
 /// The trait supplies no default operation bodies. The Google specialist
 /// supports create-only upload/download and explicitly rejects other mutations.
 pub trait Operator: Send + Sync {
+    /// Rechecks a creation's source, capabilities and free destination without
+    /// creating a user resource. The executor repeats these checks before effects.
+    fn verify_creation(
+        &self,
+        request: VerifyCreationRequest,
+    ) -> OperationFuture<'_, VerifyCreationResult>;
+    /// Returns live identity-bound source evidence, not an inferred baseline.
+    fn verify_source(&self, request: VerifySourceRequest) -> OperationFuture<'_, VerifiedSource>;
     /// Constructs one specialist with an account-scoped Engine handle.
     /// The factory must resolve the persisted provider before selecting a type;
     /// construction must not execute operations or accept caller-supplied credentials.

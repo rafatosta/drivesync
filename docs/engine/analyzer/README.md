@@ -1,3 +1,6 @@
+> Integração atual: a aplicação habilita novas réplicas por `AnalyzerExecution`.
+> Analyzer chama Operator e confirma somente após reobservação. Ver [EXECUTION.md](EXECUTION.md).
+
 # Analyzer
 
 Coordena Reconciler e Conflicts para **um item do Inventory por chamada**, registra

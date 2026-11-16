@@ -7,6 +7,7 @@ use std::sync::Arc;
 /// or caller-supplied provider selection and never enables Analyzer queue work.
 #[derive(Default)]
 pub struct DefaultOperatorFactory;
+mod creation;
 mod download;
 #[cfg(test)]
 mod tests;
@@ -61,12 +62,12 @@ impl Host {
     }
 }
 impl GoogleOperator {
-    fn transfer(
+    fn execute(
         &self,
         context: ExecutionContext,
         command: OperationCommand,
         options: ExecutionOptions,
-    ) -> OperationFuture<'_, TransferResult> {
+    ) -> OperationFuture<'_, ExecutionResult> {
         let scope = self.scope.clone();
         let journal = self.journal.clone();
         let host = self.host.clone();
@@ -99,8 +100,15 @@ impl GoogleOperator {
                             publication_effect: None,
                         };
                         let result = match worker.checkpoint.intent.command {
-                            OperationCommand::Download { .. } => worker.download().await,
-                            OperationCommand::Upload { .. } => worker.upload().await,
+                            OperationCommand::Download { .. } => {
+                                worker.download().await.map(ExecutionResult::Transfer)
+                            }
+                            OperationCommand::Upload { .. } => {
+                                worker.upload().await.map(ExecutionResult::Transfer)
+                            }
+                            OperationCommand::CreateDirectory { .. } => {
+                                worker.create_directory().await.map(ExecutionResult::Item)
+                            }
                             _ => Err(fs::fail(OperatorError::UnsupportedOperation)),
                         };
                         result.map_err(|mut e| {
@@ -124,7 +132,7 @@ impl GoogleOperator {
         })
     }
     #[cfg(test)]
-    fn testing(
+    pub(crate) fn testing(
         scope: OperatorScope,
         journal: Arc<dyn ExecutionJournal>,
         client: g::GoogleDriveClient,
@@ -170,32 +178,91 @@ impl Operator for GoogleOperator {
         })
     }
     fn upload(&self, r: UploadRequest) -> OperationFuture<'_, TransferResult> {
-        self.transfer(
-            r.execution,
-            OperationCommand::Upload {
-                source: r.source,
-                destination: r.destination,
-                name: r.name,
-            },
-            r.options,
-        )
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Upload {
+                        source: r.source,
+                        destination: r.destination,
+                        name: r.name,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Transfer(r) => Ok(r),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
     fn download(&self, r: DownloadRequest) -> OperationFuture<'_, TransferResult> {
-        self.transfer(
-            r.execution,
-            OperationCommand::Download {
-                source: r.source,
-                destination: r.destination,
-                name: r.name,
-            },
-            r.options,
-        )
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::Download {
+                        source: r.source,
+                        destination: r.destination,
+                        name: r.name,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Transfer(r) => Ok(r),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
+    }
+    fn verify_creation(
+        &self,
+        r: VerifyCreationRequest,
+    ) -> OperationFuture<'_, VerifyCreationResult> {
+        self.probe(r)
+    }
+    fn verify_source(&self, r: VerifySourceRequest) -> OperationFuture<'_, VerifiedSource> {
+        Box::pin(async move {
+            let result = self
+                .probe(VerifyCreationRequest {
+                    context: ExecutionContext {
+                        id: ExecutionId::new("source-inspection".into())
+                            .map_err(|_| fs::fail(OperatorError::Internal))?,
+                        source: Some(r.source),
+                    },
+                    command: OperationCommand::CreateFile {
+                        parent: DirectoryRef::LocalRoot,
+                        name: ItemName::Local("source-inspection".into()),
+                        content: None,
+                    },
+                    options: r.options,
+                })
+                .await?;
+            result
+                .source
+                .ok_or_else(|| fs::fail(OperatorError::InvalidRequest))
+        })
     }
     fn create_file(&self, _: CreateFileRequest) -> OperationFuture<'_, ItemResult> {
         unsupported()
     }
-    fn create_directory(&self, _: CreateDirectoryRequest) -> OperationFuture<'_, ItemResult> {
-        unsupported()
+    fn create_directory(&self, r: CreateDirectoryRequest) -> OperationFuture<'_, ItemResult> {
+        Box::pin(async move {
+            match self
+                .execute(
+                    r.execution,
+                    OperationCommand::CreateDirectory {
+                        parent: r.parent,
+                        name: r.name,
+                    },
+                    r.options,
+                )
+                .await?
+            {
+                ExecutionResult::Item(r) => Ok(r),
+                _ => Err(fs::fail(OperatorError::Internal)),
+            }
+        })
     }
     fn update_content(&self, _: UpdateContentRequest) -> OperationFuture<'_, TransferResult> {
         unsupported()
@@ -279,6 +346,12 @@ impl Worker {
     }
     fn provider_error(&self, e: g::GoogleApiFailure) -> OperatorFailure {
         use g::GoogleApiError as G;
+        if e.kind != G::NotFoundOrInaccessible {
+            eprintln!(
+                "DriveSync Operator: Provider {:?}, HTTP {:?}, reason {:?}",
+                e.kind, e.http_status, e.provider_reason
+            );
+        }
         let kind = match e.kind {
             G::PermissionDenied
             | G::InsufficientScope

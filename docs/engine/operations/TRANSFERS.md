@@ -129,14 +129,15 @@ prometido ou autorização para gerar outro ID.
 
 ## Limites e integração
 
-- Sem liberação dos planos do Analyzer, confirmação de baseline, associação de
-  réplicas ou execução automática no Orchestrator/GTK. Esses componentes ainda
-  precisam consumir os resultados com reobservação e guardas atuais.
-- Os outros métodos do especialista retornam `UnsupportedOperation`; `delete`
+- A aplicação integra o Analyzer à execução de novas réplicas com reobservação e
+  guardas atuais; ver [EXECUTION.md](../analyzer/EXECUTION.md). Operator não confirma
+  baseline nem escolhe a próxima operação.
+- Upload, download e criação de diretórios estão implementados. Os outros métodos retornam `UnsupportedOperation`; `delete`
   emite aviso estático e retorna `PermanentDeletionProhibited/NotApplied`, sem
   journal, autenticação ou HTTP.
 - Documentos nativos Workspace/conversões, atualização de conteúdo, criação de
-  pais ausentes, lixeira e restauração permanecem fora desta entrega.
+  lixeira e restauração permanecem fora desta entrega. Pais são criados como
+  operações separadas, verificadas antes de executar seus filhos.
 - Publicação precisa do suporte Linux a rename sem substituição e de staging e
   destino no mesmo filesystem. Submount diferente, falta de locks ou capacidade
   indisponível falham explicitamente; não há fallback que sobrescreva ou copie sobre

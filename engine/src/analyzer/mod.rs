@@ -1,6 +1,7 @@
 //! Revision-checked coordination of pure algorithms and durable inventory receipts.
 //!
-//! Analysis only: no execution commands, transfer workers or conflict actions.
+//! Optional initial creation execution calls Operator after live prerequisites;
+//! conflicts and existing-file mutations remain explicit blocked decisions.
 //! SQLite access goes through InventoryManager on a blocking worker, never the
 //! async caller's thread. Algorithms and persistence mappings remain private.
 //!
@@ -12,7 +13,7 @@
 //! # -> AnalyzerResult<()> {
 //! let analyzer = Analyzer::new(AnalyzerConfig { provider: drivesync_engine::models::ProviderId("google".into()),
 //!     identity: identity.clone(),
-//!     dependencies: AnalyzerDependencies { inventory },
+//!     dependencies: AnalyzerDependencies { inventory, execution: None },
 //! })?;
 //! let outcome = analyzer.analyze(AnalyzeRequest { directive: None,
 //!     sync_id: identity.sync_id, item, evidence, recorded_at,
@@ -31,6 +32,7 @@
 //! use drivesync_engine::analyzer::reconciliation::reconcile;
 //! ```
 mod conflicts;
+mod execution;
 mod models;
 mod persistence;
 mod planning;
@@ -53,6 +55,7 @@ pub struct Analyzer {
     inventory: Arc<InventoryManager>,
     identity: SyncIdentity,
     provider: crate::models::ProviderId,
+    execution: Option<AnalyzerExecution>,
     planning_cache: Arc<planning::Cache>,
     active: Arc<Mutex<BTreeMap<SyncItemId, ActiveAnalysis>>>,
 }
@@ -122,6 +125,7 @@ impl Analyzer {
             return Err(error(AnalyzerErrorKind::WrongSyncScope));
         }
         Ok(Self {
+            execution: config.dependencies.execution,
             inventory: config.dependencies.inventory,
             identity: config.identity,
             provider: config.provider,
@@ -132,7 +136,8 @@ impl Analyzer {
     /// Evaluates one item and atomically persists facts and blocked work intents.
     /// Requires a Tokio runtime. Different items can progress independently;
     /// overlapping calls for this item are rejected locally, with revision checks
-    /// providing database consistency across instances. No physical effects occur.
+    /// providing database consistency across instances. Configured execution may
+    /// create a replica; only live post-execution verification confirms a baseline.
     pub async fn analyze(&self, request: AnalyzeRequest) -> AnalyzerResult<AnalysisOutcome> {
         if request.sync_id != self.identity.sync_id {
             return Err(error(AnalyzerErrorKind::WrongSyncScope));
@@ -146,9 +151,19 @@ impl Analyzer {
         let inventory = self.inventory.clone();
         let provider = self.provider.clone();
         let planning_cache = self.planning_cache.clone();
+        let execution = self.execution.clone();
+        let worker_runtime = runtime.clone();
         runtime
             .spawn_blocking(move || {
-                analyze_one(&inventory, &provider, &planning_cache, request, guard)
+                analyze_one(
+                    &inventory,
+                    &provider,
+                    &planning_cache,
+                    request,
+                    guard,
+                    execution.as_ref(),
+                    &worker_runtime,
+                )
             })
             .await
             .map_err(|_| error(AnalyzerErrorKind::Internal))?
@@ -196,6 +211,8 @@ fn analyze_one(
     planning_cache: &planning::Cache,
     request: AnalyzeRequest,
     guard: Reservation,
+    executor: Option<&AnalyzerExecution>,
+    runtime: &tokio::runtime::Handle,
 ) -> AnalyzerResult<AnalysisOutcome> {
     if request
         .item
@@ -239,6 +256,34 @@ fn analyze_one(
         }
         return Err(error(AnalyzerErrorKind::StaleItem));
     }
+    if let Some(executor) = executor {
+        if let Some(binding) = inventory
+            .get_creation(crate::inventory::GetCreationRequest {
+                item_id: current.id.clone(),
+            })
+            .map_err(inventory_error)?
+        {
+            if binding.operation.state != crate::inventory::OperationState::Completed {
+                runtime.block_on(execution::resume(
+                    inventory,
+                    executor,
+                    &current,
+                    binding,
+                    request.recorded_at,
+                    &guard,
+                ))?;
+                if let Some(analysis) = inventory
+                    .get_analysis(GetAnalysisRequest {
+                        selector: AnalysisSelector::LatestForItem(current.id.clone()),
+                    })
+                    .map_err(inventory_error)?
+                    .analysis
+                {
+                    return Ok(AnalysisOutcome { analysis });
+                }
+            }
+        }
+    }
     guard.phase(AnalysisPhase::Reconciling);
     let reconciliation = persistence::reconcile(&request)?;
     guard.phase(AnalysisPhase::EvaluatingConflict);
@@ -261,16 +306,48 @@ fn analyze_one(
         &request,
         &mut assessment,
     )?;
+    let candidate = if let Some(executor) = executor {
+        runtime.block_on(execution::verify_candidate(
+            executor,
+            &request.item,
+            &mut assessment,
+        ))
+    } else {
+        None
+    };
     guard.phase(AnalysisPhase::Recording);
     let analysis = inventory
         .record_analysis(RecordAnalysisRequest {
             expected_sync_id: request.sync_id.clone(),
-            expected_item: request.item,
+            expected_item: request.item.clone(),
             evidence: request.evidence,
             assessment,
             recorded_at: request.recorded_at,
         })
         .map_err(inventory_error)?
         .analysis;
+    if let (Some(executor), Some((context, command))) = (executor, candidate) {
+        runtime.block_on(execution::start(
+            inventory,
+            executor,
+            &analysis,
+            &request.item,
+            (context, command),
+            request.recorded_at,
+            &guard,
+        ))?;
+    }
+    if analysis.disposition == crate::inventory::AnalysisDisposition::NoChanges {
+        if let Some(executor) = executor {
+            let current = inventory
+                .get_item(GetItemRequest {
+                    selector: ItemSelector::Id(request.item.id.clone()),
+                })
+                .map_err(inventory_error)?
+                .item
+                .ok_or_else(|| error(AnalyzerErrorKind::InvalidRequest))?;
+            runtime.block_on(execution::reconfirm(inventory, executor, &current, &guard))?;
+        }
+    }
     Ok(AnalysisOutcome { analysis })
 }
