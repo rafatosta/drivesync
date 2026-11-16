@@ -453,3 +453,60 @@ async fn unknown_total_blocks_cannot_be_announced_as_final() {
         .unwrap_err();
     assert_eq!(err.kind, GoogleApiError::InvalidResponse);
 }
+
+#[tokio::test]
+async fn reserved_creation_id_is_transmitted_and_cannot_reidentify_updates() {
+    let server = Server::start_with(|base| {
+        let mut reply = Reply::json(200, "");
+        reply.headers.push((
+            "Location",
+            format!("{base}/upload/drive/v3/files?upload_id=reserved"),
+        ));
+        vec![reply]
+    });
+    let request = GoogleFileWrite {
+        id: Some(FileId("reserved-id".into())),
+        name: GooglePatch::Set("new.bin".into()),
+        ..Default::default()
+    };
+    server
+        .client()
+        .start_resumable_create(
+            &session(),
+            request.clone(),
+            FileCreateOptions::default(),
+            Some(3),
+        )
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&server.recorded()[0].body).unwrap();
+    assert_eq!(body["id"], "reserved-id");
+    let err = server
+        .client()
+        .start_resumable_update(
+            &session(),
+            &FileId("existing".into()),
+            request.clone(),
+            FileUpdateOptions::default(),
+            Some(3),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+    let err = server
+        .client()
+        .files_update(
+            &session(),
+            &FileId("existing".into()),
+            request,
+            FileUpdateOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, GoogleApiError::InvalidArgument);
+    assert_eq!(server.recorded().len(), 1);
+    assert!(serde_json::to_value(GoogleFileWrite::default())
+        .unwrap()
+        .get("id")
+        .is_none());
+}

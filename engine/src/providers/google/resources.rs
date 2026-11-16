@@ -569,6 +569,9 @@ pub struct GoogleModifyLabelsResponse {
 #[derive(Clone, Default, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFileWrite {
+    /// Optional pre-generated identity for creation only, never a new update target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<FileId>,
     #[serde(skip_serializing_if = "GooglePatch::is_unchanged")]
     pub name: GooglePatch<String>,
     #[serde(skip_serializing_if = "GooglePatch::is_unchanged")]
@@ -1325,7 +1328,7 @@ impl GoogleFileWrite {
     /// Updating parents in the JSON body can be ignored remotely. Require the
     /// official addParents/removeParents query mechanism instead.
     pub(super) fn validate_update(&self) -> GoogleResult<()> {
-        if !matches!(self.parents, GooglePatch::Unchanged) {
+        if self.id.is_some() || !matches!(self.parents, GooglePatch::Unchanged) {
             return Err(super::client::invalid_argument());
         }
         Ok(())

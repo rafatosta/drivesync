@@ -2515,3 +2515,12 @@ Existing typed methods remain used by metadata/picker consumers.
 References: https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get,
 https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list,
 https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list.
+
+## ID reservado em criação — 2026-11-16
+
+`GoogleFileWrite.id: Option<FileId>` permite transmitir um ID obtido por
+`files_generate_ids` em criação, inclusive `start_resumable_create`. Ausência não
+serializa o campo. `files_update` e `start_resumable_update` recusam qualquer ID
+no body antes de HTTP: a identidade de atualização continua no path. O Provider
+não reserva, persiste ou repete operações automaticamente.
+Referência: [upload com ID pré-gerado](https://developers.google.com/workspace/drive/api/guides/manage-uploads#use_a_pre-generated_id_to_upload_files).
