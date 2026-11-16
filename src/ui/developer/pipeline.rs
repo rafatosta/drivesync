@@ -24,7 +24,7 @@ pub(super) fn build(context: &Context, operator: bool) -> gtk::Box {
     let title = label(if operator { "Operator" } else { "Orchestrator" });
     title.add_css_class("title-1");
     root.append(&title);
-    root.append(&label(if operator {"The Analyzer dispatches verified create-only uploads, downloads and folders. Existing files and conflicts require their own supported operation."}else{"Detector → Inventory / Scanner → Analyzer → Operator → verification → confirmed baseline. Event acknowledgement records processing; it does not prove synchronization."}));
+    root.append(&label(if operator {"Creates files and folders, transfers and updates content, renames, moves, trashes and restores resources. This session shows commands dispatched by the Analyzer."}else{"Detector → Inventory / Scanner → Analyzer → Operator → verification → confirmed baseline. Event acknowledgement records processing; it does not prove synchronization."}));
     let accounts = gtk::DropDown::from_strings(&[]);
     accounts.set_widget_name(if operator {
         "operator-account"
