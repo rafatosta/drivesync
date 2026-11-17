@@ -96,6 +96,7 @@ fn build_with_accounts(
     empty.set_margin_start(24);
     empty.set_margin_end(24);
     let status = SyncStatus::new();
+    status.widget().set_visible(false);
     empty.append(status.widget());
     toolbar.set_content(Some(&empty));
     split.set_content(Some(&adw::NavigationPage::new(&toolbar, "DriveSync")));
@@ -125,8 +126,12 @@ fn build_with_accounts(
             if let Some(subscription) = status_subscription.borrow_mut().take() {
                 subscription.abort();
             }
+            let Some(account) = account else {
+                status.widget().set_visible(false);
+                return;
+            };
             status.update(&SyncStatusData::default());
-            let (Some(account), Some(engine)) = (account, context.engine.borrow().clone()) else {
+            let Some(engine) = context.engine.borrow().clone() else {
                 return;
             };
             let mut subscription = engine.observe_synchronization(&account.id);

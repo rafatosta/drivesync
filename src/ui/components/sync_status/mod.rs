@@ -78,6 +78,7 @@ impl SyncStatus {
             progress,
         };
         result.update(&SyncStatusData::default());
+        result.root.set_visible(false);
         result
     }
     pub fn widget(&self) -> &gtk::Box {
@@ -85,23 +86,32 @@ impl SyncStatus {
     }
 
     /// Replace all visual state atomically on the GTK main thread. Unconfirmed
-    /// inactivity hides the card instead of making an unsupported success claim.
+    /// inactivity remains visible as an unknown state, never as success.
     pub fn update(&self, data: &SyncStatusData) {
         use SyncActivity::*;
         let attention = data.needs_attention();
         let active = !attention && data.activity != Idle;
-        self.root
-            .set_visible(attention || active || data.synchronized);
+        let unknown = !attention && !active && !data.synchronized;
+        self.root.set_visible(true);
         self.icon.set_icon_name(Some(if attention {
             "dialog-warning-symbolic"
+        } else if unknown {
+            "dialog-information-symbolic"
         } else {
             "emblem-ok-symbolic"
         }));
+        for class in ["success", "warning", "dim-label"] {
+            self.icon.remove_css_class(class);
+        }
+        self.icon.add_css_class(if attention {
+            "warning"
+        } else if unknown {
+            "dim-label"
+        } else {
+            "success"
+        });
         self.icon
-            .remove_css_class(if attention { "success" } else { "warning" });
-        self.icon
-            .add_css_class(if attention { "warning" } else { "success" });
-        self.icon.set_pixel_size(if attention { 28 } else { 48 });
+            .set_pixel_size(if attention || unknown { 28 } else { 48 });
         self.icon.set_visible(!active);
         self.spinner.set_visible(active);
         self.spinner.set_spinning(active);
@@ -109,10 +119,13 @@ impl SyncStatus {
             "Synchronization needs attention"
         } else if active {
             "Syncing files"
+        } else if unknown {
+            "Synchronization status is unknown"
         } else {
             "Everything is synchronized"
         }));
         let message = match data.activity {
+            Idle if !data.synchronized => "No synchronization activity is currently reported.",
             Idle => "Your files are up to date between your computer and Google Drive.",
             Upload => "Uploading files…",
             Download => "Downloading files…",
@@ -230,7 +243,15 @@ mod tests {
         assert!(card.icon.has_css_class("success"));
         assert!(!card.icon.has_css_class("warning"));
         card.update(&SyncStatusData::default());
-        assert!(!card.widget().is_visible());
+        assert!(card.widget().is_visible());
+        assert_eq!(
+            card.title.label(),
+            gettext("Synchronization status is unknown")
+        );
+        assert_eq!(
+            card.detail.label(),
+            gettext("No synchronization activity is currently reported.")
+        );
         assert!(!card.spinner.is_spinning());
     }
 }

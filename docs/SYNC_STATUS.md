@@ -21,8 +21,10 @@ combined with unrelated operations.
 Byte progress takes priority over item counts. Missing or zero totals do not
 produce percentages; a spinner indicates ongoing work. Counts are clamped to
 their totals. Idle snapshots hide progress and the spinner. Only explicit
-`synchronized: true` with no activity or attention shows the success message. Unknown idle
-state hides the card. Empty account sets do not imply synchronization.
+`synchronized: true` with no activity or attention shows the success message.
+Unknown idle state shows a neutral status message and never claims completion.
+The account page hides the card only when no account is selected. Empty account
+sets do not imply synchronization.
 
 The engine subscription is account scoped and read-only. The current engine
 does not provide an authoritative whole-account completion proof, so the

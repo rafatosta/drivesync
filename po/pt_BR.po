@@ -871,6 +871,12 @@ msgstr "Sincronizando arquivos"
 msgid "Everything is synchronized"
 msgstr "Tudo sincronizado"
 
+msgid "Synchronization status is unknown"
+msgstr "O estado da sincronização é desconhecido"
+
+msgid "No synchronization activity is currently reported."
+msgstr "Nenhuma atividade de sincronização foi informada no momento."
+
 msgid "Your files are up to date between your computer and Google Drive."
 msgstr "Seus arquivos estão atualizados entre o computador e o Google Drive."
 
