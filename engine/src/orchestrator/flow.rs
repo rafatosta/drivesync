@@ -1,6 +1,6 @@
 //! Continuous observation ingestion. Detector owns the queue; Analyzer owns decisions.
 //! This worker never claims Inventory operations or executes physical synchronization.
-use super::{analysis, ingestion, PreparationFailure, PreparationState, PreparationStatus};
+use super::{analysis, ingestion, PreparationFailure, PreparationState};
 use crate::{detectors::*, inventory::*, models::SyncId, scanner::*};
 use std::{
     collections::BTreeSet,
@@ -137,7 +137,7 @@ pub(super) struct Context {
     pub epoch: Arc<AtomicU64>,
     pub expected: u64,
     pub control: Arc<Mutex<()>>,
-    pub snapshot: Arc<Mutex<PreparationStatus>>,
+    pub snapshot: Arc<super::status::Snapshot>,
     pub busy: Arc<AtomicBool>,
 }
 impl Context {

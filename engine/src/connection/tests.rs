@@ -31,6 +31,18 @@ async fn open_without_oauth_preserves_local_use() {
             .kind,
         EngineErrorKind::AuthorizationUnavailable
     );
+    let mut status = engine.observe_synchronization(&AccountId("observed".into()));
+    let other = engine.observe_synchronization(&AccountId("other".into()));
+    assert_eq!(status.snapshot(), crate::SynchronizationStatus::default());
+    engine
+        .synchronization_publisher(&AccountId("observed".into()))
+        .phase(crate::SynchronizationActivity::Scanning);
+    assert!(status.changed().await);
+    assert_eq!(
+        status.snapshot().activity,
+        crate::SynchronizationActivity::Scanning
+    );
+    assert_eq!(other.snapshot(), crate::SynchronizationStatus::default());
     drop(engine);
     std::fs::remove_dir_all(directory).unwrap();
 }

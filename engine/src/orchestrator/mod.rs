@@ -3,6 +3,7 @@ mod analysis;
 mod diagnostics;
 mod execution;
 mod flow;
+mod status;
 pub use execution::ExecutionStatus;
 mod ingestion;
 mod startup;

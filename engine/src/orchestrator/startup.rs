@@ -63,22 +63,25 @@ pub struct PreparationStatus {
 }
 pub(super) struct Preparation {
     pub scanner: Mutex<Option<Arc<Scanner>>>,
-    pub snapshot: Arc<Mutex<PreparationStatus>>,
+    pub snapshot: Arc<super::status::Snapshot>,
     pub busy: Arc<AtomicBool>,
     pub epoch: Arc<std::sync::atomic::AtomicU64>,
     pub control: Arc<Mutex<()>>,
 }
 impl Preparation {
-    pub fn new() -> Self {
+    pub fn new(publisher: Arc<crate::synchronization::Publisher>) -> Self {
         Self {
             scanner: Mutex::new(None),
-            snapshot: Arc::new(Mutex::new(PreparationStatus {
-                state: PreparationState::Idle,
-                scanner: None,
-                report: None,
-                error: None,
-                events_processed: 0,
-            })),
+            snapshot: Arc::new(super::status::Snapshot::new(
+                PreparationStatus {
+                    state: PreparationState::Idle,
+                    scanner: None,
+                    report: None,
+                    error: None,
+                    events_processed: 0,
+                },
+                publisher,
+            )),
             busy: Arc::new(AtomicBool::new(false)),
             epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             control: Arc::new(Mutex::new(())),
@@ -117,11 +120,15 @@ impl Orchestrator {
         request.detector.event_available_sink = Some(wake.clone());
         let detector = Arc::new(Detector::new(request.detector)?.detector);
         detector.pause(DetectorPauseRequest {})?;
+        let publisher = connector.synchronization_publisher(&detector.scope().account_id);
+        publisher.phase(crate::SynchronizationActivity::Idle);
+        let execution = execution::ExecutionControl::new(request.execute_creations);
+        execution.set_publisher(publisher.clone());
         Ok(Self {
-            execution: execution::ExecutionControl::new(request.execute_creations),
+            execution,
             connector,
             detector,
-            preparation: Preparation::new(),
+            preparation: Preparation::new(publisher),
             flow: flow::Flow::new(wake),
         })
     }

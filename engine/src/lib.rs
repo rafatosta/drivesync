@@ -6,6 +6,11 @@ pub mod accounts;
 pub mod models;
 pub use models::{AccountId, ProviderId, Timestamp};
 
+mod synchronization;
+pub use synchronization::{
+    SynchronizationActivity, SynchronizationStatus, SynchronizationSubscription,
+};
+
 mod connection;
 pub use accounts::{
     Account, AccountState, AccountsError, ListAccountsRequest, ListAccountsResult,

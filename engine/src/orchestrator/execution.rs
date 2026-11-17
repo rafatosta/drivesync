@@ -16,13 +16,22 @@ pub struct ExecutionStatus {
     pub prerequisite_retries:
         std::collections::BTreeMap<crate::inventory::SyncItemId, crate::models::Timestamp>,
 }
-pub(super) struct ExecutionControl(Mutex<ExecutionStatus>);
+pub(super) struct ExecutionControl(
+    Mutex<ExecutionStatus>,
+    Mutex<Option<Arc<crate::synchronization::Publisher>>>,
+);
 impl ExecutionControl {
     pub fn new(enabled: bool) -> Arc<Self> {
-        Arc::new(Self(Mutex::new(ExecutionStatus {
-            enabled,
-            ..Default::default()
-        })))
+        Arc::new(Self(
+            Mutex::new(ExecutionStatus {
+                enabled,
+                ..Default::default()
+            }),
+            Mutex::new(None),
+        ))
+    }
+    pub fn set_publisher(&self, publisher: Arc<crate::synchronization::Publisher>) {
+        *self.1.lock().unwrap_or_else(|e| e.into_inner()) = Some(publisher);
     }
     /// Consume expired wakeups; a failed probe schedules its own next check.
     /// Items retired or confirmed in the meantime must not cause a hot loop.
@@ -41,6 +50,30 @@ impl ExecutionControl {
 }
 impl CreationObserver for ExecutionControl {
     fn notify(&self, event: CreationEvent) {
+        if let Some(publisher) = self.1.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            use crate::SynchronizationActivity as A;
+            publisher.activity(match event.stage {
+                CreationStage::Executing => Some(match &event.command {
+                    Some(OperationCommand::Download { .. }) => A::Downloading,
+                    Some(OperationCommand::CreateFile {
+                        parent,
+                        content: Some(_),
+                        ..
+                    }) => match parent {
+                        DirectoryRef::LocalRoot | DirectoryRef::Local { .. } => A::Downloading,
+                        DirectoryRef::Remote { .. } => A::Uploading,
+                    },
+                    Some(OperationCommand::Upload { .. }) => A::Uploading,
+                    Some(OperationCommand::UpdateContent { target, .. }) => match target {
+                        ResourceRef::Local { .. } => A::Downloading,
+                        ResourceRef::Remote { .. } => A::Uploading,
+                    },
+                    _ => A::Reconciling,
+                }),
+                CreationStage::Checking | CreationStage::Verifying => Some(A::Reconciling),
+                _ => None,
+            });
+        }
         let mut s = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if event.stage == CreationStage::Checking || event.stage == CreationStage::Executing {
             s.progress = None;
@@ -74,6 +107,9 @@ impl CreationObserver for ExecutionControl {
 }
 impl ProgressReporter for ExecutionControl {
     fn try_report(&self, p: ExecutionProgress) -> ProgressDelivery {
+        if let Some(publisher) = self.1.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            publisher.progress(p.bytes_transferred, p.total_bytes);
+        }
         self.0.lock().unwrap_or_else(|e| e.into_inner()).progress = Some(p);
         ProgressDelivery::Accepted
     }
