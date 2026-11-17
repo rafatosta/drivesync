@@ -864,3 +864,42 @@ msgstr "Usado apenas no DriveSync. Seu perfil do Google não será alterado."
 
 msgid "The configuration could not be saved or the previous account name restored. Try again."
 msgstr "Não foi possível salvar a configuração nem restaurar o nome anterior da conta. Tente novamente."
+
+msgid "Syncing files"
+msgstr "Sincronizando arquivos"
+
+msgid "Everything is synchronized"
+msgstr "Tudo sincronizado"
+
+msgid "Your files are up to date between your computer and Google Drive."
+msgstr "Seus arquivos estão atualizados entre o computador e o Google Drive."
+
+msgid "Uploading files…"
+msgstr "Enviando arquivos…"
+
+msgid "Downloading files…"
+msgstr "Baixando arquivos…"
+
+msgid "Checking local files…"
+msgstr "Verificando arquivos locais…"
+
+msgid "Checking cloud changes…"
+msgstr "Verificando alterações na nuvem…"
+
+msgid "Renaming files…"
+msgstr "Renomeando arquivos…"
+
+msgid "Moving files…"
+msgstr "Movendo arquivos…"
+
+msgid "Deleting files…"
+msgstr "Excluindo arquivos…"
+
+msgid "Syncing changes…"
+msgstr "Sincronizando alterações…"
+
+msgid "Uploading {completed} of {total} files"
+msgstr "Enviando {completed} de {total} arquivos"
+
+msgid "Downloading {completed} of {total} files"
+msgstr "Baixando {completed} de {total} arquivos"
