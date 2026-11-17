@@ -143,7 +143,7 @@ fn alerts_navigation_and_single_category_layout() {
         .downcast::<adw::ActionRow>()
         .unwrap()
         .emit_by_name::<()>("activated", &[]);
-    button(&nav, "review-close").emit_clicked();
+    nav.pop();
     assert_eq!(received.borrow().len(), 7);
     alerts.update(&[conflict]);
     assert!(alerts.conflicts.button.is_visible());

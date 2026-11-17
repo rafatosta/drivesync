@@ -64,17 +64,6 @@ pub(super) fn open(
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     header.set_title_widget(Some(&adw::WindowTitle::new(&title, &item.account)));
-    let close = gtk::Button::from_icon_name("window-close-symbolic");
-    close.set_tooltip_text(Some(&gettext("Close review")));
-    close.set_widget_name("review-close");
-    close.add_css_class("flat");
-    let weak = nav.downgrade();
-    close.connect_clicked(move |_| {
-        if let Some(nav) = weak.upgrade() {
-            nav.pop();
-        }
-    });
-    header.pack_end(&close);
     toolbar.add_top_bar(&header);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 24);
     margins(&body, 24);

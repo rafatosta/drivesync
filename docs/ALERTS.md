@@ -12,7 +12,9 @@ an account-qualified detail page with the filename, explanation, local and Drive
 modification times and sizes. Unknown metadata is explicitly unavailable.
 Version cards wrap on narrow displays. Radio choices explain each consequence:
 keep both with different names (default), replace Drive from local, or replace
-local from Drive. Only Confirm emits an intent; Cancel, back and close do not.
+local from Drive. Only Confirm emits an intent; Cancel and back do not. Internal page headers
+show back navigation without window-close controls, reserving window management
+for the outer window header.
 
 ## Problems
 

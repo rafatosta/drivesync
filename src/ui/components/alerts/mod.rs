@@ -142,6 +142,8 @@ impl Category {
         button.set_child(Some(&content));
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
+        header.set_show_start_title_buttons(false);
+        header.set_show_end_title_buttons(false);
         header.set_title_widget(Some(&adw::WindowTitle::new(title, "")));
         toolbar.add_top_bar(&header);
         let list = gtk::ListBox::new();

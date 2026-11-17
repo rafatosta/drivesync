@@ -986,9 +986,6 @@ msgstr "Resolver conflito"
 msgid "Fix problem"
 msgstr "Corrigir problema"
 
-msgid "Close review"
-msgstr "Fechar revisão"
-
 msgid "Local version"
 msgstr "Versão local"
 
