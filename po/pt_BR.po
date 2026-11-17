@@ -137,6 +137,9 @@ msgstr "Conta"
 msgid "Accounts"
 msgstr "Contas"
 
+msgid "Accounts · {count}"
+msgstr "Contas · {count}"
+
 #: src/features/preferences/accounts.rs:94
 msgid "Settings apply only to the account shown below."
 msgstr "Os ajustes se aplicam somente à conta exibida abaixo."

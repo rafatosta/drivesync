@@ -1,18 +1,21 @@
 //! Native account navigation, independent of account loading and persistence.
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId};
+use gettextrs::gettext;
 use std::{cell::RefCell, rc::Rc};
 
 type MenuFactory = Rc<dyn Fn(&Account) -> gtk::MenuButton>;
 
 #[derive(Clone)]
 pub(super) struct AccountSidebar {
+    pub heading: gtk::Label,
     pub list: gtk::ListBox,
     accounts: Rc<RefCell<Vec<Account>>>,
     menu: Option<MenuFactory>,
 }
 #[derive(Clone)]
 pub(super) struct SidebarHandle {
+    heading: gtk::glib::WeakRef<gtk::Label>,
     list: gtk::glib::WeakRef<gtk::ListBox>,
     accounts: Rc<RefCell<Vec<Account>>>,
     menu: Option<MenuFactory>,
@@ -20,6 +23,7 @@ pub(super) struct SidebarHandle {
 impl SidebarHandle {
     pub fn upgrade(&self) -> Option<AccountSidebar> {
         Some(AccountSidebar {
+            heading: self.heading.upgrade()?,
             list: self.list.upgrade()?,
             accounts: self.accounts.clone(),
             menu: self.menu.clone(),
@@ -29,12 +33,23 @@ impl SidebarHandle {
 impl AccountSidebar {
     pub fn downgrade(&self) -> SidebarHandle {
         SidebarHandle {
+            heading: self.heading.downgrade(),
             list: self.list.downgrade(),
             accounts: self.accounts.clone(),
             menu: self.menu.clone(),
         }
     }
     pub fn new() -> Self {
+        let heading = gtk::Label::builder()
+            .label(account_count_label(0))
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .margin_top(12)
+            .margin_bottom(4)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+        heading.set_widget_name("dashboard-accounts-heading");
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
             .activate_on_single_click(true)
@@ -42,6 +57,7 @@ impl AccountSidebar {
             .build();
         list.set_widget_name("dashboard-accounts");
         Self {
+            heading,
             list,
             accounts: Rc::default(),
             menu: None,
@@ -61,6 +77,7 @@ impl AccountSidebar {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
+        self.heading.set_label(&account_count_label(accounts.len()));
         *self.accounts.borrow_mut() = accounts.clone();
         let mut chosen = 0;
         for (index, account) in accounts.iter().enumerate() {
@@ -95,6 +112,10 @@ impl AccountSidebar {
             callback(row.and_then(|row| accounts.borrow().get(row.index() as usize).cloned()));
         });
     }
+}
+
+fn account_count_label(count: usize) -> String {
+    gettext("Accounts · {count}").replace("{count}", &count.to_string())
 }
 
 #[cfg(test)]

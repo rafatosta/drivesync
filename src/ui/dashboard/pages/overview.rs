@@ -39,7 +39,7 @@ fn build_with_accounts(
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_back_button(false);
-    header.set_title_widget(Some(&adw::WindowTitle::new(&gettext("Accounts"), "")));
+    header.set_title_widget(Some(&adw::WindowTitle::new("DriveSync", "")));
     header.pack_start(&crate::ui::components::main_menu::add_account_button());
     header.pack_end(&crate::ui::components::main_menu::button());
     let developer_console = gtk::Button::builder()
@@ -50,6 +50,7 @@ fn build_with_accounts(
     header.pack_end(&developer_console);
     toolbar.add_top_bar(&header);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    body.append(&sidebar.heading);
     body.append(&sidebar.list);
     body.append(&feedback);
     toolbar.set_content(Some(
@@ -74,10 +75,7 @@ fn build_with_accounts(
         .build();
     version.set_widget_name("dashboard-build-version");
     toolbar.add_bottom_bar(&version);
-    split.set_sidebar(Some(&adw::NavigationPage::new(
-        &toolbar,
-        &gettext("Accounts"),
-    )));
+    split.set_sidebar(Some(&adw::NavigationPage::new(&toolbar, "DriveSync")));
 
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
