@@ -1,0 +1,6 @@
+#alerts .alert-card { padding: 14px 16px; border-radius: 12px; }
+#alerts .conflicts { background: alpha(@error_color, 0.06); }
+#alerts .problems { background: alpha(@warning_color, 0.07); }
+#alerts .alert-icon { padding: 8px; border-radius: 999px; }
+#alerts .conflicts .alert-icon { color: @error_color; background: alpha(@error_color, 0.08); }
+#alerts .problems .alert-icon { color: @warning_color; background: alpha(@warning_color, 0.10); }

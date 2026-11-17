@@ -922,3 +922,30 @@ msgstr "{conflicts} e {problems}."
 
 msgid "Overview"
 msgstr "Visão geral"
+
+msgid "Pending conflicts"
+msgstr "Conflitos pendentes"
+
+msgid "Problems found"
+msgstr "Problemas encontrados"
+
+msgid "No items to review"
+msgstr "Nenhum item para revisar"
+
+msgid "Preview account · Modified on this computer and in Google Drive."
+msgstr "Conta de demonstração · Alterado no computador e no Google Drive."
+
+msgid "Preview account · Permission to access this item is missing."
+msgstr "Conta de demonstração · Sem permissão para acessar este item."
+
+msgid "Keep computer version (simulation)"
+msgstr "Manter versão do computador (simulação)"
+
+msgid "Keep Google Drive version (simulation)"
+msgstr "Manter versão do Google Drive (simulação)"
+
+msgid "Keep both versions (simulation)"
+msgstr "Manter ambas as versões (simulação)"
+
+msgid "Retry after adjustment (simulation)"
+msgstr "Tentar novamente após o ajuste (simulação)"
