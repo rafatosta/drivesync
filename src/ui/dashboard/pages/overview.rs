@@ -1,10 +1,14 @@
 //! Adaptive GNOME account navigation; account settings remain in Preferences.
 use super::sidebar::AccountSidebar;
 use crate::application::Context;
+use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
-use drivesync_engine::ListAccountsRequest;
+use drivesync_engine::{ListAccountsRequest, SynchronizationActivity, SynchronizationStatus};
 use gettextrs::gettext;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 pub(crate) fn build(context: &Context, navigation: &adw::NavigationView) -> adw::NavigationPage {
     build_with_accounts(context, navigation, Vec::new())
@@ -87,10 +91,20 @@ fn build_with_accounts(
     toolbar.add_top_bar(&header);
     let empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
     empty.set_widget_name("dashboard-content");
+    empty.set_margin_top(24);
+    empty.set_margin_bottom(24);
+    empty.set_margin_start(24);
+    empty.set_margin_end(24);
+    let status = SyncStatus::new();
+    empty.append(status.widget());
     toolbar.set_content(Some(&empty));
     split.set_content(Some(&adw::NavigationPage::new(&toolbar, "DriveSync")));
+    let status_subscription = Rc::new(RefCell::new(None::<gtk::glib::JoinHandle<()>>));
     sidebar.on_selected({
         let title = title.downgrade();
+        let status = status.clone();
+        let status_subscription = status_subscription.clone();
+        let context = context.clone();
         move |account| {
             if let Some(title) = title.upgrade() {
                 title.set_title(
@@ -108,6 +122,21 @@ fn build_with_accounts(
                         .unwrap_or(""),
                 );
             }
+            if let Some(subscription) = status_subscription.borrow_mut().take() {
+                subscription.abort();
+            }
+            status.update(&SyncStatusData::default());
+            let (Some(account), Some(engine)) = (account, context.engine.borrow().clone()) else {
+                return;
+            };
+            let mut subscription = engine.observe_synchronization(&account.id);
+            status.update(&presentation_status(&subscription.snapshot()));
+            let status = status.clone();
+            *status_subscription.borrow_mut() = Some(gtk::glib::spawn_future_local(async move {
+                while subscription.changed().await {
+                    status.update(&presentation_status(&subscription.snapshot()));
+                }
+            }));
         }
     });
     sidebar.set_accounts(accounts);
@@ -185,6 +214,25 @@ fn build_with_accounts(
     let page = adw::NavigationPage::new(&bin, "DriveSync");
     page.set_widget_name("drivesync-dashboard");
     page
+}
+
+/// Converts the engine's account snapshot into the reusable GTK presentation model.
+fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
+    use SynchronizationActivity as EngineActivity;
+    let activity = match status.activity {
+        EngineActivity::Idle => SyncActivity::Idle,
+        EngineActivity::Starting | EngineActivity::Scanning => SyncActivity::Scanning,
+        EngineActivity::Analyzing | EngineActivity::Reconciling => SyncActivity::Reconciling,
+        EngineActivity::Uploading => SyncActivity::Upload,
+        EngineActivity::Downloading => SyncActivity::Download,
+    };
+    SyncStatusData {
+        activity,
+        transferred_bytes: status.transferred_bytes,
+        total_bytes: status.total_bytes,
+        synchronized: status.synchronized,
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

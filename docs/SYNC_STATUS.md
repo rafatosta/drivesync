@@ -8,14 +8,15 @@ Overview now acts as a home-page preview, opening with the attention example;
 simulation controls are kept in a collapsed expander below the card.
 
 A presentation adapter calls `SyncStatus::update(&SyncStatusData)` on the GTK
-main thread whenever a state notification arrives. Background producers must
-marshal their events onto that thread before updating GTK. The card itself
-owns no subscription or timer. `SyncStatusData::aggregate` consumes one current
-snapshot per configured account in stable order. Attention counts are summed
-with saturation and take precedence; otherwise the first executing activity wins. Its counters are never combined with unrelated operations. Producers must
-include unknown accounts, remove disconnected accounts and invalidate old
-confirmations when activity or knowledge changes. The adapter owns event ordering
-and rejects notifications from replaced sessions.
+main thread whenever a state notification arrives. The account page subscribes
+to the selected account through `Engine::observe_synchronization`; replacing the
+selection aborts the previous subscription. The adapter maps engine activity
+and byte progress to the presentation model. The card itself owns no
+subscription or timer. `SyncStatusData::aggregate` remains available to
+multi-account producers and consumes one current snapshot per configured
+account in stable order. Attention counts are summed with saturation and take
+precedence; otherwise the first executing activity wins. Its counters are never
+combined with unrelated operations.
 
 Byte progress takes priority over item counts. Missing or zero totals do not
 produce percentages; a spinner indicates ongoing work. Counts are clamped to
@@ -23,12 +24,12 @@ their totals. Idle snapshots hide progress and the spinner. Only explicit
 `synchronized: true` with no activity or attention shows the success message. Unknown idle
 state hides the card. Empty account sets do not imply synchronization.
 
-The production engine currently exposes execution/preparation diagnostics but
-no public global-synchronization confirmation or unified activity subscription.
-This change intentionally does not infer synchronization from those diagnostics
-or poll them. The card is exercised in Developer only; connecting real account
-activity requires a producer with the above guarantees. No internal engine
-contracts were changed.
+The engine subscription is account scoped and read-only. The current engine
+does not provide an authoritative whole-account completion proof, so the
+account page never presents confirmed success from idle or preparation
+readiness. It also does not provide attention counts; those remain available to
+other producers but are not fabricated by this adapter. The Developer Console
+continues to provide isolated, button-driven presentation scenarios.
 
 ## Attention state
 
