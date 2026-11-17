@@ -2,7 +2,7 @@
 //! producer emits a new snapshot; the component performs no polling or engine IO.
 mod models;
 use adw::{gtk, prelude::*};
-use gettextrs::gettext;
+use gettextrs::{gettext, ngettext};
 pub(crate) use models::{SyncActivity, SyncStatusData};
 
 /// Reusable card with one public presentation update boundary.
@@ -21,6 +21,13 @@ impl SyncStatus {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 18);
         root.add_css_class("card");
         root.set_widget_name("sync-status");
+        let css = gtk::CssProvider::new();
+        css.load_from_data("#sync-status image.warning { background-color: alpha(@warning_color, 0.12); border-radius: 999px; padding: 8px; }");
+        gtk::style_context_add_provider_for_display(
+            &root.display(),
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
         let body = gtk::Box::new(gtk::Orientation::Vertical, 18);
         for set in [
             gtk::Widget::set_margin_top,
@@ -81,12 +88,26 @@ impl SyncStatus {
     /// inactivity hides the card instead of making an unsupported success claim.
     pub fn update(&self, data: &SyncStatusData) {
         use SyncActivity::*;
-        let active = data.activity != Idle;
-        self.root.set_visible(active || data.synchronized);
+        let attention = data.needs_attention();
+        let active = !attention && data.activity != Idle;
+        self.root
+            .set_visible(attention || active || data.synchronized);
+        self.icon.set_icon_name(Some(if attention {
+            "dialog-warning-symbolic"
+        } else {
+            "emblem-ok-symbolic"
+        }));
+        self.icon
+            .remove_css_class(if attention { "success" } else { "warning" });
+        self.icon
+            .add_css_class(if attention { "warning" } else { "success" });
+        self.icon.set_pixel_size(if attention { 28 } else { 48 });
         self.icon.set_visible(!active);
         self.spinner.set_visible(active);
         self.spinner.set_spinning(active);
-        self.title.set_label(&gettext(if active {
+        self.title.set_label(&gettext(if attention {
+            "Synchronization needs attention"
+        } else if active {
             "Syncing files"
         } else {
             "Everything is synchronized"
@@ -117,6 +138,9 @@ impl SyncStatus {
                 detail.push_str(&format!(" ({})", gtk::glib::format_size(bytes)));
             }
         }
+        if attention {
+            detail = attention_detail(data.conflicts, data.problems);
+        }
         self.detail.set_label(&detail);
         let fraction = data.fraction();
         self.progress.set_visible(fraction.is_some());
@@ -127,6 +151,30 @@ impl SyncStatus {
                 .map(|n| format!("{:.0}%", n * 100.0))
                 .unwrap_or_default(),
         );
+    }
+}
+
+/// Localized count clauses avoid showing absent categories or incorrect plurals.
+fn attention_detail(conflicts: u64, problems: u64) -> String {
+    let conflicts_text = ngettext(
+        "{count} conflict awaits a decision",
+        "{count} conflicts await a decision",
+        conflicts.min(u32::MAX as u64) as u32,
+    )
+    .replace("{count}", &conflicts.to_string());
+    let problems_text = ngettext(
+        "{count} problem prevents completion",
+        "{count} problems prevent completion",
+        problems.min(u32::MAX as u64) as u32,
+    )
+    .replace("{count}", &problems.to_string());
+    match (conflicts > 0, problems > 0) {
+        (true, true) => gettext("{conflicts} and {problems}.")
+            .replace("{conflicts}", &conflicts_text)
+            .replace("{problems}", &problems_text),
+        (true, false) => format!("{conflicts_text}."),
+        (false, true) => format!("{problems_text}."),
+        (false, false) => String::new(),
     }
 }
 
@@ -163,6 +211,24 @@ mod tests {
         assert!(!card.progress.is_visible());
         assert!(!card.percent.is_visible());
         assert!(card.spinner.is_spinning());
+        card.update(&SyncStatusData {
+            conflicts: 2,
+            problems: 1,
+            synchronized: true,
+            ..Default::default()
+        });
+        assert!(card.widget().is_visible());
+        assert!(card.icon.has_css_class("warning"));
+        assert!(!card.icon.has_css_class("success"));
+        assert!(!card.progress.is_visible());
+        assert!(!card.spinner.is_spinning());
+        assert_eq!(card.detail.label(), attention_detail(2, 1));
+        card.update(&SyncStatusData {
+            synchronized: true,
+            ..Default::default()
+        });
+        assert!(card.icon.has_css_class("success"));
+        assert!(!card.icon.has_css_class("warning"));
         card.update(&SyncStatusData::default());
         assert!(!card.widget().is_visible());
         assert!(!card.spinner.is_spinning());

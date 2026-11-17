@@ -903,3 +903,22 @@ msgstr "Enviando {completed} de {total} arquivos"
 
 msgid "Downloading {completed} of {total} files"
 msgstr "Baixando {completed} de {total} arquivos"
+
+msgid "Synchronization needs attention"
+msgstr "A sincronização precisa de atenção"
+
+msgid "{count} conflict awaits a decision"
+msgid_plural "{count} conflicts await a decision"
+msgstr[0] "{count} conflito aguarda decisão"
+msgstr[1] "{count} conflitos aguardam decisão"
+
+msgid "{count} problem prevents completion"
+msgid_plural "{count} problems prevent completion"
+msgstr[0] "{count} problema impede a conclusão"
+msgstr[1] "{count} problemas impedem a conclusão"
+
+msgid "{conflicts} and {problems}."
+msgstr "{conflicts} e {problems}."
+
+msgid "Overview"
+msgstr "Visão geral"

@@ -26,13 +26,22 @@ pub struct SyncStatusData {
     pub transferred_bytes: Option<u64>,
     pub total_bytes: Option<u64>,
     pub synchronized: bool,
+    /// Conflicts awaiting a user decision; supplied by the presentation producer.
+    pub conflicts: u64,
+    /// Problems preventing completion; no technical error details are retained.
+    pub problems: u64,
 }
 
 impl SyncStatusData {
+    /// Attention takes precedence over activity and success in this single card.
+    pub fn needs_attention(&self) -> bool {
+        self.conflicts > 0 || self.problems > 0
+    }
+
     /// Prefer byte progress, falling back to item progress. Unknown or zero
     /// denominators are indeterminate; over-reported numerators are clamped.
     pub fn fraction(&self) -> Option<f64> {
-        if self.activity == SyncActivity::Idle {
+        if self.needs_attention() || self.activity == SyncActivity::Idle {
             return None;
         }
         [
@@ -48,9 +57,23 @@ impl SyncStatusData {
 
     /// Aggregate one current snapshot per configured account. The first active
     /// account in the caller's stable ordering supplies the predominant activity.
+    /// Attention counts across accounts take precedence, using saturating sums.
     /// No accounts, unknown accounts or active accounts can imply global success.
     /// Progress belongs only to the selected activity, never unrelated totals.
     pub fn aggregate(accounts: &[Self]) -> Self {
+        let conflicts = accounts
+            .iter()
+            .fold(0_u64, |n, s| n.saturating_add(s.conflicts));
+        let problems = accounts
+            .iter()
+            .fold(0_u64, |n, s| n.saturating_add(s.problems));
+        if conflicts > 0 || problems > 0 {
+            return Self {
+                conflicts,
+                problems,
+                ..Self::default()
+            };
+        }
         accounts
             .iter()
             .find(|s| s.activity != SyncActivity::Idle)
@@ -65,6 +88,32 @@ impl SyncStatusData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn attention_overrides_success_and_activity_and_sums_accounts() {
+        let attention = SyncStatusData {
+            conflicts: 2,
+            problems: 1,
+            synchronized: true,
+            activity: SyncActivity::Upload,
+            completed: Some(1),
+            total: Some(2),
+            ..Default::default()
+        };
+        assert!(attention.needs_attention());
+        assert_eq!(attention.fraction(), None);
+        let merged = SyncStatusData::aggregate(&[
+            attention,
+            SyncStatusData {
+                conflicts: u64::MAX,
+                problems: 2,
+                ..Default::default()
+            },
+        ]);
+        assert_eq!(merged.conflicts, u64::MAX);
+        assert_eq!(merged.problems, 3);
+        assert!(!merged.synchronized);
+    }
+
     #[test]
     fn progress_requires_a_valid_pair_and_clamps() {
         let mut s = SyncStatusData {

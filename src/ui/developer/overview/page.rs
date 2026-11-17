@@ -1,6 +1,7 @@
 //! Isolated SyncStatus scenarios; buttons emit presentation updates, never engine work.
 use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
+use gettextrs::gettext;
 
 pub(in crate::ui::developer) fn build() -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -10,12 +11,11 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
     root.set_margin_end(24);
     root.append(
         &gtk::Label::builder()
-            .label("SyncStatus · simulated events")
+            .label(gettext("Overview"))
             .xalign(0.0)
             .css_classes(["title-1"])
             .build(),
     );
-    root.append(&gtk::Label::builder().label("Preview only. These controls do not operate on your accounts. Unconfirmed inactivity hides the card.").wrap(true).xalign(0.0).build());
     let card = SyncStatus::new();
     root.append(card.widget());
     let controls = gtk::FlowBox::builder()
@@ -30,9 +30,22 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
         button.connect_clicked(move |_| card.update(&SyncStatusData::aggregate(&snapshots)));
         controls.insert(&button, -1);
     }
-    root.append(&controls);
+    let simulations = gtk::Expander::builder()
+        .label("Simular estados da interface")
+        .child(
+            &gtk::ScrolledWindow::builder()
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .max_content_height(240)
+                .propagate_natural_height(true)
+                .child(&controls)
+                .build(),
+        )
+        .build();
+    simulations.set_widget_name("overview-simulations");
+    root.append(&simulations);
     card.update(&SyncStatusData {
-        synchronized: true,
+        conflicts: 2,
+        problems: 1,
         ..Default::default()
     });
     root
@@ -45,6 +58,42 @@ fn scenarios() -> Vec<(&'static str, Vec<SyncStatusData>)> {
         ..Default::default()
     };
     let mut scenarios = vec![
+        (
+            "Atenção · 2 conflitos e 1 problema",
+            vec![SyncStatusData {
+                conflicts: 2,
+                problems: 1,
+                ..Default::default()
+            }],
+        ),
+        (
+            "Atenção · 1 conflito",
+            vec![SyncStatusData {
+                conflicts: 1,
+                ..Default::default()
+            }],
+        ),
+        (
+            "Atenção · 2 problemas",
+            vec![SyncStatusData {
+                problems: 2,
+                ..Default::default()
+            }],
+        ),
+        (
+            "Duas contas · atenção",
+            vec![
+                SyncStatusData {
+                    conflicts: 1,
+                    ..Default::default()
+                },
+                SyncStatusData {
+                    conflicts: 1,
+                    problems: 1,
+                    ..Default::default()
+                },
+            ],
+        ),
         ("Confirmed synchronized", vec![confirmed.clone()]),
         ("Idle, unconfirmed", vec![SyncStatusData::default()]),
         (
@@ -122,6 +171,18 @@ mod tests {
         let page = build();
         let controls = page
             .last_child()
+            .unwrap()
+            .downcast::<gtk::Expander>()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<gtk::ScrolledWindow>()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<gtk::Viewport>()
+            .unwrap()
+            .child()
             .unwrap()
             .downcast::<gtk::FlowBox>()
             .unwrap();
