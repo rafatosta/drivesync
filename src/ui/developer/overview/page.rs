@@ -2,6 +2,7 @@
 use crate::ui::components::alerts::{
     AlertDetails, AlertItem, AlertKind, Alerts, FileVersion, ProblemCategory,
 };
+use crate::ui::components::recent_activity::{ActivityItem, ActivityKind, RecentActivity};
 use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
@@ -22,7 +23,11 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
     );
     let navigation = adw::NavigationView::new();
     navigation.set_vexpand(true);
-    let home = adw::NavigationPage::new(&root, &gettext("Overview"));
+    let home_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .child(&root)
+        .build();
+    let home = adw::NavigationPage::new(&home_scroll, &gettext("Overview"));
     navigation.add(&home);
     let card = SyncStatus::new();
     root.append(card.widget());
@@ -61,6 +66,10 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
     });
     root.append(alerts.widget());
     alerts.update(&items.borrow());
+    let recent = Rc::new(RecentActivity::new(&navigation));
+    let now = gtk::glib::DateTime::now_utc().unwrap().to_unix();
+    recent.update(&demo_activity(now), now);
+    root.append(recent.widget());
     let controls = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .max_children_per_line(3)
@@ -79,6 +88,25 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
             alerts.update(&items.borrow());
             card.update(&next);
             *state.borrow_mut() = next;
+        });
+        controls.insert(&button, -1);
+    }
+    for (name, populated) in [
+        ("Atividade · sem histórico", false),
+        ("Atividade · exemplos", true),
+    ] {
+        let button = gtk::Button::with_label(name);
+        let recent = recent.clone();
+        button.connect_clicked(move |_| {
+            let now = gtk::glib::DateTime::now_utc().unwrap().to_unix();
+            recent.update(
+                &if populated {
+                    demo_activity(now)
+                } else {
+                    Vec::new()
+                },
+                now,
+            );
         });
         controls.insert(&button, -1);
     }
@@ -103,6 +131,34 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
     let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shell.append(&navigation);
     shell
+}
+
+/// Completed synthetic events, independent of running activity and alerts.
+fn demo_activity(now: i64) -> Vec<ActivityItem> {
+    [
+        ("Relatório.docx", ActivityKind::Uploaded, 1_200_000, 120),
+        ("Fotos.zip", ActivityKind::Downloaded, 24_600_000, 480),
+        ("Planejamento.pdf", ActivityKind::Updated, 3_400_000, 900),
+        ("Notas.txt", ActivityKind::Uploaded, 4_200, 3600),
+        (
+            "Apresentação.pdf",
+            ActivityKind::Downloaded,
+            8_000_000,
+            86400,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, kind, bytes, age))| ActivityItem {
+        id: format!("preview/activity/{index}"),
+        name: name.into(),
+        path: format!("Documentos/{name}"),
+        account: "Marina · Pessoal".into(),
+        kind,
+        bytes: Some(bytes),
+        completed_at: now - age,
+    })
+    .collect()
 }
 
 /// Synthetic review choices used only in the Developer home preview.
@@ -282,7 +338,19 @@ mod tests {
             .unwrap()
             .downcast::<adw::NavigationView>()
             .unwrap();
-        let home = navigation.visible_page().unwrap().child().unwrap();
+        let home = navigation
+            .visible_page()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<gtk::ScrolledWindow>()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<gtk::Viewport>()
+            .unwrap()
+            .child()
+            .unwrap();
         let controls = home
             .last_child()
             .unwrap()

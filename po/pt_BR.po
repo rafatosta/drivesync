@@ -1042,3 +1042,45 @@ msgstr "Este arquivo foi modificado no computador e no Google Drive."
 
 msgid "Computer storage"
 msgstr "Armazenamento do computador"
+
+msgid "Recent activity"
+msgstr "Atividade recente"
+
+msgid "View all"
+msgstr "Ver todas"
+
+msgid "No recent activity"
+msgstr "Nenhuma atividade recente"
+
+msgid "Completed activities will appear here."
+msgstr "As atividades concluídas aparecerão aqui."
+
+msgid "Activity history"
+msgstr "Histórico de atividades"
+
+msgid "Uploaded"
+msgstr "Enviado"
+
+msgid "Just now"
+msgstr "Agora mesmo"
+
+msgid "Date unavailable"
+msgstr "Data indisponível"
+
+msgid "Completed"
+msgstr "Concluído"
+
+msgid "{count} minute ago"
+msgid_plural "{count} minutes ago"
+msgstr[0] "há {count} minuto"
+msgstr[1] "há {count} minutos"
+
+msgid "{count} hour ago"
+msgid_plural "{count} hours ago"
+msgstr[0] "há {count} hora"
+msgstr[1] "há {count} horas"
+
+msgid "{count} day ago"
+msgid_plural "{count} days ago"
+msgstr[0] "há {count} dia"
+msgstr[1] "há {count} dias"

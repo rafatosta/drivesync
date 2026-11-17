@@ -10,3 +10,5 @@ pub(crate) mod remote_folder_picker;
 pub(crate) mod sync_status;
 
 pub(crate) mod alerts;
+
+pub(crate) mod recent_activity;
