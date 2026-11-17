@@ -1,5 +1,7 @@
 //! Isolated SyncStatus scenarios; buttons emit presentation updates, never engine work.
-use crate::ui::components::alerts::{AlertAction, AlertItem, AlertKind, Alerts};
+use crate::ui::components::alerts::{
+    AlertDetails, AlertItem, AlertKind, Alerts, FileVersion, ProblemCategory,
+};
 use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
@@ -46,12 +48,12 @@ pub(in crate::ui::developer) fn build() -> gtk::Box {
             state.conflicts = items
                 .borrow()
                 .iter()
-                .filter(|i| i.kind == AlertKind::Conflict)
+                .filter(|i| i.kind() == AlertKind::Conflict)
                 .count() as u64;
             state.problems = items
                 .borrow()
                 .iter()
-                .filter(|i| i.kind == AlertKind::Problem)
+                .filter(|i| i.kind() == AlertKind::Problem)
                 .count() as u64;
             card.update(&state);
             alerts.update(&items.borrow());
@@ -109,36 +111,42 @@ fn demo_alerts(data: &SyncStatusData) -> Vec<AlertItem> {
     for index in 0..data.conflicts {
         items.push(AlertItem {
             id: format!("preview/conflict/{index}"),
-            kind: AlertKind::Conflict,
+            account: "Marina · Pessoal".into(),
             title: if index == 0 {
                 "Relatório.docx".into()
             } else {
                 format!("Planejamento {}.ods", index + 1)
             },
-            detail: gettext("Preview account · Modified on this computer and in Google Drive."),
-            actions: [
-                ("local", "Keep computer version (simulation)"),
-                ("remote", "Keep Google Drive version (simulation)"),
-                ("both", "Keep both versions (simulation)"),
-            ]
-            .into_iter()
-            .map(|(id, label)| AlertAction {
-                id: id.into(),
-                label: gettext(label),
-            })
-            .collect(),
+            detail: gettext("This file was modified on this computer and in Google Drive."),
+            details: AlertDetails::Conflict {
+                local: FileVersion {
+                    modified: Some(gettext("Modified today at 10:35")),
+                    bytes: Some(2_400_000),
+                },
+                remote: FileVersion {
+                    modified: Some(gettext("Modified today at 10:42")),
+                    bytes: Some(2_600_000),
+                },
+            },
         });
     }
     for index in 0..data.problems {
         items.push(AlertItem {
             id: format!("preview/problem/{index}"),
-            kind: AlertKind::Problem,
-            title: format!("Documentos/Arquivo {}.pdf", index + 1),
-            detail: gettext("Preview account · Permission to access this item is missing."),
-            actions: vec![AlertAction {
-                id: "retry".into(),
-                label: gettext("Retry after adjustment (simulation)"),
-            }],
+            account: "Marina · Pessoal".into(),
+            title: match index % 4 {
+                0 => format!("Documentos/Arquivo {}.pdf", index + 1),
+                1 => "Google Drive".into(),
+                2 => gettext("Computer storage"),
+                _ => "GoogleDrive".into(),
+            },
+            detail: gettext("An adjustment is required before synchronization can continue."),
+            details: AlertDetails::Problem(match index % 4 {
+                0 => ProblemCategory::Permission,
+                1 => ProblemCategory::Authentication,
+                2 => ProblemCategory::Storage,
+                _ => ProblemCategory::LocalFolder,
+            }),
         });
     }
     items
@@ -151,6 +159,13 @@ fn scenarios() -> Vec<(&'static str, Vec<SyncStatusData>)> {
         ..Default::default()
     };
     let mut scenarios = vec![
+        (
+            "Problemas · todas as categorias",
+            vec![SyncStatusData {
+                problems: 4,
+                ..Default::default()
+            }],
+        ),
         (
             "Atenção · 2 conflitos e 1 problema",
             vec![SyncStatusData {

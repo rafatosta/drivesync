@@ -1,91 +1,156 @@
-//! Isolated review navigation and intent delivery, without engine operations.
+//! Isolated review, confirmation, cancellation and stale-intent protection.
 use super::*;
 use std::cell::RefCell;
+fn find(widget: &gtk::Widget, name: &str) -> gtk::Widget {
+    fn search(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+        if widget.widget_name() == name {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(w) = child {
+            if let Some(found) = search(&w, name) {
+                return Some(found);
+            }
+            child = w.next_sibling();
+        }
+        None
+    }
+    search(widget, name).unwrap_or_else(|| panic!("Missing widget {name}"))
+}
+fn button(nav: &adw::NavigationView, name: &str) -> gtk::Button {
+    find(nav.visible_page().unwrap().upcast_ref(), name)
+        .downcast()
+        .unwrap()
+}
 #[test]
 #[ignore = "requires an isolated display"]
 fn alerts_navigation_and_single_category_layout() {
     adw::init().unwrap();
-    let navigation = adw::NavigationView::new();
+    let nav = adw::NavigationView::new();
     let home = adw::NavigationPage::new(&gtk::Box::new(gtk::Orientation::Vertical, 0), "Home");
-    navigation.add(&home);
+    nav.add(&home);
     let received = Rc::new(RefCell::new(Vec::new()));
     let output = received.clone();
-    let alerts = Alerts::new(&navigation, move |id, action| {
+    let alerts = Alerts::new(&nav, move |id, action| {
         output.borrow_mut().push((id.to_owned(), action.to_owned()))
     });
     let conflict = AlertItem {
         id: "account/conflict".into(),
-        kind: AlertKind::Conflict,
+        account: "Marina · Pessoal".into(),
         title: "<b>literal</b>".into(),
-        detail: "Computer and Drive".into(),
-        actions: vec![AlertAction {
-            id: "both".into(),
-            label: "Keep both".into(),
-        }],
+        detail: "Changed on both sides".into(),
+        details: AlertDetails::Conflict {
+            local: FileVersion {
+                modified: None,
+                bytes: None,
+            },
+            remote: FileVersion {
+                modified: Some("10:42".into()),
+                bytes: Some(2_600_000),
+            },
+        },
     };
     let problem = AlertItem {
-        kind: AlertKind::Problem,
         id: "account/problem".into(),
+        details: AlertDetails::Problem(ProblemCategory::Permission),
         ..conflict.clone()
     };
     alerts.update(&[conflict.clone(), problem.clone()]);
     assert!(alerts.conflicts.button.is_visible());
     assert!(alerts.problems.button.is_visible());
     assert!(alerts.widget().is_homogeneous());
-    assert!(alerts.conflicts.button.hexpands());
-    assert!(alerts.problems.button.hexpands());
     alerts.conflicts.button.emit_clicked();
+    let open = || {
+        alerts
+            .conflicts
+            .list
+            .row_at_index(0)
+            .unwrap()
+            .downcast::<adw::ActionRow>()
+            .unwrap()
+            .emit_by_name::<()>("activated", &[])
+    };
+    open();
     assert_eq!(
-        navigation.visible_page().unwrap().tag().as_deref(),
-        Some("alert-conflicts")
+        nav.visible_page().unwrap().tag().as_deref(),
+        Some("alert-review")
     );
-    let row = alerts
-        .conflicts
-        .list
-        .row_at_index(0)
+    assert!(
+        find(nav.visible_page().unwrap().upcast_ref(), "resolve-both")
+            .downcast::<gtk::CheckButton>()
+            .unwrap()
+            .is_active()
+    );
+    button(&nav, "review-cancel").emit_clicked();
+    assert!(received.borrow().is_empty());
+    for action in ["both", "local", "remote"] {
+        open();
+        find(
+            nav.visible_page().unwrap().upcast_ref(),
+            &format!("resolve-{action}"),
+        )
+        .downcast::<gtk::CheckButton>()
         .unwrap()
-        .downcast::<adw::ExpanderRow>()
-        .unwrap();
-    assert!(!row.uses_markup());
-    row.set_expanded(true);
-    // Locate the rendered action without coupling to libadwaita's private layout.
-    fn click_action(widget: &gtk::Widget) -> bool {
-        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
-            if button.label().as_deref() == Some("Keep both") {
-                button.emit_clicked();
-                return true;
-            }
-        }
-        let mut child = widget.first_child();
-        while let Some(w) = child {
-            if click_action(&w) {
-                return true;
-            }
-            child = w.next_sibling();
-        }
-        false
+        .set_active(true);
+        let confirm = button(&nav, "review-confirm");
+        confirm.emit_clicked();
+        confirm.emit_clicked();
+        assert_eq!(
+            received.borrow().last().unwrap(),
+            &(conflict.id.clone(), action.to_owned())
+        );
     }
-    assert!(click_action(row.upcast_ref()));
-    assert_eq!(
-        *received.borrow(),
-        vec![("account/conflict".into(), "both".into())]
-    );
-    alerts.update(&[problem]);
+    assert_eq!(received.borrow().len(), 3);
+    open();
+    let stale = button(&nav, "review-confirm");
+    alerts.update(std::slice::from_ref(&problem));
+    stale.emit_clicked();
+    assert_eq!(received.borrow().len(), 3);
     assert!(!alerts.conflicts.button.is_visible());
     assert!(alerts.problems.button.is_visible());
     assert!(alerts.conflicts.empty.is_visible());
-    navigation.pop();
+    nav.pop();
     alerts.problems.button.emit_clicked();
-    assert_eq!(
-        navigation.visible_page().unwrap().tag().as_deref(),
-        Some("alert-problems")
-    );
+    for (category, expected) in [
+        (ProblemCategory::Authentication, "reconnect"),
+        (ProblemCategory::Permission, "permissions"),
+        (ProblemCategory::Storage, "storage"),
+        (ProblemCategory::LocalFolder, "folder"),
+    ] {
+        alerts.update(&[AlertItem {
+            details: AlertDetails::Problem(category),
+            ..problem.clone()
+        }]);
+        alerts
+            .problems
+            .list
+            .row_at_index(0)
+            .unwrap()
+            .downcast::<adw::ActionRow>()
+            .unwrap()
+            .emit_by_name::<()>("activated", &[]);
+        button(&nav, "review-confirm").emit_clicked();
+        assert_eq!(
+            received.borrow().last().unwrap(),
+            &(problem.id.clone(), expected.into())
+        );
+    }
+    alerts
+        .problems
+        .list
+        .row_at_index(0)
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap()
+        .emit_by_name::<()>("activated", &[]);
+    button(&nav, "review-close").emit_clicked();
+    assert_eq!(received.borrow().len(), 7);
     alerts.update(&[conflict]);
     assert!(alerts.conflicts.button.is_visible());
     assert!(!alerts.problems.button.is_visible());
     alerts.update(&[]);
     assert!(!alerts.widget().is_visible());
     assert!(alerts.problems.empty.is_visible());
-    navigation.pop();
-    assert_eq!(navigation.visible_page(), Some(home));
+    nav.pop();
+    assert_eq!(nav.visible_page(), Some(home));
 }

@@ -6,30 +6,9 @@ use std::rc::Rc;
 
 type ActionHandler = Rc<dyn Fn(&str, &str)>;
 
-/// Category controlling the summary card and its review page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AlertKind {
-    Conflict,
-    Problem,
-}
-
-/// A review action supplied by the presentation layer, not an engine command.
-#[derive(Clone)]
-pub(crate) struct AlertAction {
-    pub id: String,
-    pub label: String,
-}
-
-/// Display-safe item details and available adjustments. IDs must be unique
-/// within this component; producers should qualify them by account.
-#[derive(Clone)]
-pub(crate) struct AlertItem {
-    pub id: String,
-    pub kind: AlertKind,
-    pub title: String,
-    pub detail: String,
-    pub actions: Vec<AlertAction>,
-}
+mod models;
+mod review;
+pub(crate) use models::{AlertDetails, AlertItem, AlertKind, FileVersion, ProblemCategory};
 
 /// Two equal-width buttons; hidden categories release their space to the other.
 /// Review uses NavigationView pages in the same window, including back navigation.
@@ -38,6 +17,8 @@ pub(crate) struct Alerts {
     conflicts: Category,
     problems: Category,
     on_action: ActionHandler,
+    navigation: gtk::glib::WeakRef<adw::NavigationView>,
+    revision: Rc<std::cell::Cell<u64>>,
 }
 struct Category {
     button: gtk::Button,
@@ -83,6 +64,8 @@ impl Alerts {
             conflicts,
             problems,
             on_action: Rc::new(on_action),
+            navigation: navigation.downgrade(),
+            revision: Rc::new(std::cell::Cell::new(0)),
         };
         result.update(&[]);
         result
@@ -94,10 +77,29 @@ impl Alerts {
     /// Replace counts and both review lists, including any currently open page.
     /// No callback is emitted by rendering; an empty list never implies sync success.
     pub fn update(&self, items: &[AlertItem]) {
-        self.conflicts
-            .update(items, AlertKind::Conflict, &self.on_action);
-        self.problems
-            .update(items, AlertKind::Problem, &self.on_action);
+        self.revision.set(self.revision.get().wrapping_add(1));
+        if let Some(nav) = self.navigation.upgrade() {
+            if nav
+                .visible_page()
+                .is_some_and(|p| p.tag().as_deref() == Some("alert-review"))
+            {
+                nav.pop();
+            }
+        }
+        self.conflicts.update(
+            items,
+            AlertKind::Conflict,
+            &self.on_action,
+            &self.navigation,
+            &self.revision,
+        );
+        self.problems.update(
+            items,
+            AlertKind::Problem,
+            &self.on_action,
+            &self.navigation,
+            &self.revision,
+        );
         self.root.set_visible(!items.is_empty());
     }
 }
@@ -183,11 +185,18 @@ impl Category {
             empty,
         }
     }
-    fn update(&self, items: &[AlertItem], kind: AlertKind, on_action: &ActionHandler) {
+    fn update(
+        &self,
+        items: &[AlertItem],
+        kind: AlertKind,
+        on_action: &ActionHandler,
+        navigation: &gtk::glib::WeakRef<adw::NavigationView>,
+        revision: &Rc<std::cell::Cell<u64>>,
+    ) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        let selected: Vec<_> = items.iter().filter(|item| item.kind == kind).collect();
+        let selected: Vec<_> = items.iter().filter(|item| item.kind() == kind).collect();
         self.button.set_visible(!selected.is_empty());
         self.count.set_label(&selected.len().to_string());
         self.button
@@ -203,26 +212,29 @@ impl Category {
         self.list.set_visible(!selected.is_empty());
         self.empty.set_visible(selected.is_empty());
         for item in selected {
-            let row = adw::ExpanderRow::builder()
+            let row = adw::ActionRow::builder()
                 .title(&item.title)
-                .subtitle(&item.detail)
+                .subtitle(format!(
+                    "{} · {}",
+                    item.account,
+                    match &item.details {
+                        AlertDetails::Problem(category) => category.title(),
+                        AlertDetails::Conflict { .. } => item.detail.clone(),
+                    }
+                ))
+                .activatable(true)
                 .build();
             row.set_use_markup(false);
-            let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
-            actions.set_margin_top(12);
-            actions.set_margin_bottom(12);
-            actions.set_margin_start(12);
-            actions.set_margin_end(12);
-            for action in &item.actions {
-                let button = gtk::Button::with_label(&action.label);
-                let id = item.id.clone();
-                let action_id = action.id.clone();
-                let callback = on_action.clone();
-                button.connect_clicked(move |_| callback(&id, &action_id));
-                actions.append(&button);
-            }
-            row.set_enable_expansion(!item.actions.is_empty());
-            row.add_row(&actions);
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let item = item.clone();
+            let nav = navigation.clone();
+            let revision = revision.clone();
+            let callback = on_action.clone();
+            row.connect_activated(move |_| {
+                if let Some(nav) = nav.upgrade() {
+                    review::open(&nav, &item, callback.clone(), revision.clone());
+                }
+            });
             self.list.append(&row);
         }
     }

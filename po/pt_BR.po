@@ -949,3 +949,96 @@ msgstr "Manter ambas as versões (simulação)"
 
 msgid "Retry after adjustment (simulation)"
 msgstr "Tentar novamente após o ajuste (simulação)"
+
+msgid "Account needs reconnection"
+msgstr "A conta precisa ser reconectada"
+
+msgid "Access permission missing"
+msgstr "Sem permissão de acesso"
+
+msgid "Storage is full"
+msgstr "Armazenamento cheio"
+
+msgid "Local folder unavailable"
+msgstr "Pasta local indisponível"
+
+msgid "Reconnect account"
+msgstr "Reconectar conta"
+
+msgid "Review permissions"
+msgstr "Revisar permissões"
+
+msgid "Free up space"
+msgstr "Liberar espaço"
+
+msgid "Select local folder"
+msgstr "Selecionar pasta local"
+
+msgid "Modification time unavailable"
+msgstr "Data de modificação indisponível"
+
+msgid "Size unavailable"
+msgstr "Tamanho indisponível"
+
+msgid "Resolve conflict"
+msgstr "Resolver conflito"
+
+msgid "Fix problem"
+msgstr "Corrigir problema"
+
+msgid "Close review"
+msgstr "Fechar revisão"
+
+msgid "Local version"
+msgstr "Versão local"
+
+msgid "Google Drive version"
+msgstr "Versão no Google Drive"
+
+msgid "How would you like to resolve this?"
+msgstr "Como deseja resolver?"
+
+msgid "Keep both versions"
+msgstr "Manter as duas versões"
+
+msgid "Both versions will be preserved with different names."
+msgstr "As duas versões serão preservadas com nomes diferentes."
+
+msgid "Use local version"
+msgstr "Usar a versão local"
+
+msgid "The computer version will replace the Google Drive version."
+msgstr "A versão do computador substituirá a do Google Drive."
+
+msgid "Use Google Drive version"
+msgstr "Usar a versão do Google Drive"
+
+msgid "The cloud version will replace the computer version."
+msgstr "A versão da nuvem substituirá a do computador."
+
+msgid "Reconnect this account to allow synchronization to continue."
+msgstr "Reconecte esta conta para permitir que a sincronização continue."
+
+msgid "Check your access to this item and grant the required permission."
+msgstr "Verifique seu acesso a este item e conceda a permissão necessária."
+
+msgid "Free up space on the affected storage before continuing."
+msgstr "Libere espaço no armazenamento afetado antes de continuar."
+
+msgid "Check that the local folder is accessible or choose it again."
+msgstr "Verifique se a pasta local está acessível ou selecione-a novamente."
+
+msgid "Modified today at 10:35"
+msgstr "Modificado hoje às 10:35"
+
+msgid "Modified today at 10:42"
+msgstr "Modificado hoje às 10:42"
+
+msgid "An adjustment is required before synchronization can continue."
+msgstr "É necessário um ajuste para que a sincronização continue."
+
+msgid "This file was modified on this computer and in Google Drive."
+msgstr "Este arquivo foi modificado no computador e no Google Drive."
+
+msgid "Computer storage"
+msgstr "Armazenamento do computador"
