@@ -140,6 +140,11 @@ pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> R
     };
     let action = match (raw.source, evidence.removed, file.is_some()) {
         (RemoteObservationSource::Capture, _, true) => FileEventAction::SnapshotObserved,
+        (RemoteObservationSource::Changes, _, true)
+            if file.as_ref().is_some_and(|file| file.trashed == Some(true)) =>
+        {
+            FileEventAction::RemovedFromScope
+        }
         (RemoteObservationSource::Changes, Some(true), false) => FileEventAction::RemovedFromScope,
         (RemoteObservationSource::Changes, _, true) => FileEventAction::StateChanged,
         _ => FileEventAction::Unclassified,

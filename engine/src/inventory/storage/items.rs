@@ -134,19 +134,28 @@ fn record(
     if *presence == PresenceState::Present && file.data.is_none() {
         return Err(failure(InventoryError::MissingObservation));
     }
-    if *presence == PresenceState::AbsentConfirmed
-        && (file.data.is_some()
-            || !proof.complete_scope
-            || proof
+    if *presence == PresenceState::AbsentConfirmed {
+        let explicit_remote_removal = remote
+            && proof.source == ObservationSource::RemoteChange
+            && file.event.action == FileEventAction::RemovedFromScope
+            && matches!(
+                &file.data,
+                Some(FileData::Remote(remote))
+                    if remote.trashed == MetadataValue::Known(true)
+            );
+        let complete_listing = proof.complete_scope
+            && proof
                 .scan_or_generation
                 .as_ref()
-                .is_none_or(|s| s.trim().is_empty())
-            || !matches!(
+                .is_some_and(|s| !s.trim().is_empty())
+            && matches!(
                 proof.source,
                 ObservationSource::LocalScan | ObservationSource::RemoteListing
-            ))
-    {
-        return Err(failure(InventoryError::UnconfirmedAbsence));
+            )
+            && file.data.is_none();
+        if !explicit_remote_removal && !complete_listing {
+            return Err(failure(InventoryError::UnconfirmedAbsence));
+        }
     }
     let digest = Sha256::digest(
         serde_json::to_vec(&(file, presence, proof))

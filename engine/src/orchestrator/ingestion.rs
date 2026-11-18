@@ -84,6 +84,12 @@ pub(super) fn ingest(
     }
     if file.data.is_none() && existing.is_none() {
         if remote {
+            if file.event.action == FileEventAction::RemovedFromScope {
+                return Ok(Ingested {
+                    item: None,
+                    analyze_all: true,
+                });
+            }
             return Err(PreparationFailure::InvalidObservation(file.id.clone()));
         }
         // A vanished, never-associated local locator cannot become an invented
@@ -104,7 +110,16 @@ pub(super) fn ingest(
             .map(|item| ObservationTarget::Existing(item.id.clone()))
             .unwrap_or(ObservationTarget::NewItem)
     };
-    let presence = if file.data.is_some() {
+    let remote_trashed = remote
+        && file.event.action == FileEventAction::RemovedFromScope
+        && matches!(
+            &file.data,
+            Some(FileData::Remote(remote))
+                if remote.trashed == MetadataValue::Known(true)
+        );
+    let presence = if remote_trashed {
+        PresenceState::AbsentConfirmed
+    } else if file.data.is_some() {
         PresenceState::Present
     } else {
         PresenceState::Unknown
@@ -117,7 +132,7 @@ pub(super) fn ingest(
         },
         observed_at: file.observed_at,
         scan_or_generation: None,
-        complete_scope: false,
+        complete_scope: remote_trashed,
     };
     let expected_revision = existing.map(|item| item.revision);
     let result = if remote {

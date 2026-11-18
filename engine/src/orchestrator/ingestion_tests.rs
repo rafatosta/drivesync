@@ -196,13 +196,14 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     );
 }
 #[test]
-fn remote_removal_keeps_presence_unknown_and_scope_warnings_do_not_invent_items() {
+fn remote_scope_removal_keeps_presence_unknown_without_inventing_items() {
     let (_tree, inventory, identity) = setup();
     let mut file = remote_file("present", "remote", m::MetadataValue::Known("file".into()));
     let id = ingest(&inventory, &file, &identity).unwrap().item.unwrap();
     file.id = m::FileId("removed".into());
     file.data = None;
     file.event.current = None;
+    file.event.action = m::FileEventAction::RemovedFromScope;
     file.event.remote.as_mut().unwrap().removed = Some(true);
     ingest(&inventory, &file, &identity).unwrap();
     let observed = item(&inventory, id);

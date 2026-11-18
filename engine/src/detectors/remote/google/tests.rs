@@ -268,9 +268,12 @@ fn changes_preserve_metadata_and_removal_identity_without_classifying_actions() 
             file.event.action,
             match file.event.remote.as_ref().unwrap().source {
                 RemoteObservationSource::Capture => FileEventAction::SnapshotObserved,
-                RemoteObservationSource::Changes if file.data.is_some() => {
-                    FileEventAction::StateChanged
+                RemoteObservationSource::Changes if matches!(&file.data, Some(FileData::Remote(remote)) if remote.trashed == MetadataValue::Known(true)) =>
+                {
+                    FileEventAction::RemovedFromScope
                 }
+                RemoteObservationSource::Changes if file.data.is_some() =>
+                    FileEventAction::StateChanged,
                 RemoteObservationSource::Changes => FileEventAction::RemovedFromScope,
             }
         );

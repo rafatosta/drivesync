@@ -167,9 +167,21 @@ impl File {
             return invalid();
         }
         if self.event.action == FileEventAction::RemovedFromScope
-            && self.event.remote.as_ref().is_none_or(|event| {
-                event.source != RemoteObservationSource::Changes || event.removed != Some(true)
-            })
+            && (self
+                .event
+                .remote
+                .as_ref()
+                .is_none_or(|event| event.source != RemoteObservationSource::Changes)
+                || (self
+                    .event
+                    .remote
+                    .as_ref()
+                    .is_some_and(|event| event.removed != Some(true))
+                    && !matches!(
+                        &self.data,
+                        Some(FileData::Remote(remote))
+                            if remote.trashed == MetadataValue::Known(true)
+                    )))
         {
             return invalid();
         }
@@ -351,9 +363,7 @@ impl File {
             || self.coverage == ObservationCoverage::Unavailable
             || matches!(
                 self.event.action,
-                FileEventAction::Deleted
-                    | FileEventAction::RemovedFromScope
-                    | FileEventAction::ScopeUnavailable
+                FileEventAction::Deleted | FileEventAction::ScopeUnavailable
             )
         {
             return invalid();
@@ -371,11 +381,19 @@ impl File {
             FileEventAction::StateChanged
                 if self.event.remote.as_ref().is_none_or(|event| {
                     event.source != RemoteObservationSource::Changes || event.removed == Some(true)
+                }) || remote.trashed == MetadataValue::Known(true) =>
+            {
+                return invalid();
+            }
+            FileEventAction::RemovedFromScope
+                if self.event.remote.as_ref().is_none_or(|event| {
+                    event.source != RemoteObservationSource::Changes
+                        || (event.removed != Some(true)
+                            && remote.trashed != MetadataValue::Known(true))
                 }) =>
             {
                 return invalid();
             }
-            FileEventAction::RemovedFromScope => return invalid(),
             _ => {}
         }
         for location in [&self.event.previous, &self.event.current]
