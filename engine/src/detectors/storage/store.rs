@@ -650,6 +650,59 @@ impl Store {
     pub(crate) fn release(&self, id: &BatchId) -> QueueResult<u32> {
         self.finish(id, None)
     }
+    /// Extends an active batch lease without changing its reserved events.
+    ///
+    /// The new expiry is measured from the current queue clock. Expired or
+    /// completed leases are rejected so an old worker cannot reclaim ownership.
+    pub(crate) fn renew(&self, id: &BatchId, duration: Duration) -> QueueResult<()> {
+        let millis: i64 = duration
+            .as_millis()
+            .try_into()
+            .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
+        if millis <= 0 || millis > 3_600_000 {
+            return Err(QueueFailure::new(QueueError::InvalidRequest));
+        }
+        self.run(false, |connection, now| {
+            let expires = now
+                .checked_add(millis)
+                .ok_or_else(|| QueueFailure::new(QueueError::InvalidRequest))?;
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql)?;
+            let lease: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT state,expires FROM leases WHERE id=?1",
+                    [&id.0],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(sql)?;
+            let Some((state, current_expiry)) = lease else {
+                return Err(QueueFailure::new(QueueError::InvalidLease));
+            };
+            if state != 0 {
+                return Err(QueueFailure::new(if state == 3 {
+                    QueueError::LeaseExpired
+                } else {
+                    QueueError::InvalidLease
+                }));
+            }
+            if current_expiry <= now {
+                return Err(QueueFailure::new(QueueError::LeaseExpired));
+            }
+            let updated = tx
+                .execute(
+                    "UPDATE leases SET expires=?1 WHERE id=?2 AND state=0 AND expires>?3",
+                    params![expires, id.0.as_str(), now],
+                )
+                .map_err(sql)?;
+            if updated != 1 {
+                return Err(QueueFailure::new(QueueError::LeaseExpired));
+            }
+            tx.commit().map_err(sql)?;
+            Ok(())
+        })
+    }
     fn finish(&self, id: &BatchId, disposition: Option<EventDisposition>) -> QueueResult<u32> {
         self.run(false, |connection, now| {
             let tx = connection

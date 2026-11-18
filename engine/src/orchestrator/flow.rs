@@ -22,6 +22,8 @@ use std::{
     thread::JoinHandle,
     time::Duration,
 };
+const EVENT_LEASE_DURATION: Duration = Duration::from_secs(300);
+const EVENT_LEASE_RENEWAL_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Wakeups carry availability only; no in-memory event backlog exists here.
 pub(super) struct Wake {
@@ -259,6 +261,14 @@ struct Lease {
     id: Option<BatchId>,
 }
 impl Lease {
+    fn renew(&self) -> Result<(), PreparationFailure> {
+        self.detector
+            .renew_events(
+                self.id.as_ref().ok_or(PreparationFailure::Internal)?,
+                EVENT_LEASE_DURATION,
+            )
+            .map_err(PreparationFailure::Detector)
+    }
     fn acknowledge(&mut self) -> Result<u32, PreparationFailure> {
         let id = self
             .id
@@ -353,13 +363,12 @@ fn consume(
                 .lock()
                 .map_err(|_| PreparationFailure::Internal)?;
             context.current(stop)?;
-            // Bounded to the public queue maximum; five minutes covers normal
-            // reconciliation scans. Expiry is an explicit safe failure, never an ack.
+            // The batch is renewed while its observations and resulting operations run.
             let batch = context
                 .detector
                 .take_events(TakeEventsRequest {
                     max_events: 64,
-                    lease_duration: Duration::from_secs(300),
+                    lease_duration: EVENT_LEASE_DURATION,
                 })
                 .map_err(PreparationFailure::Detector)?
                 .batch;
@@ -414,11 +423,39 @@ async fn process(
         detector: context.detector.clone(),
         id: batch.batch_id,
     };
+    let processing = process_files(context, stop, batch.files);
+    tokio::pin!(processing);
+    let complete = loop {
+        tokio::select! {
+            result = &mut processing => break result?,
+            _ = tokio::time::sleep(EVENT_LEASE_RENEWAL_INTERVAL) => {
+                context.current(stop)?;
+                lease.renew()?;
+            },
+        }
+    };
+    if !complete {
+        return Ok(false);
+    }
+    context.current(stop)?;
+    let count = lease.acknowledge()?;
+    let mut snapshot = context.snapshot.lock().unwrap_or_else(|e| e.into_inner());
+    if context.epoch.load(Ordering::Acquire) == context.expected {
+        snapshot.events_processed = snapshot.events_processed.saturating_add(u64::from(count));
+    }
+    Ok(true)
+}
+
+async fn process_files(
+    context: &Context,
+    stop: &AtomicBool,
+    files: Vec<Observation>,
+) -> Result<bool, PreparationFailure> {
     let mut ids = BTreeSet::new();
     let mut scan_local = false;
     let mut all = false;
-    let total = batch.files.len() as u64;
-    for (index, file) in batch.files.into_iter().enumerate() {
+    let total = files.len() as u64;
+    for (index, file) in files.into_iter().enumerate() {
         context.current(stop)?;
         context.publish_event(&file, index as u64, total);
         let ingested = ingestion::ingest(&context.inventory, &file, &context.identity)?;
@@ -491,11 +528,6 @@ async fn process(
             .await?;
     }
     context.current(stop)?;
-    let count = lease.acknowledge()?;
-    let mut snapshot = context.snapshot.lock().unwrap_or_else(|e| e.into_inner());
-    if context.epoch.load(Ordering::Acquire) == context.expected {
-        snapshot.events_processed = snapshot.events_processed.saturating_add(u64::from(count));
-    }
     Ok(true)
 }
 

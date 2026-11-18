@@ -328,6 +328,17 @@ impl Detector {
             batch: self.store.claim(request)?,
         })
     }
+    /// Extends the active event batch lease while the engine processes it.
+    ///
+    /// Returns an error if the batch has already expired or been completed.
+    pub(crate) fn renew_events(
+        &self,
+        batch_id: &BatchId,
+        lease_duration: std::time::Duration,
+    ) -> DetectorResult<()> {
+        self.store.renew(batch_id, lease_duration)?;
+        Ok(())
+    }
     pub fn acknowledge(
         &self,
         request: AcknowledgeEventsRequest,

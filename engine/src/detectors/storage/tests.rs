@@ -210,6 +210,37 @@ fn leases_survive_reopen_expire_release_and_reject_foreign_or_wrong_ack() {
         .acknowledge(&next, EventDisposition::Processed)
         .is_err());
 }
+
+#[test]
+fn renewed_lease_can_be_acknowledged_and_expired_lease_cannot_be_renewed() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    store.enqueue(&tree.event("renewed")).unwrap();
+    let renewed = store.claim(request()).unwrap().batch_id.unwrap();
+
+    clock.store(1190, Ordering::SeqCst);
+    store.renew(&renewed, Duration::from_millis(200)).unwrap();
+    clock.store(1300, Ordering::SeqCst);
+    assert_eq!(
+        store
+            .acknowledge(&renewed, EventDisposition::Processed)
+            .unwrap(),
+        1
+    );
+
+    store.enqueue(&tree.event("expired")).unwrap();
+    let expired = store.claim(request()).unwrap().batch_id.unwrap();
+    clock.store(1501, Ordering::SeqCst);
+    assert_eq!(
+        store
+            .renew(&expired, Duration::from_millis(200))
+            .unwrap_err()
+            .kind,
+        QueueError::LeaseExpired
+    );
+}
+
 #[test]
 fn independent_connections_cannot_claim_the_same_ordered_batch() {
     let tree = Tree::new();
