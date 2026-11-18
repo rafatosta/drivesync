@@ -878,6 +878,7 @@ fn original_remote_json_survives_reopen_delivery_and_ack_without_rewriting() {
     let file = batch.files[0].clone();
     assert_eq!(file.id, raw.id);
     assert_eq!(file.observed_at, raw.observed_at);
+    assert_eq!(file.causal_order, None);
     let Some(FileData::Remote(metadata)) = &file.data else {
         panic!()
     };

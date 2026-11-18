@@ -105,7 +105,7 @@ fn item(inventory: &InventoryManager, id: SyncItemId) -> SyncItem {
         .unwrap()
 }
 #[test]
-fn incomparable_observations_preserve_state_and_request_one_scoped_revalidation() {
+fn incomparable_receipt_replay_reissues_scoped_revalidation_after_interruption() {
     let (_tree, inventory, identity) = setup();
     let mut first = remote_file(
         "ordered",
@@ -141,8 +141,79 @@ fn incomparable_observations_preserve_state_and_request_one_scoped_revalidation(
     assert_eq!(item(&inventory, current_id.clone()).revision, revision);
 
     let replay = ingest(&inventory, &unknown, &identity).unwrap();
-    assert_eq!(replay.revalidate, None);
+    assert_eq!(replay.revalidate, result.revalidate);
     assert!(!replay.analyze_all);
+}
+
+#[test]
+fn incomparable_revalidation_outbox_survives_reopen_until_an_observation_applies() {
+    let (tree, inventory, identity) = setup();
+    let mut first = remote_file(
+        "outbox-initial",
+        "remote",
+        m::MetadataValue::Known("current".into()),
+    );
+    if let Some(m::FileData::Remote(remote)) = &mut first.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    let item_id = ingest(&inventory, &first, &identity).unwrap().item.unwrap();
+    let mut uncertain = remote_file(
+        "outbox-uncertain",
+        "remote",
+        m::MetadataValue::Known("unknown".into()),
+    );
+    uncertain.causal_order = None;
+    if let Some(m::FileData::Remote(remote)) = &mut uncertain.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    assert_eq!(
+        ingest(&inventory, &uncertain, &identity)
+            .unwrap()
+            .revalidate,
+        Some(uncertain.scope.clone())
+    );
+    assert_eq!(inventory.pending_revalidations().unwrap().len(), 1);
+    drop(inventory);
+
+    let reopened = InventoryManager::open(tree.request()).unwrap().inventory;
+    let pending = reopened.pending_revalidations().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].0, item_id);
+    assert!(pending[0].1);
+    assert_eq!(pending[0].2, uncertain.scope);
+    assert_eq!(pending[0].3, uncertain.id.0);
+
+    let mut verified = remote_file(
+        "outbox-revalidated",
+        "remote",
+        m::MetadataValue::Known("verified".into()),
+    );
+    verified.causal_order = Some(i64::MAX as u64);
+    if let Some(m::FileData::Remote(remote)) = &mut verified.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    let current = item(&reopened, item_id.clone());
+    assert_eq!(
+        reopened
+            .record_remote(RecordRemoteObservation {
+                selector: ObservationTarget::Existing(item_id),
+                expected_revision: Some(current.revision),
+                observation: crate::inventory::RemoteObservation {
+                    observed: verified,
+                    presence: PresenceState::Present,
+                    proof: ObservationProof {
+                        source: ObservationSource::RemoteChange,
+                        observed_at: Timestamp { unix_millis: 5 },
+                        scan_or_generation: None,
+                        complete_scope: false,
+                    },
+                },
+            })
+            .unwrap()
+            .disposition,
+        ObservationDisposition::Applied
+    );
+    assert!(reopened.pending_revalidations().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -188,7 +259,8 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         .unwrap()
         .analysis;
     let replay = ingest(&inventory, &file, &identity).unwrap();
-    assert_eq!(replay.item, None);
+    assert_eq!(replay.item, Some(id.clone()));
+    assert!(replay.analyze_all);
     assert_eq!(
         item(&inventory, id.clone()).revision,
         first.resulting_item_revision

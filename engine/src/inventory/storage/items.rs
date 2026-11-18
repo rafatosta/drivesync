@@ -75,6 +75,48 @@ fn remote_version(file: &File) -> Option<&str> {
     }
 }
 
+/// Checks whether caller-verified evidence is at least as new as its saved side marker.
+pub(super) fn verified_marker_is_current_or_newer(
+    db: &Connection,
+    id: &SyncItemId,
+    remote: bool,
+    causal_order: Option<u64>,
+    provider_version: Option<&str>,
+) -> InventoryResult<bool> {
+    let side = if remote { 1 } else { 0 };
+    let current: Option<TemporalOrder> = db
+        .query_row(
+            "SELECT causal_order,provider_version FROM observation_order WHERE item=?1 AND side=?2",
+            params![id.0, side],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some((old_order, old_version)) = current else {
+        return Ok(true);
+    };
+    if remote {
+        if let (Some(old), Some(new)) = (
+            old_version.as_deref().and_then(decimal_version),
+            provider_version.and_then(decimal_version),
+        ) {
+            if old != new {
+                return Ok(new > old);
+            }
+            if causal_order.is_none() {
+                return Ok(true);
+            }
+        }
+    }
+    let Some(new_order) = causal_order.and_then(|order| i64::try_from(order).ok()) else {
+        return Ok(false);
+    };
+    let Some(old_order) = old_order else {
+        return Ok(false);
+    };
+    Ok(new_order >= old_order)
+}
+
 pub(super) fn save_order(
     db: &Connection,
     id: &SyncItemId,
@@ -89,23 +131,26 @@ pub(super) fn save_order(
     let causal_order = file
         .causal_order
         .and_then(|order| i64::try_from(order).ok());
-    db.execute("INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,?4) ON CONFLICT(item,side) DO UPDATE SET causal_order=excluded.causal_order,provider_version=excluded.provider_version", params![id.0, if remote { 1 } else { 0 }, causal_order, version]).map_err(sql)?;
+    db.execute("INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,?4) ON CONFLICT(item,side) DO UPDATE SET causal_order=COALESCE(excluded.causal_order,observation_order.causal_order),provider_version=COALESCE(excluded.provider_version,observation_order.provider_version)", params![id.0, if remote { 1 } else { 0 }, causal_order, version]).map_err(sql)?;
     Ok(())
 }
 
-/// Advances a side after a caller-verified physical result without changing its provider version.
+/// Persists the causal position and provider version from one verified side.
 pub(super) fn save_causal_marker(
     db: &Connection,
     id: &SyncItemId,
     remote: bool,
     causal_order: Option<u64>,
+    provider_version: Option<&str>,
 ) -> InventoryResult<()> {
-    let Some(causal_order) = causal_order.and_then(|order| i64::try_from(order).ok()) else {
+    let causal_order = causal_order.and_then(|order| i64::try_from(order).ok());
+    let provider_version = provider_version.filter(|version| decimal_version(version).is_some());
+    if causal_order.is_none() && provider_version.is_none() {
         return Ok(());
-    };
+    }
     db.execute(
-        "INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,NULL) ON CONFLICT(item,side) DO UPDATE SET causal_order=excluded.causal_order",
-        params![id.0, if remote { 1 } else { 0 }, causal_order],
+        "INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,?4) ON CONFLICT(item,side) DO UPDATE SET causal_order=COALESCE(excluded.causal_order,observation_order.causal_order),provider_version=COALESCE(excluded.provider_version,observation_order.provider_version)",
+        params![id.0, if remote { 1 } else { 0 }, causal_order, provider_version],
     )
     .map_err(sql)?;
     Ok(())
@@ -373,6 +418,19 @@ fn record(
             ],
         )
         .map_err(sql)?;
+        if disposition == ObservationDisposition::Incomparable {
+            db.execute(
+                "INSERT INTO revalidation_work(item,side,scope,event) VALUES(?1,?2,?3,?4) ON CONFLICT(item,side) DO UPDATE SET scope=excluded.scope,event=excluded.event",
+                params![
+                    id.0,
+                    if remote { 1 } else { 0 },
+                    serde_json::to_string(&file.scope)
+                        .map_err(|_| failure(InventoryError::SerializationFailed))?,
+                    file.id.0
+                ],
+            )
+            .map_err(sql)?;
+        }
         return Ok(RecordObservationResult {
             item: current,
             created: false,
@@ -479,6 +537,11 @@ fn record(
     )
     .map_err(sql)?;
     save_order(db, &id, remote, file, proof)?;
+    db.execute(
+        "DELETE FROM revalidation_work WHERE item=?1 AND side=?2",
+        params![id.0, if remote { 1 } else { 0 }],
+    )
+    .map_err(sql)?;
     if !created {
         bump(db, &id)?;
     }

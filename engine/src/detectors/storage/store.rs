@@ -445,7 +445,7 @@ impl Store {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
         let mut file = file.clone();
-        if file.causal_order.is_none() {
+        if origin == DetectorOrigin::Local && file.causal_order.is_none() {
             file.causal_order = match self.existing_order(&file.id.0)? {
                 Some(order) => Some(order),
                 None => Some(self.reserve_causal_order()?),
@@ -474,13 +474,7 @@ impl Store {
         {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
-        let mut raw = raw.clone();
-        if raw.causal_order.is_none() {
-            raw.causal_order = match self.existing_order(&raw.id.0)? {
-                Some(order) => Some(order),
-                None => Some(self.reserve_causal_order()?),
-            };
-        }
+        let raw = raw.clone();
         let payload = codec::encode_record(&ObservationRecord::Remote(Box::new(raw.clone())))?;
         let inserted = self.enqueue_payload(
             &raw.id.0,

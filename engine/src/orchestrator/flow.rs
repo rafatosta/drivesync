@@ -346,6 +346,7 @@ fn consume(
     stop: &AtomicBool,
     wake: &Wake,
 ) -> Result<(), PreparationFailure> {
+    dispatch_pending_revalidations(context)?;
     loop {
         context.current(stop)?;
         context.publish_sources();
@@ -402,6 +403,29 @@ fn consume(
             }
         }
     }
+}
+
+fn dispatch_pending_revalidations(context: &Context) -> Result<(), PreparationFailure> {
+    for (item, remote, scope, event) in context
+        .inventory
+        .pending_revalidations()
+        .map_err(PreparationFailure::Inventory)?
+    {
+        context
+            .detector
+            .request_scan(DetectorScanRequest {
+                scope: DetectorScanScope::Scopes(vec![scope]),
+                reason: DetectorScanReason::ConsistencyCheck,
+                request_id: Some(format!(
+                    "inventory-revalidate:{}:{}:{}",
+                    item.0,
+                    if remote { "remote" } else { "local" },
+                    event
+                )),
+            })
+            .map_err(PreparationFailure::Detector)?;
+    }
+    Ok(())
 }
 async fn process(
     context: &Context,

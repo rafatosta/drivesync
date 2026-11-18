@@ -436,11 +436,13 @@ async fn run(
             CreationStage::Verifying,
             None,
         );
+        let causal_order = inventory.reserve_order().map_err(inventory_error)?;
         inventory
             .record_trashed_local(RecordTrashedLocalRequest {
                 binding: binding.clone(),
                 result,
                 trashed_at: now(),
+                causal_order,
             })
             .map_err(inventory_error)?;
         notify(
@@ -453,10 +455,12 @@ async fn run(
         );
         return Ok(());
     }
+    let causal_order = inventory.reserve_order().map_err(inventory_error)?;
     let current = inventory
         .record_created_replica(RecordCreatedReplicaRequest {
             binding: binding.clone(),
             result: result.clone(),
+            causal_order,
         })
         .map_err(inventory_error)?;
     guard.phase(AnalysisPhase::Verifying);
@@ -755,6 +759,7 @@ async fn verify_both(
     } else {
         binding.intent.context.source.clone().ok_or_else(failure)?
     };
+    let source_order = inventory.reserve_order().map_err(|_| failure())?;
     let source = e
         .operator
         .verify_source(VerifySourceRequest {
@@ -773,6 +778,7 @@ async fn verify_both(
             revision: None,
         },
     };
+    let replica_order = inventory.reserve_order().map_err(|_| failure())?;
     let replica = e
         .operator
         .verify_source(VerifySourceRequest {
@@ -781,11 +787,16 @@ async fn verify_both(
             options: e.options.clone(),
         })
         .await?;
-    let (local, remote, hash) = match (&source.metadata, &replica.metadata) {
-        (FileData::Local(l), FileData::Remote(r)) => (l, r, source.sha256.as_ref()),
-        (FileData::Remote(r), FileData::Local(l)) => (l, r, replica.sha256.as_ref()),
-        _ => return Err(failure()),
-    };
+    let (local, remote, hash, local_order, remote_order) =
+        match (&source.metadata, &replica.metadata) {
+            (FileData::Local(l), FileData::Remote(r)) => {
+                (l, r, source.sha256.as_ref(), source_order, replica_order)
+            }
+            (FileData::Remote(r), FileData::Local(l)) => {
+                (l, r, replica.sha256.as_ref(), replica_order, source_order)
+            }
+            _ => return Err(failure()),
+        };
     if item.kind == ItemKind::File {
         let checkpoint = inventory
             .get_execution(GetExecutionRequest {
@@ -846,6 +857,8 @@ async fn verify_both(
     Ok(ConfirmedState {
         status: SyncStatus::Synced,
         verified_at,
+        local_causal_order: local_order,
+        remote_causal_order: remote_order,
         baseline: SyncBaseline {
             confirmed_at: verified_at,
             local: BaselineSide {

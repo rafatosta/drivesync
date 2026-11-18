@@ -176,13 +176,14 @@ pub(super) fn ingest(
         })
     }
     .map_err(PreparationFailure::Inventory)?;
-    let newly_applied = result.disposition == ObservationDisposition::Applied && !result.duplicate;
+    let applied = result.disposition == ObservationDisposition::Applied;
     Ok(Ingested {
-        item: newly_applied.then_some(result.item.id),
+        // Detector acknowledgement follows analysis. Replayed receipts must
+        // continue interrupted work after a process restart.
+        item: applied.then_some(result.item.id),
         // Namespace and parent changes can invalidate another item's plan.
-        analyze_all: newly_applied,
-        revalidate: (result.disposition == ObservationDisposition::Incomparable
-            && !result.duplicate)
+        analyze_all: applied,
+        revalidate: (result.disposition == ObservationDisposition::Incomparable)
             .then(|| file.scope.clone()),
     })
 }

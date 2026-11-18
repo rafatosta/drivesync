@@ -20,11 +20,15 @@ pub struct BeginCreationRequest {
 pub struct RecordCreatedReplicaRequest {
     pub binding: CreationBinding,
     pub result: ItemResult,
+    /// Position reserved after the Operator verified this result and before persistence.
+    pub causal_order: Option<u64>,
 }
 pub struct RecordTrashedLocalRequest {
     pub binding: CreationBinding,
     pub result: ItemResult,
     pub trashed_at: Timestamp,
+    /// Position reserved after the Operator verified this result and before persistence.
+    pub causal_order: Option<u64>,
 }
 pub struct FailCreationRequest {
     pub binding: CreationBinding,

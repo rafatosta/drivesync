@@ -328,6 +328,8 @@ async fn local_scan_preserves_remote_baseline_and_last_sync_but_marks_work_pendi
                 },
                 status: SyncStatus::Synced,
                 verified_at: at,
+                local_causal_order: None,
+                remote_causal_order: None,
             },
             completed_operation: None,
             expected_operation_attempt: None,

@@ -135,7 +135,7 @@ impl InventoryManager {
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(source);
     }
-    pub(super) fn reserve_order(&self) -> InventoryResult<Option<u64>> {
+    pub(crate) fn reserve_order(&self) -> InventoryResult<Option<u64>> {
         let source = self
             .order_source
             .lock()
@@ -193,6 +193,34 @@ impl InventoryManager {
             status.availability = InventoryAvailability::Unavailable;
         }
         result
+    }
+
+    /// Returns durable localized revalidation work not yet resolved by an applied observation.
+    pub(crate) fn pending_revalidations(
+        &self,
+    ) -> InventoryResult<Vec<(SyncItemId, bool, FileScope, String)>> {
+        self.run(false, |db| {
+            let mut statement = db
+                .prepare("SELECT item,side,scope,event FROM revalidation_work ORDER BY item,side")
+                .map_err(sql)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(sql)?;
+            rows.map(|row| {
+                let (item, side, scope, event) = row.map_err(sql)?;
+                let scope = serde_json::from_str(&scope)
+                    .map_err(|_| failure(InventoryError::CorruptDatabase))?;
+                Ok((SyncItemId(item), side != 0, scope, event))
+            })
+            .collect()
+        })
     }
     /// Reads persistent synchronization identity and materialization progress.
     pub fn get_sync_info(
@@ -261,7 +289,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 10 {
+    if version != 11 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

@@ -588,6 +588,116 @@ fn provider_version_and_local_remote_markers_are_independent() {
 }
 
 #[test]
+fn operator_confirmed_remote_version_rejects_queued_older_provider_event() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut initial = remote_file(
+        "version-10",
+        "remote",
+        m::MetadataValue::Known("v10".into()),
+    );
+    if let Some(m::FileData::Remote(remote)) = &mut initial.data {
+        remote.version = m::MetadataValue::Known("10".into());
+    }
+    let remote_item = inventory
+        .record_remote(remote_request(initial, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let item = attach_local(&tree, &inventory, &remote_item);
+
+    let mut queued_v11 = remote_file(
+        "queued-version-11",
+        "remote",
+        m::MetadataValue::Known("v11".into()),
+    );
+    queued_v11.causal_order = Some(i64::MAX as u64);
+    if let Some(m::FileData::Remote(remote)) = &mut queued_v11.data {
+        remote.version = m::MetadataValue::Known("11".into());
+    }
+
+    let mut local = baseline_side();
+    local.size = Some(u64::MAX);
+    let mut remote = baseline_side();
+    remote.size = Some(u64::MAX);
+    remote.version = Some("12".into());
+    let confirmed_at = timestamp(20);
+    let confirmed = inventory
+        .confirm_sync(ConfirmSyncRequest {
+            item_id: item.id.clone(),
+            expected_item_revision: item.revision,
+            confirmed: ConfirmedState {
+                baseline: SyncBaseline {
+                    local,
+                    remote,
+                    confirmed_at,
+                },
+                status: SyncStatus::Synced,
+                verified_at: confirmed_at,
+                local_causal_order: Some(500),
+                remote_causal_order: Some(501),
+            },
+            completed_operation: None,
+            expected_operation_attempt: None,
+            activity: None,
+        })
+        .unwrap()
+        .item;
+
+    let stale = inventory
+        .record_remote(remote_request(
+            queued_v11,
+            ObservationTarget::Existing(item.id.clone()),
+            Some(confirmed.revision),
+        ))
+        .unwrap();
+    assert_eq!(stale.disposition, ObservationDisposition::Obsolete);
+    assert_eq!(stale.item.revision, confirmed.revision);
+    assert_eq!(
+        stale.item.remote_latest.as_ref().unwrap().name,
+        m::MetadataValue::Known("v10".into())
+    );
+
+    std::fs::write(tree.0.join("local-file"), b"changed after verification").unwrap();
+    let mut changed_local = local_file(&tree, "local-after-verify");
+    changed_local.causal_order = Some(502);
+    changed_local.observed_at = timestamp(0);
+    let local_result = inventory
+        .record_local(local_order_request(
+            changed_local,
+            "operator-verification-boundary",
+            0,
+            Some(stale.item.revision),
+            ObservationTarget::Existing(item.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(local_result.disposition, ObservationDisposition::Applied);
+
+    let mut remote_after_verify = remote_file(
+        "remote-after-verify",
+        "remote",
+        m::MetadataValue::Known("v13".into()),
+    );
+    remote_after_verify.causal_order = None;
+    remote_after_verify.observed_at = timestamp(0);
+    if let Some(m::FileData::Remote(remote)) = &mut remote_after_verify.data {
+        remote.version = m::MetadataValue::Known("13".into());
+    }
+    let remote_result = inventory
+        .record_remote(remote_request(
+            remote_after_verify,
+            ObservationTarget::Existing(item.id.clone()),
+            Some(local_result.item.revision),
+        ))
+        .unwrap();
+    assert_eq!(remote_result.disposition, ObservationDisposition::Applied);
+    assert_eq!(
+        remote_result.item.remote_latest.as_ref().unwrap().name,
+        m::MetadataValue::Known("v13".into())
+    );
+}
+
+#[test]
 fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_state() {
     let tree = Tree::new();
     std::fs::write(tree.0.join("local-file"), b"content").unwrap();
@@ -1227,6 +1337,8 @@ fn confirmation(file: &SyncItem, operation: &SyncOperation) -> ConfirmSyncReques
             },
             status: SyncStatus::Synced,
             verified_at: timestamp(20),
+            local_causal_order: None,
+            remote_causal_order: None,
         },
         completed_operation: Some(operation.id.clone()),
         expected_operation_attempt: Some(operation.attempt_count),
@@ -1473,6 +1585,8 @@ fn confirmation_requires_known_equal_presence_and_preserves_tombstone_history() 
             },
             status: SyncStatus::Synced,
             verified_at: timestamp(20),
+            local_causal_order: None,
+            remote_causal_order: None,
         },
         completed_operation: None,
         expected_operation_attempt: None,
