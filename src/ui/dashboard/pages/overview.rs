@@ -18,7 +18,7 @@ fn build_with_accounts(
     navigation: &adw::NavigationView,
     accounts: Vec<drivesync_engine::Account>,
 ) -> adw::NavigationPage {
-    let split = adw::NavigationSplitView::builder()
+    let split = adw::OverlaySplitView::builder()
         .min_sidebar_width(240.0)
         .max_sidebar_width(320.0)
         .sidebar_width_fraction(0.3)
@@ -86,6 +86,18 @@ fn build_with_accounts(
     let title = adw::WindowTitle::new("DriveSync", "");
     title.set_widget_name("dashboard-account-title");
     header.set_title_widget(Some(&title));
+    let sidebar_toggle = gtk::ToggleButton::builder()
+        .icon_name("adw-sidebar-symbolic")
+        .tooltip_text(gettext("Toggle sidebar"))
+        .css_classes(["flat"])
+        .build();
+    sidebar_toggle.set_widget_name("dashboard-sidebar-toggle");
+    split
+        .bind_property("show-sidebar", &sidebar_toggle, "active")
+        .bidirectional()
+        .sync_create()
+        .build();
+    header.pack_start(&sidebar_toggle);
     toolbar.add_top_bar(&header);
     let empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
     empty.set_widget_name("dashboard-content");
@@ -146,7 +158,9 @@ fn build_with_accounts(
     let weak_split = split.downgrade();
     sidebar.list.connect_row_activated(move |_, _| {
         if let Some(split) = weak_split.upgrade() {
-            split.set_show_content(true);
+            if split.is_collapsed() {
+                split.set_show_sidebar(false);
+            }
         }
     });
 

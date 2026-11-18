@@ -121,13 +121,19 @@ fn account_only_layout_and_initial_name_editor() {
     assert_eq!(title.subtitle(), "fixture@example.invalid");
     let split = find(dashboard.upcast_ref(), "dashboard-split")
         .unwrap()
-        .downcast::<adw::NavigationSplitView>()
+        .downcast::<adw::OverlaySplitView>()
         .unwrap();
     split.set_collapsed(true);
     accounts.row_at_index(0).unwrap().activate();
-    assert!(split.shows_content());
-    split.set_show_content(false);
-    assert!(!split.shows_content());
+    assert!(!split.shows_sidebar());
+    let sidebar_toggle = find(dashboard.upcast_ref(), "dashboard-sidebar-toggle")
+        .unwrap()
+        .downcast::<gtk::ToggleButton>()
+        .unwrap();
+    sidebar_toggle.set_active(true);
+    assert!(split.shows_sidebar());
+    sidebar_toggle.set_active(false);
+    assert!(!split.shows_sidebar());
     let preferences = crate::ui::preferences::test_build(&nav, &toasts);
     assert!(find(preferences.upcast_ref(), "preferences-theme").is_some());
     assert!(find(preferences.upcast_ref(), "preferences-accounts").is_some());

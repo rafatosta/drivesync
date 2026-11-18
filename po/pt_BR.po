@@ -140,6 +140,9 @@ msgstr "Contas"
 msgid "Accounts · {count}"
 msgstr "Contas · {count}"
 
+msgid "Toggle sidebar"
+msgstr "Mostrar ou ocultar a barra lateral"
+
 #: src/features/preferences/accounts.rs:94
 msgid "Settings apply only to the account shown below."
 msgstr "Os ajustes se aplicam somente à conta exibida abaixo."
