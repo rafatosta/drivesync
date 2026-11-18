@@ -1,6 +1,8 @@
 //! Physical collector oracles use only isolated temporary files and explicit races.
 use super::{collector::*, models::*};
-use crate::models::{AccountId, LocalEntryKind, LocalRelativePath, MetadataValue, SyncId};
+use crate::models::{
+    AccountId, LocalEntryKind, LocalPresenceEvidence, LocalRelativePath, MetadataValue, SyncId,
+};
 use std::{
     fs,
     os::unix::{
@@ -63,6 +65,7 @@ fn collects_real_file_metadata_and_preserves_root_scope() {
     assert_eq!(collector.scope(), tree.scope());
     let result = collector.collect(request(b"file")).unwrap();
     assert_eq!(result.coverage, LocalScanCoverage::Complete);
+    assert_eq!(result.presence, LocalPresenceEvidence::Present);
     let file = result.file.unwrap();
     assert_eq!(file.relative_path.as_bytes(), b"file");
     if matches!(file.times.created_at, MetadataValue::Known(_)) {
@@ -158,13 +161,18 @@ fn symlinks_and_non_utf8_names_remain_literal_even_outside_the_root() {
 }
 
 #[test]
-fn missing_entries_and_reserved_metadata_never_become_confirmed_absence() {
-    // LOC-FS-07.
+fn missing_entries_confirm_absence_only_after_the_root_and_parent_are_revalidated() {
+    // LOC-FS-07: a completed descriptor-relative lookup proves this path absent.
     let tree = Tree::new();
+    fs::create_dir(tree.0.join("parent")).unwrap();
     let collector = tree.collector();
     let missing = collector.collect(request(b"missing")).unwrap();
-    assert_eq!(missing.coverage, LocalScanCoverage::Partial);
+    assert_eq!(missing.coverage, LocalScanCoverage::Complete);
+    assert_eq!(missing.presence, LocalPresenceEvidence::AbsentConfirmed);
     assert!(missing.file.is_none());
+    let nested = collector.collect(request(b"parent/missing")).unwrap();
+    assert_eq!(nested.presence, LocalPresenceEvidence::AbsentConfirmed);
+    assert_eq!(nested.coverage, LocalScanCoverage::Complete);
     for path in [b".drivesync".as_slice(), b"folder/.drivesync/metadata"] {
         assert_eq!(
             collector.collect(request(path)).unwrap_err().kind,
@@ -380,7 +388,32 @@ fn replaced_target_with_identical_bytes_is_still_inconclusive() {
         })
         .unwrap();
     assert!(result.file.is_none());
+    assert_eq!(result.presence, LocalPresenceEvidence::Unknown);
     assert_eq!(result.coverage, LocalScanCoverage::Partial);
+}
+
+#[test]
+fn remove_and_recreate_at_the_same_path_is_present_with_the_new_identity() {
+    let tree = Tree::new();
+    fs::write(tree.0.join("file"), b"first").unwrap();
+    let collector = tree.collector();
+    let first = collector.collect(request(b"file")).unwrap();
+    fs::remove_file(tree.0.join("file")).unwrap();
+    let absent = collector.collect(request(b"file")).unwrap();
+    assert_eq!(absent.presence, LocalPresenceEvidence::AbsentConfirmed);
+    fs::write(tree.0.join("file"), b"replacement-content").unwrap();
+    let recreated = collector.collect(request(b"file")).unwrap();
+    assert_eq!(recreated.presence, LocalPresenceEvidence::Present);
+    assert_eq!(
+        recreated.file.as_ref().unwrap().storage.size_bytes,
+        MetadataValue::Known(19)
+    );
+    if let (Some(first), Some(recreated)) = (
+        first.file.and_then(|file| file.local_id),
+        recreated.file.and_then(|file| file.local_id),
+    ) {
+        assert_ne!(first, recreated);
+    }
 }
 
 #[test]
@@ -397,6 +430,7 @@ fn edits_after_observation_do_not_publish_a_complete_snapshot() {
         })
         .unwrap();
     assert!(result.file.is_none());
+    assert_eq!(result.presence, LocalPresenceEvidence::Unknown);
     assert_eq!(result.coverage, LocalScanCoverage::Partial);
 }
 

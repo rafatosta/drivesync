@@ -115,7 +115,14 @@ impl FilesystemMetadataCollector {
         }
         let mut chain = self.root_chain(cancel)?;
         let Some((entry, name)) = chain.open_entry(&request.relative_path, cancel)? else {
-            return Ok(inconclusive());
+            // A missing component is evidence only while the configured root
+            // and every traversed parent still bind to their original paths.
+            chain.validate(cancel)?;
+            return Ok(LocalMetadataResult {
+                file: None,
+                coverage: LocalScanCoverage::Complete,
+                presence: crate::models::LocalPresenceEvidence::AbsentConfirmed,
+            });
         };
         cancel.check()?;
         let before = entry
@@ -147,6 +154,7 @@ impl FilesystemMetadataCollector {
         Ok(LocalMetadataResult {
             file: Some(file),
             coverage,
+            presence: crate::models::LocalPresenceEvidence::Present,
         })
     }
 }
@@ -163,5 +171,6 @@ fn inconclusive() -> LocalMetadataResult {
     LocalMetadataResult {
         file: None,
         coverage: LocalScanCoverage::Partial,
+        presence: crate::models::LocalPresenceEvidence::Unknown,
     }
 }

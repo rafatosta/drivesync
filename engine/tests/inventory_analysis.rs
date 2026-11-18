@@ -66,6 +66,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
         event: m::FileEvent {
             action: m::FileEventAction::StateChanged,
             local: None,
+            local_presence: None,
             remote: Some(m::RemoteObservation {
                 source: m::RemoteObservationSource::Changes,
                 removed: Some(false),

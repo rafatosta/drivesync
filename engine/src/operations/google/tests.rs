@@ -1537,6 +1537,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                 } else {
                     None
                 },
+                local_presence: None,
                 remote: if upload {
                     None
                 } else {
@@ -1824,6 +1825,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                             mask: libc::IN_MODIFY,
                             cookie: 0,
                         }),
+                        local_presence: None,
                         remote: None,
                         uncertainty: None,
                         previous: None,

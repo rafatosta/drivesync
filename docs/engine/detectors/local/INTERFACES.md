@@ -73,6 +73,7 @@ pub(super) struct LocalMetadataRequest {
 pub(super) struct LocalMetadataResult {
     pub file: Option<LocalFile>,
     pub coverage: LocalScanCoverage,
+    pub presence: LocalPresenceEvidence,
 }
 pub(super) trait LocalMetadataCollector: Send + Sync {
     fn scope(&self) -> LocalDetectorScope;
@@ -81,7 +82,7 @@ pub(super) trait LocalMetadataCollector: Send + Sync {
 }
 ```
 
-**A interface de coleta é estável mesmo que `LocalFile` ganhe ou perca campos.** `file=None` e cobertura/erros representam ausência de metadados confiáveis, **não exclusão comprovada**. A coleta é síncrona no worker de observação, nunca no callback do watcher ou na thread da GUI. O detector fornece cancelamento cooperativo; não criar métodos adicionais por atributo.
+**A interface de coleta é estável mesmo que `LocalFile` ganhe ou perca campos.** `presence` distingue `Present`, `AbsentConfirmed` e `Unknown`, independentemente da completude dos metadados. `AbsentConfirmed` exige lookup relativo a descritores retornando `ENOENT` após revalidar raiz e pais; permissão, raiz indisponível, substituição e alteração durante coleta nunca viram ausência. `file=None` sozinho não prova ausência. A coleta é síncrona no worker de observação, nunca no callback do watcher ou na thread da GUI. O detector fornece cancelamento cooperativo; não criar métodos adicionais por atributo.
 
 O coletor implementa internamente as chamadas de sistema e **pode delegar a funções auxiliares** a aquisição de grupos mais caros ou específicos (ACLs, xattrs, flags, dados de symlink). O código do Detector Local não conhece nem enumera esses grupos e não constrói `LocalFile` por struct literal. Sua única função é solicitar a coleta e transportar **o objeto devolvido sem projetar/reduzir seus campos**.
 
@@ -294,7 +295,7 @@ As portas das seções 2 e 3 são os únicos contratos de dependência de negóc
 
 **Parâmetros:** caminho validado relativo à raiz vinculada ao coletor; `cancellation` pertence à geração/rodada ativa, é compartilhado por clone e somente o detector pode acioná-lo. `LocalCancellation` é um token interno com consulta `fn is_cancelled(&self) -> bool`, sem I/O. Antes de uma nova operação de leitura, o coletor consulta esse token; verdadeiro interrompe com `Cancelled`.
 
-**Retorno:** objeto integral e cobertura da coleta. `file=None` significa ausência de dados confiáveis, nunca exclusão. O caminho do objeto deve ser o solicitado; essa correspondência é obrigação do adaptador, testada na fronteira, sem projetar campos no detector.
+**Retorno:** objeto integral, cobertura e evidência de presença. `Present` acompanha `Some(LocalFile)`; `AbsentConfirmed` acompanha `None` somente após lookup completo do caminho solicitado; resultados inconclusivos acompanham `Unknown`. O caminho do objeto deve ser o solicitado; essa correspondência é obrigação do adaptador, testada na fronteira, sem projetar campos no detector.
 
 **Limites e erros:** sem mutação de arquivos, hash de conteúdo, rede, persistência ou criação de identidade lógica. A raiz do coletor deve ser a mesma da instância; composição incorreta é `PreconditionFailed`, não motivo para observar outra raiz. Falhas de atributo opcional são representadas pelos estados de Models; cancelamento e impossibilidade estrutural retornam erro tipado. `new` compara `collector.scope()` ao escopo solicitado antes de qualquer I/O; não aceitar um coletor de outra raiz silenciosamente.
 
@@ -349,8 +350,8 @@ Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelat
 
 - Cada coleta reabre a cadeia absoluta sem seguir symlinks, compara a raiz com o descritor original e percorre ancestrais relativos por descritores. O último componente pode ser um symlink, observado sem seguir seu destino. Arquivo regular, diretório, FIFO, socket ou device não é aberto para leitura/escrita de conteúdo.
 - Cancelamento é consultado antes de cada nova operação de I/O e depois das etapas de coleta. Um clone do token observa o cancelamento; tokens de outra geração são independentes. Na porta interna, os tokens são controlados pelo detector; na API pública de coleta, o consumidor cria/cancela os próprios tokens, sem efeito sobre outras instâncias.
-- A coleta revalida vínculos de ancestrais, o último componente e a evidência relevante antes/depois da leitura. Mudança observada não é fotografia completa: devolve file=None/Partial para alvo desaparecido/substituído ou modificado durante coleta; falha estrutural da raiz é RootUnavailable, e ancestral relativo inseguro é PartialObservation. Revalidação não impede mudança após o retorno.
-- ENOENT em entrada relativa resulta em file=None/Partial, nunca exclusão confirmada. PermissionDenied é erro tipado sem metadados inventados. `.drivesync` em qualquer componente relativo é InvalidScope antes de consultar o filesystem; essa proteção é do adaptador, não da validação lexical de Models.
+- A coleta revalida vínculos de ancestrais, o último componente e a evidência relevante antes/depois da leitura. Substituição ou modificação durante coleta resulta em `file=None`, cobertura Partial e presença Unknown; falha estrutural da raiz é RootUnavailable, e ancestral relativo inseguro é PartialObservation. Revalidação não impede mudança após o retorno.
+- ENOENT em lookup de entrada relativa, com raiz e pais revalidados, resulta em `AbsentConfirmed` para aquele caminho. Permissão, erro de leitura, indisponibilidade da raiz e corrida durante leitura não confirmam ausência. `.drivesync` em qualquer componente relativo é InvalidScope antes de consultar o filesystem; essa proteção é do adaptador, não da validação lexical de Models.
 - O perfil básico usa metadados reais de descritor. O enriquecimento usa statx por descritor quando disponível, respeitando máscaras, com fallback seguro para fstat. Não consultar ACL/xattr/conteúdo. A primeira unidade implementou fstat; o enriquecimento agora usa statx sem modificar as assinaturas scope/collect ou acessar campos de LocalFile no núcleo de coordenação. A montagem dos campos permanece isolada em metadata.rs.
 - A leitura do alvo literal usa o descritor do próprio symlink, com buffer crescente e limite operacional de 64 KiB por alvo. Não retornar Known de resultado possivelmente truncado; falha/limite do alvo preserva metadados confiáveis com target=Unavailable/PermissionDenied/Unsupported e cobertura Partial. Esse limite evita alocação sem controle e não limita nomes/tamanhos dos arquivos do usuário.
 - Erros têm mensagens estáticas sanitizadas e progress=None: uma coleta individual não é uma rodada scan_once. LocalScanResult é apenas o tipo de contagens previsto para essa integração, sem implementar varredura.

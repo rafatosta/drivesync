@@ -70,6 +70,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
         event: m::FileEvent {
             action: m::FileEventAction::StateChanged,
             local: None,
+            local_presence: None,
             remote: Some(m::RemoteObservation {
                 source: m::RemoteObservationSource::Changes,
                 removed: Some(false),
@@ -161,6 +162,7 @@ fn local_file(event: &str, name: &[u8]) -> m::File {
                 mask: libc::IN_MODIFY,
                 cookie: 0,
             }),
+            local_presence: None,
             remote: None,
             uncertainty: None,
             previous: None,

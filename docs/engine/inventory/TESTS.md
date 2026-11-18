@@ -444,6 +444,7 @@ A inspeção do esquema é permitida **nos testes internos do módulo**, para co
 | INV-SC-10 | Arquivo renomeado | Mesmos IDs, nome novo | Mesmo `SyncItemId`, estado observado atualizado, baseline antigo preservado |
 | INV-SC-11 | Arquivo movido | Mesmo ID remoto, pai novo | Preservar identidade e relacionamentos; sem presumir reupload |
 | INV-SC-12 | Remoto removido com prova válida | `AbsentConfirmed` | Registrar ausência comprovada e preservar identificação/tombstone |
+| INV-LOC-01 | Lookup local incremental confirma `ENOENT` | `LocalEvent` com presença explícita e escopo do caminho completo | Persistir `AbsentConfirmed`, reabrir SQLite e reentregar o mesmo `File.id` sem nova revisão |
 | INV-SC-13 | Documento Google nativo | Metadados sem checksum de binário | `None` legítimo; sem hash fabricado |
 | INV-SC-14 | Nome Unix não UTF-8 | Observação local | Preservar bytes individuais sem conversão com perda |
 | INV-SC-15 | Operação concluída | Confirmação válida | Baseline, status, fila e atividade coerentes num commit |

@@ -554,11 +554,13 @@ pub enum FileLocation {
 }
 
 pub struct FileEvent {
-    pub kind: FileEventKind,
+    pub local_presence: Option<LocalPresenceEvidence>,
     pub uncertainty: Option<ObservationUncertainty>,
     pub previous: Option<FileLocation>,
     pub current: Option<FileLocation>,
 }
+
+pub enum LocalPresenceEvidence { Present, AbsentConfirmed, Unknown }
 
 pub enum ObservationCoverage { Complete, Partial, Unavailable }
 
@@ -658,7 +660,7 @@ ID do lote, tamanho máximo, lease, reserva e ack pertencem a [`detectors/INTERF
 
 - `Option::None` num atributo de arquivo = valor não conhecido/não disponível; **nunca** significa zero, hash vazio ou exclusão.
 - `FieldValue::Unknown` = atributo composto não observado; `Known([])` = vazio realmente observado.
-- `File.data=None` = metadados do arquivo não obtidos; o evento carrega motivo + escopo para reavaliação.
+- `File.data=None` = metadados do arquivo não obtidos; o evento carrega motivo + escopo para reavaliação. Um resultado local `AbsentConfirmed` só acompanha um lookup relativo a descritores concluído após validar raiz e pais; falhas e corridas ficam `Unknown`.
 - Nenhum evento de remoção de watcher nem flag do provedor autoriza excluir sem análise de identidade, escopo, baseline e cobertura.
 - A mesma ocorrência persistida não pode mudar silenciosamente de ID ou conteúdo durante retry.
 - Campos de horário não devem ser preenchidos com valores atuais como substitutos de dados remotos ou locais desconhecidos.

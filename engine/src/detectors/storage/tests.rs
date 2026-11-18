@@ -62,6 +62,7 @@ impl Tree {
             data: None,
             event: FileEvent {
                 local: None,
+                local_presence: None,
                 remote: None,
                 action: FileEventAction::RecheckRequired,
                 previous: None,
@@ -119,6 +120,7 @@ fn enqueue_reopen_complete_payload_bytes_order_and_idempotent_ack() {
     };
     file.event = FileEvent {
         local: None,
+        local_presence: None,
         remote: None,
         action: FileEventAction::Renamed,
         previous: Some(FileLocation::Local(
@@ -539,6 +541,10 @@ fn native_local_evidence_and_history_survive_sqlite_reopen_release_and_ack() {
         mask: libc::IN_MOVED_FROM,
         cookie: 71,
     });
+    file.event.previous = Some(FileLocation::Local(match &file.scope {
+        FileScope::Local(path) => path.clone(),
+        _ => unreachable!(),
+    }));
     assert!(store.enqueue(&file).unwrap());
     drop(store);
     let reopened = tree.store(&clock);

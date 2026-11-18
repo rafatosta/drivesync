@@ -243,6 +243,7 @@ async fn local_scan_preserves_remote_baseline_and_last_sync_but_marks_work_pendi
         event: FileEvent {
             action: FileEventAction::StateChanged,
             local: None,
+            local_presence: None,
             remote: Some(crate::models::RemoteObservation {
                 source: RemoteObservationSource::Changes,
                 removed: Some(false),

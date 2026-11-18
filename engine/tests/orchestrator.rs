@@ -380,6 +380,7 @@ fn remote_observation(
         event: FileEvent {
             action: FileEventAction::StateChanged,
             local: None,
+            local_presence: None,
             remote: Some(drivesync_engine::models::RemoteObservation {
                 source: RemoteObservationSource::Changes,
                 removed: Some(false),
@@ -908,7 +909,7 @@ async fn live_rename_delete_and_stop_restart_use_detector_events_without_rescann
             i.local
                 .as_ref()
                 .is_some_and(|f| f.relative_path.as_bytes() == b"renamed")
-                && i.local_presence == PresenceState::Unknown
+                && i.local_presence == PresenceState::AbsentConfirmed
         })
     });
     settle_flow(&session);

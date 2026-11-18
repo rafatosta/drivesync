@@ -115,6 +115,7 @@ mod tests {
             sync_id: SyncId("sync".into()),
             event: FileEvent {
                 local: None,
+                local_presence: None,
                 remote: None,
                 action: FileEventAction::Created,
                 uncertainty: None,

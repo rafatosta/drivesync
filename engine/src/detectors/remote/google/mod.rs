@@ -178,6 +178,7 @@ impl GoogleRemoteDetector {
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
                 local: None,
+                local_presence: None,
                 remote: None,
                 action: kind,
                 uncertainty: reason,

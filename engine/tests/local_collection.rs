@@ -4,7 +4,9 @@ use drivesync_engine::{
         LocalCancellation, LocalDetectorError, LocalDetectorScope, LocalMetadataCollector,
         LocalMetadataRequest, LocalScanCoverage,
     },
-    models::{AccountId, LocalEntryKind, LocalRelativePath, MetadataValue, SyncId},
+    models::{
+        AccountId, LocalEntryKind, LocalPresenceEvidence, LocalRelativePath, MetadataValue, SyncId,
+    },
 };
 use std::{
     fs,
@@ -84,7 +86,8 @@ fn public_consumer_receives_sanitized_typed_errors_and_partial_absence() {
     let collector = LocalMetadataCollector::new(tree.scope()).unwrap();
     let result = collector.collect(request(b"missing")).unwrap();
     assert!(result.file.is_none());
-    assert_eq!(result.coverage, LocalScanCoverage::Partial);
+    assert_eq!(result.coverage, LocalScanCoverage::Complete);
+    assert_eq!(result.presence, LocalPresenceEvidence::AbsentConfirmed);
 }
 
 #[test]

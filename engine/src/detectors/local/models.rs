@@ -127,8 +127,13 @@ pub struct LocalMetadataRequest {
 /// Complete selected metadata, or explicit uncertainty; no parallel event list.
 #[derive(Debug)]
 pub struct LocalMetadataResult {
+    /// Complete selected metadata when a stable entry was observed.
     pub file: Option<LocalFile>,
+    /// Completeness of this path's selected metadata collection.
     pub coverage: LocalScanCoverage,
+    /// Presence is independent of metadata coverage: partial metadata can still
+    /// prove that the entry exists, while an inconclusive read stays unknown.
+    pub presence: crate::models::LocalPresenceEvidence,
 }
 impl Default for LocalCancellation {
     fn default() -> Self {

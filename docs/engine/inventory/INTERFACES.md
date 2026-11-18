@@ -306,8 +306,8 @@ pub struct UpdateItemStatusResult { pub item: SyncItem }
 ```
 
 - `RecordLocalObservation` e `RecordRemoteObservation` **nunca** avançam o baseline. Ambos recebem o envelope `models::File` **completo**, cuja variante local/remota é validada no Inventário. A revisão `SyncItem.revision` não é `File.id` nem `RemoteFile.content.version`.
-- `PresenceState::AbsentConfirmed` exige `ObservationProof` confiável e escopo observado de forma suficiente, sem apagar o último registro nem quebrar os vínculos.
-- `presence=Unknown` e `observed.data=None` preservam o último snapshot confiável; `Present` requer `File.data=Some` da variante correta. Um evento `Deleted` ou `ScopeUnavailable` **não** produz `AbsentConfirmed` sem prova adicional.
+- `PresenceState::AbsentConfirmed` exige `ObservationProof` confiável e escopo observado de forma suficiente, sem apagar o último registro nem quebrar os vínculos. Para evidência incremental local, `ObservationSource::LocalEvent`, `complete_scope=true`, `File.data=None` e `File.event.local_presence=AbsentConfirmed` registram o resultado do lookup validado de um caminho; isso não equivale a uma listagem completa.
+- `presence=Unknown` e `observed.data=None` preservam o último snapshot confiável; `Present` requer `File.data=Some` da variante correta. Um evento `Deleted` ou `ScopeUnavailable` sozinho **não** produz `AbsentConfirmed`; eventos locais precisam carregar o resultado explícito do coletor, e falhas/indisponibilidade permanecem Unknown.
 - Não importar nem persistir `GoogleFile` diretamente: o adaptador do provedor produz `RemoteFile` e `ProviderFileData` filtrado. Mapear os campos comuns selecionados para persistência e preservar estados `MetadataValue<T>`; não limpar propriedades não coletadas. Detalhes sensíveis e codec especializado dependem da revisão antes da implementação.
 - Associar arquivos já pertencentes a outro `SyncItem` retorna erro de unicidade; nunca reatribuir silenciosamente.
 

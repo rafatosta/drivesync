@@ -418,6 +418,9 @@ fn envelope(
         scope: path.clone().map_or(FileScope::WholeSync, FileScope::Local),
         event: FileEvent {
             local: None,
+            local_presence: path
+                .as_ref()
+                .map(|_| crate::models::LocalPresenceEvidence::Unknown),
             remote: None,
             action: if unavailable {
                 FileEventAction::ScopeUnavailable
@@ -436,6 +439,7 @@ fn envelope(
         data: None,
     };
     if let Some(result) = result {
+        file.event.local_presence = Some(result.presence);
         file.coverage = match result.coverage {
             LocalScanCoverage::Complete => ObservationCoverage::Complete,
             LocalScanCoverage::Partial => ObservationCoverage::Partial,

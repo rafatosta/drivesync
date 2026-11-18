@@ -11,7 +11,8 @@ conexões SQL adicionais existem somente nos testes de injeção de falha.
 - Criação real de pasta e arquivo depois de `prepare`: ingestão e recibos atuais
   aparecem sem rescan manual, sem cruzar contas e sem executar sincronização.
 - Rename e remoção locais: observações do Detector alimentam Inventory/Analyzer;
-  a remoção sem snapshot permanece desconhecida e não aciona nova varredura.
+  o lookup ausente validado persiste `AbsentConfirmed` incrementalmente, sem nova
+  varredura; permissões, indisponibilidade e corridas permanecem desconhecidas.
 - Stop/restart e criação durante parada: preparação inicial recupera o estado pelo
   Scanner, seguido por consumo contínuo; eventos em captura permanecem duráveis.
 - Falhas em `receipts` e `analyses` durante processamento ao vivo: pausa visível,

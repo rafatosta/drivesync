@@ -51,6 +51,7 @@ fn event(kind: FileEventAction) -> File {
                 mask: libc::IN_IGNORED,
                 cookie: 0,
             }),
+            local_presence: None,
             remote: None,
             action: kind,
             uncertainty: (kind == FileEventAction::RecheckRequired)
@@ -122,7 +123,10 @@ fn local_envelope_rejects_missing_evidence_wrong_scope_or_claimed_complete_parti
     let mutations: &[fn(&mut File)] = &[
         |f| f.id = FileId(" ".into()),
         |f| f.sync_id = SyncId("".into()),
-        |f| f.data = None,
+        |f| {
+            f.data = None;
+            f.event.local_presence = Some(LocalPresenceEvidence::Present);
+        },
         |f| f.event.current = None,
         |f| f.coverage = ObservationCoverage::Unavailable,
         |f| f.scope = FileScope::Local(LocalRelativePath::new(b"other".to_vec()).unwrap()),
@@ -179,6 +183,7 @@ fn remote_observation_classifies_scope_removal_without_claiming_deletion() {
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,
+            local_presence: None,
             action: FileEventAction::RemovedFromScope,
             remote: Some(RemoteObservation {
                 source: RemoteObservationSource::Changes,

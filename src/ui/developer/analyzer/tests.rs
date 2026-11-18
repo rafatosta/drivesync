@@ -202,6 +202,7 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
                         event: FileEvent {
                             action: FileEventAction::StateChanged,
                             local: None,
+                            local_presence: None,
                             remote: Some(drivesync_engine::models::RemoteObservation {
                                 source: RemoteObservationSource::Changes,
                                 removed: Some(false),
@@ -700,6 +701,7 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
                     event: FileEvent {
                         action: FileEventAction::StateChanged,
                         local: None,
+                        local_presence: None,
                         remote: Some(drivesync_engine::models::RemoteObservation {
                             source: RemoteObservationSource::Changes,
                             removed: Some(false),

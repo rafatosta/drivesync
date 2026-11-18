@@ -71,6 +71,7 @@ fn seed(root: &std::path::Path, count: usize) {
             event: m::FileEvent {
                 action: m::FileEventAction::StateChanged,
                 local: None,
+                local_presence: None,
                 remote: Some(m::RemoteObservation {
                     source: m::RemoteObservationSource::Changes,
                     removed: Some(false),

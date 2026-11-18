@@ -429,6 +429,7 @@ fn scheduler_and_queue_accept_a_provider_independent_observer() {
                 sync_id: SyncId("sync-a".into()),
                 event: FileEvent {
                     local: None,
+                    local_presence: None,
                     remote: None,
                     action: FileEventAction::RecheckRequired,
                     uncertainty: Some(ObservationUncertainty::CaptureStarted),

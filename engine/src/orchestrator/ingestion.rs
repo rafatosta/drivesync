@@ -117,13 +117,21 @@ pub(super) fn ingest(
             Some(FileData::Remote(remote))
                 if remote.trashed == MetadataValue::Known(true)
         );
-    let presence = if remote_trashed {
-        PresenceState::AbsentConfirmed
-    } else if file.data.is_some() {
-        PresenceState::Present
+    let local_presence = if remote {
+        None
     } else {
-        PresenceState::Unknown
+        file.event.local_presence
     };
+    let presence =
+        if remote_trashed || local_presence == Some(LocalPresenceEvidence::AbsentConfirmed) {
+            PresenceState::AbsentConfirmed
+        } else if local_presence == Some(LocalPresenceEvidence::Unknown) {
+            PresenceState::Unknown
+        } else if file.data.is_some() {
+            PresenceState::Present
+        } else {
+            PresenceState::Unknown
+        };
     let proof = ObservationProof {
         source: if remote {
             ObservationSource::RemoteChange
@@ -131,8 +139,13 @@ pub(super) fn ingest(
             ObservationSource::LocalEvent
         },
         observed_at: file.observed_at,
-        scan_or_generation: None,
-        complete_scope: remote_trashed,
+        scan_or_generation: file
+            .event
+            .local
+            .as_ref()
+            .map(|event| event.capture_id.clone()),
+        complete_scope: remote_trashed
+            || local_presence == Some(LocalPresenceEvidence::AbsentConfirmed),
     };
     let expected_revision = existing.map(|item| item.revision);
     let result = if remote {

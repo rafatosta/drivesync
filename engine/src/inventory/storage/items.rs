@@ -143,6 +143,12 @@ fn record(
                 Some(FileData::Remote(remote))
                     if remote.trashed == MetadataValue::Known(true)
             );
+        let explicit_local_lookup = !remote
+            && proof.source == ObservationSource::LocalEvent
+            && proof.complete_scope
+            && file.data.is_none()
+            && file.event.local_presence
+                == Some(crate::models::LocalPresenceEvidence::AbsentConfirmed);
         let complete_listing = proof.complete_scope
             && proof
                 .scan_or_generation
@@ -153,7 +159,7 @@ fn record(
                 ObservationSource::LocalScan | ObservationSource::RemoteListing
             )
             && file.data.is_none();
-        if !explicit_remote_removal && !complete_listing {
+        if !explicit_remote_removal && !explicit_local_lookup && !complete_listing {
             return Err(failure(InventoryError::UnconfirmedAbsence));
         }
     }

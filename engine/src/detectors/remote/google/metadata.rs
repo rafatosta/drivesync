@@ -160,6 +160,7 @@ pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> R
         }),
         event: FileEvent {
             local: None,
+            local_presence: None,
             remote: Some(evidence),
             action,
             uncertainty: None,

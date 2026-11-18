@@ -92,6 +92,7 @@ impl Run<'_> {
             event: FileEvent {
                 action: FileEventAction::RecheckRequired,
                 local: None,
+                local_presence: None,
                 remote: None,
                 uncertainty: Some(ObservationUncertainty::UnclassifiedSignal),
                 previous: None,

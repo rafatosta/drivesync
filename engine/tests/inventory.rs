@@ -154,6 +154,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
         event: m::FileEvent {
             action: m::FileEventAction::StateChanged,
             local: None,
+            local_presence: None,
             remote: Some(m::RemoteObservation {
                 source: m::RemoteObservationSource::Changes,
                 removed: Some(false),
@@ -347,6 +348,7 @@ fn unconfirmed_absence_and_wrong_account_never_destroy_known_metadata() {
     );
     request.observation.observed.data = None;
     request.observation.observed.event.current = None;
+    request.observation.observed.event.action = m::FileEventAction::Unclassified;
     request.observation.presence = PresenceState::AbsentConfirmed;
     assert_eq!(
         inventory.record_remote(request.clone()).unwrap_err().kind,
@@ -406,6 +408,7 @@ fn local_file(tree: &Tree, event: &str) -> m::File {
                 mask: libc::IN_MODIFY,
                 cookie: 0,
             }),
+            local_presence: None,
             remote: None,
             uncertainty: None,
             previous: None,
@@ -527,6 +530,67 @@ fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
             .id,
         local.id
     );
+}
+
+#[test]
+fn incremental_local_absence_is_persisted_and_redelivery_reuses_its_receipt() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let observed = local_file(&tree, "local-present");
+    let initial = inventory
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::NewItem,
+            expected_revision: None,
+            observation: LocalObservation {
+                observed,
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalEvent,
+                    observed_at: m::Timestamp { unix_millis: 10 },
+                    scan_or_generation: Some("test".into()),
+                    complete_scope: false,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+
+    let mut absent = local_file(&tree, "local-absent");
+    let m::FileScope::Local(path) = absent.scope.clone() else {
+        unreachable!()
+    };
+    absent.observed_at = m::Timestamp { unix_millis: 11 };
+    absent.coverage = m::ObservationCoverage::Complete;
+    absent.event.action = m::FileEventAction::Deleted;
+    absent.event.local_presence = Some(m::LocalPresenceEvidence::AbsentConfirmed);
+    absent.event.previous = Some(m::FileLocation::Local(path));
+    absent.event.current = None;
+    absent.data = None;
+    let proof = ObservationProof {
+        source: ObservationSource::LocalEvent,
+        observed_at: absent.observed_at,
+        scan_or_generation: Some("test".into()),
+        complete_scope: true,
+    };
+    let request = RecordLocalObservation {
+        selector: ObservationTarget::Existing(initial.id.clone()),
+        expected_revision: Some(initial.revision),
+        observation: LocalObservation {
+            observed: absent,
+            presence: PresenceState::AbsentConfirmed,
+            proof,
+        },
+    };
+    let stored = inventory.record_local(request.clone()).unwrap().item;
+    assert_eq!(stored.local_presence, PresenceState::AbsentConfirmed);
+    drop(inventory);
+
+    let reopened = InventoryManager::open(tree.request()).unwrap().inventory;
+    let replay = reopened.record_local(request).unwrap().item;
+    assert_eq!(replay.id, stored.id);
+    assert_eq!(replay.revision, stored.revision);
+    assert_eq!(replay.local_presence, PresenceState::AbsentConfirmed);
 }
 
 fn timestamp(unix_millis: i64) -> m::Timestamp {
@@ -1096,8 +1160,15 @@ fn confirmation_requires_known_equal_presence_and_preserves_tombstone_history() 
         InventoryError::MissingObservation
     );
     let mut local = local_file(&tree, "local-absence");
+    let m::FileScope::Local(path) = local.scope.clone() else {
+        unreachable!()
+    };
     local.data = None;
+    local.event.action = m::FileEventAction::Deleted;
+    local.event.local = None;
+    local.event.previous = Some(m::FileLocation::Local(path));
     local.event.current = None;
+    local.coverage = m::ObservationCoverage::Complete;
     let proof = ObservationProof {
         source: ObservationSource::LocalScan,
         observed_at: timestamp(19),
@@ -1123,6 +1194,7 @@ fn confirmation_requires_known_equal_presence_and_preserves_tombstone_history() 
     );
     remote.observation.observed.data = None;
     remote.observation.observed.event.current = None;
+    remote.observation.observed.event.action = m::FileEventAction::Unclassified;
     remote.observation.presence = PresenceState::AbsentConfirmed;
     remote.observation.proof = ObservationProof {
         source: ObservationSource::RemoteListing,

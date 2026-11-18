@@ -44,8 +44,11 @@ não falhas de ingestão.
 - Resolver local por ID fornecido, ou pelo índice público de caminho relativo;
   resolver remoto por referência qualificada. Não correlacionar lados pelo nome.
 - Registrar o `File` integral com seu ID original, revisão atual e prova de origem
-  local/remota. `Some(data)` indica presença observada; `None` permanece `Unknown`.
-  Um evento isolado nunca cria `AbsentConfirmed`.
+  local/remota. Para eventos locais, encaminhar `File.event.local_presence` sem
+  inferir presença de cobertura nem transformar falhas em ausência. `Present`
+  requer payload local; `AbsentConfirmed` depende da evidência de lookup emitida
+  pelo coletor e associada ao caminho. Eventos sem esse resultado permanecem
+  `Unknown`. Observações isoladas não criam item sem associação conhecida.
 - Reentrega reaproveita o recibo por `File.id` do Inventory, inclusive quando a revisão
   já foi avançada por análise anterior. Nenhum SQL é emitido pelo Orchestrator.
 - A varredura completa do Scanner ocorre somente durante a preparação inicial.

@@ -70,6 +70,19 @@ pub struct LocalObservation {
     pub mask: u32,
     pub cookie: u32,
 }
+/// Filesystem presence outcome reported by the local metadata collector.
+/// `AbsentConfirmed` is emitted only after the configured root is revalidated
+/// and descriptor-relative lookup returns `ENOENT`; access and race failures
+/// remain `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalPresenceEvidence {
+    /// The entry was opened and its selected metadata was collected.
+    Present,
+    /// A descriptor-relative lookup returned `ENOENT` after root/parent validation.
+    AbsentConfirmed,
+    /// The filesystem result was inconclusive or the collection failed.
+    Unknown,
+}
 /// Collection operation that supplied a remote observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RemoteObservationSource {
@@ -93,6 +106,8 @@ pub struct RemoteObservation {
 pub struct FileEvent {
     /// Original local notification, present only for native local observations.
     pub local: Option<LocalObservation>,
+    /// Result of a local filesystem lookup; absent for non-local observations.
+    pub local_presence: Option<LocalPresenceEvidence>,
     /// Raw collection evidence, present only for uninterpreted remote observations.
     pub remote: Option<RemoteObservation>,
     pub action: FileEventAction,
@@ -156,6 +171,23 @@ impl File {
             || (self.event.local.is_some() && self.event.remote.is_some())
             || (self.event.local.is_some() && !Self::local_action(self.event.action))
             || (self.event.remote.is_some() && !Self::remote_action(self.event.action))
+        {
+            return invalid();
+        }
+        if self.event.local_presence.is_some() && !matches!(self.scope, FileScope::Local(_)) {
+            return invalid();
+        }
+        if matches!(
+            self.event.local_presence,
+            Some(LocalPresenceEvidence::Present)
+        ) && !matches!(self.data, Some(FileData::Local(_)))
+        {
+            return invalid();
+        }
+        if matches!(
+            self.event.local_presence,
+            Some(LocalPresenceEvidence::AbsentConfirmed)
+        ) && self.data.is_some()
         {
             return invalid();
         }

@@ -52,6 +52,26 @@ impl LocalNotificationSink for Sink {
         Ok(())
     }
 }
+struct CountingSink {
+    sender: mpsc::Sender<File>,
+    created: Arc<AtomicBool>,
+    absent: Arc<AtomicBool>,
+}
+impl LocalNotificationSink for CountingSink {
+    fn notify(&self, file: File) -> LocalDetectorResult<()> {
+        let created = file.event.action == FileEventAction::Created && file.data.is_some();
+        let absent = file.event.local_presence
+            == Some(drivesync_engine::models::LocalPresenceEvidence::AbsentConfirmed);
+        self.sender.send(file).unwrap();
+        if created {
+            self.created.store(true, Ordering::Release);
+        }
+        if absent {
+            self.absent.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+}
 fn start(detector: &LocalDetector) -> LocalStartResult {
     detector
         .start(LocalStartRequest {
@@ -100,16 +120,17 @@ fn path(file: &File, expected: &[u8]) -> bool {
 fn signal(file: &File, mask: u32) -> bool {
     file.event.local.as_ref().is_some_and(|evidence| {
         evidence.mask & mask != 0
-            && match mask {
-                libc::IN_CREATE => file.event.action == FileEventAction::Created,
-                libc::IN_DELETE => file.event.action == FileEventAction::Deleted,
-                libc::IN_MODIFY | libc::IN_CLOSE_WRITE => {
-                    file.event.action == FileEventAction::Modified
+            && if mask & (libc::IN_MODIFY | libc::IN_CLOSE_WRITE) != 0 {
+                file.event.action == FileEventAction::Modified
+            } else {
+                match mask {
+                    libc::IN_CREATE => file.event.action == FileEventAction::Created,
+                    libc::IN_DELETE => file.event.action == FileEventAction::Deleted,
+                    libc::IN_ATTRIB => file.event.action == FileEventAction::MetadataChanged,
+                    libc::IN_MOVED_FROM => file.event.action == FileEventAction::MoveFrom,
+                    libc::IN_MOVED_TO => file.event.action == FileEventAction::MoveTo,
+                    _ => file.event.action == FileEventAction::Unclassified,
                 }
-                libc::IN_ATTRIB => file.event.action == FileEventAction::MetadataChanged,
-                libc::IN_MOVED_FROM => file.event.action == FileEventAction::MoveFrom,
-                libc::IN_MOVED_TO => file.event.action == FileEventAction::MoveTo,
-                _ => file.event.action == FileEventAction::Unclassified,
             }
     })
 }
@@ -146,6 +167,10 @@ fn starts_real_capture_and_delivers_native_create_write_move_and_remove_signals(
     let file = fs::File::create(tree.0.join("file")).unwrap();
     let created = receive(&rx, |f| path(f, b"file") && f.data.is_some());
     drop(file);
+    assert_eq!(
+        created.event.local_presence,
+        Some(drivesync_engine::models::LocalPresenceEvidence::Present)
+    );
     assert_eq!(created.sync_id, tree.scope().sync_id);
     assert!(signal(&created, libc::IN_CREATE));
     fs::write(tree.0.join("file"), b"four").unwrap();
@@ -164,6 +189,10 @@ fn starts_real_capture_and_delivers_native_create_write_move_and_remove_signals(
     fs::remove_file(tree.0.join("renamed")).unwrap();
     let removed = receive(&rx, |f| path(f, b"renamed") && f.data.is_none());
     assert!(signal(&removed, libc::IN_DELETE));
+    assert_eq!(
+        removed.event.local_presence,
+        Some(drivesync_engine::models::LocalPresenceEvidence::AbsentConfirmed)
+    );
     assert_eq!(stop(&detector).in_flight, 0);
     assert_eq!(stop(&detector).state, LocalDetectorState::Stopped);
     while rx.try_recv().is_ok() {}
@@ -172,6 +201,68 @@ fn starts_real_capture_and_delivers_native_create_write_move_and_remove_signals(
         rx.recv_timeout(Duration::from_millis(100)),
         Err(mpsc::RecvTimeoutError::Timeout)
     ));
+}
+
+#[test]
+fn created_snapshot_and_later_absence_remain_ordered_before_consumer_reads_queue() {
+    let tree = Tree::new();
+    let (sender, receiver) = mpsc::channel();
+    let created_seen = Arc::new(AtomicBool::new(false));
+    let absent_seen = Arc::new(AtomicBool::new(false));
+    let detector = LocalDetector::new(LocalDetectorCreateRequest {
+        scope: tree.scope(),
+        notifications: Arc::new(CountingSink {
+            sender,
+            created: created_seen.clone(),
+            absent: absent_seen.clone(),
+        }),
+        settings: LocalDetectorSettings::default(),
+    })
+    .unwrap()
+    .detector;
+    start(&detector);
+    ready(&receiver);
+
+    fs::write(tree.0.join("short-lived"), b"initial bytes").unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    while !created_seen.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < until,
+            "create observation was not accepted"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    fs::remove_file(tree.0.join("short-lived")).unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    while !absent_seen.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < until,
+            "absence observation was not accepted"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let events: Vec<_> = receiver.try_iter().collect();
+    let created = events
+        .iter()
+        .position(|file| path(file, b"short-lived") && file.data.is_some())
+        .expect("queued creation snapshot");
+    let absent = events
+        .iter()
+        .position(|file| {
+            path(file, b"short-lived")
+                && file.event.local_presence
+                    == Some(drivesync_engine::models::LocalPresenceEvidence::AbsentConfirmed)
+        })
+        .expect("queued confirmed absence");
+    assert!(created < absent);
+    assert!(matches!(
+        &events[created].data,
+        Some(FileData::Local(local))
+            if local.storage.size_bytes == MetadataValue::Known(b"initial bytes".len() as u64)
+    ));
+    assert_eq!(events[absent].data, None);
+    stop(&detector);
 }
 #[test]
 fn adds_watches_for_new_subdirectories_without_polling_file_contents() {

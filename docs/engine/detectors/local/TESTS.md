@@ -16,7 +16,7 @@ Plano TDD **exclusivo do Detector Local real** com filesystem temporário, watch
 | `unknown_metadata` | Permissões ou atributos indisponíveis | Campos `MetadataValue::NotCollected`/`Unavailable`; cobertura compatível |
 | `closed_app_changes` | Criar/editar/mover durante stop | Reobservação somente após pedido explícito de varredura |
 | `partial_tree` | Subárvore inacessível | Aviso de reavaliação sem `LocalFile` e cobertura Partial |
-| `removed_candidate` | Arquivo desaparece ou evento de remoção chega | `File.data=None`, sem exclusão confirmada |
+| `removed_candidate` | Lookup relativo confirma `ENOENT` após revalidar raiz e pais | `AbsentConfirmed` para o caminho individual; falhas e corridas ficam `Unknown` |
 | `symlink_external` | Link para fora da raiz | Nenhuma leitura externa |
 | `reserved_directory` | `.drivesync/` alterado | Ignorar dados internos |
 | `concurrent_edits` | Mudança entre watcher e scan | Não declarar leitura completa sem evidência |
@@ -117,6 +117,9 @@ Testes do coletor exercitam syscalls e funções auxiliares em filesystem tempor
 | LOC-F-06 | Coletor fake acrescenta campo | Detector continua inalterado e repassa `LocalFile` sem perda |
 | LOC-F-07 | Sink fake recusa `File` | Falha propagada; nenhuma entrega considerada durável |
 | LOC-F-08 | Retry após falha | Mesma ocorrência pode ser reentregue com ID estável, sem invenção de metadados |
+| LOC-F-09 | Arquivo removido antes do consumo de Created | Payload inicial preservado e evento subsequente transmite ausência incremental pelo mesmo caminho |
+| LOC-F-10 | Arquivo removido e recriado no mesmo caminho | Nova coleta transmite Present e metadados da nova entrada, sem reutilizar identidade não comprovada |
+| LOC-F-11 | Permissão, raiz indisponível ou alteração durante coleta | Nunca confirmar ausência; erros tipados ou presença Unknown |
 
 ## Controle de entrega e estado — testes adicionais
 
