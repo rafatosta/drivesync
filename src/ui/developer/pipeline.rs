@@ -154,21 +154,40 @@ pub(super) fn build(context: &Context, operator: bool) -> gtk::Box {
 
 fn command_label(command: &drivesync_engine::operations::OperationCommand) -> String {
     use drivesync_engine::operations::{ItemName, OperationCommand as C, ResourceRef};
-    if let C::Trash { target, .. } = command {
-        return match target {
+    fn display_name(name: &ItemName) -> String {
+        match name {
+            ItemName::Local(name) => name.to_string_lossy().into_owned(),
+            ItemName::Remote(name) => name.clone(),
+        }
+    }
+    fn target_side(target: &ResourceRef) -> &'static str {
+        match target {
+            ResourceRef::Local { .. } => "local",
+            ResourceRef::Remote { .. } => "remote",
+        }
+    }
+    match command {
+        C::Upload { name, .. } => format!("Upload: {}", display_name(name)),
+        C::Download { name, .. } => format!("Download: {}", display_name(name)),
+        C::CreateFile { name, .. } => format!("Create file: {}", display_name(name)),
+        C::CreateDirectory { name, .. } => format!("Create folder: {}", display_name(name)),
+        C::UpdateContent { target, .. } => {
+            format!("Update {} content", target_side(target))
+        }
+        C::Rename {
+            target, new_name, ..
+        } => {
+            format!(
+                "Rename {} item to {}",
+                target_side(target),
+                display_name(new_name)
+            )
+        }
+        C::Move { target, .. } => format!("Move {} item", target_side(target)),
+        C::Trash { target, .. } => match target {
             ResourceRef::Local { .. } => "Move local item to trash".into(),
             ResourceRef::Remote { .. } => "Move remote item to trash".into(),
-        };
+        },
+        C::Restore { target, .. } => format!("Restore {} item from trash", target_side(target)),
     }
-    let (action, name) = match command {
-        C::Upload { name, .. } => ("Upload", name),
-        C::Download { name, .. } => ("Download", name),
-        C::CreateDirectory { name, .. } => ("Create folder", name),
-        _ => return "Unsupported action".into(),
-    };
-    let name = match name {
-        ItemName::Local(name) => name.to_string_lossy().into_owned(),
-        ItemName::Remote(name) => name.clone(),
-    };
-    format!("{action}: {name}")
 }
