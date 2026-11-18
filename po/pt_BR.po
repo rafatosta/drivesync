@@ -1069,6 +1069,36 @@ msgstr "Arquivo: {file}."
 msgid "Will retry automatically."
 msgstr "Uma nova tentativa será feita automaticamente."
 
+msgid "Synchronization failed"
+msgstr "A sincronização falhou"
+
+msgid "Synchronization problem"
+msgstr "Problema de sincronização"
+
+msgid "This issue was reported by the synchronization engine. The main card continues to show current activity."
+msgstr "Este problema foi informado pelo mecanismo de sincronização. O cartão principal continua mostrando a atividade atual."
+
+msgid "This issue affects {count} items."
+msgstr "Este problema afeta {count} itens."
+
+msgid "Reconnect the account to access the cloud source."
+msgstr "Reconecte a conta para acessar a origem na nuvem."
+
+msgid "The account does not have permission to access this item."
+msgstr "A conta não tem permissão para acessar este item."
+
+msgid "This file operation is not supported by the provider."
+msgstr "Esta operação de arquivo não é compatível com o provedor."
+
+msgid "Permission is required to complete this file operation."
+msgstr "É necessária permissão para concluir esta operação de arquivo."
+
+msgid "There is not enough storage to complete this file operation."
+msgstr "Não há espaço suficiente para concluir esta operação de arquivo."
+
+msgid "A network problem prevented this file operation."
+msgstr "Um problema de rede impediu esta operação de arquivo."
+
 msgid "Uploading {completed} of {total} files"
 msgstr "Enviando {completed} de {total} arquivos"
 

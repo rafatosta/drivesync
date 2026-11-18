@@ -167,10 +167,13 @@ pub(super) fn open(
                     ProblemCategory::LocalFolder => {
                         "Check that the local folder is accessible or choose it again."
                     }
+                    ProblemCategory::Synchronization => {
+                        "This issue was reported by the synchronization engine. The main card continues to show current activity."
+                    }
                 }),
                 "body",
             ));
-            Some(category.action())
+            category.action()
         }
     };
     toolbar.set_content(Some(
@@ -200,6 +203,7 @@ pub(super) fn open(
     );
     confirm.set_widget_name("review-confirm");
     confirm.add_css_class("suggested-action");
+    confirm.set_visible(conflict || action.is_some());
     let id = item.id.clone();
     let weak = nav.downgrade();
     let submitted = Cell::new(false);

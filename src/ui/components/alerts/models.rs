@@ -7,13 +7,14 @@ pub(crate) enum AlertKind {
     Problem,
 }
 
-/// Persistent impediments requiring user intervention, not transient retries.
+/// Categories for a separate problem card; some categories carry a user action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProblemCategory {
     Authentication,
     Permission,
     Storage,
     LocalFolder,
+    Synchronization,
 }
 impl ProblemCategory {
     pub fn title(self) -> String {
@@ -22,14 +23,16 @@ impl ProblemCategory {
             Self::Permission => "Access permission missing",
             Self::Storage => "Storage is full",
             Self::LocalFolder => "Local folder unavailable",
+            Self::Synchronization => "Synchronization problem",
         })
     }
-    pub fn action(self) -> (&'static str, String) {
+    pub fn action(self) -> Option<(&'static str, String)> {
         match self {
-            Self::Authentication => ("reconnect", gettext("Reconnect account")),
-            Self::Permission => ("permissions", gettext("Review permissions")),
-            Self::Storage => ("storage", gettext("Free up space")),
-            Self::LocalFolder => ("folder", gettext("Select local folder")),
+            Self::Authentication => Some(("reconnect", gettext("Reconnect account"))),
+            Self::Permission => Some(("permissions", gettext("Review permissions"))),
+            Self::Storage => Some(("storage", gettext("Free up space"))),
+            Self::LocalFolder => Some(("folder", gettext("Select local folder"))),
+            Self::Synchronization => None,
         }
     }
 }

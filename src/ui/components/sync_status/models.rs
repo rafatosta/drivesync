@@ -38,7 +38,7 @@ pub struct SyncStatusData {
 }
 
 impl SyncStatusData {
-    /// Attention takes precedence over activity and success in this single card.
+    /// Whether separate conflict or problem cards should be shown.
     pub fn needs_attention(&self) -> bool {
         self.conflicts > 0 || self.problems > 0
     }
@@ -46,7 +46,7 @@ impl SyncStatusData {
     /// Prefer byte progress, falling back to item progress. Unknown or zero
     /// denominators are indeterminate; over-reported numerators are clamped.
     pub fn fraction(&self) -> Option<f64> {
-        if self.needs_attention() || !self.activity.is_active() {
+        if !self.activity.is_active() {
             return None;
         }
         [
@@ -62,7 +62,7 @@ impl SyncStatusData {
 
     /// Aggregate one current snapshot per configured account. The first active
     /// account in the caller's stable ordering supplies the predominant activity.
-    /// Attention counts across accounts take precedence, using saturating sums.
+    /// Attention counts are summed separately, so they never replace that activity.
     /// No accounts, unknown accounts or active accounts can imply global success.
     /// Progress belongs only to the selected activity, never unrelated totals.
     pub fn aggregate(accounts: &[Self]) -> Self {
@@ -72,14 +72,7 @@ impl SyncStatusData {
         let problems = accounts
             .iter()
             .fold(0_u64, |n, s| n.saturating_add(s.problems));
-        if conflicts > 0 || problems > 0 {
-            return Self {
-                conflicts,
-                problems,
-                ..Self::default()
-            };
-        }
-        accounts
+        let mut aggregate = accounts
             .iter()
             .find(|s| s.activity.is_active())
             .cloned()
@@ -92,7 +85,13 @@ impl SyncStatusData {
             .unwrap_or_else(|| Self {
                 synchronized: !accounts.is_empty() && accounts.iter().all(|s| s.synchronized),
                 ..Self::default()
-            })
+            });
+        aggregate.conflicts = conflicts;
+        aggregate.problems = problems;
+        if aggregate.needs_attention() {
+            aggregate.synchronized = false;
+        }
+        aggregate
     }
 }
 
@@ -117,7 +116,7 @@ impl SyncActivity {
 mod tests {
     use super::*;
     #[test]
-    fn attention_overrides_success_and_activity_and_sums_accounts() {
+    fn attention_is_separate_from_activity_and_sums_across_accounts() {
         let attention = SyncStatusData {
             conflicts: 2,
             problems: 1,
@@ -128,7 +127,7 @@ mod tests {
             ..Default::default()
         };
         assert!(attention.needs_attention());
-        assert_eq!(attention.fraction(), None);
+        assert_eq!(attention.fraction(), Some(0.5));
         let merged = SyncStatusData::aggregate(&[
             attention,
             SyncStatusData {
@@ -139,6 +138,8 @@ mod tests {
         ]);
         assert_eq!(merged.conflicts, u64::MAX);
         assert_eq!(merged.problems, 3);
+        assert_eq!(merged.activity, SyncActivity::Upload);
+        assert_eq!(merged.fraction(), Some(0.5));
         assert!(!merged.synchronized);
     }
 

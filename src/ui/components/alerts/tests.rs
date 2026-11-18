@@ -145,6 +145,20 @@ fn alerts_navigation_and_single_category_layout() {
         .emit_by_name::<()>("activated", &[]);
     nav.pop();
     assert_eq!(received.borrow().len(), 7);
+    alerts.update(&[AlertItem {
+        details: AlertDetails::Problem(ProblemCategory::Synchronization),
+        ..problem.clone()
+    }]);
+    alerts
+        .problems
+        .list
+        .row_at_index(0)
+        .unwrap()
+        .downcast::<adw::ActionRow>()
+        .unwrap()
+        .emit_by_name::<()>("activated", &[]);
+    assert!(!button(&nav, "review-confirm").is_visible());
+    nav.pop();
     alerts.update(&[conflict]);
     assert!(alerts.conflicts.button.is_visible());
     assert!(!alerts.problems.button.is_visible());

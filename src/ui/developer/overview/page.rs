@@ -280,6 +280,19 @@ fn scenarios() -> Vec<(&'static str, Vec<SyncStatusData>)> {
             }],
         ),
         (
+            "Download + issue · status stays active",
+            vec![SyncStatusData {
+                activity: Download,
+                detail: Some(gettext(
+                    "Downloading: archive-without-extension · Transferring file",
+                )),
+                transferred_bytes: Some(50_000_000),
+                total_bytes: Some(100_000_000),
+                problems: 1,
+                ..Default::default()
+            }],
+        ),
+        (
             "Two accounts · one active",
             vec![
                 confirmed.clone(),

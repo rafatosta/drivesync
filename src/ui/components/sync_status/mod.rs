@@ -2,7 +2,7 @@
 //! producer emits a new snapshot; the component performs no polling or engine IO.
 mod models;
 use adw::{gtk, prelude::*};
-use gettextrs::{gettext, ngettext};
+use gettextrs::gettext;
 pub(crate) use models::{SyncActivity, SyncStatusData};
 
 /// Reusable card with one public presentation update boundary.
@@ -89,14 +89,14 @@ impl SyncStatus {
     /// inactivity remains visible as an unknown state, never as success.
     pub fn update(&self, data: &SyncStatusData) {
         use SyncActivity::*;
-        let attention = data.needs_attention() || data.activity == Failed;
-        let active = !attention && data.activity.is_active();
-        let unknown = !attention
+        let failure = data.activity == Failed;
+        let active = data.activity.is_active();
+        let unknown = !failure
             && !active
             && !data.synchronized
             && matches!(data.activity, Idle | Waiting | Stopped);
         self.root.set_visible(true);
-        self.icon.set_icon_name(Some(if attention {
+        self.icon.set_icon_name(Some(if failure {
             "dialog-warning-symbolic"
         } else if unknown {
             "dialog-information-symbolic"
@@ -106,7 +106,7 @@ impl SyncStatus {
         for class in ["success", "warning", "dim-label"] {
             self.icon.remove_css_class(class);
         }
-        self.icon.add_css_class(if attention {
+        self.icon.add_css_class(if failure {
             "warning"
         } else if unknown {
             "dim-label"
@@ -114,18 +114,18 @@ impl SyncStatus {
             "success"
         });
         self.icon
-            .set_pixel_size(if attention || unknown { 28 } else { 48 });
+            .set_pixel_size(if failure || unknown { 28 } else { 48 });
         self.icon.set_visible(!active);
         self.spinner.set_visible(active);
         self.spinner.set_spinning(active);
-        self.title.set_label(&gettext(if attention {
-            "Synchronization needs attention"
-        } else if active {
+        self.title.set_label(&gettext(if active {
             "Syncing files"
         } else if data.activity == Waiting {
             "Waiting to sync"
         } else if data.activity == Stopped {
             "Synchronization stopped"
+        } else if failure {
+            "Synchronization failed"
         } else if unknown {
             "Synchronization status is unknown"
         } else {
@@ -161,9 +161,6 @@ impl SyncStatus {
                 detail.push_str(&format!(" ({})", gtk::glib::format_size(bytes)));
             }
         }
-        if attention && data.detail.is_none() {
-            detail = attention_detail(data.conflicts, data.problems);
-        }
         self.detail.set_label(&detail);
         let fraction = data.fraction();
         self.progress.set_visible(fraction.is_some());
@@ -174,30 +171,6 @@ impl SyncStatus {
                 .map(|n| format!("{:.0}%", n * 100.0))
                 .unwrap_or_default(),
         );
-    }
-}
-
-/// Localized count clauses avoid showing absent categories or incorrect plurals.
-fn attention_detail(conflicts: u64, problems: u64) -> String {
-    let conflicts_text = ngettext(
-        "{count} conflict awaits a decision",
-        "{count} conflicts await a decision",
-        conflicts.min(u32::MAX as u64) as u32,
-    )
-    .replace("{count}", &conflicts.to_string());
-    let problems_text = ngettext(
-        "{count} problem prevents completion",
-        "{count} problems prevent completion",
-        problems.min(u32::MAX as u64) as u32,
-    )
-    .replace("{count}", &problems.to_string());
-    match (conflicts > 0, problems > 0) {
-        (true, true) => gettext("{conflicts} and {problems}.")
-            .replace("{conflicts}", &conflicts_text)
-            .replace("{problems}", &problems_text),
-        (true, false) => format!("{conflicts_text}."),
-        (false, true) => format!("{problems_text}."),
-        (false, false) => String::new(),
     }
 }
 
@@ -241,11 +214,26 @@ mod tests {
             ..Default::default()
         });
         assert!(card.widget().is_visible());
-        assert!(card.icon.has_css_class("warning"));
-        assert!(!card.icon.has_css_class("success"));
+        assert!(card.icon.has_css_class("success"));
+        assert!(!card.icon.has_css_class("warning"));
         assert!(!card.progress.is_visible());
         assert!(!card.spinner.is_spinning());
-        assert_eq!(card.detail.label(), attention_detail(2, 1));
+        assert_eq!(
+            card.detail.label(),
+            gettext("Your files are up to date between your computer and Google Drive.")
+        );
+        card.update(&SyncStatusData {
+            activity: SyncActivity::Download,
+            detail: Some("Downloading: video.mov · Transferring file".into()),
+            transferred_bytes: Some(50),
+            total_bytes: Some(100),
+            problems: 1,
+            ..Default::default()
+        });
+        assert!(card.spinner.is_spinning());
+        assert!(card.progress.is_visible());
+        assert_eq!(card.percent.label(), "50%");
+        assert!(card.detail.label().starts_with("Downloading: video.mov"));
         card.update(&SyncStatusData {
             synchronized: true,
             ..Default::default()

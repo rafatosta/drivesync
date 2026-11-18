@@ -1,6 +1,7 @@
 //! Adaptive GNOME account navigation; account settings remain in Preferences.
 use super::sidebar::AccountSidebar;
 use crate::application::Context;
+use crate::ui::components::alerts::{AlertDetails, AlertItem, Alerts, ProblemCategory};
 use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
@@ -112,13 +113,18 @@ fn build_with_accounts(
     let status = SyncStatus::new();
     status.widget().set_visible(false);
     empty.append(status.widget());
+    let alerts = Rc::new(Alerts::new(navigation, |_, _| {}));
+    empty.append(alerts.widget());
     toolbar.set_content(Some(&empty));
     split.set_content(Some(&adw::NavigationPage::new(&toolbar, "DriveSync")));
     let status_subscription = Rc::new(RefCell::new(None::<gtk::glib::JoinHandle<()>>));
+    let visible_alerts = Rc::new(RefCell::new(Vec::<AlertItem>::new()));
     sidebar.on_selected({
         let title = title.downgrade();
         let status = status.clone();
         let status_subscription = status_subscription.clone();
+        let alerts = alerts.clone();
+        let visible_alerts = visible_alerts.clone();
         let context = context.clone();
         move |account| {
             if let Some(title) = title.upgrade() {
@@ -142,18 +148,40 @@ fn build_with_accounts(
             }
             let Some(account) = account else {
                 status.widget().set_visible(false);
+                visible_alerts.borrow_mut().clear();
+                alerts.update(&[]);
                 return;
             };
             status.update(&SyncStatusData::default());
+            visible_alerts.borrow_mut().clear();
+            alerts.update(&[]);
             let Some(engine) = context.engine.borrow().clone() else {
                 return;
             };
             let mut subscription = engine.observe_synchronization(&account.id);
-            status.update(&presentation_status(&subscription.snapshot()));
+            let account_label = account
+                .display_name
+                .as_deref()
+                .or(account.email.as_deref())
+                .unwrap_or("DriveSync")
+                .to_owned();
+            let snapshot = subscription.snapshot();
+            status.update(&presentation_status(&snapshot));
+            let initial_alerts = issue_alerts(&snapshot, &account.id.0, &account_label);
+            *visible_alerts.borrow_mut() = initial_alerts.clone();
+            alerts.update(&initial_alerts);
             let status = status.clone();
+            let alerts = alerts.clone();
+            let visible_alerts = visible_alerts.clone();
             *status_subscription.borrow_mut() = Some(gtk::glib::spawn_future_local(async move {
                 while subscription.changed().await {
-                    status.update(&presentation_status(&subscription.snapshot()));
+                    let snapshot = subscription.snapshot();
+                    status.update(&presentation_status(&snapshot));
+                    let next_alerts = issue_alerts(&snapshot, &account.id.0, &account_label);
+                    if *visible_alerts.borrow() != next_alerts {
+                        *visible_alerts.borrow_mut() = next_alerts.clone();
+                        alerts.update(&next_alerts);
+                    }
                 }
             }));
         }
@@ -288,7 +316,7 @@ fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
     };
     SyncStatusData {
         activity,
-        detail: status_detail(status),
+        detail: work_detail(status),
         transferred_bytes,
         total_bytes,
         problems: status.issue.as_ref().map_or(0, |issue| issue.count),
@@ -296,34 +324,7 @@ fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
     }
 }
 
-fn status_detail(status: &SynchronizationStatus) -> Option<String> {
-    if let Some(issue) = &status.issue {
-        let message = match &issue.kind {
-            SynchronizationIssueKind::Detector(_) => "A synchronization source needs attention.",
-            SynchronizationIssueKind::LocalSource(_) => "The local folder could not be read.",
-            SynchronizationIssueKind::RemoteSource(_) => "The cloud source is unavailable.",
-            SynchronizationIssueKind::Inventory(_) => {
-                "Synchronization data could not be read or saved."
-            }
-            SynchronizationIssueKind::Queue(_) => "A detected change could not be saved.",
-            SynchronizationIssueKind::Scanner(_) => "The local scan could not be completed.",
-            SynchronizationIssueKind::Analyzer(_) => "A file could not be analyzed.",
-            SynchronizationIssueKind::Operation(_) => "A file operation could not be completed.",
-            SynchronizationIssueKind::IncompleteScan => "The local scan is incomplete; retrying.",
-            SynchronizationIssueKind::Internal => "Synchronization stopped unexpectedly.",
-        };
-        let mut detail = gettext(message);
-        if let Some(name) = issue.item.as_ref().and_then(item_name) {
-            detail.push(' ');
-            detail.push_str(&gettext("File: {file}.").replace("{file}", &name));
-        }
-        if issue.retryable {
-            detail.push(' ');
-            detail.push_str(&gettext("Will retry automatically."));
-        }
-        return Some(detail);
-    }
-
+fn work_detail(status: &SynchronizationStatus) -> Option<String> {
     let work = status.work.as_ref()?;
     let name = work.item.as_ref().and_then(item_name);
     let action = match work.action {
@@ -392,6 +393,74 @@ fn status_detail(status: &SynchronizationStatus) -> Option<String> {
     Some(detail)
 }
 
+fn issue_alerts(status: &SynchronizationStatus, account_id: &str, account: &str) -> Vec<AlertItem> {
+    let Some(issue) = &status.issue else {
+        return Vec::new();
+    };
+    let category = ProblemCategory::Synchronization;
+    let title = issue
+        .item
+        .as_ref()
+        .and_then(item_name)
+        .unwrap_or_else(|| category.title());
+    let detail = issue_detail(issue);
+    vec![AlertItem {
+        id: format!("{account_id}/synchronization-issue"),
+        account: account.to_owned(),
+        title,
+        detail,
+        details: AlertDetails::Problem(category),
+    }]
+}
+
+fn issue_detail(issue: &drivesync_engine::SynchronizationIssue) -> String {
+    let message = match &issue.kind {
+        SynchronizationIssueKind::Detector(_) => "A synchronization source needs attention.",
+        SynchronizationIssueKind::LocalSource(_) => "The local folder could not be read.",
+        SynchronizationIssueKind::RemoteSource(
+            drivesync_engine::detectors::RemoteError::AuthorizationRequired,
+        ) => "Reconnect the account to access the cloud source.",
+        SynchronizationIssueKind::RemoteSource(
+            drivesync_engine::detectors::RemoteError::PermissionDenied,
+        ) => "The account does not have permission to access this item.",
+        SynchronizationIssueKind::RemoteSource(_) => "The cloud source is unavailable.",
+        SynchronizationIssueKind::Inventory(_) => {
+            "Synchronization data could not be read or saved."
+        }
+        SynchronizationIssueKind::Queue(_) => "A detected change could not be saved.",
+        SynchronizationIssueKind::Scanner(_) => "The local scan could not be completed.",
+        SynchronizationIssueKind::Analyzer(_) => "A file could not be analyzed.",
+        SynchronizationIssueKind::Operation(
+            drivesync_engine::operations::OperatorError::UnsupportedOperation,
+        ) => "This file operation is not supported by the provider.",
+        SynchronizationIssueKind::Operation(
+            drivesync_engine::operations::OperatorError::PermissionDenied,
+        ) => "Permission is required to complete this file operation.",
+        SynchronizationIssueKind::Operation(
+            drivesync_engine::operations::OperatorError::InsufficientSpace,
+        ) => "There is not enough storage to complete this file operation.",
+        SynchronizationIssueKind::Operation(
+            drivesync_engine::operations::OperatorError::Network,
+        ) => "A network problem prevented this file operation.",
+        SynchronizationIssueKind::Operation(_) => "A file operation could not be completed.",
+        SynchronizationIssueKind::IncompleteScan => "The local scan is incomplete; retrying.",
+        SynchronizationIssueKind::Internal => "Synchronization stopped unexpectedly.",
+    };
+    let mut detail = gettext(message);
+    if issue.count > 1 {
+        detail.push(' ');
+        detail.push_str(
+            &gettext("This issue affects {count} items.")
+                .replace("{count}", &issue.count.to_string()),
+        );
+    }
+    if issue.retryable {
+        detail.push(' ');
+        detail.push_str(&gettext("Will retry automatically."));
+    }
+    detail
+}
+
 fn item_name(item: &drivesync_engine::SynchronizationItem) -> Option<String> {
     item.local_name
         .as_ref()
@@ -420,8 +489,9 @@ pub(crate) fn fixture(
 mod tests {
     use super::*;
     use drivesync_engine::{
-        SynchronizationItem, SynchronizationLocation, SynchronizationProgress,
-        SynchronizationProgressUnit, SynchronizationWork,
+        SynchronizationIssue, SynchronizationIssueKind, SynchronizationItem,
+        SynchronizationLocation, SynchronizationProgress, SynchronizationProgressUnit,
+        SynchronizationWork,
     };
 
     #[test]
@@ -467,5 +537,56 @@ mod tests {
         status.work.as_mut().unwrap().detail =
             SynchronizationWorkDetail::Waiting(SynchronizationWaitReason::RetryBackoff);
         assert_eq!(presentation_status(&status).activity, SyncActivity::Waiting);
+    }
+
+    #[test]
+    fn operation_issue_is_a_separate_problem_item_while_download_stays_active() {
+        let item = SynchronizationItem {
+            id: None,
+            kind: None,
+            local_name: Some("arquivo-sem-extensao".into()),
+            remote_name: None,
+            local_path: None,
+            remote_reference: None,
+        };
+        let status = SynchronizationStatus {
+            state: SynchronizationState::Running,
+            activity: SynchronizationActivity::Downloading,
+            work: Some(SynchronizationWork {
+                action: SynchronizationAction::Download,
+                item: Some(item.clone()),
+                location: Some(SynchronizationLocation::LocalRoot),
+                detail: SynchronizationWorkDetail::Transfer(
+                    drivesync_engine::operations::ExecutionPhase::Transferring,
+                ),
+                event: None,
+            }),
+            issue: Some(SynchronizationIssue {
+                kind: SynchronizationIssueKind::Operation(
+                    drivesync_engine::operations::OperatorError::UnsupportedOperation,
+                ),
+                retryable: false,
+                item: Some(item),
+                count: 1,
+            }),
+            ..Default::default()
+        };
+
+        let main_card = presentation_status(&status);
+        assert_eq!(main_card.activity, SyncActivity::Download);
+        assert!(main_card
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("arquivo-sem-extensao")));
+        assert_eq!(main_card.problems, 1);
+
+        let problems = issue_alerts(&status, "account-id", "Personal account");
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].title, "arquivo-sem-extensao");
+        assert!(problems[0].detail.contains("not supported"));
+        assert!(matches!(
+            problems[0].details,
+            AlertDetails::Problem(ProblemCategory::Synchronization)
+        ));
     }
 }
