@@ -291,9 +291,12 @@ fn reconcile_presence(request: &ReconciliationRequest, out: &mut ReconciliationA
     } else if changes.contains(&Change::Unknown) {
         out.require(Requirement::VerifySurvivingState);
     } else {
-        // Identify trash intent without inventing authorization or execution.
+        // Remote absence may be propagated to the local trash; the reverse
+        // direction remains blocked on explicit deletion authorization.
         out.decisions.push(Decision::Trash { target: source });
-        out.require(Requirement::AuthorizeDeletion);
+        if source == Side::Remote {
+            out.require(Requirement::AuthorizeDeletion);
+        }
     }
 }
 

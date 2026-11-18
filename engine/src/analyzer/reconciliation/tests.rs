@@ -326,7 +326,7 @@ fn creation_is_an_intent_blocked_on_destination_resolution() {
     }
 }
 #[test]
-fn deletion_requires_policy_and_delete_vs_change_is_a_conflict() {
+fn remote_deletion_propagates_to_local_trash_but_local_deletion_requires_policy() {
     for survivor in [Side::Local, Side::Remote] {
         let mut r = request();
         r.evidence.content_comparison = Comparison::Unknown;
@@ -336,7 +336,11 @@ fn deletion_requires_policy_and_delete_vs_change_is_a_conflict() {
         }
         assert_eq!(
             outcome(r.clone()).requirements,
-            vec![Requirement::AuthorizeDeletion]
+            if survivor == Side::Local {
+                vec![]
+            } else {
+                vec![Requirement::AuthorizeDeletion]
+            }
         );
         match survivor {
             Side::Local => r.evidence.local_content = Change::Unknown,

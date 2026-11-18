@@ -1,4 +1,4 @@
-//! Analysis coordination with optional verified initial-creation execution.
+//! Analysis coordination with optional verified operation execution.
 use crate::{
     inventory::{
         AnalysisEvidence, InventoryError, InventoryManager, RecordedAnalysis, SyncIdentity,

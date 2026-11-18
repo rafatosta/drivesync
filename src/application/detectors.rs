@@ -156,7 +156,7 @@ pub(crate) async fn refresh(context: &Context) -> Result<Vec<(Account, Option<St
             let connector = engine.clone();
             let created = gio::spawn_blocking(move || {
                 Orchestrator::new(OrchestratorCreateRequest {
-                    execute_creations: true,
+                    execute_operations: true,
                     detector: DetectorCreateRequest {
                         connector,
                         scope,

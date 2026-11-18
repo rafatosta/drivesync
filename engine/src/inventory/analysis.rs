@@ -93,8 +93,8 @@ pub enum AnalysisRequirement {
     VerifyCapabilities,
     VerifyPreconditions,
 }
-/// An incomplete semantic intent. Only creation/content/name/location are accepted.
-/// No destination, execution command or permission to run is implied.
+/// An incomplete semantic intent. It carries no destination, execution command,
+/// or permission to run; each accepted intent must pass planning and policy checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisIntent {
     pub direction: OperationDirection,

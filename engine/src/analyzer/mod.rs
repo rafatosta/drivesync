@@ -1,7 +1,7 @@
 //! Revision-checked coordination of pure algorithms and durable inventory receipts.
 //!
-//! Optional initial creation execution calls Operator after live prerequisites;
-//! conflicts and existing-file mutations remain explicit blocked decisions.
+//! Optional operation execution calls Operator only after live prerequisites;
+//! conflicts and unresolved deletion authorization remain blocked decisions.
 //! SQLite access goes through InventoryManager on a blocking worker, never the
 //! async caller's thread. Algorithms and persistence mappings remain private.
 //!

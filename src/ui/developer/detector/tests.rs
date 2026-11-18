@@ -126,7 +126,7 @@ fn live_account_selection_and_detector_layout() {
         std::fs::create_dir(&root).unwrap();
         let session =
             Orchestrator::new(drivesync_engine::orchestrator::OrchestratorCreateRequest {
-                execute_creations: false,
+                execute_operations: false,
                 detector: DetectorCreateRequest {
                     connector: engine.clone(),
                     scope: DetectorScope {

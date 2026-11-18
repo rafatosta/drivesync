@@ -676,14 +676,16 @@ pub(super) fn build(
                         }
                     }
                 }
-                push(
-                    &mut assessment.requirements,
-                    AnalysisRequirement::AuthorizeDeletion,
-                );
-                plan.manual.push(ManualIssue {
-                    reason: ManualReason::DeletionAuthorization,
-                    resources: refs(item),
-                });
+                if upload || item.kind == ItemKind::Directory {
+                    push(
+                        &mut assessment.requirements,
+                        AnalysisRequirement::AuthorizeDeletion,
+                    );
+                    plan.manual.push(ManualIssue {
+                        reason: ManualReason::DeletionAuthorization,
+                        resources: refs(item),
+                    });
+                }
                 target.map(|target| OperationCommand::Trash {
                     target,
                     preconditions: conditions,

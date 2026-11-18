@@ -42,7 +42,7 @@ async fn main() {
     .await
     .expect("open configured account store");
     let session = Orchestrator::new(OrchestratorCreateRequest {
-        execute_creations: std::env::var("DRIVESYNC_LIVE_EXECUTION").as_deref() == Ok("1"),
+        execute_operations: std::env::var("DRIVESYNC_LIVE_EXECUTION").as_deref() == Ok("1"),
         detector: DetectorCreateRequest {
             connector,
             scope: DetectorScope {

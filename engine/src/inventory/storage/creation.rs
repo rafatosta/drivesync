@@ -76,7 +76,17 @@ impl InventoryManager {
                 let decision=analysis.decisions.first().ok_or_else(||failure(InventoryError::InvalidTransition))?;
                 let unbound=match decision.intent.direction {OperationDirection::Upload=>item.remote_ref.is_none()&&item.remote.is_none()&&item.remote_latest.is_none(),OperationDirection::Download=>item.local_file_id.is_none()&&item.local.is_none()&&item.local_latest.is_none()};
                 if decision.intent.kind==OperationKind::Create && !unbound {return Err(failure(InventoryError::DuplicateAssociation));}
-                if decision.intent.kind!=OperationKind::Create && (!matches!(decision.intent.kind,OperationKind::Rename|OperationKind::Move|OperationKind::UpdateContent)||item.baseline.is_none()) {return Err(failure(InventoryError::InvalidTransition));}
+                let local_trash = decision.intent.kind == OperationKind::Trash
+                    && item.kind == ItemKind::File
+                    && r.intent.direction == OperationDirection::Download
+                    && item.local_presence == PresenceState::Present
+                    && item.remote_presence == PresenceState::AbsentConfirmed
+                    && item.baseline.as_ref().is_some_and(|baseline| {
+                        baseline.local.presence == PresenceState::Present
+                            && baseline.remote.presence == PresenceState::Present
+                    })
+                    && matches!(&r.intent.command, OperationCommand::Trash { target: ResourceRef::Local { .. }, .. });
+                if decision.intent.kind!=OperationKind::Create && (!matches!(decision.intent.kind,OperationKind::Rename|OperationKind::Move|OperationKind::UpdateContent)||item.baseline.is_none()) && !local_trash {return Err(failure(InventoryError::InvalidTransition));}
                 super::execution::prepare(db,PrepareExecutionRequest {intent:r.intent.clone()})?;
                 db.execute("UPDATE operations SET dedup=?2 WHERE seq=?1 AND dedup IS NULL",params![decision.operation_id.0,format!("execution:{}",r.intent.context.id.as_str())]).map_err(sql)?;
                 super::operations::load(db,&decision.operation_id)?
@@ -112,6 +122,142 @@ impl InventoryManager {
             })?;
             super::items::bump(db, &current.operation.item_id)?;
             Ok(())
+        })
+    }
+    /// Atomically records a verified remote-to-local trash effect and completes
+    /// its durable operation. The private trash path is never indexed as a live item.
+    pub fn record_trashed_local(&self, r: RecordTrashedLocalRequest) -> InventoryResult<SyncItem> {
+        self.run(true, |db| {
+            let current = binding(db, &r.binding.operation.item_id)?
+                .ok_or_else(|| failure(InventoryError::NotFound))?;
+            if current.intent != r.binding.intent
+                || current.operation.attempt_count != r.binding.operation.attempt_count
+            {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            let OperationCommand::Trash {
+                target:
+                    ResourceRef::Local {
+                        relative_path,
+                        local_id: Some(local_id),
+                    },
+                ..
+            } = &current.intent.command
+            else {
+                return Err(failure(InventoryError::InvalidTransition));
+            };
+            if current.intent.direction != OperationDirection::Download
+                || current.operation.kind != OperationKind::Trash
+                || current
+                    .operation
+                    .started_at
+                    .is_some_and(|started| r.trashed_at.unix_millis < started.unix_millis)
+            {
+                return Err(failure(InventoryError::InvalidTransition));
+            }
+            let checkpoint = super::execution::load(db, &current.intent.context.id)?;
+            if checkpoint.state.phase != CheckpointPhase::Completed
+                || checkpoint.state.result.as_ref() != Some(&r.result)
+                || r.result.verification != VerificationStatus::Verified
+            {
+                return Err(failure(InventoryError::InvalidTransition));
+            }
+            let trash_path = crate::models::LocalRelativePath::new(
+                format!(".drivesync/trash/{}/item", current.intent.context.id.as_str())
+                    .into_bytes(),
+            )
+            .map_err(|_| failure(InventoryError::InvalidArgument))?;
+            match (&r.result.resource, &r.result.metadata) {
+                (
+                    ResourceRef::Local {
+                        relative_path,
+                        local_id: Some(result_id),
+                    },
+                    Some(FileData::Local(metadata)),
+                ) if relative_path == &trash_path
+                    && result_id == local_id
+                    && metadata.relative_path == trash_path
+                    && metadata.local_id.as_ref() == Some(result_id)
+                    && metadata.validate().is_ok() => {}
+                _ => return Err(failure(InventoryError::InvalidIdentity)),
+            }
+            let item = super::items::load(db, &current.operation.item_id)?;
+            let Some(SourceEvidence::Local { metadata, .. }) = &current.intent.context.source else {
+                return Err(failure(InventoryError::InvalidIdentity));
+            };
+            if current.operation.state == OperationState::Completed
+                && item.local_presence == PresenceState::AbsentConfirmed
+                && item.remote_presence == PresenceState::AbsentConfirmed
+                && item.local_file_id.is_none()
+            {
+                return super::items::load(db, &current.operation.item_id);
+            }
+            if item.kind != ItemKind::File
+                || item.local_presence != PresenceState::Present
+                || item.remote_presence != PresenceState::AbsentConfirmed
+                || item.local_file_id.as_ref() != Some(local_id)
+                || item.local_latest.as_ref().or(item.local.as_ref()) != Some(metadata.as_ref())
+                || metadata.relative_path != *relative_path
+                || metadata.local_id.as_ref() != Some(local_id)
+                || current.operation.state != OperationState::Running
+            {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            let deleted = db
+                .execute(
+                    "DELETE FROM local_files WHERE item=?1 AND path=?2",
+                    params![item.id.0, relative_path.as_bytes()],
+                )
+                .map_err(sql)?;
+            if deleted != 1 {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            let absent = enum_text(&PresenceState::AbsentConfirmed)?;
+            db.execute(
+                "UPDATE items SET local_id=NULL,local_presence=?2,remote_presence=?2,status='Synced',conflict_reason=NULL,last_checked=?3,last_synced=?3 WHERE id=?1",
+                params![item.id.0, absent, r.trashed_at.unix_millis],
+            )
+            .map_err(sql)?;
+            let baselines = db
+                .execute(
+                    "UPDATE baselines SET presence=?2,confirmed=?3 WHERE item=?1",
+                    params![item.id.0, absent, r.trashed_at.unix_millis],
+                )
+                .map_err(sql)?;
+            if baselines != 2 {
+                return Err(failure(InventoryError::MissingObservation));
+            }
+            let completed = db.execute(
+                "UPDATE operations SET state='Completed',completed=?2,next_attempt=NULL,last_error=NULL WHERE seq=?1 AND state='Running'",
+                params![current.operation.id.0, r.trashed_at.unix_millis],
+            )
+            .map_err(sql)?;
+            if completed != 1 {
+                return Err(failure(InventoryError::VersionMismatch));
+            }
+            super::activity::append(
+                db,
+                &NewActivity {
+                    item_id: item.id.clone(),
+                    operation_id: Some(current.operation.id),
+                    event_type: ActivityType::Trash,
+                    origin: ActivityOrigin::System,
+                    outcome: ActivityOutcome::Completed,
+                    occurred_at: r.trashed_at,
+                    description: Some("Remote deletion moved the local item to trash".into()),
+                    error_kind: None,
+                    item_name: Some(
+                        String::from_utf8_lossy(
+                            relative_path.as_bytes().rsplit(|byte| *byte == b'/').next().unwrap(),
+                        )
+                        .into_owned(),
+                    ),
+                    item_remote_id: item.remote_ref.as_ref().map(|reference| reference.file_id.0.clone()),
+                    item_local_path: Some(relative_path.as_bytes().to_vec()),
+                },
+            )?;
+            super::items::bump(db, &item.id)?;
+            super::items::load(db, &item.id)
         })
     }
     /// Records only the exact resulting identity verified by this execution.

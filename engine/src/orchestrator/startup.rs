@@ -9,8 +9,8 @@ use std::sync::{
 /// Configuration of one synchronization, using the Detector's account/root identity.
 pub struct OrchestratorCreateRequest {
     pub detector: DetectorCreateRequest,
-    /// Enables Analyzer-owned create-only execution after live verification.
-    pub execute_creations: bool,
+    /// Enables Analyzer-owned operations after live verification and policy checks.
+    pub execute_operations: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreparationState {
@@ -121,7 +121,7 @@ impl Orchestrator {
         let detector = Arc::new(Detector::new(request.detector)?.detector);
         detector.pause(DetectorPauseRequest {})?;
         let publisher = connector.synchronization_publisher(&detector.scope().account_id);
-        let execution = execution::ExecutionControl::new(request.execute_creations);
+        let execution = execution::ExecutionControl::new(request.execute_operations);
         execution.set_publisher(publisher.clone());
         Ok(Self {
             execution,

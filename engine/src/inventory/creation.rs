@@ -21,6 +21,11 @@ pub struct RecordCreatedReplicaRequest {
     pub binding: CreationBinding,
     pub result: ItemResult,
 }
+pub struct RecordTrashedLocalRequest {
+    pub binding: CreationBinding,
+    pub result: ItemResult,
+    pub trashed_at: Timestamp,
+}
 pub struct FailCreationRequest {
     pub binding: CreationBinding,
     pub error: OperatorError,

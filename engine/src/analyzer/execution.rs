@@ -63,8 +63,8 @@ fn new_id() -> Option<ExecutionId> {
     .ok()
 }
 /// Existing resources require a complete current plan and strict source proof.
-/// Only initial creation probes may discharge missing-replica identity/evidence
-/// requirements. Conflicts and unresolved mutation requirements remain blocked.
+/// Initial creation probes may discharge missing-replica identity/evidence
+/// requirements; remote-to-local trash requires a confirmed absence and baseline.
 pub(super) async fn verify_candidate(
     e: &AnalyzerExecution,
     item: &SyncItem,
@@ -118,6 +118,37 @@ pub(super) async fn verify_candidate(
                 },
                 _ => return None,
             },
+            OperationCommand::Trash {
+                target:
+                    ResourceRef::Local {
+                        relative_path,
+                        local_id,
+                    },
+                ..
+            } if item.local_presence == PresenceState::Present
+                && item.kind == ItemKind::File
+                && item.remote_presence == PresenceState::AbsentConfirmed
+                && item.baseline.as_ref().is_some_and(|baseline| {
+                    baseline.local.presence == PresenceState::Present
+                        && baseline.remote.presence == PresenceState::Present
+                })
+                && item
+                    .local_latest
+                    .as_ref()
+                    .or(item.local.as_ref())
+                    .is_some_and(|metadata| {
+                        metadata.relative_path == *relative_path && metadata.local_id == *local_id
+                    })
+                && a.intents.first().is_some_and(|intent| {
+                    intent.kind == OperationKind::Trash
+                        && intent.direction == OperationDirection::Download
+                }) =>
+            {
+                SourceEvidence::Local {
+                    metadata: Box::new(item.local_latest.as_ref().or(item.local.as_ref())?.clone()),
+                    sha256: None,
+                }
+            }
             _ => return None,
         };
         notify(
@@ -389,6 +420,39 @@ async fn run(
             return Ok(());
         }
     };
+    if matches!(
+        &binding.intent.command,
+        OperationCommand::Trash {
+            target: ResourceRef::Local { .. },
+            ..
+        }
+    ) {
+        guard.phase(AnalysisPhase::Verifying);
+        notify(
+            e,
+            item,
+            Some(binding.intent.command.clone()),
+            Some(binding.operation.id.clone()),
+            CreationStage::Verifying,
+            None,
+        );
+        inventory
+            .record_trashed_local(RecordTrashedLocalRequest {
+                binding: binding.clone(),
+                result,
+                trashed_at: now(),
+            })
+            .map_err(inventory_error)?;
+        notify(
+            e,
+            item,
+            Some(binding.intent.command.clone()),
+            Some(binding.operation.id),
+            CreationStage::Completed,
+            None,
+        );
+        return Ok(());
+    }
     let current = inventory
         .record_created_replica(RecordCreatedReplicaRequest {
             binding: binding.clone(),
@@ -603,6 +667,19 @@ async fn execute(e: &AnalyzerExecution, binding: &CreationBinding) -> OperatorRe
                     execution: context,
                     target,
                     destination,
+                    preconditions,
+                    options,
+                })
+                .await
+        }
+        OperationCommand::Trash {
+            target,
+            preconditions,
+        } => {
+            e.operator
+                .trash(TrashRequest {
+                    execution: context,
+                    target,
                     preconditions,
                     options,
                 })
