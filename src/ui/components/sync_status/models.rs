@@ -13,6 +13,9 @@ pub enum SyncActivity {
     Moving,
     Deleting,
     Reconciling,
+    Waiting,
+    Stopped,
+    Failed,
 }
 
 /// A snapshot supplied by a presentation adapter on state-change events.
@@ -21,6 +24,8 @@ pub enum SyncActivity {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SyncStatusData {
     pub activity: SyncActivity,
+    /// Localized description of the current item and phase, when available.
+    pub detail: Option<String>,
     pub completed: Option<u64>,
     pub total: Option<u64>,
     pub transferred_bytes: Option<u64>,
@@ -41,7 +46,7 @@ impl SyncStatusData {
     /// Prefer byte progress, falling back to item progress. Unknown or zero
     /// denominators are indeterminate; over-reported numerators are clamped.
     pub fn fraction(&self) -> Option<f64> {
-        if self.needs_attention() || self.activity == SyncActivity::Idle {
+        if self.needs_attention() || !self.activity.is_active() {
             return None;
         }
         [
@@ -76,12 +81,35 @@ impl SyncStatusData {
         }
         accounts
             .iter()
-            .find(|s| s.activity != SyncActivity::Idle)
+            .find(|s| s.activity.is_active())
             .cloned()
+            .or_else(|| {
+                accounts
+                    .iter()
+                    .find(|s| s.activity != SyncActivity::Idle)
+                    .cloned()
+            })
             .unwrap_or_else(|| Self {
                 synchronized: !accounts.is_empty() && accounts.iter().all(|s| s.synchronized),
                 ..Self::default()
             })
+    }
+}
+
+impl SyncActivity {
+    /// Whether the card should show an active spinner and accept progress.
+    pub fn is_active(self) -> bool {
+        matches!(
+            self,
+            Self::Upload
+                | Self::Download
+                | Self::Scanning
+                | Self::CheckingRemote
+                | Self::Renaming
+                | Self::Moving
+                | Self::Deleting
+                | Self::Reconciling
+        )
     }
 }
 

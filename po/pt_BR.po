@@ -910,6 +910,165 @@ msgstr "Excluindo arquivos…"
 msgid "Syncing changes…"
 msgstr "Sincronizando alterações…"
 
+msgid "Waiting to sync"
+msgstr "Aguardando para sincronizar"
+
+msgid "Synchronization stopped"
+msgstr "Sincronização parada"
+
+msgid "Waiting for synchronization work…"
+msgstr "Aguardando trabalho de sincronização…"
+
+msgid "Synchronization failed."
+msgstr "A sincronização falhou."
+
+msgid "Checking local files"
+msgstr "Verificando arquivos locais"
+
+msgid "Checking cloud changes"
+msgstr "Verificando alterações na nuvem"
+
+msgid "Analyzing"
+msgstr "Analisando"
+
+msgid "Syncing changes"
+msgstr "Sincronizando alterações"
+
+msgid "Uploading"
+msgstr "Enviando"
+
+msgid "Creating file"
+msgstr "Criando arquivo"
+
+msgid "Creating folder"
+msgstr "Criando pasta"
+
+msgid "Updating file"
+msgstr "Atualizando arquivo"
+
+msgid "Renaming"
+msgstr "Renomeando"
+
+msgid "Moving"
+msgstr "Movendo"
+
+msgid "Moving to trash"
+msgstr "Movendo para a lixeira"
+
+msgid "Restoring"
+msgstr "Restaurando"
+
+msgid "Verifying"
+msgstr "Verificando"
+
+msgid "Checking file information"
+msgstr "Verificando informações do arquivo"
+
+msgid "Reconciling file versions"
+msgstr "Conciliando versões do arquivo"
+
+msgid "Checking for conflicts"
+msgstr "Verificando conflitos"
+
+msgid "Planning changes"
+msgstr "Planejando alterações"
+
+msgid "Recording changes"
+msgstr "Registrando alterações"
+
+msgid "Applying changes"
+msgstr "Aplicando alterações"
+
+msgid "Verifying changes"
+msgstr "Verificando alterações"
+
+msgid "Checking prerequisites"
+msgstr "Verificando pré-requisitos"
+
+msgid "Waiting for a prerequisite"
+msgstr "Aguardando um pré-requisito"
+
+msgid "Executing operation"
+msgstr "Executando operação"
+
+msgid "Verifying result"
+msgstr "Verificando resultado"
+
+msgid "Operation completed"
+msgstr "Operação concluída"
+
+msgid "Operation failed"
+msgstr "A operação falhou"
+
+msgid "Preparing transfer"
+msgstr "Preparando transferência"
+
+msgid "Transferring file"
+msgstr "Transferindo arquivo"
+
+msgid "Saving file"
+msgstr "Salvando arquivo"
+
+msgid "Verifying file"
+msgstr "Verificando arquivo"
+
+msgid "Finishing transfer"
+msgstr "Finalizando transferência"
+
+msgid "Waiting for file changes"
+msgstr "Aguardando alterações nos arquivos"
+
+msgid "Waiting before retrying"
+msgstr "Aguardando antes de tentar novamente"
+
+msgid "Waiting for the source to recover"
+msgstr "Aguardando a recuperação da origem"
+
+msgid "Waiting to retry the local scan"
+msgstr "Aguardando para repetir a verificação local"
+
+msgid "Waiting to retry detected changes"
+msgstr "Aguardando para repetir o processamento das alterações"
+
+msgid "{action}: {file}"
+msgstr "{action}: {file}"
+
+msgid "A synchronization source needs attention."
+msgstr "Uma origem de sincronização precisa de atenção."
+
+msgid "The local folder could not be read."
+msgstr "Não foi possível ler a pasta local."
+
+msgid "The cloud source is unavailable."
+msgstr "A origem na nuvem está indisponível."
+
+msgid "Synchronization data could not be read or saved."
+msgstr "Não foi possível ler ou salvar os dados de sincronização."
+
+msgid "A detected change could not be saved."
+msgstr "Não foi possível salvar uma alteração detectada."
+
+msgid "The local scan could not be completed."
+msgstr "Não foi possível concluir a verificação local."
+
+msgid "A file could not be analyzed."
+msgstr "Não foi possível analisar um arquivo."
+
+msgid "A file operation could not be completed."
+msgstr "Não foi possível concluir uma operação de arquivo."
+
+msgid "The local scan is incomplete; retrying."
+msgstr "A verificação local está incompleta; tentando novamente."
+
+msgid "Synchronization stopped unexpectedly."
+msgstr "A sincronização foi interrompida inesperadamente."
+
+msgid "File: {file}."
+msgstr "Arquivo: {file}."
+
+msgid "Will retry automatically."
+msgstr "Uma nova tentativa será feita automaticamente."
+
 msgid "Uploading {completed} of {total} files"
 msgstr "Enviando {completed} de {total} arquivos"
 

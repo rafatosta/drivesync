@@ -3,7 +3,11 @@ use super::sidebar::AccountSidebar;
 use crate::application::Context;
 use crate::ui::components::sync_status::{SyncActivity, SyncStatus, SyncStatusData};
 use adw::{gtk, prelude::*};
-use drivesync_engine::{ListAccountsRequest, SynchronizationActivity, SynchronizationStatus};
+use drivesync_engine::{
+    ListAccountsRequest, SynchronizationAction, SynchronizationActivity, SynchronizationIssueKind,
+    SynchronizationProgressUnit, SynchronizationState, SynchronizationStatus,
+    SynchronizationWaitReason, SynchronizationWorkDetail,
+};
 use gettextrs::gettext;
 use std::{
     cell::{Cell, RefCell},
@@ -236,33 +240,163 @@ fn build_with_accounts(
 /// Converts the engine's account snapshot into the reusable GTK presentation model.
 fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
     use SynchronizationActivity as EngineActivity;
-    let activity = match status.activity {
-        EngineActivity::Idle => SyncActivity::Idle,
-        EngineActivity::Starting | EngineActivity::Scanning => SyncActivity::Scanning,
-        EngineActivity::Analyzing
-        | EngineActivity::ProcessingEvents
-        | EngineActivity::Checking
-        | EngineActivity::Applying
-        | EngineActivity::Verifying => SyncActivity::Reconciling,
-        EngineActivity::Uploading => SyncActivity::Upload,
-        EngineActivity::Downloading => SyncActivity::Download,
-        EngineActivity::Waiting | EngineActivity::Stopped | EngineActivity::Failed => {
-            SyncActivity::Idle
-        }
+    let activity = match status.state {
+        SynchronizationState::Waiting | SynchronizationState::Partial => SyncActivity::Waiting,
+        SynchronizationState::Stopped => SyncActivity::Stopped,
+        SynchronizationState::Failed => SyncActivity::Failed,
+        SynchronizationState::Idle => SyncActivity::Idle,
+        SynchronizationState::Running => match status.work.as_ref().map(|work| work.action) {
+            Some(SynchronizationAction::Upload) => SyncActivity::Upload,
+            Some(SynchronizationAction::Download) => SyncActivity::Download,
+            Some(SynchronizationAction::ObserveLocal) => SyncActivity::Scanning,
+            Some(SynchronizationAction::ObserveRemote) => SyncActivity::CheckingRemote,
+            Some(SynchronizationAction::Rename) => SyncActivity::Renaming,
+            Some(SynchronizationAction::Move | SynchronizationAction::Restore) => {
+                SyncActivity::Moving
+            }
+            Some(SynchronizationAction::Trash) => SyncActivity::Deleting,
+            Some(SynchronizationAction::Analyze | SynchronizationAction::Reconcile) => {
+                SyncActivity::Reconciling
+            }
+            Some(
+                SynchronizationAction::CreateFile
+                | SynchronizationAction::CreateDirectory
+                | SynchronizationAction::UpdateContent
+                | SynchronizationAction::Verify,
+            ) => SyncActivity::Reconciling,
+            None => match status.activity {
+                EngineActivity::Idle => SyncActivity::Idle,
+                EngineActivity::Starting | EngineActivity::Scanning => SyncActivity::Scanning,
+                EngineActivity::Analyzing
+                | EngineActivity::ProcessingEvents
+                | EngineActivity::Checking
+                | EngineActivity::Applying
+                | EngineActivity::Verifying => SyncActivity::Reconciling,
+                EngineActivity::Uploading => SyncActivity::Upload,
+                EngineActivity::Downloading => SyncActivity::Download,
+                EngineActivity::Waiting => SyncActivity::Waiting,
+                EngineActivity::Stopped => SyncActivity::Stopped,
+                EngineActivity::Failed => SyncActivity::Failed,
+            },
+        },
     };
     let (transferred_bytes, total_bytes) = match status.progress {
-        Some(progress) if progress.unit == drivesync_engine::SynchronizationProgressUnit::Bytes => {
+        Some(progress) if progress.unit == SynchronizationProgressUnit::Bytes => {
             (Some(progress.completed), progress.total)
         }
         _ => (None, None),
     };
     SyncStatusData {
         activity,
+        detail: status_detail(status),
         transferred_bytes,
         total_bytes,
         problems: status.issue.as_ref().map_or(0, |issue| issue.count),
         ..Default::default()
     }
+}
+
+fn status_detail(status: &SynchronizationStatus) -> Option<String> {
+    if let Some(issue) = &status.issue {
+        let message = match &issue.kind {
+            SynchronizationIssueKind::Detector(_) => "A synchronization source needs attention.",
+            SynchronizationIssueKind::LocalSource(_) => "The local folder could not be read.",
+            SynchronizationIssueKind::RemoteSource(_) => "The cloud source is unavailable.",
+            SynchronizationIssueKind::Inventory(_) => {
+                "Synchronization data could not be read or saved."
+            }
+            SynchronizationIssueKind::Queue(_) => "A detected change could not be saved.",
+            SynchronizationIssueKind::Scanner(_) => "The local scan could not be completed.",
+            SynchronizationIssueKind::Analyzer(_) => "A file could not be analyzed.",
+            SynchronizationIssueKind::Operation(_) => "A file operation could not be completed.",
+            SynchronizationIssueKind::IncompleteScan => "The local scan is incomplete; retrying.",
+            SynchronizationIssueKind::Internal => "Synchronization stopped unexpectedly.",
+        };
+        let mut detail = gettext(message);
+        if let Some(name) = issue.item.as_ref().and_then(item_name) {
+            detail.push(' ');
+            detail.push_str(&gettext("File: {file}.").replace("{file}", &name));
+        }
+        if issue.retryable {
+            detail.push(' ');
+            detail.push_str(&gettext("Will retry automatically."));
+        }
+        return Some(detail);
+    }
+
+    let work = status.work.as_ref()?;
+    let name = work.item.as_ref().and_then(item_name);
+    let action = match work.action {
+        SynchronizationAction::ObserveLocal => "Checking local files",
+        SynchronizationAction::ObserveRemote => "Checking cloud changes",
+        SynchronizationAction::Analyze => "Analyzing",
+        SynchronizationAction::Reconcile => "Syncing changes",
+        SynchronizationAction::Upload => "Uploading",
+        SynchronizationAction::Download => "Downloading",
+        SynchronizationAction::CreateFile => "Creating file",
+        SynchronizationAction::CreateDirectory => "Creating folder",
+        SynchronizationAction::UpdateContent => "Updating file",
+        SynchronizationAction::Rename => "Renaming",
+        SynchronizationAction::Move => "Moving",
+        SynchronizationAction::Trash => "Moving to trash",
+        SynchronizationAction::Restore => "Restoring",
+        SynchronizationAction::Verify => "Verifying",
+    };
+    let phase = match work.detail {
+        SynchronizationWorkDetail::Preparation => None,
+        SynchronizationWorkDetail::Analysis(phase) => Some(match phase {
+            drivesync_engine::analyzer::AnalysisPhase::Validating => "Checking file information",
+            drivesync_engine::analyzer::AnalysisPhase::Reconciling => "Reconciling file versions",
+            drivesync_engine::analyzer::AnalysisPhase::EvaluatingConflict => {
+                "Checking for conflicts"
+            }
+            drivesync_engine::analyzer::AnalysisPhase::Planning => "Planning changes",
+            drivesync_engine::analyzer::AnalysisPhase::Recording => "Recording changes",
+            drivesync_engine::analyzer::AnalysisPhase::Executing => "Applying changes",
+            drivesync_engine::analyzer::AnalysisPhase::Verifying => "Verifying changes",
+        }),
+        SynchronizationWorkDetail::Creation(stage) => Some(match stage {
+            drivesync_engine::analyzer::CreationStage::Checking => "Checking prerequisites",
+            drivesync_engine::analyzer::CreationStage::Blocked => "Waiting for a prerequisite",
+            drivesync_engine::analyzer::CreationStage::Executing => "Executing operation",
+            drivesync_engine::analyzer::CreationStage::Verifying => "Verifying result",
+            drivesync_engine::analyzer::CreationStage::Completed => "Operation completed",
+            drivesync_engine::analyzer::CreationStage::Failed => "Operation failed",
+        }),
+        SynchronizationWorkDetail::Transfer(phase) => Some(match phase {
+            drivesync_engine::operations::ExecutionPhase::Preparing => "Preparing transfer",
+            drivesync_engine::operations::ExecutionPhase::Transferring => "Transferring file",
+            drivesync_engine::operations::ExecutionPhase::Applying => "Saving file",
+            drivesync_engine::operations::ExecutionPhase::Verifying => "Verifying file",
+            drivesync_engine::operations::ExecutionPhase::Finalizing => "Finishing transfer",
+        }),
+        SynchronizationWorkDetail::Waiting(reason) => Some(match reason {
+            SynchronizationWaitReason::ForChanges => "Waiting for file changes",
+            SynchronizationWaitReason::RetryBackoff => "Waiting before retrying",
+            SynchronizationWaitReason::SourceRecovery => "Waiting for the source to recover",
+            SynchronizationWaitReason::IncompleteScan => "Waiting to retry the local scan",
+            SynchronizationWaitReason::IncompleteEventBatch => "Waiting to retry detected changes",
+        }),
+    };
+
+    let mut detail = match name {
+        Some(name) => gettext("{action}: {file}")
+            .replace("{action}", &gettext(action))
+            .replace("{file}", &name),
+        None => gettext(action),
+    };
+    if let Some(phase) = phase {
+        detail.push_str(" · ");
+        detail.push_str(&gettext(phase));
+    }
+    Some(detail)
+}
+
+fn item_name(item: &drivesync_engine::SynchronizationItem) -> Option<String> {
+    item.local_name
+        .as_ref()
+        .map(|name| name.to_string_lossy().into_owned())
+        .or_else(|| item.remote_name.clone())
 }
 
 #[cfg(test)]
@@ -280,4 +414,58 @@ pub(crate) fn fixture(
         navigation,
         vec![account.clone(), second],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use drivesync_engine::{
+        SynchronizationItem, SynchronizationLocation, SynchronizationProgress,
+        SynchronizationProgressUnit, SynchronizationWork,
+    };
+
+    #[test]
+    fn download_work_keeps_its_filename_during_verification() {
+        let mut status = SynchronizationStatus {
+            state: SynchronizationState::Running,
+            activity: SynchronizationActivity::Verifying,
+            work: Some(SynchronizationWork {
+                action: SynchronizationAction::Download,
+                item: Some(SynchronizationItem {
+                    id: None,
+                    kind: None,
+                    local_name: Some("teste-2048mb.bin".into()),
+                    remote_name: None,
+                    local_path: None,
+                    remote_reference: None,
+                }),
+                location: Some(SynchronizationLocation::LocalRoot),
+                detail: SynchronizationWorkDetail::Transfer(
+                    drivesync_engine::operations::ExecutionPhase::Verifying,
+                ),
+                event: None,
+            }),
+            progress: Some(SynchronizationProgress {
+                completed: 5,
+                total: Some(100),
+                unit: SynchronizationProgressUnit::Bytes,
+                phase: Some(drivesync_engine::operations::ExecutionPhase::Verifying),
+            }),
+            ..Default::default()
+        };
+
+        let presentation = presentation_status(&status);
+        assert_eq!(presentation.activity, SyncActivity::Download);
+        assert_eq!(presentation.transferred_bytes, Some(5));
+        assert!(presentation
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("teste-2048mb.bin")));
+
+        status.state = SynchronizationState::Waiting;
+        status.activity = SynchronizationActivity::Waiting;
+        status.work.as_mut().unwrap().detail =
+            SynchronizationWorkDetail::Waiting(SynchronizationWaitReason::RetryBackoff);
+        assert_eq!(presentation_status(&status).activity, SyncActivity::Waiting);
+    }
 }

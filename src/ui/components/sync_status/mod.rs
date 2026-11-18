@@ -89,9 +89,12 @@ impl SyncStatus {
     /// inactivity remains visible as an unknown state, never as success.
     pub fn update(&self, data: &SyncStatusData) {
         use SyncActivity::*;
-        let attention = data.needs_attention();
-        let active = !attention && data.activity != Idle;
-        let unknown = !attention && !active && !data.synchronized;
+        let attention = data.needs_attention() || data.activity == Failed;
+        let active = !attention && data.activity.is_active();
+        let unknown = !attention
+            && !active
+            && !data.synchronized
+            && matches!(data.activity, Idle | Waiting | Stopped);
         self.root.set_visible(true);
         self.icon.set_icon_name(Some(if attention {
             "dialog-warning-symbolic"
@@ -119,6 +122,10 @@ impl SyncStatus {
             "Synchronization needs attention"
         } else if active {
             "Syncing files"
+        } else if data.activity == Waiting {
+            "Waiting to sync"
+        } else if data.activity == Stopped {
+            "Synchronization stopped"
         } else if unknown {
             "Synchronization status is unknown"
         } else {
@@ -135,8 +142,11 @@ impl SyncStatus {
             Moving => "Moving files…",
             Deleting => "Deleting files…",
             Reconciling => "Syncing changes…",
+            Waiting => "Waiting for synchronization work…",
+            Stopped => "Synchronization is stopped.",
+            Failed => "Synchronization failed.",
         };
-        let mut detail = gettext(message);
+        let mut detail = data.detail.clone().unwrap_or_else(|| gettext(message));
         if matches!(data.activity, Upload | Download) {
             if let (Some(done), Some(total)) = (data.completed, data.total.filter(|n| *n > 0)) {
                 detail = gettext(if data.activity == Upload {
@@ -151,7 +161,7 @@ impl SyncStatus {
                 detail.push_str(&format!(" ({})", gtk::glib::format_size(bytes)));
             }
         }
-        if attention {
+        if attention && data.detail.is_none() {
             detail = attention_detail(data.conflicts, data.problems);
         }
         self.detail.set_label(&detail);
