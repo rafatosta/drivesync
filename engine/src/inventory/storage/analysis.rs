@@ -162,6 +162,7 @@ fn validate(request: &RecordAnalysisRequest) -> InventoryResult<()> {
             return Err(failure(InventoryError::InvalidArgument));
         }
         if intent.kind == OperationKind::Trash
+            && intent.direction == OperationDirection::Upload
             && !a
                 .requirements
                 .contains(&AnalysisRequirement::AuthorizeDeletion)
