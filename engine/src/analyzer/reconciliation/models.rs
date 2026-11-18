@@ -93,7 +93,7 @@ pub(in crate::analyzer) struct ReconciliationAssessment {
     pub requirements: Vec<Requirement>,
 }
 impl ReconciliationAssessment {
-    pub(super) fn require(&mut self, requirement: Requirement) {
+    pub(in crate::analyzer) fn require(&mut self, requirement: Requirement) {
         if !self.requirements.contains(&requirement) {
             self.requirements.push(requirement);
         }
