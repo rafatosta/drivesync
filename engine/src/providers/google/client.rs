@@ -13,8 +13,9 @@ use super::{
 const UPLOAD_BASE: &str = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_BASE: &str = "https://www.googleapis.com/drive/v3";
 
-/// Technical metadata bounds. Production uses a 30-second total timeout and
-/// an 8 MiB response limit; only the test feature permits overrides.
+/// Technical response bounds. Metadata calls use a 30-second total timeout and
+/// an 8 MiB body limit; media transfers use the timeout as a per-read idle
+/// limit, so total transfer time can scale with file size.
 #[derive(Debug, Clone, Copy)]
 pub struct GoogleClientLimits {
     pub request_timeout: Duration,
@@ -262,6 +263,44 @@ impl GoogleDriveClient {
         body: Option<Vec<u8>>,
         extra: &[(&str, String)],
     ) -> GoogleResult<reqwest::Response> {
+        self.send_with_timeout(
+            session,
+            method,
+            url,
+            body,
+            extra,
+            Some(self.limits.request_timeout),
+        )
+        .await
+    }
+
+    /// Starts a streaming response with a bounded wait for headers but no total
+    /// body deadline. Individual stream reads apply the idle timeout.
+    pub(super) async fn send_stream(
+        &self,
+        session: &GoogleSession,
+        method: reqwest::Method,
+        url: Url,
+        body: Option<Vec<u8>>,
+        extra: &[(&str, String)],
+    ) -> GoogleResult<reqwest::Response> {
+        tokio::time::timeout(
+            self.limits.request_timeout,
+            self.send_with_timeout(session, method, url, body, extra, None),
+        )
+        .await
+        .map_err(|_| GoogleApiFailure::new(E::Timeout, None))?
+    }
+
+    async fn send_with_timeout(
+        &self,
+        session: &GoogleSession,
+        method: reqwest::Method,
+        url: Url,
+        body: Option<Vec<u8>>,
+        extra: &[(&str, String)],
+        timeout: Option<Duration>,
+    ) -> GoogleResult<reqwest::Response> {
         if session.access_token.is_empty() {
             return Err(GoogleApiFailure::new(E::AuthenticationRequired, None));
         }
@@ -274,8 +313,10 @@ impl GoogleDriveClient {
             .as_ref()
             .map_err(Clone::clone)?
             .request(method, url)
-            .header(header::AUTHORIZATION, authorization)
-            .timeout(self.limits.request_timeout);
+            .header(header::AUTHORIZATION, authorization);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         if let Some(body) = body {
             request = request.body(body);
             if !extra
@@ -313,7 +354,14 @@ impl GoogleDriveClient {
             return Err(failure());
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(transport_failure)? {
+        loop {
+            let chunk = tokio::time::timeout(self.limits.request_timeout, response.chunk())
+                .await
+                .map_err(|_| GoogleApiFailure::new(E::Timeout, Some(status)))?
+                .map_err(transport_failure)?;
+            let Some(chunk) = chunk else {
+                break;
+            };
             if chunk.len() > limit - body.len() {
                 return Err(failure());
             }

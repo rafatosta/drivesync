@@ -1,6 +1,7 @@
 //! Incremental media and export transport, with explicit partial-read errors.
 use super::client::invalid_argument;
 use super::*;
+use std::time::Duration;
 
 /// Inclusive HTTP byte range. A missing end means the remaining bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,11 +10,13 @@ pub struct GoogleByteRange {
     pub end_inclusive: Option<u64>,
 }
 
-/// Incremental HTTP body. A read failure is sticky: later reads cannot convert
-/// an incomplete response into successful EOF. Debug never prints the URL.
+/// Incremental HTTP body with a per-read idle timeout. A read failure is sticky:
+/// later reads cannot convert an incomplete response into successful EOF.
+/// Debug never prints the URL.
 pub struct GoogleByteStream {
     response: Option<reqwest::Response>,
     expected: Option<u64>,
+    read_timeout: Duration,
     received: u64,
     failure: Option<GoogleApiFailure>,
 }
@@ -34,9 +37,9 @@ impl GoogleByteStream {
         let Some(response) = self.response.as_mut() else {
             return Ok(None);
         };
-        let next = response.chunk().await;
+        let next = tokio::time::timeout(self.read_timeout, response.chunk()).await;
         let failure = match next {
-            Ok(Some(bytes)) => {
+            Ok(Ok(Some(bytes))) => {
                 if let Some(total) = self.received.checked_add(bytes.len() as u64) {
                     if self.expected.is_none_or(|expected| total <= expected) {
                         self.received = total;
@@ -45,7 +48,7 @@ impl GoogleByteStream {
                 }
                 GoogleApiError::IncompleteTransfer
             }
-            Ok(None)
+            Ok(Ok(None))
                 if self
                     .expected
                     .is_none_or(|expected| expected == self.received) =>
@@ -53,9 +56,10 @@ impl GoogleByteStream {
                 self.response = None;
                 return Ok(None);
             }
-            Ok(None) => GoogleApiError::IncompleteTransfer,
-            Err(error) if error.is_timeout() => GoogleApiError::Timeout,
-            Err(_) => GoogleApiError::IncompleteTransfer,
+            Ok(Ok(None)) => GoogleApiError::IncompleteTransfer,
+            Ok(Err(error)) if error.is_timeout() => GoogleApiError::Timeout,
+            Ok(Err(_)) => GoogleApiError::IncompleteTransfer,
+            Err(_) => GoogleApiError::Timeout,
         };
         self.response = None;
         let failure = GoogleApiFailure::new(failure, None);
@@ -169,7 +173,7 @@ impl GoogleDriveClient {
         }
         url.query_pairs_mut().extend_pairs(query);
         let response = self
-            .send(session, reqwest::Method::GET, url, None, &headers)
+            .send_stream(session, reqwest::Method::GET, url, None, &headers)
             .await?;
         let status = response.status().as_u16();
         let invalid = || GoogleApiFailure::new(GoogleApiError::InvalidResponse, Some(status));
@@ -217,6 +221,7 @@ impl GoogleDriveClient {
             body: GoogleByteStream {
                 response: Some(response),
                 expected,
+                read_timeout: self.limits.request_timeout,
                 received: 0,
                 failure: None,
             },
