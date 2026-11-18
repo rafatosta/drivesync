@@ -445,6 +445,16 @@ async fn process_files(
         context.current(stop)?;
         context.publish_event(&file, index as u64, total);
         let ingested = ingestion::ingest(&context.inventory, &file, &context.identity)?;
+        if let Some(scope) = ingested.revalidate.clone() {
+            context
+                .detector
+                .request_scan(DetectorScanRequest {
+                    scope: DetectorScanScope::Scopes(vec![scope]),
+                    reason: DetectorScanReason::ConsistencyCheck,
+                    request_id: Some(format!("inventory-revalidate:{}", file.id.0)),
+                })
+                .map_err(PreparationFailure::Detector)?;
+        }
         context.publish_event(&file, index as u64 + 1, total);
         if let Some(id) = ingested.item {
             ids.insert(id);
@@ -464,7 +474,7 @@ async fn process_files(
                 observations,
             ))
             .await?;
-    } else {
+    } else if !ids.is_empty() {
         context
             .await_with_source_updates(analysis::analyze_selected(
                 context.inventory.clone(),

@@ -175,6 +175,7 @@ impl GoogleRemoteDetector {
     ) -> RemoteResult<File> {
         let event = File {
             id: crate::models::FileId(format!("remote:{}:{}:0", state.epoch, state.sequence)),
+            causal_order: None,
             sync_id: self.scope.sync_id.clone(),
             event: FileEvent {
                 local: None,
@@ -211,6 +212,7 @@ impl GoogleRemoteDetector {
     ) -> RemoteResult<ObservationRecord> {
         let raw = RawRemoteObservation {
             id: crate::models::FileId(format!("remote:{}:{}:{index}", state.epoch, state.sequence)),
+            causal_order: None,
             sync_id: self.scope.sync_id.clone(),
             observed_at: now(),
             account_id: self.scope.account_id.clone(),

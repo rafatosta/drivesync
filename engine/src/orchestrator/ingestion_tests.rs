@@ -35,6 +35,7 @@ impl Drop for Tree {
     }
 }
 fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File {
+    static NEXT_ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let remote = m::RemoteFile {
         reference: m::RemoteFileRef {
             account_id: AccountId("account".into()),
@@ -57,6 +58,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
     let reference = remote.reference.clone();
     m::File {
         id: m::FileId(event.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         observed_at: m::Timestamp { unix_millis: 10 },
         scope: m::FileScope::Remote(reference.clone()),
@@ -102,6 +104,47 @@ fn item(inventory: &InventoryManager, id: SyncItemId) -> SyncItem {
         .item
         .unwrap()
 }
+#[test]
+fn incomparable_observations_preserve_state_and_request_one_scoped_revalidation() {
+    let (_tree, inventory, identity) = setup();
+    let mut first = remote_file(
+        "ordered",
+        "remote",
+        m::MetadataValue::Known("current".into()),
+    );
+    if let Some(m::FileData::Remote(remote)) = &mut first.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    let current = ingest(&inventory, &first, &identity).unwrap();
+    let current_id = current.item.unwrap();
+    let revision = item(&inventory, current_id.clone()).revision;
+
+    let mut unknown = remote_file(
+        "unknown-order",
+        "remote",
+        m::MetadataValue::Known("uncertain".into()),
+    );
+    unknown.causal_order = None;
+    if let Some(m::FileData::Remote(remote)) = &mut unknown.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    let result = ingest(&inventory, &unknown, &identity).unwrap();
+    assert_eq!(result.item, None);
+    assert!(!result.analyze_all);
+    assert_eq!(
+        result.revalidate,
+        Some(m::FileScope::Remote(m::RemoteFileRef {
+            account_id: identity.account_id.clone(),
+            file_id: m::RemoteFileId("remote".into()),
+        }))
+    );
+    assert_eq!(item(&inventory, current_id.clone()).revision, revision);
+
+    let replay = ingest(&inventory, &unknown, &identity).unwrap();
+    assert_eq!(replay.revalidate, None);
+    assert!(!replay.analyze_all);
+}
+
 #[tokio::test]
 async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_receipts() {
     use crate::analyzer::*;
@@ -145,7 +188,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         .unwrap()
         .analysis;
     let replay = ingest(&inventory, &file, &identity).unwrap();
-    assert_eq!(replay.item, Some(id.clone()));
+    assert_eq!(replay.item, None);
     assert_eq!(
         item(&inventory, id.clone()).revision,
         first.resulting_item_revision
@@ -202,6 +245,7 @@ fn remote_scope_removal_keeps_presence_unknown_without_inventing_items() {
     let mut file = remote_file("present", "remote", m::MetadataValue::Known("file".into()));
     let id = ingest(&inventory, &file, &identity).unwrap().item.unwrap();
     file.id = m::FileId("removed".into());
+    file.causal_order = file.causal_order.map(|order| order + 1);
     file.data = None;
     file.event.current = None;
     file.event.action = m::FileEventAction::RemovedFromScope;
@@ -213,6 +257,7 @@ fn remote_scope_removal_keeps_presence_unknown_without_inventing_items() {
     assert!(observed.baseline.is_none());
     let warning = File {
         id: FileId("warning".into()),
+        causal_order: None,
         sync_id: identity.sync_id.clone(),
         observed_at: Timestamp { unix_millis: 1 },
         scope: FileScope::Remote(RemoteFileRef {

@@ -194,6 +194,7 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
                 observation: drivesync_engine::inventory::RemoteObservation {
                     observed: File {
                         id: FileId(format!("event-{index}")),
+                        causal_order: None,
                         sync_id: request.expected.sync_id.clone(),
                         observed_at: Timestamp { unix_millis: 1 },
                         coverage: ObservationCoverage::Partial,
@@ -693,6 +694,7 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
             observation: drivesync_engine::inventory::RemoteObservation {
                 observed: File {
                     id: FileId("user-choice-remote-observation".into()),
+                    causal_order: None,
                     sync_id: scope.sync_id.clone(),
                     observed_at: Timestamp { unix_millis: 1 },
                     scope: FileScope::Remote(reference.clone()),

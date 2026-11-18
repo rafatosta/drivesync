@@ -22,6 +22,8 @@ const SCHEMA: &str = "
 CREATE TABLE identity(account TEXT NOT NULL, sync TEXT NOT NULL, root BLOB NOT NULL);
 CREATE TABLE control(id INTEGER PRIMARY KEY CHECK(id=1), delivery INTEGER NOT NULL CHECK(delivery IN (0,1)));
 INSERT INTO control VALUES(1,0);
+CREATE TABLE causal_clock(id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL CHECK(value BETWEEN 0 AND 9223372036854775807));
+INSERT INTO causal_clock VALUES(1,0);
 CREATE TABLE leases(id TEXT PRIMARY KEY, expires INTEGER NOT NULL, state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 3), count INTEGER NOT NULL, disposition INTEGER);
 CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, payload BLOB NOT NULL, digest BLOB NOT NULL, state INTEGER NOT NULL DEFAULT 0 CHECK(state BETWEEN 0 AND 2), lease TEXT REFERENCES leases(id));
 CREATE INDEX delivery_order ON events(state,seq);
@@ -32,7 +34,7 @@ CREATE TABLE remote_scan(seq INTEGER PRIMARY KEY AUTOINCREMENT,folder TEXT NOT N
 CREATE INDEX remote_scan_pending ON remote_scan(done,seq);
 CREATE TABLE remote_scan_control(id INTEGER PRIMARY KEY CHECK(id=1),total INTEGER NOT NULL CHECK(total BETWEEN 0 AND 100000),pending INTEGER NOT NULL CHECK(pending BETWEEN 0 AND total));
 INSERT INTO remote_scan_control VALUES(1,0,0);
-PRAGMA user_version=6;";
+PRAGMA user_version=7;";
 struct Identity<'a> {
     account: &'a str,
     sync: &'a str,
@@ -365,6 +367,46 @@ impl Store {
     pub(crate) fn refresh(&self) -> QueueResult<()> {
         self.run(false, |_, _| Ok(()))
     }
+    fn existing_order(&self, id: &str) -> QueueResult<Option<u64>> {
+        self.run(false, |connection, _| {
+            let payload: Option<Vec<u8>> = connection
+                .query_row("SELECT payload FROM events WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .map_err(sql)?;
+            payload
+                .map(|bytes| {
+                    codec::decode_record(&bytes)
+                        .map(|record| match record {
+                            ObservationRecord::Common(file) => file.causal_order,
+                            ObservationRecord::Remote(raw) => raw.causal_order,
+                        })
+                        .map_err(|_| QueueFailure::new(QueueError::Corrupt))
+                })
+                .transpose()
+                .map(Option::flatten)
+        })
+    }
+    /// Reserves an order shared with the local detector, remote queue and initial scanner.
+    pub(crate) fn reserve_causal_order(&self) -> QueueResult<u64> {
+        self.run(true, |connection, _| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql)?;
+            let changed = tx
+                .execute("UPDATE causal_clock SET value=value+1 WHERE id=1 AND value<9223372036854775807", [])
+                .map_err(sql)?;
+            if changed != 1 {
+                return Err(QueueFailure::new(QueueError::CapacityExceeded));
+            }
+            let value: i64 = tx
+                .query_row("SELECT value FROM causal_clock WHERE id=1", [], |row| row.get(0))
+                .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            Ok(value as u64)
+        })
+    }
     #[cfg(test)]
     pub(crate) fn enqueue(&self, file: &File) -> QueueResult<bool> {
         self.enqueue_from(
@@ -402,7 +444,14 @@ impl Store {
         if !self.matches_scope(file) {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
-        let payload = codec::encode(file)?;
+        let mut file = file.clone();
+        if file.causal_order.is_none() {
+            file.causal_order = match self.existing_order(&file.id.0)? {
+                Some(order) => Some(order),
+                None => Some(self.reserve_causal_order()?),
+            };
+        }
+        let payload = codec::encode(&file)?;
         let initial = file.event.uncertainty
             == Some(crate::models::ObservationUncertainty::CaptureStarted)
             || file.event.remote.as_ref().is_some_and(|evidence| {
@@ -410,7 +459,7 @@ impl Store {
             });
         let inserted = self.enqueue_payload(&file.id.0, payload, origin, initial)?;
         if inserted {
-            self.notify(Some(file), origin);
+            self.notify(Some(&file), origin);
         }
         Ok(inserted)
     }
@@ -424,6 +473,13 @@ impl Store {
             || self.provider.as_ref() != Some(&raw.provider.0)
         {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
+        }
+        let mut raw = raw.clone();
+        if raw.causal_order.is_none() {
+            raw.causal_order = match self.existing_order(&raw.id.0)? {
+                Some(order) => Some(order),
+                None => Some(self.reserve_causal_order()?),
+            };
         }
         let payload = codec::encode_record(&ObservationRecord::Remote(Box::new(raw.clone())))?;
         let inserted = self.enqueue_payload(
@@ -439,7 +495,7 @@ impl Store {
                 .unwrap_or_else(|e| e.into_inner())
                 .is_some()
         {
-            let file = crate::detectors::remote::extract(raw).ok();
+            let file = crate::detectors::remote::extract(&raw).ok();
             self.notify(file.as_ref(), DetectorOrigin::Remote);
         }
         Ok(inserted)
@@ -867,7 +923,7 @@ fn verify(connection: &Connection, scope: &Identity<'_>) -> QueueResult<()> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 6 {
+    if version != 7 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     remote_work::validate(connection)?;

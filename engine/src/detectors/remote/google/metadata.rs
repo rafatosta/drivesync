@@ -151,6 +151,7 @@ pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> R
     };
     let event = File {
         id: raw.id.clone(),
+        causal_order: raw.causal_order,
         sync_id: raw.sync_id.clone(),
         observed_at: raw.observed_at,
         coverage: ObservationCoverage::Partial,

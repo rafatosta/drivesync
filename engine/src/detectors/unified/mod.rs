@@ -26,6 +26,18 @@ pub struct Detector {
 }
 struct QueueSink(Arc<Store>);
 impl LocalNotificationSink for QueueSink {
+    fn reserve_causal_order(&self) -> LocalDetectorResult<Option<u64>> {
+        self.0
+            .reserve_causal_order()
+            .map(Some)
+            .map_err(|error| LocalDetectorFailure {
+                kind: LocalDetectorError::NotificationFailed,
+                message: "Causal observation order is unavailable".into(),
+                retryable: error.retryable,
+                progress: None,
+            })
+    }
+
     fn notify(&self, file: File) -> LocalDetectorResult<()> {
         self.0
             .enqueue_from(&file, DetectorOrigin::Local)
@@ -36,6 +48,27 @@ impl LocalNotificationSink for QueueSink {
                 retryable: error.retryable,
                 progress: None,
             })
+    }
+}
+
+impl crate::models::CausalOrderSource for Detector {
+    fn reserve_causal_order(&self) -> Result<u64, crate::models::CausalOrderError> {
+        self.store
+            .reserve_causal_order()
+            .map_err(|_| crate::models::CausalOrderError)
+    }
+
+    fn request_local_revalidation(
+        &self,
+        path: crate::models::LocalRelativePath,
+    ) -> Result<(), crate::models::CausalOrderError> {
+        self.request_scan(DetectorScanRequest {
+            scope: DetectorScanScope::Scopes(vec![FileScope::Local(path)]),
+            reason: DetectorScanReason::ConsistencyCheck,
+            request_id: None,
+        })
+        .map(|_| ())
+        .map_err(|_| crate::models::CausalOrderError)
     }
 }
 fn observed_at() -> Timestamp {

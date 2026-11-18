@@ -147,6 +147,9 @@ pub enum FileData<R = RemoteFile> {
 #[serde(deny_unknown_fields)]
 pub struct File<R = RemoteFile> {
     pub id: FileId,
+    /// Persistent per-synchronization order assigned before collection begins.
+    /// Missing order is uncertainty and never authorizes replacing an ordered state.
+    pub causal_order: Option<u64>,
     pub sync_id: SyncId,
     pub event: FileEvent,
     pub observed_at: Timestamp,
@@ -154,6 +157,32 @@ pub struct File<R = RemoteFile> {
     pub scope: FileScope,
     pub data: Option<FileData<R>>,
 }
+
+/// Coordinates durable causal positions and localized uncertainty recovery.
+///
+/// Implementations serialize reservations across Scanner, local and remote observers,
+/// and confirmed Operator results. Positions survive process restarts. Inventory
+/// compares them only within one sync and one resource side; a missing position is
+/// never inferred from timestamps or delivery order.
+pub trait CausalOrderSource: Send + Sync {
+    /// Reserves a position before observing a resource or confirming an operation result.
+    fn reserve_causal_order(&self) -> Result<u64, CausalOrderError>;
+
+    /// Requests a targeted local revalidation after an incomparable observation.
+    fn request_local_revalidation(&self, path: LocalRelativePath) -> Result<(), CausalOrderError>;
+}
+
+/// Sanitized failure to reserve a causal position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CausalOrderError;
+
+impl std::fmt::Display for CausalOrderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("causal observation order is unavailable")
+    }
+}
+
+impl std::error::Error for CausalOrderError {}
 impl File {
     /// Validates identities and observation evidence without I/O or inferred attributes.
     pub fn validate(&self) -> ModelResult<()> {

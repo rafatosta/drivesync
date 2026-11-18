@@ -189,7 +189,9 @@ fn startup_without_console_and_scanner_page_share_real_account_preparation() {
     assert!(view.list.first_child().is_some());
     capture(&window, "scanner-partial");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
-    view.rescan.emit_clicked();
+    gtk::glib::MainContext::default()
+        .block_on(second.prepare())
+        .unwrap();
     wait_until(|| second.preparation_status().state == PreparationState::ReadyForAnalyzer);
     settle();
     assert_eq!(view.status.text(), "Scan complete");
@@ -213,7 +215,6 @@ fn startup_without_console_and_scanner_page_share_real_account_preparation() {
     );
     capture(&window, "scanner-narrow");
     // Remove an account with a preparation task in flight; it must not resurrect a session.
-    view.rescan.emit_clicked();
     gtk::glib::MainContext::default()
         .block_on(detectors::remove(&context, &AccountId(ids[0].into())));
     assert!(!context.detectors.borrow().contains_key(ids[0]));

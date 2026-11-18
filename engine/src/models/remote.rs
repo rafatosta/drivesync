@@ -112,6 +112,7 @@ mod tests {
         let remote = remote();
         let mut file = File {
             id: FileId("occurrence".into()),
+            causal_order: None,
             sync_id: SyncId("sync".into()),
             event: FileEvent {
                 local: None,

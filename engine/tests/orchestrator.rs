@@ -345,6 +345,8 @@ fn remote_observation(
     name: &str,
 ) -> drivesync_engine::inventory::RecordRemoteObservation {
     use drivesync_engine::inventory::*;
+    static NEXT_ORDER: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1_000_000_000_000);
     let account = inventory
         .get_sync_info(GetSyncInfoRequest {})
         .unwrap()
@@ -372,6 +374,7 @@ fn remote_observation(
     };
     let observed = File {
         id: FileId(event.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
         sync_id: SyncId("sync-first".into()),
         observed_at: Timestamp { unix_millis: 10 },
         coverage: ObservationCoverage::Partial,

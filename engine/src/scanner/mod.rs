@@ -21,6 +21,7 @@ pub struct Scanner {
 struct Inner {
     inventory: Arc<InventoryManager>,
     root: LocalRoot,
+    order_source: Arc<dyn CausalOrderSource>,
     filesystem: filesystem::Root,
     native: filesystem::NativeQuery,
     status: Mutex<ScannerStatus>,
@@ -114,6 +115,7 @@ impl Scanner {
             inner: Arc::new(Inner {
                 inventory: config.inventory,
                 root: config.root,
+                order_source: config.order_source,
                 filesystem,
                 native: crate::filesystem::metadata::statx,
                 status: Mutex::new(ScannerStatus::default()),

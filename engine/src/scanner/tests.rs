@@ -3,12 +3,32 @@ use super::*;
 use std::{
     fs,
     path::PathBuf,
-    sync::{atomic::AtomicU64, Condvar},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Condvar,
+    },
     time::{Duration, Instant},
 };
+struct TestOrder(AtomicU64);
+impl crate::models::CausalOrderSource for TestOrder {
+    fn reserve_causal_order(&self) -> Result<u64, crate::models::CausalOrderError> {
+        Ok(self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn request_local_revalidation(
+        &self,
+        _: crate::models::LocalRelativePath,
+    ) -> Result<(), crate::models::CausalOrderError> {
+        Ok(())
+    }
+}
+fn order_source() -> Arc<dyn crate::models::CausalOrderSource> {
+    Arc::new(TestOrder(AtomicU64::new(0)))
+}
 struct Fixture {
     root: PathBuf,
     inventory: Arc<InventoryManager>,
+    order_source: Arc<dyn crate::models::CausalOrderSource>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -32,11 +52,16 @@ impl Fixture {
             .unwrap()
             .inventory,
         );
-        Self { root, inventory }
+        Self {
+            root,
+            inventory,
+            order_source: order_source(),
+        }
     }
     fn scanner(&self) -> Scanner {
         Scanner::new(ScannerConfig {
             inventory: self.inventory.clone(),
+            order_source: self.order_source.clone(),
             root: LocalRoot {
                 sync_id: SyncId("scan-scope".into()),
                 path: self.root.clone(),
@@ -236,6 +261,7 @@ async fn local_scan_preserves_remote_baseline_and_last_sync_but_marks_work_pendi
     let at = now();
     let observed = crate::models::File {
         id: FileId("remote-event".into()),
+        causal_order: None,
         sync_id: f.request().sync_id.clone(),
         observed_at: at,
         coverage: ObservationCoverage::Partial,
@@ -337,7 +363,7 @@ async fn wrong_scope_and_replaced_root_never_produce_absence() {
     assert_eq!(scanner.status().state, ScannerState::Idle);
     let other = Fixture::new();
     assert!(
-        matches!(Scanner::new(ScannerConfig{inventory:f.inventory.clone(),root:LocalRoot{sync_id:f.request().sync_id,path:other.root.clone()}}),Err(e)if e.kind==ScannerErrorKind::WrongSyncScope)
+        matches!(Scanner::new(ScannerConfig{inventory:f.inventory.clone(),order_source:order_source(),root:LocalRoot{sync_id:f.request().sync_id,path:other.root.clone()}}),Err(e)if e.kind==ScannerErrorKind::WrongSyncScope)
     );
     let moved = f.root.with_extension("moved");
     fs::rename(&f.root, &moved).unwrap();

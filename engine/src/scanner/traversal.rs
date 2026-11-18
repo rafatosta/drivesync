@@ -52,6 +52,7 @@ impl Run<'_> {
     }
     fn persist(
         &mut self,
+        causal_order: u64,
         path: LocalRelativePath,
         data: Option<LocalFile>,
         presence: PresenceState,
@@ -81,6 +82,7 @@ impl Run<'_> {
         let observed_at = now();
         let observed = Observation {
             id: FileId(format!("scan:{}:{}", self.id, self.sequence)),
+            causal_order: Some(causal_order),
             sync_id: self.inner.root.sync_id.clone(),
             observed_at,
             scope: FileScope::Local(path.clone()),
@@ -118,14 +120,28 @@ impl Run<'_> {
             },
         };
         let result = self.inner.inventory.record_local(request);
-        let item = match result {
-            Ok(value) => value.item,
+        let (item, incomparable) = match result {
+            Ok(value) => (
+                value.item,
+                value.disposition == ObservationDisposition::Incomparable,
+            ),
             Err(error) => return self.record_failure(path.as_bytes(), error),
         };
+        if incomparable {
+            self.issue(
+                path.as_bytes(),
+                ScanIssueKind::InventoryRecordFailed,
+                ScanIssueImpact::ObservationNotPersisted,
+            );
+            self.inner
+                .order_source
+                .request_local_revalidation(path.clone())
+                .map_err(|_| failure(ScannerErrorKind::InventoryUnavailable))?;
+        }
         self.report.items_recorded += 1;
         self.inner.status_update(|s| s.items_recorded += 1);
         // Pending is durable and does not claim a transfer or change baseline/remote facts.
-        if item.status != SyncStatus::PendingReconciliation {
+        if !incomparable && item.status != SyncStatus::PendingReconciliation {
             if let Err(error) = self
                 .inner
                 .inventory
@@ -264,6 +280,11 @@ impl Run<'_> {
         Ok(())
     }
     fn observe(&mut self, path: &[u8], directories: &mut Vec<Vec<u8>>) -> ScannerResult<()> {
+        let causal_order = self
+            .inner
+            .order_source
+            .reserve_causal_order()
+            .map_err(|_| failure(ScannerErrorKind::InventoryUnavailable))?;
         let relative = LocalRelativePath::new(path.to_vec())
             .map_err(|_| failure(ScannerErrorKind::Internal))?;
         let existing = self
@@ -302,11 +323,25 @@ impl Run<'_> {
                     ScanIssueKind::EntryChanged,
                     ScanIssueImpact::ItemIncomplete,
                 );
-                return self.persist(relative, None, PresenceState::Unknown, false, existing);
+                return self.persist(
+                    causal_order,
+                    relative,
+                    None,
+                    PresenceState::Unknown,
+                    false,
+                    existing,
+                );
             }
             Err(e) => {
                 self.io_issue(path, &e, ScanIssueImpact::ItemIncomplete);
-                return self.persist(relative, None, PresenceState::Unknown, false, existing);
+                return self.persist(
+                    causal_order,
+                    relative,
+                    None,
+                    PresenceState::Unknown,
+                    false,
+                    existing,
+                );
             }
         };
         let existing = if let Some(id) = &file.local_id {
@@ -325,7 +360,14 @@ impl Run<'_> {
                         ScanIssueKind::EntryChanged,
                         ScanIssueImpact::ItemIncomplete,
                     );
-                    return self.persist(relative, None, PresenceState::Unknown, false, existing);
+                    return self.persist(
+                        causal_order,
+                        relative,
+                        None,
+                        PresenceState::Unknown,
+                        false,
+                        existing,
+                    );
                 }
             }
             by_id.or(existing)
@@ -372,9 +414,17 @@ impl Run<'_> {
                 ScanIssueKind::EntryChanged,
                 ScanIssueImpact::ItemIncomplete,
             );
-            return self.persist(relative, None, PresenceState::Unknown, false, existing);
+            return self.persist(
+                causal_order,
+                relative,
+                None,
+                PresenceState::Unknown,
+                false,
+                existing,
+            );
         }
         self.persist(
+            causal_order,
             relative,
             Some(file),
             PresenceState::Present,
@@ -406,6 +456,11 @@ impl Run<'_> {
                 if filesystem::reserved(path) {
                     continue;
                 }
+                let causal_order = self
+                    .inner
+                    .order_source
+                    .reserve_causal_order()
+                    .map_err(|_| failure(ScannerErrorKind::InventoryUnavailable))?;
                 match self.inner.filesystem.entry(path) {
                     Ok(_) => continue,
                     Err(e) if missing(&e) => {}
@@ -447,6 +502,7 @@ impl Run<'_> {
                         .is_err_and(|e| missing(&e))
                     {
                         self.persist(
+                            causal_order,
                             local.relative_path,
                             None,
                             PresenceState::AbsentConfirmed,

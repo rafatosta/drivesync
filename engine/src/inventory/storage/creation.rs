@@ -128,6 +128,7 @@ impl InventoryManager {
     /// Atomically records a verified remote-to-local trash effect and completes
     /// its durable operation. The private trash path is never indexed as a live item.
     pub fn record_trashed_local(&self, r: RecordTrashedLocalRequest) -> InventoryResult<SyncItem> {
+        let causal_order = self.reserve_order()?;
         self.run(true, |db| {
             let current = binding(db, &r.binding.operation.item_id)?
                 .ok_or_else(|| failure(InventoryError::NotFound))?;
@@ -216,6 +217,7 @@ impl InventoryManager {
             if deleted != 1 {
                 return Err(failure(InventoryError::VersionMismatch));
             }
+            super::items::save_causal_marker(db, &item.id, false, causal_order)?;
             let absent = enum_text(&PresenceState::AbsentConfirmed)?;
             db.execute(
                 "UPDATE items SET local_id=NULL,local_presence=?2,remote_presence=?2,status='Synced',conflict_reason=NULL,last_checked=?3,last_synced=?3 WHERE id=?1",
@@ -271,6 +273,7 @@ impl InventoryManager {
         &self,
         r: RecordCreatedReplicaRequest,
     ) -> InventoryResult<SyncItem> {
+        let causal_order = self.reserve_order()?;
         self.run(true,|db|{
             let current=binding(db,&r.binding.operation.item_id)?.ok_or_else(||failure(InventoryError::NotFound))?;
             if current.intent!=r.binding.intent||current.operation.attempt_count!=r.binding.operation.attempt_count {return Err(failure(InventoryError::VersionMismatch));}
@@ -302,12 +305,14 @@ impl InventoryManager {
                     let mutation=matches!(current.intent.command,OperationCommand::Rename {..}|OperationCommand::Move {..}|OperationCommand::UpdateContent {..});
                     if !mutation && (item.local_file_id.as_ref().is_some_and(|id|Some(id)!=local.local_id.as_ref()) || item.local.as_ref().is_some_and(|old|old.relative_path!=local.relative_path)) {return Err(failure(InventoryError::DuplicateAssociation));}
                     super::metadata::local_apply(db,&item.id.0,local)?;
+                    super::items::save_causal_marker(db,&item.id,false,causal_order)?;
                     db.execute("UPDATE items SET local_id=?2,local_presence='Present' WHERE id=?1",params![item.id.0,local.local_id.as_ref().map(|id|&id.0)]).map_err(sql)?;
                 },
                 FileData::Remote(remote)=>{
                     if item.remote_ref.as_ref().is_some_and(|r|*r!=remote.reference) {return Err(failure(InventoryError::DuplicateAssociation));}
                     db.execute("UPDATE items SET remote_account=?2,remote_id=?3,remote_presence='Present' WHERE id=?1",params![item.id.0,remote.reference.account_id.0,remote.reference.file_id.0]).map_err(sql)?;
                     super::metadata::remote_apply(db,&item.id.0,remote)?;
+                    super::items::save_causal_marker(db,&item.id,true,causal_order)?;
                 },
             }
             super::items::bump(db,&item.id)?;

@@ -8,6 +8,7 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawRemoteObservation {
     pub id: FileId,
+    pub causal_order: Option<u64>,
     pub sync_id: SyncId,
     pub observed_at: Timestamp,
     pub account_id: AccountId,

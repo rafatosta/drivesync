@@ -64,6 +64,7 @@ fn seed(root: &std::path::Path, count: usize) {
         let time = m::Timestamp { unix_millis: 10 };
         let observed = m::File {
             id: m::FileId(format!("event-{n}")),
+            causal_order: None,
             sync_id: m::SyncId("inventory-fixture".into()),
             observed_at: time,
             scope: m::FileScope::Remote(reference.clone()),

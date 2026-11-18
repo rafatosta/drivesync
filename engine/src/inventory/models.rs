@@ -346,6 +346,23 @@ pub enum ObservationTarget {
 pub struct RecordObservationResult {
     pub item: SyncItem,
     pub created: bool,
+    pub disposition: ObservationDisposition,
+    /// Exact receipt replay; consumers must not issue repeated revalidation requests.
+    pub duplicate: bool,
+}
+
+/// Freshness decision persisted with every accepted or rejected event receipt.
+///
+/// `Applied` requires a greater durable causal position on that side, or a greater
+/// numeric provider version for remote observations. `Obsolete` requires a smaller
+/// comparable marker. Without comparable evidence the observation is `Incomparable`;
+/// its payload and revision are preserved and the responsible detector is asked to
+/// revalidate the affected scope. Wall-clock timestamps never decide freshness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationDisposition {
+    Applied,
+    Obsolete,
+    Incomparable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

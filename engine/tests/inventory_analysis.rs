@@ -37,6 +37,7 @@ impl Drop for Tree {
     }
 }
 fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File {
+    static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
     let remote = m::RemoteFile {
         reference: m::RemoteFileRef {
             account_id: AccountId("account".into()),
@@ -59,6 +60,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
     let reference = remote.reference.clone();
     m::File {
         id: m::FileId(event.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         observed_at: m::Timestamp { unix_millis: 10 },
         scope: m::FileScope::Remote(reference.clone()),

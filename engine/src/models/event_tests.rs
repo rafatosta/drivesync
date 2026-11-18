@@ -37,6 +37,7 @@ fn event(kind: FileEventAction) -> File {
     let path = LocalRelativePath::new(b"file".to_vec()).unwrap();
     File {
         id: FileId("event-id".into()),
+        causal_order: None,
         sync_id: SyncId("sync".into()),
         observed_at: Timestamp { unix_millis: 42 },
         coverage: if kind == FileEventAction::Unclassified {
@@ -180,6 +181,7 @@ fn rechecks_require_a_reason_and_classified_events_cannot_carry_uncertainty() {
 fn remote_observation_classifies_scope_removal_without_claiming_deletion() {
     let mut file = File {
         id: FileId("observation".into()),
+        causal_order: None,
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,

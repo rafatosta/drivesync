@@ -11,6 +11,7 @@ pub mod inspection;
 pub struct InventoryManager {
     connection: Mutex<Connection>,
     status: Mutex<InventoryStatusResult>,
+    order_source: Mutex<Option<std::sync::Arc<dyn crate::models::CausalOrderSource>>>,
     _directory: FsFile,
 }
 pub(super) fn failure(kind: InventoryError) -> InventoryFailure {
@@ -114,6 +115,7 @@ impl InventoryManager {
                 recovery: InventoryRecoveryOutcome::Normal,
                 last_error: None,
             }),
+            order_source: Mutex::new(None),
             _directory: directory,
         };
         Ok(OpenInventoryResult {
@@ -122,6 +124,30 @@ impl InventoryManager {
             created,
             recovery: InventoryRecoveryOutcome::Normal,
         })
+    }
+    /// Binds the synchronization-wide durable order source used by Scanner and Operator results.
+    pub(crate) fn set_order_source(
+        &self,
+        source: std::sync::Arc<dyn crate::models::CausalOrderSource>,
+    ) {
+        *self
+            .order_source
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(source);
+    }
+    pub(super) fn reserve_order(&self) -> InventoryResult<Option<u64>> {
+        let source = self
+            .order_source
+            .lock()
+            .map_err(|_| failure(InventoryError::StorageUnavailable))?
+            .clone();
+        source
+            .map(|source| {
+                source
+                    .reserve_causal_order()
+                    .map_err(|_| failure(InventoryError::StorageUnavailable))
+            })
+            .transpose()
     }
     /// Reads cached availability without waiting for SQL or a transaction.
     pub fn status(&self, _request: InventoryStatusRequest) -> InventoryStatusResult {
@@ -235,7 +261,7 @@ fn verify(db: &Connection, request: &OpenInventoryRequest) -> InventoryResult<()
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql)?;
-    if version != 9 {
+    if version != 10 {
         return Err(failure(InventoryError::UnsupportedSchema));
     }
     let info = sync_info(db)?;

@@ -8,77 +8,55 @@ use rusqlite::{params, types::Value, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 
-type TemporalOrder = (Option<String>, Option<i64>, Option<String>, i64);
+type TemporalOrder = (Option<i64>, Option<String>);
 
-/// Compares durable causal evidence first and wall-clock time only when sources cannot be ordered.
-fn stale(
+/// Compares provider versions or shared durable causal positions; timestamps never decide freshness.
+fn disposition(
     db: &Connection,
     id: &SyncItemId,
     remote: bool,
     file: &File,
-    proof: &ObservationProof,
-) -> InventoryResult<bool> {
+) -> InventoryResult<Option<ObservationDisposition>> {
     let side = if remote { 1 } else { 0 };
     let current: Option<TemporalOrder> = db
-        .query_row("SELECT generation,sequence,provider_version,observed_at FROM observation_order WHERE item=?1 AND side=?2", params![id.0, side], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-        .optional().map_err(sql)?;
-    let Some((generation, sequence, version, observed_at)) = current else {
-        return Ok(false);
+        .query_row(
+            "SELECT causal_order,provider_version FROM observation_order WHERE item=?1 AND side=?2",
+            params![id.0, side],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some((old_order, old_version)) = current else {
+        return Ok(None);
     };
-    if !remote {
-        if let (
-            Some(old_generation),
-            Some(old_sequence),
-            Some(new_generation),
-            Some(new_sequence),
-        ) = (
-            generation.as_deref(),
-            sequence,
-            proof.scan_or_generation.as_deref(),
-            local_sequence(file),
-        ) {
-            if old_generation == new_generation {
-                return Ok(new_sequence <= old_sequence);
-            }
-        }
-    } else {
+    if remote {
         if let (Some(old), Some(new)) = (
-            version.as_deref().and_then(decimal_version),
-            remote_version(file),
+            old_version.as_deref().and_then(decimal_version),
+            remote_version(file).and_then(decimal_version),
         ) {
             if old != new {
-                return Ok(new < old);
-            }
-        }
-        if let (Some(old_generation), Some(old_sequence), Some((new_generation, new_sequence))) =
-            (generation.as_deref(), sequence, remote_sequence(file))
-        {
-            if old_generation == new_generation {
-                return Ok(new_sequence <= old_sequence);
+                return Ok(Some(if new > old {
+                    ObservationDisposition::Applied
+                } else {
+                    ObservationDisposition::Obsolete
+                }));
             }
         }
     }
-    Ok(proof.observed_at.unix_millis < observed_at)
-}
-
-fn local_sequence(file: &File) -> Option<i64> {
-    let id = &file.id.0;
-    let value = if id.starts_with("scan:") {
-        id.rsplit(':').next()?.parse::<u64>().ok()?
-    } else {
-        u64::from_str_radix(id.rsplit('-').next()?, 16).ok()?
+    let Some(new_order) = file
+        .causal_order
+        .and_then(|order| i64::try_from(order).ok())
+    else {
+        return Ok(Some(ObservationDisposition::Incomparable));
     };
-    i64::try_from(value).ok()
-}
-
-fn remote_sequence(file: &File) -> Option<(String, i64)> {
-    let mut parts = file.id.0.split(':');
-    if parts.next()? != "remote" {
-        return None;
-    }
-    let generation = parts.next()?.to_owned();
-    let sequence = parts.next()?.parse::<i64>().ok()?;
-    Some((generation, sequence))
+    let Some(old_order) = old_order else {
+        return Ok(Some(ObservationDisposition::Incomparable));
+    };
+    Ok(Some(if new_order > old_order {
+        ObservationDisposition::Applied
+    } else {
+        ObservationDisposition::Obsolete
+    }))
 }
 
 fn decimal_version(value: &str) -> Option<u128> {
@@ -87,38 +65,49 @@ fn decimal_version(value: &str) -> Option<u128> {
         .flatten()
 }
 
-fn remote_version(file: &File) -> Option<u128> {
+fn remote_version(file: &File) -> Option<&str> {
     match file.data.as_ref()? {
         FileData::Remote(remote) => match &remote.version {
-            MetadataValue::Known(value) => decimal_version(value),
+            MetadataValue::Known(value) => Some(value.as_str()),
             _ => None,
         },
         FileData::Local(_) => None,
     }
 }
 
-fn save_order(
+pub(super) fn save_order(
     db: &Connection,
     id: &SyncItemId,
     remote: bool,
     file: &File,
-    proof: &ObservationProof,
+    _proof: &ObservationProof,
 ) -> InventoryResult<()> {
-    let remote_order = remote_sequence(file);
-    let generation = if remote {
-        remote_order
-            .as_ref()
-            .map(|(generation, _)| generation.as_str())
-    } else {
-        proof.scan_or_generation.as_deref()
+    let version = remote
+        .then(|| remote_version(file))
+        .flatten()
+        .and_then(|v| decimal_version(v).map(|_| v.to_owned()));
+    let causal_order = file
+        .causal_order
+        .and_then(|order| i64::try_from(order).ok());
+    db.execute("INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,?4) ON CONFLICT(item,side) DO UPDATE SET causal_order=excluded.causal_order,provider_version=excluded.provider_version", params![id.0, if remote { 1 } else { 0 }, causal_order, version]).map_err(sql)?;
+    Ok(())
+}
+
+/// Advances a side after a caller-verified physical result without changing its provider version.
+pub(super) fn save_causal_marker(
+    db: &Connection,
+    id: &SyncItemId,
+    remote: bool,
+    causal_order: Option<u64>,
+) -> InventoryResult<()> {
+    let Some(causal_order) = causal_order.and_then(|order| i64::try_from(order).ok()) else {
+        return Ok(());
     };
-    let sequence = if remote {
-        remote_order.as_ref().map(|(_, sequence)| *sequence)
-    } else {
-        local_sequence(file)
-    };
-    let version = remote_version(file).map(|value| value.to_string());
-    db.execute("INSERT INTO observation_order(item,side,generation,sequence,provider_version,observed_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(item,side) DO UPDATE SET generation=excluded.generation,sequence=excluded.sequence,provider_version=excluded.provider_version,observed_at=excluded.observed_at", params![id.0, if remote { 1 } else { 0 }, generation, sequence, version, proof.observed_at.unix_millis]).map_err(sql)?;
+    db.execute(
+        "INSERT INTO observation_order(item,side,causal_order,provider_version) VALUES(?1,?2,?3,NULL) ON CONFLICT(item,side) DO UPDATE SET causal_order=excluded.causal_order",
+        params![id.0, if remote { 1 } else { 0 }, causal_order],
+    )
+    .map_err(sql)?;
     Ok(())
 }
 pub(super) fn resolve(
@@ -282,15 +271,15 @@ fn record(
             .map_err(|_| failure(InventoryError::SerializationFailed))?,
     )
     .to_vec();
-    let receipt: Option<(String, Vec<u8>)> = db
+    let receipt: Option<(String, Vec<u8>, String)> = db
         .query_row(
-            "SELECT item,digest FROM receipts WHERE event=?1",
+            "SELECT item,digest,outcome FROM receipts WHERE event=?1",
             [&file.id.0],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .map_err(sql)?;
-    if let Some((id, old)) = receipt {
+    if let Some((id, old, outcome)) = receipt {
         let id = SyncItemId(id);
         if old != digest || !same_target(db, target, &id)? {
             return Err(failure(InventoryError::VersionMismatch));
@@ -298,6 +287,13 @@ fn record(
         return Ok(RecordObservationResult {
             item: load(db, &id)?,
             created: false,
+            disposition: match outcome.as_str() {
+                "Applied" => ObservationDisposition::Applied,
+                "Obsolete" => ObservationDisposition::Obsolete,
+                "Incomparable" => ObservationDisposition::Incomparable,
+                _ => return Err(failure(InventoryError::CorruptDatabase)),
+            },
+            duplicate: true,
         });
     }
     let existing = match target {
@@ -325,11 +321,6 @@ fn record(
         return Err(failure(InventoryError::MissingObservation));
     }
     let id = if let Some(id) = existing {
-        let item = load(db, &id)?;
-        revision(
-            &item,
-            expected.ok_or_else(|| failure(InventoryError::VersionMismatch))?,
-        )?;
         id
     } else {
         create(db)?
@@ -361,13 +352,39 @@ fn record(
             return Err(failure(InventoryError::InvalidIdentity));
         }
     }
-    let obsolete = stale(db, &id, remote, file, proof)?;
-    if obsolete {
-        db.execute("INSERT INTO receipts(event,item,side,digest,proof,outcome) VALUES(?1,?2,?3,?4,?5,'Obsolete')", params![file.id.0, id.0, i32::from(remote), digest, serde_json::to_string(proof).map_err(|_| failure(InventoryError::SerializationFailed))?]).map_err(sql)?;
+    let disposition =
+        disposition(db, &id, remote, file)?.unwrap_or(ObservationDisposition::Applied);
+    if disposition != ObservationDisposition::Applied {
+        let outcome = match disposition {
+            ObservationDisposition::Obsolete => "Obsolete",
+            ObservationDisposition::Incomparable => "Incomparable",
+            ObservationDisposition::Applied => unreachable!(),
+        };
+        db.execute(
+            "INSERT INTO receipts(event,item,side,digest,proof,outcome) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                file.id.0,
+                id.0,
+                if remote { 1 } else { 0 },
+                digest,
+                serde_json::to_string(proof)
+                    .map_err(|_| failure(InventoryError::SerializationFailed))?,
+                outcome
+            ],
+        )
+        .map_err(sql)?;
         return Ok(RecordObservationResult {
             item: current,
             created: false,
+            disposition,
+            duplicate: false,
         });
+    }
+    if !created {
+        revision(
+            &current,
+            expected.ok_or_else(|| failure(InventoryError::VersionMismatch))?,
+        )?;
     }
     match &file.data {
         Some(FileData::Local(local)) if !remote => {
@@ -470,7 +487,7 @@ fn record(
         params![
             file.id.0,
             id.0,
-            i32::from(remote),
+            if remote { 1 } else { 0 },
             digest,
             serde_json::to_string(proof)
                 .map_err(|_| failure(InventoryError::SerializationFailed))?
@@ -480,6 +497,8 @@ fn record(
     Ok(RecordObservationResult {
         item: load(db, &id)?,
         created,
+        disposition: ObservationDisposition::Applied,
+        duplicate: false,
     })
 }
 impl InventoryManager {

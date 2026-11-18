@@ -7,6 +7,7 @@ use crate::{inventory::*, models::*};
 pub(super) struct Ingested {
     pub item: Option<SyncItemId>,
     pub analyze_all: bool,
+    pub revalidate: Option<FileScope>,
 }
 /// Keeps each File and its ID intact so a redelivered observation hits Inventory's
 /// durable receipt before revision checks. Locator paths never pair local/remote resources.
@@ -28,6 +29,7 @@ pub(super) fn ingest(
             return Ok(Ingested {
                 item: None,
                 analyze_all: true,
+                revalidate: None,
             });
         }
         FileScope::Remote(reference) => {
@@ -46,6 +48,7 @@ pub(super) fn ingest(
                 return Ok(Ingested {
                     item: None,
                     analyze_all: true,
+                    revalidate: None,
                 });
             }
             (ItemSelector::RemoteRef(reference.clone()), true)
@@ -78,6 +81,7 @@ pub(super) fn ingest(
                 return Ok(Ingested {
                     item: Some(occupied.id),
                     analyze_all: true,
+                    revalidate: None,
                 });
             }
         }
@@ -88,6 +92,7 @@ pub(super) fn ingest(
                 return Ok(Ingested {
                     item: None,
                     analyze_all: true,
+                    revalidate: None,
                 });
             }
             return Err(PreparationFailure::InvalidObservation(file.id.clone()));
@@ -97,6 +102,7 @@ pub(super) fn ingest(
         return Ok(Ingested {
             item: None,
             analyze_all: true,
+            revalidate: None,
         });
     }
     let target = if remote {
@@ -170,10 +176,14 @@ pub(super) fn ingest(
         })
     }
     .map_err(PreparationFailure::Inventory)?;
+    let newly_applied = result.disposition == ObservationDisposition::Applied && !result.duplicate;
     Ok(Ingested {
-        item: Some(result.item.id),
+        item: newly_applied.then_some(result.item.id),
         // Namespace and parent changes can invalidate another item's plan.
-        analyze_all: true,
+        analyze_all: newly_applied,
+        revalidate: (result.disposition == ObservationDisposition::Incomparable
+            && !result.duplicate)
+            .then(|| file.scope.clone()),
     })
 }
 

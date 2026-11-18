@@ -17,7 +17,7 @@ pub(super) fn encode_record(record: &ObservationRecord) -> QueueResult<Vec<u8>> 
         .validate()
         .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
     let bytes = serde_json::to_vec(&Wire {
-        version: 4,
+        version: 5,
         record: record.clone(),
     })
     .map_err(|_| QueueFailure::new(QueueError::InvalidRequest))?;
@@ -32,7 +32,7 @@ pub(super) fn decode_record(bytes: &[u8]) -> QueueResult<ObservationRecord> {
     }
     let value: Wire =
         serde_json::from_slice(bytes).map_err(|_| QueueFailure::new(QueueError::Corrupt))?;
-    if value.version != 4 {
+    if value.version != 5 {
         return Err(QueueFailure::new(QueueError::SchemaUnsupported));
     }
     value

@@ -254,8 +254,10 @@ impl Orchestrator {
                         .map_err(PreparationFailure::Inventory)?
                         .inventory,
                     );
+                    inventory.set_order_source(detector.clone());
                     Scanner::new(ScannerConfig {
                         inventory: inventory.clone(),
+                        order_source: detector.clone(),
                         root: LocalRoot {
                             sync_id: scope.sync_id.clone(),
                             path: scope.local_root.clone(),

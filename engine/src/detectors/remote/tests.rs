@@ -426,6 +426,7 @@ fn scheduler_and_queue_accept_a_provider_independent_observer() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let emitted = u64::from(self.backend.emit(&File {
                 id: crate::models::FileId("independent-occurrence".into()),
+                causal_order: None,
                 sync_id: SyncId("sync-a".into()),
                 event: FileEvent {
                     local: None,

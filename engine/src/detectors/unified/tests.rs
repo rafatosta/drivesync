@@ -2,7 +2,7 @@
 use super::*;
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     time::Duration,
 };
 struct Tree(PathBuf);
@@ -128,6 +128,7 @@ fn detector(
     )
 }
 fn remote_file(id: &str) -> File {
+    static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
     let reference = RemoteFileRef {
         account_id: AccountId("account".into()),
         file_id: RemoteFileId("resource".into()),
@@ -138,6 +139,7 @@ fn remote_file(id: &str) -> File {
     })).unwrap();
     File {
         id: FileId(id.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,
@@ -159,6 +161,7 @@ fn remote_file(id: &str) -> File {
     }
 }
 fn local_file(tree: &Tree, id: &str) -> File {
+    static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
     std::fs::create_dir_all(tree.0.join("local")).unwrap();
     std::fs::write(tree.0.join("local/file"), b"contents").unwrap();
     let collector = LocalMetadataCollector::new(LocalDetectorScope {
@@ -178,6 +181,7 @@ fn local_file(tree: &Tree, id: &str) -> File {
         .unwrap();
     File {
         id: FileId(id.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,
@@ -400,6 +404,7 @@ fn source_counters_distinguish_bootstrap_and_real_changes() {
     start(&detector, DeliveryState::Paused);
     let initial = File {
         id: FileId("initial".into()),
+        causal_order: Some(1),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,

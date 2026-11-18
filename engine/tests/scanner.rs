@@ -2,10 +2,23 @@
 use drivesync_engine::{inventory::*, models::*, scanner::*};
 use std::{
     future::Future,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     task::{Context, Poll, Wake, Waker},
     time::Duration,
 };
+struct TestOrder(AtomicU64);
+impl CausalOrderSource for TestOrder {
+    fn reserve_causal_order(&self) -> Result<u64, CausalOrderError> {
+        Ok(self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn request_local_revalidation(&self, _: LocalRelativePath) -> Result<(), CausalOrderError> {
+        Ok(())
+    }
+}
 struct WakeThread(std::thread::Thread);
 impl Wake for WakeThread {
     fn wake(self: Arc<Self>) {
@@ -59,6 +72,7 @@ fn public_scanner_runs_without_runtime_and_validates_exact_root_bytes() {
     std::fs::write(path.join("file"), b"unchanged").unwrap();
     let scanner = Scanner::new(ScannerConfig {
         inventory: inventory.clone(),
+        order_source: Arc::new(TestOrder(AtomicU64::new(0))),
         root: LocalRoot {
             sync_id: SyncId("sync".into()),
             path: path.clone(),

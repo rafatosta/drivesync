@@ -406,6 +406,7 @@ fn now() -> LocalDetectorResult<Timestamp> {
 fn envelope(
     ids: &mut Ids,
     sync_id: &crate::models::SyncId,
+    causal_order: Option<u64>,
     path: Option<LocalRelativePath>,
     result: Option<LocalMetadataResult>,
     unavailable: bool,
@@ -413,6 +414,7 @@ fn envelope(
     let observed_at = now()?;
     let mut file = File {
         id: ids.next()?,
+        causal_order,
         sync_id: sync_id.clone(),
         observed_at,
         scope: path.clone().map_or(FileScope::WholeSync, FileScope::Local),
@@ -553,7 +555,8 @@ fn run(
             LocalScanCoverage::Complete
         });
     });
-    let mut initial = envelope(&mut ids, &scope.sync_id, None, None, false)?;
+    let initial_order = sink.reserve_causal_order()?;
+    let mut initial = envelope(&mut ids, &scope.sync_id, initial_order, None, None, false)?;
     initial.event.uncertainty = Some(if coverage_error.is_some() {
         ObservationUncertainty::CoverageIncomplete
     } else {
@@ -604,10 +607,13 @@ fn run(
                 cancel.check()?;
                 if pending.is_none() {
                     if let Some(reason) = recheck.take() {
-                        let mut event = envelope(&mut ids, &scope.sync_id, None, None, false)?;
+                        let order = sink.reserve_causal_order()?;
+                        let mut event =
+                            envelope(&mut ids, &scope.sync_id, order, None, None, false)?;
                         event.event.uncertainty = Some(reason);
                         pending = Some(event);
                     } else if let Some(trigger) = signals.pop() {
+                        let causal_order = sink.reserve_causal_order()?;
                         let (path, native) = match trigger {
                             Trigger::Native(hint) => (
                                 hint.path,
@@ -638,6 +644,7 @@ fn run(
                                 let mut event = envelope(
                                     &mut ids,
                                     &scope.sync_id,
+                                    causal_order,
                                     Some(path.clone()),
                                     Some(result),
                                     false,
@@ -659,6 +666,7 @@ fn run(
                                 let mut event = envelope(
                                     &mut ids,
                                     &scope.sync_id,
+                                    causal_order,
                                     Some(path.clone()),
                                     None,
                                     true,
@@ -740,7 +748,8 @@ fn run(
             Err(failure) if failure.kind == LocalDetectorError::Cancelled => return Err(failure),
             Err(failure) => {
                 cancel.check()?;
-                let event = envelope(&mut ids, &scope.sync_id, None, None, true)?;
+                let order = sink.reserve_causal_order()?;
+                let event = envelope(&mut ids, &scope.sync_id, order, None, None, true)?;
                 let _ = sink.notify(event);
                 return Err(failure);
             }
@@ -775,7 +784,8 @@ fn run(
                 Ok(next) => next,
                 Err(failure) => {
                     cancel.check()?;
-                    let event = envelope(&mut ids, &scope.sync_id, None, None, true)?;
+                    let order = sink.reserve_causal_order()?;
+                    let event = envelope(&mut ids, &scope.sync_id, order, None, None, true)?;
                     let _ = sink.notify(event);
                     return Err(failure);
                 }

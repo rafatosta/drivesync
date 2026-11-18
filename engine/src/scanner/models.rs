@@ -1,7 +1,7 @@
 //! Local scan requests, truthful coverage and sanitized diagnostics.
 use crate::{
     inventory::{InventoryManager, SyncItemId},
-    models::{LocalRelativePath, SyncId, Timestamp},
+    models::{CausalOrderSource, LocalRelativePath, SyncId, Timestamp},
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
@@ -10,6 +10,8 @@ pub type ScannerResult<T> = Result<T, ScannerError>;
 pub struct ScannerConfig {
     pub inventory: Arc<InventoryManager>,
     pub root: LocalRoot,
+    /// Shared with live detector events so scan observations cannot race past them.
+    pub order_source: Arc<dyn CausalOrderSource>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalRoot {

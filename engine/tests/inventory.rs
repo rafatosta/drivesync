@@ -125,6 +125,7 @@ fn missing_creation_permission_symlinks_and_hardlinks_do_not_open_a_database() {
 
 use drivesync_engine::models as m;
 fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File {
+    static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
     let remote = m::RemoteFile {
         reference: m::RemoteFileRef {
             account_id: AccountId("account".into()),
@@ -147,6 +148,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
     let reference = remote.reference.clone();
     m::File {
         id: m::FileId(event.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         observed_at: m::Timestamp { unix_millis: 10 },
         scope: m::FileScope::Remote(reference.clone()),
@@ -379,6 +381,7 @@ fn unconfirmed_absence_and_wrong_account_never_destroy_known_metadata() {
 }
 
 fn local_file(tree: &Tree, event: &str) -> m::File {
+    static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
     use drivesync_engine::detectors::*;
     let collector = LocalMetadataCollector::new(LocalDetectorScope {
         account_id: AccountId("account".into()),
@@ -397,6 +400,7 @@ fn local_file(tree: &Tree, event: &str) -> m::File {
         .unwrap();
     m::File {
         id: m::FileId(event.into()),
+        causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
         sync_id: SyncId("sync".into()),
         observed_at: m::Timestamp { unix_millis: 10 },
         scope: m::FileScope::Local(path.clone()),
@@ -419,12 +423,18 @@ fn local_file(tree: &Tree, event: &str) -> m::File {
 }
 
 fn local_order_request(
-    file: m::File,
+    mut file: m::File,
     generation: &str,
     at: i64,
     revision: Option<u64>,
     target: ObservationTarget,
 ) -> RecordLocalObservation {
+    if let Some(order) = generation
+        .strip_prefix("order:")
+        .and_then(|v| v.parse().ok())
+    {
+        file.causal_order = Some(order);
+    }
     RecordLocalObservation {
         selector: target,
         expected_revision: revision,
@@ -447,6 +457,7 @@ fn local_causal_sequence_wins_over_late_delivery_clock_changes_and_restarts() {
     std::fs::write(tree.0.join("local-file"), b"content").unwrap();
     let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
     let mut newest = local_file(&tree, "capture-0000000000000002");
+    newest.causal_order = Some(20);
     newest.event.local.as_mut().unwrap().capture_id = "capture".into();
     let first = inventory
         .record_local(local_order_request(
@@ -462,13 +473,14 @@ fn local_causal_sequence_wins_over_late_delivery_clock_changes_and_restarts() {
 
     let reopened = InventoryManager::open(tree.request()).unwrap().inventory;
     let mut pending_old = local_file(&tree, "capture-0000000000000001");
+    pending_old.causal_order = Some(10);
     pending_old.event.local.as_mut().unwrap().capture_id = "capture".into();
     let obsolete = reopened
         .record_local(local_order_request(
             pending_old.clone(),
             "capture",
             9_999,
-            Some(first.revision),
+            Some(0),
             ObservationTarget::Existing(first.id.clone()),
         ))
         .unwrap();
@@ -484,6 +496,21 @@ fn local_causal_sequence_wins_over_late_delivery_clock_changes_and_restarts() {
         ))
         .unwrap();
     assert_eq!(replay.item.revision, first.revision);
+    let mut newer_generation = local_file(&tree, "capture-0000000000000003");
+    newer_generation.causal_order = Some(21);
+    newer_generation.event.local.as_mut().unwrap().capture_id = "later-generation".into();
+    newer_generation.observed_at = timestamp(1);
+    let advanced = reopened
+        .record_local(local_order_request(
+            newer_generation,
+            "later-generation",
+            1,
+            Some(first.revision),
+            ObservationTarget::Existing(first.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(advanced.disposition, ObservationDisposition::Applied);
+    assert_eq!(advanced.item.revision, first.revision + 1);
     let receipts = inspection::inspect(inspection::InspectInventoryRequest {
         local_root: tree.0.clone(),
         account_id: AccountId("account".into()),
@@ -566,6 +593,7 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
     std::fs::write(tree.0.join("local-file"), b"content").unwrap();
     let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
     let mut before_scan = local_file(&tree, "capture-0000000000000001");
+    before_scan.causal_order = Some(30);
     before_scan.event.local.as_mut().unwrap().capture_id = "capture".into();
     let initial = inventory
         .record_local(local_order_request(
@@ -579,6 +607,7 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
         .item;
 
     let mut scan = local_file(&tree, "scan:initial:1");
+    scan.causal_order = Some(31);
     scan.event.local = None;
     scan.event.action = m::FileEventAction::RecheckRequired;
     scan.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
@@ -600,6 +629,7 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
         .unwrap()
         .item;
     let mut operator_result = local_file(&tree, "capture-0000000000000002");
+    operator_result.causal_order = Some(32);
     operator_result.event.local.as_mut().unwrap().capture_id = "capture".into();
     let confirmed = inventory
         .record_local(local_order_request(
@@ -613,6 +643,108 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
         .item;
     assert_eq!(confirmed.revision, scanned.revision + 1);
     assert!(confirmed.revision > initial.revision);
+
+    let mut delayed_scan = local_file(&tree, "scan:initial:pending");
+    delayed_scan.causal_order = Some(31);
+    delayed_scan.event.local = None;
+    delayed_scan.event.action = m::FileEventAction::RecheckRequired;
+    delayed_scan.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
+    delayed_scan.observed_at = timestamp(i64::MAX);
+    let obsolete = inventory
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(initial.id.clone()),
+            expected_revision: Some(confirmed.revision),
+            observation: LocalObservation {
+                observed: delayed_scan,
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalScan,
+                    observed_at: timestamp(i64::MAX),
+                    scan_or_generation: Some("scan:initial".into()),
+                    complete_scope: true,
+                },
+            },
+        })
+        .unwrap();
+    assert_eq!(obsolete.disposition, ObservationDisposition::Obsolete);
+    assert_eq!(obsolete.item.revision, confirmed.revision);
+}
+
+#[test]
+fn incomparable_local_and_versionless_remote_events_are_receipted_without_replay() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut initial = local_file(&tree, "initial-local");
+    initial.causal_order = Some(40);
+    let current = inventory
+        .record_local(local_order_request(
+            initial,
+            "generation-a",
+            10,
+            None,
+            ObservationTarget::NewItem,
+        ))
+        .unwrap()
+        .item;
+    let mut incomparable = local_file(&tree, "unknown-order");
+    incomparable.causal_order = None;
+    incomparable.observed_at = timestamp(i64::MAX);
+    let first = inventory
+        .record_local(local_order_request(
+            incomparable.clone(),
+            "generation-b",
+            i64::MAX,
+            Some(current.revision),
+            ObservationTarget::Existing(current.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(first.disposition, ObservationDisposition::Incomparable);
+    assert_eq!(first.item.revision, current.revision);
+    let replay = inventory
+        .record_local(local_order_request(
+            incomparable,
+            "generation-b",
+            i64::MAX,
+            Some(0),
+            ObservationTarget::Existing(current.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(replay.disposition, ObservationDisposition::Incomparable);
+    assert!(replay.duplicate);
+    assert_eq!(replay.item.revision, current.revision);
+
+    let mut remote = remote_file(
+        "versionless-first",
+        "versionless",
+        m::MetadataValue::Known("first".into()),
+    );
+    if let Some(m::FileData::Remote(remote)) = &mut remote.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    let remote_item = inventory
+        .record_remote(remote_request(remote, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+    let mut no_version = remote_file(
+        "versionless-second",
+        "versionless",
+        m::MetadataValue::Known("second".into()),
+    );
+    if let Some(m::FileData::Remote(remote)) = &mut no_version.data {
+        remote.version = m::MetadataValue::Unavailable;
+    }
+    no_version.causal_order = None;
+    no_version.observed_at = timestamp(0);
+    let result = inventory
+        .record_remote(remote_request(
+            no_version,
+            ObservationTarget::Existing(remote_item.id.clone()),
+            Some(remote_item.revision),
+        ))
+        .unwrap();
+    assert_eq!(result.disposition, ObservationDisposition::Incomparable);
+    assert_eq!(result.item.revision, remote_item.revision);
 }
 #[test]
 fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
@@ -637,6 +769,7 @@ fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
     let local = inventory.record_local(request).unwrap().item;
     let mut recent = observed;
     recent.id = m::FileId("local-denied".into());
+    recent.causal_order = recent.causal_order.map(|order| order + 1);
     if let Some(m::FileData::Local(data)) = &mut recent.data {
         data.mode = m::MetadataValue::PermissionDenied;
     }

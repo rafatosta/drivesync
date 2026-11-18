@@ -203,6 +203,12 @@ impl Default for LocalDetectorSettings {
 /// Single-event acceptance boundary; Ok means the receiver assumed durable responsibility.
 /// Do not reenter blocking methods of the same detector from this callback.
 pub trait LocalNotificationSink: Send + Sync {
+    /// Reserves the synchronization-wide order before local metadata collection begins.
+    /// Standalone sinks without a durable coordinator return `None`; Inventory then
+    /// treats later observations without comparable order as uncertain.
+    fn reserve_causal_order(&self) -> LocalDetectorResult<Option<u64>> {
+        Ok(None)
+    }
     fn notify(&self, file: crate::models::File) -> LocalDetectorResult<()>;
 }
 /// Public local construction; physical collector composition remains private.

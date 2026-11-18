@@ -1447,6 +1447,7 @@ impl crate::analyzer::CreationObserver for Events {
 #[tokio::test]
 async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines() {
     use crate::analyzer::*;
+    static NEXT_ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(100);
     for (upload, directory, interrupted) in [
         (false, false, false),
         (true, false, false),
@@ -1515,6 +1516,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
         };
         let file = crate::models::File {
             id: crate::models::FileId("observed".into()),
+            causal_order: Some(1),
             sync_id: SyncId("sync".into()),
             observed_at: at,
             scope: match &data {
@@ -1814,6 +1816,9 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                 };
                 let observed = crate::models::File {
                     id: crate::models::FileId(event_id.into()),
+                    causal_order: Some(
+                        NEXT_ORDER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    ),
                     sync_id: SyncId("sync".into()),
                     observed_at: at,
                     scope: FileScope::Local(path.clone()),

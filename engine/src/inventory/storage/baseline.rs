@@ -158,6 +158,7 @@ impl InventoryManager {
     /// The caller must verify physical effects before calling; this method performs no filesystem/network I/O.
     /// Revision, claim attempt, baseline, item, completed work, history and retry receipt share one transaction.
     pub fn confirm_sync(&self, request: ConfirmSyncRequest) -> InventoryResult<ConfirmSyncResult> {
+        let causal_order = self.reserve_order()?;
         self.run(true,|db|{
             let digest=Sha256::digest(serde_json::to_vec(&request).map_err(|_|failure(InventoryError::SerializationFailed))?).to_vec();
             let receipt:Option<(Vec<u8>,Option<i64>,Option<i64>)>=db.query_row("SELECT digest,operation,activity FROM confirmations WHERE item=?1 AND revision=?2",params![request.item_id.0,request.expected_item_revision],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(sql)?;
@@ -193,6 +194,8 @@ impl InventoryManager {
             };
             // Append deliberately follows work completion; any validation/SQL failure rolls everything back.
             store(db,&item.id,b)?;
+            items::save_causal_marker(db, &item.id, false, causal_order)?;
+            items::save_causal_marker(db, &item.id, true, causal_order)?;
             db.execute("UPDATE items SET status='Synced',conflict_reason=NULL,last_synced=?2 WHERE id=?1",params![item.id.0,request.confirmed.verified_at.unix_millis]).map_err(sql)?;
             items::bump(db,&item.id)?;
             if request.activity.as_ref().is_some_and(|a|a.item_id!=item.id){return Err(failure(InventoryError::InvalidIdentity));}

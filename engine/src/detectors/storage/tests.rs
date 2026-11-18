@@ -53,8 +53,10 @@ impl Tree {
         store
     }
     fn event(&self, id: &str) -> File {
+        static NEXT_ORDER: AtomicU64 = AtomicU64::new(1);
         File {
             id: FileId(id.into()),
+            causal_order: Some(NEXT_ORDER.fetch_add(1, Ordering::Relaxed)),
             sync_id: self.scope().sync_id,
             observed_at: Timestamp { unix_millis: -10 },
             scope: FileScope::WholeSync,
@@ -406,6 +408,29 @@ fn corruption_during_a_reservation_blocks_ack_without_confirming_the_batch() {
         store.refresh().is_err(),
         "corruption must remain unavailable, not clear on a status query"
     );
+}
+
+#[test]
+fn causal_positions_are_serialized_and_survive_reopening_the_queue() {
+    let tree = Tree::new();
+    let store = Arc::new(tree.store(&Arc::new(AtomicI64::new(0))));
+    let first = store.reserve_causal_order().unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            std::thread::spawn(move || store.reserve_causal_order().unwrap())
+        })
+        .collect();
+    let mut positions: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    positions.sort_unstable();
+    assert_eq!(positions, (first + 1..=first + 8).collect::<Vec<_>>());
+    drop(store);
+
+    let reopened = tree.store(&Arc::new(AtomicI64::new(0)));
+    assert_eq!(reopened.reserve_causal_order().unwrap(), first + 9);
 }
 
 #[test]
@@ -816,6 +841,7 @@ fn original_remote_json_survives_reopen_delivery_and_ack_without_rewriting() {
     });
     let raw = RawRemoteObservation {
         id: FileId("original-item".into()),
+        causal_order: None,
         sync_id: SyncId("sync".into()),
         observed_at: Timestamp { unix_millis: 13 },
         account_id: AccountId("account".into()),
@@ -894,6 +920,7 @@ fn original_is_durable_before_extraction_and_invalid_metadata_is_not_discarded()
     let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
     let raw = RawRemoteObservation {
         id: FileId("malformed-metadata".into()),
+        causal_order: None,
         sync_id: SyncId("sync".into()),
         observed_at: Timestamp { unix_millis: 1 },
         account_id: AccountId("account".into()),
@@ -947,6 +974,7 @@ fn original_remote_records_reject_wrong_accounts_and_oversize_without_truncation
     let store = Store::open_unified(&tree.scope(), "google", "root").unwrap();
     let mut raw = RawRemoteObservation {
         id: FileId("bounded-original".into()),
+        causal_order: None,
         sync_id: SyncId("sync".into()),
         observed_at: Timestamp { unix_millis: 1 },
         account_id: AccountId("other".into()),
