@@ -1,4 +1,5 @@
 //! Analyzer execution ownership. Generic claim/requeue guards stay intact.
+use super::pagination::enum_text;
 use super::*;
 use crate::{inventory::creation::*, operations::*};
 use rusqlite::{params, OptionalExtension};
@@ -78,7 +79,7 @@ impl InventoryManager {
                 if decision.intent.kind==OperationKind::Create && !unbound {return Err(failure(InventoryError::DuplicateAssociation));}
                 let local_trash = decision.intent.kind == OperationKind::Trash
                     && item.kind == ItemKind::File
-                    && r.intent.direction == OperationDirection::Download
+                    && decision.intent.direction == OperationDirection::Download
                     && item.local_presence == PresenceState::Present
                     && item.remote_presence == PresenceState::AbsentConfirmed
                     && item.baseline.as_ref().is_some_and(|baseline| {
@@ -146,7 +147,7 @@ impl InventoryManager {
             else {
                 return Err(failure(InventoryError::InvalidTransition));
             };
-            if current.intent.direction != OperationDirection::Download
+            if current.operation.direction != OperationDirection::Download
                 || current.operation.kind != OperationKind::Trash
                 || current
                     .operation
@@ -157,7 +158,10 @@ impl InventoryManager {
             }
             let checkpoint = super::execution::load(db, &current.intent.context.id)?;
             if checkpoint.state.phase != CheckpointPhase::Completed
-                || checkpoint.state.result.as_ref() != Some(&r.result)
+                || !matches!(
+                    checkpoint.state.result.as_ref(),
+                    Some(ExecutionResult::Item(result)) if result == &r.result
+                )
                 || r.result.verification != VerificationStatus::Verified
             {
                 return Err(failure(InventoryError::InvalidTransition));
