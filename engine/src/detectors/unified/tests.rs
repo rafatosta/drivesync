@@ -448,7 +448,7 @@ fn source_counters_distinguish_bootstrap_and_real_changes() {
     assert_eq!(detector.recent_events(DetectorOrigin::Remote).len(), 2);
 }
 #[test]
-fn scoped_reobservation_validates_account_and_dispatches_without_inventory_or_scanner() {
+fn scoped_reobservation_validates_account_without_inventory_access() {
     let tree = Tree::new();
     let (detector, local, remote) = detector(&tree, false, false);
     start(&detector, DeliveryState::Paused);

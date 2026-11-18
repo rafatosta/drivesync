@@ -25,7 +25,7 @@ Foram aprovadas 23 verificações automatizadas com snapshots do SQLite real:
 | Rename remoto | Mesmo file ID com novo nome observado |
 | Conteúdo remoto | SHA-256 recebido igual ao calculado sobre os bytes de teste |
 | Move remoto | Mesmo file ID com novo pai observado |
-| Reinício | Scanner recuperou criação e rename durante a parada |
+| Reinício | Alterações locais ocorridas enquanto o aplicativo está fechado estão fora do escopo atual |
 | Associação explícita | Escolha por IDs, proveniência persistida e nenhum baseline criado |
 | Pais associados explicitamente | Destinos dos filhos resolvidos pelos IDs existentes |
 | Rajada | 25 arquivos criados rapidamente receberam análises |

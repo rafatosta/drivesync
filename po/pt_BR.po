@@ -1024,9 +1024,6 @@ msgstr "Aguardando antes de tentar novamente"
 msgid "Waiting for the source to recover"
 msgstr "Aguardando a recuperação da origem"
 
-msgid "Waiting to retry the local scan"
-msgstr "Aguardando para repetir a verificação local"
-
 msgid "Waiting to retry detected changes"
 msgstr "Aguardando para repetir o processamento das alterações"
 
@@ -1048,17 +1045,11 @@ msgstr "Não foi possível ler ou salvar os dados de sincronização."
 msgid "A detected change could not be saved."
 msgstr "Não foi possível salvar uma alteração detectada."
 
-msgid "The local scan could not be completed."
-msgstr "Não foi possível concluir a verificação local."
-
 msgid "A file could not be analyzed."
 msgstr "Não foi possível analisar um arquivo."
 
 msgid "A file operation could not be completed."
 msgstr "Não foi possível concluir uma operação de arquivo."
-
-msgid "The local scan is incomplete; retrying."
-msgstr "A verificação local está incompleta; tentando novamente."
 
 msgid "Synchronization stopped unexpectedly."
 msgstr "A sincronização foi interrompida inesperadamente."

@@ -109,7 +109,7 @@ fn remote_request(
             proof: ObservationProof {
                 source: ObservationSource::RemoteChange,
                 observed_at: m::Timestamp { unix_millis: 10 },
-                scan_or_generation: None,
+                producer_generation: None,
                 complete_scope: false,
             },
         },
@@ -190,7 +190,7 @@ fn record_local(
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 10 },
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },
@@ -628,6 +628,7 @@ async fn confirmed_absence_and_new_remote_file_persist_a_blocked_creation() {
     let mut absent = local_file("local-absent", b"file");
     absent.data = None;
     absent.event.local = None;
+    absent.event.local_presence = Some(m::LocalPresenceEvidence::AbsentConfirmed);
     absent.event.action = m::FileEventAction::RecheckRequired;
     absent.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     absent.event.current = None;
@@ -639,9 +640,9 @@ async fn confirmed_absence_and_new_remote_file_persist_a_blocked_creation() {
                 observed: absent,
                 presence: PresenceState::AbsentConfirmed,
                 proof: ObservationProof {
-                    source: ObservationSource::LocalScan,
+                    source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 20 },
-                    scan_or_generation: Some("scan".into()),
+                    producer_generation: Some("scan".into()),
                     complete_scope: true,
                 },
             },
@@ -784,7 +785,7 @@ fn homonyms_remain_distinct_until_an_explicit_user_association_is_committed() {
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 10 },
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },
@@ -968,6 +969,7 @@ async fn unchanged_survivor_produces_only_authorization_blocked_trash_never_dele
     let mut observed = local_file("gone", b"file");
     observed.data = None;
     observed.event.local = None;
+    observed.event.local_presence = Some(m::LocalPresenceEvidence::AbsentConfirmed);
     observed.event.action = m::FileEventAction::RecheckRequired;
     observed.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     observed.event.current = None;
@@ -979,9 +981,9 @@ async fn unchanged_survivor_produces_only_authorization_blocked_trash_never_dele
                 observed,
                 presence: PresenceState::AbsentConfirmed,
                 proof: ObservationProof {
-                    source: ObservationSource::LocalScan,
+                    source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 30 },
-                    scan_or_generation: Some("scan".into()),
+                    producer_generation: Some("scan".into()),
                     complete_scope: true,
                 },
             },
@@ -1122,7 +1124,7 @@ async fn known_remote_trash_is_active_absence_while_unknown_access_never_is() {
                     proof: ObservationProof {
                         source: ObservationSource::LocalEvent,
                         observed_at: m::Timestamp { unix_millis: 10 },
-                        scan_or_generation: None,
+                        producer_generation: None,
                         complete_scope: false,
                     },
                 },
@@ -1268,7 +1270,7 @@ async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 10 },
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },
@@ -1327,6 +1329,7 @@ async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements
     let mut local = local_file("folder-gone", b"folder");
     local.data = None;
     local.event.local = None;
+    local.event.local_presence = Some(m::LocalPresenceEvidence::AbsentConfirmed);
     local.event.action = m::FileEventAction::RecheckRequired;
     local.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     local.event.current = None;
@@ -1338,9 +1341,9 @@ async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements
                 observed: local,
                 presence: PresenceState::AbsentConfirmed,
                 proof: ObservationProof {
-                    source: ObservationSource::LocalScan,
+                    source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 30 },
-                    scan_or_generation: Some("scan".into()),
+                    producer_generation: Some("scan".into()),
                     complete_scope: true,
                 },
             },
@@ -1384,7 +1387,7 @@ async fn unknown_old_destination_is_evidence_pending_not_a_proven_collision() {
             proof: ObservationProof {
                 source: ObservationSource::LocalEvent,
                 observed_at: m::Timestamp { unix_millis: 10 },
-                scan_or_generation: None,
+                producer_generation: None,
                 complete_scope: false,
             },
         },

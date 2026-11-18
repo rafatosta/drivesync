@@ -388,7 +388,7 @@ impl Store {
                 .map(Option::flatten)
         })
     }
-    /// Reserves an order shared with the local detector, remote queue and initial scanner.
+    /// Reserves an order shared by local and remote observations and operation verification.
     pub(crate) fn reserve_causal_order(&self) -> QueueResult<u64> {
         self.run(true, |connection, _| {
             let tx = connection

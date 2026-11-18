@@ -224,7 +224,7 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
                     proof: ObservationProof {
                         source: ObservationSource::RemoteChange,
                         observed_at: Timestamp { unix_millis: 1 },
-                        scan_or_generation: None,
+                        producer_generation: None,
                         complete_scope: false,
                     },
                 },
@@ -724,7 +724,7 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
                 proof: ObservationProof {
                     source: ObservationSource::RemoteChange,
                     observed_at: Timestamp { unix_millis: 1 },
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },

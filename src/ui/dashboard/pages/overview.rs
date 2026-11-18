@@ -269,7 +269,7 @@ fn build_with_accounts(
 fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
     use SynchronizationActivity as EngineActivity;
     let activity = match status.state {
-        SynchronizationState::Waiting | SynchronizationState::Partial => SyncActivity::Waiting,
+        SynchronizationState::Waiting => SyncActivity::Waiting,
         SynchronizationState::Stopped => SyncActivity::Stopped,
         SynchronizationState::Failed => SyncActivity::Failed,
         SynchronizationState::Idle => SyncActivity::Idle,
@@ -375,7 +375,6 @@ fn work_detail(status: &SynchronizationStatus) -> Option<String> {
             SynchronizationWaitReason::ForChanges => "Waiting for file changes",
             SynchronizationWaitReason::RetryBackoff => "Waiting before retrying",
             SynchronizationWaitReason::SourceRecovery => "Waiting for the source to recover",
-            SynchronizationWaitReason::IncompleteScan => "Waiting to retry the local scan",
             SynchronizationWaitReason::IncompleteEventBatch => "Waiting to retry detected changes",
         }),
     };
@@ -428,7 +427,6 @@ fn issue_detail(issue: &drivesync_engine::SynchronizationIssue) -> String {
             "Synchronization data could not be read or saved."
         }
         SynchronizationIssueKind::Queue(_) => "A detected change could not be saved.",
-        SynchronizationIssueKind::Scanner(_) => "The local scan could not be completed.",
         SynchronizationIssueKind::Analyzer(_) => "A file could not be analyzed.",
         SynchronizationIssueKind::Operation(
             drivesync_engine::operations::OperatorError::UnsupportedOperation,
@@ -443,7 +441,6 @@ fn issue_detail(issue: &drivesync_engine::SynchronizationIssue) -> String {
             drivesync_engine::operations::OperatorError::Network,
         ) => "A network problem prevented this file operation.",
         SynchronizationIssueKind::Operation(_) => "A file operation could not be completed.",
-        SynchronizationIssueKind::IncompleteScan => "The local scan is incomplete; retrying.",
         SynchronizationIssueKind::Internal => "Synchronization stopped unexpectedly.",
     };
     let mut detail = gettext(message);

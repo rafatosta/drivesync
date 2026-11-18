@@ -35,10 +35,12 @@ local, sem SQL ou espera pelo término. O mesmo item não tem duas análises ati
 na mesma instância; instâncias distintas preservam consistência por revisão e
 transações do Inventory. Cancelamento do future não garante cancelamento do worker.
 
-**Estado:** integração de análise/persistência implementada. O esquema Inventory
-é 8; versões incompatíveis são preservadas e rejeitadas, sem migração automática.
-O Orchestrator chama esta fachada após Scanner completo e continua entregando
-itens observados pelos detectores durante a sessão, sem executar operações. Execução de comandos e opções/ações de resolução permanecem pendentes.
+**Estado:** integração de análise/persistência implementada. O Orchestrator chama
+esta fachada para os recursos afetados por observações duráveis do Detector e
+para recuperação de trabalho pendente. O Analyzer mantém reconciliação, conflitos
+e política de operações; o Operator executa e verifica os comandos autorizados.
+Alterações locais ocorridas enquanto o aplicativo está fechado permanecem fora
+do escopo atual.
 
 [Planos implementados](PLANNING.md) · [Mapa de ações](ACTIONS.md) · [Interfaces](INTERFACES.md) · [Testes](TESTS.md) ·
 [Persistência](../inventory/ANALYSIS.md) · [Orientações](AGENTS.md)

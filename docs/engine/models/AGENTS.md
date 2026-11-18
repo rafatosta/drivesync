@@ -81,7 +81,7 @@ O envelope FileData depende de RemoteFile. Antes de implementar o envelope compl
 - O **adaptador específico** conhece `GoogleFile` e transforma esse objeto em `RemoteFile`; `models/` jamais importa `GoogleFile`, HTTP ou sessão.
 - Metadados comuns são normalizados **somente com semântica equivalente**; dados específicos/complexos ficam em `ProviderFileData` formatado/versionado, sem perder informações observadas que forem aprovadas para retenção.
 - `MetadataValue<T>` distingue campo efetivamente observado de não solicitado, não suportado ou negado. Uma resposta parcial da API não autoriza preencher campos com zero/false/vazio.
-- **Alterações nos atributos de `RemoteFile` não podem exigir alterações no Detector Remoto** (polling, cursor, scanner, sinalização e fila). O Detector recebe objeto completo do adaptador por uma porta estável.
+- **Alterações nos atributos de `RemoteFile` não podem exigir alterações no Detector Remoto** (polling, cursor, sinalização e fila). O Detector recebe objeto completo do adaptador por uma porta estável.
 - Rotinas auxiliares do especialista podem buscar outros campos/métodos quando necessário; `RemoteFile` continua sem I/O.
 - `GoogleChange.removed` pode indicar perda de acesso. Nenhum registro remoto sem metadados confiáveis ou ID válido autoriza exclusão.
 - Evitar payload bruto e material de segurança/criptografia, chaves, tokens e dados pessoais sem política autorizada de sanitização.

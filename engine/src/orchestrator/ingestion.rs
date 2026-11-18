@@ -80,7 +80,7 @@ pub(super) fn ingest(
                 // automatic association. Analyze the known item without rescanning.
                 return Ok(Ingested {
                     item: Some(occupied.id),
-                    analyze_all: true,
+                    analyze_all: false,
                     revalidate: None,
                 });
             }
@@ -91,8 +91,8 @@ pub(super) fn ingest(
             if file.event.action == FileEventAction::RemovedFromScope {
                 return Ok(Ingested {
                     item: None,
-                    analyze_all: true,
-                    revalidate: None,
+                    analyze_all: false,
+                    revalidate: Some(file.scope.clone()),
                 });
             }
             return Err(PreparationFailure::InvalidObservation(file.id.clone()));
@@ -101,7 +101,7 @@ pub(super) fn ingest(
         // tombstone. Keep the event without fabricating an Inventory item.
         return Ok(Ingested {
             item: None,
-            analyze_all: true,
+            analyze_all: false,
             revalidate: None,
         });
     }
@@ -145,7 +145,7 @@ pub(super) fn ingest(
             ObservationSource::LocalEvent
         },
         observed_at: file.observed_at,
-        scan_or_generation: file
+        producer_generation: file
             .event
             .local
             .as_ref()
@@ -181,8 +181,7 @@ pub(super) fn ingest(
         // Detector acknowledgement follows analysis. Replayed receipts must
         // continue interrupted work after a process restart.
         item: applied.then_some(result.item.id),
-        // Namespace and parent changes can invalidate another item's plan.
-        analyze_all: applied,
+        analyze_all: false,
         revalidate: (result.disposition == ObservationDisposition::Incomparable)
             .then(|| file.scope.clone()),
     })

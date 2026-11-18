@@ -60,10 +60,7 @@ async fn main() {
         },
     })
     .expect("open observation queue");
-    println!(
-        "PREPARE {:?}",
-        session.prepare().await.map(|r| r.ready_for_analysis())
-    );
+    println!("PREPARE {:?}", session.prepare().await);
     status(&session);
     for line in io::stdin().lock().lines() {
         let line = line.unwrap();
@@ -110,10 +107,7 @@ async fn main() {
         match line.trim() {
             "status" => status(&session),
             "prepare" => {
-                println!(
-                    "PREPARE {:?}",
-                    session.prepare().await.map(|r| r.ready_for_analysis())
-                );
+                println!("PREPARE {:?}", session.prepare().await);
                 status(&session);
             }
             "quit" => break,

@@ -7,19 +7,18 @@ A engine separa observação, persistência, análise e execução. Os contratos
 | [Accounts](accounts/README.md) / [Connection](connection/README.md) | Identidade, autenticação, sessões e configuração das conexões |
 | [Providers](providers/README.md) | Operações técnicas específicas de cada serviço externo |
 | [Detector](detectors/README.md) | Captura Local/Remota, fila própria, leases, confirmação e diagnósticos |
-| [Scanner Local](scanner/README.md) | Levantamento local e registro de observações no Inventário |
 | [Inventário](inventory/README.md) | Estados observados, identidades, revisões e baseline |
 | [Analisador](analyzer/README.md) | Interpretação de um SyncItem, reconciliação/conflitos e coordenação de operações |
 | [Operador](operations/README.md) | Execução dos comandos autorizados |
 | [Orquestrador](orchestrator/README.md) | Coordenação do ciclo de sincronização pelas interfaces dos módulos |
 
-## Estado compilado e próximos limites
+## Arquitetura operacional
 
-Accounts/Connection, Providers Google, Models e Detector têm implementação Rust. O [fechamento do Detector](detectors/CLOSURE.md) descreve a fachada unificada e sua validação. O Orquestrador atual é uma composição diagnóstica mínima que instancia essa fachada e disponibiliza o conector; não executa ainda o fluxo completo de sincronização.
+Accounts/Connection, Providers Google, Models, Detector, Inventory, Analyzer, Operator, e Orchestrator têm implementação Rust. O [fechamento do Detector](detectors/CLOSURE.md) descreve a fachada unificada. O Orchestrator inicia Local/Remote, consome as observações duráveis, persiste alterações no Inventory e entrega os recursos afetados ao Analyzer.
 
-O Scanner é exclusivamente local. Não recebe eventos dos Detectores, não acessa APIs remotas e não entrega itens diretamente ao Analisador. Seu contrato foi especificado posteriormente para manter o levantamento local separado da análise por item. Os contratos de Scanner/Inventário/Analisador/Operador e do Orquestrador completo devem ser conferidos antes das respectivas implementações.
+The current detection strategies are Local and Remote, and both publish the shared observation contract through the Detector's durable queue. Inventory persists synchronization state, Analyzer reconciles resources and decides operations, and Operator executes and verifies requested changes. Acknowledging a processed event does not by itself confirm synchronization.
 
-O fluxo futuro é `Detector → Orquestrador → Inventário → Analisador`, com `Scanner Local → Inventário` no levantamento local e `Analisador → Operador` na execução. A leitura inicial remota pertence ao especialista do Detector. Consumo terminal no Developer confirma somente a observação diagnóstica, nunca sincronização ou baseline.
+Changes made locally while the application is closed are outside the current scope. Future planning may add a third retrospective local-observation producer inside Detector, implemented from scratch. The Orchestrator will not start or coordinate it directly.
 
 ## Persistência por pasta local
 
@@ -31,4 +30,4 @@ Cada par de sincronização reserva uma pasta oculta dentro da raiz local:
 └── inventory.sqlite3   # Identidades, metadados, baseline, operações e histórico
 ```
 
-`detector.sqlite3` está implementado. `inventory.sqlite3` é o caminho contratado para a implementação futura do Inventário; o Detector não cria nem altera esse banco. Não existe `history.sqlite3` separado. `.drivesync/` é excluída da observação e do conteúdo sincronizável. Accounts e credenciais permanecem nos locais próprios da aplicação. Não há migração de bancos de desenvolvimento anteriores.
+`detector.sqlite3` and `inventory.sqlite3` are separate active stores. The Detector owns its event queue and remote checkpoints; Inventory owns synchronization state and history. `.drivesync/` is excluded from observation and synchronized content. Accounts and credentials remain in their application stores. Development database formats are not migrated automatically.

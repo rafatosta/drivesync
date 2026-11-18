@@ -89,7 +89,7 @@ A criação do snapshot utiliza a Online Backup API SQLite, ou técnica oficial 
 - Indisponibilidade transitória, `SQLITE_BUSY`, permissões, disco cheio, conta errada ou esquema não suportado **não** disparam substituição automática.
 - Corrupção comprovada pode solicitar restauração; se não houver cópia íntegra ou não for possível fechar o banco, devolver falha sem substituir o original.
 - A cópia danificada deve permanecer disponível para diagnóstico, com arquivos auxiliares importantes.
-- `restore_database` não cria schema de Inventory/Detector e não decide quando usar Scanner/Analyzer; depois da substituição, o Storage precisa validar e autorizar o retorno à operação.
+- `restore_database` não cria schema de Inventory/Detector nem decide quando reobservar recursos; depois da substituição, o Storage valida e autoriza o retorno à operação.
 - Reconstrução vazia **não é** restauração. Depende de autorização explícita e inicialização própria do Storage; não converter perda de histórico em prova de exclusão.
 - Credenciais Secret Service/keyring estão fora desse serviço.
 

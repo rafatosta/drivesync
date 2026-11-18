@@ -105,7 +105,7 @@ fn remote_request(
             proof: ObservationProof {
                 source: ObservationSource::RemoteChange,
                 observed_at: m::Timestamp { unix_millis: 10 },
-                scan_or_generation: None,
+                producer_generation: None,
                 complete_scope: false,
             },
         },

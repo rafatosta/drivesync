@@ -97,7 +97,7 @@ Testar **apenas o Detector Remoto real** com um adapter remoto fake da interface
 | REM-S-02 | `status()` durante polling/espera | Atividade correta (`Polling`/`Waiting`), contadores atuais e sem HTTP na consulta |
 | REM-S-03 | Falha remota com Local saudável | Status e último erro remotos disponíveis ao pai; não afetar estado do Local |
 | REM-S-04 | `stop()` no meio de paginação | Não avança checkpoint sem persistência completa; não perde eventos aceitos |
-| REM-S-05 | `start()` depois de período sem observação | Não executa reconciliação/Scanner por iniciativa própria; decisão é do Orquestrador |
+| REM-S-05 | `start()` depois de período sem observação | Retoma polling/cursor sem decidir reconciliação ou executar operações |
 
 **Estado:** cenários documentais, ainda não executados.
 

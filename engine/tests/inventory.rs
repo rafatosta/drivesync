@@ -193,7 +193,7 @@ fn remote_request(
             proof: ObservationProof {
                 source: ObservationSource::RemoteChange,
                 observed_at: m::Timestamp { unix_millis: 10 },
-                scan_or_generation: None,
+                producer_generation: None,
                 complete_scope: false,
             },
         },
@@ -359,7 +359,7 @@ fn unconfirmed_absence_and_wrong_account_never_destroy_known_metadata() {
     request.observation.proof = ObservationProof {
         source: ObservationSource::RemoteListing,
         observed_at: m::Timestamp { unix_millis: 11 },
-        scan_or_generation: Some("verified-scan".into()),
+        producer_generation: Some("verified-scan".into()),
         complete_scope: true,
     };
     let absent = inventory.record_remote(request).unwrap().item;
@@ -444,7 +444,7 @@ fn local_order_request(
             proof: ObservationProof {
                 source: ObservationSource::LocalEvent,
                 observed_at: m::Timestamp { unix_millis: at },
-                scan_or_generation: Some(generation.into()),
+                producer_generation: Some(generation.into()),
                 complete_scope: false,
             },
         },
@@ -698,7 +698,7 @@ fn operator_confirmed_remote_version_rejects_queued_older_provider_event() {
 }
 
 #[test]
-fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_state() {
+fn causal_local_observations_and_operator_results_keep_latest_confirmed_state() {
     let tree = Tree::new();
     std::fs::write(tree.0.join("local-file"), b"content").unwrap();
     let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
@@ -729,9 +729,9 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
                 observed: scan,
                 presence: PresenceState::Present,
                 proof: ObservationProof {
-                    source: ObservationSource::LocalScan,
+                    source: ObservationSource::LocalEvent,
                     observed_at: timestamp(20),
-                    scan_or_generation: Some("scan:initial".into()),
+                    producer_generation: Some("scan:initial".into()),
                     complete_scope: true,
                 },
             },
@@ -768,9 +768,9 @@ fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_stat
                 observed: delayed_scan,
                 presence: PresenceState::Present,
                 proof: ObservationProof {
-                    source: ObservationSource::LocalScan,
+                    source: ObservationSource::LocalEvent,
                     observed_at: timestamp(i64::MAX),
-                    scan_or_generation: Some("scan:initial".into()),
+                    producer_generation: Some("scan:initial".into()),
                     complete_scope: true,
                 },
             },
@@ -871,7 +871,7 @@ fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
             proof: ObservationProof {
                 source: ObservationSource::LocalEvent,
                 observed_at: m::Timestamp { unix_millis: 10 },
-                scan_or_generation: None,
+                producer_generation: None,
                 complete_scope: false,
             },
         },
@@ -893,7 +893,7 @@ fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 11 },
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },
@@ -988,7 +988,7 @@ fn incremental_local_absence_is_persisted_and_redelivery_reuses_its_receipt() {
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: m::Timestamp { unix_millis: 10 },
-                    scan_or_generation: Some("test".into()),
+                    producer_generation: Some("test".into()),
                     complete_scope: false,
                 },
             },
@@ -1010,7 +1010,7 @@ fn incremental_local_absence_is_persisted_and_redelivery_reuses_its_receipt() {
     let proof = ObservationProof {
         source: ObservationSource::LocalEvent,
         observed_at: absent.observed_at,
-        scan_or_generation: Some("test".into()),
+        producer_generation: Some("test".into()),
         complete_scope: true,
     };
     let request = RecordLocalObservation {
@@ -1280,7 +1280,7 @@ fn attach_local(tree: &Tree, inventory: &InventoryManager, remote: &SyncItem) ->
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: timestamp(11),
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },
@@ -1610,13 +1610,14 @@ fn confirmation_requires_known_equal_presence_and_preserves_tombstone_history() 
     local.data = None;
     local.event.action = m::FileEventAction::Deleted;
     local.event.local = None;
+    local.event.local_presence = Some(m::LocalPresenceEvidence::AbsentConfirmed);
     local.event.previous = Some(m::FileLocation::Local(path));
     local.event.current = None;
     local.coverage = m::ObservationCoverage::Complete;
     let proof = ObservationProof {
-        source: ObservationSource::LocalScan,
+        source: ObservationSource::LocalEvent,
         observed_at: timestamp(19),
-        scan_or_generation: Some("complete-local-scan".into()),
+        producer_generation: None,
         complete_scope: true,
     };
     let local_absent = inventory
@@ -1642,6 +1643,7 @@ fn confirmation_requires_known_equal_presence_and_preserves_tombstone_history() 
     remote.observation.presence = PresenceState::AbsentConfirmed;
     remote.observation.proof = ObservationProof {
         source: ObservationSource::RemoteListing,
+        producer_generation: Some("test-listing".into()),
         ..proof
     };
     let absent = inventory.record_remote(remote).unwrap().item;
@@ -1757,7 +1759,7 @@ fn an_unknown_local_kind_does_not_reclassify_a_known_item() {
                 proof: ObservationProof {
                     source: ObservationSource::LocalEvent,
                     observed_at: timestamp(20),
-                    scan_or_generation: None,
+                    producer_generation: None,
                     complete_scope: false,
                 },
             },

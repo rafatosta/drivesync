@@ -299,13 +299,10 @@ fn record(
                 == Some(crate::models::LocalPresenceEvidence::AbsentConfirmed);
         let complete_listing = proof.complete_scope
             && proof
-                .scan_or_generation
+                .producer_generation
                 .as_ref()
                 .is_some_and(|s| !s.trim().is_empty())
-            && matches!(
-                proof.source,
-                ObservationSource::LocalScan | ObservationSource::RemoteListing
-            )
+            && proof.source == ObservationSource::RemoteListing
             && file.data.is_none();
         if !explicit_remote_removal && !explicit_local_lookup && !complete_listing {
             return Err(failure(InventoryError::UnconfirmedAbsence));

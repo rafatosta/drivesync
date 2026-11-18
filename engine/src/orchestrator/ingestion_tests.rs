@@ -204,7 +204,7 @@ fn incomparable_revalidation_outbox_survives_reopen_until_an_observation_applies
                     proof: ObservationProof {
                         source: ObservationSource::RemoteChange,
                         observed_at: Timestamp { unix_millis: 5 },
-                        scan_or_generation: None,
+                        producer_generation: None,
                         complete_scope: false,
                     },
                 },
@@ -260,7 +260,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         .analysis;
     let replay = ingest(&inventory, &file, &identity).unwrap();
     assert_eq!(replay.item, Some(id.clone()));
-    assert!(replay.analyze_all);
+    assert!(!replay.analyze_all);
     assert_eq!(
         item(&inventory, id.clone()).revision,
         first.resulting_item_revision

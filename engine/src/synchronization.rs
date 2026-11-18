@@ -23,12 +23,10 @@ pub enum SynchronizationState {
     /// No preparation or synchronization activity has started in this process.
     #[default]
     Idle,
-    /// A scan, analysis, event batch or file operation is in progress.
+    /// Detector observations, analysis, an event batch or a file operation is in progress.
     Running,
     /// The pipeline is healthy and waiting for another observation or retry time.
     Waiting,
-    /// The last scan or event batch was incomplete and requires another pass.
-    Partial,
     /// The pipeline was explicitly stopped or its active task was cancelled.
     Stopped,
     /// The pipeline cannot continue until an error is handled.
@@ -186,8 +184,6 @@ pub enum SynchronizationWaitReason {
     RetryBackoff,
     /// A local or remote observation source is recovering.
     SourceRecovery,
-    /// Another local scan is required to restore complete coverage.
-    IncompleteScan,
     /// Another event batch is required to finish processing observations.
     IncompleteEventBatch,
 }
@@ -220,17 +216,9 @@ pub struct SynchronizationProgress {
     pub phase: Option<ExecutionPhase>,
 }
 
-/// Counts collected during preparation and the current event or analysis pass.
+/// Counts collected during the current event or analysis pass.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SynchronizationCounters {
-    /// Files observed during the current scan.
-    pub files_observed: u64,
-    /// Directories observed during the current scan.
-    pub directories_observed: u64,
-    /// Inventory records updated during the current scan.
-    pub items_recorded: u64,
-    /// Issues recorded during the current scan.
-    pub scan_issues: u64,
     /// Events ingested in the current bounded batch.
     pub events_processed: u64,
     /// Event count in the current bounded batch.
@@ -331,14 +319,10 @@ pub enum SynchronizationIssueKind {
     Inventory(InventoryError),
     /// Durable observation queue failure.
     Queue(QueueError),
-    /// Local scanner failure.
-    Scanner(crate::scanner::ScannerErrorKind),
     /// Inventory analysis failure.
     Analyzer(AnalyzerErrorKind),
     /// File operation failure.
     Operation(OperatorError),
-    /// A scan ended without complete coverage.
-    IncompleteScan,
     /// Failure without a more specific sanitized category.
     Internal,
 }

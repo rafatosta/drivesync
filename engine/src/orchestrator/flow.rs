@@ -347,6 +347,16 @@ fn consume(
     wake: &Wake,
 ) -> Result<(), PreparationFailure> {
     dispatch_pending_revalidations(context)?;
+    if context.execution.snapshot().enabled {
+        runtime.block_on(context.await_with_source_updates(analysis::retry_pending(
+            context.inventory.clone(),
+            context.identity.clone(),
+            context.epoch.clone(),
+            context.expected,
+            context.connector.clone(),
+            context.execution.clone(),
+        )))?;
+    }
     loop {
         context.current(stop)?;
         context.publish_sources();
@@ -482,6 +492,51 @@ async fn process_files(
         context.publish_event(&file, index as u64 + 1, total);
         if let Some(id) = ingested.item {
             ids.insert(id);
+        }
+        match &file.data {
+            Some(FileData::Local(local)) => {
+                if let Some(slash) = local
+                    .relative_path
+                    .as_bytes()
+                    .iter()
+                    .rposition(|byte| *byte == b'/')
+                {
+                    if let Ok(parent) = crate::models::LocalRelativePath::new(
+                        local.relative_path.as_bytes()[..slash].to_vec(),
+                    ) {
+                        if let Some(item) = context
+                            .inventory
+                            .get_item(GetItemRequest {
+                                selector: ItemSelector::LocalRelativePath(parent),
+                            })
+                            .map_err(PreparationFailure::Inventory)?
+                            .item
+                        {
+                            ids.insert(item.id);
+                        }
+                    }
+                }
+            }
+            Some(FileData::Remote(remote)) => {
+                if let crate::models::MetadataValue::Known(parents) = &remote.parent_ids {
+                    for parent in parents {
+                        if let Some(item) = context
+                            .inventory
+                            .get_item(GetItemRequest {
+                                selector: ItemSelector::RemoteRef(crate::models::RemoteFileRef {
+                                    account_id: remote.reference.account_id.clone(),
+                                    file_id: parent.clone(),
+                                }),
+                            })
+                            .map_err(PreparationFailure::Inventory)?
+                            .item
+                        {
+                            ids.insert(item.id);
+                        }
+                    }
+                }
+            }
+            None => {}
         }
         all |= ingested.analyze_all;
     }

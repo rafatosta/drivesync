@@ -8,14 +8,14 @@ Detectar alterações em arquivos locais e remotos e disponibilizar essas ocorr�
 
 O módulo reúne observações locais e remotas como eventos individuais, preserva os dados de cada ocorrência e os organiza em uma fila persistente. Eventos podem ser reservados em lotes, confirmados após processamento ou liberados para nova entrega. A retomada mantém a identidade e a ordem de enfileiramento dos registros.
 
-## Fachada unificada prevista
+## Fachada unificada
 
 - `new`: cria o detector.
 - `start`: inicia **sempre Local e Remoto juntos**, com entrega inicial habilitada ou pausada.
 - `pause`: suspende a entrega externa de eventos, **sem interromper observação e persistência**.
 - `resume`: reabilita a entrega dos eventos acumulados.
 - `stop`: interrompe efetivamente **ambos** os observadores e suspende entrega; não apaga fila nem checkpoints.
-- `request_scan`: solicita uma nova observação.
+- `request_scan`: solicita reobservação localizada aos produtores ativos.
 - `status`: informa estado agregado, estado/atividade/erro de cada fonte, entrega e fila.
 - `take_events`: reserva um lote de eventos disponíveis.
 - `acknowledge`: confirma o processamento de um lote.
@@ -29,7 +29,9 @@ Cada ocorrência é representada por `File`, incluindo identidade, contexto da a
 
 Durante `pause`, as origens continuam registrando na fila persistente própria do Detector; `take_events` responde `DeliveryPaused` sem reservar novos eventos. `acknowledge` e `release_events` continuam operando sobre lotes já reservados. Ao `resume`, eventos pendentes tornam-se disponíveis para consumo. Não há fila paralela obrigatória no Orquestrador.
 
-`stop` é excepcional: suspende entrega e interrompe a observação, mas preserva eventos/checkpoints existentes. **O Orquestrador é responsável pela decisão de interromper e por qualquer verificação adicional necessária após a retomada**. O Detector não executa Scanner nem reconciliação para compensar esse período.
+`stop` suspende entrega e interrompe a observação, mas preserva eventos e checkpoints existentes. Mudanças locais feitas enquanto o aplicativo está fechado ficam fora do escopo atual; uma observação ausente não prova exclusão. O Detector oferece reobservação localizada e mantém reconciliação fora de sua responsabilidade.
+
+Uma estratégia futura poderá identificar alterações locais retrospectivamente como terceiro produtor interno do Detector. Ela será implementada do zero sob o contrato genérico de observações. O Orquestrador não iniciará nem coordenará essa estratégia diretamente.
 
 ## Componentes
 
@@ -54,6 +56,6 @@ Corrupção comprovada não pode apagar silenciosamente eventos. Se a restauraç
 
 Usar `drivesync_engine::detectors::LocalMetadataCollector` com `LocalDetectorScope` para construir o coletor, `scope()` para consultar a configuração e `collect(LocalMetadataRequest)` para obter uma entrada. Cancelamento, erros, cobertura e resultados necessários são reexportados pelo mesmo módulo; LocalFile e caminhos permanecem em Models.
 
-A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. A publicação inicial do coletor foi ampliada posteriormente com LocalDetector::new/start/stop/status e eventos File, conforme Local INTERFACES § 12. A aplicação usa atualmente a fachada unificada, com fila persistente e consumo diagnóstico. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).
+A API usa o coletor real já implementado e não exige trait interna ou importação de submódulos. Construção/coleta são síncronas e devem ocorrer fora da thread da GUI. LocalDetector::new/start/stop/status fornece os eventos File usados pela fachada unificada. O contrato exato está na [seção 8 de INTERFACES](INTERFACES.md#8-api-pública-compilada--coleta-local).
 
-**Fechamento implementado:** a fachada `Detector` agora compõe ambas as origens e uma fila física única, incluindo lotes mistos. A composição diagnóstica do Developer usa essa API. Os caminhos de compatibilidade antigos foram removidos. [Escopo entregue, validação e limites](CLOSURE.md).
+**Estado atual:** a fachada `Detector` compõe ambas as origens e uma fila física única, incluindo lotes mistos. A aplicação e o Developer observam a mesma sessão. [Estado, validação e limites](CLOSURE.md).

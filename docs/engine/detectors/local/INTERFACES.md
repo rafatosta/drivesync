@@ -228,7 +228,7 @@ A revisão de Models já seleciona o perfil local e define os invariantes de cam
 
 ## Integração com controle de entrega
 
-O Local **não possui `pause()` de entrega**: recebe `start/stop` do Detector pai e continua emitindo eventos pelo sink enquanto o pai estiver com entrega ao Orquestrador pausada. O pai persiste `File` antes de aceitar a emissão; pausa de consumo externo não bloqueia a observação local. `stop` interrompe efetivamente o watcher/leituras e preserva o que já foi aceito pelo sink, mas **não** executa Scanner nem reconciliação para compensar o intervalo sem detecção. Cabe ao Orquestrador decidir quando solicitar verificações após retomada. O resultado de `start` indica aceite, não garantia de cobertura completa.
+O Local **não possui `pause()` de entrega**: recebe `start/stop` do Detector pai e continua emitindo eventos pelo sink enquanto o pai estiver com entrega ao Orquestrador pausada. O pai persiste `File` antes de aceitar a emissão; pausa de consumo externo não bloqueia a observação local. `stop` interrompe efetivamente o watcher/leituras e preserva o que já foi aceito pelo sink. Alterações locais ocorridas durante o período parado permanecem fora do escopo atual. O resultado de `start` indica aceite, não garantia de cobertura completa.
 
 
 ## 8. Decisões operacionais dos cinco métodos
@@ -262,7 +262,7 @@ Estas regras complementam as assinaturas da seção 4. São definição document
 ### Captura, agrupamento e entrega
 
 - O callback do watcher só registra pistas e sinaliza trabalho. Não faz coleta, percurso, banco, hashing, rede ou entrega bloqueante. Callbacks de gerações encerradas são descartados antes de qualquer efeito.
-- A captura deve cobrir subdiretórios novos/movidos e verificar a janela entre enumeração e instalação. Overflow, limite do backend ou cobertura incerta causam `Degraded` e reavaliação do escopo afetado. Reparo da captura não chama Scanner, Inventário ou Analisador.
+- A captura deve cobrir subdiretórios novos/movidos e verificar a janela entre enumeração e instalação. Overflow, limite do backend ou cobertura incerta causam `Degraded` e reavaliação do escopo afetado. Reparo da captura não chama Inventory ou Analyzer.
 - `debounce_ms=Some(n)` positivo define quietude após a última pista, limitada a `max(n, 500)` ms desde a primeira pista da rodada, em relógio monotônico. Não é uma promessa de latência quando há trabalho em curso. O prazo apenas agenda o processamento; pistas não são fundidas, correlacionadas ou reclassificadas. Eventos construídos continuam imutáveis.
 - `max_pending_paths` limita a quantidade de notificações pendentes (inclusive caminhos repetidos), não a fila persistente do pai. Ao exceder o limite, substituir pistas por uma necessidade de reavaliação de toda a raiz, marcar cobertura degradada e não alegar histórico completo. Também limitar o trabalho em trânsito: não acumular uma segunda fila ilimitada de `File`.
 - A primeira observação de um item em scan é `RecheckRequired`, não `Created` por ausência de histórico. Notificações nativas produzem Observed com sua evidência original, independentemente de histórico e da disponibilidade de metadados.
@@ -327,7 +327,7 @@ As portas das seções 2 e 3 são os únicos contratos de dependência de negóc
 
 Este documento define controle, portas e regras de observação. Somente o coletor físico e seus contratos auxiliares possuem código e testes nesta etapa; não há watcher ou métodos de controle implementados. Os atributos de LocalFile e os invariantes locais estão selecionados em [Models](../../models/INTERFACES.md#2-localfile--seleção-para-observação-local). A implementação futura deve seguir essa seleção; o envelope completo ainda depende da revisão remota. Não implementar versões paralelas para contornar dependências.
 
-Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza implementar RemoteFile, Remoto, Storage, Scanner ou fachada unificada do Detector. A eventual necessidade de ajustar um contrato vizinho deve ser registrada antes da implementação, sem mudar seu escopo silenciosamente.
+Models define a raiz por WholeSync sem dados/localizações e rejeita LocalRelativePath vazio. Complete exige o perfil básico local, com btime/flags opcionais; o coletor devolve cobertura sem expor os campos ao detector. NotApplicable no alvo de não-symlink não degrada cobertura. Avisos locais respeitam a tabela de combinações de File na seção 5.5 de Models. Essa dependência não autoriza mudanças fora do escopo do Detector Local.
 
 
 ## 11. Adaptador físico de coleta — etapa de implementação
@@ -387,7 +387,7 @@ A solicitação posterior do usuário autoriza disponibilizar `LocalDetector::ne
 
 O backend privado usa inotify e eventfd. Mudanças disparam coleta de metadados, sem polling de conteúdo, hashing ou uploads. Descoberta recursiva instala watches apenas em diretórios; não segue symlinks e ignora `.drivesync`. Descritores e guards dos ancestrais preservam a raiz original, inclusive entre stop/start. Substituição da raiz/ancestral gera ScopeUnavailable e falha; não vincula silenciosamente outra pasta.
 
-Cada aviso transporta o mesmo `File` compartilhado. Notificações nativas usam Observed, inclusive sem metadados; não há classificação de operação. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura não é Scanner nem reconciliação. `scan_once` manual não faz parte desta implementação.
+Cada aviso transporta o mesmo `File` compartilhado. Notificações nativas usam Observed, inclusive sem metadados; não há classificação de operação. Start e reconstrução de watches emitem RecheckRequired de WholeSync para explicitar a necessidade de verificar o escopo. A verificação de cobertura pertence ao ciclo de observação Local e não faz reconciliação. `scan_once` manual não faz parte desta implementação.
 
 Limites: 4096 diretórios observados, 100000 entradas examinadas por descoberta, 8 MiB de caminhos de watches e de hints; settings.max_pending_paths limita hints (padrão 4096). Exceder limites ou overflow nativo informa cobertura parcial/recheck, nunca exclusão. O intervalo padrão de quietude é 80 ms, com teto de 500 ms desde a primeira pista; sem esperar fechamento de escrita nem interpretar ciclos. A espera cancelável não produz varreduras periódicas.
 

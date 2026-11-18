@@ -170,7 +170,7 @@ Escrever testes RED antes da implementação, completar GREEN por unidade funcio
 | DET-C-06 | Uma origem falha, outra funciona | `Degraded` agregado e estados/erros individuais fiéis |
 | DET-C-07 | Rodada de observação em andamento | `status` informa atividade e contadores por origem |
 | DET-C-08 | `stop` | Local e Remoto interrompidos, entrega pausada; eventos/checkpoints preservados |
-| DET-C-09 | Reiniciar depois de `stop` | Ambos iniciam; Detector não executa análise/Scanner por iniciativa própria |
+| DET-C-09 | Reiniciar depois de `stop` | Ambos iniciam; Detector não executa análise por iniciativa própria |
 | DET-C-10 | Notificação de eventos durante pausa | Nenhum lote entregue por callback; sinalização de disponibilidade não burla pausa |
 
 ## 6. Isolamento de interfaces

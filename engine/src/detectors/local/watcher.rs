@@ -206,7 +206,7 @@ impl Watches {
         }
         chain.validate(cancel)
     }
-    /// Installs child directory watches; no Inventory or independent Scanner is called.
+    /// Installs child directory watches without accessing Inventory.
     pub(super) fn discover(
         &mut self,
         cancel: &LocalCancellation,

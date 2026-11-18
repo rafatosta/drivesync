@@ -29,7 +29,7 @@ O Analisador está suficientemente estruturado para desenvolver a execução iso
 - Guarda itens e época de observação do namespace. Mudanças relevantes tornam o plano obsoleto. O índice de contexto é reutilizado por época.
 - Uma segunda ação depende da anterior: é necessário reobservar e reanalisar depois de mudar versão, nome ou pai.
 - Trash continua condicionado à autorização e à verificação dos sobreviventes/descendentes. Restore exige solicitação explícita.
-- O Orchestrator já faz análise inicial após Scanner completo e ingestão contínua. Não transfere conteúdo.
+- O Orchestrator consome observações contínuas do Detector e encaminha recursos afetados ao Analyzer. Não transfere conteúdo diretamente.
 
 **Barreira efetiva:** operações vinculadas a decisões do Analisador nascem `Blocked`. `ensure_executable` recusa claim/transições genéricas para essas operações, inclusive quando já existe comando no plano. O comentário dessa função foi corrigido na etapa 1: a proteção permanece mesmo com comando e checkpoint persistidos.
 
@@ -75,7 +75,7 @@ Evidências particularmente úteis em `upload/tests.rs`:
 | `download/execution/updates.rs` | Preservação da versão anterior e testes de recuperação | Redesenhar publicação/identidade e explicitar limites de atomicidade |
 | Suítes de upload/download | Cenários de falhas e asserções independentes sobre bytes/IDs | Portar fixtures para fachada atual e HTTP simulado dos Providers; não copiar apenas resultados esperados |
 | `upload/transport.rs`, `upload/provider.rs` | Regras de validação de sessão e resposta perdida como referência | Não incorporar transporte HTTP antigo; usar Providers e Accounts atuais |
-| Planner, coordenador, inventário e baseline antigos | Somente referência histórica de invariantes | Não reincorporar: Analisador, Scanner, Detector, Inventory e Orchestrator atuais já possuem essas responsabilidades |
+| Planner, coordenador, inventário e baseline antigos | Somente referência histórica de invariantes | Não reincorporar: Analyzer, Detector, Inventory e Orchestrator atuais já possuem essas responsabilidades |
 
 Não fazer cherry-pick amplo do motor arquivado. Extrair unidades pequenas com testes equivalentes, eliminando dependências do motor antigo.
 
@@ -94,7 +94,7 @@ As lacunas acima descrevem o diagnóstico inicial. A etapa 1 implementou identid
 ## 6. Distribuição de responsabilidades proposta
 
 ```text
-Detector / Scanner → Inventory → Analyzer → plano durável bloqueado
+Detector → Inventory → Analyzer → plano durável bloqueado
                                             ↓
                       coordenador revalida e autoriza um passo
                                             ↓

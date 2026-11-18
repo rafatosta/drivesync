@@ -68,9 +68,10 @@ animações apenas no processo de teste para registrar o estado final. Ver
 
 A aplicação inicia as sessões das contas configuradas durante a restauração,
 independentemente de abrir o console. Local e Remote capturam em fila persistente
-compartilhada com entrega suspensa durante a preparação. O Orchestrator aguarda a captura local e
-executa o Scanner no inventário. A página Detector apenas acompanha essas mesmas
-sessões por conta; o consumo e a confirmação pertencem ao Orchestrator.
+compartilhada com entrega suspensa durante a preparação. O Orchestrator
+inicializa Inventory, inicia o Detector, recupera trabalho pendente e consome
+observações duráveis. A página Detector acompanha essas mesmas sessões por
+conta; o consumo e a confirmação pertencem ao Orchestrator.
 
 Recarregar relê contas/pastas e reutiliza sessões existentes; mudança de escopo
 ou desconexão cancela a preparação e para as fontes antigas. Falha de leitura
@@ -79,10 +80,10 @@ preserva dados. O encerramento libera tarefas/recursos fora da thread GTK.
 Eventos são observações brutas, sem inferir CREATE/MODIFY/RENAME. Indicadores e
 últimos 100 eventos por origem vêm da engine. Snapshot visual não agenda polling
 remoto nem faz SQL. O botão pause/play do consumidor diagnóstico foi removido.
-Após scan completo e análise inicial, o Orchestrator libera a entrega e consome
-continuamente Local/Remote: registra observações no Inventory, entrega snapshots
-ao Analyzer e confirma os eventos somente depois da persistência. Não executa
-operações físicas. Scan Partial/falha conserva entrega pausada e eventos pendentes.
+O Orchestrator consome continuamente observações Local/Remote, registra-as no
+Inventory, entrega os recursos afetados ao Analyzer e confirma eventos somente
+depois da persistência. Não executa operações físicas. Falhas liberam o lote
+para recuperação e preservam eventos na fila durável.
 
 ### Acesso nativo às pastas no desenvolvimento Flatpak
 
@@ -124,31 +125,6 @@ Valida paginação, troca de tabela/conta, resposta atrasada, detalhe, ausência
 criação e janela estreita; não acessa credenciais nem contas reais. A inspeção
 SQLite possui testes próprios no engine, incluindo leitura de arquivo 0400 e
 comparação byte a byte antes/depois.
-
-## Developer / Scanner
-
-F12 → Scanner acompanha a preparação iniciada na abertura, por conta. Mostra
-estado, raiz, arquivos/pastas observados, observações aceitas no inventário,
-problemas, horários e diretório corrente. Não inventa percentual/ETA. Scan again
-repete a preparação da conta selecionada, pausando entrega até concluir e
-retomando o consumidor depois.
-
-Partial mantém análise suspensa e expõe os problemas. Após scan completo, a
-preparação registra as decisões do Analyzer; a página acompanha a fase real
-Analyzing e ProcessingEvents, seguidas pelo consumo contínuo. Entrega pausada
-permanece restrita à preparação incompleta/falha/parada. Até 100 problemas do último
-relatório desta execução são mostrados; não é histórico durável de ScanIssue.
-
-A atualização a cada 250 ms lê somente snapshots de memória. Trocar conta muda
-a fonte exibida; abrir/fechar o console não inicia/cancela sessões de backend.
-Colunas de métricas se reorganizam em janelas estreitas; mensagens vazias não
-ocupam linhas. A desconexão e o shutdown pertencem à aplicação.
-
-Teste gráfico em perfil XDG e Wayland isolados cobre abertura real antes de
-existir Developer Console, duas contas, parcial/completo, reuso sem rescan,
-contagens, problemas, captura com entrega suspensa, rescan, 440 pixels e remoção.
-O teste de Detector também foi reexecutado sem o antigo consumidor diagnóstico.
-
 
 ## Developer / Analyzer
 

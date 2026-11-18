@@ -8,7 +8,6 @@ mod orchestrator;
 mod overview;
 mod pipeline;
 mod provider;
-mod scanner;
 mod window;
 
 pub(crate) use window::install;

@@ -1,92 +1,59 @@
-# Fechamento da etapa Detector
+# Detector operational status
 
-## Escopo entregue
+The public `drivesync_engine::detectors::Detector` composes Local and Remote
+privately, selects the remote specialist from Accounts, and owns one durable
+SQLite queue at `<local-root>/.drivesync/detector.sqlite3`. The queue is scoped
+to the account, SyncId, and configured roots. Google is the implemented remote
+specialist; unsupported providers fail explicitly.
 
-A API pública `drivesync_engine::detectors::Detector` compõe Local e Remoto privadamente, escolhe o especialista remoto pelo provedor de Accounts e usa uma única fila SQLite em `<raiz-local>/.drivesync/detector.sqlite3`, validada por conta, SyncId e par de raízes. Google é o especialista remoto implementado. Provedores sem registro falham explicitamente.
+The public lifecycle includes `new`, `start`, `pause`, `resume`, `stop`,
+`request_scan`, `status`, `take_events`, `acknowledge`, and `release_events`.
+`request_scan` is a generic targeted reobservation request to the active
+producers. It does not access Inventory or choose synchronization actions.
 
-Estão implementados `new`, `start`, `pause`, `resume`, `stop`, `request_scan`, `status`, `take_events`, `acknowledge` e `release_events`. O consumidor não instancia filhos. A fachada não constrói Inventário, Scanner, Analisador ou operações de sincronização.
+- `start` starts Local and Remote together. A source failure is reported
+  separately and does not conceal the health of the other source.
+- `pause` and `resume` control event delivery only. Filesystem watching,
+  provider polling, and durable persistence continue during a delivery pause.
+- `stop` pauses delivery and stops both sources while preserving queued events
+  and remote checkpoints. A period while stopped is not treated as proof of
+  absence when the Detector restarts.
+- `status` reads cached source and queue state without HTTP, filesystem, or SQL
+  work. Local, Remote, delivery, and queue errors remain distinguishable.
+- Queue batches may contain both origins. Acknowledgement or release applies
+  to the whole leased batch. Expired leases make events available for
+  redelivery; event IDs and payloads remain stable.
+- Availability callbacks run after queue commit. They signal that work may be
+  available; they neither deliver nor confirm observations.
 
-- `start` solicita ambas as origens, inclusive quando uma falha; a entrega inicial é gravada antes do início das fontes.
-- `pause/resume` controlam somente o consumo. Captura, polling e gravação continuam. Pausa e reserva são serializadas pela mesma transação de controle da fila.
-- `stop` pausa entrega, solicita parada de ambas e preserva eventos/checkpoint. StopNow cancela HTTP em andamento; DrainInFlight permite terminar a rodada remota limitada já iniciada. Ambos aguardam callbacks locais em trânsito. Hints locais ainda não aceitos não são declarados duráveis; reinício produz reavaliação de escopo, e a coordenação decide a política após o intervalo parado.
-- `status` lê caches, sem HTTP, filesystem ou SQLite. Preserva saúde e erro tipado de cada origem; uma falha remota não transforma o Local saudável em falha.
-- A fila fornece lotes mistos de File completos em ordem global de commit, não em ordem causal ou por timestamp. Um lease e uma transação confirmam/liberam todo o lote, incluindo ambas as origens. Os horários do lote delimitam os instantes observados recebidos.
-- Eventos não confirmados reaparecem depois da expiração do lease, inclusive após encerramento abrupto. IDs e payloads são preservados; não se promete exatamente uma vez para o consumidor.
-- O aviso opcional de disponibilidade ocorre somente depois do commit e não confirma nem entrega eventos. Falha do aviso não desfaz persistência. O sink deve sinalizar de forma leve, sem reentrar em controles bloqueantes do próprio Detector.
+Local and Remote emit the shared `File` contract to the same queue. A
+`FileBatch` preserves complete event payloads and causal positions across
+delivery retries. The queue's commit order is not a claim about causal
+freshness. Inventory applies per-item causal positions, provider versions, and
+durable receipts. The Detector does not own reconciliation, conflict policy,
+baseline, or file operations.
 
-## Reobservação e Scanner
+The Orchestrator starts the Detector with delivery paused, opens Inventory,
+then starts one consumer. It persists each event and calls the Analyzer for
+affected resources. Detector confirmation follows successful processing. The
+Analyzer owns dispatch policy; the Operator executes and verifies requested
+operations.
 
-`request_scan` solicita reobservação aos produtores; não invoca o Scanner Local nem escreve no Inventário. Escopos locais são reobservados com metadados e incerteza explícita; All inclui verificação da cobertura dos watches e reavaliação da raiz. A implementação Google pode ampliar um escopo remoto para uma rodada de recuperação da raiz configurada, preservando a segurança do cursor. Aceitação não significa conclusão nem prova de ausência.
+Changes made locally while DriveSync is closed remain outside the current
+scope. A future retrospective local-observation strategy will be developed
+from scratch as a third internal Detector producer. It will use the generic
+observation contract and will be scheduled by the Detector, not directly by
+the Orchestrator.
 
-O Scanner Local permanece responsável pelo levantamento local via Inventário. Análise, baseline, conflitos e execução de comandos permanecem fora do Detector.
+Detector and Inventory use separate SQLite databases. Re-delivery and
+Inventory receipts provide recovery across the write boundary; no distributed
+transaction is claimed. Older development database formats are rejected as
+documented by their owners, with no automatic migration or deletion.
 
-## Contadores
+## Validation boundaries
 
-O índice durável registra a origem real de emissão, inclusive avisos sem payload. `QueueStats.detected` representa todas as observações; `initial_observations` separa CaptureStarted local e RemoteObservationSource::Capture remoto, incluindo bootstrap após recuperação; `changes_detected` exclui essas observações iniciais. A página Developer apresenta eventos posteriores no indicador principal e observações iniciais/de recuperação nos detalhes. Avisos e incertezas continuam identificados; os contadores não provam sincronização.
-
-## Localização e formato em desenvolvimento
-
-A localização é derivada da raiz local pelo Storage; não há parâmetro público de diretório de dados nem fallback para XDG. A raiz precisa existir e estar acessível. O diretório reservado usa 0700 e o banco 0600. Links simbólicos no caminho, hardlinks do banco e identidades divergentes são rejeitados. O banco do Inventário é independente, no mesmo diretório: `inventory.sqlite3`, ainda documental. Escritas internas não geram eventos de usuário.
-
-Não há compatibilidade ou migração de bancos antigos. A criação instala o esquema atual completo (versão SQLite 6); abertura de formato diferente falha explicitamente, sem backfill, conversão ou reconstrução automática. Reabrir o mesmo formato continua recuperando eventos e leases após interrupções. O codec de File é validado estritamente.
-
-`PersistentDetector` e os caminhos antigos de composição do Orquestrador foram removidos. Os especialistas Local/Remoto mantêm testes independentes, mas a aplicação compõe apenas a fachada `Detector`.
-
-## Validação e limites
-
-A suíte independente do Orquestrador usa portas de origem falsas e SQLite real para verificar início de ambas, falha parcial, pausa, lotes mistos, ack idempotente, release, reentrega, concorrência, aviso pós-commit, consulta de status durante início lento e contagem de bootstrap. O teste consumidor externo usa captura nativa real, conta sintética que exige reautorização, reobservação local e um processo filho encerrado abruptamente.
-
-A aplicação usa `Orchestrator::new` e `prepare` para iniciar captura pausada antes do Scanner. O consumidor terminal diagnóstico e seu play/pause foram removidos. Até conectar Analyzer/ingestão, a fila não é consumida ou confirmada. O Developer acompanha os mesmos snapshots da aplicação.
-
-Não foram repetidas mutações no Drive real nesta etapa. Autenticação real, portal/pacote instalado, permissões e expiração reais do Google permanecem validações de integração/ambiente. Backup/restauração via Configuration é uma dependência futura já registrada no contrato de Storage, não uma implementação simulada desta etapa. Permanecem os limites documentados de capacidade, tamanho de payload e árvore/paginação; falhas são explícitas, sem limpeza ou reconstrução silenciosa.
-
-## Revisão de responsabilidade do Detector remoto
-
-O remoto agora coleta observações `Observed` com os sinais fornecidos pelo
-Google, sem manter `known` nem classificar ações. Consulte
-[IMPLEMENTATION](remote/IMPLEMENTATION.md) para o contrato atual. Resultados
-anteriores de classificação e integração real são históricos e não homologam
-esta revisão. O fluxo local foi revisado posteriormente conforme a seção seguinte; Analisador
-e Inventory não foram implementados. A fila continua confirmável e conserva histórico.
-
-## Revisão de responsabilidade do Detector local
-
-O Local também entrega Observed, com máscara/cookie nativos e sessão de captura.
-Não mantém caminhos conhecidos nem correlaciona rename/move, escritas abertas ou
-substituições atômicas. Mantém somente watches de diretórios e FIFO limitada de
-notificações. Metadados vêm do coletor sem inspeção dos seus atributos. Avisos
-operacionais permanecem; classificação e tratamento pertencem ao futuro
-Analisador/Inventory. O codec atual é registros v4, com SQLite v6; bancos anteriores
-falham explicitamente, sem migração nem exclusão automática.
-
-## Auditoria de ausência de retrocompatibilidade
-
-A verificação posterior confirmou um único esquema SQLite aceito (6), um único
-codec de registros (4) e um único checkpoint Google (4). Não há migração, importação,
-backfill, leitura dupla ou conversor para formatos anteriores. Os números de
-versão identificam e rejeitam formatos incompatíveis; não implicam suporte legado.
-
-Os testes rejeitam esquemas 0/1/2/3/4/5/900 preservando o arquivo byte a byte, codecs
-0/1/2/3/900 e checkpoints 0/1/2/3/5/900. Um checkpoint contendo o catálogo antigo known
-também é recusado sem mutação ou chamada ao Provider. Reabertura e replay no
-formato atual continuam sendo recuperação de falha, não retrocompatibilidade.
-Nenhum banco do usuário foi removido ou convertido durante a auditoria.
-
-## Issue 94
-
-O controle do percurso remoto agora é relacional e incremental. O produtor não
-clona mais Progress ou serializa a fila de diretórios a cada página. O checkpoint
-Google 4 contém uma única página preparada e seu delta; a confirmação do cursor
-e do trabalho do percurso é atômica no Storage, depois da persistência dos File.
-O protocolo de replay preserva identidade/horário/payload após falha ou cancelamento.
-Nenhum índice de arquivos conhecidos foi reintroduzido. SQLite 6 rejeita versões
-anteriores sem migração, remoção ou adaptação. O codec de registros agora é 4.
-
-## Original remoto preservado antes da adaptação
-
-Google fornece JSON original por item; Detector e checkpoint o preservam sem
-converter previamente para RemoteFile. O banco guarda esse original e o contexto
-da ocorrência. O extrator constrói File apenas na entrega/leitura de histórico,
-ou para diagnóstico depois do commit. Unknowns/nulls/objetos aninhados permanecem
-no banco, e a confirmação de consumo não reescreve o payload. SQLite 6, codec 4
-e checkpoint Google 4 são os formatos atuais, sem retrocompatibilidade.
+Local and Remote unit tests use temporary roots, fake providers, and durable
+SQLite storage. They cover simultaneous sources, failure reporting, pause and
+resume, mixed batches, acknowledgements, release, redelivery, concurrency,
+and remote recovery. This does not validate real Google credentials, desktop
+portal permissions, packaged Flatpak installation, or live Drive behavior.

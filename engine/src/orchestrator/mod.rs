@@ -1,4 +1,4 @@
-//! Coordinates initial Scanner observation, continuous detection and Analyzer decisions.
+//! Coordinates continuous detector observations and Analyzer decisions.
 mod analysis;
 mod diagnostics;
 mod execution;
@@ -12,7 +12,7 @@ pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
 pub use startup::*;
 use std::sync::Arc;
 
-/// Owns capture, the initial scan barrier and continuous observation ingestion.
+/// Owns both detection sources and continuous observation ingestion.
 pub struct Orchestrator {
     connector: Engine,
     detector: Arc<Detector>,
@@ -21,6 +21,25 @@ pub struct Orchestrator {
     execution: Arc<execution::ExecutionControl>,
 }
 impl Orchestrator {
+    /// Opens the durable detection queue without starting observation or consumption.
+    /// Blocking construction belongs off the GTK thread.
+    pub fn new(mut request: OrchestratorCreateRequest) -> DetectorResult<Self> {
+        let connector = request.detector.connector.clone();
+        let wake = flow::Wake::new(request.detector.event_available_sink.take());
+        request.detector.event_available_sink = Some(wake.clone());
+        let detector = Arc::new(Detector::new(request.detector)?.detector);
+        detector.pause(DetectorPauseRequest {})?;
+        let publisher = connector.synchronization_publisher(&detector.scope().account_id);
+        let execution = execution::ExecutionControl::new(request.execute_operations);
+        execution.set_publisher(publisher.clone());
+        Ok(Self {
+            execution,
+            connector,
+            detector,
+            preparation: startup::Preparation::new(publisher),
+            flow: flow::Flow::new(wake),
+        })
+    }
     /// Reads account-scoped cached progress; never opens Inventory or starts work.
     pub fn execution_status(&self) -> ExecutionStatus {
         self.execution.snapshot()

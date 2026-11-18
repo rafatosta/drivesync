@@ -161,7 +161,7 @@ impl Detector {
 **Finalidade:** interromper efetivamente **as duas fontes** de observação e suspender a entrega, preservando os dados persistidos.
 **Parâmetros:** `DrainInFlight` ou `StopNow`.
 **Retorno:** estado e trabalhos ainda em andamento.
-**Limites e erros:** `DrainInFlight` e `StopNow` diferem na finalização segura de observações em trânsito; retorno pode indicar `Stopping` até encerramento. Não remover eventos ou checkpoints persistidos, nem confirmar lotes. **O Orquestrador decide como lidar com mudanças ocorridas durante o intervalo sem detecção**; não delegar ao Detector Scanner, análise ou reconciliação automática.
+**Limites e erros:** `DrainInFlight` e `StopNow` diferem na finalização segura de observações em trânsito; retorno pode indicar `Stopping` até encerramento. Não remover eventos ou checkpoints persistidos, nem confirmar lotes. Mudanças feitas durante uma parada não são tratadas como exclusões confirmadas. Alterações locais nesse intervalo permanecem fora do escopo atual.
 
 ### DET-06 — `request_scan`
 

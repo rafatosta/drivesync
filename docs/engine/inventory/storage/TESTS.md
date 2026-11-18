@@ -51,7 +51,7 @@ Aceite somente após a revisão dos contratos pendentes, implementação Rust e 
 | STO-R05 | Banco com WAL ativo | Cópia consistente, isolamento de conexões e validação pós-restauração |
 | STO-R06 | `SQLITE_BUSY`, disco cheio, permissão negada, identidade/esquema incompatível | Não classificar como corrupção nem reconstruir |
 | STO-R07 | Banco restaurado defasado dos Detectores | Reobservação local/remota; não executar exclusão automática devido a perda de histórico |
-| STO-R08 | Banco reconstruído após autorização separada | Scanner e Analisador operam sem mudança de algoritmo; `Unknown` não vira `AbsentConfirmed` |
+| STO-R08 | Banco reconstruído após autorização separada | Local/Remote e Analyzer retomam observações sem alterar algoritmos; `Unknown` não vira `AbsentConfirmed` |
 
 Executar com SQLite real isolado, corrupção e falhas injetadas, dados sintéticos e ambiente Flatpak. **Testes documentados, ainda não executados.**
 

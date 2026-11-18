@@ -32,8 +32,6 @@ pub mod inventory;
 
 mod filesystem;
 
-pub mod scanner;
-
 pub mod analyzer;
 
 pub mod operations;

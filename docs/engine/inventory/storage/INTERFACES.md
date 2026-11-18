@@ -90,7 +90,7 @@ O Inventory Storage registra sua identidade e localização física autorizada n
 
 Diante de corrupção **comprovada**, o Storage deve informar erro e sua indisponibilidade, assegurar exclusividade de acesso ao banco e solicitar `restore_database` pelo identificador registrado. A troca física só acontece depois que conexões/transactions relevantes foram encerradas ou isoladas, com preservação do banco anterior e arquivos WAL/journal. Após o resultado físico, o Storage reabre e valida identidade, esquema e integridade do domínio. Apenas então o Inventário sinaliza `Restored`.
 
-A falha de restauração **não** deve criar automaticamente banco vazio. Se a coordenação autorizar explicitamente reconstrução posterior, o Storage utiliza sua rotina de inicialização do schema e sinaliza `Rebuilt`; não fabrica baseline, vínculos, atividades nem operações confirmadas. Scanner, Detector e Analyzer mantêm suas responsabilidades; a coordenação decide como recuperar cobertura e sincronização.
+A falha de restauração **não** deve criar automaticamente banco vazio. Se a coordenação autorizar explicitamente reconstrução posterior, o Storage utiliza sua rotina de inicialização do schema e sinaliza `Rebuilt`; não fabrica baseline, vínculos, atividades nem operações confirmadas. Detector e Analyzer mantêm suas responsabilidades; a coordenação decide como retomar o processamento de observações pendentes.
 
 Incompatibilidade de esquema, conta/sync_id divergente, `SQLITE_BUSY`, falha transitória, disco cheio e permissão negada não são corrupção confirmada e não podem iniciar substituição. A recuperação de backup pode representar estado antigo em relação ao Drive/filesystem; nenhuma ação destrutiva é autorizada por simples retorno de `Restored`.
 

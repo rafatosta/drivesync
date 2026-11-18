@@ -163,13 +163,12 @@ truncamento, seleção e liberação da página. Não foram usadas contas reais.
 A inspeção tem quatro testes públicos; os 22 testes públicos de Inventory
 foram reexecutados após corrigir a distinção entre permissão e inexistência.
 
-## Provisionamento para a inicialização com Scanner
+## Initialization with an existing local root
 
-A abertura explícita com create_if_missing=true passa a aceitar uma raiz
-configurada que já contenha arquivos. Somente o banco privado ausente é criado;
-conteúdo do usuário e bancos existentes não são apagados, migrados ou
-substituídos. Isso permite inventariar arquivos que já estavam no local antes
-de iniciar o aplicativo. A inspeção somente leitura continua sem criar bancos.
+A abertura explícita com create_if_missing=true aceita uma raiz configurada que
+já contenha arquivos. Somente o banco privado ausente é criado; conteúdo do
+usuário e bancos existentes não são apagados, migrados ou substituídos. A
+inspeção somente leitura continua sem criar bancos.
 
 Validação no SDK: os 17 testes públicos de Inventory passaram, incluindo a
 criação em pasta ocupada com preservação do conteúdo e a recusa de banco com

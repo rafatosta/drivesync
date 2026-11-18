@@ -160,8 +160,8 @@ pub struct File<R = RemoteFile> {
 
 /// Coordinates durable causal positions and localized uncertainty recovery.
 ///
-/// Implementations serialize reservations across Scanner, local and remote observers,
-/// and confirmed Operator results. Positions survive process restarts. Inventory
+/// Implementations serialize reservations across local and remote observers and
+/// confirmed Operator results. Positions survive process restarts. Inventory
 /// compares them only within one sync and one resource side; a missing position is
 /// never inferred from timestamps or delivery order.
 pub trait CausalOrderSource: Send + Sync {

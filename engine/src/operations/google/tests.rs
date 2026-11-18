@@ -1564,7 +1564,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                 ObservationSource::RemoteChange
             },
             observed_at: at,
-            scan_or_generation: None,
+            producer_generation: None,
             complete_scope: false,
         };
         let item = if upload {
@@ -1849,7 +1849,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                             proof: ObservationProof {
                                 source: ObservationSource::LocalEvent,
                                 observed_at: at,
-                                scan_or_generation: None,
+                                producer_generation: None,
                                 complete_scope: false,
                             },
                         },

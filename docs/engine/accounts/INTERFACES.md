@@ -171,7 +171,7 @@ O `status()` é síncrono e rápido, sem consultar banco, Secret Service ou rede
 - **Provider:** operações OAuth/OIDC, identidades externas, tokens e renovação específicos; Accounts não duplica a API e não exige um catálogo/fábrica universal que o contrato Providers não possui.
 - **Armazenamento seguro:** Secret Service/keyring (ou equivalente apropriado) guarda segredos em escopo do aplicativo. Accounts possui o vínculo e a política de acesso local. Não registrar tokens em SQLite, configurações em texto claro ou logs.
 - **Conexões:** o cadastro de sincronizações ainda tem proprietário pendente; não criar tabelas, CRUD ou referências cruzadas implícitas em Accounts. Excluir conta exige conhecer uso por contrato explícito quando implementado.
-- **Inventário, Scanner, Detector, Analisador:** não acessam armazenamento de contas ou tokens diretamente; recorrem às APIs autorizadas.
+- **Detector, Inventory, Analyzer, Operator:** não acessam armazenamento de contas ou tokens diretamente; recorrem às APIs autorizadas.
 - **Recuperação:** falha de credenciais ou keyring indisponível não é "corrupção do inventário". Se o cadastro adotar persistência local, **seu armazenamento** define as regras seguras de integridade e recuperação com padrões próprios; [Configuration](../configuration/README.md) é auxiliar/opcional e pode oferecer preferências por demanda, **nunca** exportação automática de secrets.
 
 ## 8. Decisões concretas da implementação

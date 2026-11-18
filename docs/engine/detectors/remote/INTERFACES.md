@@ -181,7 +181,7 @@ A confirmação do checkpoint de leitura remota é independente da confirmação
 
 ## Integração com controle de entrega
 
-O Remoto **não possui `pause()` de entrega**: continua consultando e emitindo eventos pelo sink enquanto o Detector pai estiver com entrega externa suspensa. O sink deve persistir `File` antes de confirmar recebimento, e o checkpoint remoto só avança após aceite durável. `stop` interrompe efetivamente polling, mas preserva checkpoint e eventos aceitos. **O Orquestrador decide** se e quando solicitar varredura ou recuperação de cobertura depois de um período sem detecção; o Remoto não coordena Scanner/Analisador nem decide consequências da interrupção. `status` deve ser rápido e não disparar HTTP.
+O Remoto **não possui `pause()` de entrega**: continua consultando e emitindo eventos pelo sink enquanto o Detector pai estiver com entrega externa suspensa. O sink deve persistir `File` antes de confirmar recebimento, e o checkpoint remoto só avança após aceite durável. `stop` interrompe efetivamente polling, mas preserva checkpoint e eventos aceitos. O Remoto não coordena Analyzer nem decide consequências de uma parada. `status` deve ser rápido e não disparar HTTP.
 
 ## 8. API compilada
 

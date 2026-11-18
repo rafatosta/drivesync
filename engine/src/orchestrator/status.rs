@@ -2,7 +2,7 @@
 use super::{PreparationFailure, PreparationState, PreparationStatus};
 use crate::synchronization::{
     Publisher, SynchronizationAction, SynchronizationActivity, SynchronizationIssue,
-    SynchronizationIssueKind, SynchronizationLocation, SynchronizationState, SynchronizationStatus,
+    SynchronizationIssueKind, SynchronizationState, SynchronizationStatus,
     SynchronizationWaitReason, SynchronizationWork, SynchronizationWorkDetail,
 };
 use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError};
@@ -35,27 +35,6 @@ impl Snapshot {
             guard.previous = Some(guard.value.state);
             guard
         })
-    }
-    pub fn publish_scanner(&self, scanner: &crate::scanner::ScannerStatus) {
-        self.publisher.update(|status| {
-            status.state = SynchronizationState::Running;
-            status.activity = SynchronizationActivity::Scanning;
-            status.work = Some(SynchronizationWork {
-                action: SynchronizationAction::ObserveLocal,
-                item: None,
-                location: Some(scanner.current_directory.clone().map_or(
-                    SynchronizationLocation::LocalRoot,
-                    SynchronizationLocation::Local,
-                )),
-                detail: SynchronizationWorkDetail::Preparation,
-                event: None,
-            });
-            status.progress = None;
-            status.counters.files_observed = scanner.files_observed;
-            status.counters.directories_observed = scanner.directories_observed;
-            status.counters.items_recorded = scanner.items_recorded;
-            status.counters.scan_issues = scanner.issues_recorded;
-        });
     }
     pub fn update_status(&self, update: impl FnOnce(&mut SynchronizationStatus)) {
         self.publisher.update(update);
@@ -278,42 +257,6 @@ fn apply_state(
                 ..Default::default()
             };
         }
-        PreparationState::Scanning => {
-            status.state = SynchronizationState::Running;
-            status.activity = SynchronizationActivity::Scanning;
-            if status
-                .work
-                .as_ref()
-                .is_none_or(|work| work.action != SynchronizationAction::ObserveLocal)
-            {
-                status.work = Some(SynchronizationWork {
-                    action: SynchronizationAction::ObserveLocal,
-                    item: None,
-                    location: Some(SynchronizationLocation::LocalRoot),
-                    detail: SynchronizationWorkDetail::Preparation,
-                    event: None,
-                });
-            }
-            status.progress = None;
-            status.issue = None;
-        }
-        PreparationState::Analyzing => {
-            status.state = SynchronizationState::Running;
-            status.activity = SynchronizationActivity::Analyzing;
-            status.work = Some(SynchronizationWork {
-                action: SynchronizationAction::Analyze,
-                item: None,
-                location: None,
-                detail: SynchronizationWorkDetail::Analysis(
-                    crate::analyzer::AnalysisPhase::Validating,
-                ),
-                event: None,
-            });
-            status.progress = None;
-            status.counters.analysis_items_processed = 0;
-            status.counters.analysis_items_total = None;
-            status.issue = None;
-        }
         PreparationState::ProcessingEvents => {
             status.state = SynchronizationState::Running;
             status.activity = SynchronizationActivity::ProcessingEvents;
@@ -337,26 +280,6 @@ fn apply_state(
                 event: None,
             });
             status.progress = None;
-        }
-        PreparationState::Partial => {
-            status.state = SynchronizationState::Partial;
-            status.activity = SynchronizationActivity::Waiting;
-            status.work = Some(SynchronizationWork {
-                action: SynchronizationAction::ObserveLocal,
-                item: None,
-                location: None,
-                detail: SynchronizationWorkDetail::Waiting(
-                    SynchronizationWaitReason::IncompleteScan,
-                ),
-                event: None,
-            });
-            status.progress = None;
-            status.issue = Some(SynchronizationIssue {
-                kind: SynchronizationIssueKind::IncompleteScan,
-                retryable: true,
-                item: None,
-                count: status.counters.scan_issues,
-            });
         }
         PreparationState::Failed => {
             status.state = SynchronizationState::Failed;
@@ -395,15 +318,6 @@ fn issue(error: &PreparationFailure) -> SynchronizationIssue {
             SynchronizationIssueKind::Inventory(error.kind.clone()),
             error.retryable,
         ),
-        PreparationFailure::Scanner(error) => (
-            SynchronizationIssueKind::Scanner(error.kind),
-            matches!(
-                error.kind,
-                crate::scanner::ScannerErrorKind::RootNotFound
-                    | crate::scanner::ScannerErrorKind::RootInaccessible
-                    | crate::scanner::ScannerErrorKind::InventoryUnavailable
-            ),
-        ),
         PreparationFailure::Analyzer(error) => (
             SynchronizationIssueKind::Analyzer(error.kind),
             error.kind == crate::analyzer::AnalyzerErrorKind::InventoryFailure,
@@ -435,22 +349,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preparation_states_publish_wait_failure_partial_and_stopped() {
+    fn preparation_states_publish_start_wait_failure_and_stopped() {
         let publisher = Arc::new(Publisher::new());
         let snapshot = Snapshot::new(
             PreparationStatus {
                 state: PreparationState::Idle,
-                scanner: None,
-                report: None,
                 error: None,
                 events_processed: 0,
             },
             publisher.clone(),
         );
-        snapshot.lock().unwrap().state = PreparationState::Scanning;
+        snapshot.lock().unwrap().state = PreparationState::Starting;
         assert_eq!(
             publisher.snapshot().activity,
-            SynchronizationActivity::Scanning
+            SynchronizationActivity::Starting
         );
         snapshot.lock().unwrap().state = PreparationState::ReadyForAnalyzer;
         assert_eq!(publisher.snapshot().state, SynchronizationState::Waiting);
@@ -458,11 +370,10 @@ mod tests {
             publisher.snapshot().work.unwrap().detail,
             SynchronizationWorkDetail::Waiting(SynchronizationWaitReason::ForChanges)
         ));
-        snapshot.lock().unwrap().state = PreparationState::Partial;
-        assert_eq!(publisher.snapshot().state, SynchronizationState::Partial);
+        snapshot.lock().unwrap().state = PreparationState::ProcessingEvents;
         assert_eq!(
-            publisher.snapshot().issue.unwrap().kind,
-            SynchronizationIssueKind::IncompleteScan
+            publisher.snapshot().activity,
+            SynchronizationActivity::ProcessingEvents
         );
         snapshot.lock().unwrap().state = PreparationState::Stopped;
         assert_eq!(

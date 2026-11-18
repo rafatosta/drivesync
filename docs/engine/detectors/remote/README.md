@@ -35,7 +35,7 @@ Orquestrador e consulta o Inventory para decidir seu significado e tratamento.
 
 ## Controle pelo Detector pai
 
-A pausa de **entrega ao Orquestrador** não pausa o polling remoto: eventos continuam sendo emitidos ao sink persistente do Detector e o checkpoint só avança após persistência durável. Apenas `stop` interrompe a observação de fato, preservando o checkpoint. O Orquestrador decide eventuais verificações após intervalo sem detecção; o Remoto não assume reconciliação ou execução de Scanner. O pai deve expor a condição remota separadamente da local.
+A pausa de **entrega ao Orquestrador** não pausa o polling remoto: eventos continuam sendo emitidos ao sink persistente do Detector e o checkpoint só avança após persistência durável. Apenas `stop` interrompe a observação de fato, preservando o checkpoint. O Remoto não assume reconciliação nem execução de operações. O pai deve expor a condição remota separadamente da local.
 
 
 ## Organização por provedor

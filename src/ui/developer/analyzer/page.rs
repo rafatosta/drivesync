@@ -323,12 +323,7 @@ impl View {
         let sessions = self.context.detectors.borrow();
         let snapshot = sessions.get(&id)?.orchestrator.preparation_status();
         if let Some(error) = snapshot.error {
-            return Some(format!("Observation processing stopped: {error}. Open Scanner for details and retry preparation."));
-        }
-        if snapshot.state == drivesync_engine::orchestrator::PreparationState::Partial {
-            return Some(
-                "Analysis is waiting for a complete scan. Open Scanner for details.".into(),
-            );
+            return Some(format!("Observation processing stopped: {error}. Retry preparation after resolving the issue."));
         }
         None
     }

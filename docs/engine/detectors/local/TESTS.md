@@ -97,7 +97,7 @@ Os tipos locais selecionados em Models já possuem implementação e testes puro
 | Caso | Cenário | Resultado esperado |
 | --- | --- | --- |
 | LOC-COL-01 | Coletor fake devolve LocalFile, independentemente de seus campos | Detector encaminha o objeto integral ao sink sem inspeção/projeção de atributos |
-| LOC-COL-02 | Acrescentar campo a LocalFile e atualizar somente coletor/fixture | Código de watcher, scanner e notificação do Detector permanece **inalterado** |
+| LOC-COL-02 | Acrescentar campo a LocalFile e atualizar somente coletor/fixture | Código de watcher e notificação do Detector permanece **inalterado** |
 | LOC-COL-03 | Remover campo de LocalFile e adaptar o coletor | Detector continua compilável/funcional, sem acesso ao campo removido |
 | LOC-COL-04 | Coleta opcional de btime/flags indisponível | Coletor preserva o estado e a cobertura do perfil básico; Detector não interpreta o atributo |
 | LOC-COL-05 | Coleta parcial por custo/limite | Coletor preserva estados de coleta; Detector repassa o LocalFile sem atribuir valores padrões |
@@ -129,7 +129,7 @@ Testes do coletor exercitam syscalls e funções auxiliares em filesystem tempor
 | LOC-S-02 | `status()` durante watcher e verificação | Atividade fiel (`Watching` ou `Scanning`), contadores da rodada sem bloquear |
 | LOC-S-03 | Falha local com outras instâncias saudáveis | Erro da instância preservado sem interferir nas demais; agregação de Local/Remoto pertence aos testes do pai |
 | LOC-S-04 | `stop()` durante observação | Cessa captura após conclusão segura, sem apagar eventos já aceitos |
-| LOC-S-05 | `start()` após período parado | Retoma observação; Local não chama Scanner/Analisador nem decide reconciliação |
+| LOC-S-05 | `start()` após período parado | Retoma observação; Local não chama Analyzer nem decide reconciliação |
 
 **Estado:** cenários documentais, ainda não executados.
 
@@ -196,7 +196,7 @@ Para cada linha: preparar o estado descrito em filesystem temporário, exercer o
 | LOC-W-04 | Limite de caminhos excedido, overflow e falha do backend | Memória de pistas limitada; necessidade de reavaliar raiz, Degraded e diagnóstico; nenhuma exclusão nem promessa de recuperar histórico |
 | LOC-W-05 | Alteração durante scan e no instante de conclusão | Ao menos uma observação posterior da mudança; sem dois workers nem perda na troca de rodada |
 | LOC-W-06 | Salvamento por arquivo temporário seguido de substituição/rename | Caminho final reobservado; não presumir inode anterior nem ocultar mudança por ocorrer durante atividade interna |
-| LOC-W-07 | Alterações durante stop e start posterior | Start restabelece/verifica captura, sem Scanner/Inventário/Analisador. Pedido explícito de scan reobserva estado atual; não reconstitui operações intermediárias |
+| LOC-W-07 | Alterações durante stop e start posterior | Start restabelece/verifica captura sem acessar Inventory ou Analyzer. Pedido explícito de reobservação não reconstitui operações intermediárias |
 | LOC-W-08 | Duas instâncias com mesmos caminhos relativos | Conta/raiz/sync_id e cancelamento isolados; falha/stop de uma não interrompe outra |
 
 ### Portas e falhas de aceite

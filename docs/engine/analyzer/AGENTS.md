@@ -44,8 +44,9 @@ revisões, retry, reinício, concorrência, rollback e limpeza de status. A suí
 pura de cada algoritmo é complementar. Executar Rust exclusivamente no Flatpak
 definido pelo projeto e registrar comandos/resultados reais.
 
-**Estado:** análise/persistência implementadas e chamadas pelo Orchestrator após
-Scanner completo e durante o consumo contínuo de observações. Novas réplicas, atualização de conteúdo, renomeação e movimentação são executadas
+**Estado:** análise/persistência implementadas e chamadas pelo Orchestrator para
+recursos afetados por observações contínuas e trabalho pendente de recuperação.
+Novas réplicas, atualização de conteúdo, renomeação e movimentação são executadas
 e verificadas. Planos com várias dimensões avançam um passo por observação, sem
 baseline prematuro. Resolução de conflitos, autorização de lixeira e pedido explícito
 de restauração continuam distintos da execução automática de alterações comuns.

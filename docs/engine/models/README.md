@@ -208,7 +208,7 @@ O envelope compartilhado ainda referencia FileData::Remote(RemoteFile). Essa dep
 - [TESTS.md](TESTS.md): testes propostos diretamente derivados desses contratos.
 - [AGENTS.md](AGENTS.md): critérios para implementação literal futura.
 
-**Estado atual:** os modelos locais e seus validadores puros foram implementados. O Detector Local mantém as interfaces documentadas; o coletor físico já foi implementado em seu módulo, mas não a fachada ou o watcher. Não foram implementados File/FileData, Scanner, Inventário, Storage, Remoto ou políticas de sincronização; os testes de modelos não comprovam coleta física ou durabilidade.
+**Estado atual:** os modelos locais e remotos, os validadores do envelope `File` e as evidências de observação são compartilhados pela Engine. Local e Remote publicam observações pelo Detector persistente. Os testes de modelos não comprovam integração com um provedor real ou comportamento do aplicativo empacotado.
 
 
 ## Implementação incremental atual

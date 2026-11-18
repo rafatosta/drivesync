@@ -51,7 +51,6 @@ pub enum SyncStatus {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObservationSource {
-    LocalScan,
     LocalEvent,
     RemoteListing,
     RemoteChange,
@@ -70,7 +69,7 @@ pub enum ObservationSource {
 pub struct ObservationProof {
     pub source: ObservationSource,
     pub observed_at: Timestamp,
-    pub scan_or_generation: Option<String>,
+    pub producer_generation: Option<String>,
     pub complete_scope: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

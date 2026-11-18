@@ -1,102 +1,80 @@
-# Orchestrator — fluxo da aplicação
+# Orchestrator — operational contract
 
-## API e composição
+## Composition and preparation
 
-`OrchestratorCreateRequest` recebe `detector: DetectorCreateRequest` e
-`execute_creations: bool`. A aplicação habilita criação; testes de observação e
-ferramentas de inspeção mantêm `false`. `execution_status()` retorna o cache
-`ExecutionStatus` sem I/O. A composição fornece um Operator de escopo à dependência
-opcional do Analyzer, que decide e realiza suas chamadas.
+`OrchestratorCreateRequest` receives a unified `DetectorCreateRequest` and the
+policy flag that allows the Analyzer to dispatch operations. `Orchestrator::new`
+opens the Detector's durable queue and leaves delivery paused. `prepare`
+performs the following work off the GTK thread:
 
-O callback existente `EventAvailableSink` é composto com um sinal interno de
-condvar: o sink configurado pelo chamador continua recebendo disponibilidade.
-O sinal não contém arquivos, não acessa SQL e não chama os controles bloqueantes
-do Detector. A única fila de observações permanece no Detector.
+1. Open the account-scoped Inventory and bind the Detector's durable causal
+   order source used by operation verification.
+2. Start Local and Remote with delivery paused, waiting for Local to report an
+   operational state.
+3. Start the single event consumer, restore pending revalidation and operation
+   work, and resume event delivery.
 
-## Preparação e estado
+Preparation does not enumerate the local root, synthesize an initial baseline,
+or run global analysis to make up for missing observations. It returns after
+the consumer starts. `PreparationStatus` reports lifecycle state, the most
+recent preparation error, and the in-memory count of durably processed events.
+Neither preparation readiness nor the event count means physical
+synchronization completed.
 
-`prepare` inicia Local e Remote com `Paused`, abre Inventory/Scanner, aguarda scan
-completo e solicita análise inicial. Só então inicia o consumidor e libera entrega.
-O worker aguarda a publicação da preparação antes de consumir, evitando uma corrida
-entre estados iniciais e o processamento contínuo. Scan Partial/falha não libera a
-barreira. Chamadores GLib não precisam fornecer runtime Tokio: os workers o hospedam.
+`PreparationFailure` distinguishes Detector, Inventory, Analyzer, invalid
+observation, concurrent preparation, and internal failures. Error display does
+not expose file payloads. The Detector's status and diagnostics remain
+available through the unified public facade.
 
-`PreparationState` conserva os valores anteriores e acrescenta `ProcessingEvents`.
-`ReadyForAnalyzer` representa a preparação completa e o consumidor aguardando
-observações; `ProcessingEvents` representa ingestão/análise. Nenhum deles
-significa upload/download ou sincronização concluída.
+## Observation projection
 
-`PreparationStatus` conserva seus campos e acrescenta `events_processed: u64`,
-contador cumulativo em memória dos eventos confirmados depois de ingestão e análise
-por esta instância. O contador não mede operações físicas nem é histórico oficial;
-o Detector mantém os contadores duráveis. A UI usa a mudança desse snapshot para
-reler os recibos do Analyzer, sem polling SQL no loop GTK.
+- Validate `File`, `SyncId`, and the account on remote references.
+- Resolve local observations by a known local ID or the Inventory path index;
+  resolve remote observations only by their account-qualified reference.
+- Persist the original `File`, original event ID, causal position, and source
+  proof through the public `record_local` or `record_remote` API.
+- Forward explicit local presence evidence. `AbsentConfirmed` requires the
+  collector's validated lookup result. Missing metadata, coverage gaps,
+  inaccessible paths, and unassociated locators remain unknown.
+- Use the Inventory's durable receipt before revision checks on redelivery.
+  The Orchestrator does not open Inventory SQL or Detector storage.
+- Keep remote root diagnostics as Detector state. Do not turn technical
+  notifications into file records.
 
-`PreparationFailure` acrescenta `InvalidObservation(FileId)` para entrada inválida,
-escopo errado ou recurso remoto sem associação/snapshot suficientes. Display não
-expõe o payload. Erros de Inventory/Scanner/Analyzer permanecem tipados e visíveis.
-Conflito ou evidência insuficiente retornados pelo Analyzer são resultados válidos,
-não falhas de ingestão.
+An observation that affects known items is sent to the Analyzer with current
+Inventory snapshots. Whole-scope notifications and existing revalidation
+semantics may request analysis of current Inventory items. They are event-driven
+or recovery work; preparation never performs a compensating global pass.
 
-## Projeção das observações
+## Acknowledgement and recovery
 
-- Validar `File`, `SyncId` e conta da referência remota.
-- Resolver local por ID fornecido, ou pelo índice público de caminho relativo;
-  resolver remoto por referência qualificada. Não correlacionar lados pelo nome.
-- Registrar o `File` integral com seu ID original, revisão atual e prova de origem
-  local/remota. Para eventos locais, encaminhar `File.event.local_presence` sem
-  inferir presença de cobertura nem transformar falhas em ausência. `Present`
-  requer payload local; `AbsentConfirmed` depende da evidência de lookup emitida
-  pelo coletor e associada ao caminho. Eventos sem esse resultado permanecem
-  `Unknown`. Observações isoladas não criam item sem associação conhecida.
-- Reentrega reaproveita o recibo por `File.id` do Inventory, inclusive quando a revisão
-  já foi avançada por análise anterior. Nenhum SQL é emitido pelo Orchestrator.
-- A varredura completa do Scanner ocorre somente durante a preparação inicial.
-  Eventos contínuos usam os snapshots entregues pelos Detectores; não iniciam
-  varreduras globais para compensar metadados ausentes ou observações incompletas.
-- Observações ausentes sem item associado não fabricam registros vazios nem
-  confirmam ausências. O Detector é responsável por fornecer evidência suficiente
-  para cada mudança que detecta.
-- Avisos técnicos da raiz remota não inventam SyncItem e não provam cobertura. O
-  estado técnico permanece no Detector; itens existentes são reavaliados.
-- Evento remoto sem snapshot e sem item associado gera erro e continua pendente.
+The consumer takes bounded batches from the Detector queue and renews their
+lease while processing. `Processed` acknowledgement follows successful
+Inventory persistence and Analyzer work. A guard releases the whole lease on
+failure, cancellation, or panic. There is no partial acknowledgement or
+discard. If either database or the process fails between writes, Detector
+redelivery and Inventory receipts allow interrupted work to resume.
 
-## Análise e ack
+The consumer dispatches persisted localized revalidation requests through the
+Detector's generic reobservation API. It also revisits pending operation
+recovery on the existing retry schedule. It does not inspect strategy
+implementations or coordinate individual producers.
 
-Observações entregam ao Analyzer os IDs afetados, recarregando seus snapshots atuais.
-Aviso global visita os itens atuais por paginação, inclusive status Synced ou Conflict.
-O Scanner persiste a cobertura e as observações da preparação inicial; o Orchestrator
-não reimplementa a coleta nem suas provas de ausência durante ingestão contínua.
+## Lifecycle and concurrency
 
-A montagem de `AnalysisEvidence` permanece igual à integração anterior: presença
-conhecida por item, baseline confirmado pelo Inventory, conteúdo desconhecido sem
-hash local e pais por referências/raízes explícitas. Esta entrega **não redefine
-como o Analyzer compara ou resolve os dados**.
+One worker belongs to each prepared session. A new preparation invalidates the
+previous epoch, retires the old worker off GTK, and prevents stale workers from
+publishing readiness or acknowledging work. Stop pauses delivery and stops both
+sources while preserving queued observations/checkpoints. Wakeups only signal
+availability; the Detector remains the single queue owner. A heartbeat revisits
+expired leases, and the lease guard protects in-flight batches.
 
-`acknowledge(Processed)` ocorre após análise bem-sucedida e persistente. Um guard
-libera o lote inteiro em erro/cancelamento/Partial. Se a lease expirou ou o processo
-caiu, a fila permite reentrega após expiração. Não há ack parcial ou descarte para
-ocultar falhas. Os efeitos de ingestão já gravados são recuperáveis pelos recibos;
-o ack nunca autoriza executar uma operação do Inventory.
+## Scope boundary
 
-## Ciclo de vida
-
-Um worker é mantido por sessão preparada. Novo prepare invalida o epoch, sinaliza
-e retira o worker anterior e aguarda sua saída fora de GTK antes de substituir os
-módulos. Parada/cancelamento acorda o worker mesmo ocioso; scan ativo recebe pedido
-de cancelamento e sua saída é aguardada. Uma análise já despachada pode terminar a
-transação, mas o epoch é revalidado antes de confirmar eventos ou publicar estado.
-O lock de controle impede processamento simultâneo com setup/parada.
-
-Wakeups são incrementais e não se perdem entre consulta de fila e espera. Um
-heartbeat de um segundo cobre leases abandonados. Lotes usam o limite público de
-64 eventos e lease de 300 segundos; não há renovação/roubo de lease por SQL. Falha
-técnica pausa entrega e publica Failed; Partial pausa sem fingir cobertura completa.
-As fontes continuam capturando até uma parada física solicitada.
-
-## Fora do escopo
-
-Nenhum Operator, comando físico, resolução ou confirmação de baseline é chamado.
-Não se libera `SyncOperation::Blocked`, não se faz replay de operações Running e
-não se altera política de identidade/conflito/conteúdo do Analyzer. Cobertura
-remota global e medição de conteúdo permanecem responsabilidade de seus módulos.
+Inventory owns persisted synchronization state; Analyzer owns reconciliation,
+conflict decisions, and operation dispatch policy; Operator executes and
+verifies requested operations. Neither depends on Local or Remote strategy
+internals. Retrospective detection of local changes made while the application
+was closed is not implemented here. Future observation producers belong inside
+the Detector and use the same generic `File` contract; the Orchestrator remains
+independent of their startup and scheduling.

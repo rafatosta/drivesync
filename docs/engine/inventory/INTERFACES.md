@@ -69,11 +69,11 @@ pub enum SyncStatus {
     PendingReconciliation, PendingUpload, PendingDownload,
     Synced, Conflict, Error,
 }
-pub enum ObservationSource { LocalScan, LocalEvent, RemoteListing, RemoteChange }
+pub enum ObservationSource { LocalEvent, RemoteListing, RemoteChange }
 pub struct ObservationProof {
     pub source: ObservationSource,
     pub observed_at: Timestamp,
-    pub scan_or_generation: Option<String>,
+    pub producer_generation: Option<String>,
     pub complete_scope: bool,
 }
 pub enum FieldUpdate<T> { Keep, Set(T), Clear }
@@ -874,8 +874,8 @@ sem informar restauração ou reconstrução que não aconteceu.
 ## Vínculo de produtores locais
 
 GetSyncInfoResult expõe local_root como bytes Unix da raiz absoluta persistida,
-além de info. O Scanner valida esse vínculo antes de qualquer observação, sem
-consultar SQLite diretamente. O acréscimo não muda o esquema.
+além de info. O Inventory valida esse vínculo ao abrir a sessão; produtores de
+observação usam apenas as APIs públicas e não consultam SQLite diretamente.
 
 
 ## Integração de análises

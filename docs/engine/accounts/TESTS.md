@@ -62,7 +62,7 @@ Usar fakes controlados que mantenham operações em fases definidas, sem depende
 - `AccountId` nunca é trocado durante renovação de credenciais.
 - Nenhum token/segredo bruto nos retornos públicos, banco de cadastro, logs, diagnósticos e mensagens de erro.
 - Métodos de consulta não iniciam autenticação remota.
-- Accounts nunca chama Scanner, Inventário, Detector, Analisador ou Operador para modificar arquivos.
+- Accounts nunca chama Detector, Inventory, Analyzer ou Operator para modificar arquivos.
 - Remoção de cadastro não apaga conteúdo local ou remoto nem revoga credenciais remotamente de forma implícita.
 - Não criar banco SQLite sem requisito explícito; qualquer persistência concreta continua privada.
 - Não criar submódulo `accounts/auth/` nem duplicar OAuth/OIDC existente em Providers.

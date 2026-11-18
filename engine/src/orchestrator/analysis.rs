@@ -1,6 +1,6 @@
-//! Post-scan decision coordination through public Inventory and Analyzer contracts.
+//! Observation-driven decision coordination through public Inventory and Analyzer contracts.
 //! No execution policy, direct Operator dispatch or SQL lives here.
-use super::{Orchestrator, PreparationFailure};
+use super::PreparationFailure;
 use crate::{
     analyzer::{AnalyzeRequest, Analyzer, AnalyzerConfig, AnalyzerDependencies},
     inventory::*,
@@ -9,7 +9,7 @@ use crate::{
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -375,77 +375,6 @@ async fn analyze_item(
     }
     current(context.epoch, context.expected)
 }
-impl Orchestrator {
-    /// Keeps runtime setup and all Inventory calls off callers such as GLib.
-    /// One finite pass, not a background event consumer or a transfer scheduler.
-    pub(super) async fn analyze_inventory(
-        &self,
-        inventory: Arc<InventoryManager>,
-        expected: u64,
-    ) -> Result<(), PreparationFailure> {
-        let scope = self.detector.scope();
-        let identity = SyncIdentity {
-            sync_id: scope.sync_id.clone(),
-            account_id: scope.account_id.clone(),
-            remote_root_id: scope.remote_root_id.clone(),
-        };
-        let epoch = self.preparation.epoch.clone();
-        let control = self.preparation.control.clone();
-        let connector = self.connector.clone();
-        let execution = self.execution.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        std::thread::Builder::new()
-            .name("sync-analysis".into())
-            .spawn(move || {
-                let result = run_pass(
-                    inventory, identity, epoch, expected, control, connector, execution,
-                );
-                let _ = tx.send(result);
-            })
-            .map_err(|_| PreparationFailure::Internal)?;
-        tokio::pin!(rx);
-        if tokio::runtime::Handle::try_current().is_ok() {
-            loop {
-                tokio::select! {
-                    result = &mut rx => return result.map_err(|_| PreparationFailure::Internal)?,
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                        if let Ok(status) = self.detector.status(crate::detectors::DetectorStatusRequest {}) {
-                            self.preparation.snapshot.publish_detector(&status.status);
-                        }
-                    }
-                }
-            }
-        } else {
-            rx.await.map_err(|_| PreparationFailure::Internal)?
-        }
-    }
-}
-fn run_pass(
-    inventory: Arc<InventoryManager>,
-    identity: SyncIdentity,
-    epoch: Arc<AtomicU64>,
-    expected: u64,
-    control: Arc<Mutex<()>>,
-    connector: crate::Engine,
-    execution: Arc<super::execution::ExecutionControl>,
-) -> Result<(), PreparationFailure> {
-    let _control = control.lock().map_err(|_| PreparationFailure::Internal)?;
-    current(&epoch, expected)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| PreparationFailure::Internal)?;
-    runtime.block_on(analyze_all(
-        inventory,
-        identity,
-        epoch,
-        expected,
-        connector,
-        execution,
-        Vec::new(),
-    ))
-}
-
 /// Resolves local persisted account metadata, without credentials or Provider calls.
 async fn account_provider(
     connector: &crate::Engine,

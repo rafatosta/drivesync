@@ -100,7 +100,7 @@ fn seed(root: &std::path::Path, count: usize) {
                     proof: ObservationProof {
                         source: ObservationSource::RemoteChange,
                         observed_at: time,
-                        scan_or_generation: None,
+                        producer_generation: None,
                         complete_scope: false,
                     },
                 },

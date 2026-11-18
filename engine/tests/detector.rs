@@ -244,7 +244,10 @@ fn abruptly_terminated_unified_detector_replays_the_exact_committed_file() {
         serde_json::from_slice(&std::fs::read(tree.0.join("committed.json")).unwrap()).unwrap();
     assert!(matches!(
         original.event.action,
-        FileEventAction::Modified | FileEventAction::MoveFrom | FileEventAction::MoveTo
+        FileEventAction::Created
+            | FileEventAction::Modified
+            | FileEventAction::MoveFrom
+            | FileEventAction::MoveTo
     ));
     assert!(original
         .event

@@ -13,13 +13,12 @@ As comparações são fornecidas ao Analyzer e persistidas em seu recibo. A medi
 não associa itens nem altera o baseline. Sem hash remoto disponível, a comparação
 correspondente continua pendente; não se implementa download para medir conteúdo.
 
-Observações statx de arquivos regulares com único link e diretórios ganham uma
-identidade local baseada em dispositivo, inode e nascimento. O Scanner procura
-essa identidade antes de criar um item por caminho, preservando o vínculo após
-renomeação/movimentação. Sem nascimento confiável ou em hardlinks, não inventa ID.
-Identidade física diferente em caminho ocupado exige rechecagem, não associação
-local↔remoto por nome; o estado pode continuar desconhecido. A execução futura
-precisará revalidar recurso e precondições, inclusive após a medição atual.
+Observações Local fornecem identidade baseada em dispositivo, inode e nascimento
+para arquivos regulares com único link e diretórios. A ingestão usa essa identidade
+quando disponível e preserva o vínculo em mudanças de caminho. Sem nascimento
+confiável ou em hardlinks, não inventa ID. Identidade física diferente em caminho
+ocupado exige rechecagem, não associação local↔remoto por nome; o estado pode
+continuar desconhecido. A execução revalida recurso e precondições antes do efeito.
 
 A leitura ocorre somente quando há checksum SHA-256 remoto ou do baseline para
 comparar. Novos arquivos sem referência não são lidos inutilmente. Cancelamento

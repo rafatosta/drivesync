@@ -125,7 +125,7 @@ impl InventoryManager {
             recovery: InventoryRecoveryOutcome::Normal,
         })
     }
-    /// Binds the synchronization-wide durable order source used by Scanner and Operator results.
+    /// Binds the synchronization-wide durable order source used for operation verification.
     pub(crate) fn set_order_source(
         &self,
         source: std::sync::Arc<dyn crate::models::CausalOrderSource>,
