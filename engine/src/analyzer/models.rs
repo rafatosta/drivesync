@@ -79,7 +79,10 @@ pub struct AnalyzerError {
 }
 impl std::fmt::Display for AnalyzerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "analyzer operation failed: {:?}", self.kind)
+        match &self.inventory_error {
+            Some(cause) => write!(f, "analyzer operation failed: {:?} ({cause:?})", self.kind),
+            None => write!(f, "analyzer operation failed: {:?}", self.kind),
+        }
     }
 }
 impl std::error::Error for AnalyzerError {}

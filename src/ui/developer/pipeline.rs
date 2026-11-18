@@ -154,6 +154,9 @@ pub(super) fn build(context: &Context, operator: bool) -> gtk::Box {
 
 fn command_label(command: &drivesync_engine::operations::OperationCommand) -> String {
     use drivesync_engine::operations::{ItemName, OperationCommand as C};
+    if matches!(command, C::Trash { .. }) {
+        return "Move to trash".into();
+    }
     let (action, name) = match command {
         C::Upload { name, .. } => ("Upload", name),
         C::Download { name, .. } => ("Download", name),
