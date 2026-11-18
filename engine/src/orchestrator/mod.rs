@@ -1,4 +1,4 @@
-//! Coordinates paused detection, Scanner observation and durable Analyzer decisions.
+//! Coordinates initial Scanner observation, continuous detection and Analyzer decisions.
 mod analysis;
 mod diagnostics;
 mod execution;

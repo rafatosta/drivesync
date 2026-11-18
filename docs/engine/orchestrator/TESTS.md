@@ -10,10 +10,10 @@ conexões SQL adicionais existem somente nos testes de injeção de falha.
   Enabled somente depois da preparação/análise inicial.
 - Criação real de pasta e arquivo depois de `prepare`: ingestão e recibos atuais
   aparecem sem rescan manual, sem cruzar contas e sem executar sincronização.
-- Rename e remoção locais: observações/rechecagens atualizam Inventory/Analyzer,
-  sem atribuir ao Orchestrator uma política física de rename/delete.
-- Stop/restart e criação durante parada: Scanner recupera o estado, seguido por
-  consumo contínuo; eventos em captura permanecem duráveis.
+- Rename e remoção locais: observações do Detector alimentam Inventory/Analyzer;
+  a remoção sem snapshot permanece desconhecida e não aciona nova varredura.
+- Stop/restart e criação durante parada: preparação inicial recupera o estado pelo
+  Scanner, seguido por consumo contínuo; eventos em captura permanecem duráveis.
 - Falhas em `receipts` e `analyses` durante processamento ao vivo: pausa visível,
   lease liberada, zero ack antecipado e recuperação sem duplicar File.id.
 - Scan parcial: entrega continua pausada e nenhuma análise é liberada indevidamente.

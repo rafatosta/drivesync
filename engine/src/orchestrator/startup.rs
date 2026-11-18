@@ -335,7 +335,6 @@ impl Orchestrator {
                         connector: self.connector.clone(),
                         execution: self.execution.clone(),
                         detector: self.detector.clone(),
-                        scanner,
                         inventory,
                         identity: SyncIdentity {
                             sync_id: scope.sync_id.clone(),

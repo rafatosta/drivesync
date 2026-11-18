@@ -5,7 +5,6 @@ use crate::{
     detectors::*,
     inventory::*,
     models::{File as Observation, FileData, FileLocation, FileScope, SyncId},
-    scanner::*,
     synchronization::{
         SynchronizationAction, SynchronizationActivity, SynchronizationEvent, SynchronizationItem,
         SynchronizationLocation, SynchronizationProgress, SynchronizationProgressUnit,
@@ -144,7 +143,6 @@ pub(super) struct Context {
     pub connector: crate::Engine,
     pub execution: Arc<super::execution::ExecutionControl>,
     pub detector: Arc<Detector>,
-    pub scanner: Arc<Scanner>,
     pub inventory: Arc<InventoryManager>,
     pub identity: SyncIdentity,
     pub epoch: Arc<AtomicU64>,
@@ -254,7 +252,7 @@ impl Context {
         });
     }
 }
-/// Drop releases the entire batch on any error, cancellation, partial scan or panic.
+/// Drop releases the entire batch on any error, cancellation or panic.
 /// A crash leaves the lease to expire; no Processed acknowledgement precedes analysis.
 struct Lease {
     detector: Arc<Detector>,
@@ -334,11 +332,6 @@ fn run(
     if let Some(started) = started {
         let _ = started.send(result.clone());
     }
-    // Dropping a cancelled Scanner future requests cancellation of its finite
-    // worker. Wait for that worker before allowing replacement preparation.
-    while context.scanner.status().state == ScannerState::Running {
-        std::thread::sleep(Duration::from_millis(5));
-    }
     // Pausing delivery does not stop source observation or lose queued events.
     let _control = context.control.lock().unwrap_or_else(|e| e.into_inner());
     let _ = context.detector.pause(DetectorPauseRequest {});
@@ -380,11 +373,7 @@ fn consume(
             }
         };
         match outcome {
-            Some(true) => context.state(PreparationState::ReadyForAnalyzer, None),
-            Some(false) => {
-                context.state(PreparationState::Partial, None);
-                return Ok(());
-            }
+            Some(()) => context.state(PreparationState::ReadyForAnalyzer, None),
             None => {
                 if context.execution.snapshot().enabled {
                     runtime.block_on(context.await_with_source_updates(
@@ -418,14 +407,14 @@ async fn process(
     context: &Context,
     stop: &AtomicBool,
     batch: FileBatch,
-) -> Result<bool, PreparationFailure> {
+) -> Result<(), PreparationFailure> {
     let mut lease = Lease {
         detector: context.detector.clone(),
         id: batch.batch_id,
     };
     let processing = process_files(context, stop, batch.files);
     tokio::pin!(processing);
-    let complete = loop {
+    loop {
         tokio::select! {
             result = &mut processing => break result?,
             _ = tokio::time::sleep(EVENT_LEASE_RENEWAL_INTERVAL) => {
@@ -433,9 +422,6 @@ async fn process(
                 lease.renew()?;
             },
         }
-    };
-    if !complete {
-        return Ok(false);
     }
     context.current(stop)?;
     let count = lease.acknowledge()?;
@@ -443,16 +429,15 @@ async fn process(
     if context.epoch.load(Ordering::Acquire) == context.expected {
         snapshot.events_processed = snapshot.events_processed.saturating_add(u64::from(count));
     }
-    Ok(true)
+    Ok(())
 }
 
 async fn process_files(
     context: &Context,
     stop: &AtomicBool,
     files: Vec<Observation>,
-) -> Result<bool, PreparationFailure> {
+) -> Result<(), PreparationFailure> {
     let mut ids = BTreeSet::new();
-    let mut scan_local = false;
     let mut all = false;
     let total = files.len() as u64;
     for (index, file) in files.into_iter().enumerate() {
@@ -463,44 +448,7 @@ async fn process_files(
         if let Some(id) = ingested.item {
             ids.insert(id);
         }
-        let already_scanned = matches!(file.scope, crate::models::FileScope::WholeSync)
-            && context.scanner.status().last_report_status == Some(ScanStatus::Completed)
-            && context
-                .scanner
-                .status()
-                .started_at
-                .is_some_and(|time| time.unix_millis >= file.observed_at.unix_millis);
-        scan_local |= ingested.scan_local && !already_scanned;
         all |= ingested.analyze_all;
-    }
-    if scan_local {
-        let scan = context.scanner.scan(ScanRequest {
-            sync_id: context.identity.sync_id.clone(),
-        });
-        tokio::pin!(scan);
-        let report = loop {
-            tokio::select! {
-                report=&mut scan=>break report.map_err(PreparationFailure::Scanner)?,
-                _=tokio::time::sleep(Duration::from_millis(100))=>{
-                    context.current(stop)?;
-                    context.snapshot.publish_scanner(&context.scanner.status());
-                    context.publish_sources();
-                },
-            }
-        };
-        context.snapshot.publish_scanner(&context.scanner.status());
-        let complete = report.ready_for_analysis();
-        if context.epoch.load(Ordering::Acquire) == context.expected {
-            context
-                .snapshot
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .report = Some(Arc::new(report));
-        }
-        if !complete {
-            return Ok(false);
-        }
-        all = true;
     }
     context.current(stop)?;
     if all {
@@ -528,7 +476,7 @@ async fn process_files(
             .await?;
     }
     context.current(stop)?;
-    Ok(true)
+    Ok(())
 }
 
 fn observation_location(location: &FileLocation) -> SynchronizationLocation {

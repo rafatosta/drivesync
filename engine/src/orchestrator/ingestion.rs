@@ -1,12 +1,11 @@
-//! Projection of original detector observations through public Inventory methods.
-//! Unknown presence stays unknown; local coverage is re-established by Scanner.
+//! Projects detector observations through public Inventory methods.
+//! Unknown presence stays unknown; continuous ingestion never starts a full scan.
 use super::PreparationFailure;
 use crate::{inventory::*, models::*};
 
 #[derive(Debug)]
 pub(super) struct Ingested {
     pub item: Option<SyncItemId>,
-    pub scan_local: bool,
     pub analyze_all: bool,
 }
 /// Keeps each File and its ID intact so a redelivered observation hits Inventory's
@@ -28,7 +27,6 @@ pub(super) fn ingest(
             }
             return Ok(Ingested {
                 item: None,
-                scan_local: true,
                 analyze_all: true,
             });
         }
@@ -47,7 +45,6 @@ pub(super) fn ingest(
             {
                 return Ok(Ingested {
                     item: None,
-                    scan_local: false,
                     analyze_all: true,
                 });
             }
@@ -77,10 +74,9 @@ pub(super) fn ingest(
                 .item;
             if let Some(occupied) = occupied {
                 // A different physical identity at the old path is not an
-                // automatic association. Recheck and durably expose uncertainty.
+                // automatic association. Analyze the known item without rescanning.
                 return Ok(Ingested {
                     item: Some(occupied.id),
-                    scan_local: true,
                     analyze_all: true,
                 });
             }
@@ -91,10 +87,9 @@ pub(super) fn ingest(
             return Err(PreparationFailure::InvalidObservation(file.id.clone()));
         }
         // A vanished, never-associated local locator cannot become an invented
-        // tombstone. A complete Scanner pass reconciles the known local scope.
+        // tombstone. Keep the event without fabricating an Inventory item.
         return Ok(Ingested {
             item: None,
-            scan_local: true,
             analyze_all: true,
         });
     }
@@ -124,13 +119,6 @@ pub(super) fn ingest(
         scan_or_generation: None,
         complete_scope: false,
     };
-    let scan_local = !remote
-        && (file.data.is_none()
-            || matches!(&file.data, Some(FileData::Local(local)) if !matches!(local.kind, MetadataValue::Known(LocalEntryKind::Regular)))
-            || existing
-                .as_ref()
-                .and_then(|item| item.last_checked_at)
-                .is_some_and(|time| time.unix_millis >= file.observed_at.unix_millis));
     let expected_revision = existing.map(|item| item.revision);
     let result = if remote {
         inventory.record_remote(RecordRemoteObservation {
@@ -156,7 +144,6 @@ pub(super) fn ingest(
     .map_err(PreparationFailure::Inventory)?;
     Ok(Ingested {
         item: Some(result.item.id),
-        scan_local,
         // Namespace and parent changes can invalidate another item's plan.
         analyze_all: true,
     })

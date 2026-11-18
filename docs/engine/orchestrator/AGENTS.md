@@ -17,9 +17,10 @@ Ler [README](README.md), [INTERFACES](INTERFACES.md), [TESTS](TESTS.md) e
   não criar backlog paralelo de File ou um consumidor por página GTK.
 - Preservar File.id e payload ao registrar observações associáveis. Não inventar
   ausência confirmada, identidade local/remota por nome ou SyncItem sem dados.
-- Usar Scanner para lacunas locais; não implementar outro coletor. Avisos técnicos
-  não equivalem a arquivos e permanecem observáveis no Detector.
-- Confirmar o lote somente após ingestão, rechecagem necessária e análise duráveis.
+- Usar Scanner somente na reconstrução local inicial; eventos contínuos devem usar
+  as observações dos Detectores, sem iniciar varreduras completas para suprir dados
+  ausentes. Avisos técnicos não equivalem a arquivos e permanecem no Detector.
+- Confirmar o lote somente após ingestão e análise duráveis.
   Falha/Partial/cancelamento preserva o lote por release/expiração, sem Discarded.
 - Testar reentrega entre os bancos, cuja gravação não é uma transação distribuída.
 - As políticas e chamadas ao Operator pertencem ao Analyzer, nunca ao consumidor

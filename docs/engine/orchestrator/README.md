@@ -14,8 +14,7 @@ flowchart TD
   B -->|Sim| I["Analyzer: itens atuais do Inventory"]
   I --> R["Liberar entrega e consumir fila durável"]
   R --> E["File → Inventory: ingestão idempotente"]
-  E --> C["Revalidar escopo local pelo Scanner quando necessário"]
-  C --> N["Analyzer: snapshots atuais"]
+  E --> N["Analyzer: snapshots atuais"]
   N --> K["Decisões persistidas → confirmar lote do Detector"]
   K --> R
 ```
@@ -29,7 +28,7 @@ comandos nem executa transferências diretamente. Ver [execução](../analyzer/E
 
 O callback público de disponibilidade desperta um worker da sessão, sem guardar
 uma segunda fila de `File` em memória. O worker usa apenas `take_events`,
-`record_local`/`record_remote`, consultas do Inventory, Scanner e `Analyzer::analyze`.
+`record_local`/`record_remote`, consultas do Inventory e Analyzer.
 Uma mesma sessão não tem dois consumidores. A preparação inicial ainda funciona
 quando chamada pelo loop GLib sem runtime Tokio no chamador.
 
@@ -38,23 +37,24 @@ no Inventory. Reentrega usa o recibo durável por `File.id`. Identidades remotas
 qualificadas por conta; caminhos locais localizam somente o lado local, sem parear
 arquivos locais/remotos pelo nome. Metadados ausentes não provam exclusão.
 
-Observações locais antigas, exclusões suspeitas, diretórios e avisos de captura
-reconstruída usam o Scanner existente para revalidar o estado atual. Um aviso de
-início já coberto por scan completo não exige repetir a varredura. Um caminho que
-sumiu antes de qualquer associação pode ser resolvido por rechecagem do escopo,
-sem inventar tombstone ou SyncItem vazio. Avisos técnicos da raiz remota permanecem
-no diagnóstico do Detector e não viram arquivos fictícios no Inventory.
+O Scanner executa somente na preparação inicial para reconstruir o inventário
+local acumulado enquanto o programa estava fechado. Durante o fluxo contínuo,
+eventos são tratados pelas observações do Detector e pelo Analyzer; nenhum evento
+inicia uma varredura global. Um evento sem dados suficientes não prova ausência
+nem cria um item fictício. Cabe ao Detector fornecer observações adequadas para
+as mudanças que detecta. Avisos técnicos da raiz remota permanecem no diagnóstico
+do Detector e não viram arquivos fictícios no Inventory.
 
 ## Confirmação e falhas
 
-O lote só recebe `Processed` depois da ingestão, rechecagem necessária e análise
-concluídas com persistência. Falha, cancelamento ou scan parcial libera o lote
+O lote só recebe `Processed` depois da ingestão e análise concluídas com
+persistência. Falha, cancelamento ou scan parcial da preparação inicial libera o lote
 inteiro sem ack. Nenhum caminho usa `Discarded`. O prefixo já registrado permanece
 válido e pode ser reenviado sem duplicar seu recibo de observação.
 
 Falha técnica pausa a entrega e fica visível em `preparation_status`; as fontes
 continuam guardando eventos. Nova preparação retira o worker antigo, reconstrói o
-estado pelo Scanner e retoma os eventos pendentes. Um scan parcial mantém `Partial`
+estado inicial pelo Scanner e retoma os eventos pendentes. Um scan parcial mantém `Partial`
 e não confirma seu lote. Não existe transação distribuída entre os dois bancos:
 a segurança depende de reentrega e idempotência, não de ack antecipado.
 

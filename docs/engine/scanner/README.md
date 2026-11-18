@@ -41,7 +41,7 @@ O Scanner **não entrega itens diretamente ao Analisador**. Seu produto é o Inv
 
 | Componente | Contrato com o Scanner |
 | --- | --- |
-| Orquestrador | Inicia `scan` e recebe o relatório; suspende e retoma o consumo das filas dos Detectores |
+| Orquestrador | Inicia `scan` na preparação inicial e recebe o relatório; suspende e retoma o consumo das filas dos Detectores |
 | Inventário | Recebe as observações locais por métodos públicos; mantém vínculos, revisão, baseline e dados remotos |
 | Filesystem local | Fonte única dos arquivos, diretórios e metadados observados |
 | Detector Local/Remoto | **Nenhuma integração direta**; mantêm filas próprias |

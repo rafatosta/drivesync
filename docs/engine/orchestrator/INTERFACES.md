@@ -23,7 +23,7 @@ barreira. Chamadores GLib não precisam fornecer runtime Tokio: os workers o hos
 
 `PreparationState` conserva os valores anteriores e acrescenta `ProcessingEvents`.
 `ReadyForAnalyzer` representa a preparação completa e o consumidor aguardando
-observações; `ProcessingEvents` representa ingestão/rechecagem/análise. Nenhum deles
+observações; `ProcessingEvents` representa ingestão/análise. Nenhum deles
 significa upload/download ou sincronização concluída.
 
 `PreparationStatus` conserva seus campos e acrescenta `events_processed: u64`,
@@ -48,21 +48,22 @@ não falhas de ingestão.
   Um evento isolado nunca cria `AbsentConfirmed`.
 - Reentrega reaproveita o recibo por `File.id` do Inventory, inclusive quando a revisão
   já foi avançada por análise anterior. Nenhum SQL é emitido pelo Orchestrator.
-- Local com snapshot mais antigo que a observação persistida, diretório, lacuna ou
-  ausência de metadados exige scan. Isso evita manter um estado local antigo após
-  ingerir eventos acumulados durante o scan inicial.
-- Rechecagem de escopo local exige Scanner completo. Observações ausentes sem item
-  associado não fabricam registros vazios; a rechecagem trata os itens conhecidos.
+- A varredura completa do Scanner ocorre somente durante a preparação inicial.
+  Eventos contínuos usam os snapshots entregues pelos Detectores; não iniciam
+  varreduras globais para compensar metadados ausentes ou observações incompletas.
+- Observações ausentes sem item associado não fabricam registros vazios nem
+  confirmam ausências. O Detector é responsável por fornecer evidência suficiente
+  para cada mudança que detecta.
 - Avisos técnicos da raiz remota não inventam SyncItem e não provam cobertura. O
   estado técnico permanece no Detector; itens existentes são reavaliados.
 - Evento remoto sem snapshot e sem item associado gera erro e continua pendente.
 
 ## Análise e ack
 
-Observações remotas comuns entregam ao Analyzer os IDs afetados, recarregando seus
-snapshots atuais. Rechecagem local/aviso global visita os itens atuais por paginação,
-inclusive status Synced ou Conflict. O Scanner já persiste sua cobertura e suas
-observações; o Orchestrator não reimplementa a coleta nem suas provas de ausência.
+Observações entregam ao Analyzer os IDs afetados, recarregando seus snapshots atuais.
+Aviso global visita os itens atuais por paginação, inclusive status Synced ou Conflict.
+O Scanner persiste a cobertura e as observações da preparação inicial; o Orchestrator
+não reimplementa a coleta nem suas provas de ausência durante ingestão contínua.
 
 A montagem de `AnalysisEvidence` permanece igual à integração anterior: presença
 conhecida por item, baseline confirmado pelo Inventory, conteúdo desconhecido sem

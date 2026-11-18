@@ -111,7 +111,6 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
         m::MetadataValue::Known("remote document".into()),
     );
     let first = ingest(&inventory, &file, &identity).unwrap();
-    assert!(!first.scan_local);
     let id = first.item.unwrap();
     let analyzer = Analyzer::new(AnalyzerConfig {
         provider: crate::models::ProviderId("google".into()),
@@ -230,7 +229,6 @@ fn remote_removal_keeps_presence_unknown_and_scope_warnings_do_not_invent_items(
     let result = ingest(&inventory, &warning, &identity).unwrap();
     assert!(result.item.is_none());
     assert!(result.analyze_all);
-    assert!(!result.scan_local);
     assert_eq!(
         inventory
             .list_items(ListItemsRequest {

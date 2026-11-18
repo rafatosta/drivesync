@@ -866,8 +866,7 @@ async fn live_ingestion_failures_keep_events_for_recovery_and_exact_file_receipt
     }
 }
 #[tokio::test]
-async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without_executing_operations(
-) {
+async fn live_rename_delete_and_stop_restart_use_detector_events_without_rescanning() {
     use drivesync_engine::inventory::*;
     let (tree, connector) = Tree::new().await;
     let root = tree.0.join("first");
@@ -875,6 +874,12 @@ async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without
     let session = tree.open(connector, "first");
     session.prepare().await.unwrap();
     settle_flow(&session);
+    let initial_scan_started_at = session
+        .preparation_status()
+        .scanner
+        .as_ref()
+        .unwrap()
+        .started_at;
     let inv = inventory(&tree, "first");
     std::fs::rename(root.join("original"), root.join("renamed")).unwrap();
     wait(|| {
@@ -886,20 +891,36 @@ async fn live_rename_delete_and_stop_restart_follow_scanner_observations_without
         })
     });
     settle_flow(&session);
+    assert_eq!(
+        session
+            .preparation_status()
+            .scanner
+            .as_ref()
+            .unwrap()
+            .started_at,
+        initial_scan_started_at
+    );
     assert!(!root.join("original").exists());
     assert_eq!(std::fs::read(root.join("renamed")).unwrap(), b"user bytes");
     std::fs::remove_file(root.join("renamed")).unwrap();
     wait(|| {
-        items(&inv)
-            .iter()
-            .filter(|i| {
-                i.local
-                    .as_ref()
-                    .is_some_and(|f| f.relative_path.as_bytes() == b"renamed")
-            })
-            .all(|i| i.local_presence == PresenceState::AbsentConfirmed)
+        items(&inv).iter().any(|i| {
+            i.local
+                .as_ref()
+                .is_some_and(|f| f.relative_path.as_bytes() == b"renamed")
+                && i.local_presence == PresenceState::Unknown
+        })
     });
     settle_flow(&session);
+    assert_eq!(
+        session
+            .preparation_status()
+            .scanner
+            .as_ref()
+            .unwrap()
+            .started_at,
+        initial_scan_started_at
+    );
     assert!(items(&inv).iter().all(|i| i.baseline.is_none()));
     assert!(inv
         .list_operations(ListOperationsRequest {
