@@ -13,17 +13,27 @@ pub struct RemoteFileRef {
     pub account_id: AccountId,
     pub file_id: RemoteFileId,
 }
-/// Classification of an observation, never a synchronization command.
+/// Action reported by an observation source, never a synchronization command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FileEventKind {
-    /// Uninterpreted source evidence; the analyzer determines its meaning.
-    Observed,
+pub enum FileEventAction {
+    /// A source signal was received but did not match one supported action.
+    Unclassified,
+    /// An initial listing or capture supplied a snapshot without asserting creation.
+    SnapshotObserved,
+    /// A provider reported a state change without identifying its dimension.
+    StateChanged,
     Created,
     Modified,
     Deleted,
+    /// The item left this observed parent; a matching destination may be unknown.
+    MoveFrom,
+    /// The item entered this observed parent; a matching source may be unknown.
+    MoveTo,
     Renamed,
     Moved,
     MetadataChanged,
+    /// A provider reports that the item left the caller's visible scope.
+    RemovedFromScope,
     RecheckRequired,
     ScopeUnavailable,
 }
@@ -85,7 +95,7 @@ pub struct FileEvent {
     pub local: Option<LocalObservation>,
     /// Raw collection evidence, present only for uninterpreted remote observations.
     pub remote: Option<RemoteObservation>,
-    pub kind: FileEventKind,
+    pub action: FileEventAction,
     /// Required for RecheckRequired; absent for classified or unavailable events.
     pub uncertainty: Option<ObservationUncertainty>,
     pub previous: Option<FileLocation>,
@@ -136,23 +146,30 @@ impl File {
             return Err(ModelError::EmptyIdentity);
         }
         let invalid = || Err(ModelError::InconsistentEvent);
-        if (self.event.kind == FileEventKind::RecheckRequired) != self.event.uncertainty.is_some() {
-            return invalid();
-        }
-        let native = self.event.local.is_some() || self.event.remote.is_some();
-        if (self.event.kind == FileEventKind::Observed) != native
-            || (self.event.local.is_some() && self.event.remote.is_some())
+        if (self.event.action == FileEventAction::RecheckRequired)
+            != self.event.uncertainty.is_some()
         {
             return invalid();
         }
-        if self.event.kind == FileEventKind::Observed
+        let native = self.event.local.is_some() || self.event.remote.is_some();
+        if (self.event.action == FileEventAction::Unclassified && !native)
+            || (self.event.local.is_some() && self.event.remote.is_some())
+            || (self.event.local.is_some() && !Self::local_action(self.event.action))
+            || (self.event.remote.is_some() && !Self::remote_action(self.event.action))
+        {
+            return invalid();
+        }
+        if self.event.action == FileEventAction::Unclassified
             && (self.event.previous.is_some()
                 || self.coverage != ObservationCoverage::Partial
-                || match &self.scope {
-                    FileScope::Remote(_) => self.event.remote.is_none(),
-                    FileScope::Local(_) => self.event.local.is_none(),
-                    FileScope::WholeSync => true,
-                })
+                || matches!(self.scope, FileScope::WholeSync))
+        {
+            return invalid();
+        }
+        if self.event.action == FileEventAction::RemovedFromScope
+            && self.event.remote.as_ref().is_none_or(|event| {
+                event.source != RemoteObservationSource::Changes || event.removed != Some(true)
+            })
         {
             return invalid();
         }
@@ -181,8 +198,8 @@ impl File {
                     || self.event.previous.is_some()
                     || self.event.current.is_some()
                     || !matches!(
-                        self.event.kind,
-                        FileEventKind::RecheckRequired | FileEventKind::ScopeUnavailable
+                        self.event.action,
+                        FileEventAction::RecheckRequired | FileEventAction::ScopeUnavailable
                     )
                 {
                     return invalid();
@@ -193,13 +210,19 @@ impl File {
                     || reference.file_id.0.trim().is_empty()
                     || self.data.is_some()
                     || !matches!(
-                        self.event.kind,
-                        FileEventKind::Observed
-                            | FileEventKind::RecheckRequired
-                            | FileEventKind::ScopeUnavailable
+                        self.event.action,
+                        FileEventAction::Unclassified
+                            | FileEventAction::RemovedFromScope
+                            | FileEventAction::RecheckRequired
+                            | FileEventAction::ScopeUnavailable
                     )
                     || self.event.current.is_some()
                     || self.event.previous.is_some()
+                    || (self.event.action == FileEventAction::RemovedFromScope
+                        && self.event.remote.as_ref().is_none_or(|event| {
+                            event.source != RemoteObservationSource::Changes
+                                || event.removed != Some(true)
+                        }))
                 {
                     return invalid();
                 }
@@ -227,37 +250,44 @@ impl File {
                 }
             }
         }
-        match self.event.kind {
-            FileEventKind::Observed => {}
-            FileEventKind::Created
-            | FileEventKind::Modified
-            | FileEventKind::MetadataChanged
-            | FileEventKind::Renamed
-            | FileEventKind::Moved => {
-                if data.is_none()
-                    || self.event.current.is_none()
-                    || self.coverage == ObservationCoverage::Unavailable
+        match self.event.action {
+            FileEventAction::Unclassified
+            | FileEventAction::SnapshotObserved
+            | FileEventAction::StateChanged
+            | FileEventAction::RemovedFromScope => {}
+            FileEventAction::Created
+            | FileEventAction::Modified
+            | FileEventAction::MetadataChanged
+            | FileEventAction::Renamed
+            | FileEventAction::Moved
+            | FileEventAction::MoveTo => {
+                if self.event.current.is_none() || self.coverage == ObservationCoverage::Unavailable
                 {
                     return invalid();
                 }
                 if matches!(
-                    self.event.kind,
-                    FileEventKind::Renamed | FileEventKind::Moved
+                    self.event.action,
+                    FileEventAction::Renamed | FileEventAction::Moved
                 ) && (self.event.previous.is_none() || self.event.previous == self.event.current)
                 {
                     return invalid();
                 }
             }
-            FileEventKind::Deleted => {
-                if data.is_some()
-                    || self.event.previous.is_none()
-                    || self.event.current.is_some()
+            FileEventAction::Deleted => {
+                if self.event.previous.is_none()
                     || self.coverage == ObservationCoverage::Unavailable
                 {
                     return invalid();
                 }
             }
-            FileEventKind::ScopeUnavailable => {
+            FileEventAction::MoveFrom => {
+                if self.event.previous.is_none()
+                    || self.coverage == ObservationCoverage::Unavailable
+                {
+                    return invalid();
+                }
+            }
+            FileEventAction::ScopeUnavailable => {
                 if data.is_some()
                     || self.event.current.is_some()
                     || self.coverage != ObservationCoverage::Unavailable
@@ -265,7 +295,7 @@ impl File {
                     return invalid();
                 }
             }
-            FileEventKind::RecheckRequired => {
+            FileEventAction::RecheckRequired => {
                 if data.is_some()
                     && (self.event.current.is_none()
                         || self.coverage == ObservationCoverage::Unavailable)
@@ -281,6 +311,37 @@ impl File {
         }
         Ok(())
     }
+
+    fn local_action(action: FileEventAction) -> bool {
+        matches!(
+            action,
+            FileEventAction::Unclassified
+                | FileEventAction::Created
+                | FileEventAction::Modified
+                | FileEventAction::Deleted
+                | FileEventAction::MoveFrom
+                | FileEventAction::MoveTo
+                | FileEventAction::Renamed
+                | FileEventAction::Moved
+                | FileEventAction::MetadataChanged
+        )
+    }
+
+    fn remote_action(action: FileEventAction) -> bool {
+        matches!(
+            action,
+            FileEventAction::Unclassified
+                | FileEventAction::SnapshotObserved
+                | FileEventAction::StateChanged
+                | FileEventAction::RemovedFromScope
+                | FileEventAction::Created
+                | FileEventAction::Modified
+                | FileEventAction::Deleted
+                | FileEventAction::Renamed
+                | FileEventAction::Moved
+                | FileEventAction::MetadataChanged
+        )
+    }
 }
 
 impl File {
@@ -289,11 +350,33 @@ impl File {
         if self.scope != FileScope::Remote(remote.reference.clone())
             || self.coverage == ObservationCoverage::Unavailable
             || matches!(
-                self.event.kind,
-                FileEventKind::Deleted | FileEventKind::ScopeUnavailable
+                self.event.action,
+                FileEventAction::Deleted
+                    | FileEventAction::RemovedFromScope
+                    | FileEventAction::ScopeUnavailable
             )
         {
             return invalid();
+        }
+        match self.event.action {
+            FileEventAction::SnapshotObserved
+                if self
+                    .event
+                    .remote
+                    .as_ref()
+                    .is_none_or(|event| event.source != RemoteObservationSource::Capture) =>
+            {
+                return invalid();
+            }
+            FileEventAction::StateChanged
+                if self.event.remote.as_ref().is_none_or(|event| {
+                    event.source != RemoteObservationSource::Changes || event.removed == Some(true)
+                }) =>
+            {
+                return invalid();
+            }
+            FileEventAction::RemovedFromScope => return invalid(),
+            _ => {}
         }
         for location in [&self.event.previous, &self.event.current]
             .into_iter()
@@ -326,8 +409,8 @@ impl File {
             }
         }
         if matches!(
-            self.event.kind,
-            FileEventKind::Renamed | FileEventKind::Moved
+            self.event.action,
+            FileEventAction::Renamed | FileEventAction::Moved
         ) && (self.event.previous.is_none() || self.event.previous == self.event.current)
         {
             return invalid();

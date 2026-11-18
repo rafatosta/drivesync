@@ -62,7 +62,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
         scope: m::FileScope::Remote(reference.clone()),
         coverage: m::ObservationCoverage::Partial,
         event: m::FileEvent {
-            kind: m::FileEventKind::Observed,
+            action: m::FileEventAction::StateChanged,
             local: None,
             remote: Some(m::RemoteObservation {
                 source: m::RemoteObservationSource::Changes,
@@ -133,6 +133,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     };
     let first = analyzer
         .analyze(AnalyzeRequest {
+            observations: Vec::new(),
             directive: None,
             sync_id: identity.sync_id.clone(),
             item: item(&inventory, id.clone()),
@@ -150,6 +151,7 @@ async fn remote_observation_reaches_analyzer_and_redelivery_reuses_inventory_rec
     );
     let second = analyzer
         .analyze(AnalyzeRequest {
+            observations: Vec::new(),
             directive: None,
             sync_id: identity.sync_id.clone(),
             item: item(&inventory, id),
@@ -218,7 +220,7 @@ fn remote_removal_keeps_presence_unknown_and_scope_warnings_do_not_invent_items(
         coverage: ObservationCoverage::Unavailable,
         data: None,
         event: FileEvent {
-            kind: FileEventKind::ScopeUnavailable,
+            action: FileEventAction::ScopeUnavailable,
             local: None,
             remote: None,
             uncertainty: None,

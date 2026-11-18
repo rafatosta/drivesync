@@ -170,6 +170,7 @@ pub(super) async fn analyze_all(
     expected: u64,
     connector: crate::Engine,
     execution: Arc<super::execution::ExecutionControl>,
+    observations: Vec<crate::models::File>,
 ) -> Result<(), PreparationFailure> {
     current(&epoch, expected)?;
     let provider = account_provider(&connector, &identity).await?;
@@ -225,6 +226,7 @@ pub(super) async fn analyze_all(
             epoch: &epoch,
             expected,
             execution: &execution,
+            observations: &observations,
         };
         for (index, (_, _, id)) in items.into_iter().enumerate() {
             analyze_item(&context, id, index as u64, Some(total)).await?;
@@ -243,6 +245,7 @@ pub(super) async fn analyze_selected(
     ids: std::collections::BTreeSet<SyncItemId>,
     connector: crate::Engine,
     execution: Arc<super::execution::ExecutionControl>,
+    observations: Vec<crate::models::File>,
 ) -> Result<(), PreparationFailure> {
     let provider = account_provider(&connector, &identity).await?;
     let analyzer = Analyzer::new(AnalyzerConfig {
@@ -261,7 +264,16 @@ pub(super) async fn analyze_selected(
     })
     .map_err(PreparationFailure::Analyzer)?;
     if execution.snapshot().enabled {
-        return analyze_all(inventory, identity, epoch, expected, connector, execution).await;
+        return analyze_all(
+            inventory,
+            identity,
+            epoch,
+            expected,
+            connector,
+            execution,
+            observations,
+        )
+        .await;
     }
     let total = ids.len() as u64;
     execution.update_analysis_progress(0, Some(total));
@@ -272,6 +284,7 @@ pub(super) async fn analyze_selected(
         epoch: &epoch,
         expected,
         execution: &execution,
+        observations: &observations,
     };
     for (index, id) in ids.into_iter().enumerate() {
         analyze_item(&context, id, index as u64, Some(total)).await?;
@@ -286,6 +299,7 @@ struct ItemAnalysis<'a> {
     epoch: &'a AtomicU64,
     expected: u64,
     execution: &'a super::execution::ExecutionControl,
+    observations: &'a [crate::models::File],
 }
 
 async fn analyze_item(
@@ -327,6 +341,7 @@ async fn analyze_item(
     let current_item = item.clone();
     let analysis = context.analyzer.analyze(AnalyzeRequest {
         directive: None,
+        observations: context.observations.to_vec(),
         sync_id: context.identity.sync_id.clone(),
         item,
         evidence,
@@ -414,7 +429,13 @@ fn run_pass(
         .build()
         .map_err(|_| PreparationFailure::Internal)?;
     runtime.block_on(analyze_all(
-        inventory, identity, epoch, expected, connector, execution,
+        inventory,
+        identity,
+        epoch,
+        expected,
+        connector,
+        execution,
+        Vec::new(),
     ))
 }
 
@@ -453,7 +474,16 @@ pub(super) async fn retry_pending(
         .is_empty()
         || execution.probe_retry_due();
     if due {
-        analyze_all(inventory, identity, epoch, expected, connector, execution).await?;
+        analyze_all(
+            inventory,
+            identity,
+            epoch,
+            expected,
+            connector,
+            execution,
+            Vec::new(),
+        )
+        .await?;
     }
     Ok(())
 }

@@ -63,7 +63,7 @@ impl Tree {
             event: FileEvent {
                 local: None,
                 remote: None,
-                kind: FileEventKind::RecheckRequired,
+                action: FileEventAction::RecheckRequired,
                 previous: None,
                 current: None,
                 uncertainty: Some(ObservationUncertainty::CaptureStarted),
@@ -120,7 +120,7 @@ fn enqueue_reopen_complete_payload_bytes_order_and_idempotent_ack() {
     file.event = FileEvent {
         local: None,
         remote: None,
-        kind: FileEventKind::Renamed,
+        action: FileEventAction::Renamed,
         previous: Some(FileLocation::Local(
             LocalRelativePath::new(b"old".to_vec()).unwrap(),
         )),
@@ -532,7 +532,7 @@ fn native_local_evidence_and_history_survive_sqlite_reopen_release_and_ack() {
     let store = tree.store(&clock);
     let mut file = tree.event("native-move-half");
     file.scope = FileScope::Local(LocalRelativePath::new(b"before-\xff".to_vec()).unwrap());
-    file.event.kind = FileEventKind::Observed;
+    file.event.action = FileEventAction::MoveFrom;
     file.event.uncertainty = None;
     file.event.local = Some(LocalObservation {
         capture_id: "capture-session".into(),

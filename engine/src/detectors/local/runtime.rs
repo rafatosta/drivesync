@@ -6,7 +6,7 @@ use super::{
     watcher::{Hints, Limits, Wake, Watches},
 };
 use crate::models::{
-    File, FileData, FileEvent, FileEventKind, FileId, FileLocation, FileScope, LocalObservation,
+    File, FileData, FileEvent, FileEventAction, FileId, FileLocation, FileScope, LocalObservation,
     LocalRelativePath, ObservationCoverage, ObservationUncertainty, Timestamp,
 };
 use std::{
@@ -419,10 +419,10 @@ fn envelope(
         event: FileEvent {
             local: None,
             remote: None,
-            kind: if unavailable {
-                FileEventKind::ScopeUnavailable
+            action: if unavailable {
+                FileEventAction::ScopeUnavailable
             } else {
-                FileEventKind::RecheckRequired
+                FileEventAction::RecheckRequired
             },
             uncertainty: (!unavailable).then_some(ObservationUncertainty::ObservationUnstable),
             previous: None,
@@ -449,6 +449,46 @@ fn envelope(
     file.validate()
         .map_err(|_| LocalDetectorFailure::new(LocalDetectorError::ModelInvalid))?;
     Ok(file)
+}
+
+fn apply_native_action(file: &mut File, path: &LocalRelativePath, signal: LocalObservation) {
+    let event_mask = signal.mask
+        & (libc::IN_CREATE
+            | libc::IN_DELETE
+            | libc::IN_MODIFY
+            | libc::IN_CLOSE_WRITE
+            | libc::IN_ATTRIB
+            | libc::IN_MOVED_FROM
+            | libc::IN_MOVED_TO);
+    let action = if event_mask == libc::IN_CREATE {
+        FileEventAction::Created
+    } else if event_mask == libc::IN_DELETE {
+        FileEventAction::Deleted
+    } else if event_mask != 0 && event_mask & !(libc::IN_MODIFY | libc::IN_CLOSE_WRITE) == 0 {
+        FileEventAction::Modified
+    } else if event_mask == libc::IN_ATTRIB {
+        FileEventAction::MetadataChanged
+    } else if event_mask == libc::IN_MOVED_FROM {
+        FileEventAction::MoveFrom
+    } else if event_mask == libc::IN_MOVED_TO {
+        FileEventAction::MoveTo
+    } else {
+        FileEventAction::Unclassified
+    };
+    let location = FileLocation::Local(path.clone());
+    file.event.action = action;
+    file.event.local = Some(signal);
+    file.event.uncertainty = None;
+    file.event.previous = matches!(action, FileEventAction::Deleted | FileEventAction::MoveFrom)
+        .then(|| location.clone());
+    file.event.current = if file.data.is_some()
+        || !matches!(action, FileEventAction::Deleted | FileEventAction::MoveFrom)
+    {
+        Some(location)
+    } else {
+        None
+    };
+    file.coverage = ObservationCoverage::Partial;
 }
 
 #[allow(
@@ -594,15 +634,12 @@ fn run(
                                 let mut event = envelope(
                                     &mut ids,
                                     &scope.sync_id,
-                                    Some(path),
+                                    Some(path.clone()),
                                     Some(result),
                                     false,
                                 )?;
-                                if native.is_some() {
-                                    event.event.kind = FileEventKind::Observed;
-                                    event.event.local = native;
-                                    event.event.uncertainty = None;
-                                    event.coverage = ObservationCoverage::Partial;
+                                if let Some(native) = native {
+                                    apply_native_action(&mut event, &path, native);
                                     event.validate().map_err(|_| {
                                         LocalDetectorFailure::new(LocalDetectorError::ModelInvalid)
                                     })?;
@@ -615,12 +652,15 @@ fn run(
                             Err(failure) => {
                                 error = Some(failure.kind);
                                 round_coverage = LocalScanCoverage::Partial;
-                                let mut event =
-                                    envelope(&mut ids, &scope.sync_id, Some(path), None, true)?;
-                                if native.is_some() {
-                                    event.event.kind = FileEventKind::Observed;
-                                    event.event.local = native;
-                                    event.coverage = ObservationCoverage::Partial;
+                                let mut event = envelope(
+                                    &mut ids,
+                                    &scope.sync_id,
+                                    Some(path.clone()),
+                                    None,
+                                    true,
+                                )?;
+                                if let Some(native) = native {
+                                    apply_native_action(&mut event, &path, native);
                                 }
                                 event
                             }

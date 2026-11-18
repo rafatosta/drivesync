@@ -156,7 +156,7 @@ fn real_capture_remains_healthy_when_remote_requires_authorization_and_pause_kee
     assert!(batch
         .files
         .iter()
-        .any(|file| file.event.kind == FileEventKind::ScopeUnavailable));
+        .any(|file| file.event.action == FileEventAction::ScopeUnavailable));
     detector.pause(DetectorPauseRequest {}).unwrap();
     detector
         .acknowledge(AcknowledgeEventsRequest {
@@ -242,7 +242,10 @@ fn abruptly_terminated_unified_detector_replays_the_exact_committed_file() {
     child.wait().unwrap();
     let original: File =
         serde_json::from_slice(&std::fs::read(tree.0.join("committed.json")).unwrap()).unwrap();
-    assert_eq!(original.event.kind, FileEventKind::Observed);
+    assert!(matches!(
+        original.event.action,
+        FileEventAction::Modified | FileEventAction::MoveFrom | FileEventAction::MoveTo
+    ));
     assert!(original
         .event
         .local

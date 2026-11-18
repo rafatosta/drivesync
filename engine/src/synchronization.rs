@@ -10,7 +10,7 @@ use crate::{
         RemoteCoverage, RemoteError, RemoteState,
     },
     inventory::{InventoryError, ItemKind, SyncItemId},
-    models::{FileEventKind, FileLocation, LocalRelativePath, RemoteFileId, RemoteFileRef},
+    models::{FileEventAction, FileLocation, LocalRelativePath, RemoteFileId, RemoteFileRef},
     operations::{ExecutionPhase, OperatorError},
     Timestamp,
 };
@@ -168,7 +168,7 @@ pub struct SynchronizationWork {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SynchronizationEvent {
     /// Filesystem or remote change that prompted the ingestion.
-    pub kind: FileEventKind,
+    pub action: FileEventAction,
     /// Previous location for moves and renames, when known.
     pub previous: Option<FileLocation>,
     /// Current location, when the item still has one.

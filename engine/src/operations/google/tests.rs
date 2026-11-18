@@ -1523,7 +1523,11 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
             },
             coverage: ObservationCoverage::Partial,
             event: crate::models::FileEvent {
-                kind: FileEventKind::Observed,
+                action: if upload {
+                    FileEventAction::Modified
+                } else {
+                    FileEventAction::StateChanged
+                },
                 local: if upload {
                     Some(crate::models::LocalObservation {
                         capture_id: "test".into(),
@@ -1617,6 +1621,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
         };
         analyzer
             .analyze(AnalyzeRequest {
+                observations: Vec::new(),
                 directive: None,
                 sync_id: SyncId("sync".into()),
                 item: item.clone(),
@@ -1667,6 +1672,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
             );
             analyzer
                 .analyze(AnalyzeRequest {
+                    observations: Vec::new(),
                     directive: None,
                     sync_id: SyncId("sync".into()),
                     item: f
@@ -1728,6 +1734,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
         let started = f.server.state.lock().unwrap().started;
         analyzer
             .analyze(AnalyzeRequest {
+                observations: Vec::new(),
                 directive: None,
                 sync_id: SyncId("sync".into()),
                 item: current.clone(),
@@ -1811,7 +1818,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                     scope: FileScope::Local(path.clone()),
                     coverage: ObservationCoverage::Partial,
                     event: crate::models::FileEvent {
-                        kind: FileEventKind::Observed,
+                        action: FileEventAction::Modified,
                         local: Some(crate::models::LocalObservation {
                             capture_id: "mutation".into(),
                             mask: libc::IN_MODIFY,
@@ -1847,6 +1854,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                 }
                 analyzer
                     .analyze(AnalyzeRequest {
+                        observations: Vec::new(),
                         directive: None,
                         sync_id: SyncId("sync".into()),
                         item: updated,
@@ -1915,6 +1923,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                         .count();
                     analyzer
                         .analyze(AnalyzeRequest {
+                            observations: Vec::new(),
                             directive: None,
                             sync_id: SyncId("sync".into()),
                             item: updated,
@@ -1958,6 +1967,7 @@ async fn analyzer_dispatches_download_and_upload_and_confirms_verified_baselines
                     let previous_baseline = updated.baseline.clone();
                     analyzer
                         .analyze(AnalyzeRequest {
+                            observations: Vec::new(),
                             directive: None,
                             sync_id: SyncId("sync".into()),
                             item: updated,

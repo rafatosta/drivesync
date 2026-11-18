@@ -15,7 +15,7 @@
 //!     identity: identity.clone(),
 //!     dependencies: AnalyzerDependencies { inventory, execution: None },
 //! })?;
-//! let outcome = analyzer.analyze(AnalyzeRequest { directive: None,
+//! let outcome = analyzer.analyze(AnalyzeRequest { directive: None, observations: vec![],
 //!     sync_id: identity.sync_id, item, evidence, recorded_at,
 //! }).await?;
 //! let durable_receipt = outcome.analysis.id;
@@ -143,6 +143,11 @@ impl Analyzer {
             return Err(error(AnalyzerErrorKind::WrongSyncScope));
         }
         if request.item.id.0.trim().is_empty() || request.item.revision == 0 {
+            return Err(error(AnalyzerErrorKind::InvalidRequest));
+        }
+        if request.observations.iter().any(|observation| {
+            observation.sync_id != request.sync_id || observation.validate().is_err()
+        }) {
             return Err(error(AnalyzerErrorKind::InvalidRequest));
         }
         let runtime = tokio::runtime::Handle::try_current()

@@ -213,7 +213,7 @@ impl Context {
     fn publish_event(&self, file: &Observation, processed: u64, total: u64) {
         let item = observation_item(file);
         let event = SynchronizationEvent {
-            kind: file.event.kind,
+            action: file.event.action,
             previous: file.event.previous.clone(),
             current: file.event.current.clone(),
             observed_at: file.observed_at,
@@ -437,6 +437,7 @@ async fn process_files(
     stop: &AtomicBool,
     files: Vec<Observation>,
 ) -> Result<(), PreparationFailure> {
+    let observations = files.clone();
     let mut ids = BTreeSet::new();
     let mut all = false;
     let total = files.len() as u64;
@@ -460,6 +461,7 @@ async fn process_files(
                 context.expected,
                 context.connector.clone(),
                 context.execution.clone(),
+                observations,
             ))
             .await?;
     } else {
@@ -472,6 +474,7 @@ async fn process_files(
                 ids,
                 context.connector.clone(),
                 context.execution.clone(),
+                observations,
             ))
             .await?;
     }

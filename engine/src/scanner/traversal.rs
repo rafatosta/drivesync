@@ -90,7 +90,7 @@ impl Run<'_> {
                 ObservationCoverage::Partial
             },
             event: FileEvent {
-                kind: FileEventKind::RecheckRequired,
+                action: FileEventAction::RecheckRequired,
                 local: None,
                 remote: None,
                 uncertainty: Some(ObservationUncertainty::UnclassifiedSignal),

@@ -274,8 +274,8 @@ fn live_account_selection_and_detector_layout() {
     let after_save = session.diagnostics();
     assert!(after_save.events_detected > before_save + 1);
     assert_eq!(
-        after_save.events.last().unwrap().event.kind,
-        drivesync_engine::models::FileEventKind::Observed
+        after_save.events.last().unwrap().event.action,
+        drivesync_engine::models::FileEventAction::Modified
     );
     assert!(texts(page.upcast_ref()).contains("ordinary-source"));
     let before_gio_save = session.diagnostics().events_detected;
@@ -297,8 +297,8 @@ fn live_account_selection_and_detector_layout() {
         "GIO notifications must reach the sink without action normalization"
     );
     assert_eq!(
-        after_gio_save.events.last().unwrap().event.kind,
-        drivesync_engine::models::FileEventKind::Observed
+        after_gio_save.events.last().unwrap().event.action,
+        drivesync_engine::models::FileEventAction::Modified
     );
     std::fs::create_dir(base.join("personal@example.invalid/new-folder")).unwrap();
     settle();

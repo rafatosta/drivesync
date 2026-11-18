@@ -142,7 +142,7 @@ fn remote_file(id: &str) -> File {
         event: FileEvent {
             local: None,
             remote: None,
-            kind: FileEventKind::Created,
+            action: FileEventAction::Created,
             uncertainty: None,
             previous: None,
             current: Some(FileLocation::Remote {
@@ -181,7 +181,7 @@ fn local_file(tree: &Tree, id: &str) -> File {
         event: FileEvent {
             local: None,
             remote: None,
-            kind: FileEventKind::Created,
+            action: FileEventAction::Created,
             uncertainty: None,
             previous: None,
             current: Some(FileLocation::Local(path.clone())),
@@ -402,7 +402,7 @@ fn source_counters_distinguish_bootstrap_and_real_changes() {
         event: FileEvent {
             local: None,
             remote: None,
-            kind: FileEventKind::RecheckRequired,
+            action: FileEventAction::RecheckRequired,
             uncertainty: Some(ObservationUncertainty::CaptureStarted),
             previous: None,
             current: None,

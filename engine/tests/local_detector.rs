@@ -2,7 +2,7 @@
 use drivesync_engine::{
     detectors::*,
     models::{
-        AccountId, File, FileData, FileEventKind, FileScope, LocalRelativePath, MetadataValue,
+        AccountId, File, FileData, FileEventAction, FileScope, LocalRelativePath, MetadataValue,
         SyncId, Timestamp,
     },
 };
@@ -98,12 +98,20 @@ fn path(file: &File, expected: &[u8]) -> bool {
     file.scope == FileScope::Local(LocalRelativePath::new(expected.to_vec()).unwrap())
 }
 fn signal(file: &File, mask: u32) -> bool {
-    file.event.kind == FileEventKind::Observed
-        && file
-            .event
-            .local
-            .as_ref()
-            .is_some_and(|evidence| evidence.mask & mask != 0)
+    file.event.local.as_ref().is_some_and(|evidence| {
+        evidence.mask & mask != 0
+            && match mask {
+                libc::IN_CREATE => file.event.action == FileEventAction::Created,
+                libc::IN_DELETE => file.event.action == FileEventAction::Deleted,
+                libc::IN_MODIFY | libc::IN_CLOSE_WRITE => {
+                    file.event.action == FileEventAction::Modified
+                }
+                libc::IN_ATTRIB => file.event.action == FileEventAction::MetadataChanged,
+                libc::IN_MOVED_FROM => file.event.action == FileEventAction::MoveFrom,
+                libc::IN_MOVED_TO => file.event.action == FileEventAction::MoveTo,
+                _ => file.event.action == FileEventAction::Unclassified,
+            }
+    })
 }
 fn size(file: &File, expected: u64) -> bool {
     matches!(&file.data,Some(FileData::Local(data))if data.storage.size_bytes==MetadataValue::Known(expected))
@@ -246,7 +254,7 @@ fn root_replacement_emits_unavailable_and_cannot_silently_bind_another_root() {
     fs::rename(tree.0.join("root"), tree.0.join("old")).unwrap();
     fs::create_dir(tree.0.join("root")).unwrap();
     receive(&rx, |f| {
-        f.event.kind == FileEventKind::ScopeUnavailable && f.scope == FileScope::WholeSync
+        f.event.action == FileEventAction::ScopeUnavailable && f.scope == FileScope::WholeSync
     });
     wait_state(&detector, LocalDetectorState::Failed);
     stop(&detector);
@@ -453,7 +461,7 @@ fn ancestor_replacement_is_detected_without_file_activity() {
     ready(&rx);
     fs::rename(&parent, tree.0.join("old-parent")).unwrap();
     fs::create_dir_all(parent.join("root")).unwrap();
-    receive(&rx, |f| f.event.kind == FileEventKind::ScopeUnavailable);
+    receive(&rx, |f| f.event.action == FileEventAction::ScopeUnavailable);
     wait_state(&detector, LocalDetectorState::Failed);
     stop(&detector);
 }

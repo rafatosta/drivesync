@@ -42,16 +42,21 @@ fn location(location: &FileLocation) -> String {
         FileLocation::Remote { name, .. } => name.clone().unwrap_or_else(|| "Remote item".into()),
     }
 }
-fn event_label(kind: drivesync_engine::models::FileEventKind) -> (&'static str, &'static str) {
-    use drivesync_engine::models::FileEventKind::*;
+fn event_label(kind: drivesync_engine::models::FileEventAction) -> (&'static str, &'static str) {
+    use drivesync_engine::models::FileEventAction::*;
     match kind {
-        Observed => ("OBSERVED", "detector-event-modified"),
+        Unclassified => ("UNCLASSIFIED", "detector-event-recheck"),
+        SnapshotObserved => ("SNAPSHOT", "detector-event-modified"),
+        StateChanged => ("STATE CHANGE", "detector-event-modified"),
         Created => ("CREATE", "detector-event-created"),
         Modified => ("MODIFY", "detector-event-modified"),
         Renamed => ("RENAME", "detector-event-location"),
         Moved => ("MOVE", "detector-event-location"),
+        MoveFrom => ("MOVE FROM", "detector-event-location"),
+        MoveTo => ("MOVE TO", "detector-event-location"),
         Deleted => ("DELETE", "detector-event-deleted"),
         MetadataChanged => ("METADATA", "detector-event-modified"),
+        RemovedFromScope => ("LEFT SCOPE", "detector-event-deleted"),
         RecheckRequired => ("RECHECK", "detector-event-recheck"),
         ScopeUnavailable => ("UNAVAILABLE", "detector-event-deleted"),
     }
@@ -82,7 +87,8 @@ fn description(event: &DetectorEventSummary) -> String {
             FileScope::Local(path) => String::from_utf8_lossy(path.as_bytes()).into_owned(),
             FileScope::WholeSync => "Verify monitored folder".into(),
             FileScope::Remote(reference)
-                if event.event.kind == drivesync_engine::models::FileEventKind::Observed =>
+                if event.event.action
+                    == drivesync_engine::models::FileEventAction::Unclassified =>
             {
                 format!("Remote item {}", reference.file_id.0)
             }
@@ -314,7 +320,7 @@ Delivery: {delivery:?} · Leased: {} · Confirmed: {} · Initial/recovery observ
             let timestamp = label(&time(event.observed_at), "caption");
             timestamp.set_width_chars(8);
             row.append(&timestamp);
-            let (title, class) = event_label(event.event.kind);
+            let (title, class) = event_label(event.event.action);
             let kind = label(title, "caption-heading");
             kind.add_css_class("detector-event");
             kind.add_css_class(class);

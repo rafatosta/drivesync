@@ -57,7 +57,7 @@ pub(super) fn reconcile(request: &AnalyzeRequest) -> AnalyzerResult<r::Reconcili
             requirements: vec![r::Requirement::VerifyBaseline],
         });
     }
-    r::reconcile(r::ReconciliationRequest {
+    let mut assessment = r::reconcile(r::ReconciliationRequest {
         item: request.item.clone(),
         evidence: r::ReconciliationEvidence {
             local_observation: if e.local_scope_complete {
@@ -87,7 +87,49 @@ pub(super) fn reconcile(request: &AnalyzeRequest) -> AnalyzerResult<r::Reconcili
             r::ReconciliationError::InvalidEvidence => AnalyzerErrorKind::InvalidEvidence,
             _ => AnalyzerErrorKind::InvalidRequest,
         })
-    })
+    })?;
+    for observation in request
+        .observations
+        .iter()
+        .filter(|observation| observation_targets_item(observation, &request.item))
+    {
+        match observation.event.action {
+            crate::models::FileEventAction::Deleted
+            | crate::models::FileEventAction::RemovedFromScope => {
+                assessment.require(r::Requirement::VerifySurvivingState);
+                assessment.require(r::Requirement::AuthorizeDeletion);
+            }
+            crate::models::FileEventAction::MoveFrom | crate::models::FileEventAction::MoveTo => {
+                assessment.require(r::Requirement::VerifySurvivingState);
+            }
+            _ => {}
+        }
+    }
+    Ok(assessment)
+}
+
+fn observation_targets_item(observation: &crate::models::File, item: &SyncItem) -> bool {
+    use crate::models::{FileEventAction, FileLocation, FileScope};
+    let local_matches = |path: &crate::models::LocalRelativePath| {
+        item.local_latest
+            .as_ref()
+            .or(item.local.as_ref())
+            .is_some_and(|local| &local.relative_path == path)
+    };
+    match &observation.scope {
+        FileScope::Local(path) => local_matches(path)
+            || [&observation.event.previous, &observation.event.current]
+                .into_iter()
+                .flatten()
+                .any(
+                    |location| matches!(location, FileLocation::Local(path) if local_matches(path)),
+                ),
+        FileScope::Remote(reference) => item.remote_ref.as_ref() == Some(reference),
+        FileScope::WholeSync => matches!(
+            observation.event.action,
+            FileEventAction::RecheckRequired | FileEventAction::ScopeUnavailable
+        ),
+    }
 }
 pub(super) fn conflicts(request: &AnalyzeRequest) -> AnalyzerResult<c::ConflictAssessment> {
     let active = active_view(request);

@@ -24,6 +24,8 @@ pub struct AnalyzerConfig {
 #[derive(Debug, Clone)]
 pub struct AnalyzeRequest {
     pub directive: Option<crate::operations::RestoreSelection>,
+    /// Source events for this analysis pass; these are evidence, not deletion proof.
+    pub observations: Vec<crate::models::File>,
     pub sync_id: SyncId,
     pub item: SyncItem,
     pub evidence: AnalysisEvidence,

@@ -378,7 +378,7 @@ fn remote_observation(
         scope: FileScope::Remote(reference.clone()),
         data: Some(FileData::Remote(remote)),
         event: FileEvent {
-            kind: FileEventKind::Observed,
+            action: FileEventAction::StateChanged,
             local: None,
             remote: Some(drivesync_engine::models::RemoteObservation {
                 source: RemoteObservationSource::Changes,

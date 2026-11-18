@@ -116,7 +116,7 @@ mod tests {
             event: FileEvent {
                 local: None,
                 remote: None,
-                kind: FileEventKind::Created,
+                action: FileEventAction::Created,
                 uncertainty: None,
                 previous: None,
                 current: Some(FileLocation::Remote {

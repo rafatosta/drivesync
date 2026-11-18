@@ -64,7 +64,7 @@ fn remote_file(event: &str, id: &str, name: m::MetadataValue<String>) -> m::File
         scope: m::FileScope::Remote(reference.clone()),
         coverage: m::ObservationCoverage::Partial,
         event: m::FileEvent {
-            kind: m::FileEventKind::Observed,
+            action: m::FileEventAction::StateChanged,
             local: None,
             remote: Some(m::RemoteObservation {
                 source: m::RemoteObservationSource::Changes,

@@ -241,7 +241,7 @@ async fn local_scan_preserves_remote_baseline_and_last_sync_but_marks_work_pendi
         coverage: ObservationCoverage::Partial,
         scope: FileScope::Remote(reference.clone()),
         event: FileEvent {
-            kind: FileEventKind::Observed,
+            action: FileEventAction::StateChanged,
             local: None,
             remote: Some(crate::models::RemoteObservation {
                 source: RemoteObservationSource::Changes,

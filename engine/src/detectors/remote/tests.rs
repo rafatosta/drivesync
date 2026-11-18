@@ -430,7 +430,7 @@ fn scheduler_and_queue_accept_a_provider_independent_observer() {
                 event: FileEvent {
                     local: None,
                     remote: None,
-                    kind: FileEventKind::RecheckRequired,
+                    action: FileEventAction::RecheckRequired,
                     uncertainty: Some(ObservationUncertainty::CaptureStarted),
                     previous: None,
                     current: None,
@@ -662,7 +662,7 @@ fn sqlite_restart_preserves_observations_after_failures_before_and_after_cursor_
             RemoteError::CheckpointUnavailable
         );
         let original = detector.shared.store.recent().unwrap()[0].clone();
-        assert_eq!(original.event.kind, FileEventKind::Observed);
+        assert_eq!(original.event.action, FileEventAction::SnapshotObserved);
         assert_eq!(
             original.event.remote.as_ref().unwrap().source,
             RemoteObservationSource::Capture
@@ -726,7 +726,7 @@ fn sqlite_preserves_removal_signal_and_resource_identity_through_delivery_and_re
         .unwrap();
     let original = detector.shared.store.recent().unwrap();
     let removed = original.iter().find(|file| file.data.is_none()).unwrap();
-    assert_eq!(removed.event.kind, FileEventKind::Observed);
+    assert_eq!(removed.event.action, FileEventAction::RemovedFromScope);
     assert_eq!(
         removed.scope,
         FileScope::Remote(RemoteFileRef {

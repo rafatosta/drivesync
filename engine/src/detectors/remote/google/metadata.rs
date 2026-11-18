@@ -138,6 +138,12 @@ pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> R
             )
         }
     };
+    let action = match (raw.source, evidence.removed, file.is_some()) {
+        (RemoteObservationSource::Capture, _, true) => FileEventAction::SnapshotObserved,
+        (RemoteObservationSource::Changes, Some(true), false) => FileEventAction::RemovedFromScope,
+        (RemoteObservationSource::Changes, _, true) => FileEventAction::StateChanged,
+        _ => FileEventAction::Unclassified,
+    };
     let event = File {
         id: raw.id.clone(),
         sync_id: raw.sync_id.clone(),
@@ -150,7 +156,7 @@ pub(crate) fn extract(raw: &crate::detectors::record::RawRemoteObservation) -> R
         event: FileEvent {
             local: None,
             remote: Some(evidence),
-            kind: FileEventKind::Observed,
+            action,
             uncertainty: None,
             previous: None,
             current: file

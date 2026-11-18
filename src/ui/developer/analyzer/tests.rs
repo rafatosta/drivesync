@@ -200,7 +200,7 @@ fn seed(root: &Path, account: &str, count: usize) -> OpenInventoryRequest {
                         scope: FileScope::Remote(reference.clone()),
                         data: Some(FileData::Remote(file)),
                         event: FileEvent {
-                            kind: FileEventKind::Observed,
+                            action: FileEventAction::StateChanged,
                             local: None,
                             remote: Some(drivesync_engine::models::RemoteObservation {
                                 source: RemoteObservationSource::Changes,
@@ -698,7 +698,7 @@ fn application_startup_delivers_live_files_to_the_visible_analyzer_without_manua
                     coverage: ObservationCoverage::Partial,
                     data: Some(FileData::Remote(file)),
                     event: FileEvent {
-                        kind: FileEventKind::Observed,
+                        action: FileEventAction::StateChanged,
                         local: None,
                         remote: Some(drivesync_engine::models::RemoteObservation {
                             source: RemoteObservationSource::Changes,

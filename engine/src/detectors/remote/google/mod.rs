@@ -170,7 +170,7 @@ impl GoogleRemoteDetector {
     fn warning_event(
         &self,
         state: &State,
-        kind: FileEventKind,
+        kind: FileEventAction,
         reason: Option<ObservationUncertainty>,
     ) -> RemoteResult<File> {
         let event = File {
@@ -179,13 +179,13 @@ impl GoogleRemoteDetector {
             event: FileEvent {
                 local: None,
                 remote: None,
-                kind,
+                action: kind,
                 uncertainty: reason,
                 previous: None,
                 current: None,
             },
             observed_at: now(),
-            coverage: if kind == FileEventKind::ScopeUnavailable {
+            coverage: if kind == FileEventAction::ScopeUnavailable {
                 ObservationCoverage::Unavailable
             } else {
                 ObservationCoverage::Partial
@@ -310,9 +310,9 @@ impl GoogleRemoteDetector {
         let event = self.warning_event(
             &state,
             if inaccessible {
-                FileEventKind::ScopeUnavailable
+                FileEventAction::ScopeUnavailable
             } else {
-                FileEventKind::RecheckRequired
+                FileEventAction::RecheckRequired
             },
             if inaccessible {
                 None
@@ -358,7 +358,7 @@ impl GoogleRemoteDetector {
                 .ok_or_else(|| RemoteFailure::new(RemoteError::CheckpointUnavailable))?;
             let event = self.warning_event(
                 &state,
-                FileEventKind::RecheckRequired,
+                FileEventAction::RecheckRequired,
                 Some(ObservationUncertainty::CoverageIncomplete),
             )?;
             // Recovery never assumes that unseen entries were deleted.

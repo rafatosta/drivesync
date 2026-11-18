@@ -33,19 +33,27 @@ fn local_file() -> LocalFile {
         },
     }
 }
-fn event(kind: FileEventKind) -> File {
+fn event(kind: FileEventAction) -> File {
     let path = LocalRelativePath::new(b"file".to_vec()).unwrap();
     File {
         id: FileId("event-id".into()),
         sync_id: SyncId("sync".into()),
         observed_at: Timestamp { unix_millis: 42 },
-        coverage: ObservationCoverage::Complete,
+        coverage: if kind == FileEventAction::Unclassified {
+            ObservationCoverage::Partial
+        } else {
+            ObservationCoverage::Complete
+        },
         scope: FileScope::Local(path.clone()),
         event: FileEvent {
-            local: None,
+            local: (kind == FileEventAction::Unclassified).then(|| LocalObservation {
+                capture_id: "session".into(),
+                mask: libc::IN_IGNORED,
+                cookie: 0,
+            }),
             remote: None,
-            kind,
-            uncertainty: (kind == FileEventKind::RecheckRequired)
+            action: kind,
+            uncertainty: (kind == FileEventAction::RecheckRequired)
                 .then_some(ObservationUncertainty::ObservationUnstable),
             previous: None,
             current: Some(FileLocation::Local(path)),
@@ -56,27 +64,27 @@ fn event(kind: FileEventKind) -> File {
 #[test]
 fn local_envelopes_validate_all_eight_event_kinds_and_preserve_complete_payload() {
     for kind in [
-        FileEventKind::Created,
-        FileEventKind::Modified,
-        FileEventKind::MetadataChanged,
-        FileEventKind::Renamed,
-        FileEventKind::Moved,
-        FileEventKind::Deleted,
-        FileEventKind::RecheckRequired,
-        FileEventKind::ScopeUnavailable,
+        FileEventAction::Created,
+        FileEventAction::Modified,
+        FileEventAction::MetadataChanged,
+        FileEventAction::Renamed,
+        FileEventAction::Moved,
+        FileEventAction::Deleted,
+        FileEventAction::RecheckRequired,
+        FileEventAction::ScopeUnavailable,
     ] {
         let mut file = event(kind);
         match kind {
-            FileEventKind::Renamed | FileEventKind::Moved => {
+            FileEventAction::Renamed | FileEventAction::Moved => {
                 file.event.previous = Some(FileLocation::Local(
                     LocalRelativePath::new(b"old".to_vec()).unwrap(),
                 ))
             }
-            FileEventKind::Deleted => {
+            FileEventAction::Deleted => {
                 file.event.previous = file.event.current.take();
                 file.data = None;
             }
-            FileEventKind::ScopeUnavailable => {
+            FileEventAction::ScopeUnavailable => {
                 file.event.current = None;
                 file.data = None;
                 file.coverage = ObservationCoverage::Unavailable;
@@ -91,8 +99,8 @@ fn local_envelopes_validate_all_eight_event_kinds_and_preserve_complete_payload(
 #[test]
 fn whole_sync_only_accepts_uncertainty_without_data_or_locations() {
     for kind in [
-        FileEventKind::RecheckRequired,
-        FileEventKind::ScopeUnavailable,
+        FileEventAction::RecheckRequired,
+        FileEventAction::ScopeUnavailable,
     ] {
         let mut file = event(kind);
         file.scope = FileScope::WholeSync;
@@ -105,7 +113,7 @@ fn whole_sync_only_accepts_uncertainty_without_data_or_locations() {
         ));
         assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
     }
-    let mut file = event(FileEventKind::Created);
+    let mut file = event(FileEventAction::Created);
     file.scope = FileScope::WholeSync;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }
@@ -120,11 +128,11 @@ fn local_envelope_rejects_missing_evidence_wrong_scope_or_claimed_complete_parti
         |f| f.scope = FileScope::Local(LocalRelativePath::new(b"other".to_vec()).unwrap()),
     ];
     for mutate in mutations {
-        let mut file = event(FileEventKind::Created);
+        let mut file = event(FileEventAction::Created);
         mutate(&mut file);
         assert!(file.validate().is_err());
     }
-    let mut file = event(FileEventKind::Created);
+    let mut file = event(FileEventAction::Created);
     if let Some(FileData::Local(data)) = &mut file.data {
         data.owner.uid = MetadataValue::Unavailable;
     }
@@ -134,7 +142,7 @@ fn local_envelope_rejects_missing_evidence_wrong_scope_or_claimed_complete_parti
 }
 #[test]
 fn remote_locations_cannot_be_inserted_into_local_scopes() {
-    let mut file = event(FileEventKind::RecheckRequired);
+    let mut file = event(FileEventAction::RecheckRequired);
     file.event.current = Some(FileLocation::Remote {
         reference: RemoteFileRef {
             account_id: AccountId("account".into()),
@@ -156,22 +164,22 @@ fn remote_locations_cannot_be_inserted_into_local_scopes() {
 
 #[test]
 fn rechecks_require_a_reason_and_classified_events_cannot_carry_uncertainty() {
-    let mut file = event(FileEventKind::RecheckRequired);
+    let mut file = event(FileEventAction::RecheckRequired);
     file.event.uncertainty = None;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
-    let mut file = event(FileEventKind::Created);
+    let mut file = event(FileEventAction::Created);
     file.event.uncertainty = Some(ObservationUncertainty::ObservationUnstable);
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }
 
 #[test]
-fn remote_observation_preserves_raw_removal_without_metadata_or_inferred_action() {
+fn remote_observation_classifies_scope_removal_without_claiming_deletion() {
     let mut file = File {
         id: FileId("observation".into()),
         sync_id: SyncId("sync".into()),
         event: FileEvent {
             local: None,
-            kind: FileEventKind::Observed,
+            action: FileEventAction::RemovedFromScope,
             remote: Some(RemoteObservation {
                 source: RemoteObservationSource::Changes,
                 removed: Some(true),
@@ -194,16 +202,16 @@ fn remote_observation_preserves_raw_removal_without_metadata_or_inferred_action(
     assert_eq!(file.validate(), Ok(()));
     let bytes = serde_json::to_vec(&file).unwrap();
     assert_eq!(serde_json::from_slice::<File>(&bytes).unwrap(), file);
-    file.event.kind = FileEventKind::Deleted;
+    file.event.action = FileEventAction::Deleted;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
-    file.event.kind = FileEventKind::Observed;
+    file.event.action = FileEventAction::RemovedFromScope;
     file.event.remote = None;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }
 
 #[test]
 fn local_native_observation_preserves_signals_without_previous_location_or_metadata() {
-    let mut file = event(FileEventKind::Observed);
+    let mut file = event(FileEventAction::MoveFrom);
     file.coverage = ObservationCoverage::Partial;
     file.event.local = Some(LocalObservation {
         capture_id: "session".into(),
@@ -212,14 +220,16 @@ fn local_native_observation_preserves_signals_without_previous_location_or_metad
     });
     file.data = None;
     file.event.current = None;
+    file.event.previous = Some(FileLocation::Local(
+        LocalRelativePath::new(b"file".to_vec()).unwrap(),
+    ));
     assert_eq!(file.validate(), Ok(()));
     let bytes = serde_json::to_vec(&file).unwrap();
     assert_eq!(serde_json::from_slice::<File>(&bytes).unwrap(), file);
     file.event.previous = Some(FileLocation::Local(
-        LocalRelativePath::new(b"before".to_vec()).unwrap(),
+        LocalRelativePath::new(b"file".to_vec()).unwrap(),
     ));
-    assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
-    file.event.previous = None;
+    assert_eq!(file.validate(), Ok(()));
     file.event.local.as_mut().unwrap().mask = 0;
     assert_eq!(file.validate(), Err(ModelError::InconsistentEvent));
 }

@@ -39,8 +39,8 @@ pub(super) fn ingest(
             if reference.file_id.0 == identity.remote_root_id
                 && file.data.is_none()
                 && matches!(
-                    file.event.kind,
-                    FileEventKind::RecheckRequired | FileEventKind::ScopeUnavailable
+                    file.event.action,
+                    FileEventAction::RecheckRequired | FileEventAction::ScopeUnavailable
                 )
             {
                 return Ok(Ingested {

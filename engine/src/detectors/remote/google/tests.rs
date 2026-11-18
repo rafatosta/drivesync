@@ -264,7 +264,16 @@ fn changes_preserve_metadata_and_removal_identity_without_classifying_actions() 
         .unwrap();
     let files = sink.files.lock().unwrap();
     for file in files.iter() {
-        assert_eq!(file.event.kind, FileEventKind::Observed);
+        assert_eq!(
+            file.event.action,
+            match file.event.remote.as_ref().unwrap().source {
+                RemoteObservationSource::Capture => FileEventAction::SnapshotObserved,
+                RemoteObservationSource::Changes if file.data.is_some() => {
+                    FileEventAction::StateChanged
+                }
+                RemoteObservationSource::Changes => FileEventAction::RemovedFromScope,
+            }
+        );
         assert!(file.event.previous.is_none());
     }
     let Some(FileData::Remote(remote)) = &files[2].data else {
@@ -286,7 +295,7 @@ fn changes_preserve_metadata_and_removal_identity_without_classifying_actions() 
     assert!(files[4].data.is_none());
     assert!(!files
         .iter()
-        .any(|file| file.event.kind == FileEventKind::Deleted));
+        .any(|file| file.event.action == FileEventAction::Deleted));
 }
 #[test]
 fn partial_native_metadata_preserves_absence_and_filters_private_fields() {
@@ -440,7 +449,7 @@ fn inaccessible_scope_emits_one_durable_warning_without_advancing_progress() {
     }
     let files = sink.files.lock().unwrap();
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].event.kind, FileEventKind::ScopeUnavailable);
+    assert_eq!(files[0].event.action, FileEventAction::ScopeUnavailable);
     assert_eq!(files[0].coverage, ObservationCoverage::Unavailable);
     let progress: State = serde_json::from_slice(&sink.load().unwrap().unwrap()).unwrap();
     assert!(progress.cursor.is_none());
