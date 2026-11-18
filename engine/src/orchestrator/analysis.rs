@@ -242,10 +242,9 @@ pub(super) async fn analyze_selected(
     identity: SyncIdentity,
     epoch: Arc<AtomicU64>,
     expected: u64,
-    ids: std::collections::BTreeSet<SyncItemId>,
+    selected: SelectedAnalysisInput,
     connector: crate::Engine,
     execution: Arc<super::execution::ExecutionControl>,
-    observations: Vec<crate::models::File>,
 ) -> Result<(), PreparationFailure> {
     let provider = account_provider(&connector, &identity).await?;
     let analyzer = Analyzer::new(AnalyzerConfig {
@@ -271,11 +270,11 @@ pub(super) async fn analyze_selected(
             expected,
             connector,
             execution,
-            observations,
+            selected.observations,
         )
         .await;
     }
-    let total = ids.len() as u64;
+    let total = selected.ids.len() as u64;
     execution.update_analysis_progress(0, Some(total));
     let context = ItemAnalysis {
         analyzer: &analyzer,
@@ -284,14 +283,20 @@ pub(super) async fn analyze_selected(
         epoch: &epoch,
         expected,
         execution: &execution,
-        observations: &observations,
+        observations: &selected.observations,
     };
-    for (index, id) in ids.into_iter().enumerate() {
+    for (index, id) in selected.ids.into_iter().enumerate() {
         analyze_item(&context, id, index as u64, Some(total)).await?;
         execution.update_analysis_progress(index as u64 + 1, Some(total));
     }
     Ok(())
 }
+
+pub(super) struct SelectedAnalysisInput {
+    pub(super) ids: std::collections::BTreeSet<SyncItemId>,
+    pub(super) observations: Vec<crate::models::File>,
+}
+
 struct ItemAnalysis<'a> {
     analyzer: &'a Analyzer,
     inventory: &'a InventoryManager,

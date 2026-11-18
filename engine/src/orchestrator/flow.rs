@@ -471,10 +471,9 @@ async fn process_files(
                 context.identity.clone(),
                 context.epoch.clone(),
                 context.expected,
-                ids,
+                analysis::SelectedAnalysisInput { ids, observations },
                 context.connector.clone(),
                 context.execution.clone(),
-                observations,
             ))
             .await?;
     }
