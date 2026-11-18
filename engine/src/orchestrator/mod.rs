@@ -50,7 +50,18 @@ impl Orchestrator {
                 source: None,
                 queue: None,
             })?;
-        self.detector.stop(DetectorStopRequest { mode })
+        let result = self.detector.stop(DetectorStopRequest { mode });
+        if let Ok(status) = self.detector.status(DetectorStatusRequest {}) {
+            self.preparation.snapshot.publish_detector(&status.status);
+        }
+        if let Err(error) = &result {
+            self.preparation.snapshot.update_status(|status| {
+                status.state = crate::SynchronizationState::Failed;
+                status.activity = crate::SynchronizationActivity::Failed;
+                status.issue = Some(status::detector_issue(error));
+            });
+        }
+        result
     }
     pub fn detector_status(&self) -> DetectorResult<DetectorStatus> {
         self.detector

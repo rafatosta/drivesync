@@ -36,7 +36,11 @@ async fn open_without_oauth_preserves_local_use() {
     assert_eq!(status.snapshot(), crate::SynchronizationStatus::default());
     engine
         .synchronization_publisher(&AccountId("observed".into()))
-        .phase(crate::SynchronizationActivity::Scanning);
+        .publish(crate::SynchronizationStatus {
+            state: crate::SynchronizationState::Running,
+            activity: crate::SynchronizationActivity::Scanning,
+            ..Default::default()
+        });
     assert!(status.changed().await);
     assert_eq!(
         status.snapshot().activity,

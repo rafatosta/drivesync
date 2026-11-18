@@ -1,7 +1,18 @@
 //! Continuous observation ingestion. Detector owns the queue; Analyzer owns decisions.
 //! This worker never claims Inventory operations or executes physical synchronization.
 use super::{analysis, ingestion, PreparationFailure, PreparationState};
-use crate::{detectors::*, inventory::*, models::SyncId, scanner::*};
+use crate::{
+    detectors::*,
+    inventory::*,
+    models::{File as Observation, FileData, FileLocation, FileScope, SyncId},
+    scanner::*,
+    synchronization::{
+        SynchronizationAction, SynchronizationActivity, SynchronizationEvent, SynchronizationItem,
+        SynchronizationLocation, SynchronizationProgress, SynchronizationProgressUnit,
+        SynchronizationState, SynchronizationWork, SynchronizationWorkDetail,
+    },
+};
+use std::os::unix::ffi::OsStringExt;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -150,13 +161,95 @@ impl Context {
     }
     fn state(&self, state: PreparationState, error: Option<PreparationFailure>) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|e| e.into_inner());
-        if self.epoch.load(Ordering::Acquire) == self.expected
-            && snapshot.state != PreparationState::Stopped
+        let changed = if self.epoch.load(Ordering::Acquire) == self.expected
+            && !matches!(
+                snapshot.state,
+                PreparationState::Stopped | PreparationState::Cancelled
+            )
             && !self.busy.load(Ordering::Acquire)
         {
             snapshot.state = state;
             snapshot.error = error;
+            true
+        } else {
+            false
+        };
+        drop(snapshot);
+        if changed {
+            self.publish_sources();
         }
+    }
+    fn publish_sources(&self) {
+        match self.detector.status(DetectorStatusRequest {}) {
+            Ok(result) => self.snapshot.publish_detector(&result.status),
+            Err(error) => self.snapshot.update_status(|status| {
+                status.issue = Some(super::status::detector_issue(&error));
+                if status.state == SynchronizationState::Waiting {
+                    status.work = Some(SynchronizationWork {
+                        action: SynchronizationAction::Reconcile,
+                        item: None,
+                        location: None,
+                        detail: SynchronizationWorkDetail::Waiting(
+                            crate::synchronization::SynchronizationWaitReason::SourceRecovery,
+                        ),
+                        event: None,
+                    });
+                }
+            }),
+        }
+    }
+    async fn await_with_source_updates<T>(
+        &self,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        tokio::pin!(future);
+        loop {
+            tokio::select! {
+                result = &mut future => return result,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => self.publish_sources(),
+            }
+        }
+    }
+    fn publish_event(&self, file: &Observation, processed: u64, total: u64) {
+        let item = observation_item(file);
+        let event = SynchronizationEvent {
+            kind: file.event.kind,
+            previous: file.event.previous.clone(),
+            current: file.event.current.clone(),
+            observed_at: file.observed_at,
+        };
+        let location = file
+            .event
+            .current
+            .as_ref()
+            .map(observation_location)
+            .or_else(|| {
+                item.as_ref()
+                    .and_then(|item| item.local_path.clone().map(SynchronizationLocation::Local))
+            });
+        let action = match &file.scope {
+            FileScope::Local(_) | FileScope::WholeSync => SynchronizationAction::ObserveLocal,
+            FileScope::Remote(_) => SynchronizationAction::ObserveRemote,
+        };
+        self.snapshot.update_status(|status| {
+            status.state = SynchronizationState::Running;
+            status.activity = SynchronizationActivity::ProcessingEvents;
+            status.work = Some(SynchronizationWork {
+                action,
+                item,
+                location,
+                detail: SynchronizationWorkDetail::Preparation,
+                event: Some(event),
+            });
+            status.progress = Some(SynchronizationProgress {
+                completed: processed,
+                total: Some(total),
+                unit: SynchronizationProgressUnit::Events,
+                phase: None,
+            });
+            status.counters.events_processed = processed;
+            status.counters.events_total = Some(total);
+        });
     }
 }
 /// Drop releases the entire batch on any error, cancellation, partial scan or panic.
@@ -215,6 +308,7 @@ fn run(
                 .detector
                 .resume(DetectorResumeRequest {})
                 .map_err(PreparationFailure::Detector)?;
+            context.publish_sources();
         }
         let _ = started.take().unwrap().send(Ok(()));
         while context.busy.load(Ordering::Acquire) {
@@ -222,6 +316,7 @@ fn run(
             let version = wake.version();
             if context.busy.load(Ordering::Acquire) {
                 wake.wait(version, &stop);
+                context.publish_sources();
             }
         }
         consume(&runtime, &context, &stop, &wake)
@@ -237,6 +332,7 @@ fn run(
     // Pausing delivery does not stop source observation or lose queued events.
     let _control = context.control.lock().unwrap_or_else(|e| e.into_inner());
     let _ = context.detector.pause(DetectorPauseRequest {});
+    context.publish_sources();
     if let Err(error) = result {
         context.state(PreparationState::Failed, Some(error));
     }
@@ -249,6 +345,7 @@ fn consume(
 ) -> Result<(), PreparationFailure> {
     loop {
         context.current(stop)?;
+        context.publish_sources();
         let version = wake.version();
         let outcome = {
             let _control = context
@@ -281,17 +378,29 @@ fn consume(
             }
             None => {
                 if context.execution.snapshot().enabled {
-                    runtime.block_on(analysis::retry_pending(
-                        context.inventory.clone(),
-                        context.identity.clone(),
-                        context.epoch.clone(),
-                        context.expected,
-                        context.connector.clone(),
-                        context.execution.clone(),
+                    runtime.block_on(context.await_with_source_updates(
+                        analysis::retry_pending(
+                            context.inventory.clone(),
+                            context.identity.clone(),
+                            context.epoch.clone(),
+                            context.expected,
+                            context.connector.clone(),
+                            context.execution.clone(),
+                        ),
                     ))?;
                 }
                 context.state(PreparationState::ReadyForAnalyzer, None);
+                if !context.execution.snapshot().prerequisite_retries.is_empty() {
+                    context.snapshot.update_status(|status| {
+                        if let Some(work) = &mut status.work {
+                            work.detail = SynchronizationWorkDetail::Waiting(
+                                crate::synchronization::SynchronizationWaitReason::RetryBackoff,
+                            );
+                        }
+                    });
+                }
                 wake.wait(version, stop);
+                context.publish_sources();
             }
         }
     }
@@ -308,9 +417,12 @@ async fn process(
     let mut ids = BTreeSet::new();
     let mut scan_local = false;
     let mut all = false;
-    for file in batch.files {
+    let total = batch.files.len() as u64;
+    for (index, file) in batch.files.into_iter().enumerate() {
         context.current(stop)?;
+        context.publish_event(&file, index as u64, total);
         let ingested = ingestion::ingest(&context.inventory, &file, &context.identity)?;
+        context.publish_event(&file, index as u64 + 1, total);
         if let Some(id) = ingested.item {
             ids.insert(id);
         }
@@ -332,9 +444,14 @@ async fn process(
         let report = loop {
             tokio::select! {
                 report=&mut scan=>break report.map_err(PreparationFailure::Scanner)?,
-                _=tokio::time::sleep(Duration::from_millis(100))=>context.current(stop)?,
+                _=tokio::time::sleep(Duration::from_millis(100))=>{
+                    context.current(stop)?;
+                    context.snapshot.publish_scanner(&context.scanner.status());
+                    context.publish_sources();
+                },
             }
         };
+        context.snapshot.publish_scanner(&context.scanner.status());
         let complete = report.ready_for_analysis();
         if context.epoch.load(Ordering::Acquire) == context.expected {
             context
@@ -350,26 +467,28 @@ async fn process(
     }
     context.current(stop)?;
     if all {
-        analysis::analyze_all(
-            context.inventory.clone(),
-            context.identity.clone(),
-            context.epoch.clone(),
-            context.expected,
-            context.connector.clone(),
-            context.execution.clone(),
-        )
-        .await?;
+        context
+            .await_with_source_updates(analysis::analyze_all(
+                context.inventory.clone(),
+                context.identity.clone(),
+                context.epoch.clone(),
+                context.expected,
+                context.connector.clone(),
+                context.execution.clone(),
+            ))
+            .await?;
     } else {
-        analysis::analyze_selected(
-            context.inventory.clone(),
-            context.identity.clone(),
-            context.epoch.clone(),
-            context.expected,
-            ids,
-            context.connector.clone(),
-            context.execution.clone(),
-        )
-        .await?;
+        context
+            .await_with_source_updates(analysis::analyze_selected(
+                context.inventory.clone(),
+                context.identity.clone(),
+                context.epoch.clone(),
+                context.expected,
+                ids,
+                context.connector.clone(),
+                context.execution.clone(),
+            ))
+            .await?;
     }
     context.current(stop)?;
     let count = lease.acknowledge()?;
@@ -378,4 +497,83 @@ async fn process(
         snapshot.events_processed = snapshot.events_processed.saturating_add(u64::from(count));
     }
     Ok(true)
+}
+
+fn observation_location(location: &FileLocation) -> SynchronizationLocation {
+    match location {
+        FileLocation::Local(path) => SynchronizationLocation::Local(path.clone()),
+        FileLocation::Remote {
+            reference,
+            parent_id,
+            name,
+        } => SynchronizationLocation::Remote {
+            reference: reference.clone(),
+            parent_id: parent_id.clone(),
+            name: name.clone(),
+        },
+    }
+}
+
+fn observation_item(file: &Observation) -> Option<SynchronizationItem> {
+    let mut item = SynchronizationItem {
+        id: None,
+        kind: None,
+        local_name: None,
+        remote_name: None,
+        local_path: None,
+        remote_reference: None,
+    };
+    if let Some(FileData::Local(local)) = &file.data {
+        item.local_path = Some(local.relative_path.clone());
+        let name = local
+            .relative_path
+            .as_bytes()
+            .rsplit(|byte| *byte == b'/')
+            .next()?;
+        item.local_name = Some(std::ffi::OsString::from_vec(name.to_vec()));
+        item.kind = match local.kind {
+            crate::models::MetadataValue::Known(crate::models::LocalEntryKind::Directory) => {
+                Some(ItemKind::Directory)
+            }
+            crate::models::MetadataValue::Known(crate::models::LocalEntryKind::Regular) => {
+                Some(ItemKind::File)
+            }
+            crate::models::MetadataValue::Known(crate::models::LocalEntryKind::Symlink) => {
+                Some(ItemKind::Symlink)
+            }
+            _ => None,
+        };
+    }
+    if let Some(FileData::Remote(remote)) = &file.data {
+        item.remote_reference = Some(remote.reference.clone());
+        item.remote_name = match &remote.name {
+            crate::models::MetadataValue::Known(name) => Some(name.clone()),
+            _ => None,
+        };
+    }
+    match file.event.current.as_ref().or(file.event.previous.as_ref()) {
+        Some(FileLocation::Local(path)) => {
+            item.local_path.get_or_insert_with(|| path.clone());
+            if item.local_name.is_none() {
+                if let Some(name) = path.as_bytes().rsplit(|byte| *byte == b'/').next() {
+                    item.local_name = Some(std::ffi::OsString::from_vec(name.to_vec()));
+                }
+            }
+        }
+        Some(FileLocation::Remote {
+            reference, name, ..
+        }) => {
+            item.remote_reference
+                .get_or_insert_with(|| reference.clone());
+            if item.remote_name.is_none() {
+                item.remote_name = name.clone();
+            }
+        }
+        None => {}
+    }
+    if item.local_path.is_none() && item.remote_reference.is_none() {
+        None
+    } else {
+        Some(item)
+    }
 }

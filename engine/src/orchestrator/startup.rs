@@ -121,7 +121,6 @@ impl Orchestrator {
         let detector = Arc::new(Detector::new(request.detector)?.detector);
         detector.pause(DetectorPauseRequest {})?;
         let publisher = connector.synchronization_publisher(&detector.scope().account_id);
-        publisher.phase(crate::SynchronizationActivity::Idle);
         let execution = execution::ExecutionControl::new(request.execute_creations);
         execution.set_publisher(publisher.clone());
         Ok(Self {
@@ -274,6 +273,9 @@ impl Orchestrator {
                 std::thread::spawn(move || drop((scanner, inventory)));
                 return Err(PreparationFailure::Internal);
             }
+            if let Ok(status) = self.detector.status(DetectorStatusRequest {}) {
+                self.preparation.snapshot.publish_detector(&status.status);
+            }
             {
                 let mut snapshot = self
                     .preparation
@@ -287,12 +289,28 @@ impl Orchestrator {
                     .unwrap_or_else(|e| e.into_inner()) = Some(scanner.clone());
                 snapshot.state = PreparationState::Scanning;
             }
-            let report = scanner
-                .scan(ScanRequest {
+            let report = {
+                let scan = scanner.scan(ScanRequest {
                     sync_id: self.detector.scope().sync_id.clone(),
-                })
-                .await
-                .map_err(PreparationFailure::Scanner)?;
+                });
+                tokio::pin!(scan);
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    loop {
+                        tokio::select! {
+                            report = &mut scan => break report.map_err(PreparationFailure::Scanner)?,
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                                self.preparation.snapshot.publish_scanner(&scanner.status());
+                                if let Ok(status) = self.detector.status(DetectorStatusRequest {}) {
+                                    self.preparation.snapshot.publish_detector(&status.status);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    scan.await.map_err(PreparationFailure::Scanner)?
+                }
+            };
+            self.preparation.snapshot.publish_scanner(&scanner.status());
             if self.preparation.epoch.load(Ordering::Acquire) != epoch {
                 return Err(PreparationFailure::Internal);
             }

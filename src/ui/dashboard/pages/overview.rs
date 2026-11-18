@@ -239,15 +239,28 @@ fn presentation_status(status: &SynchronizationStatus) -> SyncStatusData {
     let activity = match status.activity {
         EngineActivity::Idle => SyncActivity::Idle,
         EngineActivity::Starting | EngineActivity::Scanning => SyncActivity::Scanning,
-        EngineActivity::Analyzing | EngineActivity::Reconciling => SyncActivity::Reconciling,
+        EngineActivity::Analyzing
+        | EngineActivity::ProcessingEvents
+        | EngineActivity::Checking
+        | EngineActivity::Applying
+        | EngineActivity::Verifying => SyncActivity::Reconciling,
         EngineActivity::Uploading => SyncActivity::Upload,
         EngineActivity::Downloading => SyncActivity::Download,
+        EngineActivity::Waiting | EngineActivity::Stopped | EngineActivity::Failed => {
+            SyncActivity::Idle
+        }
+    };
+    let (transferred_bytes, total_bytes) = match status.progress {
+        Some(progress) if progress.unit == drivesync_engine::SynchronizationProgressUnit::Bytes => {
+            (Some(progress.completed), progress.total)
+        }
+        _ => (None, None),
     };
     SyncStatusData {
         activity,
-        transferred_bytes: status.transferred_bytes,
-        total_bytes: status.total_bytes,
-        synchronized: status.synchronized,
+        transferred_bytes,
+        total_bytes,
+        problems: status.issue.as_ref().map_or(0, |issue| issue.count),
         ..Default::default()
     }
 }

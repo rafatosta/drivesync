@@ -8,7 +8,12 @@ pub use models::{AccountId, ProviderId, Timestamp};
 
 mod synchronization;
 pub use synchronization::{
-    SynchronizationActivity, SynchronizationStatus, SynchronizationSubscription,
+    SynchronizationAction, SynchronizationActivity, SynchronizationCounters, SynchronizationEvent,
+    SynchronizationIssue, SynchronizationIssueKind, SynchronizationItem,
+    SynchronizationLocalSource, SynchronizationLocation, SynchronizationProgress,
+    SynchronizationProgressUnit, SynchronizationRemoteSource, SynchronizationSources,
+    SynchronizationState, SynchronizationStatus, SynchronizationSubscription,
+    SynchronizationWaitReason, SynchronizationWork, SynchronizationWorkDetail,
 };
 
 mod connection;

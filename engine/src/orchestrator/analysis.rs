@@ -216,8 +216,19 @@ pub(super) async fn analyze_all(
             pagination.after = Some(after);
         }
         items.sort();
-        for (_, _, id) in items {
-            analyze_item(&analyzer, &inventory, &identity, &epoch, expected, id).await?;
+        let total = items.len() as u64;
+        execution.update_analysis_progress(0, Some(total));
+        let context = ItemAnalysis {
+            analyzer: &analyzer,
+            inventory: &inventory,
+            identity: &identity,
+            epoch: &epoch,
+            expected,
+            execution: &execution,
+        };
+        for (index, (_, _, id)) in items.into_iter().enumerate() {
+            analyze_item(&context, id, index as u64, Some(total)).await?;
+            execution.update_analysis_progress(index as u64 + 1, Some(total));
         }
         if execution.snapshot().completed == completed {
             return Ok(());
@@ -252,21 +263,40 @@ pub(super) async fn analyze_selected(
     if execution.snapshot().enabled {
         return analyze_all(inventory, identity, epoch, expected, connector, execution).await;
     }
-    for id in ids {
-        analyze_item(&analyzer, &inventory, &identity, &epoch, expected, id).await?;
+    let total = ids.len() as u64;
+    execution.update_analysis_progress(0, Some(total));
+    let context = ItemAnalysis {
+        analyzer: &analyzer,
+        inventory: &inventory,
+        identity: &identity,
+        epoch: &epoch,
+        expected,
+        execution: &execution,
+    };
+    for (index, id) in ids.into_iter().enumerate() {
+        analyze_item(&context, id, index as u64, Some(total)).await?;
+        execution.update_analysis_progress(index as u64 + 1, Some(total));
     }
     Ok(())
 }
-async fn analyze_item(
-    analyzer: &Analyzer,
-    inventory: &InventoryManager,
-    identity: &SyncIdentity,
-    epoch: &AtomicU64,
+struct ItemAnalysis<'a> {
+    analyzer: &'a Analyzer,
+    inventory: &'a InventoryManager,
+    identity: &'a SyncIdentity,
+    epoch: &'a AtomicU64,
     expected: u64,
+    execution: &'a super::execution::ExecutionControl,
+}
+
+async fn analyze_item(
+    context: &ItemAnalysis<'_>,
     id: SyncItemId,
+    processed: u64,
+    total: Option<u64>,
 ) -> Result<(), PreparationFailure> {
-    current(epoch, expected)?;
-    let item = inventory
+    current(context.epoch, context.expected)?;
+    let item = context
+        .inventory
         .get_item(GetItemRequest {
             selector: ItemSelector::Id(id),
         })
@@ -279,19 +309,49 @@ async fn analyze_item(
     ) {
         return Ok(());
     }
-    let evidence = evidence(inventory, &item, identity, epoch, expected)?;
-    current(epoch, expected)?;
-    analyzer
-        .analyze(AnalyzeRequest {
-            directive: None,
-            sync_id: identity.sync_id.clone(),
-            item,
-            evidence,
-            recorded_at: now(),
-        })
-        .await
-        .map_err(PreparationFailure::Analyzer)?;
-    current(epoch, expected)
+    context.execution.publish_analysis(
+        &item,
+        crate::analyzer::AnalysisPhase::Validating,
+        processed,
+        total,
+    );
+    let evidence = evidence(
+        context.inventory,
+        &item,
+        context.identity,
+        context.epoch,
+        context.expected,
+    )?;
+    current(context.epoch, context.expected)?;
+    let item_id = item.id.clone();
+    let current_item = item.clone();
+    let analysis = context.analyzer.analyze(AnalyzeRequest {
+        directive: None,
+        sync_id: context.identity.sync_id.clone(),
+        item,
+        evidence,
+        recorded_at: now(),
+    });
+    tokio::pin!(analysis);
+    loop {
+        tokio::select! {
+            result = &mut analysis => {
+                result.map_err(PreparationFailure::Analyzer)?;
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(40)) => {
+                if let Ok(status) = context.analyzer.status(crate::analyzer::AnalysisStatusRequest {
+                    item_id: item_id.clone(),
+                }) {
+                    if let Some(active) = status.active {
+                        context.execution.publish_analysis(&current_item, active.phase, processed, total);
+                    }
+                }
+                current(context.epoch, context.expected)?;
+            }
+        }
+    }
+    current(context.epoch, context.expected)
 }
 impl Orchestrator {
     /// Keeps runtime setup and all Inventory calls off callers such as GLib.
@@ -321,7 +381,21 @@ impl Orchestrator {
                 let _ = tx.send(result);
             })
             .map_err(|_| PreparationFailure::Internal)?;
-        rx.await.map_err(|_| PreparationFailure::Internal)?
+        tokio::pin!(rx);
+        if tokio::runtime::Handle::try_current().is_ok() {
+            loop {
+                tokio::select! {
+                    result = &mut rx => return result.map_err(|_| PreparationFailure::Internal)?,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        if let Ok(status) = self.detector.status(crate::detectors::DetectorStatusRequest {}) {
+                            self.preparation.snapshot.publish_detector(&status.status);
+                        }
+                    }
+                }
+            }
+        } else {
+            rx.await.map_err(|_| PreparationFailure::Internal)?
+        }
     }
 }
 fn run_pass(
