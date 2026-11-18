@@ -59,7 +59,9 @@ fn evidence(
         })
         .transpose()?
         .flatten();
-    let remote = item.remote_latest.as_ref().or(item.remote.as_ref());
+    let remote = (item.remote_presence == PresenceState::Present)
+        .then(|| item.remote_latest.as_ref().or(item.remote.as_ref()))
+        .flatten();
     let remote_parent = remote.and_then(|file| match &file.parent_ids {
         MetadataValue::Known(ids) if ids.len() == 1 => Some(RemoteFileRef {
             account_id: file.reference.account_id.clone(),
