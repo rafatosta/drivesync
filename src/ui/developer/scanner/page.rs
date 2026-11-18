@@ -239,7 +239,6 @@ impl View {
         }
         self.refresh.set_sensitive(false);
         self.accounts.set_sensitive(false);
-        self.rescan.set_sensitive(false);
         let weak = Rc::downgrade(self);
         let context = self.context.clone();
         gtk::glib::spawn_future_local(async move {
