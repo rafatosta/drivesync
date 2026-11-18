@@ -7,7 +7,8 @@ CREATE TABLE remote_files(item TEXT PRIMARY KEY REFERENCES items(id),provider TE
 CREATE TABLE remote_parents(item TEXT NOT NULL REFERENCES items(id),account TEXT NOT NULL,parent TEXT NOT NULL,PRIMARY KEY(item,parent));
 CREATE INDEX remote_parent ON remote_parents(account,parent,item);
 CREATE TABLE metadata_fields(item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),field TEXT NOT NULL,latest TEXT NOT NULL,known TEXT,PRIMARY KEY(item,side,field));
-CREATE TABLE receipts(event TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),digest BLOB NOT NULL,proof TEXT NOT NULL);
+CREATE TABLE receipts(event TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),digest BLOB NOT NULL,proof TEXT NOT NULL,outcome TEXT NOT NULL CHECK(outcome IN('Applied','Obsolete')));
+CREATE TABLE observation_order(item TEXT NOT NULL REFERENCES items(id),side INTEGER NOT NULL CHECK(side IN(0,1)),generation TEXT,sequence INTEGER,provider_version TEXT,observed_at INTEGER NOT NULL,PRIMARY KEY(item,side));
 CREATE TABLE operations(seq INTEGER PRIMARY KEY AUTOINCREMENT,item TEXT NOT NULL REFERENCES items(id),direction TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,base_revision INTEGER NOT NULL CHECK(base_revision>0),expected_version TEXT,attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 4294967295),next_attempt INTEGER,last_error TEXT,created INTEGER NOT NULL,started INTEGER,completed INTEGER,dedup TEXT,fingerprint BLOB NOT NULL,UNIQUE(item,dedup),UNIQUE(seq,item));
 CREATE INDEX operation_queue ON operations(state,next_attempt,seq);
 CREATE INDEX operation_item ON operations(item,seq);
@@ -56,4 +57,4 @@ CREATE TRIGGER planning_remote_update AFTER UPDATE ON remote_files WHEN old.item
 CREATE TRIGGER planning_remote_delete AFTER DELETE ON remote_files BEGIN UPDATE planning_clock SET epoch=epoch+1 WHERE id=1; END;
 CREATE TABLE execution_intents(id TEXT PRIMARY KEY,intent TEXT NOT NULL);
 CREATE TABLE execution_checkpoints(execution TEXT PRIMARY KEY REFERENCES execution_intents(id),revision INTEGER NOT NULL CHECK(revision>0),phase TEXT NOT NULL,effect TEXT NOT NULL,staging TEXT,reserved_remote TEXT,resume_token BLOB,confirmed_offset TEXT NOT NULL,result TEXT,local_scope TEXT,session_generation INTEGER NOT NULL CHECK(session_generation>=0));
-PRAGMA user_version=8;
+PRAGMA user_version=9;

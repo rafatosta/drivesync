@@ -58,6 +58,17 @@ pub enum ObservationSource {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Caller-supplied evidence context, never a proof inferred from a missing row.
+///
+/// Inventory accepts observations independently per side. For local events,
+/// occurrence sequence numbers order observations within the same capture
+/// generation; decimal remote provider versions take priority when both are
+/// available, with remote feed generations/sequences ordering observations in
+/// one provider epoch when versions cannot be compared. A lower comparable marker is recorded as
+/// an obsolete receipt and does not change item metadata, presence or revision.
+/// When no comparable causal marker exists, `observed_at` is a conservative
+/// fallback only. It never overrides a comparable sequence or provider version.
+/// Exact event redelivery is resolved by its durable receipt before either
+/// freshness or optimistic revision checks.
 pub struct ObservationProof {
     pub source: ObservationSource,
     pub observed_at: Timestamp,

@@ -621,6 +621,9 @@ async fn confirmed_absence_and_new_remote_file_persist_a_blocked_creation() {
     let item = record_local(&inventory, &item, "local-before-absence", b"file");
     let mut absent = local_file("local-absent", b"file");
     absent.data = None;
+    absent.event.local = None;
+    absent.event.action = m::FileEventAction::RecheckRequired;
+    absent.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     absent.event.current = None;
     let item = inventory
         .record_local(RecordLocalObservation {
@@ -956,6 +959,9 @@ async fn unchanged_survivor_produces_only_authorization_blocked_trash_never_dele
         .item;
     let mut observed = local_file("gone", b"file");
     observed.data = None;
+    observed.event.local = None;
+    observed.event.action = m::FileEventAction::RecheckRequired;
+    observed.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     observed.event.current = None;
     let item = inv
         .record_local(RecordLocalObservation {
@@ -1002,6 +1008,8 @@ async fn restore_is_explicit_scoped_and_persisted_without_executing() {
     if let Some(m::FileData::Remote(r)) = &mut observed.data {
         r.trashed = m::MetadataValue::Known(true)
     }
+    observed.event.action = m::FileEventAction::RemovedFromScope;
+    observed.event.remote.as_mut().unwrap().removed = Some(true);
     let item = inv
         .record_remote(remote_request(observed, ObservationTarget::NewItem, None))
         .unwrap()
@@ -1137,16 +1145,20 @@ async fn known_remote_trash_is_active_absence_while_unknown_access_never_is() {
         if let Some(m::FileData::Remote(r)) = &mut observed.data {
             r.trashed = m::MetadataValue::Known(true)
         }
-        let item = inv
-            .record_remote(remote_request(
-                observed,
-                ObservationTarget::Existing(item.id.clone()),
-                Some(item.revision),
-            ))
-            .unwrap()
-            .item;
+        observed.event.action = m::FileEventAction::RemovedFromScope;
+        observed.event.remote.as_mut().unwrap().removed = Some(true);
+        let mut removal = remote_request(
+            observed,
+            ObservationTarget::Existing(item.id.clone()),
+            Some(item.revision),
+        );
+        removal.observation.presence = PresenceState::AbsentConfirmed;
+        removal.observation.proof.complete_scope = true;
+        let item = inv.record_remote(removal).unwrap().item;
         let mut req = request(item.clone());
         req.evidence.local_parent = Some(parent.id);
+        req.evidence.remote_content = EvidenceRelation::Unknown;
+        req.evidence.current_content = EvidenceRelation::Unknown;
         req.evidence.local_content = if changed {
             EvidenceRelation::Different
         } else {
@@ -1169,7 +1181,7 @@ async fn known_remote_trash_is_active_absence_while_unknown_access_never_is() {
                     direction: OperationDirection::Download
                 }
             );
-            assert!(out.plan.unwrap().steps[0]
+            assert!(!out.plan.unwrap().steps[0]
                 .blocked_by
                 .contains(&PlanBlock::UserAuthorization));
         }
@@ -1182,6 +1194,7 @@ async fn known_remote_trash_is_active_absence_while_unknown_access_never_is() {
         );
         unknown.data = None;
         unknown.event.current = None;
+        unknown.event.action = m::FileEventAction::Unclassified;
         let mut unknown = remote_request(
             unknown,
             ObservationTarget::Existing(item.id.clone()),
@@ -1301,6 +1314,9 @@ async fn folder_trash_keeps_descendant_identity_and_surviving_state_requirements
         .item;
     let mut local = local_file("folder-gone", b"folder");
     local.data = None;
+    local.event.local = None;
+    local.event.action = m::FileEventAction::RecheckRequired;
+    local.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     local.event.current = None;
     let folder = inv
         .record_local(RecordLocalObservation {
@@ -1343,6 +1359,9 @@ async fn unknown_old_destination_is_evidence_pending_not_a_proven_collision() {
     let (tree, inv, item) = setup();
     let mut missing = local_file("unobserved", b"file");
     missing.data = None;
+    missing.event.local = None;
+    missing.event.action = m::FileEventAction::RecheckRequired;
+    missing.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
     missing.event.current = None;
     inv.record_local(RecordLocalObservation {
         selector: ObservationTarget::Existing(item.id.clone()),

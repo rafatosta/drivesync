@@ -7,6 +7,120 @@ use super::{
 use rusqlite::{params, types::Value, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::Read;
+
+type TemporalOrder = (Option<String>, Option<i64>, Option<String>, i64);
+
+/// Compares durable causal evidence first and wall-clock time only when sources cannot be ordered.
+fn stale(
+    db: &Connection,
+    id: &SyncItemId,
+    remote: bool,
+    file: &File,
+    proof: &ObservationProof,
+) -> InventoryResult<bool> {
+    let side = if remote { 1 } else { 0 };
+    let current: Option<TemporalOrder> = db
+        .query_row("SELECT generation,sequence,provider_version,observed_at FROM observation_order WHERE item=?1 AND side=?2", params![id.0, side], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .optional().map_err(sql)?;
+    let Some((generation, sequence, version, observed_at)) = current else {
+        return Ok(false);
+    };
+    if !remote {
+        if let (
+            Some(old_generation),
+            Some(old_sequence),
+            Some(new_generation),
+            Some(new_sequence),
+        ) = (
+            generation.as_deref(),
+            sequence,
+            proof.scan_or_generation.as_deref(),
+            local_sequence(file),
+        ) {
+            if old_generation == new_generation {
+                return Ok(new_sequence <= old_sequence);
+            }
+        }
+    } else {
+        if let (Some(old), Some(new)) = (
+            version.as_deref().and_then(decimal_version),
+            remote_version(file),
+        ) {
+            if old != new {
+                return Ok(new < old);
+            }
+        }
+        if let (Some(old_generation), Some(old_sequence), Some((new_generation, new_sequence))) =
+            (generation.as_deref(), sequence, remote_sequence(file))
+        {
+            if old_generation == new_generation {
+                return Ok(new_sequence <= old_sequence);
+            }
+        }
+    }
+    Ok(proof.observed_at.unix_millis < observed_at)
+}
+
+fn local_sequence(file: &File) -> Option<i64> {
+    let id = &file.id.0;
+    let value = if id.starts_with("scan:") {
+        id.rsplit(':').next()?.parse::<u64>().ok()?
+    } else {
+        u64::from_str_radix(id.rsplit('-').next()?, 16).ok()?
+    };
+    i64::try_from(value).ok()
+}
+
+fn remote_sequence(file: &File) -> Option<(String, i64)> {
+    let mut parts = file.id.0.split(':');
+    if parts.next()? != "remote" {
+        return None;
+    }
+    let generation = parts.next()?.to_owned();
+    let sequence = parts.next()?.parse::<i64>().ok()?;
+    Some((generation, sequence))
+}
+
+fn decimal_version(value: &str) -> Option<u128> {
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
+}
+
+fn remote_version(file: &File) -> Option<u128> {
+    match file.data.as_ref()? {
+        FileData::Remote(remote) => match &remote.version {
+            MetadataValue::Known(value) => decimal_version(value),
+            _ => None,
+        },
+        FileData::Local(_) => None,
+    }
+}
+
+fn save_order(
+    db: &Connection,
+    id: &SyncItemId,
+    remote: bool,
+    file: &File,
+    proof: &ObservationProof,
+) -> InventoryResult<()> {
+    let remote_order = remote_sequence(file);
+    let generation = if remote {
+        remote_order
+            .as_ref()
+            .map(|(generation, _)| generation.as_str())
+    } else {
+        proof.scan_or_generation.as_deref()
+    };
+    let sequence = if remote {
+        remote_order.as_ref().map(|(_, sequence)| *sequence)
+    } else {
+        local_sequence(file)
+    };
+    let version = remote_version(file).map(|value| value.to_string());
+    db.execute("INSERT INTO observation_order(item,side,generation,sequence,provider_version,observed_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(item,side) DO UPDATE SET generation=excluded.generation,sequence=excluded.sequence,provider_version=excluded.provider_version,observed_at=excluded.observed_at", params![id.0, if remote { 1 } else { 0 }, generation, sequence, version, proof.observed_at.unix_millis]).map_err(sql)?;
+    Ok(())
+}
 pub(super) fn resolve(
     db: &Connection,
     selector: &ItemSelector,
@@ -221,6 +335,40 @@ fn record(
         create(db)?
     };
     let current = load(db, &id)?;
+    if let Some(FileData::Local(local)) = &file.data {
+        if remote
+            || matches!(target, ObservationTarget::ByLocalId(value) if local.local_id.as_ref() != Some(value))
+            || current
+                .local_file_id
+                .as_ref()
+                .zip(local.local_id.as_ref())
+                .is_some_and(|(old, new)| old != new)
+        {
+            return Err(failure(InventoryError::InvalidIdentity));
+        }
+    }
+    if let Some(FileData::Remote(value)) = &file.data {
+        if !remote
+            || current
+                .remote
+                .as_ref()
+                .is_some_and(|old| old.provider != value.provider)
+            || current
+                .remote_ref
+                .as_ref()
+                .is_some_and(|old| old != &value.reference)
+        {
+            return Err(failure(InventoryError::InvalidIdentity));
+        }
+    }
+    let obsolete = stale(db, &id, remote, file, proof)?;
+    if obsolete {
+        db.execute("INSERT INTO receipts(event,item,side,digest,proof,outcome) VALUES(?1,?2,?3,?4,?5,'Obsolete')", params![file.id.0, id.0, i32::from(remote), digest, serde_json::to_string(proof).map_err(|_| failure(InventoryError::SerializationFailed))?]).map_err(sql)?;
+        return Ok(RecordObservationResult {
+            item: current,
+            created: false,
+        });
+    }
     match &file.data {
         Some(FileData::Local(local)) if !remote => {
             if matches!(target,ObservationTarget::ByLocalId(value)if local.local_id.as_ref()!=Some(value))
@@ -313,11 +461,12 @@ fn record(
         params![id.0, enum_text(presence)?, proof.observed_at.unix_millis],
     )
     .map_err(sql)?;
+    save_order(db, &id, remote, file, proof)?;
     if !created {
         bump(db, &id)?;
     }
     db.execute(
-        "INSERT INTO receipts VALUES(?1,?2,?3,?4,?5)",
+        "INSERT INTO receipts(event,item,side,digest,proof,outcome) VALUES(?1,?2,?3,?4,?5,'Applied')",
         params![
             file.id.0,
             id.0,
@@ -362,6 +511,8 @@ impl InventoryManager {
     })
     }
     /// Records local evidence without updating baseline or choosing an upload.
+    /// A stale observation is durably receipted as obsolete and returns the
+    /// unchanged item; duplicate event IDs remain idempotent across restarts.
     pub fn record_local(
         &self,
         request: RecordLocalObservation,
@@ -379,6 +530,8 @@ impl InventoryManager {
         })
     }
     /// Records remote evidence with account-qualified identity, never choosing a download.
+    /// Provider versions take precedence over timestamps when both sides have
+    /// numeric versions; obsolete events are durably receipted without mutation.
     pub fn record_remote(
         &self,
         request: RecordRemoteObservation,
@@ -402,6 +555,11 @@ impl InventoryManager {
         match &request.changes.local_file_id {
             FieldUpdate::Keep=>{},
             change=>{let value=match change{FieldUpdate::Set(value)if !value.0.trim().is_empty()=>Some(&value.0),FieldUpdate::Clear=>None,_=>return Err(failure(InventoryError::InvalidArgument))};
+                if value.map(String::as_str)
+                    != item.local_file_id.as_ref().map(|local| local.0.as_str())
+                {
+                    db.execute("DELETE FROM observation_order WHERE item=?1 AND side=0", [&item.id.0]).map_err(sql)?;
+                }
                 db.execute("UPDATE items SET local_id=?2 WHERE id=?1",params![item.id.0,value]).map_err(sql)?;}
         }
         match &request.changes.remote_ref {
@@ -411,6 +569,7 @@ impl InventoryManager {
                     db.execute("DELETE FROM remote_parents WHERE item=?1",[&item.id.0]).map_err(sql)?;
                     db.execute("DELETE FROM metadata_fields WHERE item=?1 AND side=1",[&item.id.0]).map_err(sql)?;
                     db.execute("DELETE FROM remote_files WHERE item=?1",[&item.id.0]).map_err(sql)?;
+                    db.execute("DELETE FROM observation_order WHERE item=?1 AND side=1",[&item.id.0]).map_err(sql)?;
                     db.execute("UPDATE items SET remote_account=?2,remote_id=?3,remote_presence='Unknown' WHERE id=?1",params![item.id.0,value.map(|v|&v.account_id.0),value.map(|v|&v.file_id.0)]).map_err(sql)?;
                 }
             }

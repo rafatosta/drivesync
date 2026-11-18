@@ -417,6 +417,203 @@ fn local_file(tree: &Tree, event: &str) -> m::File {
         data: Some(m::FileData::Local(local)),
     }
 }
+
+fn local_order_request(
+    file: m::File,
+    generation: &str,
+    at: i64,
+    revision: Option<u64>,
+    target: ObservationTarget,
+) -> RecordLocalObservation {
+    RecordLocalObservation {
+        selector: target,
+        expected_revision: revision,
+        observation: LocalObservation {
+            observed: file,
+            presence: PresenceState::Present,
+            proof: ObservationProof {
+                source: ObservationSource::LocalEvent,
+                observed_at: m::Timestamp { unix_millis: at },
+                scan_or_generation: Some(generation.into()),
+                complete_scope: false,
+            },
+        },
+    }
+}
+
+#[test]
+fn local_causal_sequence_wins_over_late_delivery_clock_changes_and_restarts() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut newest = local_file(&tree, "capture-0000000000000002");
+    newest.event.local.as_mut().unwrap().capture_id = "capture".into();
+    let first = inventory
+        .record_local(local_order_request(
+            newest,
+            "capture",
+            100,
+            None,
+            ObservationTarget::NewItem,
+        ))
+        .unwrap()
+        .item;
+    drop(inventory);
+
+    let reopened = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut pending_old = local_file(&tree, "capture-0000000000000001");
+    pending_old.event.local.as_mut().unwrap().capture_id = "capture".into();
+    let obsolete = reopened
+        .record_local(local_order_request(
+            pending_old.clone(),
+            "capture",
+            9_999,
+            Some(first.revision),
+            ObservationTarget::Existing(first.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(obsolete.item.revision, first.revision);
+    assert_eq!(obsolete.item.local_presence, PresenceState::Present);
+    let replay = reopened
+        .record_local(local_order_request(
+            pending_old,
+            "capture",
+            9_999,
+            Some(0),
+            ObservationTarget::Existing(first.id.clone()),
+        ))
+        .unwrap();
+    assert_eq!(replay.item.revision, first.revision);
+    let receipts = inspection::inspect(inspection::InspectInventoryRequest {
+        local_root: tree.0.clone(),
+        account_id: AccountId("account".into()),
+        remote_root_id: "root".into(),
+        table: inspection::InventoryTable::Receipts,
+        after_rowid: 0,
+    })
+    .unwrap();
+    let outcome = receipts
+        .columns
+        .iter()
+        .position(|column| column == "outcome")
+        .unwrap();
+    assert!(receipts
+        .rows
+        .iter()
+        .any(|row| row[outcome].display == "Obsolete"));
+}
+
+#[test]
+fn provider_version_and_local_remote_markers_are_independent() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut newer = remote_file(
+        "provider-new",
+        "remote",
+        m::MetadataValue::Known("new".into()),
+    );
+    if let Some(m::FileData::Remote(value)) = &mut newer.data {
+        value.version = m::MetadataValue::Known("12".into());
+    }
+    let current = inventory
+        .record_remote(remote_request(newer, ObservationTarget::NewItem, None))
+        .unwrap()
+        .item;
+
+    let mut old = remote_file(
+        "provider-old",
+        "remote",
+        m::MetadataValue::Known("old".into()),
+    );
+    if let Some(m::FileData::Remote(value)) = &mut old.data {
+        value.version = m::MetadataValue::Known("11".into());
+    }
+    old.observed_at = timestamp(5000);
+    let stale_remote = inventory
+        .record_remote(remote_request(
+            old,
+            ObservationTarget::Existing(current.id.clone()),
+            Some(current.revision),
+        ))
+        .unwrap()
+        .item;
+    assert_eq!(stale_remote.revision, current.revision);
+    assert_eq!(
+        stale_remote.remote_latest.as_ref().unwrap().name,
+        m::MetadataValue::Known("new".into())
+    );
+
+    let mut local = local_file(&tree, "capture-0000000000000001");
+    local.event.local.as_mut().unwrap().capture_id = "capture".into();
+    let interleaved = inventory
+        .record_local(local_order_request(
+            local,
+            "capture",
+            6000,
+            Some(current.revision),
+            ObservationTarget::Existing(current.id.clone()),
+        ))
+        .unwrap()
+        .item;
+    assert_eq!(interleaved.remote_latest, stale_remote.remote_latest);
+    assert_eq!(interleaved.local_presence, PresenceState::Present);
+}
+
+#[test]
+fn initial_scan_generations_and_operator_observations_keep_latest_confirmed_state() {
+    let tree = Tree::new();
+    std::fs::write(tree.0.join("local-file"), b"content").unwrap();
+    let inventory = InventoryManager::open(tree.request()).unwrap().inventory;
+    let mut before_scan = local_file(&tree, "capture-0000000000000001");
+    before_scan.event.local.as_mut().unwrap().capture_id = "capture".into();
+    let initial = inventory
+        .record_local(local_order_request(
+            before_scan,
+            "capture",
+            10,
+            None,
+            ObservationTarget::NewItem,
+        ))
+        .unwrap()
+        .item;
+
+    let mut scan = local_file(&tree, "scan:initial:1");
+    scan.event.local = None;
+    scan.event.action = m::FileEventAction::RecheckRequired;
+    scan.event.uncertainty = Some(m::ObservationUncertainty::UnclassifiedSignal);
+    let scanned = inventory
+        .record_local(RecordLocalObservation {
+            selector: ObservationTarget::Existing(initial.id.clone()),
+            expected_revision: Some(initial.revision),
+            observation: LocalObservation {
+                observed: scan,
+                presence: PresenceState::Present,
+                proof: ObservationProof {
+                    source: ObservationSource::LocalScan,
+                    observed_at: timestamp(20),
+                    scan_or_generation: Some("scan:initial".into()),
+                    complete_scope: true,
+                },
+            },
+        })
+        .unwrap()
+        .item;
+    let mut operator_result = local_file(&tree, "capture-0000000000000002");
+    operator_result.event.local.as_mut().unwrap().capture_id = "capture".into();
+    let confirmed = inventory
+        .record_local(local_order_request(
+            operator_result,
+            "capture",
+            25,
+            Some(scanned.revision),
+            ObservationTarget::Existing(initial.id.clone()),
+        ))
+        .unwrap()
+        .item;
+    assert_eq!(confirmed.revision, scanned.revision + 1);
+    assert!(confirmed.revision > initial.revision);
+}
 #[test]
 fn local_metadata_is_retained_and_link_conflicts_roll_back_all_patches() {
     let tree = Tree::new();

@@ -590,6 +590,7 @@ async fn known_remote_absence_creates_an_upload_intent_without_uploading() {
     let mut absent = remote_observation(&inventory, &item, "remote-absent", "file");
     absent.observation.observed.data = None;
     absent.observation.observed.event.current = None;
+    absent.observation.observed.event.action = FileEventAction::Unclassified;
     absent.observation.presence = PresenceState::AbsentConfirmed;
     absent.observation.proof = ObservationProof {
         source: ObservationSource::RemoteListing,
