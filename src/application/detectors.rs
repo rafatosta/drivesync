@@ -39,28 +39,6 @@ fn prepare(session: &mut Session) {
         let _ = owner.prepare().await;
     }));
 }
-/// Runs another local preparation while preserving paused capture and the durable event queue.
-pub(crate) fn rescan(context: &Context, id: &str) -> Result<(), String> {
-    if context.shutting_down.get() {
-        return Err("Application is shutting down".into());
-    }
-    let mut sessions = context.detectors.borrow_mut();
-    let session = sessions
-        .get_mut(id)
-        .ok_or("Account preparation is unavailable. Refresh to retry.")?;
-    use drivesync_engine::orchestrator::PreparationState;
-    if matches!(
-        session.orchestrator.preparation_status().state,
-        PreparationState::Starting
-            | PreparationState::Scanning
-            | PreparationState::Analyzing
-            | PreparationState::ProcessingEvents
-    ) {
-        return Err("A scan is already running".into());
-    }
-    prepare(session);
-    Ok(())
-}
 /// Cancels preparation on the main context, then stops and drops capture off the GTK thread.
 pub(crate) async fn remove(context: &Context, id: &AccountId) {
     let session = context.detectors.borrow_mut().remove(&id.0);

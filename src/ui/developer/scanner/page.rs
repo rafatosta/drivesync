@@ -56,7 +56,6 @@ struct View {
     busy: Cell<bool>,
     load_error: RefCell<Option<String>>,
     refresh: gtk::Button,
-    rescan: gtk::Button,
     status: gtk::Label,
     gate: gtk::Label,
     path: gtk::Label,
@@ -81,7 +80,6 @@ impl View {
             .cloned();
         let sessions = self.context.detectors.borrow();
         let session = id.as_ref().and_then(|id| sessions.get(id));
-        self.rescan.set_sensitive(false);
         self.spinner.stop();
         self.status.remove_css_class("success");
         self.status.remove_css_class("error");
@@ -104,59 +102,49 @@ impl View {
             .set_label(self.load_error.borrow().as_deref().unwrap_or(""));
         self.path.set_label(&session.root.display().to_string());
         let snapshot = session.orchestrator.preparation_status();
-        let working = matches!(
-            snapshot.state,
-            PreparationState::Starting
-                | PreparationState::Scanning
-                | PreparationState::Analyzing
-                | PreparationState::ProcessingEvents
-        ) || snapshot
-            .scanner
-            .as_ref()
-            .is_some_and(|s| s.state == ScannerState::Running);
-        self.rescan
-            .set_sensitive(!working && !self.busy.get() && !self.context.shutting_down.get());
+        let scanner = snapshot.scanner.as_ref();
+        let preparing = scanner.is_none()
+            && matches!(
+                snapshot.state,
+                PreparationState::Starting | PreparationState::Scanning
+            );
+        let working = preparing || scanner.is_some_and(|scan| scan.state == ScannerState::Running);
         self.spinner.set_spinning(working);
-        let state = match snapshot.state {
-            PreparationState::Idle => "Waiting to start",
-            PreparationState::Starting => "Starting capture",
-            PreparationState::Scanning => "Scanning",
-            PreparationState::Analyzing => "Recording decisions",
-            PreparationState::ProcessingEvents => "Processing changes",
-            PreparationState::ReadyForAnalyzer => "Scan complete",
-            PreparationState::Partial => "Partial scan",
-            PreparationState::Failed => "Preparation failed",
-            PreparationState::Cancelled => "Scan cancelled",
-            PreparationState::Stopped => "Stopped",
+        let state = match scanner.map(|scan| scan.state) {
+            Some(ScannerState::Idle) => "Waiting for local scan",
+            Some(ScannerState::Running) => "Scanning local files",
+            Some(ScannerState::Completed) => "Scan complete",
+            Some(ScannerState::Failed) => "Scan failed",
+            Some(ScannerState::Cancelled) => "Scan cancelled",
+            None if preparing => "Preparing local scan",
+            None => "Waiting for local scan",
         };
         self.status.set_label(state);
-        if snapshot.state == PreparationState::ReadyForAnalyzer {
+        if scanner.is_some_and(|scan| {
+            scan.state == ScannerState::Completed
+                && scan.last_report_status == Some(drivesync_engine::scanner::ScanStatus::Completed)
+        }) {
             self.status.add_css_class("success");
-            self.gate.set_label("Local scan complete. The Analyzer receives observations and calls the Operator for supported, verified creations.");
-        } else if matches!(
-            snapshot.state,
-            PreparationState::Analyzing | PreparationState::ProcessingEvents
-        ) {
-            self.gate.set_label(
-                "Analyzing observations and executing supported creations after verification.",
-            );
-        } else {
-            self.gate.set_label("Analysis suspended. A complete local scan is required; events remain stored in the detector queue.");
-        }
-        if matches!(
-            snapshot.state,
-            PreparationState::Partial | PreparationState::Failed
-        ) {
+        } else if scanner.is_some_and(|scan| {
+            scan.state == ScannerState::Failed
+                || scan.last_report_status == Some(drivesync_engine::scanner::ScanStatus::Partial)
+        }) {
             self.status.add_css_class("error");
         }
-        if let Some(error) = snapshot.error {
-            self.feedback.set_label(&match error {
-                PreparationFailure::Inventory(e) => format!(
+        self.gate.set_label(
+            "The Scanner observes local files and updates the inventory. The Analyzer processes Detector events and coordinates verified operations separately.",
+        );
+        match snapshot.error.as_ref() {
+            Some(PreparationFailure::Scanner(error)) => {
+                self.feedback.set_label(&format!("Scanner: {error}"));
+            }
+            Some(PreparationFailure::Inventory(error)) if scanner.is_none() => {
+                self.feedback.set_label(&format!(
                     "Inventory could not be opened ({:?}). Existing data has been preserved.",
-                    e.kind
-                ),
-                other => other.to_string(),
-            });
+                    error.kind
+                ));
+            }
+            _ => {}
         }
         if let Some(scan) = snapshot.scanner {
             self.files.set_label(&scan.files_observed.to_string());
@@ -173,13 +161,7 @@ impl View {
                 &scan
                     .current_directory
                     .map(|p| format!("Current folder: {}", String::from_utf8_lossy(p.as_bytes())))
-                    .unwrap_or_else(|| {
-                        if working {
-                            "Current folder: monitored root".into()
-                        } else {
-                            String::new()
-                        }
-                    }),
+                    .unwrap_or_default(),
             );
         }
         let key = snapshot
@@ -223,7 +205,7 @@ impl View {
             let message = if working {
                 "Detailed problems will be available when this scan finishes."
             } else {
-                "No completed report available."
+                "No scan report available yet."
             };
             if let Some(text) = self
                 .list
@@ -375,11 +357,8 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
     let spinner = gtk::Spinner::new();
     heading.append(&status);
     heading.append(&spinner);
-    let rescan = gtk::Button::with_label("Scan again");
-    rescan.set_widget_name("scanner-rescan");
-    heading.append(&rescan);
     body.append(&heading);
-    let gate = label("Analysis suspended.");
+    let gate = label("The Scanner observes local files and updates the inventory.");
     gate.set_widget_name("scanner-gate");
     body.append(&gate);
     let path = label("");
@@ -418,7 +397,7 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
         .build();
     list.set_widget_name("scanner-problems");
     body.append(&list);
-    let note=label("The Scanner observes local files and updates the inventory. It does not transfer files. Problems shown here belong to this application's latest scan.");
+    let note=label("This page shows the latest local scan. The Analyzer processes Detector events and coordinates verified operations separately. Scanner problems shown here belong to this application's latest scan.");
     note.add_css_class("dim-label");
     body.append(&note);
     let view = Rc::new(View {
@@ -429,7 +408,6 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
         busy: Cell::new(false),
         load_error: RefCell::new(None),
         refresh: refresh.clone(),
-        rescan: rescan.clone(),
         status,
         gate,
         path,
@@ -461,24 +439,6 @@ fn create(context: &Context) -> (gtk::Box, Rc<View>) {
         move |_| {
             if let Some(view) = weak.upgrade() {
                 view.refresh();
-            }
-        }
-    });
-    rescan.connect_clicked({
-        let weak = Rc::downgrade(&view);
-        move |_| {
-            if let Some(view) = weak.upgrade() {
-                let id = view
-                    .ids
-                    .borrow()
-                    .get(view.accounts.selected() as usize)
-                    .cloned();
-                if let Some(id) = id {
-                    if let Err(error) = detectors::rescan(&view.context, &id) {
-                        *view.load_error.borrow_mut() = Some(error);
-                    }
-                    view.render();
-                }
             }
         }
     });
