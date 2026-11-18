@@ -153,9 +153,12 @@ pub(super) fn build(context: &Context, operator: bool) -> gtk::Box {
 }
 
 fn command_label(command: &drivesync_engine::operations::OperationCommand) -> String {
-    use drivesync_engine::operations::{ItemName, OperationCommand as C};
-    if matches!(command, C::Trash { .. }) {
-        return "Move to trash".into();
+    use drivesync_engine::operations::{ItemName, OperationCommand as C, ResourceRef};
+    if let C::Trash { target, .. } = command {
+        return match target {
+            ResourceRef::Local { .. } => "Move local item to trash".into(),
+            ResourceRef::Remote { .. } => "Move remote item to trash".into(),
+        };
     }
     let (action, name) = match command {
         C::Upload { name, .. } => ("Upload", name),
