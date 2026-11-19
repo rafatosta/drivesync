@@ -465,6 +465,19 @@ fn unified_queue_uses_reserved_directory_and_preserves_inventory() {
 }
 
 #[test]
+fn detector_discards_structurally_invalid_file_before_queueing() {
+    let tree = Tree::new();
+    let clock = Arc::new(AtomicI64::new(1000));
+    let store = tree.store(&clock);
+    let mut invalid = tree.event("invalid");
+    invalid.event.action = FileEventAction::Created;
+    invalid.event.uncertainty = None;
+
+    assert!(!store.enqueue_from(&invalid, DetectorOrigin::Local).unwrap());
+    assert_eq!(store.snapshot().pending, 0);
+}
+
+#[test]
 fn root_queue_refuses_different_accounts_roots_or_syncs_without_replacement() {
     let tree = Tree::new();
     let store = Store::open_unified(&tree.scope(), "google", "remote-root").unwrap();

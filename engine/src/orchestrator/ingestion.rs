@@ -1,4 +1,4 @@
-//! Projects detector observations through public Inventory methods.
+//! Projects structurally validated detector observations through public Inventory methods.
 //! Unknown presence stays unknown; continuous ingestion never starts a full scan.
 use super::PreparationFailure;
 use crate::{inventory::*, models::*};
@@ -16,8 +16,6 @@ pub(super) fn ingest(
     file: &File,
     identity: &SyncIdentity,
 ) -> Result<Ingested, PreparationFailure> {
-    file.validate()
-        .map_err(|_| PreparationFailure::InvalidObservation(file.id.clone()))?;
     if file.sync_id != identity.sync_id {
         return Err(PreparationFailure::InvalidObservation(file.id.clone()));
     }

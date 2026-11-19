@@ -444,6 +444,10 @@ impl Store {
         if !self.matches_scope(file) {
             return Err(QueueFailure::new(QueueError::IdentityMismatch));
         }
+        // Malformed observations are discarded only after account and source ownership checks.
+        if file.validate().is_err() {
+            return Ok(false);
+        }
         let mut file = file.clone();
         if origin == DetectorOrigin::Local && file.causal_order.is_none() {
             file.causal_order = match self.existing_order(&file.id.0)? {
