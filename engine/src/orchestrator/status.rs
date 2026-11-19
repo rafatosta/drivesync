@@ -320,11 +320,13 @@ fn issue(error: &PreparationFailure) -> SynchronizationIssue {
         ),
         PreparationFailure::Analyzer(error) => (
             SynchronizationIssueKind::Analyzer(error.kind),
-            error.kind == crate::analyzer::AnalyzerErrorKind::InventoryFailure,
+            matches!(
+                error.kind,
+                crate::analyzer::AnalysisErrorKind::Inventory
+                    | crate::analyzer::AnalysisErrorKind::Evidence
+            ),
         ),
-        PreparationFailure::InvalidObservation(_) | PreparationFailure::Internal => {
-            (SynchronizationIssueKind::Internal, false)
-        }
+        PreparationFailure::Internal => (SynchronizationIssueKind::Internal, false),
         PreparationFailure::AlreadyRunning => (SynchronizationIssueKind::Internal, true),
     };
     SynchronizationIssue {

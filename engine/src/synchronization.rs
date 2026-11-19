@@ -3,7 +3,7 @@
 //! Producers publish complete snapshots. Consumers receive the latest snapshot
 //! and coalesced change notifications without starting work or reading storage.
 use crate::{
-    analyzer::{AnalysisPhase, AnalyzerErrorKind, CreationStage},
+    analyzer::{AnalysisErrorKind, AnalysisStage},
     detectors::{
         DeliveryState, DetectorError, DetectorSourceError, DetectorState, LocalActivity,
         LocalDetectorError, LocalDetectorState, LocalScanCoverage, QueueError, RemoteActivity,
@@ -45,7 +45,7 @@ pub enum SynchronizationActivity {
     Scanning,
     /// Inventory evidence is being evaluated into durable decisions.
     Analyzing,
-    /// Detector observations are being ingested into the inventory.
+    /// Detector events are being prepared for per-file Analyzer delivery.
     ProcessingEvents,
     /// A prerequisite or operation is being checked.
     Checking,
@@ -137,10 +137,8 @@ pub struct SynchronizationItem {
 pub enum SynchronizationWorkDetail {
     /// Source setup, scan coordination or another preparation step.
     Preparation,
-    /// Current inventory analysis phase.
-    Analysis(AnalysisPhase),
-    /// Current operation planning or execution phase.
-    Creation(CreationStage),
+    /// Current per-file analysis phase.
+    Analysis(AnalysisStage),
     /// Current transfer/application phase.
     Transfer(ExecutionPhase),
     /// The reason no active work is being performed.
@@ -165,7 +163,7 @@ pub struct SynchronizationWork {
 /// One observed change currently being ingested; it is evidence, not a sync command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SynchronizationEvent {
-    /// Filesystem or remote change that prompted the ingestion.
+    /// Filesystem or remote change represented by this detector file.
     pub action: FileEventAction,
     /// Previous location for moves and renames, when known.
     pub previous: Option<FileLocation>,
@@ -236,11 +234,11 @@ pub struct SynchronizationSources {
     pub detector_state: Option<DetectorState>,
     /// Whether captured events are paused, active or degraded.
     pub delivery: Option<DeliveryState>,
-    /// Events waiting to be leased for ingestion.
+    /// Events waiting to be leased for analysis.
     pub pending_events: u64,
-    /// Events currently leased to the ingestion worker.
+    /// Events currently leased to the Analyzer delivery worker.
     pub leased_events: u64,
-    /// Events durably confirmed as ingested.
+    /// Events durably acknowledged after Analyzer handling.
     pub confirmed_events: u64,
     /// Events durably captured by the source.
     pub detected_events: u64,
@@ -319,8 +317,8 @@ pub enum SynchronizationIssueKind {
     Inventory(InventoryError),
     /// Durable observation queue failure.
     Queue(QueueError),
-    /// Inventory analysis failure.
-    Analyzer(AnalyzerErrorKind),
+    /// Analyzer failure.
+    Analyzer(AnalysisErrorKind),
     /// File operation failure.
     Operation(OperatorError),
     /// Failure without a more specific sanitized category.

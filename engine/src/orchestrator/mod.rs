@@ -1,20 +1,19 @@
 //! Coordinates continuous detector observations and Analyzer decisions.
-mod analysis;
 mod diagnostics;
 mod execution;
 mod flow;
 mod status;
 pub use execution::ExecutionStatus;
-mod ingestion;
 mod startup;
 use crate::{detectors::*, Engine};
 pub use diagnostics::{DetectorDiagnostics, DetectorEventSummary};
 pub use startup::*;
 use std::sync::Arc;
 
-/// Owns both detection sources and continuous observation ingestion.
+/// Owns both detection sources and continuous one-file Analyzer delivery.
 pub struct Orchestrator {
     connector: Engine,
+    analyzer: Arc<dyn crate::analyzer::Analyzer>,
     detector: Arc<Detector>,
     preparation: startup::Preparation,
     flow: flow::Flow,
@@ -34,6 +33,7 @@ impl Orchestrator {
         execution.set_publisher(publisher.clone());
         Ok(Self {
             execution,
+            analyzer: request.analyzer,
             connector,
             detector,
             preparation: startup::Preparation::new(publisher),

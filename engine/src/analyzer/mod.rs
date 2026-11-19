@@ -4,7 +4,7 @@
 //! Progress is reported independently so the orchestrator can publish which file
 //! is active and whether each submitted file was analyzed, skipped, or failed.
 
-use crate::models::{File, FileId, SyncId};
+use crate::models::File;
 use std::{future::Future, pin::Pin};
 
 /// Boxed future returned by the analyzer boundary.
@@ -16,8 +16,11 @@ pub trait Analyzer: Send + Sync {
     /// Analyzes one detector file and reports lifecycle updates to `feedback`.
     ///
     /// The call completes only after this file has reached a terminal result.
-    /// Implementations must report `Started` before phase updates and exactly one
-    /// terminal feedback state (`Completed`, `Skipped`, or `Failed`).
+    /// The orchestrator publishes `Started` before calling this method;
+    /// implementations report phase updates and return the authoritative result.
+    /// Returning `Ok` authorizes the orchestrator to acknowledge this detector file:
+    /// completed outcomes must be durably handled, and skipped outcomes must be
+    /// proven duplicate or obsolete. Return `Err` when redelivery is required.
     fn analyze<'a>(&'a self, file: File, feedback: &'a dyn AnalysisFeedback) -> AnalysisFuture<'a>;
 }
 
@@ -30,10 +33,9 @@ pub trait AnalysisFeedback: Send + Sync {
 /// Progress or terminal status for one detector file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalysisUpdate {
-    /// Detector identity of the submitted file.
-    pub file_id: FileId,
-    /// Synchronization to which the submitted file belongs.
-    pub sync_id: SyncId,
+    /// Detector file currently being handled. Consumers should derive only the
+    /// display-safe identity and location needed for progress reporting.
+    pub file: File,
     /// Current lifecycle status.
     pub status: AnalysisStatus,
 }
@@ -45,12 +47,6 @@ pub enum AnalysisStatus {
     Started,
     /// The analyzer is working through a named stage.
     InProgress(AnalysisStage),
-    /// The analyzer finished handling the file.
-    Completed(AnalysisDisposition),
-    /// The file was deliberately not analyzed, with a machine-readable reason.
-    Skipped(AnalysisSkipReason),
-    /// Analysis failed; the call also returns the corresponding error.
-    Failed(AnalysisErrorKind),
 }
 
 /// Coarse stages suitable for user-visible synchronization feedback.
@@ -73,13 +69,13 @@ pub enum AnalysisStage {
 /// High-level outcome of successfully handling one file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisDisposition {
-    /// The file was handled and no operation was needed.
+    /// The file's current state was checked and no operation was needed.
     NoAction,
-    /// The file was handled and a synchronization operation was selected.
+    /// The selected synchronization operation was durably recorded.
     ActionSelected,
-    /// The file was handled but requires a conflict decision.
+    /// A conflict outcome was durably recorded for later resolution.
     Conflict,
-    /// The file was handled but more evidence is needed before an operation.
+    /// A request for more evidence was durably recorded before an operation.
     NeedsEvidence,
 }
 
@@ -90,8 +86,6 @@ pub enum AnalysisSkipReason {
     Duplicate,
     /// The observation is older than the state already known to the analyzer.
     Obsolete,
-    /// The observation cannot be analyzed with the currently available state.
-    InsufficientContext,
 }
 
 /// Sanitized analyzer failure category suitable for status reporting.
@@ -114,6 +108,20 @@ pub struct AnalysisError {
     pub kind: AnalysisErrorKind,
 }
 
+impl std::fmt::Display for AnalysisError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let description = match self.kind {
+            AnalysisErrorKind::Inventory => "inventory access or persistence failed",
+            AnalysisErrorKind::Evidence => "required analysis evidence is unavailable",
+            AnalysisErrorKind::Operation => "a selected operation failed",
+            AnalysisErrorKind::Internal => "an internal analyzer failure occurred",
+        };
+        f.write_str(description)
+    }
+}
+
+impl std::error::Error for AnalysisError {}
+
 /// Terminal result for one submitted detector file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalysisResult {
@@ -127,8 +135,7 @@ impl AnalysisUpdate {
     /// Builds an update tied to the identity of the submitted detector file.
     pub fn new(file: &File, status: AnalysisStatus) -> Self {
         Self {
-            file_id: file.id.clone(),
-            sync_id: file.sync_id.clone(),
+            file: file.clone(),
             status,
         }
     }

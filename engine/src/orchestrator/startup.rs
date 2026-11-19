@@ -9,6 +9,8 @@ use std::sync::{
 /// Configuration of one synchronization, using the Detector's account/root identity.
 pub struct OrchestratorCreateRequest {
     pub detector: DetectorCreateRequest,
+    /// Account-scoped Analyzer implementation receiving each detector file.
+    pub analyzer: Arc<dyn crate::analyzer::Analyzer>,
     /// Enables Analyzer-owned operations after live verification and policy checks.
     pub execute_operations: bool,
 }
@@ -28,8 +30,7 @@ pub enum PreparationState {
 pub enum PreparationFailure {
     Detector(DetectorFailure),
     Inventory(InventoryFailure),
-    Analyzer(crate::analyzer::AnalyzerError),
-    InvalidObservation(crate::models::FileId),
+    Analyzer(crate::analyzer::AnalysisError),
     AlreadyRunning,
     Internal,
 }
@@ -39,9 +40,6 @@ impl std::fmt::Display for PreparationFailure {
             Self::Detector(e) => write!(f, "Detector: {e}"),
             Self::Inventory(e) => write!(f, "Inventory: {e}"),
             Self::Analyzer(e) => write!(f, "Analyzer: {e}"),
-            Self::InvalidObservation(_) => {
-                f.write_str("Observation could not be safely associated with an inventory item")
-            }
             Self::AlreadyRunning => f.write_str("Preparation is already running"),
             Self::Internal => f.write_str("Could not prepare synchronization"),
         }
@@ -54,7 +52,7 @@ impl std::error::Error for PreparationFailure {}
 pub struct PreparationStatus {
     pub state: PreparationState,
     pub error: Option<PreparationFailure>,
-    /// Events acknowledged after durable ingestion and analysis by this Orchestrator.
+    /// Events acknowledged after the Analyzer returned for every file in the batch.
     pub events_processed: u64,
 }
 
@@ -234,18 +232,12 @@ impl Orchestrator {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .state = PreparationState::ProcessingEvents;
-            let scope = self.detector.scope();
             self.flow
                 .start(flow::Context {
-                    connector: self.connector.clone(),
+                    analyzer: self.analyzer.clone(),
                     execution: self.execution.clone(),
                     detector: self.detector.clone(),
                     inventory,
-                    identity: SyncIdentity {
-                        sync_id: scope.sync_id.clone(),
-                        account_id: scope.account_id.clone(),
-                        remote_root_id: scope.remote_root_id.clone(),
-                    },
                     epoch: self.preparation.epoch.clone(),
                     expected: epoch,
                     control: self.preparation.control.clone(),

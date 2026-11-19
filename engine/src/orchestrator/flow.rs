@@ -1,9 +1,9 @@
-//! Continuous observation ingestion. Detector owns the queue; Analyzer owns decisions.
-//! This worker never claims Inventory operations or executes physical synchronization.
-use super::{analysis, ingestion, PreparationFailure, PreparationState};
+//! Continuous observation delivery. Detector owns the queue; Analyzer owns file decisions.
+use super::{PreparationFailure, PreparationState};
 use crate::{
+    analyzer::AnalysisFeedback,
     detectors::*,
-    inventory::*,
+    inventory::{InventoryManager, ItemKind},
     models::{File as Observation, FileData, FileLocation, FileScope, SyncId},
     synchronization::{
         SynchronizationAction, SynchronizationActivity, SynchronizationEvent, SynchronizationItem,
@@ -13,7 +13,6 @@ use crate::{
 };
 use std::os::unix::ffi::OsStringExt;
 use std::{
-    collections::BTreeSet,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -140,11 +139,10 @@ impl Drop for Flow {
     }
 }
 pub(super) struct Context {
-    pub connector: crate::Engine,
+    pub analyzer: Arc<dyn crate::analyzer::Analyzer>,
     pub execution: Arc<super::execution::ExecutionControl>,
     pub detector: Arc<Detector>,
     pub inventory: Arc<InventoryManager>,
-    pub identity: SyncIdentity,
     pub epoch: Arc<AtomicU64>,
     pub expected: u64,
     pub control: Arc<Mutex<()>>,
@@ -153,10 +151,10 @@ pub(super) struct Context {
 }
 impl Context {
     fn current(&self, stop: &AtomicBool) -> Result<(), PreparationFailure> {
-        if stop.load(Ordering::Acquire) {
+        if stop.load(Ordering::Acquire) || self.epoch.load(Ordering::Acquire) != self.expected {
             Err(PreparationFailure::Internal)
         } else {
-            analysis::current(&self.epoch, self.expected)
+            Ok(())
         }
     }
     fn state(&self, state: PreparationState, error: Option<PreparationFailure>) {
@@ -196,18 +194,6 @@ impl Context {
                     });
                 }
             }),
-        }
-    }
-    async fn await_with_source_updates<T>(
-        &self,
-        future: impl std::future::Future<Output = T>,
-    ) -> T {
-        tokio::pin!(future);
-        loop {
-            tokio::select! {
-                result = &mut future => return result,
-                _ = tokio::time::sleep(Duration::from_millis(100)) => self.publish_sources(),
-            }
         }
     }
     fn publish_event(&self, file: &Observation, processed: u64, total: u64) {
@@ -347,16 +333,6 @@ fn consume(
     wake: &Wake,
 ) -> Result<(), PreparationFailure> {
     dispatch_pending_revalidations(context)?;
-    if context.execution.snapshot().enabled {
-        runtime.block_on(context.await_with_source_updates(analysis::retry_pending(
-            context.inventory.clone(),
-            context.identity.clone(),
-            context.epoch.clone(),
-            context.expected,
-            context.connector.clone(),
-            context.execution.clone(),
-        )))?;
-    }
     loop {
         context.current(stop)?;
         context.publish_sources();
@@ -367,7 +343,7 @@ fn consume(
                 .lock()
                 .map_err(|_| PreparationFailure::Internal)?;
             context.current(stop)?;
-            // The batch is renewed while its observations and resulting operations run.
+            // The batch lease remains active while files are delivered one by one.
             let batch = context
                 .detector
                 .take_events(TakeEventsRequest {
@@ -386,28 +362,7 @@ fn consume(
         match outcome {
             Some(()) => context.state(PreparationState::ReadyForAnalyzer, None),
             None => {
-                if context.execution.snapshot().enabled {
-                    runtime.block_on(context.await_with_source_updates(
-                        analysis::retry_pending(
-                            context.inventory.clone(),
-                            context.identity.clone(),
-                            context.epoch.clone(),
-                            context.expected,
-                            context.connector.clone(),
-                            context.execution.clone(),
-                        ),
-                    ))?;
-                }
                 context.state(PreparationState::ReadyForAnalyzer, None);
-                if !context.execution.snapshot().prerequisite_retries.is_empty() {
-                    context.snapshot.update_status(|status| {
-                        if let Some(work) = &mut status.work {
-                            work.detail = SynchronizationWorkDetail::Waiting(
-                                crate::synchronization::SynchronizationWaitReason::RetryBackoff,
-                            );
-                        }
-                    });
-                }
                 wake.wait(version, stop);
                 context.publish_sources();
             }
@@ -471,106 +426,43 @@ async fn process_files(
     stop: &AtomicBool,
     files: Vec<Observation>,
 ) -> Result<(), PreparationFailure> {
-    let observations = files.clone();
-    let mut ids = BTreeSet::new();
-    let mut all = false;
     let total = files.len() as u64;
+    context.execution.begin_batch(total);
     for (index, file) in files.into_iter().enumerate() {
         context.current(stop)?;
         context.publish_event(&file, index as u64, total);
-        let ingested = ingestion::ingest(&context.inventory, &file, &context.identity)?;
-        if let Some(scope) = ingested.revalidate.clone() {
-            context
-                .detector
-                .request_scan(DetectorScanRequest {
-                    scope: DetectorScanScope::Scopes(vec![scope]),
-                    reason: DetectorScanReason::ConsistencyCheck,
-                    request_id: Some(format!("inventory-revalidate:{}", file.id.0)),
-                })
-                .map_err(PreparationFailure::Detector)?;
-        }
+        context
+            .execution
+            .report(crate::analyzer::AnalysisUpdate::new(
+                &file,
+                crate::analyzer::AnalysisStatus::Started,
+            ));
+        let analysis = context
+            .analyzer
+            .analyze(file.clone(), context.execution.as_ref());
+        tokio::pin!(analysis);
+        let result = loop {
+            tokio::select! {
+                result = &mut analysis => break result,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    context.current(stop)?;
+                    context.publish_sources();
+                },
+            }
+        };
+        context
+            .execution
+            .finish_file(file.id.clone(), result.clone());
+        let result = result.map_err(PreparationFailure::Analyzer)?;
+        context.current(stop)?;
+        context.execution.advance_batch(index as u64 + 1, total);
         context.publish_event(&file, index as u64 + 1, total);
-        if let Some(id) = ingested.item {
-            ids.insert(id);
-        }
-        match &file.data {
-            Some(FileData::Local(local)) => {
-                if let Some(slash) = local
-                    .relative_path
-                    .as_bytes()
-                    .iter()
-                    .rposition(|byte| *byte == b'/')
-                {
-                    if let Ok(parent) = crate::models::LocalRelativePath::new(
-                        local.relative_path.as_bytes()[..slash].to_vec(),
-                    ) {
-                        if let Some(item) = context
-                            .inventory
-                            .get_item(GetItemRequest {
-                                selector: ItemSelector::LocalRelativePath(parent),
-                            })
-                            .map_err(PreparationFailure::Inventory)?
-                            .item
-                        {
-                            ids.insert(item.id);
-                        }
-                    }
-                }
-            }
-            Some(FileData::Remote(remote)) => {
-                if let crate::models::MetadataValue::Known(parents) = &remote.parent_ids {
-                    for parent in parents {
-                        if let Some(item) = context
-                            .inventory
-                            .get_item(GetItemRequest {
-                                selector: ItemSelector::RemoteRef(crate::models::RemoteFileRef {
-                                    account_id: remote.reference.account_id.clone(),
-                                    file_id: parent.clone(),
-                                }),
-                            })
-                            .map_err(PreparationFailure::Inventory)?
-                            .item
-                        {
-                            ids.insert(item.id);
-                        }
-                    }
-                }
-            }
-            None => {}
-        }
-        all |= ingested.analyze_all;
+        let _ = result;
     }
-    context.current(stop)?;
-    if all {
-        context
-            .await_with_source_updates(analysis::analyze_all(
-                context.inventory.clone(),
-                context.identity.clone(),
-                context.epoch.clone(),
-                context.expected,
-                context.connector.clone(),
-                context.execution.clone(),
-                observations,
-            ))
-            .await?;
-    } else if !ids.is_empty() {
-        context
-            .await_with_source_updates(analysis::analyze_selected(
-                context.inventory.clone(),
-                context.identity.clone(),
-                context.epoch.clone(),
-                context.expected,
-                analysis::SelectedAnalysisInput { ids, observations },
-                context.connector.clone(),
-                context.execution.clone(),
-            ))
-            .await?;
-    }
-    context.current(stop)?;
     Ok(())
 }
 
-fn observation_location(location: &FileLocation) -> SynchronizationLocation {
+pub(super) fn observation_location(location: &FileLocation) -> SynchronizationLocation {
     match location {
         FileLocation::Local(path) => SynchronizationLocation::Local(path.clone()),
         FileLocation::Remote {
@@ -585,7 +477,7 @@ fn observation_location(location: &FileLocation) -> SynchronizationLocation {
     }
 }
 
-fn observation_item(file: &Observation) -> Option<SynchronizationItem> {
+pub(super) fn observation_item(file: &Observation) -> Option<SynchronizationItem> {
     let mut item = SynchronizationItem {
         id: None,
         kind: None,
