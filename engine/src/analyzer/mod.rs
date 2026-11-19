@@ -3,6 +3,25 @@
 //! The orchestrator submits one validated detector `File` and awaits its result.
 //! Progress is reported independently so the orchestrator can publish which file
 //! is active and whether each submitted file was analyzed, skipped, or failed.
+//!
+//! The internal artifact flow is `File -> AnalysisContext -> AnalysisDecision -> AnalysisResult`.
+//! Context reads state, Decision classifies intent, and Apply plans/persists/optionally
+//! executes. The decision artifact retains the context needed by Apply.
+//!
+//! | Boundary | Receives | Returns |
+//! | --- | --- | --- |
+//! | `Analyzer::analyze` | One `File` and feedback sink | `AnalysisResult` |
+//! | `ContextService::build` | One `File` | `AnalysisContext` |
+//! | `DecisionService::decide` | `AnalysisContext` | `AnalysisDecision` |
+//! | `ApplyService::apply` | `AnalysisDecision` | `AnalysisResult` |
+
+pub mod apply;
+pub mod context;
+pub mod decision;
+
+pub use apply::{AnalysisItemResult, ApplyService};
+pub use context::{AnalysisContext, AnalysisItemContext, ContextService};
+pub use decision::{AnalysisDecision, AnalysisItemDecision, DecisionService, DecisionTarget};
 
 use crate::models::File;
 use std::{future::Future, pin::Pin};
@@ -125,8 +144,8 @@ impl std::error::Error for AnalysisError {}
 /// Terminal result for one submitted detector file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalysisResult {
-    /// Analysis reached a successful outcome.
-    Completed(AnalysisDisposition),
+    /// Every target produced by the decision stage reached a durable outcome.
+    Completed(Vec<AnalysisItemResult>),
     /// The analyzer intentionally ignored this delivery.
     Skipped(AnalysisSkipReason),
 }
