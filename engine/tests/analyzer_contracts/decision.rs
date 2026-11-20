@@ -1,3 +1,4 @@
+//! Artifact shape fixtures only; decision behavior is not yet specified here.
 use super::support::{file, item_context, unknown_observation};
 use drivesync_engine::{
     analyzer::{
@@ -18,9 +19,8 @@ use drivesync_engine::{
 fn context(action: FileEventAction, items: Vec<AnalysisItemContext>) -> AnalysisContext {
     AnalysisContext {
         file: file(action, FileScope::WholeSync),
-        association: ContextAssociation::Scope,
+        association: ContextAssociation::Scope(items),
         observation: unknown_observation(),
-        items,
     }
 }
 
@@ -41,7 +41,6 @@ fn new_remote_file_without_inventory_item_has_download_create_decision_fixture()
         file: remote_file,
         association: ContextAssociation::Unmatched,
         observation: unknown_observation(),
-        items: Vec::new(),
     };
     let expected = AnalysisDecision {
         context: input.clone(),
@@ -77,9 +76,8 @@ fn local_edit_with_known_inventory_revision_has_upload_update_decision_fixture()
     );
     let input = AnalysisContext {
         file: local_file,
-        association: ContextAssociation::Matched,
+        association: ContextAssociation::Matched(Box::new(subject)),
         observation: unknown_observation(),
-        items: vec![subject],
     };
     let expected = AnalysisDecision {
         context: input.clone(),

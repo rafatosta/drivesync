@@ -1,3 +1,4 @@
+//! Artifact shape fixtures only; behavioral oracles live in context_behavior.rs.
 use super::support::{file, item_context, unknown_observation};
 use drivesync_engine::{
     analyzer::{AnalysisContext, ContextAssociation},
@@ -15,18 +16,16 @@ fn remote_creation_without_inventory_entry_has_empty_item_context() {
         file: input.clone(),
         association: ContextAssociation::Unmatched,
         observation: unknown_observation(),
-        items: Vec::new(),
     };
 
     let context = AnalysisContext {
         file: input,
         association: ContextAssociation::Unmatched,
         observation: unknown_observation(),
-        items: Vec::new(),
     };
 
     assert_eq!(context, expected);
-    assert!(context.items.is_empty());
+    assert!(context.association.items().is_empty());
     assert_eq!(context.file.event.action, FileEventAction::Created);
 }
 
@@ -36,21 +35,19 @@ fn context_keeps_inventory_snapshot_and_its_evidence_together() {
     let subject = item_context(12);
     let expected = AnalysisContext {
         file: input.clone(),
-        association: ContextAssociation::Scope,
+        association: ContextAssociation::Scope(vec![subject.clone()]),
         observation: unknown_observation(),
-        items: vec![subject.clone()],
     };
 
     let context = AnalysisContext {
         file: input,
-        association: ContextAssociation::Scope,
+        association: ContextAssociation::Scope(vec![subject]),
         observation: unknown_observation(),
-        items: vec![subject],
     };
 
     assert_eq!(context, expected);
-    assert_eq!(context.items[0].item.revision, 12);
-    assert!(!context.items[0].evidence.baseline_confirmed);
+    assert_eq!(context.association.items()[0].item.revision, 12);
+    assert!(!context.association.items()[0].evidence.baseline_confirmed);
 }
 
 #[test]
@@ -61,13 +58,12 @@ fn whole_synchronization_scope_can_carry_multiple_inventory_snapshots() {
     second.item.id.0 = "item-second".into();
     let expected = AnalysisContext {
         file: file(FileEventAction::RecheckRequired, FileScope::WholeSync),
-        association: ContextAssociation::Scope,
+        association: ContextAssociation::Scope(vec![first, second]),
         observation: unknown_observation(),
-        items: vec![first, second],
     };
 
-    assert_eq!(expected.items.len(), 2);
-    assert_eq!(expected.items[0].item.revision, 3);
-    assert_eq!(expected.items[1].item.revision, 8);
+    assert_eq!(expected.association.items().len(), 2);
+    assert_eq!(expected.association.items()[0].item.revision, 3);
+    assert_eq!(expected.association.items()[1].item.revision, 8);
     assert_eq!(expected.file.event.action, FileEventAction::RecheckRequired);
 }

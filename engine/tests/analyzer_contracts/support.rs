@@ -1,7 +1,7 @@
 //! Shared value fixtures for Analyzer artifact contract tests.
 
 use drivesync_engine::{
-    analyzer::{AnalysisItemContext, ObservationContext},
+    analyzer::{AnalysisItemContext, ObservationContext, ObservationFreshness},
     inventory::{
         AnalysisEvidence, EvidenceRelation, ItemKind, PresenceState, SyncItem, SyncItemId,
         SyncStatus,
@@ -57,6 +57,7 @@ pub(crate) fn item_context(revision: u64) -> AnalysisItemContext {
             last_synced_at: None,
         },
         evidence: unknown_evidence(),
+        freshness: ObservationFreshness::Incomparable,
     }
 }
 

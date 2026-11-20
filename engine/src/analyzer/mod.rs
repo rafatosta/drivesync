@@ -22,6 +22,7 @@ pub mod decision;
 pub use apply::{AnalysisItemResult, ApplyService};
 pub use context::{
     AnalysisContext, AnalysisItemContext, ContextAssociation, ContextService, ObservationContext,
+    ObservationFreshness,
 };
 pub use decision::{
     AnalysisDecision, AnalysisItemDecision, DecisionOutcome, DecisionService, DecisionTarget,

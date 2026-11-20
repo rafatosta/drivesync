@@ -18,5 +18,7 @@ pub trait DecisionService: Send + Sync {
     /// It returns an `Observation` target when no inventory item matches, one
     /// `Item` target for each affected row, or a `Synchronization` target when a
     /// whole-synchronization observation has no current rows to decide.
+    /// Ambiguous associations must not authorize operations on candidates;
+    /// return an Observation target requiring identity evidence instead.
     fn decide(&self, context: AnalysisContext) -> Result<AnalysisDecision, AnalysisError>;
 }
