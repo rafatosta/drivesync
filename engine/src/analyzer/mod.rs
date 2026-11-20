@@ -21,7 +21,9 @@ pub mod decision;
 
 pub use apply::{AnalysisItemResult, ApplyService};
 pub use context::{AnalysisContext, AnalysisItemContext, ContextService};
-pub use decision::{AnalysisDecision, AnalysisItemDecision, DecisionService, DecisionTarget};
+pub use decision::{
+    AnalysisDecision, AnalysisItemDecision, DecisionOutcome, DecisionService, DecisionTarget,
+};
 
 use crate::models::File;
 use std::{future::Future, pin::Pin};

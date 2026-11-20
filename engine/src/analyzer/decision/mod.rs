@@ -8,6 +8,10 @@ use crate::analyzer::{AnalysisContext, AnalysisError};
 pub trait DecisionService: Send + Sync {
     /// Produces one decision entry per affected item or scope target.
     ///
+    /// Each entry has exactly one semantic outcome. ActionSelected must carry
+    /// at least one intent, and NeedsEvidence at least one requirement.
+    /// Targets must be unique and correspond to the input context.
+    ///
     /// This stage may classify conflicts and identify required evidence. It does
     /// not access Inventory, select physical destinations, persist decisions, or
     /// invoke operations.

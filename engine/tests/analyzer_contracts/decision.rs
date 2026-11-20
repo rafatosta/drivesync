@@ -2,7 +2,7 @@ use super::support::{file, item_context};
 use drivesync_engine::{
     analyzer::{
         AnalysisContext, AnalysisDecision, AnalysisDisposition, AnalysisItemContext,
-        AnalysisItemDecision, DecisionTarget,
+        AnalysisItemDecision, DecisionOutcome, DecisionTarget,
     },
     inventory::{
         AnalysisDimension, AnalysisFinding, AnalysisFindingStatus, AnalysisIntent, AnalysisOrigin,
@@ -42,10 +42,10 @@ fn new_remote_file_without_inventory_item_has_download_create_decision_fixture()
         context: input.clone(),
         items: vec![AnalysisItemDecision {
             target: DecisionTarget::Observation(FileId("detector-file-1".into())),
-            disposition: AnalysisDisposition::ActionSelected,
             findings: vec![],
-            requirements: vec![],
-            intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
+            outcome: DecisionOutcome::ActionSelected {
+                intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
+            },
         }],
     };
 
@@ -56,8 +56,10 @@ fn new_remote_file_without_inventory_item_has_download_create_decision_fixture()
         DecisionTarget::Observation(FileId("detector-file-1".into()))
     );
     assert_eq!(
-        expected.items[0].intents,
-        vec![intent(OperationDirection::Download, OperationKind::Create)]
+        expected.items[0].outcome,
+        DecisionOutcome::ActionSelected {
+            intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
+        }
     );
 }
 
@@ -79,13 +81,13 @@ fn local_edit_with_known_inventory_revision_has_upload_update_decision_fixture()
                 id: SyncItemId("inventory-item-1".into()),
                 revision: 9,
             },
-            disposition: AnalysisDisposition::ActionSelected,
             findings: vec![],
-            requirements: vec![],
-            intents: vec![intent(
-                OperationDirection::Upload,
-                OperationKind::UpdateContent,
-            )],
+            outcome: DecisionOutcome::ActionSelected {
+                intents: vec![intent(
+                    OperationDirection::Upload,
+                    OperationKind::UpdateContent,
+                )],
+            },
         }],
     };
 
@@ -98,12 +100,13 @@ fn local_edit_with_known_inventory_revision_has_upload_update_decision_fixture()
         }
     );
     assert_eq!(
-        expected.items[0].intents[0].direction,
-        OperationDirection::Upload
-    );
-    assert_eq!(
-        expected.items[0].intents[0].kind,
-        OperationKind::UpdateContent
+        expected.items[0].outcome,
+        DecisionOutcome::ActionSelected {
+            intents: vec![intent(
+                OperationDirection::Upload,
+                OperationKind::UpdateContent,
+            )],
+        }
     );
 }
 
@@ -136,15 +139,20 @@ fn rename_move_and_deletion_cases_use_semantic_intents() {
                     id: SyncItemId("inventory-item-1".into()),
                     revision: 4,
                 },
-                disposition: AnalysisDisposition::ActionSelected,
                 findings: vec![],
-                requirements: vec![],
-                intents: vec![intent(direction.clone(), kind.clone())],
+                outcome: DecisionOutcome::ActionSelected {
+                    intents: vec![intent(direction.clone(), kind.clone())],
+                },
             }],
         };
 
         assert_eq!(expected.context.file.event.action, action);
-        assert_eq!(expected.items[0].intents, vec![intent(direction, kind)]);
+        assert_eq!(
+            expected.items[0].outcome,
+            DecisionOutcome::ActionSelected {
+                intents: vec![intent(direction, kind)],
+            }
+        );
     }
 }
 
@@ -158,15 +166,15 @@ fn conflict_and_missing_evidence_are_distinct_decision_fixtures() {
                 id: SyncItemId("inventory-item-1".into()),
                 revision: 5,
             },
-            disposition: AnalysisDisposition::Conflict,
             findings: vec![AnalysisFinding {
                 origin: AnalysisOrigin::Conflicts,
                 dimension: AnalysisDimension::Content,
                 status: AnalysisFindingStatus::Divergent,
                 reason: AnalysisReason::ConcurrentChanges,
             }],
-            requirements: vec![],
-            intents: vec![],
+            outcome: DecisionOutcome::Conflict {
+                requirements: vec![],
+            },
         }],
     };
     let needs_evidence = AnalysisItemDecision {
@@ -174,24 +182,29 @@ fn conflict_and_missing_evidence_are_distinct_decision_fixtures() {
             id: SyncItemId("inventory-item-1".into()),
             revision: 5,
         },
-        disposition: AnalysisDisposition::NeedsEvidence,
         findings: vec![],
-        requirements: vec![AnalysisRequirement::VerifyContent],
-        intents: vec![],
+        outcome: DecisionOutcome::NeedsEvidence {
+            requirements: vec![AnalysisRequirement::VerifyContent],
+        },
     };
 
-    assert_eq!(conflict.items[0].disposition, AnalysisDisposition::Conflict);
+    assert_eq!(
+        conflict.items[0].outcome.disposition(),
+        AnalysisDisposition::Conflict
+    );
     assert_eq!(
         conflict.items[0].findings[0].reason,
         AnalysisReason::ConcurrentChanges
     );
     assert_eq!(
-        needs_evidence.disposition,
+        needs_evidence.outcome.disposition(),
         AnalysisDisposition::NeedsEvidence
     );
     assert_eq!(
-        needs_evidence.requirements,
-        vec![AnalysisRequirement::VerifyContent]
+        needs_evidence.outcome,
+        DecisionOutcome::NeedsEvidence {
+            requirements: vec![AnalysisRequirement::VerifyContent],
+        }
     );
 }
 
@@ -199,15 +212,46 @@ fn conflict_and_missing_evidence_are_distinct_decision_fixtures() {
 fn synchronization_scope_target_is_available_without_fabricating_item_identity() {
     let expected = AnalysisItemDecision {
         target: DecisionTarget::Synchronization,
-        disposition: AnalysisDisposition::NeedsEvidence,
         findings: vec![],
-        requirements: vec![AnalysisRequirement::ObserveRemote],
-        intents: vec![],
+        outcome: DecisionOutcome::NeedsEvidence {
+            requirements: vec![AnalysisRequirement::ObserveRemote],
+        },
     };
 
     assert_eq!(expected.target, DecisionTarget::Synchronization);
     assert_eq!(
-        expected.requirements,
-        vec![AnalysisRequirement::ObserveRemote]
+        expected.outcome,
+        DecisionOutcome::NeedsEvidence {
+            requirements: vec![AnalysisRequirement::ObserveRemote],
+        }
     );
+}
+
+#[test]
+fn semantic_outcomes_map_to_result_dispositions() {
+    let cases = [
+        (DecisionOutcome::NoAction, AnalysisDisposition::NoAction),
+        (
+            DecisionOutcome::ActionSelected {
+                intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
+            },
+            AnalysisDisposition::ActionSelected,
+        ),
+        (
+            DecisionOutcome::Conflict {
+                requirements: vec![],
+            },
+            AnalysisDisposition::Conflict,
+        ),
+        (
+            DecisionOutcome::NeedsEvidence {
+                requirements: vec![AnalysisRequirement::VerifyContent],
+            },
+            AnalysisDisposition::NeedsEvidence,
+        ),
+    ];
+
+    for (outcome, expected) in cases {
+        assert_eq!(outcome.disposition(), expected);
+    }
 }

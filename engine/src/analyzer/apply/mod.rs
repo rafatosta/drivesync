@@ -11,6 +11,11 @@ pub type ApplyFuture<'a> = AnalysisFuture<'a>;
 pub trait ApplyService: Send + Sync {
     /// Returns only after each decision has a durable terminal outcome.
     ///
+    /// Handle each `DecisionOutcome` explicitly. Only `ActionSelected` may
+    /// proceed to operation planning, subject to execution preconditions.
+    /// Reject empty actionable intent lists or empty evidence requirement lists
+    /// before acknowledging a delivery.
+    ///
     /// An error means the detector delivery must be retried. A completed result
     /// authorizes acknowledgement; it does not by itself assert that a physical
     /// operation ran unless the item disposition says so. For `Completed`, return
