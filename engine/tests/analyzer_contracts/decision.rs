@@ -1,7 +1,8 @@
-use super::support::{file, item_context};
+use super::support::{file, item_context, unknown_observation};
 use drivesync_engine::{
     analyzer::{
         AnalysisContext, AnalysisDecision, AnalysisDisposition, AnalysisItemContext,
+        ContextAssociation,
         AnalysisItemDecision, DecisionOutcome, DecisionTarget,
     },
     inventory::{
@@ -17,6 +18,8 @@ use drivesync_engine::{
 fn context(action: FileEventAction, items: Vec<AnalysisItemContext>) -> AnalysisContext {
     AnalysisContext {
         file: file(action, FileScope::WholeSync),
+        association: ContextAssociation::Scope,
+        observation: unknown_observation(),
         items,
     }
 }
@@ -36,6 +39,8 @@ fn new_remote_file_without_inventory_item_has_download_create_decision_fixture()
     );
     let input = AnalysisContext {
         file: remote_file,
+        association: ContextAssociation::Unmatched,
+        observation: unknown_observation(),
         items: Vec::new(),
     };
     let expected = AnalysisDecision {
@@ -72,6 +77,8 @@ fn local_edit_with_known_inventory_revision_has_upload_update_decision_fixture()
     );
     let input = AnalysisContext {
         file: local_file,
+        association: ContextAssociation::Matched,
+        observation: unknown_observation(),
         items: vec![subject],
     };
     let expected = AnalysisDecision {

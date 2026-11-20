@@ -1,7 +1,7 @@
 //! Shared value fixtures for Analyzer artifact contract tests.
 
 use drivesync_engine::{
-    analyzer::AnalysisItemContext,
+    analyzer::{AnalysisItemContext, ObservationContext},
     inventory::{
         AnalysisEvidence, EvidenceRelation, ItemKind, PresenceState, SyncItem, SyncItemId,
         SyncStatus,
@@ -56,15 +56,27 @@ pub(crate) fn item_context(revision: u64) -> AnalysisItemContext {
             last_checked_at: None,
             last_synced_at: None,
         },
-        evidence: AnalysisEvidence {
-            baseline_confirmed: false,
-            local_scope_complete: false,
-            remote_scope_complete: false,
-            local_content: EvidenceRelation::Unknown,
-            remote_content: EvidenceRelation::Unknown,
-            current_content: EvidenceRelation::Unknown,
-            local_parent: None,
-            current_parents: EvidenceRelation::Unknown,
-        },
+        evidence: unknown_evidence(),
+    }
+}
+
+pub(crate) fn unknown_evidence() -> AnalysisEvidence {
+    AnalysisEvidence {
+        baseline_confirmed: false,
+        local_scope_complete: false,
+        remote_scope_complete: false,
+        local_content: EvidenceRelation::Unknown,
+        remote_content: EvidenceRelation::Unknown,
+        current_content: EvidenceRelation::Unknown,
+        local_parent: None,
+        current_parents: EvidenceRelation::Unknown,
+    }
+}
+
+pub(crate) fn unknown_observation() -> ObservationContext {
+    ObservationContext {
+        local_presence: PresenceState::Unknown,
+        remote_presence: PresenceState::Unknown,
+        evidence: unknown_evidence(),
     }
 }

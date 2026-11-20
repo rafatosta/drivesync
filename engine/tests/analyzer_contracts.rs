@@ -8,3 +8,6 @@ mod context;
 mod decision;
 #[path = "analyzer_contracts/support.rs"]
 mod support;
+
+#[path = "analyzer_contracts/context_behavior.rs"]
+mod context_behavior;

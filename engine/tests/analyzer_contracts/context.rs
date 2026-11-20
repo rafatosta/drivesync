@@ -1,6 +1,6 @@
-use super::support::{file, item_context};
+use super::support::{file, item_context, unknown_observation};
 use drivesync_engine::{
-    analyzer::AnalysisContext,
+    analyzer::{AnalysisContext, ContextAssociation},
     models::{AccountId, FileEventAction, FileScope, RemoteFileId, RemoteFileRef},
 };
 
@@ -13,11 +13,15 @@ fn remote_creation_without_inventory_entry_has_empty_item_context() {
     let input = file(FileEventAction::Created, scope);
     let expected = AnalysisContext {
         file: input.clone(),
+        association: ContextAssociation::Unmatched,
+        observation: unknown_observation(),
         items: Vec::new(),
     };
 
     let context = AnalysisContext {
         file: input,
+        association: ContextAssociation::Unmatched,
+        observation: unknown_observation(),
         items: Vec::new(),
     };
 
@@ -32,11 +36,15 @@ fn context_keeps_inventory_snapshot_and_its_evidence_together() {
     let subject = item_context(12);
     let expected = AnalysisContext {
         file: input.clone(),
+        association: ContextAssociation::Scope,
+        observation: unknown_observation(),
         items: vec![subject.clone()],
     };
 
     let context = AnalysisContext {
         file: input,
+        association: ContextAssociation::Scope,
+        observation: unknown_observation(),
         items: vec![subject],
     };
 
@@ -53,6 +61,8 @@ fn whole_synchronization_scope_can_carry_multiple_inventory_snapshots() {
     second.item.id.0 = "item-second".into();
     let expected = AnalysisContext {
         file: file(FileEventAction::RecheckRequired, FileScope::WholeSync),
+        association: ContextAssociation::Scope,
+        observation: unknown_observation(),
         items: vec![first, second],
     };
 
