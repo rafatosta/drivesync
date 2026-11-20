@@ -1,261 +1,37 @@
-//! Artifact shape fixtures only; decision behavior is not yet specified here.
-use super::support::{file, item_context, unknown_observation};
+//! Structural Decision artifact tests (behavior is in decision_behavior.rs).
 use drivesync_engine::{
-    analyzer::{
-        AnalysisContext, AnalysisDecision, AnalysisDisposition, AnalysisItemContext,
-        ContextAssociation,
-        AnalysisItemDecision, DecisionOutcome, DecisionTarget,
-    },
-    inventory::{
-        AnalysisDimension, AnalysisFinding, AnalysisFindingStatus, AnalysisIntent, AnalysisOrigin,
-        AnalysisReason, AnalysisRequirement, OperationDirection, OperationKind, SyncItemId,
-    },
-    models::{
-        AccountId, FileEventAction, FileId, FileScope, LocalRelativePath, RemoteFileId,
-        RemoteFileRef,
-    },
+    analyzer::{AnalysisDisposition, DecisionBlock, DecisionOutcome, NonEmpty},
+    inventory::{AnalysisIntent, AnalysisRequirement, OperationDirection, OperationKind},
 };
 
-fn context(action: FileEventAction, items: Vec<AnalysisItemContext>) -> AnalysisContext {
-    AnalysisContext {
-        file: file(action, FileScope::WholeSync),
-        association: ContextAssociation::Scope(items),
-        observation: unknown_observation(),
-    }
-}
-
-fn intent(direction: OperationDirection, kind: OperationKind) -> AnalysisIntent {
-    AnalysisIntent { direction, kind }
+#[test]
+fn empty_payload_cannot_be_constructed() {
+    assert!(NonEmpty::<AnalysisIntent>::from_vec(vec![]).is_none());
+    assert!(NonEmpty::<AnalysisRequirement>::from_vec(vec![]).is_none());
 }
 
 #[test]
-fn new_remote_file_without_inventory_item_has_download_create_decision_fixture() {
-    let remote_file = file(
-        FileEventAction::Created,
-        FileScope::Remote(RemoteFileRef {
-            account_id: AccountId("account-1".into()),
-            file_id: RemoteFileId("remote-1".into()),
-        }),
-    );
-    let input = AnalysisContext {
-        file: remote_file,
-        association: ContextAssociation::Unmatched,
-        observation: unknown_observation(),
-    };
-    let expected = AnalysisDecision {
-        context: input.clone(),
-        items: vec![AnalysisItemDecision {
-            target: DecisionTarget::Observation(FileId("detector-file-1".into())),
-            findings: vec![],
-            outcome: DecisionOutcome::ActionSelected {
-                intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
-            },
-        }],
-    };
-
-    assert_eq!(expected.context, input);
-    assert_eq!(expected.items.len(), 1);
-    assert_eq!(
-        expected.items[0].target,
-        DecisionTarget::Observation(FileId("detector-file-1".into()))
-    );
-    assert_eq!(
-        expected.items[0].outcome,
-        DecisionOutcome::ActionSelected {
-            intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
-        }
-    );
+fn nonempty_preserves_order() {
+    let values = NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![AnalysisRequirement::ObserveRemote]);
+    assert_eq!(values.as_slice(), &[AnalysisRequirement::ObserveLocal, AnalysisRequirement::ObserveRemote]);
+    assert_eq!(values.into_vec().len(), 2);
 }
 
 #[test]
-fn local_edit_with_known_inventory_revision_has_upload_update_decision_fixture() {
-    let subject = item_context(9);
-    let local_file = file(
-        FileEventAction::Modified,
-        FileScope::Local(LocalRelativePath::new(b"notes.txt".to_vec()).unwrap()),
-    );
-    let input = AnalysisContext {
-        file: local_file,
-        association: ContextAssociation::Matched(Box::new(subject)),
-        observation: unknown_observation(),
-    };
-    let expected = AnalysisDecision {
-        context: input.clone(),
-        items: vec![AnalysisItemDecision {
-            target: DecisionTarget::Item {
-                id: SyncItemId("inventory-item-1".into()),
-                revision: 9,
-            },
-            findings: vec![],
-            outcome: DecisionOutcome::ActionSelected {
-                intents: vec![intent(
-                    OperationDirection::Upload,
-                    OperationKind::UpdateContent,
-                )],
-            },
-        }],
-    };
-
-    assert_eq!(expected.context, input);
-    assert_eq!(
-        expected.items[0].target,
-        DecisionTarget::Item {
-            id: SyncItemId("inventory-item-1".into()),
-            revision: 9,
-        }
-    );
-    assert_eq!(
-        expected.items[0].outcome,
-        DecisionOutcome::ActionSelected {
-            intents: vec![intent(
-                OperationDirection::Upload,
-                OperationKind::UpdateContent,
-            )],
-        }
-    );
-}
-
-#[test]
-fn rename_move_and_deletion_cases_use_semantic_intents() {
-    let cases = [
-        (
-            FileEventAction::Renamed,
-            OperationDirection::Upload,
-            OperationKind::Rename,
-        ),
-        (
-            FileEventAction::Moved,
-            OperationDirection::Download,
-            OperationKind::Move,
-        ),
-        (
-            FileEventAction::Deleted,
-            OperationDirection::Download,
-            OperationKind::Trash,
-        ),
-    ];
-
-    for (action, direction, kind) in cases {
-        let input = context(action, vec![item_context(4)]);
-        let expected = AnalysisDecision {
-            context: input.clone(),
-            items: vec![AnalysisItemDecision {
-                target: DecisionTarget::Item {
-                    id: SyncItemId("inventory-item-1".into()),
-                    revision: 4,
-                },
-                findings: vec![],
-                outcome: DecisionOutcome::ActionSelected {
-                    intents: vec![intent(direction.clone(), kind.clone())],
-                },
-            }],
-        };
-
-        assert_eq!(expected.context.file.event.action, action);
-        assert_eq!(
-            expected.items[0].outcome,
-            DecisionOutcome::ActionSelected {
-                intents: vec![intent(direction, kind)],
-            }
-        );
-    }
-}
-
-#[test]
-fn conflict_and_missing_evidence_are_distinct_decision_fixtures() {
-    let input = context(FileEventAction::Modified, vec![item_context(5)]);
-    let conflict = AnalysisDecision {
-        context: input.clone(),
-        items: vec![AnalysisItemDecision {
-            target: DecisionTarget::Item {
-                id: SyncItemId("inventory-item-1".into()),
-                revision: 5,
-            },
-            findings: vec![AnalysisFinding {
-                origin: AnalysisOrigin::Conflicts,
-                dimension: AnalysisDimension::Content,
-                status: AnalysisFindingStatus::Divergent,
-                reason: AnalysisReason::ConcurrentChanges,
-            }],
-            outcome: DecisionOutcome::Conflict {
-                requirements: vec![],
-            },
-        }],
-    };
-    let needs_evidence = AnalysisItemDecision {
-        target: DecisionTarget::Item {
-            id: SyncItemId("inventory-item-1".into()),
-            revision: 5,
-        },
-        findings: vec![],
-        outcome: DecisionOutcome::NeedsEvidence {
-            requirements: vec![AnalysisRequirement::VerifyContent],
-        },
-    };
-
-    assert_eq!(
-        conflict.items[0].outcome.disposition(),
-        AnalysisDisposition::Conflict
-    );
-    assert_eq!(
-        conflict.items[0].findings[0].reason,
-        AnalysisReason::ConcurrentChanges
-    );
-    assert_eq!(
-        needs_evidence.outcome.disposition(),
-        AnalysisDisposition::NeedsEvidence
-    );
-    assert_eq!(
-        needs_evidence.outcome,
-        DecisionOutcome::NeedsEvidence {
-            requirements: vec![AnalysisRequirement::VerifyContent],
-        }
-    );
-}
-
-#[test]
-fn synchronization_scope_target_is_available_without_fabricating_item_identity() {
-    let expected = AnalysisItemDecision {
-        target: DecisionTarget::Synchronization,
-        findings: vec![],
-        outcome: DecisionOutcome::NeedsEvidence {
-            requirements: vec![AnalysisRequirement::ObserveRemote],
-        },
-    };
-
-    assert_eq!(expected.target, DecisionTarget::Synchronization);
-    assert_eq!(
-        expected.outcome,
-        DecisionOutcome::NeedsEvidence {
-            requirements: vec![AnalysisRequirement::ObserveRemote],
-        }
-    );
-}
-
-#[test]
-fn semantic_outcomes_map_to_result_dispositions() {
+fn semantic_outcomes_map_to_distinct_handled_dispositions() {
     let cases = [
         (DecisionOutcome::NoAction, AnalysisDisposition::NoAction),
-        (
-            DecisionOutcome::ActionSelected {
-                intents: vec![intent(OperationDirection::Download, OperationKind::Create)],
-            },
-            AnalysisDisposition::ActionSelected,
-        ),
-        (
-            DecisionOutcome::Conflict {
-                requirements: vec![],
-            },
-            AnalysisDisposition::Conflict,
-        ),
-        (
-            DecisionOutcome::NeedsEvidence {
-                requirements: vec![AnalysisRequirement::VerifyContent],
-            },
-            AnalysisDisposition::NeedsEvidence,
-        ),
+        (DecisionOutcome::EstablishBaseline, AnalysisDisposition::BaselineEstablished),
+        (DecisionOutcome::Obsolete, AnalysisDisposition::Obsolete),
+        (DecisionOutcome::Blocked { reason: DecisionBlock::UnsupportedKind }, AnalysisDisposition::Blocked),
+        (DecisionOutcome::ActionSelected {
+            intents: NonEmpty::new(AnalysisIntent { direction: OperationDirection::Download, kind: OperationKind::Create }, vec![]),
+        }, AnalysisDisposition::ActionSelected),
+        (DecisionOutcome::Conflict { requirements: vec![] }, AnalysisDisposition::Conflict),
+        (DecisionOutcome::NeedsEvidence {
+            requirements: NonEmpty::new(AnalysisRequirement::VerifyContent, vec![]),
+        }, AnalysisDisposition::NeedsEvidence),
     ];
-
     for (outcome, expected) in cases {
         assert_eq!(outcome.disposition(), expected);
     }

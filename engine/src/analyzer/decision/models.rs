@@ -50,16 +50,23 @@ pub struct AnalysisItemDecision {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecisionOutcome {
-    /// No synchronization operation is necessary.
+    /// Both states already agree with a confirmed baseline, or both are absent.
     NoAction,
+    /// All relevant dimensions converge; Apply must verify and establish/advance
+    /// the baseline. This is not itself a confirmation or a physical operation.
+    EstablishBaseline,
+    /// The observation is provably older than the matched subject.
+    Obsolete,
+    /// A known unsupported condition prevents synchronization.
+    Blocked { reason: DecisionBlock },
     /// Semantic intents, without physical destinations or executable commands.
     /// Must contain at least one intent.
-    ActionSelected { intents: Vec<AnalysisIntent> },
+    ActionSelected { intents: NonEmpty<AnalysisIntent> },
     /// A conflict blocks execution until resolved.
     Conflict { requirements: Vec<AnalysisRequirement> },
     /// Additional evidence is required before a safe decision can be made.
     /// Must contain at least one requirement.
-    NeedsEvidence { requirements: Vec<AnalysisRequirement> },
+    NeedsEvidence { requirements: NonEmpty<AnalysisRequirement> },
 }
 
 impl DecisionOutcome {
@@ -68,9 +75,43 @@ impl DecisionOutcome {
     pub fn disposition(&self) -> AnalysisDisposition {
         match self {
             Self::NoAction => AnalysisDisposition::NoAction,
+            Self::EstablishBaseline => AnalysisDisposition::BaselineEstablished,
+            Self::Obsolete => AnalysisDisposition::Obsolete,
+            Self::Blocked { .. } => AnalysisDisposition::Blocked,
             Self::ActionSelected { .. } => AnalysisDisposition::ActionSelected,
             Self::Conflict { .. } => AnalysisDisposition::Conflict,
             Self::NeedsEvidence { .. } => AnalysisDisposition::NeedsEvidence,
         }
+    }
+}
+
+/// A known condition which cannot be resolved by repeating an observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecisionBlock {
+    UnsupportedKind,
+}
+
+/// Non-empty ordered semantic payload. An empty list cannot be constructed
+/// through the public API; callers cannot mutate the contained vector.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NonEmpty<T>(Vec<T>);
+
+impl<T> NonEmpty<T> {
+    pub fn new(first: T, rest: Vec<T>) -> Self {
+        let mut values = vec![first];
+        values.extend(rest);
+        Self(values)
+    }
+
+    pub fn from_vec(values: Vec<T>) -> Option<Self> {
+        if values.is_empty() { None } else { Some(Self(values)) }
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        &self.0
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.0
     }
 }

@@ -25,7 +25,8 @@ pub use context::{
     ObservationFreshness,
 };
 pub use decision::{
-    AnalysisDecision, AnalysisItemDecision, DecisionOutcome, DecisionService, DecisionTarget,
+    AnalysisDecision, AnalysisItemDecision, DecisionBlock, DecisionOutcome, DecisionService,
+    DecisionTarget, NonEmpty,
 };
 
 use crate::models::File;
@@ -95,6 +96,12 @@ pub enum AnalysisStage {
 pub enum AnalysisDisposition {
     /// The file's current state was checked and no operation was needed.
     NoAction,
+    /// The baseline was verified and durably established or advanced.
+    BaselineEstablished,
+    /// A superseded observation was durably handled without executing an operation.
+    Obsolete,
+    /// A known unsupported condition was durably recorded.
+    Blocked,
     /// The selected synchronization operation was durably recorded.
     ActionSelected,
     /// A conflict outcome was durably recorded for later resolution.
@@ -121,6 +128,8 @@ pub enum AnalysisErrorKind {
     Evidence,
     /// Applying or verifying a selected operation failed.
     Operation,
+    /// The input context violates its structural or evidence contract.
+    InvalidContext,
     /// An unexpected internal failure occurred.
     Internal,
 }

@@ -11,3 +11,8 @@ mod support;
 
 #[path = "analyzer_contracts/context_behavior.rs"]
 mod context_behavior;
+
+#[path = "analyzer_contracts/decision_fixtures.rs"]
+mod decision_fixtures;
+#[path = "analyzer_contracts/decision_behavior.rs"]
+mod decision_behavior;

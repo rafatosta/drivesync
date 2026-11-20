@@ -51,6 +51,9 @@ fn completed_apply_result_preserves_each_decision_target_and_disposition() {
 fn all_terminal_dispositions_can_be_returned_after_durable_handling() {
     let dispositions = [
         AnalysisDisposition::NoAction,
+        AnalysisDisposition::BaselineEstablished,
+        AnalysisDisposition::Obsolete,
+        AnalysisDisposition::Blocked,
         AnalysisDisposition::ActionSelected,
         AnalysisDisposition::Conflict,
         AnalysisDisposition::NeedsEvidence,

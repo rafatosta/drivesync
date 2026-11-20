@@ -23,15 +23,15 @@ impl ContextInventory for FakeInventory {
     }
 }
 
-fn path(value: &str) -> LocalRelativePath {
+pub(super) fn path(value: &str) -> LocalRelativePath {
     LocalRelativePath::new(value.as_bytes().to_vec()).unwrap()
 }
 
-fn remote_ref(account: &str, id: &str) -> RemoteFileRef {
+pub(super) fn remote_ref(account: &str, id: &str) -> RemoteFileRef {
     RemoteFileRef { account_id: AccountId(account.into()), file_id: RemoteFileId(id.into()) }
 }
 
-fn local_metadata(id: &str, location: &str) -> LocalFile {
+pub(super) fn local_metadata(id: &str, location: &str) -> LocalFile {
     use MetadataValue::{Known, NotApplicable, NotCollected};
     LocalFile {
         local_id: Some(LocalFileId(id.into())),
@@ -46,7 +46,7 @@ fn local_metadata(id: &str, location: &str) -> LocalFile {
     }
 }
 
-fn remote_metadata(account: &str, id: &str, name: &str) -> RemoteFile {
+pub(super) fn remote_metadata(account: &str, id: &str, name: &str) -> RemoteFile {
     use MetadataValue::{Known, NotCollected};
     RemoteFile {
         reference: remote_ref(account, id), provider: ProviderId("google".into()),
@@ -58,7 +58,7 @@ fn remote_metadata(account: &str, id: &str, name: &str) -> RemoteFile {
     }
 }
 
-fn remote_input() -> File {
+pub(super) fn remote_input() -> File {
     let remote = remote_metadata("account-1", "remote-1", "file.txt");
     let mut input = file(FileEventAction::Created, FileScope::Remote(remote.reference.clone()));
     input.coverage = ObservationCoverage::Partial;
@@ -67,7 +67,7 @@ fn remote_input() -> File {
     input
 }
 
-fn local_input(action: FileEventAction) -> File {
+pub(super) fn local_input(action: FileEventAction) -> File {
     let location = path("folder/file.txt");
     let mut input = file(action, FileScope::Local(location.clone()));
     if action == FileEventAction::Deleted {
@@ -85,7 +85,7 @@ fn local_input(action: FileEventAction) -> File {
     input
 }
 
-fn scope_input() -> File {
+pub(super) fn scope_input() -> File {
     file(FileEventAction::RecheckRequired, FileScope::WholeSync)
 }
 

@@ -13,8 +13,13 @@ pub trait ApplyService: Send + Sync {
     ///
     /// Handle each `DecisionOutcome` explicitly. Only `ActionSelected` may
     /// proceed to operation planning, subject to execution preconditions.
-    /// Reject empty actionable intent lists or empty evidence requirement lists
-    /// before acknowledging a delivery.
+    /// NonEmpty prevents empty actionable/evidence payloads. Validate targets,
+    /// deduplication and preconditions before acknowledgement.
+    /// EstablishBaseline requires verification and durable confirmation, not an
+    /// Operator transfer. Obsolete must be proven and durably handled; a whole
+    /// delivery may be Skipped(Obsolete) only if every target is obsolete.
+    /// Blocked records the known unsupported condition without operation planning.
+    /// Authorization is a requirement to persist, not an automatic deletion.
     ///
     /// An error means the detector delivery must be retried. A completed result
     /// authorizes acknowledgement; it does not by itself assert that a physical
