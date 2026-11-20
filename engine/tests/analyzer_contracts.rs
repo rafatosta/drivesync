@@ -23,3 +23,6 @@ mod apply_fixtures;
 mod apply_mocks;
 #[path = "analyzer_contracts/apply_behavior.rs"]
 mod apply_behavior;
+
+#[path = "analyzer_contracts/analyzer_behavior.rs"]
+mod analyzer_behavior;

@@ -18,6 +18,8 @@
 pub mod apply;
 pub mod context;
 pub mod decision;
+mod facade;
+pub use facade::AnalyzerEngine;
 
 pub use apply::{AnalysisItemResult, ApplyOutcome, ApplyService};
 pub use context::{
@@ -40,9 +42,13 @@ pub type AnalysisFuture<'a> =
 pub trait Analyzer: Send + Sync {
     /// Analyzes one detector file and reports lifecycle updates to `feedback`.
     ///
-    /// The call completes only after this file has reached a terminal result.
+    /// The call completes only after this delivery has reached a durable handling result;
+    /// pending execution, recovery or reanalysis is not synchronization completion.
     /// The orchestrator publishes `Started` before calling this method;
-    /// implementations report phase updates and return the authoritative result.
+    /// implementations report only the stages they actually enter and return the
+    /// authoritative result. The facade reports Inspecting, Reconciling and Applying
+    /// immediately before calling Context, Decision and Apply, respectively.
+    /// It does not fabricate internal progress or repeat Started.
     /// Returning `Ok` authorizes the orchestrator to acknowledge this detector file:
     /// completed outcomes must be durably handled, and skipped outcomes must be
     /// proven duplicate or obsolete. Return `Err` when redelivery is required.
@@ -132,11 +138,13 @@ pub enum AnalysisErrorKind {
     InvalidContext,
     /// A decision artifact violates its target or intent contract.
     InvalidDecision,
+    /// Apply returned a result incompatible with the decision's targets or outcomes.
+    InvalidResult,
     /// An unexpected internal failure occurred.
     Internal,
 }
 
-/// Analyzer error returned to the orchestrator after terminal feedback.
+/// Analyzer error returned to the orchestrator; the return itself is terminal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalysisError {
     /// Stable category for orchestration and user-visible diagnostics.
@@ -160,9 +168,10 @@ impl std::error::Error for AnalysisError {}
 /// Terminal result for one submitted detector file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalysisResult {
-    /// Every target produced by the decision stage reached a durable outcome.
+    /// Every target produced by the decision stage reached a durable handling
+    /// outcome, possibly with pending work. It is not a declaration of Synced.
     Completed(Vec<AnalysisItemResult>),
-    /// The analyzer intentionally ignored this delivery.
+    /// Apply proved a duplicate or obsolete delivery; no acknowledgement occurs here.
     Skipped(AnalysisSkipReason),
 }
 
