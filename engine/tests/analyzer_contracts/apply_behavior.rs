@@ -2,7 +2,7 @@
 use super::{apply_fixtures::*, apply_mocks::*};
 use drivesync_engine::{
     analyzer::{AnalysisDecision, AnalysisErrorKind, AnalysisItemResult, AnalysisResult, AnalysisSkipReason, ApplyOutcome, ContextAssociation, DecisionBlock, DecisionOutcome, NonEmpty},
-    analyzer::apply::{ApplyBlock, DeliveryState, OperationReceipt, OperationState, RecoveryEvidence, ReanalysisReason, TargetReceipt},
+    analyzer::apply::{ApplyBlock, DeliveryState, OperationReceipt, OperationState, RecoveryEvidence, InterruptionReason, TargetReceipt},
     inventory::{AnalysisIntent, AnalysisRequirement::*, ItemKind, OperationDirection::{Upload, Download}, OperationKind::{Create, UpdateContent, Rename, Move, Trash, Delete}},
     operations::*,
 };
@@ -103,7 +103,7 @@ fn a04_stale_revision_reanalysis() {
     let s = setup(&d);
     s.lock().unwrap().snapshot.current_item.as_mut().unwrap().revision += 1;
     let out = outcome(run(d, &s).unwrap());
-    assert!(matches!(out, ApplyOutcome::PendingReanalysis { reason: ReanalysisReason::StaleRevision, .. }));
+    assert!(matches!(out, ApplyOutcome::Interrupted { reason: InterruptionReason::StaleRevision, .. }));
     no_effect(&s);
 }
 
@@ -177,7 +177,7 @@ fn b03_conflict_records_without_effect() {
 #[test]
 #[ignore = "TDD red: ApplyEngine implementation pending"]
 fn b04_evidence_request_persisted() {
-    simple(basic(need(ObserveRemote)), ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(ObserveRemote, vec![]) });
+    simple(basic(need(ObserveRemote)), ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(ObserveRemote, vec![]) });
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn b06_obsolete_never_mutates() {
 #[test]
 #[ignore = "TDD red: ApplyEngine implementation pending"]
 fn b07_authorization_request_persisted() {
-    simple(basic(need(AuthorizeDeletion)), ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AuthorizeDeletion, vec![]) });
+    simple(basic(need(AuthorizeDeletion)), ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(AuthorizeDeletion, vec![]) });
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn b08_new_observation_survives_pending_evidence() {
     let d = new_observation();
     let file = d.context.file.clone();
     let s = setup(&d);
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::EvidenceRequested { .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::InsufficientEvidence { .. }));
     assert!(calls(&s).iter().any(|c| matches!(c, Call::Begin(f) if f == &file)));
     no_effect(&s);
     finished(&s);
@@ -270,7 +270,7 @@ fn c09_missing_parent_blocks_dispatch() {
     let d = creation(true, ItemKind::File);
     let s = setup(&d);
     s.lock().unwrap().snapshot.related_parents.clear();
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::EvidenceRequested { .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::InsufficientEvidence { .. }));
     no_effect(&s);
 }
 
@@ -280,7 +280,7 @@ fn c10_occupied_destination_reanalysis() {
     let d = creation(true, ItemKind::File);
     let s = setup(&d);
     s.lock().unwrap().verification_error = Some(failure(OperatorError::DestinationOccupied, ExecutionEffect::NotApplied));
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::PendingReanalysis { reason: ReanalysisReason::DestinationOccupied, .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::Interrupted { reason: InterruptionReason::DestinationOccupied, .. }));
     no_effect(&s);
 }
 
@@ -290,7 +290,7 @@ fn c11_missing_guard_blocks_mutation() {
     let mut d = mutation(Rename, Upload);
     if let ContextAssociation::Scope(items) = &mut d.context.association { for m in [&mut items[0].item.remote, &mut items[0].item.remote_latest].into_iter().flatten() { m.version = drivesync_engine::models::MetadataValue::NotCollected;
     } } let s = setup(&d);
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::EvidenceRequested { .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::InsufficientEvidence { .. }));
     no_effect(&s);
 }
 
@@ -398,7 +398,7 @@ fn d09_changed_source_reanalysis() {
     let d = creation(true, ItemKind::File);
     let s = setup(&d);
     s.lock().unwrap().verification_error = Some(failure(OperatorError::PreconditionFailed, ExecutionEffect::NotApplied));
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::PendingReanalysis { reason: ReanalysisReason::SourceChanged, .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::Interrupted { reason: InterruptionReason::SourceChanged, .. }));
     no_effect(&s);
 }
 
@@ -582,20 +582,21 @@ fn f08_new_observation_invalidates_guard() {
     let d = mutation(UpdateContent, Upload);
     let s = setup(&d);
     s.lock().unwrap().snapshot.current_item.as_mut().unwrap().revision = 8;
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::PendingReanalysis { .. }));
+    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::Interrupted { .. }));
     no_effect(&s);
 }
 
 #[test]
 #[ignore = "TDD red: ApplyEngine implementation pending"]
-fn g01_multiple_intents_execute_first_only() {
-    let d = multi();
-    let s = setup(&d);
+fn g01_multiple_intents_execute_in_order() {
+    let d = multi(); let s = setup(&d);
     s.lock().unwrap().effect = Ok(existing_remote_result(&d, None, None));
-    let out = outcome(run(d, &s).unwrap());
-    assert!(matches!(out, ApplyOutcome::PendingReanalysis { reason: ReanalysisReason::PriorStepCompleted, .. }));
-    assert_eq!(execs(&s).len(), 1);
-    assert!(matches!(execs(&s)[0].1, OperationCommand::UpdateContent { .. }));
+    s.lock().unwrap().second_effect = Some(Ok(existing_remote_result(&d, Some("new.txt"), None)));
+    let _ = run(d, &s).unwrap();
+    let commands = execs(&s);
+    assert_eq!(commands.len(), 2);
+    assert!(matches!(&commands[0].1, OperationCommand::UpdateContent { .. }));
+    assert!(matches!(&commands[1].1, OperationCommand::Rename { preconditions, .. } if preconditions.expected_version.as_deref() == Some("10")));
 }
 
 #[test]
@@ -607,23 +608,25 @@ fn g02_failed_first_never_dispatches_dependent() {
 #[test]
 #[ignore = "TDD red: ApplyEngine implementation pending"]
 fn g03_partial_completion_is_preserved() {
-    let d = multi();
-    let s = setup(&d);
-    let result = existing_remote_result(&d, None, None);
-    s.lock().unwrap().effect = Ok(result.clone());
+    let d = multi(); let s = setup(&d);
+    s.lock().unwrap().effect = Ok(existing_remote_result(&d, None, None));
+    s.lock().unwrap().second_effect = Some(Err(failure(OperatorError::PreconditionFailed, ExecutionEffect::NotApplied)));
     let out = outcome(run(d, &s).unwrap());
-    assert!(matches!(out, ApplyOutcome::PendingReanalysis { completed, .. } if completed.len() == 1 && completed[0].result == result));
-    no_confirm(&s);
+    assert!(matches!(out, ApplyOutcome::Interrupted { completed, reason: InterruptionReason::SourceChanged } if completed.len() == 1));
+    assert_eq!(execs(&s).len(), 2); no_confirm(&s);
 }
 
 #[test]
 #[ignore = "TDD red: ApplyEngine implementation pending"]
-fn g04_prior_step_requires_renewed_analysis() {
-    let d = multi();
-    let s = setup(&d);
+fn g04_prior_step_refreshes_guard() {
+    let d = multi(); let s = setup(&d);
     s.lock().unwrap().effect = Ok(existing_remote_result(&d, None, None));
-    assert!(matches!(outcome(run(d, &s).unwrap()), ApplyOutcome::PendingReanalysis { reason: ReanalysisReason::PriorStepCompleted, .. }));
-    assert_eq!(execs(&s).len(), 1);
+    s.lock().unwrap().second_effect = Some(Ok(existing_remote_result(&d, Some("new.txt"), None)));
+    let _ = run(d, &s).unwrap();
+    let commands = execs(&s);
+    assert_eq!(commands.len(), 2);
+    assert_ne!(commands[0].0, commands[1].0);
+    assert!(matches!(&commands[1].1, OperationCommand::Rename { preconditions, .. } if preconditions.expected_version.as_deref() == Some("10")));
 }
 
 #[test]

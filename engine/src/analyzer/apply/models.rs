@@ -18,13 +18,13 @@ pub enum ApplyOutcome {
     NoAction,
     BaselineEstablished,
     ConflictRecorded,
-    EvidenceRequested { requirements: NonEmpty<AnalysisRequirement> },
+    InsufficientEvidence { missing: NonEmpty<AnalysisRequirement> },
     Blocked { reason: ApplyBlock },
     Obsolete,
     PendingExecution { operations: NonEmpty<ExecutionId> },
     Applied { operations: NonEmpty<AppliedOperation> },
     PendingRecovery { operations: NonEmpty<ExecutionId> },
-    PendingReanalysis { completed: Vec<AppliedOperation>, reason: ReanalysisReason },
+    Interrupted { completed: Vec<AppliedOperation>, reason: InterruptionReason },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,18 +36,19 @@ pub struct AppliedOperation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyBlock {
     UnsupportedKind,
+    Decision(crate::analyzer::DecisionBlock),
     UnsupportedOperation,
     PermissionDenied,
     RetryExhausted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReanalysisReason {
+pub enum InterruptionReason {
     StaleRevision,
     DestinationOccupied,
     SourceChanged,
-    PriorStepCompleted,
     NewObservation,
+    PreconditionsUnavailable,
 }
 
 /// Retry identity is qualified by the configured synchronization and delivery.

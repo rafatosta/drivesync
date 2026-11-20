@@ -22,7 +22,8 @@ pub trait ContextService: Send + Sync {
     /// or a foreign candidate returns Err; failed reads propagate.
     /// Match qualified remote identity or persistent local identity only.
     /// A path/name candidate without matching identity is Ambiguous, not Matched.
-    /// A matching identity plus a different destination candidate is Ambiguous.
+    /// Exact identity remains Matched even with an occupied destination.
+    /// Path-only absence may identify a historical subject, never a new identity.
     /// Unrelated candidates are excluded; a successful empty lookup is Unmatched.
     /// WholeSync is Scope, including when empty. Deduplicate identical rows by ID;
     /// reject contradictory snapshots of the same ID.
@@ -33,8 +34,9 @@ pub trait ContextService: Send + Sync {
     /// Compare numeric remote versions first when both are comparable, otherwise
     /// durable causal orders on the same side; never use wall-clock timestamps.
     /// Missing comparable markers or whole-sync scope means Incomparable.
-    /// No writes, filesystem/provider access, reobservation requests, conflict
-    /// classification or operation selection are permitted.
+    /// Context obtains complementary facts using its own read-only I/O.
+    /// Never invoke Detector, Operator, Resolve or other stages for evidence.
+    /// Preserve unavailable fields after relevant attempts. No writes or decisions.
     fn build<'a>(&'a self, file: File) -> ContextFuture<'a>;
 }
 
@@ -74,19 +76,34 @@ pub struct RevisionEvidence {
 /// context assembly are deliberately not implemented in this TDD step.
 pub struct ContextBuilder<I> {
     inventory: I,
+    evidence: Box<dyn ContextEvidenceReader>,
 }
 
 impl<I: ContextInventory> ContextBuilder<I> {
-    pub fn new(inventory: I) -> Self {
-        Self { inventory }
+    pub fn new(inventory: I, evidence: Box<dyn ContextEvidenceReader>) -> Self {
+        Self { inventory, evidence }
     }
 }
 
 impl<I: ContextInventory> ContextService for ContextBuilder<I> {
     fn build<'a>(&'a self, file: File) -> ContextFuture<'a> {
         Box::pin(async move {
-            let _ = (&self.inventory, file);
+            let _ = (&self.inventory, &self.evidence, file);
             todo!("implement Context after its behavioral contract is approved")
         })
     }
+}
+
+use crate::models::{MetadataValue, SyncId, LocalRelativePath, RemoteFileRef, LocalFile, RemoteFile, ObservedParent, ContentDigest};
+pub type EvidenceFuture<'a,T> = Pin<Box<dyn Future<Output=Result<T,AnalysisError>> + Send + 'a>>;
+/// Context-private evidence acquisition implementation, injected for tests.
+/// Raw read-only facts, never association or synchronization decisions.
+pub trait ContextEvidenceReader: Send + Sync {
+    fn scope<'a>(&'a self, sync: &'a SyncId) -> EvidenceFuture<'a, MetadataValue<ContextScope>>;
+    fn local<'a>(&'a self, scope: &'a ContextScope, path: &'a LocalRelativePath) -> EvidenceFuture<'a, CurrentSide<LocalFile>>;
+    fn remote<'a>(&'a self, scope: &'a ContextScope, reference: &'a RemoteFileRef) -> EvidenceFuture<'a, CurrentSide<RemoteFile>>;
+    fn local_destination<'a>(&'a self, scope: &'a ContextScope, parent: &'a ObservedParent, name: &'a [u8]) -> EvidenceFuture<'a, MetadataValue<LocalDestination>>;
+    fn remote_destination<'a>(&'a self, scope: &'a ContextScope, parent: &'a RemoteFileRef, name: &'a str) -> EvidenceFuture<'a, MetadataValue<RemoteDestination>>;
+    fn local_digest<'a>(&'a self, scope: &'a ContextScope, expected: &'a LocalFile) -> EvidenceFuture<'a, MetadataValue<ContentDigest>>;
+    fn remote_digest<'a>(&'a self, scope: &'a ContextScope, expected: &'a RemoteFile) -> EvidenceFuture<'a, MetadataValue<ContentDigest>>;
 }

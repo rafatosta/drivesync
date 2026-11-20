@@ -45,7 +45,7 @@ pub(super) fn known_subject(id: &str) -> AnalysisItemContext {
 
 /// A scope does not assert a new per-item observation; use retained facts only.
 pub(super) fn scope(items: Vec<AnalysisItemContext>) -> AnalysisContext {
-    AnalysisContext { file: scope_input(), association: ContextAssociation::Scope(items), observation: unknown_observation() }
+    AnalysisContext { file: scope_input(), association: ContextAssociation::Scope(items), observation: unknown_observation(), facts: Default::default(), }
 }
 
 /// Matched reobservation uses the exact retained local payload (equal marker).
@@ -60,14 +60,14 @@ pub(super) fn matched(subject: AnalysisItemContext, freshness: ObservationFreshn
     observation.local_presence = PresenceState::Present;
     let mut subject = subject;
     subject.freshness = freshness;
-    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(subject)), observation }
+    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(subject)), observation, facts: Default::default() }
 }
 
 pub(super) fn unmatched(local: bool) -> AnalysisContext {
     let file = if local { local_input(FileEventAction::Created) } else { remote_input() };
     let mut observation = unknown_observation();
     if local { observation.local_presence = PresenceState::Present; } else { observation.remote_presence = PresenceState::Present; }
-    AnalysisContext { file, association: ContextAssociation::Unmatched, observation }
+    AnalysisContext { file, association: ContextAssociation::Unmatched, observation, facts: Default::default() }
 }
 
 pub(super) fn clear_baseline(subject: &mut AnalysisItemContext) {
@@ -181,7 +181,7 @@ pub(super) fn deleted_signal() -> AnalysisContext {
     file.event.local_presence = Some(LocalPresenceEvidence::Unknown);
     let mut subject = known_subject("1");
     subject.freshness = ObservationFreshness::Newer;
-    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(subject)), observation: unknown_observation() }
+    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(subject)), observation: unknown_observation(), facts: Default::default(), }
 }
 
 pub(super) fn remote_removal_signal() -> AnalysisContext {
@@ -190,5 +190,5 @@ pub(super) fn remote_removal_signal() -> AnalysisContext {
     file.event.remote = Some(RemoteObservation { source: RemoteObservationSource::Changes, removed: Some(true), time: None, change_type: None, drive_id: None });
     let mut s = known_subject("1");
     s.freshness = ObservationFreshness::Newer;
-    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(s)), observation: unknown_observation() }
+    AnalysisContext { file, association: ContextAssociation::Matched(Box::new(s)), observation: unknown_observation(), facts: Default::default(), }
 }

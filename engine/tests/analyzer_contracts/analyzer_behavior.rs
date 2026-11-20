@@ -9,7 +9,7 @@ use drivesync_engine::{
         ApplyOutcome, ApplyService, ContextService, DecisionOutcome, DecisionService,
         DecisionTarget, NonEmpty,
         context::ContextFuture,
-        apply::{ApplyBlock, ReanalysisReason},
+        apply::{ApplyBlock, InterruptionReason},
     },
     inventory::{AnalysisRequirement, OperationDirection, OperationKind, SyncItemId},
     models::File,
@@ -142,8 +142,8 @@ fn a02_remote_payload_preserved() {
     let mut d = new_observation();
     d.context = super::decision_fixtures::unmatched(false);
     d.items[0].target = DecisionTarget::Observation(d.context.file.id.clone());
-    d.items[0].outcome = DecisionOutcome::NeedsEvidence { requirements: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) };
-    let r = completed(&d, ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) });
+    d.items[0].outcome = DecisionOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) };
+    let r = completed(&d, ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) });
     assert!(d.context.file.data.is_some());
     assert_passthrough(script(d, r));
 }
@@ -153,7 +153,7 @@ fn a02_remote_payload_preserved() {
 fn a03_local_payload_preserved() {
     let d = new_observation();
     assert!(d.context.file.data.is_some());
-    let r = completed(&d, ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AnalysisRequirement::ObserveRemote, vec![]) });
+    let r = completed(&d, ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::ObserveRemote, vec![]) });
     assert_passthrough(script(d, r));
 }
 
@@ -292,7 +292,7 @@ fn c03_conflict_is_successful_durable_handling() {
 #[ignore = "TDD red: AnalyzerEngine implementation pending"]
 fn c04_evidence_request_is_not_error() {
     let d = new_observation();
-    let r = completed(&d, ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AnalysisRequirement::ObserveRemote, vec![]) });
+    let r = completed(&d, ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::ObserveRemote, vec![]) });
     assert_passthrough(script(d, r));
 }
 
@@ -311,7 +311,7 @@ fn c06_pending_recovery_not_retried() {
 #[test]
 #[ignore = "TDD red: AnalyzerEngine implementation pending"]
 fn c07_pending_reanalysis_not_recursive() {
-    assert_passthrough(action_script(ApplyOutcome::PendingReanalysis { completed: vec![], reason: ReanalysisReason::StaleRevision }));
+    assert_passthrough(action_script(ApplyOutcome::Interrupted { completed: vec![], reason: InterruptionReason::StaleRevision }));
 }
 
 #[test]
@@ -517,7 +517,7 @@ fn f03_pending_reanalysis_preserves_confirmed_partial_effect() {
     let mut m = d.context.association.items()[0].item.remote.as_ref().unwrap().clone();
     m.size = drivesync_engine::models::MetadataValue::Known(31);
     let result = drivesync_engine::operations::ItemResult { resource: drivesync_engine::operations::ResourceRef::Remote { provider_id: m.provider.clone(), reference: m.reference.clone() }, metadata: Some(drivesync_engine::models::FileData::Remote(m)), verification: drivesync_engine::operations::VerificationStatus::Verified };
-    let r = completed(&d, ApplyOutcome::PendingReanalysis { completed: vec![drivesync_engine::analyzer::apply::AppliedOperation { id: operation_id(), result }], reason: ReanalysisReason::PriorStepCompleted });
+    let r = completed(&d, ApplyOutcome::Interrupted { completed: vec![drivesync_engine::analyzer::apply::AppliedOperation { id: operation_id(), result }], reason: InterruptionReason::SourceChanged });
     assert_passthrough(script(d, r));
 }
 
@@ -525,6 +525,6 @@ fn f03_pending_reanalysis_preserves_confirmed_partial_effect() {
 #[ignore = "TDD red: AnalyzerEngine implementation pending"]
 fn f04_stale_no_action_can_request_reanalysis() {
     let d = basic(DecisionOutcome::NoAction);
-    let r = completed(&d, ApplyOutcome::PendingReanalysis { completed: vec![], reason: ReanalysisReason::StaleRevision });
+    let r = completed(&d, ApplyOutcome::Interrupted { completed: vec![], reason: InterruptionReason::StaleRevision });
     assert_passthrough(script(d, r));
 }

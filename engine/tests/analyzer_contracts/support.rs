@@ -32,6 +32,7 @@ pub(crate) fn file(action: FileEventAction, scope: FileScope) -> File {
         coverage: ObservationCoverage::Complete,
         scope,
         data: None,
+        evidence: Default::default(),
     }
 }
 

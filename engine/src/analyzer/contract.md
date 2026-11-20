@@ -1,52 +1,30 @@
-# Analyzer facade contract (behavior-first)
+# Analyzer facade contract — forward only
 
-The public Analyzer::analyze(File, feedback) interface and its asynchronous return
-are unchanged. AnalyzerEngine composes ContextService, DecisionService and
-ApplyService. No direct persistence, provider, Operator, Detector or queue access.
-The facade owns neither synchronization policies nor retry scheduling.
+Analyzer::analyze(File, feedback) is unchanged. The facade invokes Context,
+Decision and Apply exactly once, in that order, preserving artifacts. It
+validates File before the pipeline and structural target coverage at each
+boundary. It never obtains evidence, executes operations or calls Detector,
+Resolve or a previous stage. Feedback reports Inspecting, Reconciling and
+Applying before their calls; no invented progress or duplicate Started.
+Stage errors propagate unchanged. The Orchestrator owns acknowledgement.
 
-## Pipeline invariants
+Context owns all collection and enrichment needed for a decision. It may
+read persisted facts, filesystem and Provider independently. It may not
+delegate evidence gathering to Detector, Operator or Resolve. Missing fields
+remain explicit and are not discarded. Decision consumes the completed
+Context and produces a conclusive semantic outcome including terminal
+InsufficientEvidence if necessary. Apply consumes it once, persists it and
+executes all selected intents in order, renewing guards from verified effects.
+Operator verifies and executes selected commands only.
 
-- Validate File before progress or stage calls; invalid envelopes return
-  InvalidContext. The Orchestrator owns Started and acknowledgement.
-- Report Inspecting, Reconciling and Applying exactly before the corresponding
-  stage, with the unchanged File. No fabricated progress for private algorithms
-  or transfer/verification. The return is authoritative and terminal for this call.
-- Move the artifacts through the stages once in order. Preserve the original
-  File and the exact Context through Decision. Reject substituted artifacts.
-- Check structural target coverage and uniqueness against Context before Apply.
-  Matched has one exact item/revision; Unmatched/Ambiguous one observation;
-  Scope has each item/revision in stable order or Synchronization if empty.
-  This is structural validation, not new synchronization reasoning.
-- Propagate stage errors unchanged, never execute a later stage on error,
-  never retry or recursively reanalyze inside this facade.
-- The only authoritative successful return comes from Apply. Completed must
-  match the decision target identities, revisions, cardinality and order.
-  A mismatch returns InvalidResult. A duplicate may be proven by Apply for
-  any valid delivery. Whole-delivery Obsolete requires all targets obsolete.
-- Reject physically actionable outcomes for non-actionable decisions.
-  In particular Conflict/NeedsEvidence cannot claim execution or baseline
-  establishment. A stale guard may return PendingReanalysis even for a
-  nonmutating semantic decision; evidence and operational blockers are
-  legitimate downgrades of actionable work. Do not reinterpret the reason.
-- PendingExecution, PendingRecovery, PendingReanalysis, ConflictRecorded and
-  EvidenceRequested are durable handling success, NOT Synced. Ack is performed
-  only by Orchestrator after Ok; Apply is responsible for actual durability.
-- No facade receipt cache; each call passes through ports, including redelivery.
-  The facade does not guarantee independent work scheduling or serialization.
-  Concurrent claims and physical safety remain Apply's responsibility.
+A stale guard or external change interrupts work; partial effects are
+preserved. No PendingReanalysis or EvidenceRequested callback. A subsequent
+independent File starts its own analysis. Durable recovery may retry the same
+execution without replaying earlier stages. Successful durable handling is not
+a declaration of synchronization. InvalidResult rejects incompatible targets,
+order, revisions or an actionable outcome for a non-actionable decision.
 
-## Outstanding integration concerns
-
-This is a specification of the internal composition, not an end-to-end test of
-real modules or durable storage. Cancellation of the outer future, feedback
-granularity, whole-sync boundedness, evidence sourcing, and recovery wakeups
-remain for the consolidated review. Legacy integration tests using the removed
-Analyzer API are not migrated by this commit.
-
-## RED
-
-cargo test -p drivesync-engine --test analyzer_contracts analyzer_behavior -- --ignored
-
-AnalyzerEngine intentionally uses todo!(); tests are ignored until deliberately
-run. No stage algorithms are added.
+This is a staged conceptual contract. The Detector, Operator, Orchestrator
+and Inventory implementations are intentionally unchanged. External File literals
+require migration for FileEvidence. No analyzer stage algorithms are implemented.
+See information-requirements.md. Compilation and RED are pending.

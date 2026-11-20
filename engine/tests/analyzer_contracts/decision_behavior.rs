@@ -25,7 +25,7 @@ fn actions(values: Vec<AnalysisIntent>) -> DecisionOutcome {
     DecisionOutcome::ActionSelected { intents: NonEmpty::from_vec(values).unwrap() }
 }
 fn need(values: Vec<AnalysisRequirement>) -> DecisionOutcome {
-    DecisionOutcome::NeedsEvidence { requirements: NonEmpty::from_vec(values).unwrap() }
+    DecisionOutcome::InsufficientEvidence { missing: NonEmpty::from_vec(values).unwrap() }
 }
 fn conflict() -> DecisionOutcome {
     DecisionOutcome::Conflict { requirements: vec![] }

@@ -26,3 +26,6 @@ mod apply_behavior;
 
 #[path = "analyzer_contracts/analyzer_behavior.rs"]
 mod analyzer_behavior;
+
+#[path = "analyzer_contracts/information_contract.rs"]
+mod information_contract;

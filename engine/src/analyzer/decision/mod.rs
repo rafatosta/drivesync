@@ -16,15 +16,15 @@ pub trait DecisionService: Send + Sync {
     /// Older matched observations are Obsolete. Equal order is not proof of
     /// duplicate delivery; revision-bound historical facts may be evaluated if
     /// the observed payload agrees with them. Incomparable targeted observations
-    /// require reobservation; scope observations evaluate retained history instead.
+    /// remain insufficient if Context could not establish freshness. Scope uses verified facts.
     /// A newer observation is evaluated against the retained baseline, without
     /// treating old measurements as measurements of the incoming payload.
     ///
     /// Evaluate presence before content, name and location. Unknown is never
     /// absence/equivalence. Event labels are observations, not commands.
-    /// An unmatched one-sided observation must request evidence from the other
-    /// side; a missing row is not evidence of a free destination.
-    /// A new, already identified one-sided subject may create on the other side
+    /// An unmatched one-sided observation may select Create with proved free destination;
+    /// a missing row is not proof.
+    /// A new one-sided subject may create on the other side
     /// only with verified absence at the intended destination and no baseline.
     /// Two present linked sides without a baseline require proven equivalence
     /// to establish it; known incompatibility is a conflict.
@@ -35,7 +35,7 @@ pub trait DecisionService: Send + Sync {
     /// propagate only if the surviving state is verified unchanged and the policy
     /// permits it; select Trash, never permanent Delete.
     /// A confirmed conflict blocks every intent for that item; otherwise missing
-    /// relevant evidence blocks every intent until observed. Unsupported known
+    /// relevant evidence blocks every intent for this delivery. Unsupported known
     /// kinds are Blocked rather than requesting the same evidence forever.
     /// Directories have no content-update intent. Known name/parent differences
     /// are independent of content; timestamps, sizes and remote versions alone
@@ -45,6 +45,7 @@ pub trait DecisionService: Send + Sync {
     /// deduplicate requirements and intents, with intent order Presence/Create,
     /// Content/UpdateContent, Name/Rename, Location/Move.
     /// No I/O, clock, inventory mutation, conflict resolution or operator commands.
+    /// Never return to Context; produce terminal InsufficientEvidence when facts are unavailable.
     fn decide(&self, context: AnalysisContext) -> Result<AnalysisDecision, AnalysisError>;
 }
 

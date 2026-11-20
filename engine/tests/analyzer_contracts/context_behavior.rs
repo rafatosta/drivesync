@@ -60,7 +60,8 @@ pub(super) fn remote_metadata(account: &str, id: &str, name: &str) -> RemoteFile
 
 pub(super) fn remote_input() -> File {
     let remote = remote_metadata("account-1", "remote-1", "file.txt");
-    let mut input = file(FileEventAction::Created, FileScope::Remote(remote.reference.clone()));
+    let mut input = file(FileEventAction::SnapshotObserved, FileScope::Remote(remote.reference.clone()));
+    input.event.remote = Some(RemoteObservation { source: RemoteObservationSource::Capture, removed: None, time: None, change_type: None, drive_id: None });
     input.coverage = ObservationCoverage::Partial;
     input.event.current = Some(FileLocation::Remote { reference: remote.reference.clone(), parent_id: Some(RemoteFileId("root".into())), name: Some("file.txt".into()) });
     input.data = Some(FileData::Remote(remote));
@@ -123,7 +124,7 @@ fn known() -> ContextCandidate {
 
 fn build(input: File, snapshot: Result<ContextInventorySnapshot, AnalysisError>) -> (Result<AnalysisContext, AnalysisError>, Vec<File>) {
     let reads = Arc::new(Mutex::new(vec![]));
-    let service = ContextBuilder::new(FakeInventory { snapshot, reads: reads.clone() });
+    let service = ContextBuilder::new(FakeInventory { snapshot, reads: reads.clone() }, Box::new(UnavailableEvidence));
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
     let result = runtime.block_on(service.build(input));
     let calls = reads.lock().unwrap().clone();
@@ -359,10 +360,9 @@ fn d01_same_path_different_identity_is_ambiguous() {
 #[test]
 #[ignore = "TDD red: ContextBuilder implementation pending"]
 fn d02_identity_and_destination_disagree() {
-    let prior = candidate("known", "local-1", "remote-1", "old/file.txt");
-    let occupied = candidate("other", "local-2", "remote-2", "folder/file.txt");
-    let out = result(local_input(FileEventAction::Moved), vec![prior, occupied]);
-    assert!(matches!(out.association, ContextAssociation::Ambiguous(ref items) if items.len() == 2));
+    let other = candidate("other", "local-2", "remote-2", "folder/file.txt");
+    let out = result(local_input(FileEventAction::Modified), vec![known(), other]);
+    assert_eq!(matched(&out).item.id.0, "known");
 }
 
 #[test]
@@ -496,4 +496,16 @@ fn d16_newer_local_observation_is_not_applied_to_snapshot() {
     let out = result(local_input(FileEventAction::Modified), vec![c]);
     assert_eq!(matched(&out).freshness, ObservationFreshness::Newer);
     assert_eq!(matched(&out).item, expected);
+}
+
+use drivesync_engine::analyzer::context::{ContextEvidenceReader, EvidenceFuture, ContextScope, CurrentSide, LocalDestination, RemoteDestination};
+struct UnavailableEvidence;
+impl ContextEvidenceReader for UnavailableEvidence {
+    fn scope<'a>(&'a self, _: &'a SyncId) -> EvidenceFuture<'a, MetadataValue<ContextScope>> { Box::pin(async { Ok(MetadataValue::Unavailable) }) }
+    fn local<'a>(&'a self, _: &'a ContextScope, _: &'a LocalRelativePath) -> EvidenceFuture<'a, CurrentSide<LocalFile>> { Box::pin(async { Err(AnalysisError { kind: AnalysisErrorKind::Evidence }) }) }
+    fn remote<'a>(&'a self, _: &'a ContextScope, _: &'a RemoteFileRef) -> EvidenceFuture<'a, CurrentSide<RemoteFile>> { Box::pin(async { Err(AnalysisError { kind: AnalysisErrorKind::Evidence }) }) }
+    fn local_destination<'a>(&'a self, _: &'a ContextScope, _: &'a ObservedParent, _: &'a [u8]) -> EvidenceFuture<'a, MetadataValue<LocalDestination>> { Box::pin(async { Ok(MetadataValue::Unavailable) }) }
+    fn remote_destination<'a>(&'a self, _: &'a ContextScope, _: &'a RemoteFileRef, _: &'a str) -> EvidenceFuture<'a, MetadataValue<RemoteDestination>> { Box::pin(async { Ok(MetadataValue::Unavailable) }) }
+    fn local_digest<'a>(&'a self, _: &'a ContextScope, _: &'a LocalFile) -> EvidenceFuture<'a, MetadataValue<ContentDigest>> { Box::pin(async { Ok(MetadataValue::Unavailable) }) }
+    fn remote_digest<'a>(&'a self, _: &'a ContextScope, _: &'a RemoteFile) -> EvidenceFuture<'a, MetadataValue<ContentDigest>> { Box::pin(async { Ok(MetadataValue::Unavailable) }) }
 }

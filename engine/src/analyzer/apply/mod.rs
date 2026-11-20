@@ -17,15 +17,15 @@ pub trait ApplyService: Send + Sync {
     /// exact completed redelivery is Duplicate; a changed File with the same ID
     /// is invalid. Resume incomplete receipts without repeating verified effects.
     ///
-    /// Persist accepted observations even when the outcome is NeedsEvidence.
+    /// Persist accepted observations even when the outcome is InsufficientEvidence.
     /// Never update state with an obsolete payload. NoAction, Conflict, Blocked,
-    /// NeedsEvidence and Obsolete cannot dispatch a mutation. EstablishBaseline
+    /// InsufficientEvidence and Obsolete cannot dispatch a mutation. EstablishBaseline
     /// requires verified equivalent states and atomic durable confirmation.
     ///
     /// Only ActionSelected can dispatch operations. Plan exclusively from its
     /// intents with exact source/target identity, parent, scope and preconditions.
     /// Permanent Delete and unauthorized Trash are rejected; never fall back to
-    /// deletion or merge. Use Operator's existing verification/operation API.
+    /// deletion or merge. Use Operator only for selected commands and execution safety, never initial analysis facts.
     /// Reserve an immutable ExecutionIntent before dispatch, and validate guards
     /// again atomically before claiming it. Keep ExecutionId across retries.
     ///
@@ -33,11 +33,11 @@ pub trait ApplyService: Send + Sync {
     /// ID. An unverified/uncertain effect requires recovery, never blind retry.
     /// A known no-effect transient failure may be durably queued for retry.
     /// Permanent failure is blocked; retry limits must be finite.
-    /// After the first verified step of a multi-intent decision, preserve that
-    /// step and request reanalysis before executing remaining dependent intents.
+    /// Execute selected dependent intents in order; renew guards from verified
+    /// results. Never return to Decision. Interrupt invalidated remaining work.
     /// No rollback of confirmed physical effects. Independent targets continue.
     /// Baseline confirmation requires all relevant dimensions verified, not
-    /// merely a successful Operator response. A stale guard requests reanalysis.
+    /// merely a successful Operator response. A stale guard interrupts remaining work.
     ///
     /// Ok authorizes ack ONLY after durable target outcomes, pending work and
     /// delivery completion are committed. Err means redelivery is necessary.

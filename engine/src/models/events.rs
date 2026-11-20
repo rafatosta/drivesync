@@ -156,6 +156,9 @@ pub struct File<R = RemoteFile> {
     pub coverage: ObservationCoverage,
     pub scope: FileScope,
     pub data: Option<FileData<R>>,
+    /// Additional facts bound to this observation, never inferred decisions.
+    #[serde(default)]
+    pub evidence: FileEvidence,
 }
 
 /// Coordinates durable causal positions and localized uncertainty recovery.
@@ -189,6 +192,7 @@ impl File {
         if self.id.0.trim().is_empty() || self.sync_id.0.trim().is_empty() {
             return Err(ModelError::EmptyIdentity);
         }
+        self.evidence.validate(self)?;
         let invalid = || Err(ModelError::InconsistentEvent);
         if (self.event.action == FileEventAction::RecheckRequired)
             != self.event.uncertainty.is_some()

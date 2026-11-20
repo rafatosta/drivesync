@@ -12,7 +12,7 @@ pub(super) fn action(direction: OperationDirection, kind: OperationKind) -> Deci
     DecisionOutcome::ActionSelected { intents: NonEmpty::new(AnalysisIntent { direction, kind }, vec![]) }
 }
 pub(super) fn need(requirement: AnalysisRequirement) -> DecisionOutcome {
-    DecisionOutcome::NeedsEvidence { requirements: NonEmpty::new(requirement, vec![]) }
+    DecisionOutcome::InsufficientEvidence { missing: NonEmpty::new(requirement, vec![]) }
 }
 pub(super) fn decision(context: AnalysisContext, outcome: DecisionOutcome) -> AnalysisDecision {
     let target = match &context.association {

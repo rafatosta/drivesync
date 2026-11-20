@@ -28,9 +28,8 @@ fn semantic_outcomes_map_to_distinct_handled_dispositions() {
             intents: NonEmpty::new(AnalysisIntent { direction: OperationDirection::Download, kind: OperationKind::Create }, vec![]),
         }, AnalysisDisposition::ActionSelected),
         (DecisionOutcome::Conflict { requirements: vec![] }, AnalysisDisposition::Conflict),
-        (DecisionOutcome::NeedsEvidence {
-            requirements: NonEmpty::new(AnalysisRequirement::VerifyContent, vec![]),
-        }, AnalysisDisposition::NeedsEvidence),
+        (DecisionOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::VerifyContent, vec![]),
+        }, AnalysisDisposition::Blocked),
     ];
     for (outcome, expected) in cases {
         assert_eq!(outcome.disposition(), expected);

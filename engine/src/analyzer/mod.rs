@@ -43,7 +43,7 @@ pub trait Analyzer: Send + Sync {
     /// Analyzes one detector file and reports lifecycle updates to `feedback`.
     ///
     /// The call completes only after this delivery has reached a durable handling result;
-    /// pending execution, recovery or reanalysis is not synchronization completion.
+    /// pending execution, recovery or interruption is not synchronization completion.
     /// The orchestrator publishes `Started` before calling this method;
     /// implementations report only the stages they actually enter and return the
     /// authoritative result. The facade reports Inspecting, Reconciling and Applying
@@ -112,8 +112,6 @@ pub enum AnalysisDisposition {
     ActionSelected,
     /// A conflict outcome was durably recorded for later resolution.
     Conflict,
-    /// A request for more evidence was durably recorded before an operation.
-    NeedsEvidence,
 }
 
 /// Why an accepted file did not enter analysis.

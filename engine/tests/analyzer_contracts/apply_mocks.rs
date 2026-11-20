@@ -26,6 +26,7 @@ pub(super) struct State {
     pub delivery: DeliveryState,
     pub fault: Option<Fault>,
     pub effect: Result<ItemResult, OperatorFailure>,
+    pub second_effect: Option<Result<ItemResult, OperatorFailure>>,
     pub integrity: IntegrityStatus,
     pub recovery: RecoveryEvidence,
     pub verification_error: Option<OperatorFailure>,
@@ -38,7 +39,7 @@ pub(super) type Shared = Arc<Mutex<State>>;
 pub(super) fn setup(d: &AnalysisDecision) -> Shared {
     Arc::new(Mutex::new(State {
         calls: vec![], snapshot: apply_fixtures::snapshot(d), delivery: DeliveryState::New,
-        fault: None, effect: Ok(apply_fixtures::applied_result(false, true)),
+        fault: None, effect: Ok(apply_fixtures::applied_result(false, true)), second_effect: None,
         integrity: IntegrityStatus::Verified, recovery: RecoveryEvidence::Unknown,
         verification_error: None, reserved: None, source_mismatch: false, fail_after_execute: false,
     }))
@@ -76,8 +77,10 @@ impl ApplyInventory for Store {
         record_call(&self.0, Call::Reserve(request.clone()), Fault::Reserve)?;
         let mut s = self.0.lock().unwrap();
         if let Some(old) = &s.reserved {
-            if old.intent != request.intent { return Err(error()); }
-            return Ok(old.clone());
+            if old.intent.context.id == request.intent.context.id {
+                if old.intent != request.intent { return Err(error()); }
+                return Ok(old.clone());
+            }
         }
         let receipt = OperationReceipt { intent: request.intent.clone(), state: OperationState::Reserved, attempts: 0 };
         s.reserved = Some(receipt.clone());
@@ -110,6 +113,9 @@ impl FakeOperator {
         let mut s = self.0.lock().unwrap();
         s.calls.push(Call::Execute(id, command));
         if s.fail_after_execute { s.fault = Some(Fault::Checkpoint); }
+        if s.calls.iter().filter(|c| matches!(c, Call::Execute(..))).count() > 1 {
+            if let Some(effect) = &s.second_effect { return effect.clone(); }
+        }
         s.effect.clone()
     }
     fn transfer(&self, id: ExecutionId, command: OperationCommand) -> OperatorResult<TransferResult> {

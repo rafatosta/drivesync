@@ -15,13 +15,13 @@ fn remote_creation_without_inventory_entry_has_empty_item_context() {
     let expected = AnalysisContext {
         file: input.clone(),
         association: ContextAssociation::Unmatched,
-        observation: unknown_observation(),
+        observation: unknown_observation(), facts: Default::default(),
     };
 
     let context = AnalysisContext {
         file: input,
         association: ContextAssociation::Unmatched,
-        observation: unknown_observation(),
+        observation: unknown_observation(), facts: Default::default(),
     };
 
     assert_eq!(context, expected);
@@ -36,13 +36,13 @@ fn context_keeps_inventory_snapshot_and_its_evidence_together() {
     let expected = AnalysisContext {
         file: input.clone(),
         association: ContextAssociation::Scope(vec![subject.clone()]),
-        observation: unknown_observation(),
+        observation: unknown_observation(), facts: Default::default(),
     };
 
     let context = AnalysisContext {
         file: input,
         association: ContextAssociation::Scope(vec![subject]),
-        observation: unknown_observation(),
+        observation: unknown_observation(), facts: Default::default(),
     };
 
     assert_eq!(context, expected);
@@ -59,7 +59,7 @@ fn whole_synchronization_scope_can_carry_multiple_inventory_snapshots() {
     let expected = AnalysisContext {
         file: file(FileEventAction::RecheckRequired, FileScope::WholeSync),
         association: ContextAssociation::Scope(vec![first, second]),
-        observation: unknown_observation(),
+        observation: unknown_observation(), facts: Default::default(),
     };
 
     assert_eq!(expected.association.items().len(), 2);

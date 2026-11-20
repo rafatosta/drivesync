@@ -64,9 +64,8 @@ pub enum DecisionOutcome {
     ActionSelected { intents: NonEmpty<AnalysisIntent> },
     /// A conflict blocks execution until resolved.
     Conflict { requirements: Vec<AnalysisRequirement> },
-    /// Additional evidence is required before a safe decision can be made.
-    /// Must contain at least one requirement.
-    NeedsEvidence { requirements: NonEmpty<AnalysisRequirement> },
+    /// Terminal diagnosis after Context exhausted relevant collection; not a request.
+    InsufficientEvidence { missing: NonEmpty<AnalysisRequirement> },
 }
 
 impl DecisionOutcome {
@@ -80,7 +79,7 @@ impl DecisionOutcome {
             Self::Blocked { .. } => AnalysisDisposition::Blocked,
             Self::ActionSelected { .. } => AnalysisDisposition::ActionSelected,
             Self::Conflict { .. } => AnalysisDisposition::Conflict,
-            Self::NeedsEvidence { .. } => AnalysisDisposition::NeedsEvidence,
+            Self::InsufficientEvidence { .. } => AnalysisDisposition::Blocked,
         }
     }
 }
@@ -89,6 +88,11 @@ impl DecisionOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecisionBlock {
     UnsupportedKind,
+    IdentityUncertain,
+    ResourceUnavailable,
+    ParentUnavailable,
+    AuthorizationRequired,
+    DestinationOccupied,
 }
 
 /// Non-empty ordered semantic payload. An empty list cannot be constructed

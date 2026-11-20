@@ -17,7 +17,7 @@ fn pending_execution_is_distinct_from_recovery() {
 fn mixed_terminal_receipt_preserves_target_outcomes() {
     let items = vec![
         AnalysisItemResult { target: DecisionTarget::Item { id: SyncItemId("one".into()), revision: 7 }, outcome: ApplyOutcome::ConflictRecorded },
-        AnalysisItemResult { target: DecisionTarget::Synchronization, outcome: ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) } },
+        AnalysisItemResult { target: DecisionTarget::Synchronization, outcome: ApplyOutcome::InsufficientEvidence { missing: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) } },
     ];
     let result = AnalysisResult::Completed(items.clone());
     assert_eq!(result, AnalysisResult::Completed(items));
