@@ -16,3 +16,10 @@ mod context_behavior;
 mod decision_fixtures;
 #[path = "analyzer_contracts/decision_behavior.rs"]
 mod decision_behavior;
+
+#[path = "analyzer_contracts/apply_fixtures.rs"]
+mod apply_fixtures;
+#[path = "analyzer_contracts/apply_mocks.rs"]
+mod apply_mocks;
+#[path = "analyzer_contracts/apply_behavior.rs"]
+mod apply_behavior;

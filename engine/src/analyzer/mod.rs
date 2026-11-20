@@ -19,7 +19,7 @@ pub mod apply;
 pub mod context;
 pub mod decision;
 
-pub use apply::{AnalysisItemResult, ApplyService};
+pub use apply::{AnalysisItemResult, ApplyOutcome, ApplyService};
 pub use context::{
     AnalysisContext, AnalysisItemContext, ContextAssociation, ContextService, ObservationContext,
     ObservationFreshness,
@@ -130,6 +130,8 @@ pub enum AnalysisErrorKind {
     Operation,
     /// The input context violates its structural or evidence contract.
     InvalidContext,
+    /// A decision artifact violates its target or intent contract.
+    InvalidDecision,
     /// An unexpected internal failure occurred.
     Internal,
 }

@@ -1,95 +1,29 @@
+//! Structural Apply artifact tests; behavior is specified separately.
 use drivesync_engine::{
-    analyzer::{
-        AnalysisDisposition, AnalysisItemResult, AnalysisResult, AnalysisSkipReason, DecisionTarget,
-    },
-    inventory::SyncItemId,
-    models::FileId,
+    analyzer::{AnalysisItemResult, AnalysisResult, AnalysisSkipReason, ApplyOutcome, DecisionTarget, NonEmpty},
+    inventory::{AnalysisRequirement, SyncItemId},
+    operations::ExecutionId,
 };
 
 #[test]
-fn completed_apply_result_preserves_each_decision_target_and_disposition() {
-    let expected_items = vec![
-        AnalysisItemResult {
-            target: DecisionTarget::Observation(FileId("new-observation".into())),
-            disposition: AnalysisDisposition::ActionSelected,
-        },
-        AnalysisItemResult {
-            target: DecisionTarget::Item {
-                id: SyncItemId("item-1".into()),
-                revision: 6,
-            },
-            disposition: AnalysisDisposition::Conflict,
-        },
-        AnalysisItemResult {
-            target: DecisionTarget::Synchronization,
-            disposition: AnalysisDisposition::NeedsEvidence,
-        },
-    ];
-    let expected = AnalysisResult::Completed(expected_items.clone());
-    let result = AnalysisResult::Completed(expected_items);
-
-    assert_eq!(result, expected);
-    let AnalysisResult::Completed(items) = result else {
-        panic!("expected a completed apply result")
-    };
-    assert_eq!(items.len(), 3);
-    assert_eq!(
-        items[0].target,
-        DecisionTarget::Observation(FileId("new-observation".into()))
-    );
-    assert_eq!(
-        items[1].target,
-        DecisionTarget::Item {
-            id: SyncItemId("item-1".into()),
-            revision: 6,
-        }
-    );
-    assert_eq!(items[2].target, DecisionTarget::Synchronization);
+fn pending_execution_is_distinct_from_recovery() {
+    let id = ExecutionId::new("operation-1".into()).unwrap();
+    let pending = ApplyOutcome::PendingExecution { operations: NonEmpty::new(id.clone(), vec![]) };
+    let recovery = ApplyOutcome::PendingRecovery { operations: NonEmpty::new(id, vec![]) };
+    assert_ne!(pending, recovery);
 }
 
 #[test]
-fn all_terminal_dispositions_can_be_returned_after_durable_handling() {
-    let dispositions = [
-        AnalysisDisposition::NoAction,
-        AnalysisDisposition::BaselineEstablished,
-        AnalysisDisposition::Obsolete,
-        AnalysisDisposition::Blocked,
-        AnalysisDisposition::ActionSelected,
-        AnalysisDisposition::Conflict,
-        AnalysisDisposition::NeedsEvidence,
+fn mixed_terminal_receipt_preserves_target_outcomes() {
+    let items = vec![
+        AnalysisItemResult { target: DecisionTarget::Item { id: SyncItemId("one".into()), revision: 7 }, outcome: ApplyOutcome::ConflictRecorded },
+        AnalysisItemResult { target: DecisionTarget::Synchronization, outcome: ApplyOutcome::EvidenceRequested { requirements: NonEmpty::new(AnalysisRequirement::ObserveLocal, vec![]) } },
     ];
-    let results = dispositions
-        .into_iter()
-        .map(|disposition| AnalysisItemResult {
-            target: DecisionTarget::Item {
-                id: SyncItemId("item-1".into()),
-                revision: 2,
-            },
-            disposition,
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        results
-            .iter()
-            .map(|result| result.disposition)
-            .collect::<Vec<_>>(),
-        dispositions
-    );
+    let result = AnalysisResult::Completed(items.clone());
+    assert_eq!(result, AnalysisResult::Completed(items));
 }
 
 #[test]
-fn duplicate_and_obsolete_deliveries_have_distinct_skip_results() {
-    let duplicate = AnalysisResult::Skipped(AnalysisSkipReason::Duplicate);
-    let obsolete = AnalysisResult::Skipped(AnalysisSkipReason::Obsolete);
-
-    assert_eq!(
-        duplicate,
-        AnalysisResult::Skipped(AnalysisSkipReason::Duplicate)
-    );
-    assert_eq!(
-        obsolete,
-        AnalysisResult::Skipped(AnalysisSkipReason::Obsolete)
-    );
-    assert_ne!(duplicate, obsolete);
+fn duplicate_and_obsolete_are_distinct() {
+    assert_ne!(AnalysisResult::Skipped(AnalysisSkipReason::Duplicate), AnalysisResult::Skipped(AnalysisSkipReason::Obsolete));
 }
