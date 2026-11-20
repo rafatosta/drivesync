@@ -35,3 +35,5 @@ mod filesystem;
 pub mod analyzer;
 
 pub mod operations;
+
+pub mod file_contract;
