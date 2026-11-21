@@ -139,6 +139,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             status,
             stop: rx,
             blockers: BTreeMap::new(),
+            sources: BTreeMap::new(),
         },
         stop,
     )
@@ -438,4 +439,24 @@ async fn correlation_to_a_known_item_does_not_leave_a_phantom_anonymous_blocker(
         DecisionStatus::NoOp
     );
     assert!(worker.blockers.is_empty());
+}
+
+#[tokio::test]
+async fn incomplete_sources_suspend_dispatch_until_fresh_complete_observations() {
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    worker.sources.insert(Source::Local, None);
+    worker.sources.insert(
+        Source::Remote,
+        Some(issue(SynchronizationIssueKind::Deferred, true)),
+    );
+    assert_eq!(
+        worker.process(changed_file()).await.decision,
+        DecisionStatus::Ready
+    );
+    assert!(calls.requests.lock().unwrap().is_empty());
+    assert_eq!(worker.status.borrow().state, SynchronizationState::Waiting);
+    worker.sources.insert(Source::Remote, None);
+    assert_eq!(worker.process(changed_file()).await.results.len(), 2);
+    assert_eq!(calls.requests.lock().unwrap().len(), 2);
 }

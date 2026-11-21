@@ -3,7 +3,7 @@
 Reconstruction step 7 implements the private `orchestrator::operations` boundary.
 The Analyzer and executor share one `Operation` and `OperationPreconditions` contract.
 Operations do not choose synchronization policy or analyze conflicts. Step 8 now wires the
-[Orchestrator and GUI status](ORCHESTRATOR.md); functional observation producers remain step 9.
+[Orchestrator and GUI status](ORCHESTRATOR.md); [functional observation producers](OBSERVATION_SOURCES.md) are implemented in step 9.
 
 ## Execution and provider selection
 

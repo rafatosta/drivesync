@@ -17,14 +17,14 @@ its roots can change. Different active accounts cannot configure overlapping loc
 
 Synchronization Inventory files live in a dedicated `<accounts-directory>.synchronization`
 sibling directory. Opening a scope neither migrates nor changes Accounts storage. Each
-Inventory lookup/write retains account and synchronization-root isolation. Startup validates
-local access and creates no baseline, remote session, or provider mutation.
+Inventory lookup/write retains account and synchronization-root isolation. Startup validates local access and creates no baseline. Once the worker is installed,
+read-only sources acquire their own authorized sessions and publish observations.
 
 Each account has a bounded queue of 32 `File` values and one sequential worker. Private
 `Engine::observe` passes normalized observations through Detectors/Context before admission;
 raw observations and operation plans are not public application commands. Producers get
-backpressure and stopped workers reject further work. Observation source implementations,
-initial scanning, and continuous monitoring belong to reconstruction step 9.
+backpressure and stopped workers reject further work. [Functional sources](OBSERVATION_SOURCES.md) now supply initial scans, continuous local
+polling and Google observation through the same Detectors/Context File facade.
 
 ## Plan coordination
 
@@ -77,14 +77,12 @@ scope before activating the newly saved one.
 
 ## Current acceptance boundary
 
-Scanner, local watcher, and remote observer implementations are still step 9. The existing
-Context retains an unobserved counterpart as unknown and does not enrich destination evidence
-by performing provider reads. The normal dashboard therefore starts at **Waiting for
-observations**, not Scanning or Up to date. One-sided observations can legitimately defer.
-Orchestrator does not duplicate Context or Analyzer logic to bypass that contract.
+Step 9 now starts functional observation sources and joins current sides only through a known
+Inventory identity. Partial sources suspend execution admission. See [source behavior and
+limits](OBSERVATION_SOURCES.md). Unknown counterparts, new items without association, adoption
+without confirmed execution support, and unresolved destinations still explicitly defer.
+Orchestrator does not duplicate Context or Analyzer logic to bypass those limitations.
 
-Verified coordinator tests provide complete `File` fixtures to the real Analyzer and controlled
-Operator receipts. Connection tests use synthetic OAuth and an isolated vault to verify
-lifecycle, Observation/Context ingestion, account preservation, and safe disconnection. Existing
-Operations tests cover real temporary filesystem effects and loopback provider requests. These
-checks do not establish live Google Drive or installed-Flatpak acceptance.
+Coordinator tests use the real Analyzer and controlled Operator receipts. Connection/source
+tests use synthetic OAuth, an isolated vault, temporary local data, and loopback HTTP. These
+checks do not establish live Google Drive, portal, or installed-Flatpak acceptance.

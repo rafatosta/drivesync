@@ -33,7 +33,7 @@ const QUEUE_CAPACITY: usize = 32;
 /// Producer handle to a bounded per-account File queue. It exposes no Analyzer or Operator.
 pub(crate) struct OrchestratorHandle {
     config: OrchestratorConfig,
-    files: mpsc::Sender<File>,
+    files: mpsc::Sender<Command>,
     stop: watch::Sender<bool>,
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
@@ -64,7 +64,18 @@ impl OrchestratorHandle {
             return Err(SynchronizationErrorKind::Stopped);
         }
         self.files
-            .send(file)
+            .send(Command::File(Box::new(file)))
+            .await
+            .map_err(|_| SynchronizationErrorKind::Stopped)
+    }
+    pub(crate) async fn source_status(
+        &self,
+        source: Source,
+        scanning: bool,
+        issue: Option<SynchronizationIssue>,
+    ) -> Result<(), SynchronizationErrorKind> {
+        self.files
+            .send(Command::Source(source, scanning, issue))
             .await
             .map_err(|_| SynchronizationErrorKind::Stopped)
     }
@@ -131,6 +142,7 @@ fn start(
         status: status.clone(),
         stop: stop_rx,
         blockers: BTreeMap::new(),
+        sources: BTreeMap::new(),
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -154,15 +166,25 @@ fn start(
         status: status_rx,
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Source {
+    Local,
+    Remote,
+}
+enum Command {
+    File(Box<File>),
+    Source(Source, bool, Option<SynchronizationIssue>),
+}
 struct Orchestrator {
     config: OrchestratorConfig,
     operator: Box<dyn Operator>,
     status: watch::Sender<SynchronizationStatus>,
     stop: watch::Receiver<bool>,
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
+    sources: BTreeMap<Source, Option<SynchronizationIssue>>,
 }
 impl Orchestrator {
-    async fn run(&mut self, mut files: mpsc::Receiver<File>, ownership: Arc<RwLock<()>>) {
+    async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
         loop {
             let file = tokio::select! {biased;
                 _=self.stop.changed()=>break,
@@ -179,7 +201,31 @@ impl Orchestrator {
             if *self.stop.borrow() {
                 break;
             }
-            self.process(file).await;
+            match file {
+                Command::File(file) => {
+                    self.process(*file).await;
+                }
+                Command::Source(source, scanning, issue) => {
+                    self.sources.insert(source, issue);
+                    if scanning
+                        && !self
+                            .sources
+                            .values()
+                            .flatten()
+                            .any(|issue| is_failure(issue.kind))
+                    {
+                        self.publish(
+                            SynchronizationState::Running,
+                            SynchronizationActivity::Scanning,
+                            None,
+                            None,
+                            None,
+                        );
+                    } else {
+                        self.settle();
+                    }
+                }
+            }
         }
         files.close();
         self.publish(
@@ -214,6 +260,22 @@ impl Orchestrator {
         self.blockers.insert(key(&item), (item, issue));
     }
     fn settle(&self) {
+        if let Some(issue) = self
+            .sources
+            .values()
+            .flatten()
+            .find(|issue| is_failure(issue.kind))
+        {
+            self.publish(
+                SynchronizationState::Failed,
+                SynchronizationActivity::Observing,
+                None,
+                None,
+                Some(issue.clone()),
+            );
+            return;
+        }
+
         if let Some((_, (item, issue))) = self
             .blockers
             .iter()
@@ -230,6 +292,26 @@ impl Orchestrator {
                 Some(item.clone()),
                 None,
                 Some(issue.clone()),
+            );
+        } else if let Some(issue) = self.sources.values().flatten().next() {
+            self.publish(
+                if is_failure(issue.kind) {
+                    SynchronizationState::Failed
+                } else {
+                    SynchronizationState::Waiting
+                },
+                SynchronizationActivity::Observing,
+                None,
+                None,
+                Some(issue.clone()),
+            );
+        } else if !self.sources.is_empty() && self.sources.len() < 2 {
+            self.publish(
+                SynchronizationState::Waiting,
+                SynchronizationActivity::Observing,
+                None,
+                None,
+                None,
             );
         } else {
             self.publish(
@@ -301,6 +383,14 @@ impl Orchestrator {
             || decision.operations.is_empty()
         {
             self.block(item, issue(SynchronizationIssueKind::InvalidInput, false));
+            self.settle();
+            return outcome;
+        }
+        // Partial or unavailable producers suspend dispatch, without changing Analyzer decisions.
+        if !self.sources.is_empty()
+            && (self.sources.len() < 2 || self.sources.values().any(Option::is_some))
+        {
+            self.block(item, issue(SynchronizationIssueKind::Deferred, true));
             self.settle();
             return outcome;
         }

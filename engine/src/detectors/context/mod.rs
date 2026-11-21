@@ -1,5 +1,6 @@
 //! Consolidates one normalized observation with persisted facts into an Analyzer-ready file.
 
+mod cache;
 mod models;
 
 use crate::{
@@ -24,6 +25,7 @@ pub(crate) use models::{ContextConfig, File, Observations, PathRoot};
 pub(crate) struct Context {
     inventory: Inventory,
     config: ContextConfig,
+    cache: std::sync::Mutex<cache::Cache>,
 }
 
 impl Context {
@@ -43,7 +45,11 @@ impl Context {
             account_id: config.account_id.clone(),
         })
         .map_err(|_| ContextError::InventoryUnavailable)?;
-        Ok(Self { inventory, config })
+        Ok(Self {
+            inventory,
+            config,
+            cache: std::sync::Mutex::new(cache::Cache::default()),
+        })
     }
 
     /// Consolidates one observation without inferring missing evidence or choosing an action.
@@ -178,7 +184,7 @@ impl Context {
                 ),
             };
 
-        Ok(File {
+        let mut file = File {
             identity,
             local,
             remote,
@@ -190,7 +196,11 @@ impl Context {
             prior_conflict,
             initial_association_authorized: self.config.initial_association_authorized,
             inventory_revision,
-        })
+        };
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.consolidate(&mut file);
+        }
+        Ok(file)
     }
 
     fn validate_scope(&self, sync_root_id: &SyncRootId) -> Result<(), ContextError> {

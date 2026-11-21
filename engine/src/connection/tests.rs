@@ -79,6 +79,7 @@ impl Fixture {
         crate::accounts::tests::use_isolated_vault(
             &mut Arc::get_mut(&mut engine.inner).unwrap().accounts,
         );
+        Arc::get_mut(&mut engine.inner).unwrap().sources_enabled = false;
         Self {
             directory,
             engine,
@@ -832,7 +833,7 @@ impl Fixture {
     }
 }
 #[tokio::test]
-async fn synchronization_start_is_idempotent_scoped_and_independent_of_google_io() {
+async fn coordination_start_is_idempotent_with_sources_isolated() {
     use crate::{SynchronizationActivity, SynchronizationErrorKind, SynchronizationState};
     let fixture = Fixture::new(replies("sync-user")).await;
     let account = fixture.connected().await;
@@ -1137,4 +1138,94 @@ async fn active_account_scopes_reject_overlapping_local_trees_and_stop_independe
         .stop_synchronization(account_b.id)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn functional_sources_start_from_engine_and_stop_without_mutating_user_files() {
+    let mut responses = replies("functional-sources");
+    responses.extend(vec![Reply::json(200,r#"{"startPageToken":"start"}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#),Reply::json(200,r#"{"files":[],"incompleteSearch":false}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#)]);
+    let mut f = Fixture::new(responses).await;
+    Arc::get_mut(&mut f.engine.inner).unwrap().sources_enabled = true;
+    let account = f.connected().await;
+    let request = f.sync_request(&account);
+    std::fs::write(request.local_root.join("file"), b"preserved").unwrap();
+    f.engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut status = f
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let current = status.current();
+            if f.server.requests.lock().unwrap().len() == 6
+                && current
+                    .current_item
+                    .as_ref()
+                    .and_then(|item| item.local_path.as_deref())
+                    == Some(std::path::Path::new("file"))
+                && current.issue.is_some()
+            {
+                break;
+            }
+            status.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("file")).unwrap(),
+        b"preserved"
+    );
+    assert_eq!(std::fs::read_dir(&request.local_root).unwrap().count(), 1);
+    let stopped = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        f.engine.stop_synchronization(account.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(stopped.state, crate::SynchronizationState::Stopped);
+    assert!(f.server.requests.lock().unwrap()[2..]
+        .iter()
+        .all(|request| request.method == "GET"));
+}
+#[tokio::test]
+async fn disconnect_cancels_remote_collection_and_preserves_local_files() {
+    let mut responses = replies("stop-sources");
+    let mut delayed = Reply::json(200, r#"{"startPageToken":"start"}"#);
+    delayed.delay = std::time::Duration::from_secs(2);
+    responses.push(delayed);
+    let mut f = Fixture::new(responses).await;
+    Arc::get_mut(&mut f.engine.inner).unwrap().sources_enabled = true;
+    let account = f.connected().await;
+    let request = f.sync_request(&account);
+    std::fs::write(request.local_root.join("kept"), b"preserved").unwrap();
+    f.engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while f.server.requests.lock().unwrap().len() < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        f.engine.disconnect_account(RemoveAccountRequest {
+            account_id: account.id,
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("kept")).unwrap(),
+        b"preserved"
+    );
 }

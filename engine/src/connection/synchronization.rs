@@ -3,7 +3,6 @@ use super::*;
 use crate::{
     detectors::{
         context::{ContextConfig, PathRoot},
-        observation::Observation,
         Detectors,
     },
     models::SyncRootId,
@@ -14,9 +13,21 @@ use sha2::{Digest, Sha256};
 use std::{os::unix::ffi::OsStrExt, path::PathBuf};
 
 pub(super) struct Session {
-    #[allow(dead_code)] // Functional producer ingress is implemented in reconstruction step 9.
     detectors: Arc<Detectors>,
     pub(super) orchestrator: Arc<OrchestratorHandle>,
+    sources: Option<crate::detectors::sources::SourceTasks>,
+}
+impl Session {
+    pub(super) async fn stop(&self) -> SynchronizationStatus {
+        if let Some(sources) = &self.sources {
+            // Close execution admission immediately, even if credential refresh or a blocking
+            // source read must still finish before disconnect can remove the account.
+            let (_, status) = tokio::join!(sources.stop(), self.orchestrator.stop());
+            status
+        } else {
+            self.orchestrator.stop().await
+        }
+    }
 }
 pub(super) fn error(kind: SynchronizationErrorKind) -> EngineError {
     EngineError::new(EngineErrorKind::Synchronization(kind))
@@ -58,7 +69,7 @@ pub(super) fn directory(accounts: &std::path::Path) -> PathBuf {
 impl Engine {
     /// Starts one bounded coordination worker for an explicitly configured account.
     /// Identical running configuration is idempotent; changing an active scope requires stopping it.
-    /// No scanner, network mutation, or claim of synchronization is started by this request.
+    /// Read-only producers start immediately; mutations still require an executable Analyzer plan.
     pub async fn start_synchronization(
         &self,
         request: StartSynchronizationRequest,
@@ -92,7 +103,14 @@ impl Engine {
                 let ownership = inner.ownership.gate.clone();
                 let directory = inner.synchronization_directory.clone();
                 let id = request.account_id.clone();
-                let session = tokio::task::spawn_blocking(move || {
+                let source_accounts = accounts.clone();
+                let source_client = client.clone();
+                let source_ownership = ownership.clone();
+                #[cfg(test)]
+                let sources_enabled = inner.sources_enabled;
+                #[cfg(not(test))]
+                let sources_enabled = true;
+                let mut session = tokio::task::spawn_blocking(move || {
                     let account = accounts
                         .get(GetAccountRequest {
                             account_id: request.account_id.clone(),
@@ -124,10 +142,21 @@ impl Engine {
                     Ok::<_, EngineError>(Session {
                         detectors: Arc::new(detectors),
                         orchestrator: Arc::new(orchestrator),
+                        sources: None,
                     })
                 })
                 .await
                 .map_err(|_| EngineError::new(EngineErrorKind::Internal))??;
+                if sources_enabled {
+                    session.sources = Some(crate::detectors::sources::start(
+                        session.orchestrator.config().clone(),
+                        session.detectors.clone(),
+                        session.orchestrator.clone(),
+                        source_accounts,
+                        source_client,
+                        source_ownership,
+                    ));
+                }
                 let status = session.orchestrator.status();
                 sessions.insert(id, session);
                 Ok(status)
@@ -146,7 +175,7 @@ impl Engine {
             .spawn(async move {
                 let sessions = inner.synchronizations.lock().await;
                 Ok(match sessions.get(&account_id) {
-                    Some(session) => session.orchestrator.stop().await,
+                    Some(session) => session.stop().await,
                     None => SynchronizationStatus::new(account_id, SynchronizationState::Stopped),
                 })
             })
@@ -177,9 +206,9 @@ impl Engine {
             .map(|session| session.orchestrator.subscribe())
             .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))
     }
-    /// Sole Observation ingress for later Engine-owned producers. Raw File/Decision/Operation
+    /// Normalized Observation ingress for Engine-owned integrations. Raw File/Decision/Operation
     /// values are never exposed as application commands or synthesized around an incomplete Context.
-    #[allow(dead_code)] // Internal producer entry point for reconstruction step 9.
+    #[allow(dead_code)] // Preserves normalized ingress for Engine-owned integrations.
     pub(crate) async fn observe(
         &self,
         account_id: AccountId,
@@ -195,14 +224,15 @@ impl Engine {
                         .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?;
                     (session.detectors.clone(), session.orchestrator.clone())
                 };
-                let file =
-                    tokio::task::spawn_blocking(move || detectors.contextualize(observation))
-                        .await
-                        .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
-                        .map_err(|_| error(SynchronizationErrorKind::InvalidObservation))?;
+                let file = detectors
+                    .contextualize_async(observation)
+                    .await
+                    .map_err(|_| error(SynchronizationErrorKind::InvalidObservation))?;
                 orchestrator.submit(file).await.map_err(error)
             })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
     }
 }
+
+use crate::detectors::observation::Observation;

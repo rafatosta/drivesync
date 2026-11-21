@@ -6,3 +6,6 @@ pub(crate) mod remote;
 pub(crate) use models::{
     LocalObservation, LocalObservationSource, Observation, ObservationCoverage, RemoteObservation,
 };
+
+pub(crate) mod local;
+pub(crate) mod scanner;

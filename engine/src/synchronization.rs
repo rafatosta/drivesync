@@ -3,7 +3,7 @@ use crate::models::{AccountId, DateTime, ItemId, Path, RemoteId};
 use tokio::sync::watch;
 
 /// One account's configured local and remote synchronization roots.
-/// Starting coordinates existing contracts; observation producers are installed separately.
+/// Starting activates read-only observation producers and the existing coordination contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartSynchronizationRequest {
     pub account_id: AccountId,
@@ -19,7 +19,7 @@ pub enum SynchronizationState {
     Stopped,
     Failed,
 }
-/// Actual current work. Scanning is reserved for a functional scanner source.
+/// Actual current work, including the functional initial local scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationActivity {
     None,

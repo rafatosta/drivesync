@@ -29,6 +29,8 @@ struct Inner {
     attempts: Mutex<HashMap<GoogleSignInId, Arc<sign_in::Attempt>>>,
     synchronization_directory: std::path::PathBuf,
     synchronizations: tokio::sync::Mutex<HashMap<crate::AccountId, synchronization::Session>>,
+    #[cfg(test)]
+    sources_enabled: bool,
 }
 /// Every
 /// authorization attempt holds a read lease; local removal requires exclusion
@@ -136,6 +138,8 @@ impl Engine {
                 attempts: Mutex::new(HashMap::new()),
                 synchronization_directory,
                 synchronizations: tokio::sync::Mutex::new(HashMap::new()),
+                #[cfg(test)]
+                sources_enabled: true,
             }),
         })
     }
@@ -172,7 +176,7 @@ impl Engine {
                 // Serialize removal against scope replacement, and release operation leases first.
                 let mut sessions = inner.synchronizations.lock().await;
                 if let Some(session) = sessions.get(&request.account_id) {
-                    session.orchestrator.stop().await;
+                    session.stop().await;
                 }
                 let account_id = request.account_id.clone();
                 let result = inner

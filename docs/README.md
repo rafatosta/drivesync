@@ -5,3 +5,4 @@
 - [Google Drive provider APIs](engine/providers/README.md)
 - [Synchronization Operations](OPERATIONS.md)
 - [Synchronization Orchestrator and status](ORCHESTRATOR.md)
+- [Functional observation sources](OBSERVATION_SOURCES.md)
