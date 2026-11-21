@@ -1,6 +1,9 @@
 //! Detector module boundary.
 //!
-//! The local detector is exposed through its public module contract. No
+//! Detector data contracts exposed through their public module interfaces.
+//!
+//! Local and remote observations are available as data-only contracts. No
 //! detection implementation is provided at this stage.
 
 pub mod local;
+pub mod remote;
