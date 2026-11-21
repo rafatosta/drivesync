@@ -15,6 +15,9 @@ use crate::{
 };
 use std::path::Component;
 
+#[allow(unused_imports)]
+// Environment is part of the File contract constructed by Context callers.
+pub(crate) use models::Environment;
 pub(crate) use models::{ContextConfig, File, Observations, PathRoot};
 
 /// Builds Analyzer input from one observation and its account-scoped persisted snapshot.

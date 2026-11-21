@@ -6,6 +6,8 @@ mod detectors;
 #[allow(dead_code)] // Inventory contracts are consumed by Context and Operations in later steps.
 mod inventory;
 pub mod models;
+#[allow(dead_code)] // Analyzer contracts are consumed by the Orchestrator in a later step.
+mod orchestrator;
 pub mod providers;
 pub use models::{AccountId, ProviderId, Timestamp};
 
