@@ -102,9 +102,20 @@ pub(crate) struct Baseline {
 }
 
 impl Baseline {
-    pub(super) fn never_synced() -> Self {
+    pub(crate) fn never_synced() -> Self {
         Self {
             state: BaselineState::NeverSynced,
+            local: None,
+            remote: None,
+            confirmed_at: None,
+            projection: None,
+        }
+    }
+
+    /// Returns an explicit unavailable baseline for inconclusive Inventory results.
+    pub(crate) fn unavailable() -> Self {
+        Self {
+            state: BaselineState::Unavailable,
             local: None,
             remote: None,
             confirmed_at: None,
