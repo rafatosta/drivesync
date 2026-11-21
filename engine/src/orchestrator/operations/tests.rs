@@ -481,3 +481,40 @@ async fn replaced_root_is_rejected_before_writing_or_mutating() {
     assert!(!moved.join("file").exists());
     assert!(!executor.config.local_root.join("file").exists());
 }
+
+#[tokio::test]
+async fn confirmed_replacement_refreshes_persisted_local_identity() {
+    struct Replace;
+    impl RemoteExecutor for Replace {
+        fn execute<'a>(
+            &'a self,
+            config: &'a OperatorConfig,
+            r: &'a ExecuteOperationRequest,
+            filesystem: &'a Filesystem,
+        ) -> EffectFuture<'a> {
+            Box::pin(async move {
+                let temporary = config.local_root.join("replacement");
+                fs::write(&temporary, b"replacement bytes").unwrap();
+                fs::rename(temporary, config.local_root.join("file")).unwrap();
+                let local = filesystem.observe(std::path::Path::new("file"))?;
+                Ok(AppliedEffect {
+                    local: Some(local),
+                    remote: None,
+                    remote_id: r.operation.remote_id.clone(),
+                    verified: true,
+                })
+            })
+        }
+    }
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    fs::write(executor.config.local_root.join("file"), b"old bytes").unwrap();
+    let r = request(&executor, OperationAction::UpdateLocalContent);
+    let old_identity = r.local.identity.clone();
+    executor.remote = Arc::new(Replace);
+    let result = executor.execute(r).await;
+    assert_eq!(result.status, OperationResultStatus::Succeeded);
+    let actual = result.effect.unwrap().local.unwrap().identity;
+    assert_ne!(actual, old_identity);
+    assert_eq!(snapshot(&executor).identity.local_identity, actual);
+}

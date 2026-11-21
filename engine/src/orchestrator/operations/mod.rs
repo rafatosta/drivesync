@@ -309,14 +309,24 @@ impl Operator for PersistingOperator {
                     }
                 }
             };
-            let mut receipt = self.write(&r, receipt.revision, persisted);
+            let mut recorded = r.clone();
+            if let Some(effect) = result.effect.as_ref().filter(|effect| effect.verified) {
+                if let Some(local) = &effect.local {
+                    if matches!(local.identity, Evidence::Known(_)) {
+                        recorded.identity.local_identity = local.identity.clone();
+                    }
+                }
+            }
+            // Replacement can change the inode; subsequent confirmation must not restore the
+            // pre-execution identity over the verified effect's identity.
+            let mut receipt = self.write(&recorded, receipt.revision, persisted);
             if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded
             {
                 let confirmed = match result.effect.as_ref().and_then(|e| self.baseline(e)) {
                     Some(baseline) => PersistedEffect::BaselineConfirmed(baseline),
                     None => PersistedEffect::OperationConfirmed,
                 };
-                receipt = self.write(&r, receipt.revision, confirmed);
+                receipt = self.write(&recorded, receipt.revision, confirmed);
             }
             result.status = if receipt.status == WriteStatus::Written {
                 status
