@@ -13,7 +13,7 @@ use crate::{
 };
 use std::path::PathBuf;
 
-fn fixture() -> File {
+pub(in crate::orchestrator) fn fixture() -> File {
     let local = local_state("same", 10);
     let remote = remote_state("same", 10);
     File {

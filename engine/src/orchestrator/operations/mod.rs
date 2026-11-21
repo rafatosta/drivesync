@@ -11,9 +11,9 @@ use crate::{
 use filesystem::Filesystem;
 #[cfg(test)]
 use interfaces::EffectFuture;
-use interfaces::{OperationFuture, RemoteExecutor};
+use interfaces::RemoteExecutor;
 #[allow(unused_imports)]
-pub(super) use interfaces::{Operator, OperatorFactory};
+pub(super) use interfaces::{OperationFuture, Operator, OperatorFactory};
 use models::*;
 use std::{
     sync::Arc,

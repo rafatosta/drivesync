@@ -2,8 +2,8 @@
 
 Reconstruction step 7 implements the private `orchestrator::operations` boundary.
 The Analyzer and executor share one `Operation` and `OperationPreconditions` contract.
-Operations do not choose synchronization policy or analyze conflicts. The orchestration
-loop, GUI status publication, and functional observation producers remain later steps.
+Operations do not choose synchronization policy or analyze conflicts. Step 8 now wires the
+[Orchestrator and GUI status](ORCHESTRATOR.md); functional observation producers remain step 9.
 
 ## Execution and provider selection
 
@@ -11,8 +11,8 @@ loop, GUI status publication, and functional observation producers remain later 
 constructing an executor. Google is the built-in specialist; every other provider returns
 `UnsupportedProvider`. There is no implicit Google fallback. Sessions are acquired through
 Accounts for each execution and never enter serializable requests, results, or Inventory.
-The connection owner must retain its account/link lease while awaiting execution, just as
-it does for its existing remote queries. Factory construction and execution belong on the
+The connection owner retains its account/link lease while Orchestrator awaits execution,
+just as it does for its existing remote queries. Factory construction and execution belong on the
 engine worker runtime, not the GTK main loop; filesystem and Inventory calls perform I/O.
 
 `ExecuteOperationRequest` carries the normalized command, execution ID, expected Inventory

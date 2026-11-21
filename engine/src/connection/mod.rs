@@ -2,6 +2,7 @@
 mod models;
 mod remote_folders;
 mod sign_in;
+mod synchronization;
 use crate::{accounts::*, providers::google::*};
 pub use models::*;
 use std::{
@@ -26,6 +27,8 @@ struct Inner {
     oauth: Option<GoogleOAuthConfig>,
     ownership: Arc<ConnectionOwnership>,
     attempts: Mutex<HashMap<GoogleSignInId, Arc<sign_in::Attempt>>>,
+    synchronization_directory: std::path::PathBuf,
+    synchronizations: tokio::sync::Mutex<HashMap<crate::AccountId, synchronization::Session>>,
 }
 /// Every
 /// authorization attempt holds a read lease; local removal requires exclusion
@@ -73,6 +76,7 @@ impl Engine {
         {
             return Err(EngineError::new(EngineErrorKind::InvalidConfiguration));
         }
+        let synchronization_directory = synchronization::directory(&config.data_directory);
         let executor = Executor(Some(
             Builder::new_multi_thread()
                 .worker_threads(1)
@@ -130,6 +134,8 @@ impl Engine {
                 oauth: initialized.2,
                 ownership: initialized.3,
                 attempts: Mutex::new(HashMap::new()),
+                synchronization_directory,
+                synchronizations: tokio::sync::Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -160,9 +166,25 @@ impl Engine {
         &self,
         request: RemoveAccountRequest,
     ) -> EngineResult<RemoveAccountResult> {
-        let accounts = self.inner.accounts.clone();
+        let inner = self.inner.clone();
         self.runtime()
-            .spawn(async move { accounts.remove(request).await.map_err(EngineError::from) })
+            .spawn(async move {
+                // Serialize removal against scope replacement, and release operation leases first.
+                let mut sessions = inner.synchronizations.lock().await;
+                if let Some(session) = sessions.get(&request.account_id) {
+                    session.orchestrator.stop().await;
+                }
+                let account_id = request.account_id.clone();
+                let result = inner
+                    .accounts
+                    .remove(request)
+                    .await
+                    .map_err(EngineError::from);
+                if result.is_ok() {
+                    sessions.remove(&account_id);
+                }
+                result
+            })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
     }

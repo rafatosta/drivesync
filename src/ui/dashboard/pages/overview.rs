@@ -97,12 +97,17 @@ fn build_with_accounts(
         .icon_name("drive-harddisk-symbolic")
         .build();
     status.set_widget_name("dashboard-content");
+    let synchronization = super::synchronization::SynchronizationView::new();
+    status.set_child(Some(&synchronization.widget));
     content.set_content(Some(&status));
     split.set_content(Some(&adw::NavigationPage::new(&content, "DriveSync")));
     sidebar.on_selected({
+        let context = context.clone();
+        let synchronization = synchronization.clone();
         let title = title.downgrade();
         let status = status.downgrade();
         move |account| {
+            synchronization.select(&context, account.as_ref());
             if let Some(title) = title.upgrade() {
                 title.set_title(
                     account
@@ -172,6 +177,17 @@ fn build_with_accounts(
                 }
                 match result {
                     Ok(result) => {
+                        // Prepare every completed account without delaying access to its dashboard.
+                        for account in &result.accounts {
+                            let _ = crate::services::synchronization::ensure_started(
+                                &engine,
+                                &account.id,
+                            )
+                            .await;
+                        }
+                        if generation.get() != request {
+                            return;
+                        }
                         sidebar.set_accounts(result.accounts);
                         if let Some(label) = feedback.upgrade() {
                             label.set_label("");

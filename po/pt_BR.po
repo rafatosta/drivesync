@@ -1273,3 +1273,115 @@ msgid "{count} day ago"
 msgid_plural "{count} days ago"
 msgstr[0] "há {count} dia"
 msgstr[1] "há {count} dias"
+
+#: src/services/synchronization.rs
+msgid "Preparing synchronization…"
+msgstr "Preparando sincronização…"
+
+#: src/services/synchronization.rs
+msgid "Configure folders to prepare synchronization."
+msgstr "Configure as pastas para preparar a sincronização."
+
+#: src/services/synchronization.rs
+msgid "Waiting for observations."
+msgstr "Aguardando observações."
+
+#: src/services/synchronization.rs
+msgid "No pending operations."
+msgstr "Nenhuma operação pendente."
+
+#: src/services/synchronization.rs
+msgid "Synchronization stopped."
+msgstr "Sincronização parada."
+
+#: src/services/synchronization.rs
+msgid "Scanning files…"
+msgstr "Verificando arquivos…"
+
+#: src/services/synchronization.rs
+msgid "Analyzing changes…"
+msgstr "Analisando alterações…"
+
+#: src/services/synchronization.rs
+msgid "Uploading…"
+msgstr "Enviando…"
+
+#: src/services/synchronization.rs
+msgid "Downloading…"
+msgstr "Baixando…"
+
+#: src/services/synchronization.rs
+msgid "Applying changes…"
+msgstr "Aplicando alterações…"
+
+#: src/services/synchronization.rs
+msgid "Waiting for more information about this item."
+msgstr "Aguardando mais informações sobre este item."
+
+#: src/services/synchronization.rs
+msgid "A conflict needs resolution before this item can continue."
+msgstr "Um conflito precisa ser resolvido antes de continuar com este item."
+
+#: src/services/synchronization.rs
+msgid "Initial association needs confirmation before this item can continue."
+msgstr "A associação inicial precisa ser confirmada antes de continuar com este item."
+
+#: src/services/synchronization.rs
+msgid "This change is not supported yet."
+msgstr "Esta alteração ainda não é compatível."
+
+#: src/services/synchronization.rs
+msgid "The synchronization information is inconsistent. Refresh observations before continuing."
+msgstr "As informações de sincronização estão inconsistentes. Atualize as observações antes de continuar."
+
+#: src/services/synchronization.rs
+msgid "An operation failed. Check account and folder access."
+msgstr "Uma operação falhou. Verifique o acesso à conta e às pastas."
+
+#: src/services/synchronization.rs
+msgid "The item changed before execution. Waiting for a fresh observation."
+msgstr "O item mudou antes da execução. Aguardando uma nova observação."
+
+#: src/services/synchronization.rs
+msgid "An operation needs verification before this item can continue."
+msgstr "Uma operação precisa ser verificada antes de continuar com este item."
+
+#: src/services/synchronization.rs
+msgid "Synchronization could not continue. Stop and restart it before trying again."
+msgstr "Não foi possível continuar a sincronização. Pare e reinicie antes de tentar novamente."
+
+#: src/services/synchronization.rs
+msgid "{completed} of {total} operations"
+msgstr "{completed} de {total} operações"
+
+#: src/services/synchronization.rs
+msgid "The synchronization folder configuration is invalid."
+msgstr "A configuração das pastas de sincronização é inválida."
+
+#: src/services/synchronization.rs
+msgid "Authorize your account before preparing synchronization."
+msgstr "Autorize sua conta antes de preparar a sincronização."
+
+#: src/services/synchronization.rs
+msgid "Synchronization is not supported for this provider."
+msgstr "A sincronização não é compatível com este provedor."
+
+#: src/services/synchronization.rs
+msgid "Synchronization records could not be accessed. Your files have been kept."
+msgstr "Não foi possível acessar os registros de sincronização. Seus arquivos foram preservados."
+
+#: src/services/synchronization.rs
+msgid "Stop synchronization before changing its folders."
+msgstr "Pare a sincronização antes de alterar suas pastas."
+
+#: src/services/synchronization.rs
+msgid "Synchronization is unavailable. Prepare the account and try again."
+msgstr "A sincronização está indisponível. Prepare a conta e tente novamente."
+
+#: src/core/messages.rs
+msgid "Finish or stop the active account operation before disconnecting."
+msgstr "Conclua ou pare a operação ativa da conta antes de desconectar."
+
+#: src/core/messages.rs
+msgid "Choose a local folder separate from other active accounts."
+msgstr "Escolha uma pasta local separada das outras contas ativas."

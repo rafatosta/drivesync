@@ -14,7 +14,7 @@ pub(crate) fn engine_error(error: &EngineError) -> String {
             "Google could not be reached. Check your connection and try again."
         }
         EngineErrorKind::Accounts(AccountsError::AccountInUse) => {
-            "Finish or cancel account authorization before disconnecting."
+            "Finish or stop the active account operation before disconnecting."
         }
         EngineErrorKind::Accounts(AccountsError::IdentityMismatch) => {
             "Sign in with the Google account selected in DriveSync."
@@ -28,6 +28,30 @@ pub(crate) fn engine_error(error: &EngineError) -> String {
         EngineErrorKind::Accounts(AccountsError::InvalidRequest) => {
             "The account name could not be saved. Check the value and try again."
         }
+        EngineErrorKind::Synchronization(kind) => match kind {
+            drivesync_engine::SynchronizationErrorKind::InvalidConfiguration => {
+                "The synchronization folder configuration is invalid."
+            }
+            drivesync_engine::SynchronizationErrorKind::AccountUnavailable => {
+                "Authorize your account before preparing synchronization."
+            }
+            drivesync_engine::SynchronizationErrorKind::UnsupportedProvider => {
+                "Synchronization is not supported for this provider."
+            }
+            drivesync_engine::SynchronizationErrorKind::InventoryUnavailable => {
+                "Synchronization records could not be accessed. Your files have been kept."
+            }
+            drivesync_engine::SynchronizationErrorKind::LocalRootUnavailable => {
+                "The selected folder is unavailable. Choose another folder."
+            }
+            drivesync_engine::SynchronizationErrorKind::RootInUse => {
+                "Choose a local folder separate from other active accounts."
+            }
+            drivesync_engine::SynchronizationErrorKind::AlreadyRunning => {
+                "Stop synchronization before changing its folders."
+            }
+            _ => "Synchronization is unavailable. Prepare the account and try again.",
+        },
         EngineErrorKind::RemoteFolder(
             drivesync_engine::RemoteFolderErrorKind::AuthorizationRequired,
         ) => "Authorize Drive access again to browse your folders.",

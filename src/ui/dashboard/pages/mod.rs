@@ -4,3 +4,5 @@ pub(crate) mod overview;
 mod sidebar;
 
 mod account_menu;
+
+mod synchronization;

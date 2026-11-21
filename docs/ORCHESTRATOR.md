@@ -1,0 +1,90 @@
+# Synchronization Orchestrator
+
+Reconstruction step 8 connects the existing contracts and publishes an account-scoped
+`SynchronizationStatus`. The Engine owns lifecycle and account leases. Detectors owns
+`Observation -> Context -> File`. Only Orchestrator invokes its private Analyzer and
+Operations. Accounts, OAuth, Provider, and saved-folder formats remain intact.
+
+## Application boundary
+
+The public Engine API adds `start_synchronization`, `stop_synchronization`,
+`synchronization_status`, and `subscribe_synchronization`. Starting takes an account,
+absolute local root, and opaque remote root ID. It derives a stable synchronization scope
+from the length-delimited account ID, remote ID, and raw local path bytes; the identity is
+never derived from a path alone. The provider is resolved from Accounts, not selected by
+the caller. Identical active configuration is idempotent. An active scope must stop before
+its roots can change. Different active accounts cannot configure overlapping local trees.
+
+Synchronization Inventory files live in a dedicated `<accounts-directory>.synchronization`
+sibling directory. Opening a scope neither migrates nor changes Accounts storage. Each
+Inventory lookup/write retains account and synchronization-root isolation. Startup validates
+local access and creates no baseline, remote session, or provider mutation.
+
+Each account has a bounded queue of 32 `File` values and one sequential worker. Private
+`Engine::observe` passes normalized observations through Detectors/Context before admission;
+raw observations and operation plans are not public application commands. Producers get
+backpressure and stopped workers reject further work. Observation source implementations,
+initial scanning, and continuous monitoring belong to reconstruction step 9.
+
+## Plan coordination
+
+For each scoped `File`, Orchestrator invokes the pure Analyzer once:
+
+- `Ready` executes an executable plan in dependency order.
+- `NoOp` performs no write and does not manufacture a baseline.
+- `Defer`, `Conflict`, `Unsupported`, and `InvalidInput` publish an explicit blocker.
+- `Adopt` waits for the separate confirmed-adoption operation/policy; Orchestrator never
+  substitutes a direct Inventory write for missing execution support.
+
+Each dispatched step gets a cryptographically random execution ID. Its result must match the
+execution ID, item, and action and include a verified effect plus a committed, advancing
+Inventory revision before any dependent step can run. Confirmed local/remote state, paths,
+identities, remote version, and Inventory revision refresh subsequent request preconditions.
+The action, destination, and dependency choices remain the Analyzer's plan. Missing receipts,
+failed writes, skips, failures, or uncertain effects stop that plan. There is no blind replay,
+automatic merge, or invented evidence for an unknown side.
+
+FIFO items captured before an earlier operation may have stale revisions. Operations rejects
+those preconditions and the status requests a fresh observation; Orchestrator does not rerun
+source reads or infer a replacement plan. Current blockers are held by item identity so an
+unrelated NoOp cannot conceal an unresolved item. This is current status, not durable issue
+history or a recovery scheduler; durable execution facts remain in Inventory.
+
+## Lifecycle and status
+
+Workers hold the connection owner's read lease throughout an active item's plan. Disconnect
+serializes against scope start/replacement, stops the account's worker, waits for its current
+operation, then removes credentials through Accounts. Other active account operations or
+sign-in attempts can still prevent removal through the existing ownership gate.
+
+Stop closes admission, discards queued unexecuted files, and lets the current operation
+produce its real receipt before stopping. No dependent step starts after stop is requested.
+Dropping the last worker handle requests stop; an abrupt Engine/runtime shutdown can leave
+`Running`/uncertain Inventory records that require later recovery. A supervisor publishes
+`Failed` and releases stop waiters if the worker panics. Failed work is never reported as Idle.
+
+`SynchronizationSubscription` is a coalescing latest-state feed that can be awaited from GLib
+without a caller Tokio runtime. It exposes account, lifecycle, actual activity, current item,
+measured operation-count progress, typed blocker, and UTC timestamp, without sessions or
+provider diagnostics. It is not an event log: rapid intermediate transitions may coalesce.
+Idle means no pending plan for observed items; it does not prove whole-tree synchronization.
+
+The dashboard prepares completed saved scopes and subscribes for the selected account.
+Selection changes and widget teardown cancel its previous listener. Preparation failure
+leaves accounts and saved choices intact. Status text is localized, and progress appears
+only when a plan has a known operation count. Folder changes stop and replace the prior
+scope before activating the newly saved one.
+
+## Current acceptance boundary
+
+Scanner, local watcher, and remote observer implementations are still step 9. The existing
+Context retains an unobserved counterpart as unknown and does not enrich destination evidence
+by performing provider reads. The normal dashboard therefore starts at **Waiting for
+observations**, not Scanning or Up to date. One-sided observations can legitimately defer.
+Orchestrator does not duplicate Context or Analyzer logic to bypass that contract.
+
+Verified coordinator tests provide complete `File` fixtures to the real Analyzer and controlled
+Operator receipts. Connection tests use synthetic OAuth and an isolated vault to verify
+lifecycle, Observation/Context ingestion, account preservation, and safe disconnection. Existing
+Operations tests cover real temporary filesystem effects and loopback provider requests. These
+checks do not establish live Google Drive or installed-Flatpak acceptance.

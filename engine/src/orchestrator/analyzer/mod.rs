@@ -7,9 +7,6 @@ use crate::{
     inventory::models::{BaselineState, OperationAction},
     models::{Evidence, FileState, ItemId},
 };
-#[allow(unused_imports)]
-// The typed Analyzer output is consumed by the Orchestrator in the next step.
-pub(crate) use models::*;
 use std::collections::BTreeMap;
 
 pub(crate) use models::{
@@ -1043,4 +1040,4 @@ fn known<T: Clone>(evidence: &Evidence<T>) -> Option<T> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
