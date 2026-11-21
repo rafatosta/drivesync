@@ -1,8 +1,8 @@
 //! Data types returned by the local detector interface.
 
 use crate::models::{
-    Checksum, FileEvent, FileState as SharedFileState, LocalEntryKind, LocalFileId,
-    LocalRelativePath, LocalTimestamp, SyncId, Timestamp,
+    Checksum, FileState as SharedFileState, LocalEntryKind, LocalFileId, LocalRelativePath,
+    LocalTimestamp, ObservationEvent, SyncId, Timestamp,
 };
 use std::collections::BTreeMap;
 
@@ -20,9 +20,6 @@ pub type FileKind = LocalEntryKind;
 
 /// Auxiliary filesystem identity for a local item.
 pub type LocalIdentity = LocalFileId;
-
-/// Event context that caused or accompanied the local read.
-pub type ObservationEvent = FileEvent;
 
 /// Capabilities reported for the local item.
 ///

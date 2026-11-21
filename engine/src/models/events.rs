@@ -2,6 +2,60 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
+/// Source context for a normalized observation event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationOrigin {
+    /// The event was reported by local observation.
+    Local,
+    /// The event was reported by a remote provider.
+    Remote,
+    /// The event represents an initial observation without a change signal.
+    Initial,
+}
+
+/// Normalized kind of an observed event, not a synchronization decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationKind {
+    /// The item appeared in the observed scope.
+    Created,
+    /// The item content or metadata changed.
+    Modified,
+    /// The item changed location.
+    Moved,
+    /// The source reported that the item left the observed scope.
+    Removed,
+    /// The item was included in an initial observation.
+    Snapshot,
+    /// The item name changed without a known parent change.
+    Renamed,
+    /// Metadata changed without a known content change.
+    MetadataChanged,
+    /// The source did not provide a supported event classification.
+    Unknown,
+}
+
+/// Normalized event context attached to local or remote observation data.
+///
+/// This records what the source observed; it does not instruct synchronization
+/// or assert that a corresponding operation should be performed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationEvent {
+    /// Source context for this event.
+    pub origin: ObservationOrigin,
+    /// Normalized source event classification, independent of sync policy.
+    pub kind: ObservationKind,
+    /// Time at which the source recorded the event.
+    pub observed_at: Timestamp,
+    /// Previous known local path, when supplied by the source.
+    pub old_path: Option<LocalRelativePath>,
+    /// Current known local path, when supplied by the source.
+    pub new_path: Option<LocalRelativePath>,
+    /// Provider resource identifier associated with the event, when available.
+    pub remote_id: Option<RemoteFileId>,
+    /// Local move correlation value; its meaning is limited to the source stream.
+    pub move_cookie: Option<u64>,
+}
+
 /// Provider resource identity, always qualified by its owning account.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -5,7 +5,7 @@
 
 mod models;
 
+pub use crate::models::{ObservationEvent, ObservationKind, ObservationOrigin};
 pub use models::{
-    FileKind, FileState, Id, LocalCapabilities, LocalIdentity, LocalObservation, ObservationEvent,
-    Path,
+    FileKind, FileState, Id, LocalCapabilities, LocalIdentity, LocalObservation, Path,
 };

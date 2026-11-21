@@ -1,7 +1,7 @@
 //! Data types returned by the remote detector interface.
 
 use crate::models::{
-    AccountId, Checksum, FileEvent, FileState as SharedFileState, RemoteFileId, Timestamp,
+    AccountId, Checksum, FileState as SharedFileState, ObservationEvent, RemoteFileId, Timestamp,
 };
 use std::collections::BTreeMap;
 
@@ -10,9 +10,6 @@ pub type RemoteId = RemoteFileId;
 
 /// Presence state reported for a remote item.
 pub type FileState = SharedFileState;
-
-/// Event context associated with a remote read.
-pub type ObservationEvent = FileEvent;
 
 /// Capabilities reported by the remote provider for an item.
 ///

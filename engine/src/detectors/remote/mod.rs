@@ -6,4 +6,5 @@
 
 mod models;
 
-pub use models::{FileState, ObservationEvent, RemoteCapabilities, RemoteId, RemoteObservation};
+pub use crate::models::{ObservationEvent, ObservationKind, ObservationOrigin};
+pub use models::{FileState, RemoteCapabilities, RemoteId, RemoteObservation};
