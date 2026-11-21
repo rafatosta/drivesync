@@ -270,6 +270,26 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             }
             true
         }
+        PersistedEffect::OperationConfirmed => {
+            let Some(operation) = snapshot
+                .pending_operations
+                .iter_mut()
+                .find(|op| op.id == request.operation_id)
+            else {
+                return false;
+            };
+            if operation.state != OperationState::AppliedUnconfirmed
+                || !operation
+                    .applied_effect
+                    .as_ref()
+                    .is_some_and(|e| e.verified)
+            {
+                return false;
+            }
+            operation.state = OperationState::Confirmed;
+            operation.updated_at = request.recorded_at;
+            true
+        }
         PersistedEffect::BaselineConfirmed(baseline) => {
             let Some(operation) = snapshot
                 .pending_operations

@@ -1,0 +1,406 @@
+//! Linux descriptor-anchored operations. No symlink traversal or destination replacement.
+mod trash;
+use super::models::*;
+use crate::{inventory::models::LocalState, models::*};
+use sha2::{Digest, Sha256};
+use std::{
+    ffi::CString,
+    fs::{File, OpenOptions},
+    io::{Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
+    },
+    path::{Component, Path as StdPath, PathBuf},
+};
+
+pub(super) struct Filesystem {
+    root: File,
+    absolute: PathBuf,
+}
+pub(super) struct Entry {
+    pub parent: File,
+    pub name: CString,
+}
+impl Entry {
+    pub fn anchored(&self) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}", self.parent.as_raw_fd()))
+            .join(std::ffi::OsStr::from_bytes(self.name.as_bytes()))
+    }
+}
+pub(super) fn error(_: std::io::Error) -> OperatorError {
+    OperatorError::new(OperatorErrorKind::Unavailable)
+}
+pub(super) fn invalid() -> OperatorError {
+    OperatorError::new(OperatorErrorKind::InvalidRequest)
+}
+pub(super) fn stale() -> OperatorError {
+    OperatorError::new(OperatorErrorKind::PreconditionFailed)
+}
+fn directory(path: &StdPath) -> Result<File, OperatorError> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(error)
+}
+impl Filesystem {
+    pub fn open(root: &StdPath) -> Result<Self, OperatorError> {
+        if !root.is_absolute() {
+            return Err(invalid());
+        }
+        let mut dir = directory(StdPath::new("/"))?;
+        for part in root.components().skip(1) {
+            let Component::Normal(name) = part else {
+                return Err(invalid());
+            };
+            dir =
+                directory(&PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(name))?;
+        }
+        Ok(Self {
+            root: dir,
+            absolute: root.to_owned(),
+        })
+    }
+    pub fn validate_root(&self) -> Result<(), OperatorError> {
+        let current = Self::open(&self.absolute)?;
+        let original = self.root.metadata().map_err(error)?;
+        let current = current.root.metadata().map_err(error)?;
+        if original.dev() != current.dev() || original.ino() != current.ino() {
+            return Err(stale());
+        }
+        Ok(())
+    }
+    pub fn entry(&self, path: &StdPath) -> Result<Entry, OperatorError> {
+        let parts: Vec<_> = path.components().collect();
+        if parts.is_empty()
+            || parts.iter().any(|c| !matches!(c, Component::Normal(_)))
+            || parts.first().is_some_and(|c| c.as_os_str() == ".drivesync")
+        {
+            return Err(invalid());
+        }
+        let mut parent = self.root.try_clone().map_err(error)?;
+        for part in &parts[..parts.len() - 1] {
+            parent = directory(
+                &PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd()))
+                    .join(part.as_os_str()),
+            )?;
+        }
+        Ok(Entry {
+            parent,
+            name: CString::new(parts.last().unwrap().as_os_str().as_bytes())
+                .map_err(|_| invalid())?,
+        })
+    }
+    pub fn temporary(&self) -> Result<File, OperatorError> {
+        let fd = unsafe {
+            libc::openat(
+                self.root.as_raw_fd(),
+                c".".as_ptr(),
+                libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(error(std::io::Error::last_os_error()));
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+    pub fn read(&self, path: &StdPath) -> Result<File, OperatorError> {
+        let entry = self.entry(path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(entry.anchored())
+            .map_err(error)?;
+        if !file.metadata().map_err(error)?.is_file() {
+            return Err(invalid());
+        }
+        Ok(file)
+    }
+    pub fn observe(&self, path: &StdPath) -> Result<LocalState, OperatorError> {
+        let entry = self.entry(path)?;
+        let meta = std::fs::symlink_metadata(entry.anchored()).map_err(error)?;
+        if !meta.is_file() && !meta.is_dir() {
+            return Err(invalid());
+        }
+        let checksum = if meta.is_file() {
+            let mut file = self.read(path)?;
+            let before = file.metadata().map_err(error)?;
+            let mut digest = Sha256::new();
+            let mut buf = [0; 65536];
+            loop {
+                let n = file.read(&mut buf).map_err(error)?;
+                if n == 0 {
+                    break;
+                }
+                digest.update(&buf[..n]);
+            }
+            let after = file.metadata().map_err(error)?;
+            if stamp(&before) != stamp(&after) || stamp(&meta) != stamp(&after) {
+                return Err(stale());
+            }
+            Evidence::Known(Checksum {
+                algorithm: "sha256".into(),
+                value: format!("{:x}", digest.finalize()),
+            })
+        } else {
+            Evidence::NotApplicable
+        };
+        Ok(LocalState {
+            state: FileState::Present,
+            path: Some(path.to_owned()),
+            name: path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| Evidence::Known(n.to_owned()))
+                .unwrap_or(Evidence::Unsupported),
+            parent: Evidence::Known(path.parent().unwrap_or(StdPath::new("")).to_owned()),
+            kind: Evidence::Known(if meta.is_file() {
+                FileKind::Regular
+            } else {
+                FileKind::Directory
+            }),
+            identity: Evidence::Known(LocalIdentity {
+                device_id: meta.dev(),
+                inode: meta.ino(),
+                mount_id: None,
+            }),
+            size: if meta.is_file() {
+                Evidence::Known(meta.len())
+            } else {
+                Evidence::NotApplicable
+            },
+            modified_at: Evidence::Known(DateTime {
+                unix_millis: meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000,
+            }),
+            changed_at: Evidence::Known(DateTime {
+                unix_millis: meta.ctime() * 1000 + meta.ctime_nsec() / 1_000_000,
+            }),
+            checksum,
+            capabilities: Evidence::NotCollected,
+        })
+    }
+    pub fn check_absent(&self, path: &StdPath) -> Result<(), OperatorError> {
+        let entry = self.entry(path)?;
+        match std::fs::symlink_metadata(entry.anchored()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(stale()),
+        }
+    }
+    pub fn check(&self, expected: &LocalState) -> Result<LocalState, OperatorError> {
+        let path = expected.path.as_deref().ok_or_else(invalid)?;
+        let current = self.observe(path)?;
+        let identity_matches = match (&expected.identity, &current.identity) {
+            (Evidence::Known(a), Evidence::Known(b)) => {
+                a.device_id == b.device_id && a.inode == b.inode
+            }
+            _ => false,
+        };
+        if expected.state != FileState::Present
+            || !identity_matches
+            || expected.kind != current.kind
+            || expected.modified_at != current.modified_at
+            || expected.changed_at != current.changed_at
+            || expected.size != current.size
+        {
+            return Err(stale());
+        }
+        if let Evidence::Known(hash) = &expected.checksum {
+            if hash.algorithm != "sha256" || expected.checksum != current.checksum {
+                return Err(stale());
+            }
+        }
+        Ok(current)
+    }
+    pub fn execute(
+        &self,
+        request: &ExecuteOperationRequest,
+    ) -> Result<AppliedEffect, OperatorError> {
+        let op = &request.operation;
+        let path = op.local_path.as_deref().ok_or_else(invalid)?;
+        let local = match op.action {
+            OperationAction::CreateLocalDirectory => {
+                let entry = self.entry(path)?;
+                // mkdirat is exclusive even when a destination appears after analysis.
+                if unsafe { libc::mkdirat(entry.parent.as_raw_fd(), entry.name.as_ptr(), 0o700) }
+                    != 0
+                {
+                    return Err(error(std::io::Error::last_os_error()));
+                }
+                self.observe(path).map_err(OperatorError::uncertain)?
+            }
+            OperationAction::RenameLocal | OperationAction::MoveLocal => {
+                self.check(&request.local)?;
+                let target = if op.action == OperationAction::RenameLocal {
+                    let name = op.name.as_ref().ok_or_else(invalid)?;
+                    if StdPath::new(name).components().count() != 1
+                        || !matches!(
+                            StdPath::new(name).components().next(),
+                            Some(Component::Normal(_))
+                        )
+                    {
+                        return Err(invalid());
+                    }
+                    path.with_file_name(name)
+                } else {
+                    op.parent
+                        .as_ref()
+                        .ok_or_else(invalid)?
+                        .join(path.file_name().ok_or_else(invalid)?)
+                };
+                let source = self.entry(path)?;
+                let dest = self.entry(&target)?;
+                rename(&source, &dest, libc::RENAME_NOREPLACE)?;
+                self.observe(&target).map_err(OperatorError::uncertain)?
+            }
+            OperationAction::RemoveLocal => {
+                self.check(&request.local)?;
+                trash::move_to_trash(&self.entry(path)?, &self.absolute.join(path))?;
+                let mut state = request.local.clone();
+                state.state = FileState::Absent;
+                state
+            }
+            _ => return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation)),
+        };
+        Ok(AppliedEffect {
+            local: Some(local),
+            remote: None,
+            remote_id: op.remote_id.clone(),
+            verified: true,
+        })
+    }
+    /// Stages bytes exclusively; old content goes to trash before publishing a replacement.
+    pub fn install(
+        &self,
+        request: &ExecuteOperationRequest,
+        bytes: &mut File,
+    ) -> Result<LocalState, OperatorError> {
+        self.install_with_trash(request, bytes, trash::prepare)
+    }
+    fn install_with_trash(
+        &self,
+        request: &ExecuteOperationRequest,
+        bytes: &mut File,
+        prepare: impl FnOnce(&Entry, &StdPath) -> Result<trash::TrashDestination, OperatorError>,
+    ) -> Result<LocalState, OperatorError> {
+        let path = request
+            .operation
+            .local_path
+            .as_deref()
+            .ok_or_else(invalid)?;
+        let dest = self.entry(path)?;
+        let stage_path = path.with_file_name(format!(
+            ".drivesync-transfer-{}",
+            execution_key(&request.execution_id)
+        ));
+        let stage = self.entry(&stage_path)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(stage.anchored())
+            .map_err(error)?;
+        bytes.rewind().map_err(error)?;
+        std::io::copy(bytes, &mut output).map_err(|e| error(e).uncertain())?;
+        output
+            .flush()
+            .and_then(|_| output.sync_all())
+            .map_err(|e| error(e).uncertain())?;
+        if request.operation.action == OperationAction::UpdateLocalContent {
+            self.check(&request.local)?;
+            // Exchange is atomic. Preserve the previous bytes through the trash backend.
+            let trash = prepare(&stage, &self.absolute.join(path))?;
+            rename(&stage, &dest, libc::RENAME_EXCHANGE)?;
+            trash.commit(&stage).map_err(OperatorError::uncertain)?;
+        } else {
+            rename(&stage, &dest, libc::RENAME_NOREPLACE)?;
+        }
+        self.observe(path).map_err(OperatorError::uncertain)
+    }
+}
+use std::io::Seek;
+pub(super) fn stamp(meta: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64) {
+    (
+        meta.dev(),
+        meta.ino(),
+        meta.len(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.ctime(),
+        meta.ctime_nsec(),
+    )
+}
+pub(super) fn execution_key(id: &Id) -> String {
+    format!("{:x}", Sha256::digest(id.0.as_bytes()))
+}
+fn rename(source: &Entry, dest: &Entry, flags: u32) -> Result<(), OperatorError> {
+    if unsafe {
+        libc::renameat2(
+            source.parent.as_raw_fd(),
+            source.name.as_ptr(),
+            dest.parent.as_raw_fd(),
+            dest.name.as_ptr(),
+            flags,
+        )
+    } != 0
+    {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tests::{request, setup, Sandbox};
+    use super::*;
+    #[test]
+    fn replacement_preserves_old_bytes_in_isolated_trash() {
+        let sandbox = Sandbox::new();
+        let executor = setup(&sandbox);
+        std::fs::write(executor.config.local_root.join("file"), b"old version").unwrap();
+        let request = request(&executor, OperationAction::UpdateLocalContent);
+        let mut downloaded = executor.filesystem.temporary().unwrap();
+        downloaded.write_all(b"new version").unwrap();
+        executor
+            .filesystem
+            .install_with_trash(&request, &mut downloaded, |source, original| {
+                trash::prepare_to(source, original, &sandbox.0)
+            })
+            .unwrap();
+        assert_eq!(
+            std::fs::read(executor.config.local_root.join("file")).unwrap(),
+            b"new version"
+        );
+        let old = std::fs::read_dir(sandbox.0.join("Trash/files"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(std::fs::read(old).unwrap(), b"old version");
+    }
+    #[test]
+    fn unavailable_trash_refuses_replacement_before_exchange() {
+        let sandbox = Sandbox::new();
+        let executor = setup(&sandbox);
+        std::fs::write(executor.config.local_root.join("file"), b"old version").unwrap();
+        let request = request(&executor, OperationAction::UpdateLocalContent);
+        let mut downloaded = executor.filesystem.temporary().unwrap();
+        downloaded.write_all(b"new version").unwrap();
+        assert!(executor
+            .filesystem
+            .install_with_trash(&request, &mut downloaded, |source, original| {
+                trash::prepare_to(source, original, &sandbox.0.join("unavailable"))
+            })
+            .is_err());
+        assert_eq!(
+            std::fs::read(executor.config.local_root.join("file")).unwrap(),
+            b"old version"
+        );
+    }
+}

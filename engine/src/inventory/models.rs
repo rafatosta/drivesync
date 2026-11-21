@@ -313,6 +313,8 @@ pub(crate) enum PersistedEffect {
     Pending(PendingOperation),
     /// Record an observed operation effect that may require later confirmation.
     OperationApplied(AppliedEffect),
+    /// Confirm a verified individual effect without asserting whole-item convergence.
+    OperationConfirmed,
     /// Replace the baseline after the caller has confirmed the resulting states.
     BaselineConfirmed(Baseline),
     /// Record a failed operation.

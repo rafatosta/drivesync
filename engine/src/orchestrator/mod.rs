@@ -1,3 +1,3 @@
-//! Pure planning and later coordination of synchronization work.
-
-pub(crate) mod analyzer;
+//! Internal synchronization planning and execution; coordination is added separately.
+mod analyzer;
+mod operations;
