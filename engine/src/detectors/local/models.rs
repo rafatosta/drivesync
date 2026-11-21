@@ -1,8 +1,8 @@
 //! Data types returned by the local detector interface.
 
 use crate::models::{
-    FileEvent, LocalEntryKind, LocalFileId, LocalPresenceEvidence, LocalRelativePath,
-    LocalTimestamp, SyncId, Timestamp,
+    Checksum, FileEvent, FileState as SharedFileState, LocalEntryKind, LocalFileId,
+    LocalRelativePath, LocalTimestamp, SyncId, Timestamp,
 };
 use std::collections::BTreeMap;
 
@@ -13,7 +13,7 @@ pub type Id = SyncId;
 pub type Path = LocalRelativePath;
 
 /// State of local presence observed for an item.
-pub type FileState = LocalPresenceEvidence;
+pub type FileState = SharedFileState;
 
 /// Local filesystem entry kind.
 pub type FileKind = LocalEntryKind;
@@ -23,16 +23,6 @@ pub type LocalIdentity = LocalFileId;
 
 /// Event context that caused or accompanied the local read.
 pub type ObservationEvent = FileEvent;
-
-/// Normalized checksum evidence.
-///
-/// `algorithm` identifies the digest algorithm and `digest` stores its
-/// normalized textual value. This type does not compute or validate digests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Checksum {
-    pub algorithm: String,
-    pub digest: String,
-}
 
 /// Capabilities reported for the local item.
 ///

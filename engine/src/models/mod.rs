@@ -23,6 +23,30 @@ pub struct SyncId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FileId(pub String);
 
+/// Shared presence state for local and remote observation data contracts.
+///
+/// `Unknown` includes unavailable or inconclusive evidence; absence is only
+/// represented by `AbsentConfirmed` when the observing source can confirm it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileState {
+    /// The item is known to exist in the observed scope.
+    Present,
+    /// The observing source confirmed that the item is absent.
+    AbsentConfirmed,
+    /// The source could not determine presence reliably.
+    Unknown,
+}
+
+/// Normalized content checksum shared by local and remote observations.
+///
+/// `algorithm` identifies the digest algorithm and `digest` stores its
+/// normalized textual value. This type does not compute or validate digests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checksum {
+    pub algorithm: String,
+    pub digest: String,
+}
+
 /// Optional scoped local entry identity. Collectors require complete device,
 /// inode and birth evidence; path or inode alone never establish identity.
 /// This identity never associates an independent remote resource.

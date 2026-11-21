@@ -6,6 +6,6 @@
 mod models;
 
 pub use models::{
-    Checksum, FileKind, FileState, Id, LocalCapabilities, LocalIdentity, LocalObservation,
-    ObservationEvent, Path,
+    FileKind, FileState, Id, LocalCapabilities, LocalIdentity, LocalObservation, ObservationEvent,
+    Path,
 };
