@@ -1,8 +1,5 @@
-//! Application connection lifecycle, independent of GTK and synchronization.
-mod detector;
+//! Application account connection lifecycle, independent of GTK.
 mod models;
-mod operator;
-pub(crate) use operator::OperatorAccess;
 mod remote_folders;
 mod sign_in;
 use crate::{accounts::*, providers::google::*};
@@ -28,10 +25,9 @@ struct Inner {
     client: GoogleDriveClient,
     oauth: Option<GoogleOAuthConfig>,
     ownership: Arc<ConnectionOwnership>,
-    synchronization: crate::synchronization::StatusRegistry,
     attempts: Mutex<HashMap<GoogleSignInId, Arc<sign_in::Attempt>>>,
 }
-/// This connection-only engine owns no synchronization associations. Every
+/// Every
 /// authorization attempt holds a read lease; local removal requires exclusion
 /// against all attempts, including additions whose identity is not yet known.
 #[derive(Default)]
@@ -134,7 +130,6 @@ impl Engine {
                 oauth: initialized.2,
                 ownership: initialized.3,
                 attempts: Mutex::new(HashMap::new()),
-                synchronization: Default::default(),
             }),
         })
     }
@@ -186,27 +181,3 @@ impl Engine {
 }
 #[cfg(test)]
 mod tests;
-
-impl Engine {
-    pub(crate) fn synchronization_publisher(
-        &self,
-        account: &AccountId,
-    ) -> Arc<crate::synchronization::Publisher> {
-        self.inner
-            .synchronization
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .entry(account.clone())
-            .or_insert_with(|| Arc::new(crate::synchronization::Publisher::new()))
-            .clone()
-    }
-    /// Observes one account without starting work, opening Inventory or using credentials.
-    /// Unknown/inactive accounts initially report Idle; accounts never share a channel.
-    pub fn observe_synchronization(
-        &self,
-        account: &AccountId,
-    ) -> crate::SynchronizationSubscription {
-        self.synchronization_publisher(account).subscribe()
-    }
-}

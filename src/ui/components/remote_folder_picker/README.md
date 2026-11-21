@@ -1,7 +1,7 @@
 # Remote folder picker
 
 Reusable, single-use UI component, opened from the setup remote-folder choice. No engine, provider, authentication,
-persistence or synchronization operations are performed here.
+persistence or file operations are performed here.
 
 ```rust,ignore
 let source = MockFolderSource::default();
@@ -71,7 +71,7 @@ translation catalog into a locale directory and supply that directory using
 
 Setup retains the selected location only in memory, displays it in review and
 requires both directory choices before continuing. The selected folder never
-grants synchronization readiness or dashboard access.
+grants account setup completion or dashboard access.
 
 ## Real setup integration
 
@@ -94,5 +94,4 @@ The reusable picker retains a request generation check as a second safeguard.
 Mock sources are used only by explicit test fixtures and the documented example;
 production setup does not fall back to simulated data on errors.
 
-The selected path remains an in-memory choice. No synchronization, remote
-modification or persistent synchronization configuration is implemented here.
+The selected path remains an in-memory choice. No file synchronization or remote modification is performed by the picker.

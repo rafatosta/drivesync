@@ -13,13 +13,9 @@ path = "src/lib.rs"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Durable local event queue; link the SQLite library supplied by the GNOME SDK.
-rusqlite = "=0.37.0"
 httpdate = "1"
 base64 = "0.22"
 sha2 = "0.10"
-# Drive blob integrity must support existing files that expose MD5 but not SHA-256.
-md-5 = "0.10"
 # Refuse symlinks and special files when opening private account metadata.
 libc = "0.2"
 tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "rt-multi-thread", "net", "time", "macros"] }

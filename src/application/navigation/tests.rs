@@ -1,8 +1,8 @@
-//! Completed configuration owns startup routing; authorization failure must not erase it.
+//! Saved accounts remain reachable during account setup.
 use super::*;
 use drivesync_engine::{AccountState, ProviderId, Timestamp};
 #[test]
-fn only_completed_records_grant_dashboard_access_and_survive_reauthorization() {
+fn saved_accounts_are_available_even_before_folder_configuration() {
     assert_eq!(initial_destination(&[]), InitialDestination::Setup);
     let mut account = Account {
         id: AccountId("fixture".into()),
@@ -16,7 +16,7 @@ fn only_completed_records_grant_dashboard_access_and_survive_reauthorization() {
     };
     assert_eq!(
         initial_destination(&[(account.clone(), false)]),
-        InitialDestination::Setup
+        InitialDestination::Dashboard
     );
     assert_eq!(
         initial_destination(&[(account.clone(), true)]),

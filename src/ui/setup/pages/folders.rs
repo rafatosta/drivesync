@@ -3,7 +3,7 @@ use super::super::components::FolderChoice;
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
 use std::{cell::Cell, rc::Rc};
-pub(in crate::ui::setup) struct SynchronizationPage {
+pub(in crate::ui::setup) struct FolderSelectionPage {
     root: gtk::Box,
     nickname: adw::EntryRow,
     updating_nickname: Rc<Cell<bool>>,
@@ -11,18 +11,18 @@ pub(in crate::ui::setup) struct SynchronizationPage {
     remote: adw::ActionRow,
     choose_remote: gtk::Button,
 }
-impl SynchronizationPage {
+impl FolderSelectionPage {
     pub fn new() -> Self {
         let root = super::content();
-        root.set_widget_name("setup-synchronization-page");
+        root.set_widget_name("setup-folders-page");
         let icon = crate::ui::components::svg_icon(
             include_str!("../../../../data/icons/hicolor/scalable/apps/com.rtosta.DriveSync.svg"),
             112,
         );
         let header = super::PageHeader::new(
-            "synchronization",
+            "folders",
             &icon,
-            &gettext("Configure synchronization"),
+            &gettext("Choose folders"),
             &gettext("Choose where your files will be stored on this computer."),
         );
         root.append(header.widget());
@@ -59,7 +59,7 @@ impl SynchronizationPage {
         root.append(&remote);
         let local = FolderChoice::new();
         root.append(local.widget());
-        root.append(&gtk::Label::builder().label(gettext("Your choices are kept only while setup is open. Closing without completing setup disconnects the account.")).wrap(true).css_classes(["dim-label"]).build());
+        root.append(&gtk::Label::builder().label(gettext("Folder choices are saved when you finish setup. Closing this window keeps your connected account.")).wrap(true).css_classes(["dim-label"]).build());
         Self {
             root,
             nickname,

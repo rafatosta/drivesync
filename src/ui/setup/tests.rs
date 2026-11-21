@@ -107,7 +107,7 @@ pub(crate) fn exercise(
     capture(dialog.upcast_ref(), "setup-reauthorize-drive");
     state.remote_authorization_required = false;
     state.feedback.clear();
-    state.step = Step::Synchronization;
+    state.step = Step::Folders;
     state.account_nickname = "Trabalho".into();
     state.draft.local_uri =
         Some("file:///run/user/1000/doc/fixture-portal-grant/Downloads/Google%20Drive".into());
@@ -121,13 +121,13 @@ pub(crate) fn exercise(
         },
     );
     view.render(&state);
-    capture(dialog.upcast_ref(), "setup-synchronization");
+    capture(dialog.upcast_ref(), "setup-folders");
     assert_eq!(
-        header_positions(dialog.upcast_ref(), "synchronization"),
+        header_positions(dialog.upcast_ref(), "folders"),
         header_position,
         "artwork and titles must stay aligned between setup steps"
     );
-    let scroll = find(dialog.upcast_ref(), "setup-synchronization-scroll")
+    let scroll = find(dialog.upcast_ref(), "setup-folders-scroll")
         .downcast::<gtk::ScrolledWindow>()
         .unwrap();
     assert!(
@@ -282,7 +282,8 @@ pub(crate) fn exercise(
         )
         .unwrap()
         .accounts
-        .is_empty());
+        .iter()
+        .any(|saved| saved.id == account.id));
 
     // Closing setup also destroys an outstanding modal picker without applying it.
     let (host, nav, toasts) = new_host();
@@ -328,24 +329,14 @@ pub(crate) fn exercise(
     setup.close();
     wait_until(|| !host.is_visible());
 
-    // A cleanup failure must remain visible and retry logout before exiting.
+    // Closing setup does not require an engine operation or remove account data.
     let (host, nav, toasts) = new_host();
     let context = Context::default();
     let setup = super::show(&context, &nav, &toasts, Some(account.clone()));
     setup.close();
-    wait_until(|| {
-        find(&setup, "setup-feedback")
-            .downcast::<gtk::Label>()
-            .unwrap()
-            .label()
-            == gettextrs::gettext("The account service is unavailable. Try again.")
-    });
-    assert!(host.is_visible());
-    *context.engine.borrow_mut() = new_context().engine.borrow().clone();
-    setup.close();
     wait_until(|| !host.is_visible());
 
-    // A late saved identity must be cleaned before closing, never resumed.
+    // A late saved identity remains registered when setup closes.
     let (host, nav, toasts) = new_host();
     let context = new_context();
     gtk::glib::MainContext::default()
@@ -364,21 +355,23 @@ pub(crate) fn exercise(
     );
     wait_until(|| !host.is_visible());
     assert!(!setup.is_visible());
-    assert!(gtk::glib::MainContext::default()
-        .block_on(crate::services::setup::load_draft(&account.id))
-        .unwrap()
-        .local_uri
-        .is_none());
+    assert!(
+        gtk::glib::MainContext::default()
+            .block_on(crate::services::setup::load_draft(&account.id))
+            .unwrap()
+            .local_uri
+            .as_deref()
+            == Some(uri.as_str())
+    );
 
-    // Legacy incomplete registrations are discarded at startup. There is no
-    // resume screen; hidden startup mounts the fresh wizard without presenting it.
+    // Incomplete registrations remain available in the dashboard after restart.
     let (host, nav, toasts) = new_host();
     let context = new_context();
     gtk::glib::MainContext::default()
         .block_on(crate::services::setup::save_draft(
             &account.id,
             &SetupDraft {
-                local_uri: Some(uri),
+                local_uri: Some(uri.clone()),
             },
         ))
         .unwrap();
@@ -390,26 +383,22 @@ pub(crate) fn exercise(
         None,
         false,
     );
-    wait_until(|| host.widget_name() == "drivesync-account-setup");
-    assert!(!host.is_visible());
-    assert!(gtk::glib::MainContext::default()
-        .block_on(crate::services::setup::load_draft(&account.id))
-        .unwrap()
-        .local_uri
-        .is_none());
-    host.present();
+    wait_until(|| host.widget_name() == "drivesync-dashboard");
+    assert!(host.is_visible());
+    assert!(
+        gtk::glib::MainContext::default()
+            .block_on(crate::services::setup::load_draft(&account.id))
+            .unwrap()
+            .local_uri
+            .as_deref()
+            == Some(uri.as_str())
+    );
     assert_eq!(visible_windows(), 1);
-    assert!(!find_type::<gtk::CheckButton>(host.upcast_ref())
-        .unwrap()
-        .is_active());
-    assert!(!find(host.upcast_ref(), "setup-continue").is_sensitive());
-    assert!(!contains(host.upcast_ref(), "setup-landing"));
-    assert!(!contains(host.upcast_ref(), "pending-account-resume"));
-    capture(host.upcast_ref(), "setup-fresh-start");
+    assert!(contains(host.upcast_ref(), "dashboard-accounts"));
     host.close();
     wait_until(|| !host.is_visible());
 
-    // Completion persists choices, mounts an empty dashboard, and survives a restart.
+    // Completion persists choices, mounts the dashboard, and survives a restart.
     let (host, nav, toasts) = new_host();
     let context = new_context();
     let app = window

@@ -1,13 +1,13 @@
 //! Pages compose setup components and expose semantic interaction events.
 mod connection;
+mod folders;
 mod provider;
 mod review;
-mod synchronization;
 use adw::{gtk, prelude::*};
 pub(super) use connection::ConnectionPage;
+pub(super) use folders::FolderSelectionPage;
 pub(super) use provider::ProviderPage;
 pub(super) use review::ReviewPage;
-pub(super) use synchronization::SynchronizationPage;
 /// Shared content margins and rhythm for setup steps after provider selection.
 fn content() -> gtk::Box {
     let root = crate::ui::content();
