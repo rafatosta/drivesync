@@ -1,173 +1,86 @@
 # Instruções para agentes — DriveSync
 
-Estas regras se aplicam a alterações realizadas por agentes de IA neste repositório.
+Aplicam-se a todos os agentes de IA que modificam este repositório.
 
-## Idioma de commits e comentários
+## 1. Idioma e escopo
 
-- Escrever **todas as mensagens de commit em inglês**, incluindo título e corpo (motivação, mudanças, validação e limitações).
-- Escrever **todos os comentários no código em inglês**, incluindo comentários inline, documentação rustdoc (`//!`, `///`) e comentários em scripts e arquivos de configuração.
-- Ao adicionar ou alterar comentários, seguir essa regra também nos exemplos de código da documentação.
+- Escrever commits (título e corpo), comentários, rustdoc e comentários em exemplos de código **sempre em inglês**.
+- Realizar alterações pequenas, justificadas, verificáveis e limitadas ao escopo solicitado.
+- Preservar isolamento entre contas, credenciais, dados locais e segurança das operações.
+- **Proibir exclusão permanente:** utilizar sempre a lixeira. Se indisponível, recusar a operação, sem fallback destrutivo. APIs públicas de exclusão permanente devem manter a assinatura, emitir aviso e recusar a execução, sem declarar sucesso.
+- Não adicionar funcionalidades, dependências ou refatorações fora do escopo sem necessidade demonstrada.
 
-## Escopo e segurança
+## 2. Retrocompatibilidade
 
-- Trabalhar em tarefas pequenas, com mudanças justificadas e verificáveis.
-- Preservar isolamento por conta, credenciais, dados locais e garantias contra operações destrutivas.
-- Exclusão permanente de arquivos/pastas é proibida: toda exclusão deve ir para
-  a lixeira. Sem suporte à lixeira, bloquear; nunca fazer fallback destrutivo.
-  Métodos públicos de exclusão permanente devem conservar a chamada, emitir aviso
-  e recusar localmente sem executar nem declarar sucesso.
-- Não desenvolver funcionalidades adicionais, criar dependências ou refatorar módulos alheios sem necessidade demonstrável.
+- **Nesta fase, não há exigência de retrocompatibilidade.** Não criar migrações, adaptadores, aliases, fallbacks ou suporte legado.
+- Antes de introduzir compatibilidade entre versões, consultar o usuário, explicar o impacto e aguardar decisão.
+- Decisões já estabelecidas para a tarefa não precisam ser reconfirmadas.
+- Remover implementações substituídas dentro do escopo, sem excluir dados do usuário ou alterar contratos externos não relacionados.
 
-## Retrocompatibilidade entre versões
+## 3. Arquitetura e organização
 
-- Antes de alterar contratos ou formatos entre versões, perguntar ao usuário se
-  deseja manter retrocompatibilidade. A regra abrange código, APIs, bancos e
-  esquemas, configurações, arquivos persistidos, protocolos e demais interfaces.
-- Explicar brevemente o impacto da escolha e aguardar a resposta antes de
-  implementar a parte dependente dessa decisão. Não presumir necessidade de
-  migrações, conversões, adaptadores, aliases, fallbacks ou suporte legado.
-- Se o usuário já definiu a política para o escopo em andamento, seguir essa
-  decisão sem perguntar novamente. Atualmente, o usuário determinou que não há
-  retrocompatibilidade nesta fase de desenvolvimento; uma nova necessidade deve
-  ser confirmada antes de introduzir suporte a versões anteriores.
-- Quando a retrocompatibilidade não for desejada, remover código substituído e
-  caminhos legados sem criar migrações ou adaptações. Isso não autoriza apagar
-  dados existentes, arquivos do usuário ou modificar contratos fora do escopo.
+- Em Rust, preferir `mod.rs` para organização e reexportação, `models.rs` para modelos relacionados e arquivos separados por responsabilidade.
+- Evitar fragmentação excessiva, abstrações artificiais e duplicação de responsabilidades.
+- Preservar contratos e interfaces entre módulos, salvo quando a alteração fizer parte do escopo autorizado.
+- Priorizar modularidade, baixo acoplamento e separação de responsabilidades.
 
-## Fonte de verdade e documentação
+## 4. Documentação Rust
 
-A documentação em `docs/architecture/` não deve ser consultada e nem editada.
+- Durante o desenvolvimento, documentar apenas invariantes, riscos e comportamentos não óbvios.
+- Após a consolidação de cada módulo, adicionar rustdoc (`//!` e `///`) aos contratos e APIs relevantes.
+- Manter a documentação existente sincronizada com alterações de comportamento.
+- Evitar comentários triviais e documentação de implementações provisórias.
+- Não pesquisar rotineiramente a sintaxe rustdoc; consultar referências oficiais apenas diante de dúvidas ou recursos desconhecidos.
+- Executar `cargo doc` e doctests quando houver documentação aplicável, sempre no ambiente Flatpak do projeto.
 
-## Convenção de organização dos módulos Rust
+## 5. Planejamento e implementação
 
-Preferir `mod.rs` como ponto de organização e
-reexportação, agrupar modelos relacionados em um `models.rs` quando apropriado
-e separar implementações por responsabilidade real. Não impor arquivo por
-estrutura, classe equivalente ou método, nem criar abstrações artificiais.
+- Para tarefas com múltiplas alterações, planejar resultado, módulos, dependências, riscos e etapas antes de editar. Não criar arquivo de planejamento sem necessidade.
+- Implementar, validar e criar **um commit por unidade lógica completa**, não por arquivo ou método.
+- Ordenar etapas dependentes para preservar compilação e testes nos estados intermediários, quando possível.
+- Registrar correções independentes em commits `fix`, sem fragmentação artificial.
+- Ao finalizar, revisar código morto, duplicações, imports, dependências e artefatos temporários. Criar commit de limpeza apenas se houver alterações reais.
+- Executar validação integrada final, corrigir falhas e declarar limitações.
+- Não reescrever histórico publicado para reorganizar etapas.
 
-## Documentação do código Rust (rustdoc)
+## 6. Commits e Git
 
-Em novas implementações e refatorações, seguir o padrão rustdoc:
+- Usar títulos curtos em inglês, preferencialmente `type(scope): description` (`feat`, `fix`, `refactor`, `test`, `docs`, `chore`).
+- Registrar no corpo, de forma objetiva: motivação, mudanças, validações realmente executadas, limitações e pendências relevantes.
+- Em ambiente local, verificar `git status`, revisar o diff, executar `git add` seletivo e `git commit` automaticamente após validar cada unidade lógica.
+- Não incluir alterações preexistentes ou de terceiros.
+- **Nunca executar `git push`, criar PR, publicar release ou modificar tags remotas sem autorização explícita.** Commit local não autoriza publicação.
+- Respeitar as permissões específicas de conectores e ambientes remotos.
+- Se commits locais não forem possíveis, fornecer patches e mensagens sugeridas, sem simular sua criação.
+- Ao concluir, informar branch, commits criados, testes e pendências, indicando que não houve publicação remota.
 
-- Documentar módulos com `//!` e contratos relevantes de tipos, traits e
-  métodos com `///`, no próprio código. Documentar também itens internos
-  quando houver invariantes, riscos ou efeitos não óbvios.
-- Explicar propósito, comportamento, parâmetros relevantes, retorno, erros,
-  invariantes, efeitos colaterais e concorrência conforme o caso. Não repetir
-  assinaturas nem exigir um comentário para cada auxiliar trivial.
-- Manter a documentação coerente com a implementação em cada alteração;
-  preferir exemplos autocontidos e seguros, sem rede, credenciais ou dados reais.
-- Para o uso rotineiro de rustdoc, **a convenção local é suficiente**: não
-  pesquisar novamente a sintaxe na internet. Consultar referências oficiais
-  quando houver recurso desconhecido, ambiguidade ou comportamento dependente
-  de versão.
-- Quando as ferramentas estiverem disponíveis, gerar a documentação e executar
-  doctests. Informar claramente o que não pôde ser verificado.
+## 7. Ambiente Rust obrigatório
 
-## Planejamento, implementação incremental e commits atômicos
+- Executar **todas as ferramentas Rust exclusivamente no ambiente Flatpak** definido em `flatpak/com.rtosta.DriveSync.Devel.yml`, incluindo Cargo, rustc, rustfmt, Clippy, documentação e scripts relacionados.
+- O manifesto determina SDK, versão, extensões e ambiente. Nunca utilizar ferramentas Rust do host como fallback.
+- Usar Flathub para SDK e extensões. Não instalar ou atualizar componentes automaticamente.
+- Se o ambiente estiver indisponível, informar o impedimento e as verificações não realizadas.
+- Remote Flatpak adicional somente quando necessário para distribuição e testes de instalação/atualização; não substitui o ambiente de desenvolvimento.
+- Registrar nos commits os comandos executados e o ambiente utilizado.
+- Testes no SDK não comprovam integração real com Google Drive nem funcionamento do pacote Flatpak.
 
-Para uma demanda com várias mudanças, **planejar antes de editar**: identificar
-resultado esperado, módulos afetados, dependências, riscos e uma sequência de
-entregas pequenas e verificáveis. O plano orienta o trabalho; não precisa virar
-um arquivo de histórico no repositório.
+## 8. Verificação final
 
-- **Um commit por unidade lógica completa**, não por método, arquivo ou quantidade
-  fixa de linhas. A unidade pode abranger vários arquivos quando isso for
-  indispensável para entregar uma alteração coesa.
-- Implementar e validar cada unidade antes de avançar à próxima; criar o
-  respectivo commit assim que estiver consistente. Não acumular toda a demanda
-  em um único commit final quando houver etapas independentes.
-- Quando houver dependência entre módulos, ordenar os commits para que cada
-  estado intermediário do repositório permaneça compilável e com testes
-  relevantes passando, sempre que tecnicamente possível.
-- Separar correções descobertas durante o desenvolvimento em commits `fix`
-  próprios quando forem mudanças logicamente distintas. Não gerar commits
-  artificiais apenas para aumentar a quantidade de commits.
-- **Ao concluir a demanda**, revisar o conjunto das alterações e procurar código
-  morto, funções substituídas, duplicações, artefatos temporários, imports e
-  dependências desnecessárias. Fazer um commit `refactor` ou `chore` de limpeza
-  somente se houver resíduos reais; não criar commit vazio.
-- Rodar a validação final integrada e informar limites de teste. Se encontrar
-  defeitos, corrigi-los em commits apropriados.
-- Não reescrever commits já publicados para simular etapas posteriores. Se o
-  ambiente não permitir commits, entregar patches e mensagens de commit
-  separados por unidade lógica.
-
-Exemplo de sequência para uma funcionalidade envolvendo dois módulos:
-
-1. `feat(engine): implement listing contract` — lógica e testes do módulo A.
-2. `feat(ui): integrate listing into the interface` — consumo e testes do módulo B.
-3. `fix(ui): handle pagination errors` — correção específica identificada nos testes.
-4. `refactor: remove superseded helper` — **somente se** a revisão final
-   detectar código obsoleto.
-
-## Commits como registro de implementação
-
-Ao finalizar uma alteração, preparar um commit com:
-
-1. **Título curto e objetivo em inglês**, preferencialmente `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`, `chore`).
-2. **Motivação e escopo:** qual problema foi tratado e por quê.
-3. **Mudanças:** comportamento e arquivos/componentes relevantes, sem repetir o diff linha a linha.
-4. **Validação:** comandos e testes realmente executados, resultados e ambiente quando relevante. Não declarar testes não executados.
-5. **Limitações, riscos e pendências:** verificações não feitas e próximos passos necessários, quando houver.
-
-Criar cada commit ao concluir sua unidade lógica, quando o ambiente e as permissões permitirem; se não for possível, fornecer a mensagem de commit pronta e informar a limitação. Não alterar histórico publicado nem misturar tarefas independentes sem autorização.
-
-## Commits locais e publicação remota
-
-- **No ambiente local (Codex, terminal ou outros agentes com acesso ao checkout):**
-  depois de validar cada unidade lógica, executar `git add` seletivamente e
-  `git commit` automaticamente, sem solicitar autorização adicional para cada
-  commit, desde que o ambiente permita essas operações.
-- Não incluir alterações pré-existentes ou de terceiros no commit; verificar
-  `git status` e revisar o diff preparado antes de confirmar.
-- **Nunca executar `git push`, criar PR, publicar release, alterar tags remotas
-  ou sincronizar alterações com o GitHub sem autorização explícita do usuário
-  para essa operação.** O envio é uma etapa separada da criação de commits.
-- Em ambientes de integração remota, como conectores GitHub, não interpretar
-  esta regra como permissão para enviar alterações diretamente. Respeitar
-  autorizações e restrições específicas do ambiente.
-- Ao finalizar, informar branch, commits locais criados e resultado dos testes;
-  deixar claro que os commits ainda não foram enviados ao remoto. Quando o
-  ambiente não permitir commits locais, informar isso e fornecer as mensagens
-  sugeridas em vez de simular a criação dos commits.
-
-## Desenvolvimento de UX/UI
-
-
-## Ambiente obrigatório para ferramentas Rust
-
-- Executar toda compilação e verificação Rust exclusivamente dentro do ambiente
-  Flatpak configurado por `flatpak/com.rtosta.DriveSync.Devel.yml`, incluindo
-  `cargo build`, `cargo check`, `cargo fmt`, `cargo clippy`, `cargo test`,
-  `cargo doc` e doctests. Isso também se aplica a scripts que invoquem essas
-  ferramentas.
-- O manifesto é a fonte de verdade para o SDK, sua versão, extensões e opções
-  de ambiente. Usar as ferramentas Rust da extensão definida pelo projeto;
-  não executar Cargo, rustc, rustfmt ou Clippy do host como alternativa.
-- Se o SDK, a extensão ou alguma ferramenta necessária estiver indisponível,
-  informar o impedimento e as verificações não executadas. Não instalar ou
-  atualizar SDKs e extensões automaticamente.
-- Usar o Flathub como origem do SDK e das extensões. Um remote Flatpak próprio
-  para testes só deve ser introduzido quando houver necessidade de distribuir
-  builds experimentais e validar instalação e atualização do aplicativo.
-  Um remote separado não garante isolamento dos testes nem substitui o
-  ambiente definido pelo manifesto.
-- Registrar no commit os comandos efetivamente executados e o ambiente Flatpak
-  utilizado. A execução dentro do SDK não comprova integração real com Google
-  Drive nem funcionamento do aplicativo empacotado.
-
-## Verificação
-
-Antes de concluir, executar quando disponível, sempre dentro do ambiente
-Flatpak definido acima (os comandos abaixo não devem ser executados no host):
+Executar quando disponível, **dentro do ambiente Flatpak**, nunca no host:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+```
+
+Após a consolidação e documentação dos módulos envolvidos, executar também:
+
+```sh
 cargo doc --workspace --no-deps --document-private-items
 cargo test --workspace --doc
 ```
 
-Registrar o que foi efetivamente executado no commit. Testes de integração real exigem ambiente isolado e consentimento apropriado.
+- Registrar resultados reais e verificações não executadas.
+- Testes com contas ou dados reais exigem ambiente isolado e consentimento apropriado.
+- Não declarar sucesso de verificações que não foram executadas.
