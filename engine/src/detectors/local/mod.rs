@@ -1,26 +1,11 @@
-//! Root-bound metadata collection and native local event production.
+//! Local observation data contract.
+//!
+//! This module defines the public shape of local observations. It performs no
+//! filesystem access and contains no detection implementation.
 
-mod collector;
-mod filesystem;
-mod metadata;
 mod models;
-mod runtime;
-mod signals;
-mod watcher;
-
-pub use collector::FilesystemMetadataCollector;
-pub use models::{
-    LocalCancellation, LocalDetectorError, LocalDetectorFailure, LocalDetectorResult,
-    LocalDetectorScope, LocalMetadataRequest, LocalMetadataResult, LocalScanCoverage,
-    LocalScanResult,
-};
-
-#[cfg(test)]
-mod tests;
 
 pub use models::{
-    LocalActivity, LocalDetectorCreateRequest, LocalDetectorCreateResult, LocalDetectorSettings,
-    LocalDetectorState, LocalNotificationSink, LocalStartMode, LocalStartRequest, LocalStartResult,
-    LocalStatusRequest, LocalStatusResult, LocalStopReason, LocalStopRequest, LocalStopResult,
+    Checksum, FileKind, FileState, Id, LocalCapabilities, LocalIdentity, LocalObservation,
+    ObservationEvent, Path,
 };
-pub use runtime::LocalDetector;
