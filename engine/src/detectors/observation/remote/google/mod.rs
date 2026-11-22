@@ -170,6 +170,9 @@ impl GoogleObserver {
         request: RemoteObserveRequest,
         session: &GoogleSession,
     ) -> Result<RemoteObserveResult, RemoteObserverError> {
+        if request.known_remote_ids.len() > MAX_ITEMS {
+            return Err(RemoteObserverError::IncompleteCoverage);
+        }
         let mut state = self.state.lock().await;
         let budget = request.page_budget.unwrap_or(16).min(64);
         if budget == 0 {
@@ -241,7 +244,7 @@ impl GoogleObserver {
                 }
             }
             if state.capture.is_none() {
-                let observations = if state.feed_token.is_none() {
+                let mut observations: Vec<RemoteObservation> = if state.feed_token.is_none() {
                     state
                         .known
                         .values()
@@ -258,6 +261,13 @@ impl GoogleObserver {
                 } else {
                     Vec::new()
                 };
+                if state.feed_token.is_none() {
+                    for id in &request.known_remote_ids {
+                        if !state.known.contains_key(id) && id != &self.config.remote_root_id {
+                            observations.push(self.probe(session, id.clone(), &state.known).await);
+                        }
+                    }
+                }
                 return Ok(self.result(
                     observations,
                     if state.feed_token.is_some() {
@@ -386,29 +396,22 @@ impl GoogleObserver {
                 true,
             ));
         }
-        // Inaccessible or moved-out items are outside this scope, never proven deleted.
+        // A missing listing entry does not distinguish trash, loss of access or a move.
         self.root(session).await?;
         let capture = state.capture.take().unwrap();
+        let ids: BTreeSet<_> = state
+            .known
+            .keys()
+            .cloned()
+            .chain(request.known_remote_ids)
+            .collect();
+        if ids.len() > MAX_ITEMS {
+            return Err(RemoteObserverError::IncompleteCoverage);
+        }
         let mut observations = Vec::new();
-        for (id, old) in &state.known {
-            if !capture.items.contains_key(id) {
-                let mut departed = old.clone();
-                departed.state = FileState::OutsideScope;
-                departed.coverage = ObservationCoverage::Complete;
-                departed.observed_at = super::super::scanner::now();
-                departed.event.as_mut().unwrap().kind = ObservationKind::Removed;
-                departed.event.as_mut().unwrap().observed_at = departed.observed_at;
-                departed.name = Evidence::NotCollected;
-                departed.parents = Evidence::NotCollected;
-                departed.mime_type = Evidence::NotCollected;
-                departed.size = Evidence::NotCollected;
-                departed.checksum = Evidence::NotCollected;
-                departed.version = Evidence::NotCollected;
-                departed.modified_time = Evidence::NotCollected;
-                departed.trashed = Evidence::NotCollected;
-                departed.capabilities = Evidence::NotCollected;
-                departed.page_token = Some(capture.checkpoint.clone());
-                observations.push(departed);
+        for id in ids {
+            if !capture.items.contains_key(&id) && id != self.config.remote_root_id {
+                observations.push(self.probe(session, id, &capture.items).await);
             }
         }
         let mut next = capture.items;
@@ -446,6 +449,96 @@ impl GoogleObserver {
             state.cursor.clone(),
             false,
         ))
+    }
+    /// A failed specific read is never evidence of deletion. Ancestry must reach an
+    /// observed external root before an item can be classified as outside scope.
+    async fn probe(
+        &self,
+        session: &GoogleSession,
+        id: RemoteId,
+        captured: &BTreeMap<RemoteId, RemoteObservation>,
+    ) -> RemoteObservation {
+        let unavailable = |permission: bool| {
+            let mut value = normalize::missing(id.clone(), &self.config);
+            value.state = if permission {
+                FileState::Unavailable
+            } else {
+                FileState::Unknown
+            };
+            if permission {
+                value.capabilities = Evidence::PermissionDenied;
+            }
+            value
+        };
+        let get = |id: RemoteId| async move {
+            self.client
+                .files_get(
+                    session,
+                    &FileId(id.0),
+                    FileGetOptions {
+                        fields: Some(FieldMask(FIELDS.into())),
+                        supports_all_drives: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .await
+        };
+        let file = match get(id.clone()).await {
+            Ok(file) if file.id.as_ref().is_some_and(|value| value.0 == id.0) => file,
+            Ok(_) => return unavailable(false),
+            Err(error) => {
+                let mut value = unavailable(error.kind == GoogleApiError::PermissionDenied);
+                if error.kind != GoogleApiError::NotFoundOrInaccessible {
+                    value.state = FileState::Unavailable;
+                }
+                return value;
+            }
+        };
+        let mut value =
+            match normalize::observation(file, &self.config, ObservationCoverage::Complete) {
+                Ok(value) => value,
+                Err(_) => return unavailable(false),
+            };
+        if value.trashed == Evidence::Known(true) {
+            value.state = FileState::Absent;
+            return value;
+        }
+        if value.trashed != Evidence::Known(false) {
+            return unavailable(false);
+        }
+        let mut parents = value.parents.clone();
+        let mut visited = BTreeSet::from([id.clone()]);
+        for _ in 0..128 {
+            let Evidence::Known(ids) = parents else {
+                return unavailable(false);
+            };
+            if ids.is_empty() {
+                value.state = FileState::OutsideScope;
+                return value;
+            }
+            if ids.len() != 1
+                || ids[0] == self.config.remote_root_id
+                || captured.contains_key(&ids[0])
+                || !visited.insert(ids[0].clone())
+            {
+                return unavailable(false);
+            }
+            let parent = match get(ids[0].clone()).await {
+                Ok(parent)
+                    if parent.id.as_ref().is_some_and(|value| value.0 == ids[0].0)
+                        && parent.trashed == Some(false) =>
+                {
+                    parent
+                }
+                Err(error) => return unavailable(error.kind == GoogleApiError::PermissionDenied),
+                _ => return unavailable(false),
+            };
+            parents = parent
+                .parents
+                .map(|ids| Evidence::Known(ids.into_iter().map(|id| RemoteId(id.0)).collect()))
+                .unwrap_or(Evidence::NotCollected);
+        }
+        unavailable(false)
     }
     fn result(
         &self,

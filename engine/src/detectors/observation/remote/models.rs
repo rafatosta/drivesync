@@ -40,6 +40,8 @@ pub(crate) struct RemoteObserveRequest {
     pub mode: RemoteObserveMode,
     /// Optional upper bound on provider pages to read in this round.
     pub page_budget: Option<u64>,
+    /// Persisted identities to recheck when missing, including after restart.
+    pub known_remote_ids: Vec<RemoteId>,
 }
 
 /// Remote observation round strategy.

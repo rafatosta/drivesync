@@ -291,6 +291,7 @@ mod tests {
             },
             mode: super::super::models::RemoteObserveMode::Initial,
             page_budget: None,
+            known_remote_ids: Vec::new(),
         };
         assert!(observer.accepts(&request, &session));
 
@@ -312,6 +313,7 @@ mod tests {
                 },
                 mode: super::super::models::RemoteObserveMode::Initial,
                 page_budget: None,
+                known_remote_ids: Vec::new(),
             },
             &mismatched_session
         ));
@@ -325,6 +327,7 @@ mod tests {
             },
             mode: super::super::models::RemoteObserveMode::Initial,
             page_budget: None,
+            known_remote_ids: Vec::new(),
         };
         mismatched_provider_request.scope.provider_id = ProviderId("another-provider".into());
         assert!(!observer.accepts(&mismatched_provider_request, &session));

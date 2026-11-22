@@ -541,3 +541,10 @@ mod tests {
         assert_eq!(decoded, state);
     }
 }
+
+/// Account/root enumeration is all-or-error; an unreadable row never becomes absence.
+#[derive(Debug, Clone)]
+pub(crate) struct InventoryScopeQuery {
+    pub account_id: AccountId,
+    pub sync_root_id: SyncRootId,
+}

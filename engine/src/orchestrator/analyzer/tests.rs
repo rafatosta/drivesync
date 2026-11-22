@@ -17,6 +17,7 @@ pub(in crate::orchestrator) fn fixture() -> File {
     let local = local_state("same", 10);
     let remote = remote_state("same", 10);
     File {
+        association_candidates: Vec::new(),
         identity: FileIdentity {
             account_id: AccountId("account-a".into()),
             sync_root_id: SyncRootId("root-a".into()),

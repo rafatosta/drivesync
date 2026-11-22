@@ -15,7 +15,7 @@ use std::{
 
 static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
-fn context() -> (Context, PathBuf) {
+pub(super) fn context() -> (Context, PathBuf) {
     let directory = std::env::temp_dir().join(format!(
         "drivesync-context-{}-{}",
         std::process::id(),
@@ -37,7 +37,7 @@ fn context() -> (Context, PathBuf) {
     (context, directory)
 }
 
-fn local_observation() -> LocalObservation {
+pub(super) fn local_observation() -> LocalObservation {
     LocalObservation {
         sync_root_id: SyncRootId("root-a".into()),
         state: FileState::Present,

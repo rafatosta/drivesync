@@ -21,6 +21,8 @@ pub(crate) enum Observation {
     },
     /// Evidence collected from a configured remote provider.
     Remote(RemoteObservation),
+    /// A full scoped round, including an empty or invalidated capture.
+    Capture(Box<ScopeCapture>),
 }
 
 /// Origin of a local observation.
@@ -125,4 +127,30 @@ pub(crate) struct RemoteObservation {
     pub page_token: Option<String>,
     /// Optional normalized signal associated with this read.
     pub event: Option<ObservationEvent>,
+}
+
+/// A round is ordered by a source-local generation, never by wall-clock time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ScopeCapture {
+    /// All configured identities and roots must match the receiving Context.
+    pub account_id: AccountId,
+    pub provider_id: ProviderId,
+    pub sync_root_id: SyncRootId,
+    /// Absolute configured local root, unlike item-relative paths.
+    pub local_root: Path,
+    pub remote_root_id: RemoteId,
+    /// Strictly increasing for this source within a Context lifetime.
+    pub generation: u64,
+    /// Partial/unavailable captures replace prior evidence without proving absence.
+    pub coverage: ObservationCoverage,
+    /// Diagnostic completion time, never used to order generations.
+    pub observed_at: DateTime,
+    pub entries: CaptureEntries,
+}
+
+/// Source-specific snapshots; remote departures are explicit per-item probe results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum CaptureEntries {
+    Local(Vec<LocalObservation>),
+    Remote(Vec<RemoteObservation>),
 }

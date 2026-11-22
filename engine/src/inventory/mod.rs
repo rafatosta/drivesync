@@ -56,6 +56,19 @@ impl Inventory {
         }
     }
 
+    /// Reads all facts in one account/root, failing rather than returning a partial view.
+    pub(crate) fn enumerate(
+        &self,
+        query: models::InventoryScopeQuery,
+    ) -> Result<Vec<models::InventorySnapshot>, InventoryError> {
+        if query.account_id != self.account_id {
+            return Err(InventoryError::InvalidConfiguration);
+        }
+        self.database()
+            .map_err(|_| InventoryError::Unavailable)?
+            .enumerate(query)
+    }
+
     /// Atomically records a typed operation effect with optional optimistic revision checking.
     pub(crate) fn write(&self, request: InventoryWrite) -> InventoryWriteResult {
         if request.identity.account_id != self.account_id {

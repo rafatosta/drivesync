@@ -2,8 +2,8 @@ use super::Database;
 use crate::{
     inventory::models::{
         AppliedEffect, Baseline, BaselineState, InventoryLookup, InventoryLookupStatus,
-        InventoryWrite, LocalState, OperationAction, OperationState, PendingOperation,
-        PersistedEffect, ProjectionKind, RemoteState, WriteStatus,
+        InventoryScopeQuery, InventoryWrite, LocalState, OperationAction, OperationState,
+        PendingOperation, PersistedEffect, ProjectionKind, RemoteState, WriteStatus,
     },
     models::{
         AccountId, DateTime, Evidence, FileIdentity, FileKind, FileState, Id, ItemId,
@@ -318,4 +318,48 @@ fn remote_state() -> RemoteState {
             can_trash: Evidence::Known(true),
         }),
     }
+}
+
+#[test]
+fn scoped_enumeration_includes_pending_and_fails_on_corruption_without_partial_results() {
+    let mut db = database("account-a");
+    insert_pending(&mut db, "item-a", "remote-a");
+    insert_pending(&mut db, "item-b", "remote-b");
+    let query = || InventoryScopeQuery {
+        account_id: AccountId("account-a".into()),
+        sync_root_id: SyncRootId("root-a".into()),
+    };
+    let mut other_root = write(
+        "other-item",
+        "other-remote",
+        "other-operation",
+        Some(0),
+        PersistedEffect::Pending(pending(
+            "other-item",
+            "other-operation",
+            OperationState::Pending,
+            1,
+        )),
+        1,
+    );
+    other_root.identity.sync_root_id = SyncRootId("other".into());
+    assert_eq!(db.write(other_root).status, WriteStatus::Written);
+    let rows = db.enumerate(query()).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows
+        .iter()
+        .all(|row| row.revision == 1 && row.pending_operations.len() == 1));
+    let mut wrong = query();
+    wrong.account_id = AccountId("account-b".into());
+    assert!(db.enumerate(wrong).is_err());
+    let mut other = query();
+    other.sync_root_id = SyncRootId("other".into());
+    assert_eq!(db.enumerate(other).unwrap().len(), 1);
+    db.connection
+        .execute(
+            "UPDATE inventory_items SET snapshot_json = 'invalid' WHERE item_id = 'item-b'",
+            [],
+        )
+        .unwrap();
+    assert!(db.enumerate(query()).is_err());
 }

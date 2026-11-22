@@ -11,6 +11,7 @@ pub(crate) struct LocalObserver {
     scanner: Scanner,
     previous: Option<BTreeMap<Path, LocalObservation>>,
     recheck: bool,
+    latest: Vec<LocalObservation>,
 }
 impl LocalObserver {
     pub(crate) fn new(scanner: Scanner) -> Self {
@@ -18,7 +19,12 @@ impl LocalObserver {
             scanner,
             previous: None,
             recheck: false,
+            latest: Vec::new(),
         }
+    }
+    /// Full latest read, including unchanged entries; coverage is supplied by poll.
+    pub(crate) fn snapshot(&self) -> Vec<LocalObservation> {
+        self.latest.clone()
     }
     /// Invalidates prior evidence on source loss; it never declares those entries absent.
     pub(crate) fn unavailable(&self) -> Vec<Observation> {
@@ -50,6 +56,7 @@ impl LocalObserver {
             }
         };
         let coverage = scan.coverage;
+        self.latest = scan.entries.values().cloned().collect();
         let observations = if let (Some(previous), true) = (&self.previous, self.recheck) {
             let mut observations: Vec<_> = scan
                 .entries
@@ -70,6 +77,24 @@ impl LocalObserver {
         } else {
             scan.observations(LocalObservationSource::Scanner)
         };
+        let events: BTreeMap<_, _> = observations
+            .iter()
+            .filter_map(|observation| match observation {
+                Observation::Local { data, .. } => {
+                    data.path.clone().map(|path| (path, data.event.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for entry in &mut self.latest {
+            if let Some(event) = entry.path.as_ref().and_then(|path| events.get(path)) {
+                entry.event = event.clone();
+            } else if self.previous.is_some() {
+                if let Some(event) = &mut entry.event {
+                    event.origin = ObservationOrigin::Local;
+                }
+            }
+        }
         if coverage == ObservationCoverage::Complete {
             self.previous = Some(scan.entries);
             self.recheck = false;

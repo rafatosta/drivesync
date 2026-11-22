@@ -1229,3 +1229,86 @@ async fn disconnect_cancels_remote_collection_and_preserves_local_files() {
         b"preserved"
     );
 }
+
+#[tokio::test]
+async fn scoped_source_captures_reconcile_three_levels_without_mutations_or_adoption() {
+    let mut responses = replies("scoped-captures");
+    let root = || {
+        Reply::json(
+            200,
+            r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#,
+        )
+    };
+    responses.extend([Reply::json(200, r#"{"startPageToken":"start"}"#), root()]);
+    for (id, parent, directory) in [
+        ("a", "remote-root", true),
+        ("b", "a", true),
+        ("c", "b", true),
+        ("file", "c", false),
+    ] {
+        responses.push(Reply::json(200,&serde_json::json!({"files":[{"id":id,"name":id,"parents":[parent],"mimeType":if directory {"application/vnd.google-apps.folder"} else {"text/plain"},"trashed":false,"capabilities":{"canListChildren":true}}],"incompleteSearch":false}).to_string()));
+    }
+    responses.push(root());
+    let mut fixture = Fixture::new(responses).await;
+    Arc::get_mut(&mut fixture.engine.inner)
+        .unwrap()
+        .sources_enabled = true;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    std::fs::create_dir_all(request.local_root.join("a/b/c")).unwrap();
+    std::fs::write(request.local_root.join("a/b/c/file"), b"preserved").unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut subscription = fixture
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if fixture.server.requests.lock().unwrap().len() == 9
+                && subscription.current().issue.is_some()
+            {
+                break;
+            }
+            subscription.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let scope = {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        sessions[&account.id]
+            .orchestrator
+            .config()
+            .sync_root_id
+            .clone()
+    };
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("a/b/c/file")).unwrap(),
+        b"preserved"
+    );
+    assert!(fixture.server.requests.lock().unwrap()[2..]
+        .iter()
+        .all(|r| r.method == "GET"));
+    let inventory = crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
+        directory: synchronization::directory(&fixture.directory.join("accounts")),
+        account_id: account.id.clone(),
+    })
+    .unwrap();
+    assert!(inventory
+        .enumerate(crate::inventory::models::InventoryScopeQuery {
+            account_id: account.id,
+            sync_root_id: scope
+        })
+        .unwrap()
+        .is_empty());
+}

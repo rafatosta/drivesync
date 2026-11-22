@@ -15,17 +15,23 @@ impl Detectors {
             context: Context::open(config)?,
         })
     }
-    /// Runs consolidation off async executor threads while preserving the File-only facade.
-    pub(crate) async fn contextualize_async(
+    /// Context consumes the same Observation envelope for complete rounds and individual reads.
+    pub(crate) async fn contextualize_batch(
         self: std::sync::Arc<Self>,
         observation: Observation,
-    ) -> Result<File, ContextError> {
-        tokio::task::spawn_blocking(move || self.contextualize(observation))
+    ) -> Result<Vec<File>, ContextError> {
+        tokio::task::spawn_blocking(move || self.context.consolidate(observation))
             .await
             .map_err(|_| ContextError::InventoryUnavailable)?
     }
-    pub(crate) fn contextualize(&self, observation: Observation) -> Result<File, ContextError> {
-        self.context.build(observation)
+    /// Persisted remote IDs are probe candidates, not evidence of current presence.
+    pub(crate) fn known_remote_ids(&self) -> Result<Vec<crate::models::RemoteId>, ContextError> {
+        Ok(self
+            .context
+            .snapshots()?
+            .into_iter()
+            .filter_map(|s| s.identity.remote_id)
+            .collect())
     }
 }
 

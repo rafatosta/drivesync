@@ -224,11 +224,14 @@ impl Engine {
                         .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?;
                     (session.detectors.clone(), session.orchestrator.clone())
                 };
-                let file = detectors
-                    .contextualize_async(observation)
+                let files = detectors
+                    .contextualize_batch(observation)
                     .await
                     .map_err(|_| error(SynchronizationErrorKind::InvalidObservation))?;
-                orchestrator.submit(file).await.map_err(error)
+                for file in files {
+                    orchestrator.submit(file).await.map_err(error)?;
+                }
+                Ok(())
             })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?

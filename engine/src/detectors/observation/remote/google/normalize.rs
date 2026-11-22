@@ -139,6 +139,30 @@ fn timestamp(text: &str) -> Option<DateTime> {
         unix_millis: seconds.checked_mul(1000)?.checked_add(millis)?,
     })
 }
+/// Identity-only evidence after an inconclusive specific lookup.
+pub(super) fn missing(id: RemoteId, config: &RemoteObserverConfig) -> RemoteObservation {
+    RemoteObservation {
+        account_id: config.account_id.clone(),
+        provider_id: config.provider_id.clone(),
+        sync_root_id: config.sync_root_id.clone(),
+        state: FileState::Unknown,
+        remote_id: Some(id),
+        name: Evidence::NotCollected,
+        parents: Evidence::NotCollected,
+        mime_type: Evidence::NotCollected,
+        size: Evidence::NotCollected,
+        checksum: Evidence::NotCollected,
+        version: Evidence::NotCollected,
+        modified_time: Evidence::NotCollected,
+        trashed: Evidence::NotCollected,
+        capabilities: Evidence::Unavailable,
+        observed_at: super::super::super::scanner::now(),
+        coverage: ObservationCoverage::Complete,
+        page_token: None,
+        event: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

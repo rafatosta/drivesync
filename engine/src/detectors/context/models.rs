@@ -117,4 +117,13 @@ pub(crate) struct File {
     pub initial_association_authorized: bool,
     /// Inventory revision used for future optimistic writes.
     pub inventory_revision: Option<u64>,
+    /// Possible initial counterparts, never proof of a persisted identity or authorization.
+    pub association_candidates: Vec<AssociationCandidate>,
+}
+
+/// Location correspondence gathered from current captures, without assigning identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AssociationCandidate {
+    pub local: LocalState,
+    pub remote: RemoteState,
 }

@@ -2,9 +2,10 @@
 
 Reconstruction step 9 implements Scanner, continuous local observation, and the Google
 RemoteObserver on the existing `Observation -> Context -> File -> Analyzer -> Operations`
-contracts. Public status types, observation envelopes, Analyzer input/output, execution
-requests, and Inventory schemas are unchanged. Producers read facts; only Operations writes
-execution effects or baselines. Google calls continue through the preserved Provider API.
+contracts. [Functional correction Stage 1](FUNCTIONAL_CORRECTION_STAGE_1.md) extends the
+original delivery with scoped captures, Inventory enumeration and candidate evidence.
+Public status, execution requests and Inventory schemas are unchanged. Producers read facts;
+only Operations writes execution effects or baselines. Google calls continue through the preserved Provider API.
 
 ## Lifecycle and admission
 
@@ -42,12 +43,13 @@ every sibling. Limits are 100,000 entries, depth 128, and 256 retained diagnosti
 Permission errors, instability, and limits yield Partial; root loss/replacement is unavailable.
 A partial scan does not replace the last complete snapshot or manufacture removal evidence.
 
-The continuous local source rescans two seconds after the preceding round finishes. Initial
-facts are `Observation::Local { source: Scanner }` with Snapshot events. Later comparisons
-emit Watcher Created, Modified, MetadataChanged, and Removed facts. Removal is emitted only
-when a complete current scan omits a previously observed path. Recovery republishes current
-evidence and any now-confirmed missing paths. An unavailable source emits Unavailable, never
-Absent, for prior entries.
+The continuous local source rescans two seconds after the preceding round finishes. The
+observer computes initial Scanner Snapshot events and later Watcher Created, Modified,
+MetadataChanged and Removed facts. Removal requires a complete current scan omitting a
+previously observed path. Engine source tasks deliver full scoped captures, retaining events
+for present entries; Context also confronts persisted paths with these captures to describe
+missing known entries without manufacturing events. An unavailable scope invalidates prior
+current evidence, without declaring entries absent.
 
 This is polling, not an inotify journal: transient changes between rounds can coalesce.
 Renaming is observed as an old path disappearing and a new path appearing. It does not assert
@@ -75,14 +77,20 @@ recaptures the selected subtree. This safely handles ancestor moves and permissi
 without imposing Google models or cursor semantics on Context. Completed empty feeds reaffirm
 known unchanged metadata and republish it to permit reconsidering previously deferred items.
 
-A previously observed ID missing from a completed selected-tree capture becomes OutsideScope
-with unknown current metadata. It does not become Absent or automatically delete a local file.
+A previously observed or persisted ID missing from a completed selected-tree capture is
+queried individually, including after restart. Confirmed trash is Absent with Known(true)
+trash evidence; OutsideScope requires a readable ancestry chain terminating outside the
+selected root. A missing/inaccessible response remains Unknown; permission denial and other
+request failures remain Unavailable. A listing omission alone never proves deletion. These
+reads do not authorize propagation to trash or local removal.
 A cursor expiry or read failure requests a fresh Recovery capture; source loss invalidates
 previous current evidence. Unknown capability attributes remain NotCollected, malformed
 numeric/digest/time attributes are Unavailable, and Workspace-only attributes are NotApplicable.
 
-Each round reads at most 16 provider pages by default (hard round cap 64). Captures retain at
-most 100,000 items and 100,000 pages; feed continuation history is also bounded. Successful
+Each round reads at most 16 listing/change-feed pages by default (hard round cap 64).
+Specific missing-ID and ancestry probes are additional reads, bounded by the known-ID limit
+and 128 ancestry steps per missing item, and cancel with the observer request. Captures retain
+at most 100,000 items and 100,000 pages; feed continuation history is also bounded. Successful
 incremental polls wait 15 seconds; unfinished captures continue after 50 ms. Errors retry after
 15 seconds, with cooperative cancellation during reads. Cursors and source views are currently
 in memory only. Restart performs a fresh capture; no observation checkpoint is written to
@@ -95,10 +103,22 @@ correlates them to the same scoped ItemId. Cache eviction leaves evidence unknow
 inventing a counterpart. Baselines never stand in for current observations. Source tasks
 serialize each producer's delivery; UTC wall-clock values are diagnostic, not sequence numbers.
 The next observation after source loss replaces its unavailable side after recovery. Inventory
-lookup results, revisions, pending operations, and conflicts are freshly read for every File.
+lookup results, revisions, pending operations, and conflicts are freshly read. Engine sources
+now deliver `Observation::Capture` rounds, including empty/partial/unavailable scopes, with
+source-local generations and configured account/provider/root bindings. Context rechecks
+persisted records absent from the capture, uses baseline paths only as locations to confront
+with current evidence, and rebuilds destinations and collisions. It shares derived indexes
+and one scoped enumeration within each round; correlated items are emitted once per round.
+A complete local scan may prove a known path absent, but an observed identity at another path
+keeps the logical item's state Unknown. Remote omissions stay Unknown without a specific
+probe. Partial/unavailable rounds invalidate old capture evidence. Captures are not atomic
+snapshots; Operations must still revalidate preconditions.
 
-New same-name local and remote files are not associated by this cache. New items without a
-logical association, initial adoption without a confirmed Operations contract, unresolved
+New same-name local and remote files are not associated by this cache. Current tree projections
+only gather candidate pairs; duplicates remain explicit candidates/collisions. Directory
+associations from Inventory resolve destination parents in either direction; unassociated
+nested parents remain unresolved until later identity/baseline work. No source or Context
+writes an association or baseline. New items without a logical association, initial adoption without a confirmed Operations contract, unresolved
 moves/destinations, and uncertain operations still defer according to the existing Analyzer
 and Operations limits. This step makes observation functional; it does not claim complete
 initial upload/download or full conflict recovery. Local replacement receipts now retain

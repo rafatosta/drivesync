@@ -34,6 +34,7 @@ fn request(mode: RemoteObserveMode, budget: u64) -> RemoteObserveRequest {
         },
         mode,
         page_budget: Some(budget),
+        known_remote_ids: Vec::new(),
     }
 }
 fn session() -> GoogleObserverSession {
@@ -168,6 +169,11 @@ async fn changes_recapture_moves_out_of_scope_without_claiming_deletion() {
         root(),
         Reply::json(200, r#"{"files":[],"incompleteSearch":false}"#),
         root(),
+        Reply::json(
+            200,
+            r#"{"id":"one","name":"a","mimeType":"text/plain","parents":["outside"],"trashed":false}"#,
+        ),
+        Reply::json(200, r#"{"id":"outside","parents":[],"trashed":false}"#),
     ]);
     let observer = observer(&server);
     let auth = session();
@@ -281,4 +287,121 @@ async fn expired_cursor_recovers_by_a_new_capture_and_cancellation_interrupts_re
             .unwrap_err(),
         RemoteObserverError::Cancelled
     );
+}
+
+#[tokio::test]
+async fn persisted_missing_ids_are_probed_after_restart_without_inventing_absence() {
+    for (reply, expected, permission) in [
+        (
+            Reply::json(
+                404,
+                r#"{"error":{"code":404,"message":"not found","errors":[{"reason":"notFound"}]}}"#,
+            ),
+            FileState::Unknown,
+            false,
+        ),
+        (
+            Reply::json(
+                403,
+                r#"{"error":{"code":403,"message":"denied","errors":[{"reason":"insufficientFilePermissions"}]}}"#,
+            ),
+            FileState::Unavailable,
+            true,
+        ),
+        (
+            Reply::json(
+                200,
+                r#"{"id":"persisted","name":"file","parents":["root"],"mimeType":"text/plain","trashed":true}"#,
+            ),
+            FileState::Absent,
+            false,
+        ),
+        (
+            Reply::json(
+                200,
+                r#"{"id":"persisted","name":"file","parents":[],"mimeType":"text/plain","trashed":false}"#,
+            ),
+            FileState::OutsideScope,
+            false,
+        ),
+        // A readable item allegedly still in the subtree contradicts the completed listing.
+        (
+            Reply::json(
+                200,
+                r#"{"id":"persisted","name":"file","parents":["root"],"mimeType":"text/plain","trashed":false}"#,
+            ),
+            FileState::Unknown,
+            false,
+        ),
+    ] {
+        let server = Server::start(vec![
+            Reply::json(200, r#"{"startPageToken":"start"}"#),
+            root(),
+            Reply::json(200, r#"{"files":[],"incompleteSearch":false}"#),
+            root(),
+            reply,
+        ]);
+        let observer = observer(&server);
+        let mut request = request(RemoteObserveMode::Initial, 4);
+        request.known_remote_ids = vec![RemoteId("persisted".into())];
+        let result = observer
+            .observe(request, &session(), &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(result.observations.len(), 1);
+        let observation = &result.observations[0];
+        assert_eq!(observation.state, expected);
+        if expected == FileState::Absent {
+            assert_eq!(observation.trashed, Evidence::Known(true));
+        }
+        if permission {
+            assert_eq!(observation.capabilities, Evidence::PermissionDenied);
+        }
+        assert!(server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.method == "GET"));
+        assert!(server
+            .requests
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .target
+            .contains("persisted"));
+    }
+}
+
+#[tokio::test]
+async fn missing_item_ancestry_errors_cycles_and_wrong_ids_remain_inconclusive() {
+    for response in [
+        Reply::json(404, r#"{"error":{"code":404,"message":"missing"}}"#),
+        Reply::json(
+            200,
+            r#"{"id":"outside","parents":["outside"],"trashed":false}"#,
+        ),
+        Reply::json(200, r#"{"id":"wrong","parents":[],"trashed":false}"#),
+    ] {
+        let server = Server::start(vec![
+            Reply::json(200, r#"{"startPageToken":"start"}"#),
+            root(),
+            Reply::json(200, r#"{"files":[],"incompleteSearch":false}"#),
+            root(),
+            Reply::json(
+                200,
+                r#"{"id":"persisted","parents":["outside"],"trashed":false}"#,
+            ),
+            response,
+        ]);
+        let observer = observer(&server);
+        let mut request = request(RemoteObserveMode::Initial, 4);
+        request.known_remote_ids = vec![RemoteId("persisted".into())];
+        let result = observer
+            .observe(request, &session(), &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(result.observations[0].state, FileState::Unknown);
+    }
 }

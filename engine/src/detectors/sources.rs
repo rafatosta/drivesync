@@ -1,5 +1,6 @@
 //! Engine-owned source tasks. Only normalized observations enter the Context facade.
 use super::{
+    observation::models::{CaptureEntries, ScopeCapture},
     observation::{
         local::LocalObserver,
         remote::{
@@ -20,7 +21,6 @@ use crate::{
     synchronization::{SynchronizationIssue, SynchronizationIssueKind},
 };
 use std::{
-    collections::BTreeMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -121,11 +121,13 @@ async fn deliver(
         if cancel.is_cancelled() || handle.is_finished() {
             return false;
         }
-        let file = match detectors.clone().contextualize_async(observation).await {
+        let files = match detectors.clone().contextualize_batch(observation).await {
             Ok(file) => file,
             Err(_) => return false,
         };
-        tokio::select! {biased;_=cancelled(cancel)=>return false,result=handle.submit(file)=>if result.is_err(){return false;}}
+        for file in files {
+            tokio::select! {biased;_=cancelled(cancel)=>return false,result=handle.submit(file)=>if result.is_err(){return false;}}
+        }
     }
     true
 }
@@ -140,6 +142,7 @@ async fn local(
 ) {
     let mut observer: Option<Arc<Mutex<LocalObserver>>> = None;
     let mut initial = true;
+    let mut generation = 0;
     while !cancel.is_cancelled() && !handle.is_finished() {
         if observer.is_none() {
             let path = config.roots.local_root.clone();
@@ -152,6 +155,22 @@ async fn local(
         }
         let Some(current) = observer.clone() else {
             health(&handle, Source::Local, false, true, &cancel).await;
+            generation += 1;
+            if !deliver(
+                &detectors,
+                &handle,
+                vec![capture(
+                    &config,
+                    generation,
+                    ObservationCoverage::Unavailable,
+                    CaptureEntries::Local(Vec::new()),
+                )],
+                &cancel,
+            )
+            .await
+            {
+                break;
+            }
             sleep(Duration::from_secs(2), &cancel).await;
             continue;
         };
@@ -162,11 +181,12 @@ async fn local(
         let round = tokio::task::spawn_blocking(move || {
             let mut observer = current.lock().unwrap();
             match observer.poll(&token) {
-                Ok(round) => Ok(round),
+                Ok((_, coverage)) => Ok((observer.snapshot(), coverage)),
                 Err(error) => Err((error, observer.unavailable())),
             }
         })
         .await;
+        generation += 1;
         match round {
             Ok(Ok((observations, coverage))) => {
                 health(
@@ -177,15 +197,39 @@ async fn local(
                     &cancel,
                 )
                 .await;
-                if !deliver(&detectors, &handle, observations, &cancel).await {
+                if !deliver(
+                    &detectors,
+                    &handle,
+                    vec![capture(
+                        &config,
+                        generation,
+                        coverage,
+                        CaptureEntries::Local(observations),
+                    )],
+                    &cancel,
+                )
+                .await
+                {
                     break;
                 }
                 initial = false;
             }
             Ok(Err((ScanError::Cancelled, _))) => break,
-            Ok(Err((_, observations))) => {
+            Ok(Err((_, _))) => {
                 health(&handle, Source::Local, false, true, &cancel).await;
-                if !deliver(&detectors, &handle, observations, &cancel).await {
+                if !deliver(
+                    &detectors,
+                    &handle,
+                    vec![capture(
+                        &config,
+                        generation,
+                        ObservationCoverage::Unavailable,
+                        CaptureEntries::Local(Vec::new()),
+                    )],
+                    &cancel,
+                )
+                .await
+                {
                     break;
                 }
                 health(&handle, Source::Local, false, true, &cancel).await;
@@ -229,10 +273,15 @@ async fn remote(
     };
     health(&handle, Source::Remote, false, true, &cancel).await;
     let mut mode = RemoteObserveMode::Initial;
-    let mut known = BTreeMap::<RemoteId, super::observation::RemoteObservation>::new();
     let mut invalidated = false;
+    let mut generation = 0;
     while !cancel.is_cancelled() && !handle.is_finished() {
         let round = async {
+            let scoped = detectors.clone();
+            let known_remote_ids = tokio::task::spawn_blocking(move || scoped.known_remote_ids())
+                .await
+                .map_err(|_| RemoteObserverError::Unavailable)?
+                .map_err(|_| RemoteObserverError::Unavailable)?;
             let _lease = tokio::select! {biased;_=cancelled(&cancel)=>return Err(RemoteObserverError::Cancelled),lease=ownership.clone().read_owned()=>lease};
             let session = accounts
                 .acquire_session(AcquireSessionRequest {
@@ -255,6 +304,7 @@ async fn remote(
                             remote_root_id: config.roots.remote_root_id.clone(),
                         },
                         mode,
+                        known_remote_ids,
                         page_budget: Some(16),
                     },
                     &session,
@@ -265,24 +315,25 @@ async fn remote(
         // Session acquisition can commit refreshed credentials: retain the ownership lease
         // and await its real completion before allowing a disconnect to remove the account.
         let result = round.await;
+        generation += 1;
         let delay = match result {
             Ok(result) => {
                 let complete = result.coverage == ObservationCoverage::Complete && !result.has_more;
                 let observations = result.observations;
-                for observation in &observations {
-                    if let Some(id) = &observation.remote_id {
-                        if observation.state == FileState::Present {
-                            known.insert(id.clone(), observation.clone());
-                        } else {
-                            known.remove(id);
-                        }
-                    }
-                }
                 health(&handle, Source::Remote, false, !complete, &cancel).await;
                 if !deliver(
                     &detectors,
                     &handle,
-                    observations.into_iter().map(Observation::Remote).collect(),
+                    vec![capture(
+                        &config,
+                        generation,
+                        if result.has_more && result.coverage == ObservationCoverage::Complete {
+                            ObservationCoverage::Partial
+                        } else {
+                            result.coverage
+                        },
+                        CaptureEntries::Remote(observations),
+                    )],
                     &cancel,
                 )
                 .await
@@ -301,20 +352,19 @@ async fn remote(
             Err(_) => {
                 health(&handle, Source::Remote, false, true, &cancel).await;
                 if !invalidated {
-                    let missing = known
-                        .values()
-                        .cloned()
-                        .map(|mut data| {
-                            data.state = FileState::Unavailable;
-                            data.coverage = ObservationCoverage::Unavailable;
-                            data.observed_at = super::observation::scanner::now();
-                            data.checksum = Evidence::Unavailable;
-                            data.version = Evidence::Unavailable;
-                            data.capabilities = Evidence::Unavailable;
-                            Observation::Remote(data)
-                        })
-                        .collect();
-                    if !deliver(&detectors, &handle, missing, &cancel).await {
+                    if !deliver(
+                        &detectors,
+                        &handle,
+                        vec![capture(
+                            &config,
+                            generation,
+                            ObservationCoverage::Unavailable,
+                            CaptureEntries::Remote(Vec::new()),
+                        )],
+                        &cancel,
+                    )
+                    .await
+                    {
                         break;
                     }
                     invalidated = true;
@@ -329,4 +379,23 @@ async fn remote(
     if !cancel.is_cancelled() && !handle.is_finished() {
         failed(&handle, Source::Remote, &cancel).await;
     }
+}
+
+fn capture(
+    config: &OrchestratorConfig,
+    generation: u64,
+    coverage: ObservationCoverage,
+    entries: CaptureEntries,
+) -> Observation {
+    Observation::Capture(Box::new(ScopeCapture {
+        account_id: config.roots.account_id.clone(),
+        provider_id: config.provider_id.clone(),
+        sync_root_id: config.sync_root_id.clone(),
+        local_root: config.roots.local_root.clone(),
+        remote_root_id: config.roots.remote_root_id.clone(),
+        generation,
+        coverage,
+        observed_at: super::observation::scanner::now(),
+        entries,
+    }))
 }

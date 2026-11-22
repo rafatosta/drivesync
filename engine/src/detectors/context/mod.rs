@@ -1,6 +1,7 @@
 //! Consolidates one normalized observation with persisted facts into an Analyzer-ready file.
 
 mod cache;
+mod capture;
 mod models;
 
 use crate::{
@@ -26,6 +27,8 @@ pub(crate) struct Context {
     inventory: Inventory,
     config: ContextConfig,
     cache: std::sync::Mutex<cache::Cache>,
+    captures: std::sync::Mutex<capture::Captures>,
+    rounds: std::sync::Mutex<()>,
 }
 
 impl Context {
@@ -49,13 +52,30 @@ impl Context {
             inventory,
             config,
             cache: std::sync::Mutex::new(cache::Cache::default()),
+            captures: std::sync::Mutex::new(capture::Captures::default()),
+            rounds: std::sync::Mutex::new(()),
         })
     }
 
+    /// Consumes only normalized observations; a completed scope can recheck many known items.
+    pub(crate) fn consolidate(&self, observation: Observation) -> Result<Vec<File>, ContextError> {
+        match observation {
+            Observation::Capture(capture) => self.build_capture(*capture),
+            observation => self.build(observation).map(|file| vec![file]),
+        }
+    }
+
     /// Consolidates one observation without inferring missing evidence or choosing an action.
-    pub(crate) fn build(&self, observation: Observation) -> Result<File, ContextError> {
+    fn build(&self, observation: Observation) -> Result<File, ContextError> {
+        let mut file = self.build_item(observation)?;
+        self.enrich(&mut file)?;
+        Ok(file)
+    }
+
+    fn build_item(&self, observation: Observation) -> Result<File, ContextError> {
         let (sync_root_id, local, remote, observations, remote_id, lookup_local_identity, path) =
             match observation {
+                Observation::Capture(_) => return Err(ContextError::InvalidCapture),
                 Observation::Local { source, data } => {
                     self.validate_scope(&data.sync_root_id)?;
                     validate_local_paths(&data)?;
@@ -196,6 +216,7 @@ impl Context {
             prior_conflict,
             initial_association_authorized: self.config.initial_association_authorized,
             inventory_revision,
+            association_candidates: Vec::new(),
         };
         if let Ok(mut cache) = self.cache.lock() {
             cache.consolidate(&mut file);
@@ -335,6 +356,8 @@ fn unknown_remote_state() -> RemoteState {
 pub(crate) enum ContextError {
     /// A required root or configured identity is empty or malformed.
     InvalidConfiguration,
+    /// A capture is malformed, out of order or cannot be represented safely.
+    InvalidCapture,
     /// The configured Inventory could not be opened.
     InventoryUnavailable,
     /// Observation account, provider, or sync root differs from this Context.
@@ -353,3 +376,6 @@ impl std::error::Error for ContextError {}
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod capture_tests;

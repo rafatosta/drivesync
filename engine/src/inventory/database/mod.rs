@@ -47,6 +47,47 @@ impl Database {
         lookup::lookup(self, request)
     }
 
+    /// Enumerates a consistent scoped view, including unseen and pending items.
+    pub(super) fn enumerate(
+        &self,
+        query: models::InventoryScopeQuery,
+    ) -> Result<Vec<models::InventorySnapshot>, models::InventoryError> {
+        if query.account_id != self.account_id || query.sync_root_id.0.trim().is_empty() {
+            return Err(models::InventoryError::InvalidConfiguration);
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT snapshot_json, revision, item_id FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 ORDER BY item_id"
+        ).map_err(|_| models::InventoryError::Unavailable)?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![query.account_id.0, query.sync_root_id.0],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| models::InventoryError::Unavailable)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (json, revision, item_id) = row.map_err(|_| models::InventoryError::Unavailable)?;
+            let mut snapshot: models::InventorySnapshot =
+                serde_json::from_str(&json).map_err(|_| models::InventoryError::Unavailable)?;
+            if snapshot.identity.account_id != query.account_id
+                || snapshot.identity.sync_root_id != query.sync_root_id
+                || snapshot.identity.item_id.as_ref().map(|id| &id.0) != Some(&item_id)
+                || revision <= 0
+            {
+                return Err(models::InventoryError::Unavailable);
+            }
+            snapshot.revision = revision as u64;
+            result.push(snapshot);
+        }
+        Ok(result)
+    }
+
     /// Applies one write in an immediate SQLite transaction.
     pub(super) fn write(&mut self, request: InventoryWrite) -> InventoryWriteResult {
         write::write(self, request)
