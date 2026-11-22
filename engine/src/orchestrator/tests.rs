@@ -138,6 +138,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
     let (stop, rx) = watch::channel(false);
     (
         Orchestrator {
+            local_refresh: Arc::new(Notify::new()),
             config,
             operator,
             status,

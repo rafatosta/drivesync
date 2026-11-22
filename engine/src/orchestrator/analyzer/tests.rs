@@ -304,3 +304,94 @@ fn proven_concurrent_equivalence_confirms_baseline_while_noop_has_no_write_plan(
     unchanged.remote.checksum = Evidence::Unavailable;
     assert!(analyze(&unchanged).operations.is_empty());
 }
+
+fn initial_remote(directory: bool, registered: bool) -> File {
+    let mut f = fixture();
+    f.baseline = Baseline {
+        state: BaselineState::NeverSynced,
+        local: None,
+        remote: None,
+        confirmed_at: None,
+        projection: None,
+    };
+    f.local.state = FileState::Absent;
+    f.local.identity = Evidence::NotCollected;
+    f.identity.local_identity = Evidence::NotCollected;
+    f.local.checksum = Evidence::NotCollected;
+    f.remote.checksum = checksum(&"a".repeat(64));
+    f.environment.destination_local_parent = f.local.parent.clone();
+    f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("parent-a".into()));
+    f.remote.parents = Evidence::Known(vec![RemoteId("parent-a".into())]);
+    f.environment.destination_local_occupied = Evidence::Known(false);
+    f.environment.destination_remote_matches = Evidence::Known(vec![RemoteId("remote-a".into())]);
+    if directory {
+        f.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+    }
+    if !registered {
+        f.identity.item_id = None;
+        f.inventory_lookup = InventoryLookupStatus::NotFound;
+        f.inventory_revision = None;
+    }
+    f
+}
+
+#[test]
+fn initial_remote_plans_register_before_materializing_and_resume_registered_absence() {
+    for directory in [false, true] {
+        for registered in [false, true] {
+            let f = initial_remote(directory, registered);
+            let d = analyze(&f);
+            assert_eq!(d.status, DecisionStatus::Ready, "{}", d.reason);
+            assert_eq!(d.operations.len(), if registered { 1 } else { 2 });
+            if !registered {
+                assert_eq!(d.operations[0].action, OperationAction::RegisterIdentity);
+            }
+            let op = d.operations.last().unwrap();
+            assert_eq!(
+                op.action,
+                if directory {
+                    OperationAction::CreateLocalDirectory
+                } else {
+                    OperationAction::Download
+                }
+            );
+            assert_eq!(op.depends_on, if registered { vec![] } else { vec![1] });
+            assert_eq!(
+                op.preconditions.as_ref().unwrap().destination_free,
+                Evidence::Known(true)
+            );
+        }
+    }
+}
+
+#[test]
+fn initial_remote_planning_rejects_incomplete_parent_collision_and_binary_evidence() {
+    for case in 0..9 {
+        let mut f = initial_remote(false, false);
+        match case {
+            0 => f.environment.destination_local_parent = Evidence::NotCollected,
+            1 => f.environment.destination_local_occupied = Evidence::Known(true),
+            2 => f.observations.local_coverage = ObservationCoverage::Partial,
+            3 => f.remote.checksum = Evidence::NotCollected,
+            4 => f.remote.checksum = checksum("malformed"),
+            5 => f.remote.size = Evidence::Unavailable,
+            6 => f.remote.capabilities = Evidence::NotCollected,
+            7 => {
+                f.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into())
+            }
+            _ => {
+                f.environment.destination_remote_matches = Evidence::Known(vec![
+                    RemoteId("remote-a".into()),
+                    RemoteId("duplicate".into()),
+                ])
+            }
+        }
+        assert!(
+            analyze(&f).operations.iter().all(|op| !matches!(
+                op.action,
+                OperationAction::Download | OperationAction::CreateLocalDirectory
+            )),
+            "case {case}"
+        );
+    }
+}

@@ -239,7 +239,11 @@ async fn local(
                 break;
             }
         }
-        sleep(Duration::from_secs(2), &cancel).await;
+        tokio::select! {
+            _ = cancelled(&cancel) => {},
+            _ = handle.local_refresh() => {},
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+        }
     }
     if !cancel.is_cancelled() && !handle.is_finished() {
         failed(&handle, Source::Local, &cancel).await;

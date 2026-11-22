@@ -121,6 +121,24 @@ impl PersistingOperator {
         else {
             return None;
         };
+        let parent = self.confirmed_parent(local_parent, remote_parents)?;
+        Some((
+            Baseline {
+                state: BaselineState::Synced,
+                local: Some(local.clone()),
+                remote: Some(remote.clone()),
+                confirmed_at: Some(now()),
+                projection: Some(ProjectionKind::Native),
+            },
+            parent,
+        ))
+    }
+    /// Initial child effects require an existing confirmed parent association before dispatch.
+    fn confirmed_parent(
+        &self,
+        local_parent: &std::path::Path,
+        remote_parents: &[RemoteId],
+    ) -> Option<Option<ParentAssociation>> {
         if remote_parents.len() != 1 {
             return None;
         }
@@ -135,7 +153,7 @@ impl PersistingOperator {
                 item_id: None,
                 remote_id: Some(remote_parents[0].clone()),
                 local_identity: Evidence::NotCollected,
-                local_path: Some(local_parent.clone()),
+                local_path: Some(local_parent.to_path_buf()),
             });
             if lookup.status != InventoryLookupStatus::Found {
                 return None;
@@ -147,8 +165,16 @@ impl PersistingOperator {
                     current.kind == expected.kind
                         && current.identity == snapshot.identity.local_identity
                 })
-                || snapshot.local_path.as_ref() != Some(local_parent)
+                || snapshot.local_path.as_deref() != Some(local_parent)
                 || snapshot.baseline.state != BaselineState::Synced
+                || snapshot.pending_operations.iter().any(|op| {
+                    matches!(
+                        op.state,
+                        OperationState::Pending
+                            | OperationState::Running
+                            | OperationState::AppliedUnconfirmed
+                    )
+                })
             {
                 return None;
             }
@@ -156,19 +182,10 @@ impl PersistingOperator {
                 item_id: snapshot.identity.item_id?,
                 revision: snapshot.revision,
                 remote_id: remote_parents[0].clone(),
-                local_path: local_parent.clone(),
+                local_path: local_parent.to_path_buf(),
             })
         };
-        Some((
-            Baseline {
-                state: BaselineState::Synced,
-                local: Some(local.clone()),
-                remote: Some(remote.clone()),
-                confirmed_at: Some(now()),
-                projection: Some(ProjectionKind::Native),
-            },
-            parent,
-        ))
+        Some(parent)
     }
     #[cfg(test)]
     fn baseline(&self, effect: &AppliedEffect) -> Option<Baseline> {

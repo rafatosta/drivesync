@@ -118,7 +118,9 @@ snapshots; Operations must still revalidate preconditions.
 New same-name local and remote files are not associated by this cache. Current tree projections
 only gather candidate pairs; duplicates remain explicit candidates/collisions. Directory
 associations from Inventory resolve destination parents in either direction; unassociated
-nested parents remain unresolved until explicit parent association is confirmed. No source
+nested parents remain unresolved until their association is confirmed by adoption or a
+successful initial creation. Only Synced directory parents without active uncertain operations
+resolve child destinations. No source
 or Context writes an association or baseline. [Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) now
 provides Operations-based registration and authorized adoption; ambiguous candidates,
 unresolved moves/destinations and uncertain operations still defer. This step makes observation functional; it does not claim complete
@@ -137,3 +139,7 @@ identities or baseline rewrites. It does not claim installed GUI or portal accep
 [Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) separately validates initial-effect recovery in a
 new real-account Engine process. It introduces neither the initial synchronization planner nor
 permission to associate preexisting items implicitly.
+
+[Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) adds initial remote directory/download plans.
+Confirmed directory publication wakes the local source immediately; a fresh capture re-evaluates
+remote children without requiring an external filesystem edit or additional remote change.

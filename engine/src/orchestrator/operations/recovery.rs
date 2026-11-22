@@ -46,6 +46,18 @@ impl PersistingOperator {
         &self,
         r: &ExecuteOperationRequest,
     ) -> Result<RecoveryRecord, OperatorError> {
+        if matches!(
+            r.operation.action,
+            OperationAction::CreateLocalDirectory | OperationAction::Download
+        ) {
+            let (Evidence::Known(local_parent), Evidence::Known(remote_parents)) =
+                (&r.local.parent, &r.remote.parents)
+            else {
+                return Err(filesystem::stale());
+            };
+            self.confirmed_parent(local_parent, remote_parents)
+                .ok_or_else(filesystem::stale)?;
+        }
         let reserved = self.remote.reserve(&self.config, r).await?;
         record(&self.config, r, &self.filesystem, reserved)
     }

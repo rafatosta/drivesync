@@ -86,7 +86,10 @@ Step 9 now starts functional observation sources and joins current sides only th
 Inventory identity. Partial sources suspend execution admission. See [source behavior and
 limits](OBSERVATION_SOURCES.md). [Functional correction Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md)
 adds atomic identity registration, authorized adoption and baseline confirmation. Unilateral
-registration does not confirm convergence or create a transfer plan. Unknown counterparts,
+registration alone does not confirm convergence. [Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md)
+now adds initial remote directory/download plans after registration and requires confirmed
+parents before child dispatch. A directory receipt requests a fresh local source round to
+re-evaluate waiting children, without an external edit. Unknown counterparts,
 ambiguous adoption, missing authorization and unresolved destinations still block explicitly.
 Orchestrator does not duplicate Context or Analyzer logic to bypass those limitations.
 
@@ -94,3 +97,5 @@ Coordinator tests use the real Analyzer and controlled Operator receipts. Connec
 tests use synthetic OAuth, an isolated vault, temporary local data, and loopback HTTP. These
 checks do not establish live Google Drive, portal, or installed-Flatpak acceptance. The Stage 2
 report separately records real test-account Engine checks inside a Devel Flatpak build sandbox.
+Stage 4 additionally records real three-level initial downloads and another Engine process
+reopening the same scope without duplicate operations or baseline rewrites.

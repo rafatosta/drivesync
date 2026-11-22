@@ -67,7 +67,7 @@ fn directory_metadata() -> String {
 async fn source_server() -> Endpoint {
     endpoint(|_| (200, directory_metadata(), vec![])).await
 }
-fn use_backend(
+pub(super) fn use_backend(
     s: &Sandbox,
     executor: &mut PersistingOperator,
     client: GoogleDriveClient,

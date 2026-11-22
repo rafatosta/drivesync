@@ -274,6 +274,18 @@ impl GoogleOperator {
                     return Err(filesystem::stale());
                 }
                 let mut effect = fs.execute(r, journal)?;
+                if op.action == OperationAction::CreateLocalDirectory {
+                    let after = self
+                        .snapshot(
+                            session,
+                            op.remote_id.as_ref().ok_or_else(filesystem::stale)?,
+                        )
+                        .await
+                        .map_err(OperatorError::uncertain)?;
+                    if after.file.version != source.file.version {
+                        return Err(filesystem::stale().uncertain());
+                    }
+                }
                 effect.remote = Some(normalize(&source.file));
                 return Ok(effect);
             }
@@ -508,21 +520,7 @@ impl GoogleOperator {
                     .await
                     .map_err(read_error)?;
                 let mut temp = fs.temporary()?;
-                let mut digest = Sha256::new();
-                let mut count = 0u64;
-                while let Some(bytes) = stream.body.next_chunk().await.map_err(read_error)? {
-                    count = count
-                        .checked_add(bytes.len() as u64)
-                        .ok_or_else(filesystem::stale)?;
-                    if count > size {
-                        return Err(filesystem::stale());
-                    }
-                    digest.update(&bytes);
-                    temp.write_all(&bytes).map_err(filesystem::error)?;
-                }
-                if count != size || format!("{:x}", digest.finalize()) != expected {
-                    return Err(filesystem::stale());
-                }
+                receive_verified(&mut stream.body, &mut temp, size, expected).await?;
                 let after = self
                     .snapshot(session, op.remote_id.as_ref().unwrap())
                     .await?;
@@ -704,6 +702,31 @@ impl GoogleOperator {
         }
     }
 }
+/// Media must be completely written and verified before the caller can publish its stage.
+async fn receive_verified(
+    stream: &mut GoogleByteStream,
+    output: &mut (impl Write + Send),
+    size: u64,
+    expected: &str,
+) -> Result<(), OperatorError> {
+    let mut digest = Sha256::new();
+    let mut count = 0u64;
+    while let Some(bytes) = stream.next_chunk().await.map_err(read_error)? {
+        count = count
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(filesystem::stale)?;
+        if count > size {
+            return Err(filesystem::stale());
+        }
+        output.write_all(&bytes).map_err(filesystem::error)?;
+        digest.update(&bytes);
+    }
+    if count != size || format!("{:x}", digest.finalize()) != expected {
+        return Err(filesystem::stale());
+    }
+    Ok(())
+}
+
 impl RemoteExecutor for GoogleOperator {
     fn reserve<'a>(
         &'a self,
@@ -874,3 +897,6 @@ mod recovery_tests;
 
 #[cfg(test)]
 mod live_recovery_tests;
+
+#[cfg(test)]
+mod initial_download_tests;

@@ -650,6 +650,9 @@ fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) ->
             );
         }
     }
+    if let Some(plan) = initial_remote_plan(file, validation.clone(), changeset.clone()) {
+        return plan;
+    }
     if file.identity.item_id.is_none() && file.association_candidates.is_empty() && complete(file) {
         let local_only = file.local.state == FileState::Present
             && file.remote.state == FileState::Absent
@@ -678,6 +681,99 @@ fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) ->
         }
     }
     decision(DecisionStatus::Defer,"Initial identity or association requires unambiguous current evidence, matching parents and authorization.",validation,changeset,Vec::new(),ExecutionStatus::NotExecutable,Vec::new())
+}
+
+/// Initial transfer never adopts an existing local replica and requires an already resolved parent.
+fn initial_remote_plan(
+    file: &File,
+    validation: Validation,
+    changeset: Changeset,
+) -> Option<Decision> {
+    if !complete(file)
+        || !file.association_candidates.is_empty()
+        || file.remote.state != FileState::Present
+        || file.remote.trashed != Evidence::Known(false)
+        || file.local.state != FileState::Absent
+        || file.environment.destination_local_occupied != Evidence::Known(false)
+        || !parents_correspond(file)
+        || file.identity.remote_id != file.remote.id
+        || file.environment.destination_remote_matches
+            != Evidence::Known(file.remote.id.iter().cloned().collect())
+    {
+        return None;
+    }
+    file.remote.id.as_ref()?;
+    if known(&file.remote.version)? == 0 {
+        return None;
+    }
+    let path = file.local.path.as_ref()?;
+    let Evidence::Known(name) = &file.remote.name else {
+        return None;
+    };
+    if path.file_name()?.to_str()? != name
+        || path.parent()? != known(&file.environment.destination_local_parent)?
+    {
+        return None;
+    }
+    let action = match known(&file.remote.mime_type)?.as_str() {
+        "application/vnd.google-apps.folder" => OperationAction::CreateLocalDirectory,
+        mime if !mime.starts_with("application/vnd.google-apps.") => {
+            let checksum = known(&file.remote.checksum)?;
+            if checksum.algorithm != "sha256"
+                || checksum.value.len() != 64
+                || !checksum.value.bytes().all(|b| b.is_ascii_hexdigit())
+                || known(&file.remote.size).is_none()
+                || remote_download_capability(file) != Evidence::Known(true)
+            {
+                return None;
+            }
+            OperationAction::Download
+        }
+        _ => return None,
+    };
+    let mut plan = metadata_plan(
+        file,
+        &file.local,
+        &file.remote,
+        OperationAction::RegisterIdentity,
+        validation,
+        changeset,
+    );
+    if plan.status != DecisionStatus::Ready || plan.operations.is_empty() {
+        return None;
+    }
+    if file.identity.item_id.is_some() {
+        plan.operations.clear();
+    }
+    let operation = Operation {
+        step: (plan.operations.len() + 1) as u64,
+        action,
+        item_ref: file
+            .identity
+            .item_id
+            .clone()
+            .or_else(|| file.registration_id.clone())?,
+        depends_on: if plan.operations.is_empty() {
+            Vec::new()
+        } else {
+            vec![1]
+        },
+        remote_id: file.remote.id.clone(),
+        local_path: Some(path.clone()),
+        name: Some(name.clone()),
+        parent: Some(known(&file.environment.destination_local_parent)?),
+        parent_id: Some(known(&file.environment.destination_remote_parent_id)?),
+        preconditions: Some(OperationPreconditions {
+            observed_remote_version: known(&file.remote.version),
+            baseline_remote_version: None,
+            local_unchanged: Evidence::Known(true),
+            remote_unchanged: Evidence::Known(true),
+            destination_free: Evidence::Known(true),
+        }),
+    };
+    plan.operations.push(operation);
+    plan.reason = "Create the absent local replica after identity registration and confirmed parent association.".into();
+    Some(plan)
 }
 
 fn complete(file: &File) -> bool {

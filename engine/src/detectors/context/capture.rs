@@ -271,9 +271,19 @@ impl Context {
                     if local_complete {
                         file.environment.destination_local_occupied =
                             Evidence::Known(local.contains_key(&destination));
-                        if file.identity.item_id.is_none() && !local.contains_key(&destination) {
+                        if !local.contains_key(&destination)
+                            && (file.identity.item_id.is_none()
+                                || (file.baseline.state
+                                    == crate::inventory::models::BaselineState::NeverSynced
+                                    && !matches!(file.identity.local_identity, Evidence::Known(_))))
+                        {
                             file.local.state = FileState::Absent;
-                            file.local.path = Some(destination);
+                            file.local.path = Some(destination.clone());
+                            file.local.name = Evidence::Known(name.clone());
+                            file.local.parent =
+                                Evidence::Known(destination.parent().unwrap().to_path_buf());
+                            file.environment.destination_remote_parent_id =
+                                Evidence::Known(parents[0].clone());
                         }
                     }
                 }
@@ -401,7 +411,16 @@ impl<'a> View<'a> {
             let (Some(l), Some(r)) = (local.get(path), remote.get(id)) else {
                 continue;
             };
-            if l.kind == Evidence::Known(FileKind::Directory)
+            if snapshot.baseline.state == crate::inventory::models::BaselineState::Synced
+                && !snapshot.pending_operations.iter().any(|op| {
+                    matches!(
+                        op.state,
+                        crate::inventory::models::OperationState::Pending
+                            | crate::inventory::models::OperationState::Running
+                            | crate::inventory::models::OperationState::AppliedUnconfirmed
+                    )
+                })
+                && l.kind == Evidence::Known(FileKind::Directory)
                 && matches!((&l.identity,&snapshot.identity.local_identity),(Evidence::Known(a),Evidence::Known(b)) if a == b)
                 && r.state == FileState::Present
                 && r.trashed == Evidence::Known(false)

@@ -8,6 +8,8 @@ Operations do not choose synchronization policy or analyze conflicts. Step 8 now
 identity registration, explicitly authorized adoption, and nested baseline confirmation.
 [Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) persists execution recovery commands and checkpoints
 and reconciles initial creates/transfers before startup admits further work.
+[Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) connects initial remote directory/download plans,
+confirms parent associations before child dispatch, and signals fresh local rounds after publication.
 
 ## Execution and provider selection
 
