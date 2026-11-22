@@ -78,7 +78,7 @@ pub(super) fn use_backend(
         lose_receipt,
     });
 }
-fn pending_record(
+pub(super) fn pending_record(
     executor: &PersistingOperator,
     r: &ExecuteOperationRequest,
     record: RecoveryRecord,
@@ -123,7 +123,7 @@ fn snapshots(executor: &PersistingOperator) -> Vec<InventorySnapshot> {
         })
         .unwrap()
 }
-fn reopen(s: &Sandbox, old: PersistingOperator) -> PersistingOperator {
+pub(super) fn reopen(s: &Sandbox, old: PersistingOperator) -> PersistingOperator {
     PersistingOperator {
         filesystem: Filesystem::open(&old.config.local_root).unwrap(),
         config: old.config.clone(),
@@ -319,6 +319,7 @@ async fn staged_bytes_and_transfer_references_survive_unknown_recovery() {
     .await;
     use_backend(&s, &mut executor, server.client.clone(), false);
     let mut r = request(&executor, OperationAction::Upload);
+    r.operation.parent_id = Some(RemoteId("remote-root".into()));
     r.operation.remote_id = None;
     r.identity.remote_id = None;
     r.remote.id = None;
@@ -624,6 +625,7 @@ async fn source_changes_during_remote_reconciliation_prevent_confirmation() {
     .await;
     use_backend(&s, &mut executor, server.client.clone(), false);
     let mut r = request(&executor, OperationAction::Upload);
+    r.operation.parent_id = Some(RemoteId("remote-root".into()));
     r.operation.remote_id = None;
     r.identity.remote_id = None;
     r.remote.id = None;

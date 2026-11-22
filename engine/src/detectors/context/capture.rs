@@ -310,8 +310,15 @@ impl Context {
                         .get(&(parent_id.clone(), name.clone()))
                         .cloned()
                         .unwrap_or_default();
-                    if matches.is_empty() && file.identity.item_id.is_none() {
+                    if matches.is_empty()
+                        && file.identity.remote_id.is_none()
+                        && file.baseline.state
+                            == crate::inventory::models::BaselineState::NeverSynced
+                    {
                         file.remote.state = FileState::Absent;
+                        file.remote.name = Evidence::Known(name.clone());
+                        file.remote.parents = Evidence::Known(vec![parent_id.clone()]);
+                        file.environment.destination_local_parent = Evidence::Known(parent.clone());
                     }
                     file.environment.destination_remote_matches = Evidence::Known(matches);
                 }

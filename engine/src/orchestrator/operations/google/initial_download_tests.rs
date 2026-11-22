@@ -118,6 +118,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let mut worker = Orchestrator {
         local_refresh: Arc::new(tokio::sync::Notify::new()),
+        remote_refresh: Arc::new(tokio::sync::Notify::new()),
         config: worker_config,
         operator: Box::new(executor),
         status,

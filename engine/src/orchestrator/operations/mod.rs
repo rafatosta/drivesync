@@ -396,6 +396,14 @@ impl Operator for PersistingOperator {
                 error: None,
                 inventory_write: None,
             };
+            let _lease = match self.inventory.execution_lease() {
+                Ok(lease) => lease,
+                Err(_) => {
+                    result.error =
+                        Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
+                    return result;
+                }
+            };
             if let Err(error) = self.validate(&r) {
                 result.error = Some(error.failure());
                 return result;

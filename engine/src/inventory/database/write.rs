@@ -295,7 +295,14 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             else {
                 return false;
             };
-            if operation.state != OperationState::Running {
+            if operation.state != OperationState::Running
+                && !(operation.state == OperationState::AppliedUnconfirmed
+                    && !operation
+                        .applied_effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.verified)
+                    && matches!(checkpoint, super::models::RecoveryCheckpoint::Transfer(_)))
+            {
                 return false;
             }
             let Some(record) = operation.recovery.as_mut() else {

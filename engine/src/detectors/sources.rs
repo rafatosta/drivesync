@@ -378,7 +378,11 @@ async fn remote(
                 Duration::from_secs(15)
             }
         };
-        sleep(delay, &cancel).await;
+        tokio::select! {
+            _ = cancelled(&cancel) => {},
+            _ = handle.remote_refresh() => {},
+            _ = tokio::time::sleep(delay) => {},
+        }
     }
     if !cancel.is_cancelled() && !handle.is_finished() {
         failed(&handle, Source::Remote, &cancel).await;

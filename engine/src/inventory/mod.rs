@@ -43,6 +43,34 @@ impl Inventory {
         })
     }
 
+    /// Holds an OS lease on this account database while Operations dispatches or recovers effects.
+    /// Closing the descriptor releases ownership after cancellation or process exit.
+    pub(crate) fn execution_lease(&self) -> Result<std::fs::File, InventoryError> {
+        use std::os::{
+            fd::AsRawFd,
+            unix::fs::{MetadataExt, OpenOptionsExt},
+        };
+        let database = self.database().map_err(|_| InventoryError::Unavailable)?;
+        let path = database
+            .connection
+            .path()
+            .ok_or(InventoryError::Unavailable)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+            .map_err(|_| InventoryError::Unavailable)?;
+        let meta = file.metadata().map_err(|_| InventoryError::Unavailable)?;
+        if !meta.is_file()
+            || meta.uid() != unsafe { libc::geteuid() }
+            || meta.nlink() != 1
+            || unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0
+        {
+            return Err(InventoryError::Unavailable);
+        }
+        Ok(file)
+    }
+
     /// Returns a conclusive result only when the database and scope were readable.
     pub(crate) fn lookup(&self, request: InventoryLookup) -> InventoryLookupResult {
         if request.account_id != self.account_id {

@@ -10,6 +10,9 @@ identity registration, explicitly authorized adoption, and nested baseline confi
 and reconciles initial creates/transfers before startup admits further work.
 [Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) connects initial remote directory/download plans,
 confirms parent associations before child dispatch, and signals fresh local rounds after publication.
+[Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) adds initial local-to-remote planning and guarded
+continuation of persisted upload sessions from freshly queried server progress. Account database
+leases exclude competing execution/recovery; no expired session is silently replaced.
 
 ## Execution and provider selection
 

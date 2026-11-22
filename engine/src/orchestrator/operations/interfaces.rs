@@ -28,6 +28,18 @@ pub(super) trait RemoteExecutor: Send + Sync {
             RecoveryAssessment::unknown(crate::inventory::models::RecoveryIssue::UnsupportedAction)
         })
     }
+    /// Continue only a persisted upload session after current progress and source validation.
+    fn resume_upload<'a>(
+        &'a self,
+        _: &'a OperatorConfig,
+        _: &'a crate::inventory::models::RecoveryRecord,
+        _: &'a Filesystem,
+        _: &'a dyn ExecutionJournal,
+    ) -> Pin<Box<dyn Future<Output = RecoveryAssessment> + Send + 'a>> {
+        Box::pin(async {
+            RecoveryAssessment::unknown(crate::inventory::models::RecoveryIssue::TransferIncomplete)
+        })
+    }
     /// Reserve a recoverable remote create identity before committing dispatch intent.
     fn reserve<'a>(
         &'a self,

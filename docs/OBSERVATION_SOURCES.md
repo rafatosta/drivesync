@@ -143,3 +143,7 @@ permission to associate preexisting items implicitly.
 [Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) adds initial remote directory/download plans.
 Confirmed directory publication wakes the local source immediately; a fresh capture re-evaluates
 remote children without requiring an external filesystem edit or additional remote change.
+
+[Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) also wakes remote observation after verified remote
+creation. Complete collision-free captures prove absence for registered NeverSynced local items
+without a remote ID; partial/unavailable captures cannot authorize a create or upload.

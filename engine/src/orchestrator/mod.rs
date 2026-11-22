@@ -39,6 +39,7 @@ pub(crate) struct OrchestratorHandle {
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
     local_refresh: Arc<tokio::sync::Notify>,
+    remote_refresh: Arc<tokio::sync::Notify>,
 }
 impl Drop for OrchestratorHandle {
     fn drop(&mut self) {
@@ -49,6 +50,9 @@ impl OrchestratorHandle {
     /// A confirmed parent publication requests a fresh local round for waiting children.
     pub(crate) async fn local_refresh(&self) {
         self.local_refresh.notified().await;
+    }
+    pub(crate) async fn remote_refresh(&self) {
+        self.remote_refresh.notified().await;
     }
     pub(crate) fn config(&self) -> &OrchestratorConfig {
         &self.config
@@ -144,8 +148,10 @@ fn start(
     let (finished, finished_rx) = watch::channel(false);
     let (files, files_rx) = mpsc::channel(capacity);
     let local_refresh = Arc::new(tokio::sync::Notify::new());
+    let remote_refresh = Arc::new(tokio::sync::Notify::new());
     let mut worker = Orchestrator {
         local_refresh: local_refresh.clone(),
+        remote_refresh: remote_refresh.clone(),
         config: config.clone(),
         operator,
         status: status.clone(),
@@ -175,6 +181,7 @@ fn start(
         finished: finished_rx,
         status: status_rx,
         local_refresh,
+        remote_refresh,
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -188,6 +195,7 @@ enum Command {
 }
 struct Orchestrator {
     local_refresh: Arc<tokio::sync::Notify>,
+    remote_refresh: Arc<tokio::sync::Notify>,
     config: OrchestratorConfig,
     operator: Box<dyn Operator>,
     status: watch::Sender<SynchronizationStatus>,
@@ -575,6 +583,12 @@ impl Orchestrator {
                 completed.push(step);
                 if expected_action == OperationAction::CreateLocalDirectory {
                     self.local_refresh.notify_one();
+                }
+                if matches!(
+                    expected_action,
+                    OperationAction::CreateRemoteDirectory | OperationAction::Upload
+                ) {
+                    self.remote_refresh.notify_one();
                 }
             } else {
                 let kind = match result.status {

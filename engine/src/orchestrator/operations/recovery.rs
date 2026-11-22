@@ -48,14 +48,26 @@ impl PersistingOperator {
     ) -> Result<RecoveryRecord, OperatorError> {
         if matches!(
             r.operation.action,
-            OperationAction::CreateLocalDirectory | OperationAction::Download
+            OperationAction::CreateLocalDirectory
+                | OperationAction::Download
+                | OperationAction::CreateRemoteDirectory
+                | OperationAction::Upload
         ) {
-            let (Evidence::Known(local_parent), Evidence::Known(remote_parents)) =
-                (&r.local.parent, &r.remote.parents)
-            else {
+            let remote_parents = if matches!(
+                r.operation.action,
+                OperationAction::Upload | OperationAction::CreateRemoteDirectory
+            ) {
+                r.operation.parent_id.iter().cloned().collect::<Vec<_>>()
+            } else {
+                match &r.remote.parents {
+                    Evidence::Known(parents) => parents.clone(),
+                    _ => return Err(filesystem::stale()),
+                }
+            };
+            let Evidence::Known(local_parent) = &r.local.parent else {
                 return Err(filesystem::stale());
             };
-            self.confirmed_parent(local_parent, remote_parents)
+            self.confirmed_parent(local_parent, &remote_parents)
                 .ok_or_else(filesystem::stale)?;
         }
         let reserved = self.remote.reserve(&self.config, r).await?;
@@ -97,6 +109,10 @@ impl PersistingOperator {
     }
     async fn recover_all(&self) -> Result<Vec<RecoveryResult>, OperatorError> {
         let _guard = self.gate.lock().await;
+        let _lease = self
+            .inventory
+            .execution_lease()
+            .map_err(|_| OperatorError::new(OperatorErrorKind::Unavailable))?;
         let snapshots = self
             .inventory
             .enumerate(InventoryScopeQuery {
@@ -128,6 +144,7 @@ impl PersistingOperator {
                         .clone()
                         .or(pending.remote_id.clone()),
                 };
+                let mut revision = Some(snapshot.revision);
                 let mut assessment = match pending.recovery.as_ref() {
                     None => RecoveryAssessment::unknown(RecoveryIssue::MissingCommand),
                     Some(record)
@@ -152,6 +169,52 @@ impl PersistingOperator {
                         }
                     },
                 };
+                if assessment.issue == Some(RecoveryIssue::TransferIncomplete)
+                    && (pending.state == OperationState::Running
+                        || (pending.state == OperationState::AppliedUnconfirmed
+                            && !pending
+                                .applied_effect
+                                .as_ref()
+                                .is_some_and(|effect| effect.verified)))
+                {
+                    if let Some(record) = pending
+                        .recovery
+                        .as_ref()
+                        .filter(|r| r.command.action == OperationAction::Upload)
+                    {
+                        let parent = match &record.local.parent {
+                            Evidence::Known(parent) => self.confirmed_parent(
+                                parent,
+                                &record.command.parent_id.iter().cloned().collect::<Vec<_>>(),
+                            ),
+                            _ => None,
+                        };
+                        if parent.is_some() {
+                            let request = ExecuteOperationRequest {
+                                operation: record.command.clone(),
+                                execution_id: record.execution_id.clone(),
+                                expected_revision: Some(snapshot.revision),
+                                identity: record.identity.clone(),
+                                local: record.local.clone(),
+                                remote: record.remote.clone(),
+                                completed_steps: record.completed_steps.clone(),
+                            };
+                            let journal = Journal::new(
+                                self.inventory.clone(),
+                                request,
+                                snapshot.revision,
+                                (**record).clone(),
+                            );
+                            assessment = self
+                                .remote
+                                .resume_upload(&self.config, record, &self.filesystem, &journal)
+                                .await;
+                            revision = journal.revision();
+                        } else {
+                            assessment = RecoveryAssessment::unknown(RecoveryIssue::ParentChanged);
+                        }
+                    }
+                }
                 if assessment.outcome != ExecutionEffect::Unknown {
                     if let Some(record) = &pending.recovery {
                         if let Err(issue) = self.validate_recovery(record) {
@@ -172,7 +235,7 @@ impl PersistingOperator {
                     operation_id: pending.id.clone(),
                     item_id: pending.item_id.clone(),
                     identity: identity.clone(),
-                    expected_revision: Some(snapshot.revision),
+                    expected_revision: revision,
                     effect: PersistedEffect::RecoveryObserved {
                         outcome: assessment.outcome,
                         issue: assessment.issue,

@@ -507,6 +507,7 @@ pub(crate) enum RecoveryIssue {
     DestinationChanged,
     RemoteInconclusive,
     TransferIncomplete,
+    TransferExpired,
     NotDispatched,
     InventoryConflict,
 }

@@ -1,5 +1,10 @@
 //! Google specialization using the preserved provider API and private Accounts sessions.
 mod recovery;
+mod resume;
+struct UploadCursor {
+    session: GoogleUploadSession,
+    offset: u64,
+}
 use super::journal::ExecutionJournal;
 use super::{
     filesystem::{self, Filesystem},
@@ -572,7 +577,9 @@ impl GoogleOperator {
             op.action,
             OperationAction::Upload | OperationAction::UpdateRemoteContent
         ) {
-            verified=local.as_ref().is_some_and(|l| matches!((&l.checksum,&remote.checksum),(Evidence::Known(a),Evidence::Known(b)) if a==b));
+            verified = local
+                .as_ref()
+                .is_some_and(|l| crate::orchestrator::evidence::equivalent(l, &remote));
         }
         Ok(AppliedEffect {
             remote_id: remote.id.clone(),
@@ -595,7 +602,8 @@ impl GoogleOperator {
             .local_path
             .as_deref()
             .ok_or_else(filesystem::invalid)?;
-        let mut input = fs.read(path)?;
+        fs.check(&r.local)?;
+        let input = fs.read(path)?;
         let stamp = filesystem::stamp(&input.metadata().map_err(filesystem::error)?);
         let total = stamp.2;
         let upload = if r.operation.action == OperationAction::UpdateRemoteContent {
@@ -644,7 +652,46 @@ impl GoogleOperator {
                     confirmed_offset: 0,
                 }))?;
         }
-        let mut offset = 0;
+        self.transfer(
+            session,
+            r,
+            fs,
+            UploadCursor {
+                session: upload,
+                offset: 0,
+            },
+            etag,
+            journal,
+        )
+        .await
+    }
+    async fn transfer(
+        &self,
+        session: &GoogleSession,
+        r: &ExecuteOperationRequest,
+        fs: &Filesystem,
+        cursor: UploadCursor,
+        etag: Option<&str>,
+        journal: Option<&dyn ExecutionJournal>,
+    ) -> Result<GoogleFile, OperatorError> {
+        use std::io::{Seek, SeekFrom};
+        fs.check(&r.local).map_err(OperatorError::uncertain)?;
+        let mut input = fs.read(
+            r.operation
+                .local_path
+                .as_deref()
+                .ok_or_else(filesystem::invalid)?,
+        )?;
+        let stamp = filesystem::stamp(&input.metadata().map_err(filesystem::error)?);
+        let total = stamp.2;
+        let upload = cursor.session;
+        let mut offset = cursor.offset;
+        if upload.total_bytes != Some(total) || offset > total {
+            return Err(filesystem::stale().uncertain());
+        }
+        input
+            .seek(SeekFrom::Start(offset))
+            .map_err(filesystem::error)?;
         loop {
             let remaining = (total - offset).min(256 * 1024) as usize;
             let mut bytes = vec![0; remaining];
@@ -667,6 +714,9 @@ impl GoogleOperator {
                 self.client.upload_chunk(session, &upload, chunk).await
             }
             .map_err(mutation_error)?;
+            if filesystem::stamp(&input.metadata().map_err(filesystem::error)?) != stamp {
+                return Err(filesystem::stale().uncertain());
+            }
             offset += remaining as u64;
             match progress {
                 GoogleUploadProgress::Complete { file } if offset == total => {
@@ -728,6 +778,32 @@ async fn receive_verified(
 }
 
 impl RemoteExecutor for GoogleOperator {
+    fn resume_upload<'a>(
+        &'a self,
+        config: &'a OperatorConfig,
+        record: &'a RecoveryRecord,
+        fs: &'a Filesystem,
+        journal: &'a dyn ExecutionJournal,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RecoveryAssessment> + Send + 'a>> {
+        Box::pin(async move {
+            let session = match self
+                .accounts
+                .acquire_session(AcquireSessionRequest {
+                    account_id: config.account_id.clone(),
+                })
+                .await
+            {
+                Ok(session) => session,
+                Err(_) => {
+                    return RecoveryAssessment::unknown(
+                        crate::inventory::models::RecoveryIssue::RemoteInconclusive,
+                    )
+                }
+            };
+            self.continue_upload(config, record, fs, journal, session.session.google())
+                .await
+        })
+    }
     fn reserve<'a>(
         &'a self,
         config: &'a OperatorConfig,
@@ -900,3 +976,9 @@ mod live_recovery_tests;
 
 #[cfg(test)]
 mod initial_download_tests;
+
+#[cfg(test)]
+mod initial_upload_tests;
+
+#[cfg(test)]
+mod live_upload_recovery_tests;

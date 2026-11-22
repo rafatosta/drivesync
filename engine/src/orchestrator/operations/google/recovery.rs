@@ -152,10 +152,14 @@ impl GoogleOperator {
                         session_uri: transfer.session_uri.clone(),
                         total_bytes: Some(transfer.total_bytes),
                     };
-                    if let Ok(GoogleUploadProgress::Incomplete { .. }) =
-                        self.client.query_upload_progress(session, &upload).await
-                    {
-                        return RecoveryAssessment::unknown(RecoveryIssue::TransferIncomplete);
+                    match self.client.query_upload_progress(session, &upload).await {
+                        Ok(GoogleUploadProgress::Incomplete { .. }) => {
+                            return RecoveryAssessment::unknown(RecoveryIssue::TransferIncomplete)
+                        }
+                        Err(error) if error.kind == GoogleApiError::ExpiredUploadSession => {
+                            return RecoveryAssessment::unknown(RecoveryIssue::TransferExpired)
+                        }
+                        _ => {}
                     }
                 }
                 RecoveryAssessment::unknown(RecoveryIssue::RemoteInconclusive)

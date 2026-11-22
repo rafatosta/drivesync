@@ -62,7 +62,7 @@ fn opaque() -> String {
         .unwrap();
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-fn scope(account: &AccountId, remote: &RemoteId, local: &std::path::Path) -> SyncRootId {
+pub(super) fn scope(account: &AccountId, remote: &RemoteId, local: &std::path::Path) -> SyncRootId {
     let mut hash = Sha256::new();
     for bytes in [
         account.0.as_bytes(),
@@ -74,7 +74,7 @@ fn scope(account: &AccountId, remote: &RemoteId, local: &std::path::Path) -> Syn
     }
     SyncRootId(format!("{:x}", hash.finalize()))
 }
-fn sync_directory(accounts: &std::path::Path) -> PathBuf {
+pub(super) fn sync_directory(accounts: &std::path::Path) -> PathBuf {
     let mut name = accounts.file_name().unwrap().to_os_string();
     name.push(".synchronization");
     accounts.with_file_name(name)
@@ -98,7 +98,7 @@ fn absent(path: &str, directory: bool) -> LocalState {
         capabilities: Evidence::NotCollected,
     }
 }
-fn absent_remote() -> RemoteState {
+pub(super) fn absent_remote() -> RemoteState {
     RemoteState {
         state: FileState::Absent,
         id: None,
@@ -113,7 +113,7 @@ fn absent_remote() -> RemoteState {
         capabilities: Evidence::NotCollected,
     }
 }
-fn fixture_request(
+pub(super) fn fixture_request(
     executor: &PersistingOperator,
     path: &str,
     action: OperationAction,
@@ -165,7 +165,7 @@ fn fixture_request(
         completed_steps: Vec::new(),
     }
 }
-fn seed_identity(executor: &PersistingOperator, r: &mut ExecuteOperationRequest) {
+pub(super) fn seed_identity(executor: &PersistingOperator, r: &mut ExecuteOperationRequest) {
     let receipt = executor.write(
         r,
         Some(0),

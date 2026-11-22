@@ -395,3 +395,81 @@ fn initial_remote_planning_rejects_incomplete_parent_collision_and_binary_eviden
         );
     }
 }
+
+fn initial_local(directory: bool, registered: bool) -> File {
+    let mut file = fixture();
+    file.baseline = Baseline {
+        state: BaselineState::NeverSynced,
+        local: None,
+        remote: None,
+        confirmed_at: None,
+        projection: None,
+    };
+    file.identity.remote_id = None;
+    file.remote.id = None;
+    file.remote.state = FileState::Absent;
+    file.remote.version = Evidence::NotCollected;
+    file.local.checksum = checksum(&"b".repeat(64));
+    file.environment.destination_remote_parent_id = Evidence::Known(RemoteId("parent-a".into()));
+    file.remote.parents = Evidence::Known(vec![RemoteId("parent-a".into())]);
+    file.environment.destination_local_parent = file.local.parent.clone();
+    file.environment.destination_remote_matches = Evidence::Known(Vec::new());
+    if directory {
+        file.local.kind = Evidence::Known(FileKind::Directory);
+    }
+    if !registered {
+        file.identity.item_id = None;
+        file.inventory_revision = None;
+        file.inventory_lookup = InventoryLookupStatus::NotFound;
+    }
+    file
+}
+#[test]
+fn initial_upload_plans_register_before_create_and_resume_registered_items() {
+    for directory in [false, true] {
+        for registered in [false, true] {
+            let d = analyze(&initial_local(directory, registered));
+            assert_eq!(d.status, DecisionStatus::Ready, "{}", d.reason);
+            assert_eq!(d.operations.len(), if registered { 1 } else { 2 });
+            let last = d.operations.last().unwrap();
+            assert_eq!(
+                last.action,
+                if directory {
+                    OperationAction::CreateRemoteDirectory
+                } else {
+                    OperationAction::Upload
+                }
+            );
+            assert_eq!(last.depends_on, if registered { vec![] } else { vec![1] });
+            assert_eq!(
+                last.preconditions.as_ref().unwrap().destination_free,
+                Evidence::Known(true)
+            );
+        }
+    }
+}
+#[test]
+fn initial_upload_requires_complete_absence_and_stable_readable_binary_evidence() {
+    for case in 0..7 {
+        let mut f = initial_local(false, false);
+        match case {
+            0 => {
+                f.environment.destination_remote_matches =
+                    Evidence::Known(vec![RemoteId("collision".into())])
+            }
+            1 => f.observations.remote_coverage = ObservationCoverage::Partial,
+            2 => f.environment.destination_remote_parent_id = Evidence::NotCollected,
+            3 => f.local.checksum = checksum("bad"),
+            4 => f.local.size = Evidence::Unavailable,
+            5 => f.local.capabilities = Evidence::NotCollected,
+            _ => f.remote.state = FileState::Unknown,
+        }
+        assert!(
+            analyze(&f).operations.iter().all(|op| !matches!(
+                op.action,
+                OperationAction::Upload | OperationAction::CreateRemoteDirectory
+            )),
+            "case {case}"
+        );
+    }
+}

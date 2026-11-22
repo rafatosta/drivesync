@@ -99,3 +99,8 @@ checks do not establish live Google Drive, portal, or installed-Flatpak acceptan
 report separately records real test-account Engine checks inside a Devel Flatpak build sandbox.
 Stage 4 additionally records real three-level initial downloads and another Engine process
 reopening the same scope without duplicate operations or baseline rewrites.
+
+[Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) adds initial remote creation/upload plans. A verified
+remote creation wakes the remote producer; the resulting current capture resolves waiting
+children against confirmed parent IDs. Startup recovery can continue a validated incomplete
+upload session under exclusive account execution ownership and optimistic checkpoints.
