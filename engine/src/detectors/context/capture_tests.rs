@@ -95,6 +95,8 @@ fn seed(context: &Context, local: LocalObservation, remote: RemoteObservation) {
         remote_id: identity.remote_id.clone(),
         applied_effect: None,
         idempotency_key: None,
+        recovery: None,
+        recovery_diagnostic: None,
         created_at: crate::models::DateTime { unix_millis: 1 },
         updated_at: crate::models::DateTime { unix_millis: 1 },
     };

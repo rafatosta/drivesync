@@ -1,9 +1,12 @@
 //! Google specialization using the preserved provider API and private Accounts sessions.
+mod recovery;
+use super::journal::ExecutionJournal;
 use super::{
     filesystem::{self, Filesystem},
     interfaces::{EffectFuture, RemoteExecutor},
     models::*,
 };
+use crate::inventory::models::{RecoveryCheckpoint, RecoveryRecord, TransferReference};
 use crate::{
     accounts::{Accounts, AcquireSessionRequest},
     inventory::models::RemoteState,
@@ -16,7 +19,7 @@ use std::{
     io::{Read, Write},
 };
 const FIELDS: &str =
-    "id,name,mimeType,parents,size,sha256Checksum,version,trashed,capabilities,webViewLink";
+    "id,name,mimeType,parents,size,sha256Checksum,version,trashed,capabilities,webViewLink,appProperties";
 const FOLDER: &str = "application/vnd.google-apps.folder";
 pub(super) struct GoogleOperator {
     accounts: Accounts,
@@ -146,12 +149,13 @@ impl GoogleOperator {
         }
         Ok(())
     }
-    async fn run(
+    async fn run_with_journal(
         &self,
         config: &OperatorConfig,
         r: &ExecuteOperationRequest,
         fs: &Filesystem,
         session: &GoogleSession,
+        journal: Option<&dyn ExecutionJournal>,
     ) -> Result<AppliedEffect, OperatorError> {
         let op = &r.operation;
         let pre = op.preconditions.as_ref().ok_or_else(filesystem::stale)?;
@@ -269,7 +273,7 @@ impl GoogleOperator {
                 {
                     return Err(filesystem::stale());
                 }
-                let mut effect = fs.execute(r)?;
+                let mut effect = fs.execute(r, journal)?;
                 effect.remote = Some(normalize(&source.file));
                 return Ok(effect);
             }
@@ -282,7 +286,17 @@ impl GoogleOperator {
                 let name = op.name.as_deref().ok_or_else(filesystem::invalid)?;
                 self.destination(session, config, parent, name, None)
                     .await?;
+                let record = journal.ok_or_else(filesystem::stale)?.record();
+                let reserved = record
+                    .reserved_remote_id
+                    .as_ref()
+                    .ok_or_else(filesystem::stale)?;
                 let metadata = GoogleFileWrite {
+                    id: Some(FileId(reserved.0.clone())),
+                    app_properties: GooglePatch::Set(std::collections::BTreeMap::from([(
+                        "drivesyncExecution".into(),
+                        r.execution_id.0.clone(),
+                    )])),
                     name: GooglePatch::Set(name.into()),
                     parents: GooglePatch::Set(vec![FileId(parent.0.clone())]),
                     mime_type: if op.action == OperationAction::CreateRemoteDirectory {
@@ -309,19 +323,27 @@ impl GoogleOperator {
                         .await
                         .map_err(mutation_error)?
                 } else {
-                    self.upload(session, r, fs, metadata, None).await?
+                    self.upload(session, r, fs, metadata, None, journal).await?
                 };
                 let id = file
                     .id
                     .as_ref()
                     .map(|id| RemoteId(id.0.clone()))
                     .ok_or_else(|| filesystem::stale().uncertain())?;
+                if id != *reserved {
+                    return Err(filesystem::stale().uncertain());
+                }
                 let observed = self
                     .snapshot(session, &id)
                     .await
                     .map_err(OperatorError::uncertain)?
                     .file;
-                if observed.name.as_deref() != Some(name)
+                if observed
+                    .app_properties
+                    .as_ref()
+                    .and_then(|values| values.get("drivesyncExecution"))
+                    != Some(&r.execution_id.0)
+                    || observed.name.as_deref() != Some(name)
                     || observed.parents.as_ref() != Some(&vec![FileId(parent.0.clone())])
                     || observed.trashed != Some(false)
                     || (op.action == OperationAction::CreateRemoteDirectory
@@ -446,6 +468,7 @@ impl GoogleOperator {
                     fs,
                     GoogleFileWrite::default(),
                     snapshot.etag.as_deref(),
+                    journal,
                 )
                 .await?;
                 self.snapshot(session, op.remote_id.as_ref().unwrap())
@@ -506,7 +529,7 @@ impl GoogleOperator {
                 if after.file.version != snapshot.file.version {
                     return Err(filesystem::stale());
                 }
-                local = Some(fs.install(r, &mut temp)?);
+                local = Some(fs.install(r, &mut temp, journal)?);
                 after.file
             }
             OperationAction::CreateLocalShortcut => {
@@ -531,7 +554,7 @@ impl GoogleOperator {
                         .collect();
                 let mut temp = fs.temporary()?;
                 write!(temp,"[Desktop Entry]\nType=Link\nName=Google Drive item\nURL=https://drive.google.com/open?id={encoded}\n").map_err(filesystem::error)?;
-                local = Some(fs.install(r, &mut temp)?);
+                local = Some(fs.install(r, &mut temp, journal)?);
                 snapshot.file.clone()
             }
         };
@@ -567,6 +590,7 @@ impl GoogleOperator {
         fs: &Filesystem,
         metadata: GoogleFileWrite,
         etag: Option<&str>,
+        journal: Option<&dyn ExecutionJournal>,
     ) -> Result<GoogleFile, OperatorError> {
         let path = r
             .operation
@@ -613,6 +637,15 @@ impl GoogleOperator {
                 .await
         }
         .map_err(mutation_error)?;
+        if r.operation.action == OperationAction::Upload {
+            journal
+                .ok_or_else(filesystem::stale)?
+                .checkpoint(RecoveryCheckpoint::Transfer(TransferReference {
+                    session_uri: upload.session_uri.clone(),
+                    total_bytes: total,
+                    confirmed_offset: 0,
+                }))?;
+        }
         let mut offset = 0;
         loop {
             let remaining = (total - offset).min(256 * 1024) as usize;
@@ -638,23 +671,112 @@ impl GoogleOperator {
             .map_err(mutation_error)?;
             offset += remaining as u64;
             match progress {
-                GoogleUploadProgress::Complete { file } if offset == total => return Ok(file),
+                GoogleUploadProgress::Complete { file } if offset == total => {
+                    if r.operation.action == OperationAction::Upload {
+                        journal.ok_or_else(filesystem::stale)?.checkpoint(
+                            RecoveryCheckpoint::Transfer(TransferReference {
+                                session_uri: upload.session_uri.clone(),
+                                total_bytes: total,
+                                confirmed_offset: offset,
+                            }),
+                        )?;
+                    }
+                    return Ok(file);
+                }
                 GoogleUploadProgress::Incomplete {
                     received_range: Some(range),
                 } if range.start == 0
                     && range.end_inclusive == offset.checked_sub(1)
-                    && offset < total => {}
+                    && offset < total =>
+                {
+                    if r.operation.action == OperationAction::Upload {
+                        journal.ok_or_else(filesystem::stale)?.checkpoint(
+                            RecoveryCheckpoint::Transfer(TransferReference {
+                                session_uri: upload.session_uri.clone(),
+                                total_bytes: total,
+                                confirmed_offset: offset,
+                            }),
+                        )?;
+                    }
+                }
                 _ => return Err(filesystem::stale().uncertain()),
             }
         }
     }
 }
 impl RemoteExecutor for GoogleOperator {
+    fn reserve<'a>(
+        &'a self,
+        config: &'a OperatorConfig,
+        r: &'a ExecuteOperationRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<RemoteId>, OperatorError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            if !matches!(
+                r.operation.action,
+                OperationAction::Upload | OperationAction::CreateRemoteDirectory
+            ) {
+                return Ok(None);
+            }
+            let session = self
+                .accounts
+                .acquire_session(AcquireSessionRequest {
+                    account_id: config.account_id.clone(),
+                })
+                .await
+                .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
+            let ids = self
+                .client
+                .files_generate_ids(
+                    session.session.google(),
+                    GenerateIdsOptions {
+                        count: Some(1),
+                        space: Some("drive".into()),
+                        type_: Some("files".into()),
+                    },
+                )
+                .await
+                .map_err(read_error)?
+                .ids
+                .ok_or_else(filesystem::stale)?;
+            if ids.len() != 1 || ids[0].0.is_empty() {
+                return Err(filesystem::stale());
+            }
+            Ok(Some(RemoteId(ids[0].0.clone())))
+        })
+    }
+    fn reconcile<'a>(
+        &'a self,
+        config: &'a OperatorConfig,
+        record: &'a RecoveryRecord,
+        fs: &'a Filesystem,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RecoveryAssessment> + Send + 'a>> {
+        Box::pin(async move {
+            let session = match self
+                .accounts
+                .acquire_session(AcquireSessionRequest {
+                    account_id: config.account_id.clone(),
+                })
+                .await
+            {
+                Ok(session) => session,
+                Err(_) => {
+                    return RecoveryAssessment::unknown(
+                        crate::inventory::models::RecoveryIssue::RemoteInconclusive,
+                    )
+                }
+            };
+            self.probe_recovery(config, record, fs, session.session.google())
+                .await
+        })
+    }
     fn execute<'a>(
         &'a self,
         config: &'a OperatorConfig,
         r: &'a ExecuteOperationRequest,
         fs: &'a Filesystem,
+        journal: Option<&'a dyn ExecutionJournal>,
     ) -> EffectFuture<'a> {
         Box::pin(async move {
             let account = self
@@ -674,7 +796,8 @@ impl RemoteExecutor for GoogleOperator {
                 })
                 .await
                 .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
-            self.run(config, r, fs, session.session.google()).await
+            self.run_with_journal(config, r, fs, session.session.google(), journal)
+                .await
         })
     }
 }
@@ -745,3 +868,9 @@ fn normalize(file: &GoogleFile) -> RemoteState {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod recovery_tests;
+
+#[cfg(test)]
+mod live_recovery_tests;

@@ -31,6 +31,7 @@ impl RemoteExecutor for LocalBackend {
         _: &'a OperatorConfig,
         r: &'a ExecuteOperationRequest,
         fs: &'a Filesystem,
+        journal: Option<&'a dyn ExecutionJournal>,
     ) -> EffectFuture<'a> {
         Box::pin(async move {
             if matches!(
@@ -51,7 +52,7 @@ impl RemoteExecutor for LocalBackend {
                     verified: true,
                 });
             }
-            fs.execute(r)
+            fs.execute(r, journal)
         })
     }
 }
@@ -62,6 +63,7 @@ impl RemoteExecutor for UncertainBackend {
         _: &'a OperatorConfig,
         _: &'a ExecuteOperationRequest,
         _: &'a Filesystem,
+        _: Option<&'a dyn ExecutionJournal>,
     ) -> EffectFuture<'a> {
         Box::pin(async { Err(OperatorError::new(OperatorErrorKind::Unavailable).uncertain()) })
     }
@@ -73,6 +75,7 @@ impl RemoteExecutor for FailedBackend {
         _: &'a OperatorConfig,
         _: &'a ExecuteOperationRequest,
         _: &'a Filesystem,
+        _: Option<&'a dyn ExecutionJournal>,
     ) -> EffectFuture<'a> {
         Box::pin(async { Err(OperatorError::new(OperatorErrorKind::PermissionDenied)) })
     }
@@ -208,9 +211,10 @@ async fn confirmed_whole_item_convergence_advances_baseline() {
             _: &'a OperatorConfig,
             r: &'a ExecuteOperationRequest,
             fs: &'a Filesystem,
+            journal: Option<&'a dyn ExecutionJournal>,
         ) -> EffectFuture<'a> {
             Box::pin(async move {
-                let mut effect = fs.execute(r)?;
+                let mut effect = fs.execute(r, journal)?;
                 effect.remote = Some(r.remote.clone());
                 Ok(effect)
             })
@@ -301,7 +305,7 @@ async fn rename_and_move_preserve_bytes_and_refuse_collisions() {
     fs::write(executor.config.local_root.join("renamed"), b"occupied").unwrap();
     assert!(executor
         .filesystem
-        .execute(&request(&executor, OperationAction::RenameLocal))
+        .execute(&request(&executor, OperationAction::RenameLocal), None)
         .is_err());
     assert_eq!(
         fs::read(executor.config.local_root.join("renamed")).unwrap(),
@@ -310,7 +314,7 @@ async fn rename_and_move_preserve_bytes_and_refuse_collisions() {
     fs::create_dir(executor.config.local_root.join("destination")).unwrap();
     let effect = executor
         .filesystem
-        .execute(&request(&executor, OperationAction::MoveLocal))
+        .execute(&request(&executor, OperationAction::MoveLocal), None)
         .unwrap();
     assert_eq!(effect.local.unwrap().path, Some("destination/file".into()));
     assert_eq!(
@@ -358,7 +362,7 @@ fn changed_local_evidence_and_non_utf8_paths_are_handled() {
     fs::write(executor.config.local_root.join("file"), b"original").unwrap();
     let r = request(&executor, OperationAction::RenameLocal);
     fs::write(executor.config.local_root.join("file"), b"changed").unwrap();
-    assert!(executor.filesystem.execute(&r).is_err());
+    assert!(executor.filesystem.execute(&r, None).is_err());
     let path = PathBuf::from(OsString::from_vec(vec![0xff]));
     fs::write(executor.config.local_root.join(&path), b"bytes").unwrap();
     assert_eq!(executor.filesystem.observe(&path).unwrap().path, Some(path));
@@ -372,7 +376,7 @@ fn download_staging_never_overwrites_existing_destination() {
     let mut bytes = executor.filesystem.temporary().unwrap();
     use std::io::Write;
     bytes.write_all(b"download").unwrap();
-    assert!(executor.filesystem.install(&r, &mut bytes).is_err());
+    assert!(executor.filesystem.install(&r, &mut bytes, None).is_err());
     assert_eq!(
         fs::read(executor.config.local_root.join("file")).unwrap(),
         b"concurrent edit"
@@ -412,9 +416,10 @@ async fn applied_effect_is_retained_when_the_final_inventory_write_conflicts() {
             _: &'a OperatorConfig,
             r: &'a ExecuteOperationRequest,
             fs: &'a Filesystem,
+            journal: Option<&'a dyn ExecutionJournal>,
         ) -> EffectFuture<'a> {
             Box::pin(async move {
-                let effect = fs.execute(r)?;
+                let effect = fs.execute(r, journal)?;
                 let write = self.inventory.write(InventoryWrite {
                     operation_id: r.execution_id.clone(),
                     item_id: r.operation.item_ref.clone(),
@@ -459,6 +464,7 @@ async fn cancellation_after_dispatch_keeps_a_running_record_for_recovery() {
             _: &'a OperatorConfig,
             _: &'a ExecuteOperationRequest,
             _: &'a Filesystem,
+            _: Option<&'a dyn ExecutionJournal>,
         ) -> EffectFuture<'a> {
             Box::pin(async move {
                 self.started.notify_one();
@@ -517,6 +523,7 @@ async fn confirmed_replacement_refreshes_persisted_local_identity() {
             config: &'a OperatorConfig,
             r: &'a ExecuteOperationRequest,
             filesystem: &'a Filesystem,
+            _: Option<&'a dyn ExecutionJournal>,
         ) -> EffectFuture<'a> {
             Box::pin(async move {
                 let temporary = config.local_root.join("replacement");

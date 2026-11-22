@@ -47,6 +47,8 @@ fn pending(item: &str, operation: &str, state: OperationState, at: i64) -> Pendi
         remote_id: None,
         applied_effect: None,
         idempotency_key: None,
+        recovery: None,
+        recovery_diagnostic: None,
         created_at: timestamp(at),
         updated_at: timestamp(at),
     }

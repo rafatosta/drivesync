@@ -1,4 +1,5 @@
 //! Linux descriptor-anchored operations. No symlink traversal or destination replacement.
+mod staging;
 mod trash;
 use super::models::*;
 use crate::{inventory::models::LocalState, models::*};
@@ -219,19 +220,13 @@ impl Filesystem {
     pub fn execute(
         &self,
         request: &ExecuteOperationRequest,
+        journal: Option<&dyn super::journal::ExecutionJournal>,
     ) -> Result<AppliedEffect, OperatorError> {
         let op = &request.operation;
         let path = op.local_path.as_deref().ok_or_else(invalid)?;
         let local = match op.action {
             OperationAction::CreateLocalDirectory => {
-                let entry = self.entry(path)?;
-                // mkdirat is exclusive even when a destination appears after analysis.
-                if unsafe { libc::mkdirat(entry.parent.as_raw_fd(), entry.name.as_ptr(), 0o700) }
-                    != 0
-                {
-                    return Err(error(std::io::Error::last_os_error()));
-                }
-                self.observe(path).map_err(OperatorError::uncertain)?
+                self.create_staged_directory(request, journal.ok_or_else(stale)?)?
             }
             OperationAction::RenameLocal | OperationAction::MoveLocal => {
                 self.check(&request.local)?;
@@ -278,14 +273,16 @@ impl Filesystem {
         &self,
         request: &ExecuteOperationRequest,
         bytes: &mut File,
+        journal: Option<&dyn super::journal::ExecutionJournal>,
     ) -> Result<LocalState, OperatorError> {
-        self.install_with_trash(request, bytes, trash::prepare)
+        self.install_with_trash(request, bytes, trash::prepare, journal)
     }
     fn install_with_trash(
         &self,
         request: &ExecuteOperationRequest,
         bytes: &mut File,
         prepare: impl FnOnce(&Entry, &StdPath) -> Result<trash::TrashDestination, OperatorError>,
+        journal: Option<&dyn super::journal::ExecutionJournal>,
     ) -> Result<LocalState, OperatorError> {
         let path = request
             .operation
@@ -311,6 +308,10 @@ impl Filesystem {
             .flush()
             .and_then(|_| output.sync_all())
             .map_err(|e| error(e).uncertain())?;
+        if request.operation.action == OperationAction::Download {
+            let journal = journal.ok_or_else(stale)?;
+            self.mark_stage(&output, request, &stage_path, journal)?;
+        }
         if request.operation.action == OperationAction::UpdateLocalContent {
             self.check(&request.local)?;
             // Exchange is atomic. Preserve the previous bytes through the trash backend.
@@ -320,6 +321,9 @@ impl Filesystem {
         } else {
             rename(&stage, &dest, libc::RENAME_NOREPLACE)?;
         }
+        dest.parent
+            .sync_all()
+            .map_err(|error_| error(error_).uncertain())?;
         self.observe(path).map_err(OperatorError::uncertain)
     }
 }
@@ -368,9 +372,12 @@ mod tests {
         downloaded.write_all(b"new version").unwrap();
         executor
             .filesystem
-            .install_with_trash(&request, &mut downloaded, |source, original| {
-                trash::prepare_to(source, original, &sandbox.0)
-            })
+            .install_with_trash(
+                &request,
+                &mut downloaded,
+                |source, original| trash::prepare_to(source, original, &sandbox.0),
+                None,
+            )
             .unwrap();
         assert_eq!(
             std::fs::read(executor.config.local_root.join("file")).unwrap(),
@@ -394,9 +401,14 @@ mod tests {
         downloaded.write_all(b"new version").unwrap();
         assert!(executor
             .filesystem
-            .install_with_trash(&request, &mut downloaded, |source, original| {
-                trash::prepare_to(source, original, &sandbox.0.join("unavailable"))
-            })
+            .install_with_trash(
+                &request,
+                &mut downloaded,
+                |source, original| {
+                    trash::prepare_to(source, original, &sandbox.0.join("unavailable"))
+                },
+                None
+            )
             .is_err());
         assert_eq!(
             std::fs::read(executor.config.local_root.join("file")).unwrap(),

@@ -287,10 +287,121 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             snapshot.baseline = baseline.clone();
             true
         }
+        PersistedEffect::RecoveryCheckpoint(checkpoint) => {
+            let Some(operation) = snapshot
+                .pending_operations
+                .iter_mut()
+                .find(|op| op.id == request.operation_id)
+            else {
+                return false;
+            };
+            if operation.state != OperationState::Running {
+                return false;
+            }
+            let Some(record) = operation.recovery.as_mut() else {
+                return false;
+            };
+            match checkpoint {
+                super::models::RecoveryCheckpoint::LocalStage(identity) => {
+                    if record.stage_path.is_none()
+                        || record
+                            .stage_identity
+                            .as_ref()
+                            .is_some_and(|old| old != identity)
+                    {
+                        return false;
+                    }
+                    record.stage_identity = Some(identity.clone());
+                }
+                super::models::RecoveryCheckpoint::Transfer(transfer) => {
+                    if transfer.confirmed_offset > transfer.total_bytes
+                        || transfer.session_uri.is_empty()
+                        || record.transfer.as_ref().is_some_and(|old| {
+                            old.session_uri != transfer.session_uri
+                                || old.total_bytes != transfer.total_bytes
+                                || old.confirmed_offset > transfer.confirmed_offset
+                        })
+                    {
+                        return false;
+                    }
+                    record.transfer = Some(transfer.clone());
+                }
+            }
+            operation.updated_at = request.recorded_at;
+            true
+        }
+        PersistedEffect::RecoveryObserved {
+            outcome,
+            issue,
+            effect,
+        } => {
+            let Some(operation) = snapshot
+                .pending_operations
+                .iter_mut()
+                .find(|op| op.id == request.operation_id)
+            else {
+                return false;
+            };
+            if !matches!(
+                operation.state,
+                OperationState::Pending
+                    | OperationState::Running
+                    | OperationState::AppliedUnconfirmed
+            ) {
+                return false;
+            }
+            match outcome {
+                crate::models::ExecutionEffect::Unknown => {
+                    if effect.is_some() {
+                        return false;
+                    }
+                }
+                crate::models::ExecutionEffect::NotApplied => {
+                    if effect.is_some() {
+                        return false;
+                    }
+                    operation.state = OperationState::Failed;
+                }
+                crate::models::ExecutionEffect::Applied => {
+                    let Some(effect) = effect.as_ref().filter(|effect| effect.verified) else {
+                        return false;
+                    };
+                    if operation.state == OperationState::Pending {
+                        return false;
+                    }
+                    operation.state = OperationState::AppliedUnconfirmed;
+                    operation.applied_effect = Some((**effect).clone());
+                    operation.remote_id = effect.remote_id.clone();
+                    if effect.remote_id.is_some() {
+                        snapshot.identity.remote_id = effect.remote_id.clone();
+                    }
+                    if let Some(local) = &effect.local {
+                        snapshot.local_path = local.path.clone();
+                        snapshot.identity.local_identity = local.identity.clone();
+                    }
+                }
+            }
+            operation.recovery_diagnostic = Some(super::models::RecoveryDiagnostic {
+                outcome: *outcome,
+                issue: *issue,
+                checked_at: request.recorded_at,
+            });
+            operation.updated_at = request.recorded_at;
+            true
+        }
         PersistedEffect::Pending(operation) => {
             if operation.id != request.operation_id
                 || operation.item_id != request.item_id
                 || operation.applied_effect.is_some()
+                || operation.recovery.as_ref().is_some_and(|record| {
+                    record.execution_id != operation.id
+                        || record.command.item_ref != operation.item_id
+                        || record.command.action != operation.action
+                        || record.identity != request.identity
+                        || record.account_id != request.identity.account_id
+                        || record.sync_root_id != request.identity.sync_root_id
+                        || record.command.remote_id != record.identity.remote_id
+                })
             {
                 return false;
             }
@@ -300,6 +411,8 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
                 .find(|existing| existing.id == operation.id)
             {
                 if existing.item_id != operation.item_id
+                    || existing.recovery != operation.recovery
+                    || existing.idempotency_key != operation.idempotency_key
                     || existing.action != operation.action
                     || existing.state != OperationState::Pending
                     || operation.state != OperationState::Running

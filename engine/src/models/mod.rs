@@ -222,3 +222,7 @@ mod tests {
         );
     }
 }
+
+mod operation;
+pub(crate) mod path_serde;
+pub(crate) use operation::{ExecutionEffect, Operation, OperationAction, OperationPreconditions};

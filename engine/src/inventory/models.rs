@@ -222,48 +222,17 @@ pub(crate) struct PendingOperation {
     pub applied_effect: Option<AppliedEffect>,
     /// Idempotency key supplied by the executor, when supported.
     pub idempotency_key: Option<String>,
+    /// Immutable dispatch inputs and provider/FS references required after interruption.
+    pub recovery: Option<Box<RecoveryRecord>>,
+    /// Last conservative reconciliation outcome, including blocked uncertainty.
+    pub recovery_diagnostic: Option<RecoveryDiagnostic>,
     /// Time at which the operation was first recorded.
     pub created_at: DateTime,
     /// Time at which the operation state was last changed.
     pub updated_at: DateTime,
 }
 
-/// Operation categories shared by pending Inventory records and the executor contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum OperationAction {
-    /// Persist a new unilateral identity without asserting convergence.
-    RegisterIdentity,
-    /// Confirm an explicitly authorized initial association without transfer.
-    Adopt,
-    /// Record revalidated convergence for an already associated item.
-    ConfirmBaseline,
-    /// Upload local content to the provider.
-    Upload,
-    /// Download remote content to the local filesystem.
-    Download,
-    /// Update remote content.
-    UpdateRemoteContent,
-    /// Update local content.
-    UpdateLocalContent,
-    /// Rename a remote item.
-    RenameRemote,
-    /// Rename a local item.
-    RenameLocal,
-    /// Move a remote item.
-    MoveRemote,
-    /// Move a local item.
-    MoveLocal,
-    /// Send a remote item to the provider's trash.
-    TrashRemote,
-    /// Remove a local replica according to the configured safe policy.
-    RemoveLocal,
-    /// Create a remote directory.
-    CreateRemoteDirectory,
-    /// Create a local directory.
-    CreateLocalDirectory,
-    /// Create a local shortcut for a provider-native item.
-    CreateLocalShortcut,
-}
+pub(crate) use crate::models::OperationAction;
 
 /// Persisted execution state of an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +300,14 @@ pub(crate) enum PersistedEffect {
     },
     /// Record a newly planned or started operation.
     Pending(PendingOperation),
+    /// Persist a transfer or staged-object checkpoint before publication/continuation.
+    RecoveryCheckpoint(RecoveryCheckpoint),
+    /// Record a read-based recovery assessment without replaying the command.
+    RecoveryObserved {
+        outcome: crate::models::ExecutionEffect,
+        issue: Option<RecoveryIssue>,
+        effect: Option<Box<AppliedEffect>>,
+    },
     /// Record an observed operation effect that may require later confirmation.
     OperationApplied(AppliedEffect),
     /// Confirm a verified individual effect without asserting whole-item convergence.
@@ -415,148 +392,7 @@ impl std::fmt::Display for InventoryError {
 
 impl std::error::Error for InventoryError {}
 
-/// Local path serde that preserves Unix path bytes in persisted JSON.
-mod path_serde {
-    use crate::models::{Evidence, Path};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::path::PathBuf;
-
-    #[cfg(unix)]
-    fn to_bytes(path: &Path) -> Vec<u8> {
-        use std::os::unix::ffi::OsStrExt;
-        path.as_os_str().as_bytes().to_vec()
-    }
-
-    #[cfg(not(unix))]
-    fn to_bytes(path: &Path) -> Result<Vec<u8>, &'static str> {
-        path.to_str()
-            .map(|value| value.as_bytes().to_vec())
-            .ok_or("Path cannot be represented as UTF-8 on this platform.")
-    }
-
-    #[cfg(unix)]
-    fn from_bytes(bytes: Vec<u8>) -> PathBuf {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-        PathBuf::from(OsString::from_vec(bytes))
-    }
-
-    #[cfg(not(unix))]
-    fn from_bytes(bytes: Vec<u8>) -> Result<PathBuf, &'static str> {
-        String::from_utf8(bytes)
-            .map(PathBuf::from)
-            .map_err(|_| "Persisted path is invalid UTF-8 on this platform.")
-    }
-
-    pub(super) mod required {
-        use super::*;
-        pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
-            #[cfg(unix)]
-            let bytes = to_bytes(path);
-            #[cfg(not(unix))]
-            let bytes = to_bytes(path).map_err(serde::ser::Error::custom)?;
-            bytes.serialize(serializer)
-        }
-        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Path, D::Error> {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            #[cfg(unix)]
-            {
-                Ok(from_bytes(bytes))
-            }
-            #[cfg(not(unix))]
-            {
-                from_bytes(bytes).map_err(serde::de::Error::custom)
-            }
-        }
-    }
-    pub(super) mod option {
-        use super::*;
-
-        pub fn serialize<S>(path: &Option<Path>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            #[cfg(unix)]
-            let bytes = path.as_ref().map(to_bytes);
-            #[cfg(not(unix))]
-            let bytes = path
-                .as_ref()
-                .map(to_bytes)
-                .transpose()
-                .map_err(serde::ser::Error::custom)?;
-            bytes.serialize(serializer)
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Path>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let bytes = Option::<Vec<u8>>::deserialize(deserializer)?;
-            #[cfg(unix)]
-            let path = bytes.map(from_bytes);
-            #[cfg(not(unix))]
-            let path = bytes
-                .map(from_bytes)
-                .transpose()
-                .map_err(serde::de::Error::custom)?;
-            Ok(path)
-        }
-    }
-
-    pub(super) mod evidence {
-        use super::*;
-
-        pub fn serialize<S>(evidence: &Evidence<Path>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            let encoded = match evidence {
-                Evidence::Known(path) => {
-                    #[cfg(unix)]
-                    {
-                        Evidence::Known(to_bytes(path))
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        Evidence::Known(to_bytes(path).map_err(serde::ser::Error::custom)?)
-                    }
-                }
-                Evidence::NotCollected => Evidence::NotCollected,
-                Evidence::NotApplicable => Evidence::NotApplicable,
-                Evidence::Unsupported => Evidence::Unsupported,
-                Evidence::Unavailable => Evidence::Unavailable,
-                Evidence::PermissionDenied => Evidence::PermissionDenied,
-            };
-            encoded.serialize(serializer)
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Evidence<Path>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let encoded = Evidence::<Vec<u8>>::deserialize(deserializer)?;
-            match encoded {
-                Evidence::Known(bytes) => {
-                    #[cfg(unix)]
-                    {
-                        Ok(Evidence::Known(from_bytes(bytes)))
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        Ok(Evidence::Known(
-                            from_bytes(bytes).map_err(serde::de::Error::custom)?,
-                        ))
-                    }
-                }
-                Evidence::NotCollected => Ok(Evidence::NotCollected),
-                Evidence::NotApplicable => Ok(Evidence::NotApplicable),
-                Evidence::Unsupported => Ok(Evidence::Unsupported),
-                Evidence::Unavailable => Ok(Evidence::Unavailable),
-                Evidence::PermissionDenied => Ok(Evidence::PermissionDenied),
-            }
-        }
-    }
-}
+use crate::models::path_serde;
 
 #[cfg(test)]
 mod tests {
@@ -612,4 +448,71 @@ pub(crate) struct ParentAssociation {
     pub remote_id: RemoteId,
     #[serde(with = "path_serde::required")]
     pub local_path: Path,
+}
+
+/// Stable, credential-free inputs to one dispatched operation, scoped to its configured roots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecoveryRecord {
+    pub account_id: AccountId,
+    pub provider_id: crate::models::ProviderId,
+    pub sync_root_id: SyncRootId,
+    #[serde(with = "path_serde::required")]
+    pub local_root: Path,
+    pub remote_root_id: RemoteId,
+    pub root_identity: LocalIdentity,
+    pub parent_identity: Option<LocalIdentity>,
+    pub command: crate::models::Operation,
+    pub execution_id: Id,
+    pub identity: FileIdentity,
+    pub expected_revision: Option<u64>,
+    pub local: LocalState,
+    pub remote: RemoteState,
+    pub completed_steps: Vec<u64>,
+    /// Server-reserved identity, committed before a create or upload dispatch.
+    pub reserved_remote_id: Option<RemoteId>,
+    #[serde(with = "path_serde::option")]
+    pub stage_path: Option<Path>,
+    /// Identity committed before publishing a tagged staged entry.
+    pub stage_identity: Option<LocalIdentity>,
+    pub transfer: Option<TransferReference>,
+}
+/// Sensitive provider transfer handle. No OAuth credential is stored; Debug redacts the URI.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TransferReference {
+    pub session_uri: String,
+    pub total_bytes: u64,
+    pub confirmed_offset: u64,
+}
+impl std::fmt::Debug for TransferReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransferReference")
+            .field("total_bytes", &self.total_bytes)
+            .field("confirmed_offset", &self.confirmed_offset)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum RecoveryCheckpoint {
+    LocalStage(LocalIdentity),
+    Transfer(TransferReference),
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum RecoveryIssue {
+    MissingCommand,
+    UnsupportedAction,
+    ScopeMismatch,
+    RootChanged,
+    ParentChanged,
+    SourceChanged,
+    DestinationChanged,
+    RemoteInconclusive,
+    TransferIncomplete,
+    NotDispatched,
+    InventoryConflict,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecoveryDiagnostic {
+    pub outcome: crate::models::ExecutionEffect,
+    pub issue: Option<RecoveryIssue>,
+    pub checked_at: DateTime,
 }

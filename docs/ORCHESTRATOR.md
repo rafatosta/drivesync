@@ -63,7 +63,9 @@ sign-in attempts can still prevent removal through the existing ownership gate.
 Stop closes admission, discards queued unexecuted files, and lets the current operation
 produce its real receipt before stopping. No dependent step starts after stop is requested.
 Dropping the last worker handle requests stop; an abrupt Engine/runtime shutdown can leave
-`Running`/uncertain Inventory records that require later recovery. A supervisor publishes
+`Running`/uncertain Inventory records. [Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) reconciles
+active records before consuming observations on the next scope startup. Unknown effects remain
+blocked; failure to enumerate recovery blocks all mutation admission for the scope. A supervisor publishes
 `Failed` and releases stop waiters if the worker panics. Failed work is never reported as Idle.
 
 `SynchronizationSubscription` is a coalescing latest-state feed that can be awaited from GLib

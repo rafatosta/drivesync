@@ -6,45 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-/// One ordered operation in a proposed plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Operation {
-    /// One-based order within the plan.
-    pub step: u64,
-    /// Requested normalized operation.
-    pub action: OperationAction,
-    /// Logical item identity.
-    pub item_ref: ItemId,
-    /// Earlier operation steps that must complete first.
-    pub depends_on: Vec<u64>,
-    /// Provider item identity when known.
-    pub remote_id: Option<RemoteId>,
-    /// Current or target local relative path, when applicable.
-    pub local_path: Option<Path>,
-    /// Target name for a creation or rename.
-    pub name: Option<String>,
-    /// Target remote parent for a move or creation.
-    pub parent_id: Option<RemoteId>,
-    /// Target local parent for a move or creation.
-    pub parent: Option<Path>,
-    /// Preconditions that the executor must recheck before applying the operation.
-    pub preconditions: Option<OperationPreconditions>,
-}
-
-/// Snapshot stability requirements for a planned operation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OperationPreconditions {
-    /// Remote version observed during analysis.
-    pub observed_remote_version: Option<u64>,
-    /// Remote version recorded in the baseline.
-    pub baseline_remote_version: Option<u64>,
-    /// Whether the local source must remain unchanged until execution.
-    pub local_unchanged: Evidence<bool>,
-    /// Whether the remote source must remain unchanged until execution.
-    pub remote_unchanged: Evidence<bool>,
-    /// Whether the destination was confirmed free during analysis.
-    pub destination_free: Evidence<bool>,
-}
+pub(crate) use crate::models::{ExecutionEffect, Operation, OperationPreconditions};
 
 /// Fixed account and root boundaries for an executor.
 #[derive(Debug, Clone)]
@@ -96,12 +58,6 @@ pub(crate) struct OperationFailure {
     pub message: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExecutionEffect {
-    NotApplied,
-    Applied,
-    Unknown,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperatorErrorKind {
     UnsupportedProvider,
     UnsupportedOperation,
@@ -139,4 +95,28 @@ impl OperatorError {
             message: format!("Operation could not be confirmed: {:?}.", self.code),
         }
     }
+}
+
+/// Conservative read-based reconciliation; Unknown never authorizes a repeat.
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveryAssessment {
+    pub outcome: ExecutionEffect,
+    pub issue: Option<crate::inventory::models::RecoveryIssue>,
+    pub effect: Option<AppliedEffect>,
+}
+impl RecoveryAssessment {
+    pub(super) fn unknown(issue: crate::inventory::models::RecoveryIssue) -> Self {
+        Self {
+            outcome: ExecutionEffect::Unknown,
+            issue: Some(issue),
+            effect: None,
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveryResult {
+    pub operation_id: Id,
+    pub item: crate::synchronization::SynchronizationItem,
+    pub assessment: RecoveryAssessment,
+    pub inventory_write: Option<InventoryWriteResult>,
 }

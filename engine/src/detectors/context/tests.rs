@@ -202,6 +202,8 @@ fn current_sides_join_only_through_persisted_identity_and_never_update_baseline(
         remote_id: remote.remote_id.clone(),
         applied_effect: None,
         idempotency_key: None,
+        recovery: None,
+        recovery_diagnostic: None,
         created_at: DateTime { unix_millis: 1 },
         updated_at: DateTime { unix_millis: 1 },
     };

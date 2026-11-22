@@ -27,6 +27,9 @@ struct Pause {
     release: Notify,
 }
 impl Operator for MockOperator {
+    fn recover(&self) -> operations::RecoveryFuture<'_> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
     fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
         Box::pin(async move {
             self.calls.requests.lock().unwrap().push(r.clone());
@@ -141,6 +144,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             stop: rx,
             blockers: BTreeMap::new(),
             sources: BTreeMap::new(),
+            recovery_failed: false,
         },
         stop,
     )
@@ -335,6 +339,9 @@ async fn successful_receipt_without_persistence_or_with_a_crossed_identity_canno
         crossed: bool,
     }
     impl Operator for InvalidReceipt {
+        fn recover(&self) -> operations::RecoveryFuture<'_> {
+            self.inner.recover()
+        }
         fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
             Box::pin(async move {
                 let mut result = self.inner.execute(r).await;
@@ -460,4 +467,59 @@ async fn incomplete_sources_suspend_dispatch_until_fresh_complete_observations()
     worker.sources.insert(Source::Remote, None);
     assert_eq!(worker.process(changed_file()).await.results.len(), 2);
     assert_eq!(calls.requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn unavailable_recovery_inventory_blocks_dispatch_before_any_analysis_plan_executes() {
+    struct Unavailable;
+    impl Operator for Unavailable {
+        fn recover<'a>(
+            &'a self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            Vec<operations::models::RecoveryResult>,
+                            operations::models::OperatorError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async {
+                Err(operations::models::OperatorError {
+                    code: OperatorErrorKind::Unavailable,
+                    retryable: false,
+                    effect: operations::models::ExecutionEffect::NotApplied,
+                })
+            })
+        }
+        fn execute<'a>(&'a self, _: ExecuteOperationRequest) -> OperationFuture<'a> {
+            Box::pin(async { panic!("unreadable recovery state must prevent dispatch") })
+        }
+    }
+    let handle = start(
+        config(),
+        Box::new(Unavailable),
+        Arc::new(RwLock::new(())),
+        2,
+    );
+    let mut subscription = handle.subscribe();
+    handle.submit(changed_file()).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if subscription
+                .current()
+                .issue
+                .as_ref()
+                .is_some_and(|issue| issue.kind == SynchronizationIssueKind::RecoveryRequired)
+            {
+                break;
+            }
+            subscription.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(handle.stop().await.state, SynchronizationState::Stopped);
 }

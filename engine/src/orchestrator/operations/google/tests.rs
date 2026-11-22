@@ -6,18 +6,18 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
-struct Endpoint {
-    base: String,
-    client: GoogleDriveClient,
+pub(super) struct Endpoint {
+    pub(super) base: String,
+    pub(super) client: GoogleDriveClient,
     task: tokio::task::JoinHandle<()>,
-    requests: Arc<Mutex<Vec<String>>>,
+    pub(super) requests: Arc<Mutex<Vec<String>>>,
 }
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
-async fn endpoint(
+pub(super) async fn endpoint(
     handler: impl Fn(&str) -> (u16, String, Vec<(String, String)>) + Send + 'static,
 ) -> Endpoint {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -77,7 +77,7 @@ async fn endpoint(
         requests,
     }
 }
-struct Associations;
+pub(super) struct Associations;
 impl crate::accounts::AccountAssociations for Associations {
     fn lock_for_removal(
         &self,
@@ -86,7 +86,7 @@ impl crate::accounts::AccountAssociations for Associations {
         unreachable!("test performs no account removal")
     }
 }
-fn operator(s: &Sandbox, client: GoogleDriveClient) -> GoogleOperator {
+pub(super) fn operator(s: &Sandbox, client: GoogleDriveClient) -> GoogleOperator {
     GoogleOperator::new(
         Accounts::new(crate::accounts::AccountsConfig::new(
             s.0.join("accounts"),
@@ -97,10 +97,10 @@ fn operator(s: &Sandbox, client: GoogleDriveClient) -> GoogleOperator {
         client,
     )
 }
-fn metadata(name: &str, parent: &str, version: u64, content: &str) -> String {
+pub(super) fn metadata(name: &str, parent: &str, version: u64, content: &str) -> String {
     serde_json::json!({"id":"remote","name":name,"parents":[parent],"mimeType":"application/octet-stream","version":version.to_string(),"trashed":false,"size":content.len().to_string(),"sha256Checksum":format!("{:x}",Sha256::digest(content.as_bytes())),"capabilities":{"canEdit":true,"canRename":true,"canDownload":true,"canTrash":true,"canMoveItemWithinDrive":true}}).to_string()
 }
-fn root() -> String {
+pub(super) fn root() -> String {
     serde_json::json!({"id":"remote-root","name":"Root","parents":[],"mimeType":FOLDER,"version":"1","trashed":false,"capabilities":{"canAddChildren":true}}).to_string()
 }
 #[tokio::test]
@@ -342,7 +342,7 @@ async fn directory_creation_checks_parent_and_records_provider_identity() {
     std::fs::create_dir(executor.config.local_root.join("file")).unwrap();
     let server=endpoint(|r| {
         let body=if r.starts_with("POST ") {serde_json::json!({"id":"created"}).to_string()}
-            else if r.contains("/files/created?") {serde_json::json!({"id":"created","name":"file","parents":["remote-root"],"mimeType":FOLDER,"version":"1","trashed":false}).to_string()}
+            else if r.contains("/files/created?") {serde_json::json!({"id":"created","name":"file","parents":["remote-root"],"mimeType":FOLDER,"version":"1","trashed":false,"appProperties":{"drivesyncExecution":"execution"}}).to_string()}
             else if r.contains("/files?") {"{\"files\":[],\"incompleteSearch\":false}".into()}else{root()};
         (200,body,vec![])
     }).await;
@@ -619,5 +619,39 @@ async fn adoption_revalidates_versions_and_collisions_using_reads_only() {
             std::fs::read(executor.config.local_root.join("file")).unwrap(),
             b"bytes"
         );
+    }
+}
+
+struct MemoryJournal(std::sync::Mutex<RecoveryRecord>);
+impl ExecutionJournal for MemoryJournal {
+    fn record(&self) -> RecoveryRecord {
+        self.0.lock().unwrap().clone()
+    }
+    fn checkpoint(&self, checkpoint: RecoveryCheckpoint) -> Result<(), OperatorError> {
+        let mut record = self.0.lock().unwrap();
+        match checkpoint {
+            RecoveryCheckpoint::LocalStage(identity) => record.stage_identity = Some(identity),
+            RecoveryCheckpoint::Transfer(transfer) => record.transfer = Some(transfer),
+        }
+        Ok(())
+    }
+}
+impl GoogleOperator {
+    /// Component tests provide a controlled journal; production always persists its checkpoints.
+    async fn run(
+        &self,
+        config: &OperatorConfig,
+        r: &ExecuteOperationRequest,
+        fs: &Filesystem,
+        session: &GoogleSession,
+    ) -> Result<AppliedEffect, OperatorError> {
+        let journal = MemoryJournal(std::sync::Mutex::new(super::super::recovery::record(
+            config,
+            r,
+            fs,
+            Some(RemoteId("created".into())),
+        )?));
+        self.run_with_journal(config, r, fs, session, Some(&journal))
+            .await
     }
 }

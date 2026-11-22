@@ -6,6 +6,8 @@ Operations do not choose synchronization policy or analyze conflicts. Step 8 now
 [Orchestrator and GUI status](ORCHESTRATOR.md); [functional observation producers](OBSERVATION_SOURCES.md) are implemented in step 9.
 [Functional correction Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) adds metadata-only
 identity registration, explicitly authorized adoption, and nested baseline confirmation.
+[Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) persists execution recovery commands and checkpoints
+and reconciles initial creates/transfers before startup admits further work.
 
 ## Execution and provider selection
 

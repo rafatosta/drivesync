@@ -145,6 +145,7 @@ fn start(
         stop: stop_rx,
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
+        recovery_failed: false,
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -184,9 +185,38 @@ struct Orchestrator {
     stop: watch::Receiver<bool>,
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
+    recovery_failed: bool,
 }
 impl Orchestrator {
     async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
+        {
+            let _lease = ownership.clone().read_owned().await;
+            match self.operator.recover().await {
+                Ok(results) => {
+                    let changed = !results.is_empty();
+                    for result in results {
+                        if result.assessment.outcome == operations::models::ExecutionEffect::Unknown
+                            || !result
+                                .inventory_write
+                                .as_ref()
+                                .is_some_and(|receipt| receipt.status == WriteStatus::Written)
+                        {
+                            self.block(
+                                result.item,
+                                issue(SynchronizationIssueKind::RecoveryRequired, false),
+                            );
+                        }
+                    }
+                    if changed {
+                        self.settle();
+                    }
+                }
+                Err(_) => {
+                    self.recovery_failed = true;
+                    self.settle();
+                }
+            }
+        }
         loop {
             let file = tokio::select! {biased;
                 _=self.stop.changed()=>break,
@@ -210,6 +240,7 @@ impl Orchestrator {
                 Command::Source(source, scanning, issue) => {
                     self.sources.insert(source, issue);
                     if scanning
+                        && !self.recovery_failed
                         && !self
                             .sources
                             .values()
@@ -262,6 +293,16 @@ impl Orchestrator {
         self.blockers.insert(key(&item), (item, issue));
     }
     fn settle(&self) {
+        if self.recovery_failed {
+            self.publish(
+                SynchronizationState::Waiting,
+                SynchronizationActivity::None,
+                None,
+                None,
+                Some(issue(SynchronizationIssueKind::RecoveryRequired, false)),
+            );
+            return;
+        }
         if let Some(issue) = self
             .sources
             .values()
@@ -351,6 +392,11 @@ impl Orchestrator {
             None,
             None,
         );
+        if self.recovery_failed {
+            outcome.decision = DecisionStatus::Defer;
+            self.settle();
+            return outcome;
+        }
         file.initial_association_authorized &= self.config.initial_association_authorized;
         let decision = analyzer::analyze(&file);
         outcome.decision = decision.status;

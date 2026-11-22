@@ -2,7 +2,9 @@
 mod filesystem;
 mod google;
 mod interfaces;
+mod journal;
 pub(super) mod models;
+mod recovery;
 use crate::{
     accounts::{Accounts, GetAccountRequest},
     inventory::{models::*, Inventory},
@@ -11,9 +13,14 @@ use crate::{
 use filesystem::Filesystem;
 #[cfg(test)]
 use interfaces::EffectFuture;
+#[cfg(test)]
+pub(super) use interfaces::RecoveryFuture;
 use interfaces::RemoteExecutor;
 #[allow(unused_imports)]
 pub(super) use interfaces::{OperationFuture, Operator, OperatorFactory};
+#[cfg(test)]
+use journal::ExecutionJournal;
+use journal::Journal;
 use models::*;
 use std::{
     sync::Arc,
@@ -178,7 +185,11 @@ impl PersistingOperator {
             result.error = Some(filesystem::stale().failure());
             return result;
         }
-        let effect = match self.remote.execute(&self.config, r, &self.filesystem).await {
+        let effect = match self
+            .remote
+            .execute(&self.config, r, &self.filesystem, None)
+            .await
+        {
             Ok(effect) if effect.verified => effect,
             _ => {
                 result.error = Some(filesystem::stale().failure());
@@ -344,6 +355,17 @@ impl PersistingOperator {
     }
 }
 impl Operator for PersistingOperator {
+    fn recover<'a>(
+        &'a self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Vec<RecoveryResult>, OperatorError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.recover_future()
+    }
     fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
         Box::pin(async move {
             let _guard = self.gate.lock().await;
@@ -369,14 +391,26 @@ impl Operator for PersistingOperator {
             ) {
                 return self.metadata(&r, result).await;
             }
+            let record = match self.prepare(&r).await {
+                Ok(record) => record,
+                Err(error) => {
+                    result.error = Some(error.failure());
+                    return result;
+                }
+            };
             let mut pending = PendingOperation {
                 id: r.execution_id.clone(),
                 item_id: r.operation.item_ref.clone(),
                 action: r.operation.action,
                 state: OperationState::Pending,
-                remote_id: r.operation.remote_id.clone(),
+                remote_id: record
+                    .reserved_remote_id
+                    .clone()
+                    .or_else(|| r.operation.remote_id.clone()),
                 applied_effect: None,
                 idempotency_key: Some(r.execution_id.0.clone()),
+                recovery: Some(Box::new(record.clone())),
+                recovery_diagnostic: None,
                 created_at: now(),
                 updated_at: now(),
             };
@@ -397,9 +431,15 @@ impl Operator for PersistingOperator {
                 result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
                 return result;
             }
+            let journal = Journal::new(
+                self.inventory.clone(),
+                r.clone(),
+                receipt.revision.unwrap(),
+                record,
+            );
             let effect = self
                 .remote
-                .execute(&self.config, &r, &self.filesystem)
+                .execute(&self.config, &r, &self.filesystem, Some(&journal))
                 .await;
             let (persisted, status) = match effect {
                 Ok(effect) => {
@@ -445,7 +485,7 @@ impl Operator for PersistingOperator {
             }
             // Replacement can change the inode; subsequent confirmation must not restore the
             // pre-execution identity over the verified effect's identity.
-            let mut receipt = self.write(&recorded, receipt.revision, persisted);
+            let mut receipt = self.write(&recorded, journal.revision(), persisted);
             if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded
             {
                 let confirmed = match result.effect.as_ref().and_then(|e| self.convergence(e)) {

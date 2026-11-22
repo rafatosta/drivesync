@@ -133,3 +133,7 @@ portal integration, installed Flatpak, or native desktop acceptance is establish
 The Stage 2 report separately records real test-account source/Engine validation inside a
 Devel Flatpak build sandbox, including three-level adoption and re-opening without duplicate
 identities or baseline rewrites. It does not claim installed GUI or portal acceptance.
+
+[Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) separately validates initial-effect recovery in a
+new real-account Engine process. It introduces neither the initial synchronization planner nor
+permission to associate preexisting items implicitly.
