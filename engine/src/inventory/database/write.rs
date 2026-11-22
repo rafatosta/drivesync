@@ -47,6 +47,7 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
                 InventorySnapshot {
                     identity: request.identity.clone(),
                     baseline: super::models::Baseline::never_synced(),
+                    local_path: None,
                     pending_operations: Vec::new(),
                     prior_conflict: None,
                     revision: 0,
@@ -72,6 +73,37 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
             request.recorded_at,
         );
     }
+    if let PersistedEffect::ConvergenceConfirmed {
+        parent: Some(parent),
+        ..
+    }
+    | PersistedEffect::BaselineConfirmed {
+        parent: Some(parent),
+        ..
+    } = &request.effect
+    {
+        let current = transaction.query_row(
+            "SELECT snapshot_json, revision FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 AND item_id = ?3",
+            params![request.identity.account_id.0,request.identity.sync_root_id.0,parent.item_id.0],
+            |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)),
+        ).ok().and_then(|(json,revision)| serde_json::from_str::<InventorySnapshot>(&json).ok().map(|snapshot|(snapshot,revision)));
+        if !current.is_some_and(|(snapshot, revision)| {
+            revision > 0
+                && snapshot.identity.account_id == request.identity.account_id
+                && snapshot.identity.sync_root_id == request.identity.sync_root_id
+                && snapshot.identity.item_id.as_ref() == Some(&parent.item_id)
+                && revision as u64 == parent.revision
+                && snapshot.identity.remote_id.as_ref() == Some(&parent.remote_id)
+                && snapshot.local_path.as_ref() == Some(&parent.local_path)
+        }) {
+            return InventoryWriteResult::new(
+                WriteStatus::RevisionConflict,
+                Some(current_revision),
+                request.recorded_at,
+            );
+        }
+    }
+    snapshot.revision = current_revision;
     merge_identity(&mut snapshot.identity, &request.identity);
 
     if !apply_effect(&mut snapshot, &request) {
@@ -112,6 +144,16 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
         }
     };
 
+    let collision: rusqlite::Result<bool> = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 AND item_id <> ?3 AND ((?4 IS NOT NULL AND remote_id = ?4) OR (?5 IS NOT NULL AND local_path = ?5)))",
+        params![request.identity.account_id.0,request.identity.sync_root_id.0,request.item_id.0,indexes.remote_id,indexes.local_path], |row| row.get(0));
+    if !matches!(collision, Ok(false)) {
+        return InventoryWriteResult::new(
+            WriteStatus::RevisionConflict,
+            Some(current_revision),
+            request.recorded_at,
+        );
+    }
     let persisted = if let Some(record_id) = record_id {
         transaction.execute(
             "UPDATE inventory_items SET remote_id = ?1, local_device_id = ?2,
@@ -213,6 +255,38 @@ fn merge_identity(stored: &mut FileIdentity, incoming: &FileIdentity) {
 
 fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> bool {
     match &request.effect {
+        PersistedEffect::ItemRegistered { local_path } => {
+            if snapshot.revision != 0 {
+                return false;
+            }
+            snapshot.local_path = local_path.clone();
+            true
+        }
+        PersistedEffect::ConvergenceConfirmed {
+            baseline, effect, ..
+        } => {
+            if !effect.verified
+                || baseline.state != BaselineState::Synced
+                || baseline.confirmed_at.is_none()
+                || baseline.local.is_none()
+                || baseline.remote.is_none()
+                || baseline.local != effect.local
+                || baseline.remote != effect.remote
+                || snapshot.pending_operations.iter().any(|op| {
+                    matches!(
+                        op.state,
+                        OperationState::Pending
+                            | OperationState::Running
+                            | OperationState::AppliedUnconfirmed
+                    )
+                })
+            {
+                return false;
+            }
+            snapshot.local_path = baseline.local.as_ref().and_then(|local| local.path.clone());
+            snapshot.baseline = baseline.clone();
+            true
+        }
         PersistedEffect::Pending(operation) => {
             if operation.id != request.operation_id
                 || operation.item_id != request.item_id
@@ -261,6 +335,11 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             if operation.state != OperationState::Running {
                 return false;
             }
+            if effect.verified {
+                if let Some(local) = &effect.local {
+                    snapshot.local_path = local.path.clone();
+                }
+            }
             operation.state = OperationState::AppliedUnconfirmed;
             operation.remote_id.clone_from(&effect.remote_id);
             operation.applied_effect = Some(effect.clone());
@@ -290,7 +369,7 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             operation.updated_at = request.recorded_at;
             true
         }
-        PersistedEffect::BaselineConfirmed(baseline) => {
+        PersistedEffect::BaselineConfirmed { baseline, .. } => {
             let Some(operation) = snapshot
                 .pending_operations
                 .iter_mut()
@@ -310,6 +389,7 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             {
                 return false;
             }
+            snapshot.local_path = baseline.local.as_ref().and_then(|local| local.path.clone());
             snapshot.baseline = baseline.clone();
             operation.state = OperationState::Confirmed;
             operation.updated_at = request.recorded_at;
@@ -360,13 +440,7 @@ impl IndexValues {
             Evidence::Known(identity) => Some(identity),
             _ => None,
         };
-        let local_path = snapshot
-            .baseline
-            .local
-            .as_ref()
-            .and_then(|state| state.path.as_ref())
-            .map(path_bytes)
-            .transpose()?;
+        let local_path = snapshot.local_path.as_ref().map(path_bytes).transpose()?;
         Ok(Self {
             remote_id: snapshot.identity.remote_id.as_ref().map(|id| id.0.clone()),
             local_device_id: local_identity.map(|identity| identity.device_id.to_string()),
@@ -380,7 +454,16 @@ impl IndexValues {
 }
 
 fn path_bytes(path: &crate::models::Path) -> Result<Vec<u8>, ()> {
-    if path.is_absolute() {
+    if path.is_absolute()
+        || path.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
         return Err(());
     }
     #[cfg(unix)]

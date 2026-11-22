@@ -109,7 +109,10 @@ fn seed(context: &Context, local: LocalObservation, remote: RemoteObservation) {
             remote_id: identity.remote_id.clone(),
             verified: true,
         }),
-        PersistedEffect::BaselineConfirmed(baseline),
+        PersistedEffect::BaselineConfirmed {
+            baseline,
+            parent: None,
+        },
     ]
     .into_iter()
     .enumerate()

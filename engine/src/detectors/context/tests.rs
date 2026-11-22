@@ -223,7 +223,10 @@ fn current_sides_join_only_through_persisted_identity_and_never_update_baseline(
             remote_id: remote.remote_id.clone(),
             verified: true,
         }),
-        PersistedEffect::BaselineConfirmed(baseline.clone()),
+        PersistedEffect::BaselineConfirmed {
+            baseline: baseline.clone(),
+            parent: None,
+        },
     ]
     .into_iter()
     .enumerate()

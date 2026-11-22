@@ -32,7 +32,27 @@ impl RemoteExecutor for LocalBackend {
         r: &'a ExecuteOperationRequest,
         fs: &'a Filesystem,
     ) -> EffectFuture<'a> {
-        Box::pin(async move { fs.execute(r) })
+        Box::pin(async move {
+            if matches!(
+                r.operation.action,
+                OperationAction::RegisterIdentity
+                    | OperationAction::Adopt
+                    | OperationAction::ConfirmBaseline
+            ) {
+                let local = if r.local.state == FileState::Present {
+                    fs.check(&r.local)?
+                } else {
+                    r.local.clone()
+                };
+                return Ok(AppliedEffect {
+                    local: Some(local),
+                    remote: Some(r.remote.clone()),
+                    remote_id: r.remote.id.clone(),
+                    verified: true,
+                });
+            }
+            fs.execute(r)
+        })
     }
 }
 struct UncertainBackend;
@@ -62,6 +82,7 @@ pub(super) fn setup(s: &Sandbox) -> PersistingOperator {
     fs::create_dir(&root).unwrap();
     PersistingOperator {
         config: OperatorConfig {
+            initial_association_authorized: false,
             account_id: AccountId("account".into()),
             sync_root_id: SyncRootId("root".into()),
             provider_id: ProviderId("google".into()),
@@ -370,6 +391,11 @@ fn baseline_requires_complete_matching_evidence() {
     };
     assert!(executor.baseline(&effect).is_none());
     effect.local.as_mut().unwrap().state = FileState::Present;
+    effect.local.as_mut().unwrap().identity = Evidence::Known(LocalIdentity {
+        device_id: 1,
+        inode: 2,
+        mount_id: None,
+    });
     assert!(executor.baseline(&effect).is_some());
     effect.remote.as_mut().unwrap().name = Evidence::Known("different".into());
     assert!(executor.baseline(&effect).is_none());
@@ -517,4 +543,223 @@ async fn confirmed_replacement_refreshes_persisted_local_identity() {
     let actual = result.effect.unwrap().local.unwrap().identity;
     assert_ne!(actual, old_identity);
     assert_eq!(snapshot(&executor).identity.local_identity, actual);
+}
+
+fn association_request(
+    executor: &PersistingOperator,
+    path: &str,
+    id: &str,
+    parent: &str,
+) -> ExecuteOperationRequest {
+    let mut r = request(executor, OperationAction::Adopt);
+    r.local = executor
+        .filesystem
+        .observe(std::path::Path::new(path))
+        .unwrap();
+    r.operation.local_path = r.local.path.clone();
+    r.operation.name = match &r.local.name {
+        Evidence::Known(name) => Some(name.clone()),
+        _ => None,
+    };
+    r.operation.parent = match &r.local.parent {
+        Evidence::Known(parent) => Some(parent.clone()),
+        _ => None,
+    };
+    r.operation.parent_id = Some(RemoteId(parent.into()));
+    r.operation.item_ref = ItemId(id.into());
+    r.operation.remote_id = Some(RemoteId(format!("remote-{id}")));
+    r.identity.item_id = Some(ItemId(id.into()));
+    r.identity.remote_id = r.operation.remote_id.clone();
+    r.identity.local_identity = r.local.identity.clone();
+    r.execution_id = Id(format!("associate-{id}"));
+    r.remote.id = r.operation.remote_id.clone();
+    r.remote.name = r.local.name.clone();
+    r.remote.parents = Evidence::Known(vec![RemoteId(parent.into())]);
+    r.remote.size = r.local.size.clone();
+    r.remote.checksum = r.local.checksum.clone();
+    r.remote.mime_type = Evidence::Known(
+        if r.local.kind == Evidence::Known(FileKind::Directory) {
+            "application/vnd.google-apps.folder"
+        } else {
+            "application/octet-stream"
+        }
+        .into(),
+    );
+    r
+}
+fn rows(executor: &PersistingOperator) -> Vec<InventorySnapshot> {
+    executor
+        .inventory
+        .enumerate(InventoryScopeQuery {
+            account_id: executor.config.account_id.clone(),
+            sync_root_id: executor.config.sync_root_id.clone(),
+        })
+        .unwrap()
+}
+#[tokio::test]
+async fn adoption_requires_explicit_authorization_and_preserves_existing_bytes() {
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    fs::write(executor.config.local_root.join("file"), b"preserved").unwrap();
+    let r = association_request(&executor, "file", "item", "remote-root");
+    assert_eq!(
+        executor.execute(r.clone()).await.status,
+        OperationResultStatus::Skipped
+    );
+    assert!(rows(&executor).is_empty());
+    executor.config.initial_association_authorized = true;
+    let result = executor.execute(r).await;
+    assert_eq!(result.status, OperationResultStatus::Succeeded);
+    let registered = rows(&executor);
+    assert_eq!(registered.len(), 1);
+    assert_eq!(registered[0].revision, 1);
+    assert_eq!(registered[0].baseline.state, BaselineState::Synced);
+    assert!(registered[0].pending_operations.is_empty());
+    assert_eq!(
+        fs::read(executor.config.local_root.join("file")).unwrap(),
+        b"preserved"
+    );
+    let reopened = Inventory::open(InventoryConfig {
+        directory: s.0.join("inventory"),
+        account_id: executor.config.account_id.clone(),
+    })
+    .unwrap();
+    let lookup = reopened.lookup(InventoryLookup {
+        account_id: executor.config.account_id.clone(),
+        sync_root_id: executor.config.sync_root_id.clone(),
+        item_id: None,
+        remote_id: Some(RemoteId("remote-item".into())),
+        local_identity: registered[0].identity.local_identity.clone(),
+        local_path: Some(Path::from("file")),
+    });
+    assert_eq!(lookup.status, InventoryLookupStatus::Found);
+    assert_eq!(lookup.snapshot.unwrap(), registered[0]);
+}
+#[tokio::test]
+async fn metadata_registration_has_no_baseline_and_concurrent_proposals_cannot_duplicate_a_path() {
+    let s = Sandbox::new();
+    let executor = setup(&s);
+    fs::write(executor.config.local_root.join("file"), b"local-only").unwrap();
+    let mut r = association_request(&executor, "file", "item", "remote-root");
+    r.operation.action = OperationAction::RegisterIdentity;
+    r.remote.id = None;
+    r.identity.remote_id = None;
+    r.operation.remote_id = None;
+    r.remote.state = FileState::Absent;
+    r.operation
+        .preconditions
+        .as_mut()
+        .unwrap()
+        .observed_remote_version = None;
+    assert_eq!(
+        executor.execute(r.clone()).await.status,
+        OperationResultStatus::Succeeded
+    );
+    let registered = rows(&executor);
+    assert_eq!(registered[0].baseline.state, BaselineState::NeverSynced);
+    assert_eq!(registered[0].local_path, Some(Path::from("file")));
+    r.identity.item_id = Some(ItemId("other-proposal".into()));
+    r.operation.item_ref = ItemId("other-proposal".into());
+    assert_eq!(
+        executor.execute(r).await.status,
+        OperationResultStatus::Skipped
+    );
+    assert_eq!(rows(&executor).len(), 1);
+}
+#[tokio::test]
+async fn nested_directories_and_empty_files_adopt_without_content_transfer() {
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    executor.config.initial_association_authorized = true;
+    fs::create_dir_all(executor.config.local_root.join("a/b/c")).unwrap();
+    fs::write(executor.config.local_root.join("a/b/c/empty"), b"").unwrap();
+    for (path, id, parent) in [
+        ("a", "a", "remote-root"),
+        ("a/b", "b", "remote-a"),
+        ("a/b/c", "c", "remote-b"),
+        ("a/b/c/empty", "empty", "remote-c"),
+    ] {
+        let r = association_request(&executor, path, id, parent);
+        assert_eq!(
+            executor.execute(r).await.status,
+            OperationResultStatus::Succeeded,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        rows(&executor)
+            .iter()
+            .filter(|r| r.baseline.state == BaselineState::Synced)
+            .count(),
+        4
+    );
+    assert_eq!(
+        fs::read(executor.config.local_root.join("a/b/c/empty")).unwrap(),
+        b""
+    );
+}
+#[tokio::test]
+async fn stale_revision_or_divergent_effect_never_confirms_a_baseline() {
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    executor.config.initial_association_authorized = true;
+    fs::write(executor.config.local_root.join("file"), b"preserved").unwrap();
+    let mut r = association_request(&executor, "file", "item", "remote-root");
+    r.remote.checksum = Evidence::Known(Checksum {
+        algorithm: "sha256".into(),
+        value: "different".into(),
+    });
+    assert_eq!(
+        executor.execute(r).await.status,
+        OperationResultStatus::Skipped
+    );
+    assert!(rows(&executor).is_empty());
+    let r = association_request(&executor, "file", "item", "remote-root");
+    assert_eq!(
+        executor.execute(r.clone()).await.status,
+        OperationResultStatus::Succeeded
+    );
+    assert_eq!(
+        executor.execute(r).await.status,
+        OperationResultStatus::Skipped
+    );
+    assert_eq!(rows(&executor)[0].revision, 1);
+}
+#[tokio::test]
+async fn parent_revision_is_checked_in_the_child_confirmation_transaction() {
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    executor.config.initial_association_authorized = true;
+    fs::create_dir_all(executor.config.local_root.join("a")).unwrap();
+    let parent = association_request(&executor, "a", "a", "remote-root");
+    assert_eq!(
+        executor.execute(parent.clone()).await.status,
+        OperationResultStatus::Succeeded
+    );
+    fs::write(executor.config.local_root.join("a/child"), b"child").unwrap();
+    let child = association_request(&executor, "a/child", "child", "remote-a");
+    let effect = AppliedEffect {
+        local: Some(child.local.clone()),
+        remote: Some(child.remote.clone()),
+        remote_id: child.remote.id.clone(),
+        verified: true,
+    };
+    let (baseline, dependency) = executor.convergence(&effect).unwrap();
+    assert_eq!(
+        executor
+            .write(&parent, Some(1), PersistedEffect::ConflictUpdated(None))
+            .status,
+        WriteStatus::Written
+    );
+    let receipt = executor.write(
+        &child,
+        Some(0),
+        PersistedEffect::ConvergenceConfirmed {
+            baseline,
+            effect: Box::new(effect),
+            parent: dependency,
+        },
+    );
+    assert_eq!(receipt.status, WriteStatus::RevisionConflict);
+    assert_eq!(rows(&executor).len(), 1);
 }

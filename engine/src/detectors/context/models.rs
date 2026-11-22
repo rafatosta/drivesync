@@ -97,6 +97,8 @@ pub(crate) struct Observations {
 pub(crate) struct File {
     /// Account, sync root, and known item identities.
     pub identity: crate::models::FileIdentity,
+    /// Opaque proposed ID for an initial Operations write; not a persisted identity.
+    pub registration_id: Option<crate::models::ItemId>,
     /// Current local observation; unobserved attributes stay explicit.
     pub local: LocalState,
     /// Current remote observation; unobserved attributes stay explicit.
@@ -126,4 +128,6 @@ pub(crate) struct File {
 pub(crate) struct AssociationCandidate {
     pub local: LocalState,
     pub remote: RemoteState,
+    /// Directory associations, not projected names alone, establish corresponding parents.
+    pub parents_correspond: Evidence<bool>,
 }

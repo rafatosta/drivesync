@@ -4,6 +4,8 @@ Reconstruction step 7 implements the private `orchestrator::operations` boundary
 The Analyzer and executor share one `Operation` and `OperationPreconditions` contract.
 Operations do not choose synchronization policy or analyze conflicts. Step 8 now wires the
 [Orchestrator and GUI status](ORCHESTRATOR.md); [functional observation producers](OBSERVATION_SOURCES.md) are implemented in step 9.
+[Functional correction Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) adds metadata-only
+identity registration, explicitly authorized adoption, and nested baseline confirmation.
 
 ## Execution and provider selection
 
@@ -33,7 +35,7 @@ concurrent duplicate names; a preflight collision query is not a server-side uni
 
 ## Persistence and partial effects
 
-Before dispatch, Operations commits `Pending`, then `Running`, with optimistic revisions.
+Before material-effect dispatch, Operations commits `Pending`, then `Running`, with optimistic revisions.
 Every terminal attempt records either failure, an observed effect, or an uncertain effect.
 A lost response, dropped future, process interruption, or failed final database write cannot
 be reported as a completed persisted success. `Pending`, `Running`, and
@@ -43,9 +45,18 @@ Reusing any recorded execution ID is rejected; the executor does not blindly rep
 `OperationConfirmed` confirms a verified individual effect without inventing a synchronized
 baseline. `BaselineConfirmed` is used only when both replicas demonstrably converge, including
 known name, parent relationship, type, and matching SHA-256 for binary content. The current
-baseline check resolves direct children of the configured root; nested parent associations
-and Workspace projection baselines require further confirmed mapping evidence. A successful
+baseline check resolves the configured roots or a persisted directory association at any
+supported depth. Parent identity/location/revision dependencies are checked atomically with
+the child write; Workspace projection baselines still require their own mapping policy. A successful
 individual operation can therefore leave the previous baseline intact. NoOp does not write one.
+
+`RegisterIdentity`, `Adopt`, and `ConfirmBaseline` revalidate using read-only provider calls
+and local filesystem reads, then commit one atomic Inventory metadata transaction instead of
+creating a pending material operation. Registration leaves `NeverSynced`; adoption additionally
+requires explicit session policy and unique equivalent replicas. Known equal sizes/SHA-256
+confirm regular files; directories need no binary metadata. Stale anonymous proposals are
+rejected by their existing scoped keys before additional remote reads. The current location
+index is independent of historical baseline paths, and bare NoOp still performs no write.
 
 Inventory remains a transactional fact store. Its new `OperationConfirmed` transition checks
 that an effect was recorded and marked verified; it performs no synchronization analysis.
@@ -75,6 +86,8 @@ unavailable trash, or unsafe directory ownership/permissions is refused without 
 source content. Workspace links contain a fixed HTTPS Drive URL and no `Exec` entry or
 executable mode. Permanent deletion is never used.
 
-No new Provider, Accounts, Connection, GUI, or credential-storage behavior is introduced.
-Tests use temporary directories, synthetic authorization, and loopback HTTP only. They do not
-establish real Google Drive behavior or installed-Flatpak acceptance.
+Provider, Accounts, GUI and credential storage remain preserved. Connection exposes a separate
+explicit initial-association start method; normal dashboard startup does not grant it.
+Automated tests use temporary directories, synthetic authorization and loopback HTTP. Real
+Engine validation in a Devel Flatpak build sandbox is recorded separately in the Stage 2
+report; neither category establishes installed-GUI/package acceptance.

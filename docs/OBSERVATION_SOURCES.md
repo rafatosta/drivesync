@@ -106,8 +106,9 @@ The next observation after source loss replaces its unavailable side after recov
 lookup results, revisions, pending operations, and conflicts are freshly read. Engine sources
 now deliver `Observation::Capture` rounds, including empty/partial/unavailable scopes, with
 source-local generations and configured account/provider/root bindings. Context rechecks
-persisted records absent from the capture, uses baseline paths only as locations to confront
-with current evidence, and rebuilds destinations and collisions. It shares derived indexes
+persisted records absent from the capture, confronts confirmed current locations with new
+evidence, and rebuilds destinations and collisions. Historical baselines never substitute
+for current observations. It shares derived indexes
 and one scoped enumeration within each round; correlated items are emitted once per round.
 A complete local scan may prove a known path absent, but an observed identity at another path
 keeps the logical item's state Unknown. Remote omissions stay Unknown without a specific
@@ -117,10 +118,10 @@ snapshots; Operations must still revalidate preconditions.
 New same-name local and remote files are not associated by this cache. Current tree projections
 only gather candidate pairs; duplicates remain explicit candidates/collisions. Directory
 associations from Inventory resolve destination parents in either direction; unassociated
-nested parents remain unresolved until later identity/baseline work. No source or Context
-writes an association or baseline. New items without a logical association, initial adoption without a confirmed Operations contract, unresolved
-moves/destinations, and uncertain operations still defer according to the existing Analyzer
-and Operations limits. This step makes observation functional; it does not claim complete
+nested parents remain unresolved until explicit parent association is confirmed. No source
+or Context writes an association or baseline. [Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) now
+provides Operations-based registration and authorized adoption; ambiguous candidates,
+unresolved moves/destinations and uncertain operations still defer. This step makes observation functional; it does not claim complete
 initial upload/download or full conflict recovery. Local replacement receipts now retain
 the confirmed inode identity, preventing the next scan from conflicting with its own effect.
 
@@ -128,3 +129,7 @@ Validation uses temporary files, synthetic account authorization, an isolated va
 loopback HTTP. It covers pagination, nested folders, cursor expiry, cancellation, coverage,
 local recovery, identity-based pairing, and Engine lifecycle. No real Google account, document
 portal integration, installed Flatpak, or native desktop acceptance is established by SDK tests.
+
+The Stage 2 report separately records real test-account source/Engine validation inside a
+Devel Flatpak build sandbox, including three-level adoption and re-opening without duplicate
+identities or baseline rewrites. It does not claim installed GUI or portal acceptance.

@@ -17,6 +17,7 @@ pub(in crate::orchestrator) fn fixture() -> File {
     let local = local_state("same", 10);
     let remote = remote_state("same", 10);
     File {
+        registration_id: Some(crate::models::ItemId("proposed".into())),
         association_candidates: Vec::new(),
         identity: FileIdentity {
             account_id: AccountId("account-a".into()),
@@ -197,12 +198,19 @@ fn initial_association_requires_matching_metadata_stable_identity_and_authorizat
     file.inventory_revision = None;
     file.identity.item_id = None;
     file.baseline = Baseline::never_synced();
+    file.local.path = Some(PathBuf::from("file.txt"));
+    file.local.parent = Evidence::Known(PathBuf::new());
+    file.remote.parents = Evidence::Known(vec![RemoteId("drive-root".into())]);
+    file.environment.destination_local_parent = Evidence::Known(PathBuf::new());
+    file.environment.destination_remote_parent_id = Evidence::Known(RemoteId("drive-root".into()));
     file.initial_association_authorized = true;
 
     assert_eq!(analyze(&file).status, DecisionStatus::Adopt);
 
     file.initial_association_authorized = false;
-    assert_eq!(analyze(&file).status, DecisionStatus::Defer);
+    let decision = analyze(&file);
+    assert_eq!(decision.status, DecisionStatus::Adopt);
+    assert!(decision.operations.is_empty());
 }
 
 #[test]
@@ -220,4 +228,79 @@ fn inconclusive_inventory_or_incomplete_absence_never_produces_operations() {
     let partial_absence = analyze(&file);
     assert_eq!(partial_absence.status, DecisionStatus::Defer);
     assert!(partial_absence.operations.is_empty());
+}
+
+fn initial_pair(directory: bool) -> File {
+    let mut file = fixture();
+    file.identity.item_id = None;
+    file.inventory_lookup = InventoryLookupStatus::NotFound;
+    file.inventory_revision = None;
+    file.baseline = Baseline::never_synced();
+    file.local.path = Some(PathBuf::from("file.txt"));
+    file.local.parent = Evidence::Known(PathBuf::new());
+    file.remote.parents = Evidence::Known(vec![RemoteId("drive-root".into())]);
+    file.environment.destination_local_parent = Evidence::Known(PathBuf::new());
+    file.environment.destination_remote_parent_id = Evidence::Known(RemoteId("drive-root".into()));
+    file.initial_association_authorized = true;
+    if directory {
+        file.local.kind = Evidence::Known(FileKind::Directory);
+        file.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+        file.local.size = Evidence::NotApplicable;
+        file.remote.size = Evidence::NotApplicable;
+        file.local.checksum = Evidence::NotApplicable;
+        file.remote.checksum = Evidence::NotApplicable;
+    }
+    file
+}
+#[test]
+fn directories_adopt_without_binary_metadata_but_not_without_authorization_or_parent_evidence() {
+    let mut file = initial_pair(true);
+    let result = analyze(&file);
+    assert_eq!(result.status, DecisionStatus::Adopt);
+    assert_eq!(result.operations[0].action, OperationAction::Adopt);
+    assert_eq!(
+        result.operations[0].item_ref,
+        file.registration_id.clone().unwrap()
+    );
+    assert!(file.identity.item_id.is_none());
+    file.initial_association_authorized = false;
+    assert!(analyze(&file).operations.is_empty());
+    file.initial_association_authorized = true;
+    file.environment.destination_local_parent = Evidence::NotCollected;
+    assert!(analyze(&file).operations.is_empty());
+}
+#[test]
+fn differing_bytes_or_ambiguous_candidates_do_not_adopt_even_with_authorization() {
+    let mut file = initial_pair(false);
+    file.remote.checksum = checksum("different");
+    assert!(analyze(&file).operations.is_empty());
+    file.remote.checksum = file.local.checksum.clone();
+    let candidate = crate::detectors::context::AssociationCandidate {
+        local: file.local.clone(),
+        remote: file.remote.clone(),
+        parents_correspond: Evidence::Known(true),
+    };
+    file.association_candidates = vec![candidate.clone(), candidate];
+    assert!(analyze(&file).operations.is_empty());
+}
+#[test]
+fn proven_concurrent_equivalence_confirms_baseline_while_noop_has_no_write_plan() {
+    let mut file = initial_pair(false);
+    file.identity.item_id = Some(crate::models::ItemId("known".into()));
+    file.inventory_lookup = InventoryLookupStatus::Found;
+    file.inventory_revision = Some(5);
+    file.baseline = fixture().baseline;
+    file.local.checksum = checksum("changed-together");
+    file.remote.checksum = file.local.checksum.clone();
+    let result = analyze(&file);
+    assert_eq!(result.status, DecisionStatus::Ready);
+    assert_eq!(
+        result.operations[0].action,
+        OperationAction::ConfirmBaseline
+    );
+    let mut unchanged = fixture();
+    assert_eq!(analyze(&unchanged).status, DecisionStatus::NoOp);
+    assert!(analyze(&unchanged).operations.is_empty());
+    unchanged.remote.checksum = Evidence::Unavailable;
+    assert!(analyze(&unchanged).operations.is_empty());
 }

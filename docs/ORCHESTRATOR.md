@@ -7,13 +7,15 @@ Operations. Accounts, OAuth, Provider, and saved-folder formats remain intact.
 
 ## Application boundary
 
-The public Engine API adds `start_synchronization`, `stop_synchronization`,
+The public Engine API adds `start_synchronization`, `start_synchronization_with_initial_association`, `stop_synchronization`,
 `synchronization_status`, and `subscribe_synchronization`. Starting takes an account,
 absolute local root, and opaque remote root ID. It derives a stable synchronization scope
 from the length-delimited account ID, remote ID, and raw local path bytes; the identity is
 never derived from a path alone. The provider is resolved from Accounts, not selected by
 the caller. Identical active configuration is idempotent. An active scope must stop before
-its roots can change. Different active accounts cannot configure overlapping local trees.
+its roots or initial-association policy can change. Different active accounts cannot configure
+overlapping local trees. The initial-association start method grants permission only to that
+exact worker session; ordinary/dashboard startup always uses false. Permission is not saved.
 
 Synchronization Inventory files live in a dedicated `<accounts-directory>.synchronization`
 sibling directory. Opening a scope neither migrates nor changes Accounts storage. Each
@@ -33,8 +35,9 @@ For each scoped `File`, Orchestrator invokes the pure Analyzer once:
 - `Ready` executes an executable plan in dependency order.
 - `NoOp` performs no write and does not manufacture a baseline.
 - `Defer`, `Conflict`, `Unsupported`, and `InvalidInput` publish an explicit blocker.
-- `Adopt` waits for the separate confirmed-adoption operation/policy; Orchestrator never
-  substitutes a direct Inventory write for missing execution support.
+- `Adopt` executes its metadata plan only when the Analyzer and worker session explicitly
+  authorize it; otherwise it publishes AdoptionRequired. Orchestrator copies the exact planned
+  candidate evidence into the request and never writes Inventory itself.
 
 Each dispatched step gets a cryptographically random execution ID. Its result must match the
 execution ID, item, and action and include a verified effect plus a committed, advancing
@@ -79,10 +82,13 @@ scope before activating the newly saved one.
 
 Step 9 now starts functional observation sources and joins current sides only through a known
 Inventory identity. Partial sources suspend execution admission. See [source behavior and
-limits](OBSERVATION_SOURCES.md). Unknown counterparts, new items without association, adoption
-without confirmed execution support, and unresolved destinations still explicitly defer.
+limits](OBSERVATION_SOURCES.md). [Functional correction Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md)
+adds atomic identity registration, authorized adoption and baseline confirmation. Unilateral
+registration does not confirm convergence or create a transfer plan. Unknown counterparts,
+ambiguous adoption, missing authorization and unresolved destinations still block explicitly.
 Orchestrator does not duplicate Context or Analyzer logic to bypass those limitations.
 
 Coordinator tests use the real Analyzer and controlled Operator receipts. Connection/source
 tests use synthetic OAuth, an isolated vault, temporary local data, and loopback HTTP. These
-checks do not establish live Google Drive, portal, or installed-Flatpak acceptance.
+checks do not establish live Google Drive, portal, or installed-Flatpak acceptance. The Stage 2
+report separately records real test-account Engine checks inside a Devel Flatpak build sandbox.

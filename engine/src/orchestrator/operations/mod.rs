@@ -99,48 +99,134 @@ impl PersistingOperator {
             recorded_at: now(),
         })
     }
-    /// Only equal, fully resolved replicas may replace a synchronized baseline.
-    fn baseline(&self, effect: &AppliedEffect) -> Option<Baseline> {
+    /// Only corresponding, equivalent current replicas may replace a synchronization baseline.
+    fn convergence(&self, effect: &AppliedEffect) -> Option<(Baseline, Option<ParentAssociation>)> {
         if !effect.verified {
             return None;
         }
         let local = effect.local.as_ref()?;
         let remote = effect.remote.as_ref()?;
-        let absent = local.state == FileState::Absent && remote.trashed == Evidence::Known(true);
-        let same_name =
-            matches!((&local.name,&remote.name),(Evidence::Known(a),Evidence::Known(b)) if a==b);
-        let root_parent = local.parent == Evidence::Known(Path::new())
-            && remote.parents == Evidence::Known(vec![self.config.remote_root_id.clone()]);
-        let content = match (&local.kind, &remote.mime_type) {
-            (Evidence::Known(FileKind::Directory), Evidence::Known(mime))
-                if mime == "application/vnd.google-apps.folder" =>
-            {
-                true
-            }
-            (Evidence::Known(FileKind::Regular), Evidence::Known(mime))
-                if !mime.starts_with("application/vnd.google-apps.") =>
-            {
-                matches!((&local.checksum,&remote.checksum),(Evidence::Known(a),Evidence::Known(b)) if a==b)
-            }
-            _ => false,
-        };
-        if !absent
-            && !(local.state == FileState::Present
-                && remote.state == FileState::Present
-                && remote.trashed == Evidence::Known(false)
-                && same_name
-                && root_parent
-                && content)
-        {
+        if !super::evidence::equivalent(local, remote) {
             return None;
         }
-        Some(Baseline {
-            state: BaselineState::Synced,
-            local: Some(local.clone()),
-            remote: Some(remote.clone()),
-            confirmed_at: Some(now()),
-            projection: Some(ProjectionKind::Native),
-        })
+        let (Evidence::Known(local_parent), Evidence::Known(remote_parents)) =
+            (&local.parent, &remote.parents)
+        else {
+            return None;
+        };
+        if remote_parents.len() != 1 {
+            return None;
+        }
+        let parent = if local_parent.as_os_str().is_empty()
+            && remote_parents[0] == self.config.remote_root_id
+        {
+            None
+        } else {
+            let lookup = self.inventory.lookup(InventoryLookup {
+                account_id: self.config.account_id.clone(),
+                sync_root_id: self.config.sync_root_id.clone(),
+                item_id: None,
+                remote_id: Some(remote_parents[0].clone()),
+                local_identity: Evidence::NotCollected,
+                local_path: Some(local_parent.clone()),
+            });
+            if lookup.status != InventoryLookupStatus::Found {
+                return None;
+            }
+            let snapshot = lookup.snapshot?;
+            let expected = snapshot.baseline.local.as_ref()?;
+            if expected.kind != Evidence::Known(FileKind::Directory)
+                || !self.filesystem.observe(local_parent).is_ok_and(|current| {
+                    current.kind == expected.kind
+                        && current.identity == snapshot.identity.local_identity
+                })
+                || snapshot.local_path.as_ref() != Some(local_parent)
+                || snapshot.baseline.state != BaselineState::Synced
+            {
+                return None;
+            }
+            Some(ParentAssociation {
+                item_id: snapshot.identity.item_id?,
+                revision: snapshot.revision,
+                remote_id: remote_parents[0].clone(),
+                local_path: local_parent.clone(),
+            })
+        };
+        Some((
+            Baseline {
+                state: BaselineState::Synced,
+                local: Some(local.clone()),
+                remote: Some(remote.clone()),
+                confirmed_at: Some(now()),
+                projection: Some(ProjectionKind::Native),
+            },
+            parent,
+        ))
+    }
+    #[cfg(test)]
+    fn baseline(&self, effect: &AppliedEffect) -> Option<Baseline> {
+        self.convergence(effect).map(|(baseline, _)| baseline)
+    }
+
+    async fn metadata(
+        &self,
+        r: &ExecuteOperationRequest,
+        mut result: OperationResult,
+    ) -> OperationResult {
+        let action = r.operation.action;
+        if action == OperationAction::Adopt && !self.config.initial_association_authorized {
+            result.error = Some(filesystem::stale().failure());
+            return result;
+        }
+        let effect = match self.remote.execute(&self.config, r, &self.filesystem).await {
+            Ok(effect) if effect.verified => effect,
+            _ => {
+                result.error = Some(filesystem::stale().failure());
+                return result;
+            }
+        };
+        let persisted = if action == OperationAction::RegisterIdentity {
+            if r.expected_revision != Some(0)
+                || !matches!((&effect.local,&effect.remote),
+                (Some(local),Some(remote)) if (local.state == FileState::Present && remote.state == FileState::Absent) || (local.state == FileState::Absent && remote.state == FileState::Present))
+            {
+                result.error = Some(filesystem::stale().failure());
+                return result;
+            }
+            PersistedEffect::ItemRegistered {
+                local_path: effect
+                    .local
+                    .as_ref()
+                    .filter(|s| s.state == FileState::Present)
+                    .and_then(|s| s.path.clone()),
+            }
+        } else {
+            let Some((baseline, parent)) = self.convergence(&effect) else {
+                result.error = Some(filesystem::stale().failure());
+                return result;
+            };
+            PersistedEffect::ConvergenceConfirmed {
+                baseline,
+                effect: Box::new(effect.clone()),
+                parent,
+            }
+        };
+        // No external effect is dispatched: this single transaction is the whole metadata action.
+        let mut current = r.clone();
+        if let Some(local) = &effect.local {
+            current.identity.local_identity = local.identity.clone();
+        }
+        current.identity.remote_id = effect.remote_id.clone();
+        let receipt = self.write(&current, r.expected_revision, persisted);
+        result.status = if receipt.status == WriteStatus::Written {
+            OperationResultStatus::Succeeded
+        } else {
+            OperationResultStatus::Skipped
+        };
+        result.inventory_write = Some(receipt);
+        result.effect = Some(effect);
+        result.completed_at = Some(now());
+        result
     }
     fn validate(&self, r: &ExecuteOperationRequest) -> Result<(), OperatorError> {
         let op = &r.operation;
@@ -204,7 +290,14 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
-                if snapshot.identity.remote_id != r.identity.remote_id
+                if (snapshot.identity.remote_id != r.identity.remote_id
+                    && !(op.action == OperationAction::Adopt
+                        && snapshot.identity.remote_id.is_none()))
+                    || (op.action == OperationAction::ConfirmBaseline
+                        && snapshot.baseline.state != BaselineState::Synced)
+                    || (op.action == OperationAction::Adopt
+                        && matches!(snapshot.identity.local_identity, Evidence::Known(_))
+                        && snapshot.identity.local_identity != r.identity.local_identity)
                     || r.expected_revision != Some(snapshot.revision)
                     || snapshot.pending_operations.iter().any(|p| {
                         p.id == r.execution_id
@@ -219,7 +312,32 @@ impl PersistingOperator {
                     return Err(filesystem::stale());
                 }
             }
-            InventoryLookupStatus::NotFound if r.expected_revision == Some(0) => {}
+            InventoryLookupStatus::NotFound if r.expected_revision == Some(0) => {
+                if matches!(
+                    op.action,
+                    OperationAction::RegisterIdentity | OperationAction::Adopt
+                ) {
+                    let existing = self.inventory.lookup(InventoryLookup {
+                        account_id: r.identity.account_id.clone(),
+                        sync_root_id: r.identity.sync_root_id.clone(),
+                        item_id: None,
+                        remote_id: r.identity.remote_id.clone(),
+                        local_path: if r.local.state == FileState::Present {
+                            r.local.path.clone()
+                        } else {
+                            None
+                        },
+                        local_identity: if r.local.state == FileState::Present {
+                            r.local.identity.clone()
+                        } else {
+                            Evidence::NotCollected
+                        },
+                    });
+                    if existing.status != InventoryLookupStatus::NotFound {
+                        return Err(filesystem::stale());
+                    }
+                }
+            }
             _ => return Err(filesystem::stale()),
         }
         Ok(())
@@ -242,6 +360,14 @@ impl Operator for PersistingOperator {
             if let Err(error) = self.validate(&r) {
                 result.error = Some(error.failure());
                 return result;
+            }
+            if matches!(
+                r.operation.action,
+                OperationAction::RegisterIdentity
+                    | OperationAction::Adopt
+                    | OperationAction::ConfirmBaseline
+            ) {
+                return self.metadata(&r, result).await;
             }
             let mut pending = PendingOperation {
                 id: r.execution_id.clone(),
@@ -322,8 +448,10 @@ impl Operator for PersistingOperator {
             let mut receipt = self.write(&recorded, receipt.revision, persisted);
             if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded
             {
-                let confirmed = match result.effect.as_ref().and_then(|e| self.baseline(e)) {
-                    Some(baseline) => PersistedEffect::BaselineConfirmed(baseline),
+                let confirmed = match result.effect.as_ref().and_then(|e| self.convergence(e)) {
+                    Some((baseline, parent)) => {
+                        PersistedEffect::BaselineConfirmed { baseline, parent }
+                    }
                     None => PersistedEffect::OperationConfirmed,
                 };
                 receipt = self.write(&recorded, receipt.revision, confirmed);

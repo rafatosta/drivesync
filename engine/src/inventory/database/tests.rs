@@ -195,7 +195,10 @@ fn revisions_prevent_lost_updates_and_baselines_require_verified_effects() {
         "remote-a",
         operation_id,
         unverified.revision,
-        PersistedEffect::BaselineConfirmed(baseline.clone()),
+        PersistedEffect::BaselineConfirmed {
+            baseline: baseline.clone(),
+            parent: None,
+        },
         4,
     ));
     assert_eq!(rejected_confirmation.status, WriteStatus::Rejected);
@@ -251,13 +254,16 @@ fn verified_operation_can_confirm_a_baseline() {
         "remote-a",
         operation_id,
         applied.revision,
-        PersistedEffect::BaselineConfirmed(Baseline {
-            state: BaselineState::Synced,
-            local: Some(local_state()),
-            remote: Some(remote_state()),
-            confirmed_at: Some(timestamp(4)),
-            projection: Some(ProjectionKind::Native),
-        }),
+        PersistedEffect::BaselineConfirmed {
+            baseline: Baseline {
+                state: BaselineState::Synced,
+                local: Some(local_state()),
+                remote: Some(remote_state()),
+                confirmed_at: Some(timestamp(4)),
+                projection: Some(ProjectionKind::Native),
+            },
+            parent: None,
+        },
         4,
     ));
     assert_eq!(confirmed.status, WriteStatus::Written);
@@ -362,4 +368,75 @@ fn scoped_enumeration_includes_pending_and_fails_on_corruption_without_partial_r
         )
         .unwrap();
     assert!(db.enumerate(query()).is_err());
+}
+
+#[test]
+fn confirmed_current_location_is_indexed_without_replacing_historical_baseline() {
+    let mut db = database("account-a");
+    let baseline = Baseline {
+        state: BaselineState::Synced,
+        local: Some(local_state()),
+        remote: Some(remote_state()),
+        confirmed_at: Some(timestamp(1)),
+        projection: Some(ProjectionKind::Native),
+    };
+    let initial_effect = AppliedEffect {
+        local: baseline.local.clone(),
+        remote: baseline.remote.clone(),
+        remote_id: Some(RemoteId("remote-a".into())),
+        verified: true,
+    };
+    assert_eq!(
+        db.write(write(
+            "item-a",
+            "remote-a",
+            "seed",
+            Some(0),
+            PersistedEffect::ConvergenceConfirmed {
+                baseline: baseline.clone(),
+                effect: Box::new(initial_effect),
+                parent: None
+            },
+            1
+        ))
+        .status,
+        WriteStatus::Written
+    );
+    let mut local = local_state();
+    local.path = Some(crate::models::Path::from("new-location"));
+    let mut registered = pending("item-a", "move", OperationState::Pending, 2);
+    for (revision, effect) in [
+        PersistedEffect::Pending(registered.clone()),
+        {
+            registered.state = OperationState::Running;
+            PersistedEffect::Pending(registered)
+        },
+        PersistedEffect::OperationApplied(AppliedEffect {
+            local: Some(local.clone()),
+            remote: Some(remote_state()),
+            remote_id: Some(RemoteId("remote-a".into())),
+            verified: true,
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            db.write(write(
+                "item-a",
+                "remote-a",
+                "move",
+                Some(revision as u64 + 1),
+                effect,
+                2
+            ))
+            .status,
+            WriteStatus::Written
+        );
+    }
+    let mut query = lookup(Some("item-a"), Some("remote-a"));
+    query.local_path = local.path.clone();
+    let snapshot = db.lookup(query).snapshot.unwrap();
+    assert_eq!(snapshot.local_path, local.path);
+    assert_eq!(snapshot.baseline, baseline);
 }

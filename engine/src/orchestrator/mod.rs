@@ -1,5 +1,6 @@
 //! Account-scoped coordination of pure analysis, ordered execution, and status publication.
 mod analyzer;
+mod evidence;
 mod models;
 mod operations;
 use crate::{
@@ -108,6 +109,7 @@ pub(crate) fn open(
     );
     let operator = operations::DefaultOperatorFactory::new(accounts, inventory, client)
         .create(OperatorConfig {
+            initial_association_authorized: config.initial_association_authorized,
             account_id: config.roots.account_id.clone(),
             sync_root_id: config.sync_root_id.clone(),
             provider_id: config.provider_id.clone(),
@@ -349,11 +351,16 @@ impl Orchestrator {
             None,
             None,
         );
+        file.initial_association_authorized &= self.config.initial_association_authorized;
         let decision = analyzer::analyze(&file);
         outcome.decision = decision.status;
         self.blockers
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
-        if decision.status != DecisionStatus::Ready {
+        if decision.status != DecisionStatus::Ready
+            && !(decision.status == DecisionStatus::Adopt
+                && decision.execution.status == ExecutionStatus::Executable
+                && !decision.operations.is_empty())
+        {
             let blocker = match decision.status {
                 DecisionStatus::NoOp => None,
                 DecisionStatus::Adopt => Some(SynchronizationIssueKind::AdoptionRequired),
@@ -421,6 +428,32 @@ impl Orchestrator {
                     break;
                 }
             };
+            if operation.action == OperationAction::Adopt {
+                let selected: Vec<_> = file
+                    .association_candidates
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.local.path == operation.local_path
+                            && candidate.remote.id == operation.remote_id
+                    })
+                    .collect();
+                if selected.len() == 1 {
+                    file.local = selected[0].local.clone();
+                    file.remote = selected[0].remote.clone();
+                    file.identity.remote_id = file.remote.id.clone();
+                    file.identity.local_identity = file.local.identity.clone();
+                }
+            }
+            if file.identity.item_id.is_none()
+                && matches!(
+                    operation.action,
+                    OperationAction::RegisterIdentity | OperationAction::Adopt
+                )
+                && file.registration_id.as_ref() == Some(&operation.item_ref)
+            {
+                file.identity.item_id = Some(operation.item_ref.clone());
+                file.inventory_revision = Some(0);
+            }
             // Refresh command preconditions only from verified receipts of earlier steps.
             operation.local_path = file.local.path.clone();
             operation.remote_id = file.identity.remote_id.clone();

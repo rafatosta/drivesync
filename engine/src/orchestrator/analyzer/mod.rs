@@ -82,6 +82,19 @@ pub(crate) fn analyze(file: &File) -> Decision {
                 Vec::new(),
             );
         }
+        if complete(file)
+            && parents_correspond(file)
+            && super::evidence::equivalent(&file.local, &file.remote)
+        {
+            return metadata_plan(
+                file,
+                &file.local,
+                &file.remote,
+                OperationAction::ConfirmBaseline,
+                validation,
+                changeset,
+            );
+        }
         return decision(
             DecisionStatus::Defer,
             "Both sides changed; the Analyzer does not merge concurrent edits.",
@@ -597,16 +610,38 @@ fn known_values_differ<T: PartialEq>(left: &Evidence<T>, right: &Evidence<T>) ->
 }
 
 fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) -> Decision {
-    if file.local.state == FileState::Present && file.remote.state == FileState::Present {
-        let equivalent = matches!(file.identity.local_identity, Evidence::Known(_))
-            && file.identity.remote_id.is_some()
-            && known_equal(&file.local.name, &file.remote.name)
-            && known_equal(&file.local.size, &file.remote.size)
-            && known_equal(&file.local.checksum, &file.remote.checksum);
-        if equivalent && file.initial_association_authorized {
+    use crate::inventory::models::{LocalState, RemoteState};
+    let pair: Option<(&LocalState, &RemoteState)> = if file.association_candidates.len() == 1 {
+        let candidate = &file.association_candidates[0];
+        (candidate.parents_correspond == Evidence::Known(true)
+            && file
+                .identity
+                .remote_id
+                .as_ref()
+                .is_none_or(|id| candidate.remote.id.as_ref() == Some(id))
+            && (!matches!(file.identity.local_identity, Evidence::Known(_))
+                || file.identity.local_identity == candidate.local.identity))
+            .then_some((&candidate.local, &candidate.remote))
+    } else if file.association_candidates.is_empty() && parents_correspond(file) {
+        Some((&file.local, &file.remote))
+    } else {
+        None
+    };
+    if let Some((local, remote)) = pair {
+        if super::evidence::equivalent(local, remote) && complete(file) {
+            if file.initial_association_authorized {
+                return metadata_plan(
+                    file,
+                    local,
+                    remote,
+                    OperationAction::Adopt,
+                    validation,
+                    changeset,
+                );
+            }
             return decision(
                 DecisionStatus::Adopt,
-                "Both sides have matching observed metadata and initial association is authorized.",
+                "Matching replicas need explicit initial association authorization.",
                 validation,
                 changeset,
                 Vec::new(),
@@ -614,9 +649,80 @@ fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) ->
                 Vec::new(),
             );
         }
+    }
+    if file.identity.item_id.is_none() && file.association_candidates.is_empty() && complete(file) {
+        let local_only = file.local.state == FileState::Present
+            && file.remote.state == FileState::Absent
+            && matches!(file.local.identity, Evidence::Known(_))
+            && matches!(
+                file.environment.destination_remote_parent_id,
+                Evidence::Known(_)
+            )
+            && file.environment.destination_remote_matches == Evidence::Known(Vec::new());
+        let remote_only = file.remote.state == FileState::Present
+            && file.local.state == FileState::Absent
+            && file.environment.destination_local_occupied == Evidence::Known(false)
+            && matches!(
+                file.environment.destination_local_parent,
+                Evidence::Known(_)
+            );
+        if local_only || remote_only {
+            return metadata_plan(
+                file,
+                &file.local,
+                &file.remote,
+                OperationAction::RegisterIdentity,
+                validation,
+                changeset,
+            );
+        }
+    }
+    decision(DecisionStatus::Defer,"Initial identity or association requires unambiguous current evidence, matching parents and authorization.",validation,changeset,Vec::new(),ExecutionStatus::NotExecutable,Vec::new())
+}
+
+fn complete(file: &File) -> bool {
+    use crate::detectors::observation::ObservationCoverage;
+    file.observations.local_coverage == ObservationCoverage::Complete
+        && file.observations.remote_coverage == ObservationCoverage::Complete
+        && file.environment.local_root_available
+        && file.environment.remote_available
+}
+fn parents_correspond(file: &File) -> bool {
+    matches!((&file.local.parent,&file.environment.destination_local_parent),(Evidence::Known(a),Evidence::Known(b)) if a == b)
+        && matches!((&file.remote.parents,&file.environment.destination_remote_parent_id),(Evidence::Known(parents),Evidence::Known(parent)) if parents == &vec![parent.clone()])
+}
+fn metadata_plan(
+    file: &File,
+    local: &crate::inventory::models::LocalState,
+    remote: &crate::inventory::models::RemoteState,
+    action: OperationAction,
+    validation: Validation,
+    changeset: Changeset,
+) -> Decision {
+    let Some(item_ref) = file
+        .identity
+        .item_id
+        .clone()
+        .or_else(|| file.registration_id.clone())
+    else {
         return decision(
             DecisionStatus::Defer,
-            "An unbased item cannot be associated without matching evidence and explicit authorization.",
+            "A registration token is required.",
+            validation,
+            changeset,
+            Vec::new(),
+            ExecutionStatus::NotExecutable,
+            Vec::new(),
+        );
+    };
+    let remote_version = match remote.version {
+        Evidence::Known(version) => Some(version),
+        _ => None,
+    };
+    if remote.state == FileState::Present && remote_version.is_none() {
+        return decision(
+            DecisionStatus::Defer,
+            "Current remote version is required.",
             validation,
             changeset,
             Vec::new(),
@@ -624,19 +730,49 @@ fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) ->
             Vec::new(),
         );
     }
+    let operation = Operation {
+        step: 1,
+        action,
+        item_ref,
+        depends_on: Vec::new(),
+        remote_id: remote.id.clone(),
+        local_path: local.path.clone(),
+        name: match &local.name {
+            Evidence::Known(name) => Some(name.clone()),
+            _ => None,
+        },
+        parent: match &local.parent {
+            Evidence::Known(parent) => Some(parent.clone()),
+            _ => None,
+        },
+        parent_id: match &remote.parents {
+            Evidence::Known(parents) if parents.len() == 1 => parents.first().cloned(),
+            _ => match &file.environment.destination_remote_parent_id {
+                Evidence::Known(parent) => Some(parent.clone()),
+                _ => None,
+            },
+        },
+        preconditions: Some(OperationPreconditions {
+            observed_remote_version: remote_version,
+            baseline_remote_version: None,
+            local_unchanged: Evidence::Known(true),
+            remote_unchanged: Evidence::Known(true),
+            destination_free: Evidence::NotApplicable,
+        }),
+    };
     decision(
-        DecisionStatus::Defer,
-        "A new item needs a stable logical item identity and an explicitly verified destination before planning creation.",
+        if action == OperationAction::Adopt {
+            DecisionStatus::Adopt
+        } else {
+            DecisionStatus::Ready
+        },
+        "Revalidate and persist metadata without transferring content.",
         validation,
         changeset,
-        Vec::new(),
-        ExecutionStatus::NotExecutable,
+        vec![operation],
+        ExecutionStatus::Executable,
         Vec::new(),
     )
-}
-
-fn known_equal<T: PartialEq>(left: &Evidence<T>, right: &Evidence<T>) -> bool {
-    matches!((left, right), (Evidence::Known(left), Evidence::Known(right)) if left == right)
 }
 
 fn plan_unilateral_changes(file: &File, changeset: &Changeset, from_local: bool) -> Vec<Operation> {

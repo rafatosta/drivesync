@@ -49,6 +49,8 @@ pub(crate) struct OperationPreconditions {
 /// Fixed account and root boundaries for an executor.
 #[derive(Debug, Clone)]
 pub(crate) struct OperatorConfig {
+    /// Explicit initial-association authorization for this session only.
+    pub initial_association_authorized: bool,
     pub account_id: AccountId,
     pub sync_root_id: SyncRootId,
     pub provider_id: ProviderId,

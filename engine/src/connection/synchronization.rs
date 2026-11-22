@@ -74,6 +74,23 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
+        self.start_scope(request, false).await
+    }
+
+    /// Starts an exact scope with explicit permission to associate equivalent preexisting replicas.
+    /// Permission lasts only for this worker session; dashboard startup never calls this method.
+    pub async fn start_synchronization_with_initial_association(
+        &self,
+        request: StartSynchronizationRequest,
+    ) -> EngineResult<SynchronizationStatus> {
+        self.start_scope(request, true).await
+    }
+
+    async fn start_scope(
+        &self,
+        request: StartSynchronizationRequest,
+        initial_association_authorized: bool,
+    ) -> EngineResult<SynchronizationStatus> {
         validate(&request)?;
         let inner = self.inner.clone();
         self.runtime()
@@ -81,7 +98,10 @@ impl Engine {
                 let mut sessions = inner.synchronizations.lock().await;
                 if let Some(session) = sessions.get(&request.account_id) {
                     if !session.orchestrator.is_finished() {
-                        if session.orchestrator.config().roots == request {
+                        if session.orchestrator.config().roots == request
+                            && session.orchestrator.config().initial_association_authorized
+                                == initial_association_authorized
+                        {
                             return Ok(session.orchestrator.status());
                         }
                         return Err(error(SynchronizationErrorKind::AlreadyRunning));
@@ -120,6 +140,7 @@ impl Engine {
                         return Err(error(SynchronizationErrorKind::AccountUnavailable));
                     }
                     let config = OrchestratorConfig {
+                        initial_association_authorized,
                         sync_root_id: root_id(&request),
                         roots: request,
                         provider_id: account.provider,
@@ -133,7 +154,7 @@ impl Engine {
                         remote_root_id: config.roots.remote_root_id.clone(),
                         local_root_available: true,
                         remote_available: false,
-                        initial_association_authorized: false,
+                        initial_association_authorized,
                     })
                     .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
                     let orchestrator =

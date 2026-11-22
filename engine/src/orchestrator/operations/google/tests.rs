@@ -549,3 +549,75 @@ async fn remote_move_and_trash_use_conditional_metadata_mutations() {
         }
     }
 }
+
+#[tokio::test]
+async fn adoption_revalidates_versions_and_collisions_using_reads_only() {
+    for scenario in ["stable", "changed", "duplicate"] {
+        let sandbox = Sandbox::new();
+        let executor = setup(&sandbox);
+        std::fs::write(executor.config.local_root.join("file"), b"bytes").unwrap();
+        let reads = Arc::new(Mutex::new(0));
+        let state = reads.clone();
+        let server = endpoint(move |request| {
+            let body = if request.contains("/files/remote-root?") {
+                let mut value: serde_json::Value = serde_json::from_str(&root()).unwrap();
+                value["capabilities"]["canListChildren"] = true.into();
+                value.to_string()
+            } else if request.contains("/files?") {
+                if scenario == "duplicate" {
+                    r#"{"files":[{"id":"remote"},{"id":"collision"}],"incompleteSearch":false}"#
+                        .into()
+                } else {
+                    r#"{"files":[{"id":"remote"}],"incompleteSearch":false}"#.into()
+                }
+            } else {
+                let mut count = state.lock().unwrap();
+                *count += 1;
+                metadata(
+                    "file",
+                    "remote-root",
+                    if scenario == "changed" && *count >= 3 {
+                        2
+                    } else {
+                        1
+                    },
+                    "bytes",
+                )
+            };
+            (200, body, Vec::new())
+        })
+        .await;
+        let mut r = request(&executor, OperationAction::Adopt);
+        r.local = executor
+            .filesystem
+            .observe(std::path::Path::new("file"))
+            .unwrap();
+        r.identity.local_identity = r.local.identity.clone();
+        let result = operator(&sandbox, server.client.clone())
+            .run(
+                &executor.config,
+                &r,
+                &executor.filesystem,
+                &GoogleSession::new("test", "synthetic"),
+            )
+            .await;
+        if scenario == "stable" {
+            assert!(result.unwrap().verified);
+        } else {
+            assert_eq!(
+                result.unwrap_err().code,
+                OperatorErrorKind::PreconditionFailed
+            );
+        }
+        assert!(server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.starts_with("GET ")));
+        assert_eq!(
+            std::fs::read(executor.config.local_root.join("file")).unwrap(),
+            b"bytes"
+        );
+    }
+}

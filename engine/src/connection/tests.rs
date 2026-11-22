@@ -1312,3 +1312,63 @@ async fn scoped_source_captures_reconcile_three_levels_without_mutations_or_adop
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn initial_association_authorization_is_explicit_scoped_and_not_retained_after_stop() {
+    let fixture = Fixture::new(replies("association-authorization")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization_with_initial_association(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::AlreadyRunning)
+    );
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization_with_initial_association(request.clone())
+        .await
+        .unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            sessions[&account.id]
+                .orchestrator
+                .config()
+                .initial_association_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture.engine.start_synchronization(request).await.unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            !sessions[&account.id]
+                .orchestrator
+                .config()
+                .initial_association_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}

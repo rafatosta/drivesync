@@ -20,7 +20,7 @@ use std::path::Component;
 #[allow(unused_imports)]
 // Environment is part of the File contract constructed by Context callers.
 pub(crate) use models::Environment;
-pub(crate) use models::{ContextConfig, File, Observations, PathRoot};
+pub(crate) use models::{AssociationCandidate, ContextConfig, File, Observations, PathRoot};
 
 /// Builds Analyzer input from one observation and its account-scoped persisted snapshot.
 pub(crate) struct Context {
@@ -170,6 +170,9 @@ impl Context {
                 _ => (InventoryLookupStatus::Error, None),
             };
 
+        let registered_path = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.local_path.clone());
         let (identity, baseline, pending_operations, prior_conflict, inventory_revision) =
             match (lookup_status, snapshot) {
                 (InventoryLookupStatus::Found, Some(snapshot)) => {
@@ -204,8 +207,25 @@ impl Context {
                 ),
             };
 
+        let mut local = local;
+        if local.path.is_none() {
+            local.path = registered_path;
+        }
+        let registration_id = if lookup_status == InventoryLookupStatus::NotFound {
+            use std::io::Read;
+            let mut bytes = [0u8; 16];
+            std::fs::File::open("/dev/urandom")
+                .and_then(|mut source| source.read_exact(&mut bytes))
+                .map_err(|_| ContextError::InventoryUnavailable)?;
+            Some(crate::models::ItemId(
+                bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+            ))
+        } else {
+            None
+        };
         let mut file = File {
             identity,
+            registration_id,
             local,
             remote,
             baseline,

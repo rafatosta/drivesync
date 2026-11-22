@@ -104,6 +104,7 @@ impl Operator for MockOperator {
 fn config() -> OrchestratorConfig {
     let f = fixture();
     OrchestratorConfig {
+        initial_association_authorized: false,
         roots: StartSynchronizationRequest {
             account_id: f.identity.account_id,
             local_root: f.environment.local_root.0,

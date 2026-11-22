@@ -85,14 +85,32 @@ impl GoogleOperator {
         name: &str,
         except: Option<&RemoteId>,
     ) -> Result<(), OperatorError> {
+        self.check_destination(session, config, parent, name, except, true)
+            .await
+    }
+    async fn check_destination(
+        &self,
+        session: &GoogleSession,
+        config: &OperatorConfig,
+        parent: &RemoteId,
+        name: &str,
+        except: Option<&RemoteId>,
+        requires_write: bool,
+    ) -> Result<(), OperatorError> {
         self.within(session, parent, &config.remote_root_id).await?;
         let parent_file = self.snapshot(session, parent).await?.file;
         if parent_file.mime_type.as_ref().map(|m| m.0.as_str()) != Some(FOLDER)
             || parent_file.trashed != Some(false)
-            || !parent_file
-                .capabilities
-                .as_ref()
-                .is_some_and(|c| c.can_add_children == Some(true))
+            || (requires_write
+                && !parent_file
+                    .capabilities
+                    .as_ref()
+                    .is_some_and(|c| c.can_add_children == Some(true)))
+            || (!requires_write
+                && !parent_file
+                    .capabilities
+                    .as_ref()
+                    .is_some_and(|c| c.can_list_children == Some(true)))
         {
             return Err(filesystem::stale());
         }
@@ -117,6 +135,7 @@ impl GoogleOperator {
             .await
             .map_err(read_error)?;
         if matches.incomplete_search != Some(false)
+            || (!requires_write && except.is_some() && matches.files.len() != 1)
             || matches.next_page_token.is_some()
             || matches
                 .files
@@ -174,6 +193,65 @@ impl GoogleOperator {
             }
         }
         let remote = match op.action {
+            OperationAction::RegisterIdentity
+            | OperationAction::Adopt
+            | OperationAction::ConfirmBaseline => {
+                if op.action == OperationAction::RegisterIdentity
+                    && r.local.state == FileState::Present
+                    && r.remote.state == FileState::Absent
+                {
+                    let parent = op.parent_id.as_ref().ok_or_else(filesystem::stale)?;
+                    let name = match &r.local.name {
+                        Evidence::Known(name) => name,
+                        _ => return Err(filesystem::stale()),
+                    };
+                    self.check_destination(session, config, parent, name, None, false)
+                        .await?;
+                    return Ok(AppliedEffect {
+                        local: Some(fs.check(&r.local)?),
+                        remote: Some(r.remote.clone()),
+                        remote_id: None,
+                        verified: true,
+                    });
+                }
+                let before = snapshot.as_ref().ok_or_else(filesystem::stale)?;
+                if matches!(
+                    op.action,
+                    OperationAction::Adopt | OperationAction::ConfirmBaseline
+                ) {
+                    let parents = before
+                        .file
+                        .parents
+                        .as_ref()
+                        .filter(|parents| parents.len() == 1)
+                        .ok_or_else(filesystem::stale)?;
+                    let name = before.file.name.as_deref().ok_or_else(filesystem::stale)?;
+                    self.check_destination(
+                        session,
+                        config,
+                        &RemoteId(parents[0].0.clone()),
+                        name,
+                        op.remote_id.as_ref(),
+                        false,
+                    )
+                    .await?;
+                }
+                let after = self
+                    .snapshot(
+                        session,
+                        op.remote_id.as_ref().ok_or_else(filesystem::stale)?,
+                    )
+                    .await?;
+                if before.file.version != after.file.version {
+                    return Err(filesystem::stale());
+                }
+                return Ok(AppliedEffect {
+                    local,
+                    remote: Some(normalize(&after.file)),
+                    remote_id: op.remote_id.clone(),
+                    verified: true,
+                });
+            }
             OperationAction::RenameLocal
             | OperationAction::MoveLocal
             | OperationAction::RemoveLocal

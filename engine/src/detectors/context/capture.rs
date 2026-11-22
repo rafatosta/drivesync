@@ -139,7 +139,12 @@ impl Context {
             }
             let mut file = File {
                 identity: snapshot.identity.clone(),
-                local: unknown_local_state(),
+                registration_id: None,
+                local: {
+                    let mut local = unknown_local_state();
+                    local.path = snapshot.local_path.clone();
+                    local
+                },
                 remote: unknown_remote_state(),
                 baseline: snapshot.baseline.clone(),
                 pending_operations: snapshot.pending_operations.clone(),
@@ -315,9 +320,19 @@ impl Context {
             if let (Some(local_entry), Some(entries)) = (local.get(path), view.candidates.get(path))
             {
                 file.association_candidates
-                    .extend(entries.iter().map(|entry| models::AssociationCandidate {
+                    .extend(entries.iter().map(|entry| AssociationCandidate {
                         local: local_state((*local_entry).clone()),
                         remote: remote_state((*entry).clone()),
+                        parents_correspond: match (&local_entry.parent, &entry.parents) {
+                            (Evidence::Known(local_parent), Evidence::Known(remote_parents))
+                                if remote_parents.len() == 1
+                                    && view.associated.get(&remote_parents[0])
+                                        == Some(local_parent) =>
+                            {
+                                Evidence::Known(true)
+                            }
+                            _ => Evidence::NotCollected,
+                        },
                     }));
             }
         }
@@ -380,12 +395,7 @@ impl<'a> View<'a> {
                 continue;
             }
             let snapshot = records[0];
-            let Some(path) = snapshot
-                .baseline
-                .local
-                .as_ref()
-                .and_then(|s| s.path.as_ref())
-            else {
+            let Some(path) = snapshot.local_path.as_ref() else {
                 continue;
             };
             let (Some(l), Some(r)) = (local.get(path), remote.get(id)) else {

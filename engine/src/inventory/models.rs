@@ -78,6 +78,9 @@ pub(crate) struct InventorySnapshot {
     pub identity: FileIdentity,
     /// Last state confirmed by an operation.
     pub baseline: Baseline,
+    /// Last confirmed location, independent of historical synchronization baseline.
+    #[serde(with = "path_serde::option")]
+    pub local_path: Option<Path>,
     /// Operations that are pending, in progress, or retained for recovery/audit.
     pub pending_operations: Vec<PendingOperation>,
     /// Conflict currently relevant to this item, if any.
@@ -228,6 +231,12 @@ pub(crate) struct PendingOperation {
 /// Operation categories shared by pending Inventory records and the executor contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum OperationAction {
+    /// Persist a new unilateral identity without asserting convergence.
+    RegisterIdentity,
+    /// Confirm an explicitly authorized initial association without transfer.
+    Adopt,
+    /// Record revalidated convergence for an already associated item.
+    ConfirmBaseline,
     /// Upload local content to the provider.
     Upload,
     /// Download remote content to the local filesystem.
@@ -309,6 +318,17 @@ pub(crate) struct AppliedEffect {
 /// Typed change requested by Operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum PersistedEffect {
+    /// Store a revalidated location without recording a synchronized baseline.
+    ItemRegistered {
+        #[serde(with = "path_serde::option")]
+        local_path: Option<Path>,
+    },
+    /// Atomically store verified convergence and its directory association dependency.
+    ConvergenceConfirmed {
+        baseline: Baseline,
+        effect: Box<AppliedEffect>,
+        parent: Option<ParentAssociation>,
+    },
     /// Record a newly planned or started operation.
     Pending(PendingOperation),
     /// Record an observed operation effect that may require later confirmation.
@@ -316,7 +336,10 @@ pub(crate) enum PersistedEffect {
     /// Confirm a verified individual effect without asserting whole-item convergence.
     OperationConfirmed,
     /// Replace the baseline after the caller has confirmed the resulting states.
-    BaselineConfirmed(Baseline),
+    BaselineConfirmed {
+        baseline: Baseline,
+        parent: Option<ParentAssociation>,
+    },
     /// Record a failed operation.
     OperationFailed,
     /// Set or clear the conflict associated with this item.
@@ -425,6 +448,27 @@ mod path_serde {
             .map_err(|_| "Persisted path is invalid UTF-8 on this platform.")
     }
 
+    pub(super) mod required {
+        use super::*;
+        pub fn serialize<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
+            #[cfg(unix)]
+            let bytes = to_bytes(path);
+            #[cfg(not(unix))]
+            let bytes = to_bytes(path).map_err(serde::ser::Error::custom)?;
+            bytes.serialize(serializer)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Path, D::Error> {
+            let bytes = Vec::<u8>::deserialize(deserializer)?;
+            #[cfg(unix)]
+            {
+                Ok(from_bytes(bytes))
+            }
+            #[cfg(not(unix))]
+            {
+                from_bytes(bytes).map_err(serde::de::Error::custom)
+            }
+        }
+    }
     pub(super) mod option {
         use super::*;
 
@@ -539,6 +583,17 @@ mod tests {
         let encoded = serde_json::to_vec(&state).unwrap();
         let decoded: LocalState = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, state);
+        let parent = ParentAssociation {
+            item_id: crate::models::ItemId("parent".into()),
+            revision: 1,
+            remote_id: RemoteId("remote".into()),
+            local_path: state.path.clone().unwrap(),
+        };
+        assert_eq!(
+            serde_json::from_slice::<ParentAssociation>(&serde_json::to_vec(&parent).unwrap())
+                .unwrap(),
+            parent
+        );
     }
 }
 
@@ -547,4 +602,14 @@ mod tests {
 pub(crate) struct InventoryScopeQuery {
     pub account_id: AccountId,
     pub sync_root_id: SyncRootId,
+}
+
+/// Optimistic dependency checked within the same transaction as a child baseline write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ParentAssociation {
+    pub item_id: crate::models::ItemId,
+    pub revision: u64,
+    pub remote_id: RemoteId,
+    #[serde(with = "path_serde::required")]
+    pub local_path: Path,
 }
