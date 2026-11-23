@@ -24,6 +24,13 @@ impl Detectors {
             .await
             .map_err(|_| ContextError::InventoryUnavailable)?
     }
+    pub(crate) fn audit(
+        &self,
+        epoch: u64,
+        expected: &crate::models::LocalIdentity,
+    ) -> Result<crate::synchronization::SynchronizationAudit, ContextError> {
+        self.context.audit(epoch, expected)
+    }
     /// Persisted remote IDs are probe candidates, not evidence of current presence.
     pub(crate) fn known_remote_ids(&self) -> Result<Vec<crate::models::RemoteId>, ContextError> {
         Ok(self

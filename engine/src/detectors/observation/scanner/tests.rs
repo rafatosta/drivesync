@@ -109,3 +109,44 @@ fn denied_content_is_explicit_and_cannot_be_a_complete_snapshot() {
         Evidence::PermissionDenied
     );
 }
+
+#[test]
+#[ignore = "creates 100001 real local files to measure soft-budget recovery and memory; no Drive access"]
+fn stage11_large_tree_budget_recovers_without_false_absence() {
+    let s = Sandbox::new();
+    let count = 100001usize;
+    let create = std::time::Instant::now();
+    for n in 0..count {
+        std::fs::write(s.0.join(format!("file-{n:06}")), []).unwrap();
+    }
+    println!("created {count} files in {:?}", create.elapsed());
+    let mut scanner = Scanner::open(s.0.clone(), SyncRootId("large-tree".into())).unwrap();
+    let started = std::time::Instant::now();
+    let partial = scanner.scan(&CancellationToken::new()).unwrap();
+    assert_eq!(partial.coverage, ObservationCoverage::Partial);
+    assert!(partial
+        .issues
+        .iter()
+        .any(|i| i.kind == ScanIssueKind::LimitReached));
+    println!(
+        "soft limit: {} entries in {:?}",
+        partial.entries.len(),
+        started.elapsed()
+    );
+    drop(partial);
+    assert!(scanner.expand_limit());
+    let started = std::time::Instant::now();
+    let complete = scanner.scan(&CancellationToken::new()).unwrap();
+    assert_eq!(complete.coverage, ObservationCoverage::Complete);
+    assert_eq!(complete.entries.len(), count);
+    println!(
+        "recovered: {count} entries in {:?}; {}",
+        started.elapsed(),
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("VmHWM:") || l.starts_with("VmRSS:"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+}

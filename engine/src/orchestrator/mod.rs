@@ -121,6 +121,7 @@ pub(crate) fn open(
     accounts: Accounts,
     client: GoogleDriveClient,
     ownership: Arc<RwLock<()>>,
+    writer: Arc<dyn Send + Sync>,
 ) -> Result<OrchestratorHandle, SynchronizationErrorKind> {
     let inventory = Arc::new(
         Inventory::open(InventoryConfig {
@@ -131,6 +132,7 @@ pub(crate) fn open(
     );
     let operator = operations::DefaultOperatorFactory::new(accounts, inventory, client)
         .create(OperatorConfig {
+            expected_root_identity: config.expected_root_identity.clone(),
             trash_propagation_authorized: config.trash_propagation_authorized,
             initial_association_authorized: config.initial_association_authorized,
             account_id: config.roots.account_id.clone(),
@@ -144,13 +146,29 @@ pub(crate) fn open(
             OperatorErrorKind::PermissionDenied => SynchronizationErrorKind::AccountUnavailable,
             _ => SynchronizationErrorKind::LocalRootUnavailable,
         })?;
-    Ok(start(config, operator, ownership, QUEUE_CAPACITY))
+    Ok(start_guarded(
+        config,
+        operator,
+        ownership,
+        QUEUE_CAPACITY,
+        Some(writer),
+    ))
 }
+#[cfg(test)]
 fn start(
     config: OrchestratorConfig,
     operator: Box<dyn Operator>,
     ownership: Arc<RwLock<()>>,
     capacity: usize,
+) -> OrchestratorHandle {
+    start_guarded(config, operator, ownership, capacity, None)
+}
+fn start_guarded(
+    config: OrchestratorConfig,
+    operator: Box<dyn Operator>,
+    ownership: Arc<RwLock<()>>,
+    capacity: usize,
+    writer: Option<Arc<dyn Send + Sync>>,
 ) -> OrchestratorHandle {
     let mut initial = SynchronizationStatus::new(
         config.roots.account_id.clone(),
@@ -165,6 +183,7 @@ fn start(
     let local_refresh = Arc::new(tokio::sync::Notify::new());
     let remote_refresh = Arc::new(tokio::sync::Notify::new());
     let mut worker = Orchestrator {
+        _writer: writer,
         capture_epoch: capture_epoch.clone(),
         local_refresh: local_refresh.clone(),
         remote_refresh: remote_refresh.clone(),
@@ -212,6 +231,7 @@ enum Command {
     Source(Source, bool, Option<SynchronizationIssue>),
 }
 struct Orchestrator {
+    _writer: Option<Arc<dyn Send + Sync>>,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,

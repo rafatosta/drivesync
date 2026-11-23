@@ -2,17 +2,23 @@
 
 **A Google Drive client for Linux.**
 
-DriveSync is an early-stage Linux application for connecting Google accounts and editing their local names. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release.
+DriveSync is an early-stage Linux application for connecting Google accounts and synchronizing explicitly selected native folders. Its GTK4/Libadwaita interface follows the GNOME design guidelines; GNOME is not a requirement for using the application. It is a technical preview, not a stable release.
 
 ## What you can do today
 
-**The current application does not synchronize files.** The interface currently focuses on account connection and local account names.
+This checkout includes conservative synchronization for explicitly configured native folders.
+The [Stage 11 acceptance matrix](docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed
+and real-account results separately from controlled tests. Published `main` artifacts may
+not include these unpublished functional corrections.
 
 | Feature | Current availability and limits |
 | --- | --- |
 | Google accounts | Connect and manage multiple accounts, each with its own settings and credentials. |
 | Account identity | Edit and save a local name without changing the Google profile. New accounts open this editor automatically. |
-| Background operation | Keep the application running when allowed by the desktop. No synchronization runs in the background. |
+| Native folder synchronization | Initial upload/download, binary content updates, and verified rename/move operations for supported items. Scope, identity and access checks can defer an operation. |
+| Workspace documents | Read-only local links for supported Google document types; no offline document-content editing or remote-shortcut traversal. |
+| Trash | Disabled by default; explicit authorization and recoverability checks required. Default sandbox trash may refuse local moves. Permanent deletion is never used. |
+| Background operation | Keep the application running when allowed by the desktop; synchronization runs only for a completed configured scope. |
 
 ## Download and install the experimental Flatpak
 

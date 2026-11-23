@@ -13,6 +13,8 @@ pub(crate) use crate::models::{ExecutionEffect, Operation, OperationPrecondition
 pub(crate) struct OperatorConfig {
     /// Explicit initial-association authorization for this session only.
     pub initial_association_authorized: bool,
+    /// Production admission always pins an identity; synthetic test executors may omit it.
+    pub expected_root_identity: Option<crate::models::LocalIdentity>,
     /// Explicit recoverable trash propagation authorization for this session only.
     pub trash_propagation_authorized: bool,
     pub account_id: AccountId,

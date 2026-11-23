@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(super) struct Captures {
-    local: Option<ScopeCapture>,
-    remote: Option<ScopeCapture>,
+    pub(super) local: Option<ScopeCapture>,
+    pub(super) remote: Option<ScopeCapture>,
 }
 impl Context {
     pub(crate) fn snapshots(&self) -> Result<Vec<InventorySnapshot>, ContextError> {
@@ -731,7 +731,7 @@ impl<'a> View<'a> {
     }
 }
 impl Captures {
-    fn locals(&self) -> BTreeMap<Path, &LocalObservation> {
+    pub(super) fn locals(&self) -> BTreeMap<Path, &LocalObservation> {
         match self.local.as_ref().map(|c| &c.entries) {
             Some(CaptureEntries::Local(entries)) => entries
                 .iter()
@@ -740,7 +740,7 @@ impl Captures {
             _ => BTreeMap::new(),
         }
     }
-    fn remotes(&self) -> BTreeMap<RemoteId, &RemoteObservation> {
+    pub(super) fn remotes(&self) -> BTreeMap<RemoteId, &RemoteObservation> {
         match self.remote.as_ref().map(|c| &c.entries) {
             Some(CaptureEntries::Remote(entries)) => entries
                 .iter()

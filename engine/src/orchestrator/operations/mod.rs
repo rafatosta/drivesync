@@ -67,6 +67,13 @@ impl OperatorFactory for DefaultOperatorFactory {
             return Err(filesystem::invalid());
         }
         let filesystem = Filesystem::open(&config.local_root)?;
+        if config
+            .expected_root_identity
+            .as_ref()
+            .is_some_and(|expected| filesystem.root_identity().ok().as_ref() != Some(expected))
+        {
+            return Err(filesystem::stale());
+        }
         Ok(Box::new(PersistingOperator {
             config,
             inventory: self.inventory.clone(),

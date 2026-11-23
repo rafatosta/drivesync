@@ -178,6 +178,7 @@ async fn real_partial_upload_recovers_the_same_session_in_a_new_engine() {
         let executor = PersistingOperator {
             filesystem: Filesystem::open(&local).unwrap(),
             config: OperatorConfig {
+                expected_root_identity: None,
                 trash_propagation_authorized: false,
                 initial_association_authorized: false,
                 account_id: account.clone(),

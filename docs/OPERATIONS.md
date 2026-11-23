@@ -113,3 +113,5 @@ trash failure preserves the previous bytes in private stages; no destructive fal
 [Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) restricts Workspace actions to verified link creation, local metadata updates and baseline confirmation. Remote shortcuts and unsupported native types are refused. Link publication is checkpointed and recovered without uploading its bytes.
 
 [Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
+
+[Stage 11](FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.

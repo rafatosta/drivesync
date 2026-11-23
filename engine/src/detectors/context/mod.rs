@@ -1,5 +1,6 @@
 //! Consolidates one normalized observation with persisted facts into an Analyzer-ready file.
 
+mod audit;
 mod cache;
 mod capture;
 mod models;

@@ -116,3 +116,20 @@ pub enum SynchronizationErrorKind {
     Stopped,
     InvalidObservation,
 }
+
+/// Convergence proof for complete captured source rounds at a specific effect epoch.
+/// This is not a promise that external files cannot change after the captured horizon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationAudit {
+    /// Exact configured scope whose captured horizon was audited.
+    pub roots: StartSynchronizationRequest,
+    pub initial_complete: bool,
+    pub coverage_complete: bool,
+    pub epoch: u64,
+    pub local_entries: usize,
+    pub remote_entries: usize,
+    pub inventory_items: usize,
+    pub converged_items: usize,
+    pub unconfirmed_operations: usize,
+    pub unresolved_conflicts: usize,
+}

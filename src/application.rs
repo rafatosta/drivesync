@@ -1,4 +1,5 @@
 //! Application composition; all engine requests use its public root API.
+mod acceptance;
 pub(crate) mod accounts;
 mod background;
 mod lifecycle;

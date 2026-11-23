@@ -1432,3 +1432,57 @@ async fn trash_authorization_is_explicit_scoped_and_not_retained_after_stop() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn stopped_scope_rejects_replaced_root_and_allows_explicit_new_configuration() {
+    let fixture = Fixture::new(replies("stage11-root-replacement")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    let retained = fixture.directory.join("retained-root");
+    std::fs::write(request.local_root.join("retained"), b"preserved").unwrap();
+    std::fs::rename(&request.local_root, &retained).unwrap();
+    std::fs::create_dir(&request.local_root).unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootUnavailable)
+    );
+    assert_eq!(
+        std::fs::read(retained.join("retained")).unwrap(),
+        b"preserved"
+    );
+    let mut changed = request;
+    changed.local_root = fixture.directory.join("new-explicit-root");
+    std::fs::create_dir(&changed.local_root).unwrap();
+    changed.remote_root_id.0 = "new-remote-root".into();
+    fixture.engine.start_synchronization(changed).await.unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}

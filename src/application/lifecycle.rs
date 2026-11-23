@@ -48,6 +48,7 @@ pub(crate) fn run() -> adw::gtk::glib::ExitCode {
             &toasts,
         ));
         let window = crate::ui::dashboard::window::build(app, &toasts);
+        super::acceptance::install(app, &window, &context);
         let shutdown_context = context.clone();
         app.connect_shutdown(move |_| {
             if let (Some(engine), Some(id)) = (

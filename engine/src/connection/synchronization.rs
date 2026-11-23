@@ -16,6 +16,7 @@ pub(super) struct Session {
     detectors: Arc<Detectors>,
     pub(super) orchestrator: Arc<OrchestratorHandle>,
     sources: Option<crate::detectors::sources::SourceTasks>,
+    writer: std::sync::Mutex<Option<Arc<super::scope::WriterLease>>>,
 }
 impl Session {
     pub(super) async fn stop(&self) -> SynchronizationStatus {
@@ -23,9 +24,12 @@ impl Session {
             // Close execution admission immediately, even if credential refresh or a blocking
             // source read must still finish before disconnect can remove the account.
             let (_, status) = tokio::join!(sources.stop(), self.orchestrator.stop());
+            self.writer.lock().unwrap().take();
             status
         } else {
-            self.orchestrator.stop().await
+            let status = self.orchestrator.stop().await;
+            self.writer.lock().unwrap().take();
+            status
         }
     }
 }
@@ -119,6 +123,9 @@ impl Engine {
                         return Err(error(SynchronizationErrorKind::AlreadyRunning));
                     }
                 }
+                if let Some(finished) = sessions.remove(&request.account_id) {
+                    finished.stop().await;
+                }
                 // Active accounts cannot mutate overlapping local trees under independent plans.
                 if sessions.iter().any(|(account, session)| {
                     account != &request.account_id && !session.orchestrator.is_finished() && {
@@ -151,7 +158,15 @@ impl Engine {
                     if account.state != AccountState::Connected {
                         return Err(error(SynchronizationErrorKind::AccountUnavailable));
                     }
+                    let writer = Arc::new(super::scope::WriterLease::acquire(
+                        &request.local_root,
+                        &account.provider.0,
+                        &account.provider_user_id,
+                    )?);
+                    let scope = root_id(&request);
+                    writer.bind(&directory, &scope)?;
                     let config = OrchestratorConfig {
+                        expected_root_identity: Some(writer.identity.clone()),
                         initial_association_authorized,
                         trash_propagation_authorized,
                         sync_root_id: root_id(&request),
@@ -171,13 +186,20 @@ impl Engine {
                         trash_propagation_authorized,
                     })
                     .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
-                    let orchestrator =
-                        orchestrator::open(config, directory, accounts, client, ownership)
-                            .map_err(error)?;
+                    let orchestrator = orchestrator::open(
+                        config,
+                        directory,
+                        accounts,
+                        client,
+                        ownership,
+                        writer.clone(),
+                    )
+                    .map_err(error)?;
                     Ok::<_, EngineError>(Session {
                         detectors: Arc::new(detectors),
                         orchestrator: Arc::new(orchestrator),
                         sources: None,
+                        writer: std::sync::Mutex::new(Some(writer)),
                     })
                 })
                 .await
@@ -217,6 +239,36 @@ impl Engine {
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
     }
+    /// Attests captured replica convergence without equating an idle queue with completion.
+    /// Busy/unreadable Inventory or a replaced root returns an error rather than partial proof.
+    pub async fn synchronization_audit(
+        &self,
+        account_id: AccountId,
+    ) -> EngineResult<SynchronizationAudit> {
+        let (detectors, epoch, identity) = {
+            let sessions = self.inner.synchronizations.lock().await;
+            let session = sessions
+                .get(&account_id)
+                .filter(|s| !s.orchestrator.is_finished())
+                .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?;
+            (
+                session.detectors.clone(),
+                session.orchestrator.collection_epoch(),
+                session
+                    .orchestrator
+                    .config()
+                    .expected_root_identity
+                    .clone()
+                    .ok_or_else(|| error(SynchronizationErrorKind::InvalidConfiguration))?,
+            )
+        };
+        self.runtime()
+            .spawn_blocking(move || detectors.audit(epoch, &identity))
+            .await
+            .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
+            .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))
+    }
+
     /// Latest account status without I/O, authentication, or a connectivity claim.
     pub async fn synchronization_status(
         &self,

@@ -107,6 +107,7 @@ impl Operator for MockOperator {
 fn config() -> OrchestratorConfig {
     let f = fixture();
     OrchestratorConfig {
+        expected_root_identity: None,
         trash_propagation_authorized: false,
         initial_association_authorized: false,
         roots: StartSynchronizationRequest {
@@ -139,6 +140,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
     let (stop, rx) = watch::channel(false);
     (
         Orchestrator {
+            _writer: None,
             capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             local_refresh: Arc::new(Notify::new()),
             remote_refresh: Arc::new(Notify::new()),

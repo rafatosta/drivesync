@@ -103,6 +103,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
         initial_association_authorized: false,
     };
     let worker_config = OrchestratorConfig {
+        expected_root_identity: None,
         trash_propagation_authorized: false,
         initial_association_authorized: false,
         roots: StartSynchronizationRequest {
@@ -119,6 +120,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
     ));
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let mut worker = Orchestrator {
+        _writer: None,
         capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         local_refresh: Arc::new(tokio::sync::Notify::new()),
         remote_refresh: Arc::new(tokio::sync::Notify::new()),

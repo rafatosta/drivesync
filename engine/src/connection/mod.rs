@@ -2,6 +2,7 @@
 mod conflicts;
 mod models;
 mod remote_folders;
+mod scope;
 mod sign_in;
 mod synchronization;
 use crate::{accounts::*, providers::google::*};
@@ -229,3 +230,6 @@ mod live_projection_tests;
 
 #[cfg(test)]
 mod live_trash_tests;
+
+#[cfg(test)]
+mod live_acceptance_tests;

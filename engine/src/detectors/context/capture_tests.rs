@@ -1006,3 +1006,75 @@ fn trashed_remote_retains_parent_correspondence_without_claiming_a_free_destinat
         Evidence::Known(false)
     );
 }
+
+#[test]
+fn completion_requires_registered_convergence_current_epochs_and_no_unresolved_items() {
+    use std::os::unix::fs::MetadataExt;
+    let (mut context, directory) = context();
+    let root = directory.join("audit-root");
+    std::fs::create_dir(&root).unwrap();
+    context.config.local_root = PathRoot(root.clone());
+    let m = std::fs::metadata(root).unwrap();
+    let expected = LocalIdentity {
+        device_id: m.dev(),
+        inode: m.ino(),
+        mount_id: None,
+        birth_ns: crate::models::birth_ns(&m),
+    };
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![]),
+        ))
+        .unwrap();
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![]),
+        ))
+        .unwrap();
+    assert!(context.audit(0, &expected).unwrap().initial_complete);
+    assert!(!context.audit(1, &expected).unwrap().initial_complete);
+    let mut item = local("file", 4, false);
+    item.checksum = Evidence::Known(crate::models::Checksum {
+        algorithm: "sha256".into(),
+        value: "a".repeat(64),
+    });
+    let mut source = remote("file", "file", "drive-root", false);
+    source.checksum = item.checksum.clone();
+    context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![item.clone()]),
+        ))
+        .unwrap();
+    context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![source.clone()]),
+        ))
+        .unwrap();
+    assert!(!context.audit(0, &expected).unwrap().initial_complete);
+    seed(&context, item, source);
+    assert!(context.audit(0, &expected).unwrap().initial_complete);
+    let mut edited = local("file", 4, false);
+    edited.size = Evidence::Known(8);
+    context
+        .build_capture(round(
+            &context,
+            3,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![edited]),
+        ))
+        .unwrap();
+    assert!(!context.audit(0, &expected).unwrap().initial_complete);
+    std::fs::remove_dir_all(directory).unwrap();
+}
