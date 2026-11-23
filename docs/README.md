@@ -14,3 +14,4 @@
 - [Functional correction — Stage 5 initial uploads and continuation](FUNCTIONAL_CORRECTION_STAGE_5.md)
 - [Functional correction — Stage 6 continuous synchronization](FUNCTIONAL_CORRECTION_STAGE_6.md)
 - [Functional correction — Stage 7 tree renames and moves](FUNCTIONAL_CORRECTION_STAGE_7.md)
+- [Functional correction — Stage 8 persistent conflicts and real choices](FUNCTIONAL_CORRECTION_STAGE_8.md)

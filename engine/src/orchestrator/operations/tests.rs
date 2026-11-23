@@ -129,6 +129,7 @@ pub(super) fn request(
     }
     ExecuteOperationRequest {
         operation: Operation {
+            conflict_id: None,
             step: 1,
             action,
             item_ref: ItemId("item".into()),

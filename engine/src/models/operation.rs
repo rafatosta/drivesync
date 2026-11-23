@@ -40,6 +40,8 @@ pub(crate) enum OperationAction {
 /// One ordered operation in a proposed plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Operation {
+    /// Exact persisted conflict authorization; a resolved boolean grants no permission.
+    pub conflict_id: Option<Id>,
     /// One-based order within the plan.
     pub step: u64,
     /// Requested normalized operation.

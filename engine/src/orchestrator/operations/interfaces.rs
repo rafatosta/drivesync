@@ -9,6 +9,13 @@ pub(super) type EffectFuture<'a> =
 pub(crate) type RecoveryFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<RecoveryResult>, OperatorError>> + Send + 'a>>;
 pub(crate) trait Operator: Send + Sync {
+    fn record_conflict<'a>(
+        &'a self,
+        _file: &'a crate::detectors::context::File,
+        _reason: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), OperatorError>> + Send + 'a>> {
+        Box::pin(async { Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation)) })
+    }
     fn recover(&self) -> RecoveryFuture<'_>;
     fn execute<'a>(&'a self, request: ExecuteOperationRequest) -> OperationFuture<'a>;
 }

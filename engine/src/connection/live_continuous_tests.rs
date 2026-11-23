@@ -65,7 +65,7 @@ impl Drop for RestorePermissions {
         let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o600));
     }
 }
-async fn remote_edit(engine: &Engine, account: &AccountId, id: &RemoteId, bytes: &[u8]) {
+pub(super) async fn remote_edit(engine: &Engine, account: &AccountId, id: &RemoteId, bytes: &[u8]) {
     let acquired = engine
         .inner
         .accounts

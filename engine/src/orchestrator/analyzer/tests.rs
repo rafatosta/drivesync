@@ -624,3 +624,178 @@ fn combined_tree_location_and_content_plans_resume_each_verified_step_in_both_di
         );
     }
 }
+
+fn content_conflict() -> File {
+    let mut f = fixture();
+    f.local.checksum = checksum("local");
+    f.remote.checksum = checksum("remote");
+    f.remote.version = Evidence::Known(11);
+    f.environment.destination_local_parent = f.local.parent.clone();
+    if let Evidence::Known(ids) = &f.remote.parents {
+        f.environment.destination_remote_parent_id = Evidence::Known(ids[0].clone());
+    }
+    f
+}
+fn stored_conflict(
+    f: &File,
+    choice: Option<crate::conflicts::ConflictChoice>,
+) -> crate::inventory::models::ConflictState {
+    crate::inventory::models::ConflictState {
+        id: crate::models::Id("conflict-test".into()),
+        item_id: f.identity.item_id.clone().unwrap(),
+        reason: "Content".into(),
+        resolved: false,
+        local: f.local.clone(),
+        remote: f.remote.clone(),
+        observed_revision: f.inventory_revision.unwrap(),
+        updated_at: timestamp(9),
+        resolution: choice.map(|choice| {
+            Box::new(crate::inventory::models::ConflictResolution {
+                choice,
+                expected_local: f.local.clone(),
+                expected_remote: f.remote.clone(),
+            })
+        }),
+    }
+}
+#[test]
+fn conflicts_require_proven_incompatible_attributes_and_not_just_missing_evidence() {
+    let f = content_conflict();
+    assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+    let mut unknown = f.clone();
+    unknown.remote.checksum = Evidence::Unavailable;
+    assert_eq!(analyze(&unknown).status, DecisionStatus::Defer);
+    let mut independent = fixture();
+    independent.local.name = Evidence::Known("new.txt".into());
+    independent.remote.checksum = checksum("remote");
+    assert_eq!(analyze(&independent).status, DecisionStatus::Ready);
+    let mut mime = fixture();
+    mime.remote.mime_type = Evidence::Known("application/pdf".into());
+    assert_eq!(analyze(&mime).status, DecisionStatus::NoOp);
+    let mut native = fixture();
+    native.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
+    native.remote.checksum = Evidence::Unsupported;
+    assert_eq!(analyze(&native).status, DecisionStatus::Conflict);
+    let mut trash = f.clone();
+    trash.remote.trashed = Evidence::Known(true);
+    assert_eq!(analyze(&trash).status, DecisionStatus::Conflict);
+    let mut kind = fixture();
+    kind.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+    kind.remote.checksum = Evidence::NotApplicable;
+    assert_eq!(analyze(&kind).status, DecisionStatus::Conflict);
+    let mut moved = fixture();
+    moved.local.parent = Evidence::Known("local-destination".into());
+    moved.remote.parents = Evidence::Known(vec![RemoteId("remote-destination".into())]);
+    assert_eq!(analyze(&moved).status, DecisionStatus::Conflict);
+}
+#[test]
+fn explicit_choices_pin_evidence_and_resolved_boolean_never_authorizes_overwrite() {
+    use crate::conflicts::ConflictChoice;
+    for (choice, action) in [
+        (
+            ConflictChoice::KeepLocal,
+            OperationAction::UpdateRemoteContent,
+        ),
+        (
+            ConflictChoice::KeepRemote,
+            OperationAction::UpdateLocalContent,
+        ),
+    ] {
+        let mut f = content_conflict();
+        f.prior_conflict = Some(stored_conflict(&f, Some(choice)));
+        let d = analyze(&f);
+        assert_eq!(d.status, DecisionStatus::Ready);
+        assert_eq!(d.operations[0].action, action);
+        assert_eq!(
+            d.operations[0].conflict_id,
+            f.prior_conflict.as_ref().map(|c| c.id.clone())
+        );
+        f.remote.version = Evidence::Known(12);
+        assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+        f.prior_conflict.as_mut().unwrap().resolved = true;
+        assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+    }
+    let mut f = content_conflict();
+    f.prior_conflict = Some(stored_conflict(&f, None));
+    f.remote.checksum = f.local.checksum.clone();
+    let d = analyze(&f);
+    assert_eq!(d.status, DecisionStatus::Ready);
+    assert_eq!(d.operations[0].action, OperationAction::ConfirmBaseline);
+}
+
+#[test]
+fn initial_collision_is_conflict_and_requires_explicit_choice() {
+    let mut f = content_conflict();
+    f.baseline = Baseline::never_synced();
+    f.identity.item_id = None;
+    f.inventory_revision = None;
+    f.inventory_lookup = InventoryLookupStatus::NotFound;
+    assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+    f.remote.checksum = Evidence::Unavailable;
+    assert_eq!(analyze(&f).status, DecisionStatus::Defer);
+}
+
+#[test]
+fn pending_conflict_effect_is_recovered_before_any_new_conflict_decision() {
+    use crate::inventory::models::{OperationState, PendingOperation};
+    let mut f = content_conflict();
+    f.prior_conflict = Some(stored_conflict(&f, None));
+    f.pending_operations.push(PendingOperation {
+        id: crate::models::Id("lost".into()),
+        item_id: f.identity.item_id.clone().unwrap(),
+        action: OperationAction::UpdateLocalContent,
+        state: OperationState::AppliedUnconfirmed,
+        remote_id: f.remote.id.clone(),
+        applied_effect: None,
+        idempotency_key: None,
+        recovery: None,
+        recovery_diagnostic: None,
+        created_at: timestamp(9),
+        updated_at: timestamp(9),
+    });
+    let d = analyze(&f);
+    assert_eq!(d.status, DecisionStatus::Defer);
+    assert!(d
+        .validation
+        .checks
+        .iter()
+        .any(|c| c.code == "operation.pending"));
+}
+
+#[test]
+fn folder_move_conflicts_choose_location_without_planning_binary_transfers() {
+    for choice in [
+        crate::conflicts::ConflictChoice::KeepLocal,
+        crate::conflicts::ConflictChoice::KeepRemote,
+    ] {
+        let mut f = fixture();
+        f.local.kind = Evidence::Known(crate::models::FileKind::Directory);
+        f.local.size = Evidence::NotApplicable;
+        f.local.checksum = Evidence::NotApplicable;
+        f.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+        f.remote.size = Evidence::NotCollected;
+        f.remote.checksum = Evidence::NotCollected;
+        f.baseline.local = Some(f.local.clone());
+        f.baseline.remote = Some(f.remote.clone());
+        f.local.parent = Evidence::Known("local-new".into());
+        f.remote.parents = Evidence::Known(vec![RemoteId("remote-new".into())]);
+        f.environment.destination_remote_parent_id =
+            Evidence::Known(RemoteId("local-new-id".into()));
+        f.environment.destination_local_parent = Evidence::Known("remote-new-path".into());
+        f.environment.destination_local_occupied = Evidence::Known(false);
+        f.environment.destination_remote_matches = Evidence::Known(vec![]);
+        assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+        f.prior_conflict = Some(stored_conflict(&f, Some(choice)));
+        let d = analyze(&f);
+        assert_eq!(d.status, DecisionStatus::Ready);
+        assert_eq!(d.operations.len(), 1);
+        assert_eq!(
+            d.operations[0].action,
+            if choice == crate::conflicts::ConflictChoice::KeepLocal {
+                OperationAction::MoveRemote
+            } else {
+                OperationAction::MoveLocal
+            }
+        );
+    }
+}

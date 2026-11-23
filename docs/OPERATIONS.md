@@ -106,3 +106,5 @@ private/public property handling. Unknown incomplete replacements remain blocked
 trash failure preserves the previous bytes in private stages; no destructive fallback exists.
 
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) adds pinned, tagged local moves, conditional marked remote moves and read-only recovery for all four location actions. Destination and ancestor changes block confirmation.
+
+[Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) persists conflict facts and validates revision-bound choices before normal dispatch. Both divergent file contents are privately archived and checkpointed before replacement; directory choices archive locations without replacing descendants. Archive verification is part of uncertain-effect recovery.

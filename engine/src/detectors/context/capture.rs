@@ -269,7 +269,11 @@ impl Context {
                             })
                             && file.baseline.remote.as_ref().is_some_and(|old| {
                                 old.id == file.identity.remote_id
-                                    && file.remote.unchanged_binary(old)
+                                    && (file.remote.unchanged_binary(old)
+                                        || (file.remote.state==FileState::Present
+                                            && file.baseline.local.as_ref().is_some_and(|old_local|
+                                                matches!((&old_local.checksum,&entry.checksum,&old.checksum,&file.remote.checksum),
+                                                    (Evidence::Known(a),Evidence::Known(b),Evidence::Known(c),Evidence::Known(d)) if a!=b && c!=d))))
                             })
                             && !identity_key(&file.identity.local_identity)
                                 .is_some_and(|key| view.local_identities.contains(&key))

@@ -216,7 +216,7 @@ async fn blocked_decisions_do_not_execute_or_create_baselines() {
     assert!(calls.requests.lock().unwrap().is_empty());
     assert_eq!(
         worker.status.borrow().issue.as_ref().unwrap().kind,
-        SynchronizationIssueKind::Conflict
+        SynchronizationIssueKind::OperationFailed
     );
 }
 #[tokio::test]

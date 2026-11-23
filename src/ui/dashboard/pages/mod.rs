@@ -6,3 +6,5 @@ mod sidebar;
 mod account_menu;
 
 mod synchronization;
+
+mod conflicts;

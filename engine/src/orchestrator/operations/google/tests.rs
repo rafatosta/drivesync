@@ -630,6 +630,7 @@ impl ExecutionJournal for MemoryJournal {
     fn checkpoint(&self, checkpoint: RecoveryCheckpoint) -> Result<(), OperatorError> {
         let mut record = self.0.lock().unwrap();
         match checkpoint {
+            RecoveryCheckpoint::ConflictArchive(id) => record.conflict_archive = Some(id),
             RecoveryCheckpoint::LocalStage(identity) => record.stage_identity = Some(identity),
             RecoveryCheckpoint::Transfer(transfer) => record.transfer = Some(transfer),
             RecoveryCheckpoint::RemoteAncestry(ancestors) => {

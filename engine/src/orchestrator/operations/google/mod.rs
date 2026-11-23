@@ -1,4 +1,5 @@
 //! Google specialization using the preserved provider API and private Accounts sessions.
+mod conflicts;
 mod recovery;
 mod resume;
 struct UploadCursor {
@@ -280,6 +281,10 @@ impl GoogleOperator {
             if op.action != OperationAction::RemoveLocal && snapshot.file.trashed != Some(false) {
                 return Err(filesystem::stale());
             }
+        }
+        self.preserve_conflict(r, fs, session).await?;
+        if let (Some(id), Some(journal)) = (&op.conflict_id, journal) {
+            journal.checkpoint(RecoveryCheckpoint::ConflictArchive(id.clone()))?;
         }
         let remote = match op.action {
             OperationAction::RegisterIdentity
@@ -1118,3 +1123,6 @@ mod initial_upload_tests;
 
 #[cfg(test)]
 mod live_upload_recovery_tests;
+
+#[cfg(test)]
+mod conflict_tests;

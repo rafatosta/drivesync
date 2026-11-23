@@ -270,23 +270,30 @@ pub(crate) enum OperationState {
 /// Persistent conflict facts associated with one logical item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ConflictState {
+    /// Stable review and archive identity, replaced when conflicting evidence changes.
+    pub id: Id,
+    pub local: LocalState,
+    pub remote: RemoteState,
+    /// Inventory revision from which the conflicting evidence was consolidated.
+    pub observed_revision: u64,
     /// Logical item associated with the conflict.
     pub item_id: crate::models::ItemId,
     /// Stable conflict category or diagnostic code.
     pub reason: String,
-    /// Whether a user or policy has resolved the conflict.
+    /// Verified convergence retired this conflict; the flag never authorizes a write.
     pub resolved: bool,
-    /// Explicit resolution choice, represented as an opaque policy value.
-    pub resolution: Option<ConflictResolution>,
+    /// Explicit choice and the current evidence authorized by its verified progress.
+    pub resolution: Option<Box<ConflictResolution>>,
     /// Time at which the conflict state last changed.
     pub updated_at: DateTime,
 }
 
-/// Explicit conflict-resolution choice supplied by a later policy/UI contract.
+/// Explicit conflict choice, pinned to the evidence reviewed through the public Engine API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ConflictResolution {
-    /// Opaque stable choice understood by the component that requested resolution.
-    pub choice: String,
+    pub choice: crate::conflicts::ConflictChoice,
+    pub expected_local: LocalState,
+    pub expected_remote: RemoteState,
 }
 
 /// Observed effects of a completed operation.
@@ -497,6 +504,8 @@ pub(crate) struct RecoveryRecord {
     pub transfer: Option<TransferReference>,
     /// Ancestor facts committed before a tree-location mutation.
     pub remote_ancestry: Option<Vec<RemoteState>>,
+    /// Archive publication committed before any selected conflict effect.
+    pub conflict_archive: Option<Id>,
 }
 /// Sensitive provider transfer handle. No OAuth credential is stored; Debug redacts the URI.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +527,7 @@ pub(crate) enum RecoveryCheckpoint {
     LocalStage(LocalIdentity),
     Transfer(TransferReference),
     RemoteAncestry(Vec<RemoteState>),
+    ConflictArchive(Id),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum RecoveryIssue {

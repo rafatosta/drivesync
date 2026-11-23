@@ -1,4 +1,5 @@
 //! Linux descriptor-anchored operations. No symlink traversal or destination replacement.
+pub(super) mod conflicts;
 mod staging;
 mod trash;
 use super::models::*;

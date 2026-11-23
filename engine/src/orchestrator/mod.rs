@@ -48,7 +48,14 @@ impl Drop for OrchestratorHandle {
     }
 }
 impl OrchestratorHandle {
-    /// Sample before source I/O; every effect invalidates captures that started in an older epoch.
+    /// A reviewed choice invalidates older rounds and wakes both evidence producers.
+    pub(crate) fn request_refresh(&self) {
+        self.capture_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.local_refresh.notify_one();
+        self.remote_refresh.notify_one();
+    }
+    /// Sample before source I/O; effects invalidate captures that started in an older epoch.
     pub(crate) fn collection_epoch(&self) -> u64 {
         self.capture_epoch.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -466,6 +473,19 @@ impl Orchestrator {
         file.initial_association_authorized &= self.config.initial_association_authorized;
         let decision = analyzer::analyze(&file);
         outcome.decision = decision.status;
+        if decision.status == DecisionStatus::Conflict {
+            let attributes = analyzer::conflict_attributes(&file);
+            let reason = if attributes.is_empty() {
+                decision.reason.clone()
+            } else {
+                attributes.join(", ")
+            };
+            if self.operator.record_conflict(&file, reason).await.is_err() {
+                self.block(item, issue(SynchronizationIssueKind::OperationFailed, true));
+                self.settle();
+                return outcome;
+            }
+        }
         self.blockers
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         if decision.status != DecisionStatus::Ready
@@ -568,6 +588,14 @@ impl Orchestrator {
             }
             // Refresh command preconditions only from verified receipts of earlier steps.
             operation.local_path = file.local.path.clone();
+            if matches!(
+                operation.action,
+                OperationAction::UpdateRemoteContent | OperationAction::UpdateLocalContent
+            ) {
+                if let Evidence::Known(name) = &file.local.name {
+                    operation.name = Some(name.clone());
+                }
+            }
             operation.remote_id = file.identity.remote_id.clone();
             if let Some(preconditions) = &mut operation.preconditions {
                 preconditions.observed_remote_version = match file.remote.version {

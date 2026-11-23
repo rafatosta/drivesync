@@ -50,6 +50,7 @@ pub(super) fn record(
         stage_identity: None,
         transfer: None,
         remote_ancestry: None,
+        conflict_archive: None,
     })
 }
 impl PersistingOperator {

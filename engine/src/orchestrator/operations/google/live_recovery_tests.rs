@@ -134,6 +134,7 @@ pub(super) fn fixture_request(
     };
     ExecuteOperationRequest {
         operation: Operation {
+            conflict_id: None,
             step: 1,
             action,
             item_ref: id.clone(),

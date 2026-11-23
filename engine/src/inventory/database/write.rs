@@ -253,7 +253,50 @@ fn merge_identity(stored: &mut FileIdentity, incoming: &FileIdentity) {
     }
 }
 
+fn advance_conflict(snapshot: &mut InventorySnapshot, effect: &super::models::AppliedEffect) {
+    if !effect.verified {
+        return;
+    }
+    if let Some(resolution) = snapshot
+        .prior_conflict
+        .as_mut()
+        .filter(|c| !c.resolved)
+        .and_then(|c| c.resolution.as_mut())
+    {
+        if let Some(local) = &effect.local {
+            resolution.expected_local = local.clone();
+        }
+        if let Some(remote) = &effect.remote {
+            resolution.expected_remote = remote.clone();
+        }
+    }
+}
+fn finish_conflict(snapshot: &mut InventorySnapshot, recorded_at: crate::models::DateTime) {
+    if let Some(c) = snapshot.prior_conflict.as_mut() {
+        c.resolved = true;
+        c.updated_at = recorded_at;
+        c.resolution = None;
+    }
+}
 fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> bool {
+    let authorized = snapshot
+        .pending_operations
+        .iter()
+        .find(|op| op.id == request.operation_id)
+        .and_then(|op| op.recovery.as_ref())
+        .is_some_and(|record| {
+            record.command.conflict_id.as_ref() == snapshot.prior_conflict.as_ref().map(|c| &c.id)
+        });
+    if authorized {
+        match &request.effect {
+            PersistedEffect::OperationApplied(effect) => advance_conflict(snapshot, effect),
+            PersistedEffect::RecoveryObserved {
+                effect: Some(effect),
+                ..
+            } => advance_conflict(snapshot, effect),
+            _ => {}
+        }
+    }
     match &request.effect {
         PersistedEffect::ItemRegistered { local_path } => {
             if snapshot.revision != 0 {
@@ -285,6 +328,7 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             }
             snapshot.local_path = baseline.local.as_ref().and_then(|local| local.path.clone());
             snapshot.baseline = baseline.clone();
+            finish_conflict(snapshot, request.recorded_at);
             true
         }
         PersistedEffect::RecoveryCheckpoint(checkpoint) => {
@@ -309,6 +353,18 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
                 return false;
             };
             match checkpoint {
+                super::models::RecoveryCheckpoint::ConflictArchive(id) => {
+                    if record.command.conflict_id.as_ref() != Some(id)
+                        || record
+                            .conflict_archive
+                            .as_ref()
+                            .is_some_and(|old| old != id)
+                    {
+                        return false;
+                    }
+                    record.conflict_archive = Some(id.clone());
+                }
+
                 super::models::RecoveryCheckpoint::RemoteAncestry(ancestors) => {
                     if record.remote_ancestry.is_some() || ancestors.len() > 256 {
                         return false;
@@ -519,6 +575,7 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
             snapshot.baseline = baseline.clone();
             operation.state = OperationState::Confirmed;
             operation.updated_at = request.recorded_at;
+            finish_conflict(snapshot, request.recorded_at);
             true
         }
         PersistedEffect::OperationFailed => {
@@ -545,6 +602,9 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
                 .is_some_and(|conflict| conflict.item_id != request.item_id)
             {
                 return false;
+            }
+            if snapshot.local_path.is_none() {
+                snapshot.local_path = conflict.as_ref().and_then(|c| c.local.path.clone());
             }
             snapshot.prior_conflict.clone_from(conflict);
             true

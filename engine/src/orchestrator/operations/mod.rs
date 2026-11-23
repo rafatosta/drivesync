@@ -1,4 +1,5 @@
 //! Execution with fixed scope, optimistic persistence, and explicit uncertain effects.
+mod conflicts;
 mod filesystem;
 mod google;
 mod interfaces;
@@ -266,19 +267,18 @@ impl PersistingOperator {
             remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
         };
         use std::os::unix::fs::MetadataExt;
-        if !matches!(
+        if (!matches!(
             r.operation.action,
             OperationAction::UpdateRemoteContent | OperationAction::ConfirmBaseline
-        ) || stored.baseline.state != BaselineState::Synced
+        ) && r.operation.conflict_id.is_none())
+            || stored.baseline.state != BaselineState::Synced
             || stored.local_path != r.local.path
             || !stored.baseline.local.as_ref().is_some_and(|old| {
                 old.path == r.local.path && old.kind == Evidence::Known(FileKind::Regular)
             })
-            || !stored
-                .baseline
-                .remote
-                .as_ref()
-                .is_some_and(|old| r.remote.unchanged_binary(old))
+            || !stored.baseline.remote.as_ref().is_some_and(|old| {
+                r.remote.unchanged_binary(old) || r.operation.conflict_id.is_some()
+            })
             || r.local.kind != Evidence::Known(FileKind::Regular)
         {
             return Err(filesystem::stale());
@@ -454,6 +454,7 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
+                self.validate_consent(r, &snapshot)?;
                 if r.local.state == FileState::Present && snapshot.local_path != r.local.path {
                     self.validate_relocation(r, &snapshot)?;
                 }
@@ -466,7 +467,8 @@ impl PersistingOperator {
                     && !(op.action == OperationAction::Adopt
                         && snapshot.identity.remote_id.is_none()))
                     || (op.action == OperationAction::ConfirmBaseline
-                        && snapshot.baseline.state != BaselineState::Synced)
+                        && snapshot.baseline.state != BaselineState::Synced
+                        && op.conflict_id.is_none())
                     || (op.action == OperationAction::Adopt
                         && matches!(snapshot.identity.local_identity, Evidence::Known(_))
                         && snapshot.identity.local_identity != r.identity.local_identity)
@@ -516,6 +518,17 @@ impl PersistingOperator {
     }
 }
 impl Operator for PersistingOperator {
+    fn record_conflict<'a>(
+        &'a self,
+        file: &'a crate::detectors::context::File,
+        reason: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), OperatorError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let _guard = self.gate.lock().await;
+            self.record_conflict(file, reason)
+        })
+    }
     fn recover<'a>(
         &'a self,
     ) -> std::pin::Pin<

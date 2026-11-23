@@ -9,6 +9,18 @@ impl GoogleOperator {
         fs: &Filesystem,
         session: &GoogleSession,
     ) -> RecoveryAssessment {
+        if let Some(id) = &record.command.conflict_id {
+            if record.conflict_archive.as_ref() != Some(id) {
+                return RecoveryAssessment {
+                    outcome: ExecutionEffect::NotApplied,
+                    issue: Some(RecoveryIssue::NotDispatched),
+                    effect: None,
+                };
+            }
+            if !fs.conflict_archived(id).unwrap_or(false) {
+                return RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged);
+            }
+        }
         match record.command.action {
             OperationAction::RenameLocal
             | OperationAction::MoveLocal

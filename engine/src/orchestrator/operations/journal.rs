@@ -47,6 +47,7 @@ impl ExecutionJournal for Journal {
         }
         state.0 = receipt.revision.ok_or_else(filesystem::stale)?;
         match checkpoint {
+            RecoveryCheckpoint::ConflictArchive(id) => state.1.conflict_archive = Some(id),
             RecoveryCheckpoint::LocalStage(identity) => state.1.stage_identity = Some(identity),
             RecoveryCheckpoint::Transfer(transfer) => state.1.transfer = Some(transfer),
             RecoveryCheckpoint::RemoteAncestry(ancestors) => {

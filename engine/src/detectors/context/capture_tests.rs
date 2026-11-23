@@ -638,6 +638,46 @@ fn atomic_slot_replacement_requires_unchanged_remote_and_absent_old_inode() {
 }
 
 #[test]
+fn atomic_divergent_slot_becomes_conflict_evidence_without_automatic_overwrite() {
+    let (context, directory) = context();
+    let old = local("file", 1, false);
+    let original = remote("r", "file", "drive-root", false);
+    seed(&context, old.clone(), original.clone());
+    let mut changed = original;
+    changed.version = Evidence::Known(2);
+    changed.checksum = Evidence::Known(crate::models::Checksum {
+        algorithm: "sha256".into(),
+        value: "remote-edit".into(),
+    });
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![changed]),
+        ))
+        .unwrap();
+    let mut replacement = local("file", 2, false);
+    replacement.checksum = Evidence::Known(crate::models::Checksum {
+        algorithm: "sha256".into(),
+        value: "local-edit".into(),
+    });
+    let files = context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![replacement.clone()]),
+        ))
+        .unwrap();
+    let item = files.iter().find(|f| f.identity.item_id.is_some()).unwrap();
+    assert_eq!(item.local.identity, replacement.identity);
+    assert_eq!(item.identity.local_identity, old.identity);
+    assert_eq!(item.environment.local_replacement, Evidence::Known(true));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn moved_incarnations_follow_trees_but_recycled_or_aliased_inodes_do_not() {
     for scenario in ["tree", "recycled", "hardlink", "partial", "outside"] {
         let (context, _directory) = context();

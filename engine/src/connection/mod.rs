@@ -1,4 +1,5 @@
 //! Application account connection lifecycle, independent of GTK.
+mod conflicts;
 mod models;
 mod remote_folders;
 mod sign_in;
@@ -219,3 +220,6 @@ mod live_continuous_tests;
 
 #[cfg(test)]
 mod live_tree_tests;
+
+#[cfg(test)]
+mod live_conflict_tests;

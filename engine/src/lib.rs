@@ -1,6 +1,7 @@
 //! DriveSync engine library for account connections and provider access.
 
 pub mod accounts;
+pub mod conflicts;
 #[allow(dead_code)] // Some diagnostic and recovery contracts are reserved for later policies.
 mod detectors;
 #[allow(dead_code)] // Some recovery and conflict writes are reserved for later lifecycle policies.

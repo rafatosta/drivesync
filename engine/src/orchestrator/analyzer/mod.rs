@@ -1,6 +1,8 @@
 //! Purely validates and analyzes a consolidated File without performing I/O.
 
+mod conflicts;
 mod models;
+pub(crate) use conflicts::attributes as conflict_attributes;
 
 use crate::{
     detectors::context::File,
@@ -42,6 +44,21 @@ pub(crate) fn analyze(file: &File) -> Decision {
         );
     }
 
+    if conflicts::authorized(file) {
+        return conflicts::selected(file, validation, changeset);
+    }
+    let incompatible = conflicts::attributes(file);
+    if !incompatible.is_empty() {
+        return decision(
+            DecisionStatus::Conflict,
+            &format!("Incompatible attributes: {}", incompatible.join(", ")),
+            validation,
+            changeset,
+            Vec::new(),
+            ExecutionStatus::NotExecutable,
+            Vec::new(),
+        );
+    }
     if file.baseline.state == BaselineState::NeverSynced {
         return analyze_unbased(file, validation, changeset);
     }
@@ -95,15 +112,7 @@ pub(crate) fn analyze(file: &File) -> Decision {
     }
     if local_changed && remote_changed {
         if current_states_diverge(file) {
-            return decision(
-                DecisionStatus::Conflict,
-                "Both sides changed and their current values differ.",
-                validation,
-                changeset,
-                Vec::new(),
-                ExecutionStatus::NotExecutable,
-                Vec::new(),
-            );
+            return conflicts::independent(file, validation, changeset);
         }
         if complete(file)
             && parents_correspond(file)
@@ -293,7 +302,20 @@ fn validate(file: &File) -> Validation {
         );
     }
     if let Some(conflict) = &file.prior_conflict {
-        if !conflict.resolved {
+        if !conflict.resolved
+            && !file.pending_operations.iter().any(|op| {
+                matches!(
+                    op.state,
+                    crate::inventory::models::OperationState::Pending
+                        | crate::inventory::models::OperationState::Running
+                        | crate::inventory::models::OperationState::AppliedUnconfirmed
+                )
+            })
+            && !conflicts::authorized(file)
+            && !(complete(file)
+                && parents_correspond(file)
+                && super::evidence::equivalent(&file.local, &file.remote))
+        {
             push_check(
                 &mut checks,
                 ValidationCheckStatus::Conflict,
@@ -454,9 +476,9 @@ fn compare(file: &File) -> Changeset {
         AttributeName::Kind,
         compare_evidence(&baseline_local.kind, &file.local.kind, "local kind"),
         compare_evidence(
-            &baseline_remote.mime_type,
-            &file.remote.mime_type,
-            "remote MIME type",
+            &remote_kind(&baseline_remote.mime_type),
+            &remote_kind(&file.remote.mime_type),
+            "remote kind",
         ),
     );
     add_attribute(
@@ -602,6 +624,23 @@ fn compare_evidence<T: PartialEq>(
     }
 }
 
+fn remote_kind(mime: &Evidence<String>) -> Evidence<crate::models::FileKind> {
+    use crate::models::FileKind;
+    match mime {
+        Evidence::Known(mime) => Evidence::Known(if mime == "application/vnd.google-apps.folder" {
+            FileKind::Directory
+        } else if mime.starts_with("application/vnd.google-apps.") {
+            FileKind::Unsupported
+        } else {
+            FileKind::Regular
+        }),
+        Evidence::NotCollected => Evidence::NotCollected,
+        Evidence::NotApplicable => Evidence::NotApplicable,
+        Evidence::Unsupported => Evidence::Unsupported,
+        Evidence::Unavailable => Evidence::Unavailable,
+        Evidence::PermissionDenied => Evidence::PermissionDenied,
+    }
+}
 fn compare_content(
     baseline_checksum: &Evidence<crate::models::Checksum>,
     baseline_size: &Evidence<u64>,
@@ -700,6 +739,22 @@ fn analyze_unbased(file: &File, validation: Validation, changeset: Changeset) ->
                 Vec::new(),
             );
         }
+    }
+    if pair.is_some_and(|(local, remote)| {
+        local.state == FileState::Present
+            && remote.state == FileState::Present
+            && conflicts::initial_incompatible(local, remote)
+    }) && complete(file)
+    {
+        return decision(
+            DecisionStatus::Conflict,
+            "Initial replicas collide and have different content or types.",
+            validation,
+            changeset,
+            Vec::new(),
+            ExecutionStatus::NotExecutable,
+            Vec::new(),
+        );
     }
     if let Some(plan) = initial_remote_plan(file, validation.clone(), changeset.clone()) {
         return plan;
@@ -800,6 +855,7 @@ fn initial_remote_plan(
         plan.operations.clear();
     }
     let operation = Operation {
+        conflict_id: None,
         step: (plan.operations.len() + 1) as u64,
         action,
         item_ref: file
@@ -886,6 +942,7 @@ fn initial_local_plan(
         plan.operations.clear();
     }
     plan.operations.push(Operation {
+        conflict_id: None,
         step: (plan.operations.len() + 1) as u64,
         action,
         item_ref: file
@@ -966,6 +1023,7 @@ fn metadata_plan(
         );
     }
     let operation = Operation {
+        conflict_id: None,
         step: 1,
         action,
         item_ref,
@@ -1108,6 +1166,7 @@ fn operation_for(
         _ => return None,
     };
     Some(Operation {
+        conflict_id: None,
         step: 0,
         action,
         item_ref,

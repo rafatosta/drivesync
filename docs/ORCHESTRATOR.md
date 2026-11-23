@@ -111,3 +111,5 @@ recovery when the remote source returns. Captures started before an effect canno
 post-effect barrier; older-than-baseline remote versions defer. NoOp still performs no write.
 
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) orders parent records before descendants and executes combined rename/move/content plans using verified intermediate receipts. Descendant path refresh remains a verified metadata transaction.
+
+[Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) records incompatible attributes as durable conflicts, merges disjoint attributes through verified receipts, and keeps uncertain effects ahead of new conflict decisions. Choice submission refreshes sources; only verified convergence retires a conflict.
