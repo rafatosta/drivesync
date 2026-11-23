@@ -71,6 +71,8 @@ pub struct SynchronizationOperation {
     pub display_name: Option<String>,
     /// This download follows a verified registration of a newly observed remote identity.
     pub newly_observed_remote: bool,
+    /// This upload follows a verified registration of a newly observed local identity.
+    pub newly_observed_local: bool,
 }
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]

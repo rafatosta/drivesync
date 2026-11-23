@@ -123,6 +123,17 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     )
                 }
                 A::Downloading => (ActivityKind::Download, Direction::RemoteToLocal),
+                A::Uploading
+                    if status
+                        .current_operation
+                        .as_ref()
+                        .is_some_and(|op| op.newly_observed_local) =>
+                {
+                    (
+                        ActivityKind::UploadDiscoveredLocal,
+                        Direction::LocalToRemote,
+                    )
+                }
                 A::Uploading => (ActivityKind::Upload, Direction::LocalToRemote),
                 A::Applying => (ActivityKind::Apply, Direction::None),
                 _ => return None,

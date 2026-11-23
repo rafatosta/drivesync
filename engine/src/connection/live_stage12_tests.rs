@@ -146,18 +146,26 @@ async fn real_event1_independent_provider_hash_version_and_baseline() {
 #[tokio::test]
 #[ignore = "requires an explicitly isolated event2 fixture and the authorized Google test account"]
 async fn real_event2_verify_uploaded_file() {
-    verify_binary_fixture(false).await;
+    verify_binary_fixture("event2").await;
 }
 
 /// Verify exactly one new remote identity and its installed download receipt.
 #[tokio::test]
 #[ignore = "requires an explicitly isolated event3 fixture and the authorized Google test account"]
 async fn real_event3_verify_created_remote_file() {
-    verify_binary_fixture(true).await;
+    verify_binary_fixture("event3").await;
 }
 
-async fn verify_binary_fixture(created_remote: bool) {
-    let event = if created_remote { "event3" } else { "event2" };
+/// Verify the installed upload of a file created after initial convergence.
+#[tokio::test]
+#[ignore = "requires an explicitly isolated event4 fixture and the authorized Google test account"]
+async fn real_event4_verify_created_local_file() {
+    verify_binary_fixture("event4").await;
+}
+
+async fn verify_binary_fixture(event: &str) {
+    let created_remote = event == "event3";
+    let created_local = event == "event4";
     let env = |key: &str| std::env::var(key).expect(key);
     let local = PathBuf::from(env("DRIVESYNC_STAGE12_LOCAL_ROOT"));
     let fixture = local.file_name().unwrap().to_str().unwrap();
@@ -215,6 +223,9 @@ async fn verify_binary_fixture(created_remote: bool) {
     let files = page.files;
     if phase == "prepare" {
         assert!(files.is_empty());
+        if created_local {
+            assert_eq!(std::fs::read_dir(&local).unwrap().count(), 0);
+        }
         println!("{event} preflight: empty Drive folder {remote_root}");
         return;
     }
@@ -231,13 +242,16 @@ async fn verify_binary_fixture(created_remote: bool) {
         file.parents.as_deref(),
         Some(&[FileId(remote_root.clone())][..])
     );
-    let name = if created_remote {
-        "created-remote.bin"
-    } else {
-        "existing-local.bin"
+    let name = match event {
+        "event2" => "existing-local.bin",
+        "event3" => "created-remote.bin",
+        "event4" => "created-local.bin",
+        _ => unreachable!(),
     };
     if created_remote {
         assert_eq!(id.0, env("DRIVESYNC_STAGE12_FILE_ID"));
+    }
+    if created_local || created_remote {
         assert_eq!(std::fs::read_dir(&local).unwrap().count(), 1);
     }
     assert_eq!(file.name.as_deref(), Some(name));
@@ -369,5 +383,47 @@ async fn verify_binary_fixture(created_remote: bool) {
             .get("drivesyncExecution"),
         Some(&upload.id.0)
     );
-    println!("event2 verified: remote_id={} revision={} provider_version={version} baseline_version={baseline_version} size={size} sha256={digest} operation_id={}", id.0, revision.0, upload.id.0);
+    if created_local {
+        use std::os::unix::fs::MetadataExt;
+
+        let metadata = std::fs::metadata(request.local_root.join(name)).unwrap();
+        let Evidence::Known(identity) = &local.identity else {
+            panic!("confirmed baseline must retain the observed local identity");
+        };
+        assert_eq!(identity.device_id, metadata.dev());
+        assert_eq!(identity.inode, metadata.ino());
+        assert_eq!(item.identity.local_identity, local.identity);
+        assert_eq!(effect.local.as_ref(), Some(local));
+        assert_eq!(local.path.as_ref(), Some(&PathBuf::from(name)));
+        assert_eq!(local.parent, Evidence::Known(PathBuf::new()));
+        assert_eq!(item.pending_operations.len(), 1);
+        assert_eq!(upload.id.0, env("DRIVESYNC_STAGE12_OPERATION_ID"));
+        let creation = upload.recovery.as_ref().unwrap();
+        assert_eq!(creation.command.action, OperationAction::Upload);
+        assert!(creation.command.remote_id.is_none());
+        assert_eq!(creation.reserved_remote_id, remote_id);
+        assert_eq!(
+            creation.identity,
+            crate::models::FileIdentity {
+                remote_id: None,
+                ..item.identity.clone()
+            }
+        );
+        assert_eq!(creation.local.identity, local.identity);
+        assert_eq!(creation.local.checksum, checksum);
+        assert_eq!(creation.local.path, local.path);
+        assert_eq!(creation.expected_revision, Some(1));
+        assert_eq!(creation.command.depends_on.len(), 1);
+        assert_eq!(creation.completed_steps, creation.command.depends_on);
+        assert_eq!(
+            item.identity.item_id.as_ref().unwrap().0,
+            env("DRIVESYNC_STAGE12_ITEM_ID")
+        );
+        assert_eq!(id.0, env("DRIVESYNC_STAGE12_FILE_ID"));
+        println!(
+            "{event} identity: item_id={:?} local={identity:?} parent={:?}",
+            item.identity.item_id, remote.parents
+        );
+    }
+    println!("{event} verified: remote_id={} revision={} provider_version={version} baseline_version={baseline_version} size={size} sha256={digest} operation_id={}", id.0, revision.0, upload.id.0);
 }

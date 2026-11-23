@@ -31,6 +31,7 @@ pub enum ActivityKind {
     Download,
     DownloadDiscoveredRemote,
     Upload,
+    UploadDiscoveredLocal,
     Verify,
     Apply,
 }

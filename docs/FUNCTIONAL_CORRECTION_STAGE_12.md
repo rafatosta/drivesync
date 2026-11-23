@@ -1,9 +1,8 @@
 # Stage 12 — GUI components and incremental file synchronization
 
-Scope: mandatory component groundwork, existing remote file download, and existing local file
-upload, and creation of a remote file after initial convergence. The Stage 12 specification is
-the acceptance reference. English identifiers
-and gettext strings follow repository conventions.
+Scope: mandatory component groundwork, existing remote file download and local file upload, and
+remote and local file creation after initial convergence. The Stage 12 specification is the
+acceptance reference. English identifiers and gettext strings follow repository conventions.
 
 ### Evento: Mandatory component groundwork
 - Estado inicial / fixture / escopo: clean main at 0226204, identical to origin/main after fetch; deterministic presentation-only fixtures and isolated temporary GTK/XDG profile.
@@ -70,8 +69,24 @@ no event 10/11 acceptance is claimed. Interactive keyboard and screen-reader acc
 - Limitações: installed widget evidence is a trace of visible English labels. The PT-BR catalog passed `msgfmt --check`. The run did not capture a screenshot of the transient operation, exercise assistive technologies or deliberately interrupt the transfer. The public latest-state subscription can still coalesce short-lived updates. The GUI briefly showed the existing waiting-for-information state during startup and post-download refresh.
 - Resultado: APROVADO for remote creation after established synchronization in the isolated installed fixture.
 
+### Evento: 4 — Creation of a local file
+
+- Estado inicial / fixture / escopo: authorized account `rtosta.coc@gmail.com`. Independent preflight verified that both roots were empty. The installed Devel dashboard then reached a positive public audit at epoch 0 with complete coverage and zero local, remote and Inventory entries. The acceptance fixture uses `~/GoogleDrive/DriveSync-stage12-event4-20261123-02` and the matching [Drive folder](https://drive.google.com/drive/folders/1BRfWoyNZrJPubTWoejJ44NHakTOPqJNI).
+- Ação única executada: after the empty-scope audit and while the same dashboard instance was running, published `created-local.bin` by atomically renaming the staged 4 MiB binary from outside the selected root. The harness captured its SHA-256 before publication.
+- Resultado esperado na Engine e GUI: observe the new file, register its local identity, dispatch one upload that creates the remote replica, and persist the verified baseline. Show the discovered file and the Computer → Drive direction on the running upload with indeterminate progress. Show convergence only after a positive audit.
+- API pública e correção mínima: `SynchronizationOperation::newly_observed_local` marks an Upload dispatched after verified registration of the local identity in the same plan. The registration stays internal. The existing Adapter maps this public fact to the upload presentation. Discovery refers to when the Engine first observed the identity, including a first scan. The flag carries no filesystem creation timestamp. The GUI does not derive byte progress from operation counts. Transfer policy and receipt confirmation continue through the existing Engine path.
+- Diagnóstico por fronteira: the live trace connects the local observation and GUI activity to the actual execution ID. The read-only checkpoint recorded `NeverSynced`, a running Upload, the local device/inode/birth time and SHA-256, the completed registration dependency and the server-reserved remote ID before completion.
+- Resultado observado na GUI e auditoria: the visible labels showed “Uploading… created-local.bin” and “Computer → Drive / New file discovered on computer” for execution `523832f0182c1e9b2ecacdcd25944817`. The activity cleared on completion. “Everything synchronized” accompanied a positive epoch 1 audit with one local entry, one remote entry, one converged Inventory item, complete coverage, zero unconfirmed operations and zero unresolved conflicts. Reopening the installed dashboard produced another positive audit without a transfer.
+- Erro de acesso no Flatpak: reopening the approved fixture with local-root sandbox access withheld displayed “Synchronization failed” and “The selected folder is unavailable.” Reopening with standard access restored the positive audit without a transfer. This checks startup access failure and recovery.
+- Identidade e integridade: separate Drive listing, metadata, revision and media requests verified one active child in the expected parent, [created-local.bin](https://drive.google.com/file/d/1D6U0Ia1Yiudxv87hfxVt5Yw4uyaeJi0K/view), using the same ID the Engine reserved before upload. The single binary revision and all 4,194,304 bytes matched readback. The source, local file, provider metadata and both sides of the confirmed baseline shared SHA-256 `b9acd22df5c7ce0cfe1b06f966f0fa8ac0e4444e1302b5be39dc6525f8862fb8`. Drive metadata version was 2 and the confirmed receipt and baseline retained version 1. The provider connector independently listed the same single child.
+- Inventory: exactly one item (`1a976bd2a5d5dcd3be34cac5a7ae4167`), with device 54, inode 5673759 and birth time 1795473756370675592 ns. The recorded Upload started from registration revision 1 with no remote identity, and the only confirmed receipt matches the GUI execution ID, the Drive execution marker and the recorded local and remote snapshots. The baseline is `Synced`. An independent readback after reopening verified the same identities, sole receipt, sole binary revision and bytes, with one entry in each root.
+- Testes direcionados e regressões: separate provider and Inventory checks passed for the retained fixtures of events 1–3. Their sequential dashboard reopen runs on the new package passed public audit without transfers. A concurrent reopen attempt was refused by the existing writer lease. The isolated GTK component/fake-backend test and the real-operation mapping regression passed. GNOME SDK 50 with rust-stable passed `cargo fmt --all --check`, `cargo clippy --offline --workspace --all-targets -- -D warnings`, `cargo test --offline --workspace` (701 passed, 26 opt-in ignored), `cargo doc --offline --workspace --no-deps --document-private-items` and `cargo test --offline --workspace --doc`.
+- Ambiente e evidências: installed user Flatpak `com.rtosta.DriveSync.Devel//stage12-event4`, commit `fb156eac4a1ed95bffe21c1169530b4d8fef13a7b1e9a3beb61ed46b6a2bb46d`, with GNOME 50. The package used a test-only non-unique instance and a collector for visible GTK labels and public Engine state. Evidence and commands are retained in `/home/tosta/Documentos/ChatGPT/drivesync 2/relatorios/etapa-12-atividade-4`, with the acceptance logs under `repeat/`.
+- Limitações: the first isolated fixture used 32 MiB and reached the collector's five-minute limit while the provider was still confirming chunks. Its trace showed the real upload and no completion audit. A separate connector listing after that run found no active child. The first fixture was retained, and the same event was repeated with 4 MiB in a fresh scope. Presentation evidence consists of visible English labels. The PT-BR catalog passed `msgfmt --check`. Transient screenshots and interactive accessibility were not exercised.
+- Resultado: APROVADO for local creation and upload after established convergence in the isolated installed fixture.
+
 ## Execution boundary
 
-The latest run covered event 3 and read-only regressions of events 1 and 2. Events 4–14 remain
-outside this run. All Rust tools used the manifest's GNOME SDK 50 and rust-stable extension. The local
-acceptance Flatpak and fixtures were retained. No remote publication occurred.
+The latest run covered event 4 and regressions of events 1–3. Events 5–14 remain outside this run.
+All Rust tools used GNOME SDK 50 and the rust-stable extension. The isolated Flatpak and fixtures
+were retained. No remote publication occurred.

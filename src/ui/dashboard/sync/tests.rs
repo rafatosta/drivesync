@@ -346,6 +346,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         item_id: models::ItemId("item-1".into()),
         display_name: Some("Relatório.bin".into()),
         newly_observed_remote: false,
+        newly_observed_local: false,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -381,6 +382,16 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     assert_eq!(discovery.kind, ActivityKind::DownloadDiscoveredRemote);
     assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
     assert_eq!(discovery.direction, Direction::RemoteToLocal);
+    assert_eq!(discovery.progress, ProgressView::Indeterminate);
+
+    value.activity = SynchronizationActivity::Uploading;
+    let operation = value.current_operation.as_mut().unwrap();
+    operation.newly_observed_remote = false;
+    operation.newly_observed_local = true;
+    let discovery = map_status(&value, false).activity.unwrap();
+    assert_eq!(discovery.kind, ActivityKind::UploadDiscoveredLocal);
+    assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
+    assert_eq!(discovery.direction, Direction::LocalToRemote);
     assert_eq!(discovery.progress, ProgressView::Indeterminate);
 }
 

@@ -581,7 +581,12 @@ impl Orchestrator {
             .operations
             .iter()
             .any(|op| op.action == OperationAction::Download);
+        let uploads_new_replica = decision
+            .operations
+            .iter()
+            .any(|op| op.action == OperationAction::Upload);
         let mut registered_remote = false;
+        let mut registered_local = false;
         for mut operation in decision.operations {
             if *self.stop.borrow() {
                 break;
@@ -653,17 +658,24 @@ impl Orchestrator {
             let registers_remote_download = downloads_new_replica
                 && operation.action == OperationAction::RegisterIdentity
                 && file.identity.remote_id.is_some();
+            let registers_local_upload = uploads_new_replica
+                && operation.action == OperationAction::RegisterIdentity
+                && file.identity.remote_id.is_none()
+                && matches!(file.local.identity, Evidence::Known(_));
+            let internal_registration = registers_remote_download || registers_local_upload;
             let public_operation = SynchronizationOperation {
                 id: execution_id.0.clone(),
                 newly_observed_remote: registered_remote
                     && operation.action == OperationAction::Download,
+                newly_observed_local: registered_local
+                    && operation.action == OperationAction::Upload,
                 item_id: operation.item_ref.clone(),
                 display_name: operation.name.clone().or_else(|| match &file.remote.name {
                     Evidence::Known(name) => Some(name.clone()),
                     _ => None,
                 }),
             };
-            if !registers_remote_download {
+            if !internal_registration {
                 self.publish_execution(
                     activity(operation.action),
                     &item,
@@ -717,6 +729,7 @@ impl Orchestrator {
                     .as_ref()
                     .and_then(|write| write.revision);
                 registered_remote |= registers_remote_download;
+                registered_local |= registers_local_upload;
                 completed.push(step);
                 if expected_action != OperationAction::RegisterIdentity {
                     let epoch = self
@@ -761,7 +774,10 @@ impl Orchestrator {
                 );
             }
             outcome.results.push(result);
-            if !registers_remote_download && !public_operation.newly_observed_remote {
+            if !internal_registration
+                && !public_operation.newly_observed_remote
+                && !public_operation.newly_observed_local
+            {
                 self.publish_execution(
                     SynchronizationActivity::Applying,
                     &item,
