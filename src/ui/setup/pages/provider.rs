@@ -47,7 +47,7 @@ impl ProviderPage {
                 .build(),
         );
         content.append(&gtk::Label::builder()
-            .label(gettextrs::gettext("Connect your cloud storage accounts and keep your files synchronized on your computer."))
+            .label(gettextrs::gettext("Connect your cloud storage accounts and choose folders to access from DriveSync."))
             .xalign(0.0).wrap(true).max_width_chars(44).build());
         content.append(
             &gtk::Label::builder()

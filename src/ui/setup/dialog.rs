@@ -33,7 +33,7 @@ pub(super) struct SetupDialog {
     feedback: gtk::Label,
     provider: ProviderPage,
     connection: ConnectionPage,
-    synchronization: SynchronizationPage,
+    folders: FolderSelectionPage,
     review: ReviewPage,
 }
 impl SetupDialog {
@@ -75,16 +75,16 @@ impl SetupDialog {
             .build();
         let provider = ProviderPage::new(providers);
         let connection = ConnectionPage::new();
-        let synchronization = SynchronizationPage::new();
+        let folders = FolderSelectionPage::new();
         let review = ReviewPage::new();
         stack.add_named(provider.widget(), Some("provider"));
         let connection_scroll = crate::ui::scroll(connection.widget(), 680);
         connection_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         stack.add_named(&connection_scroll, Some("connection"));
-        let configuration_scroll = crate::ui::scroll(synchronization.widget(), 680);
+        let configuration_scroll = crate::ui::scroll(folders.widget(), 680);
         configuration_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
-        configuration_scroll.set_widget_name("setup-synchronization-scroll");
-        stack.add_named(&configuration_scroll, Some("synchronization"));
+        configuration_scroll.set_widget_name("setup-folders-scroll");
+        stack.add_named(&configuration_scroll, Some("folders"));
         let review_scroll = crate::ui::scroll(review.widget(), 680);
         review_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         review_scroll.set_widget_name("setup-review-scroll");
@@ -129,7 +129,7 @@ impl SetupDialog {
             feedback,
             provider,
             connection,
-            synchronization,
+            folders,
             review,
         }
     }
@@ -145,7 +145,7 @@ impl SetupDialog {
             cb(Event::Provider(id, selected))
         }));
         let cb = callback.clone();
-        self.synchronization
+        self.folders
             .on_nickname(move |text| cb(Event::Nickname(text)));
         let cb = callback.clone();
         self.review.on_finish(move || cb(Event::Finish));
@@ -158,10 +158,9 @@ impl SetupDialog {
         let cb = callback.clone();
         self.connection.on_copy(move || cb(Event::Copy));
         let cb = callback.clone();
-        self.synchronization
-            .on_choose(move || cb(Event::ChooseLocal));
+        self.folders.on_choose(move || cb(Event::ChooseLocal));
         let cb = callback.clone();
-        self.synchronization
+        self.folders
             .on_choose_remote(move || cb(Event::ChooseRemote));
         self.disconnect
             .connect_clicked(move |_| callback(Event::Disconnect));
@@ -208,7 +207,7 @@ impl SetupDialog {
         );
         let path = state.draft.local_uri.as_deref().map(setup::display_path);
         let remote = state.remote_path();
-        self.synchronization.update(
+        self.folders.update(
             path.as_deref(),
             remote.as_deref(),
             &state.account_nickname,

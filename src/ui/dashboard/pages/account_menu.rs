@@ -15,6 +15,7 @@ pub(super) fn build(
 ) -> gtk::MenuButton {
     let menu = gio::Menu::new();
     for (label, action) in [
+        (gettext("Configure folders"), "configure"),
         (gettext("Open local folder"), "local"),
         (gettext("Open Google Drive folder"), "remote"),
         (gettext("Sign Out"), "sign-out"),
@@ -30,6 +31,24 @@ pub(super) fn build(
         .build();
     button.set_widget_name("sidebar-account-menu");
     let group = gio::SimpleActionGroup::new();
+    let configure = gio::SimpleAction::new("configure", None);
+    {
+        let context = context.clone();
+        let navigation = navigation.clone();
+        let account = account.clone();
+        configure.connect_activate(move |_, _| {
+            if let (Some(nav), Some(toasts)) = (
+                navigation.upgrade(),
+                navigation.upgrade().and_then(|nav| {
+                    nav.ancestor(adw::ToastOverlay::static_type())
+                        .and_downcast::<adw::ToastOverlay>()
+                }),
+            ) {
+                crate::ui::setup::show(&context, &nav, &toasts, Some(account.clone()));
+            }
+        });
+    }
+    group.add_action(&configure);
     for (name, local) in [("local", true), ("remote", false)] {
         let action = gio::SimpleAction::new(name, None);
         if !local {

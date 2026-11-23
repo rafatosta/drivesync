@@ -1,20 +1,17 @@
-//! DriveSync engine library.
-
-pub mod providers;
+//! DriveSync engine library for account connections and provider access.
 
 pub mod accounts;
+pub mod conflicts;
+#[allow(dead_code)] // Some diagnostic and recovery contracts are reserved for later policies.
+mod detectors;
+#[allow(dead_code)] // Some recovery and conflict writes are reserved for later lifecycle policies.
+mod inventory;
 pub mod models;
+#[allow(dead_code)] // Some operation and recovery policies are still deliberately unsupported.
+mod orchestrator;
+mod projections;
+pub mod providers;
 pub use models::{AccountId, ProviderId, Timestamp};
-
-mod synchronization;
-pub use synchronization::{
-    SynchronizationAction, SynchronizationActivity, SynchronizationCounters, SynchronizationEvent,
-    SynchronizationIssue, SynchronizationIssueKind, SynchronizationItem,
-    SynchronizationLocalSource, SynchronizationLocation, SynchronizationProgress,
-    SynchronizationProgressUnit, SynchronizationRemoteSource, SynchronizationSources,
-    SynchronizationState, SynchronizationStatus, SynchronizationSubscription,
-    SynchronizationWaitReason, SynchronizationWork, SynchronizationWorkDetail,
-};
 
 mod connection;
 pub use accounts::{
@@ -23,15 +20,5 @@ pub use accounts::{
 };
 pub use connection::*;
 
-pub mod detectors;
-
-pub mod orchestrator;
-pub use orchestrator::Orchestrator;
-
-pub mod inventory;
-
-mod filesystem;
-
-pub mod analyzer;
-
-pub mod operations;
+mod synchronization;
+pub use synchronization::*;

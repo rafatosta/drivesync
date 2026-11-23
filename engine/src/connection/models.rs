@@ -65,6 +65,7 @@ pub enum EngineErrorKind {
     Accounts(AccountsError),
     Internal,
     RemoteFolder(RemoteFolderErrorKind),
+    Synchronization(crate::SynchronizationErrorKind),
 }
 /// Sanitized error, without backend text, OAuth codes or credential material.
 #[derive(Debug, Clone, PartialEq, Eq)]

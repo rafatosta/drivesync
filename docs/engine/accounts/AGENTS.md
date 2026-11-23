@@ -10,8 +10,6 @@
 - [INTERFACES.md](INTERFACES.md) — contratos públicos e tipos.
 - [TESTS.md](TESTS.md) — matriz TDD e invariantes.
 - [Providers](../providers/INTERFACES.md) e [Google](../providers/google/INTERFACES.md) — autenticação técnica específica.
-- [Models](../models/INTERFACES.md) — tipos compartilhados.
-- [MODULE_STANDARD](../MODULE_STANDARD.md) — convenções documentais.
 - [Configuration](../configuration/README.md) — propriedade e política de dados persistidos.
 
 ## Regras de implementação
@@ -23,8 +21,8 @@
 5. Guardar credenciais no armazenamento seguro associado à conta e provedor, nunca em campos de metadados, texto claro ou logs.
 6. Validar o identificador externo estável; não identificar contas por e-mail ou nome.
 7. Projetar idempotência e recuperação entre cadastro e keyring, sem supor transação atômica entre sistemas distintos.
-8. Não atribuir ao Accounts a propriedade do cadastro de conexões antes de decisão contratual. Não permitir remoção que torne sincronizações órfãs.
-9. Não executar ações de sincronização nem exclusões locais/remotas por remoção de conta.
+8. Accounts mantém a propriedade dos metadados e credenciais da conta; conexão e remoção usam a guarda definida pelo Engine.
+9. Remover uma conta não apaga arquivos locais nem dados remotos.
 10. Quando houver falhas de armazenamento persistente, distinguir indisponibilidade do keyring de corrupção de banco; não fazer reset destrutivo nem backup inseguro de segredos.
 11. Sem compatibilidade com formatos legados não solicitados, sem mudanças destrutivas ou migrações retroativas.
 12. Implementação Rust/testes reais somente no ambiente Flatpak; não alegar que testes foram executados sem evidência.

@@ -35,7 +35,7 @@ Uma conta pode estar associada a várias sincronizações (`sync_id`, raiz local
 | Protocolo OAuth/OIDC, consentimento, refresh e revogação pela API | `providers/<provedor>/` |
 | API externa de arquivos e metadados do serviço | `providers/<provedor>/` |
 | Preferências globais e políticas transversais | `configuration/` |
-| Estado de arquivos, baseline e fila de operações | `inventory/` e `detectors/storage/`, cada um em seu escopo |
+
 | Cadastro de conexões de sincronização | **Pendente de decisão**, não presumido em Accounts |
 
 O Provider **não é proprietário da persistência local de credenciais**. Sua interface de autenticação pode receber sessões e dados de autorização adequados ao serviço, sem exigir um contrato universal OAuth para todos os provedores. A forma concreta de integração deverá evitar o trânsito desnecessário de tokens brutos entre módulos.

@@ -11,11 +11,10 @@ use crate::{
     },
 };
 use adw::{gtk, prelude::*};
-use drivesync_engine::{Account, AccountId, Engine};
+use drivesync_engine::{Account, Engine};
 use gettextrs::gettext;
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeSet,
     rc::Rc,
 };
 
@@ -28,8 +27,6 @@ pub(super) struct Controller {
     finishing: Cell<bool>,
     providers: Vec<RegisteredProvider>,
     state: RefCell<SetupState>,
-    provisional_accounts: RefCell<BTreeSet<AccountId>>,
-    cleanup_running: Cell<bool>,
     hold: RefCell<Option<gtk::gio::ApplicationHoldGuard>>,
     view: SetupDialog,
     remote_open_task: RefCell<Option<gtk::glib::JoinHandle<()>>>,
@@ -86,19 +83,12 @@ impl Controller {
             parent
         };
         let view = SetupDialog::new(&window, &providers);
-        let provisional_accounts = RefCell::new(
-            account
-                .as_ref()
-                .map(|account| account.id.clone())
-                .into_iter()
-                .collect(),
-        );
         let mut state = SetupState::default();
         if let Some(account) = account {
             state.provider = providers.iter().find(|v| v.id == account.provider).cloned();
             state.account = Some(account);
             state.step = if state.authorized() {
-                Step::Synchronization
+                Step::Folders
             } else {
                 Step::Connection
             };
@@ -111,8 +101,6 @@ impl Controller {
             finishing: Cell::new(false),
             providers,
             state: RefCell::new(state),
-            provisional_accounts,
-            cleanup_running: Cell::new(false),
             hold: RefCell::new(None),
             view,
             remote_open_task: RefCell::new(None),
@@ -202,8 +190,8 @@ impl Controller {
                 let step = self.state.borrow().step;
                 match step {
                     Step::Provider => self.state.borrow_mut().step = Step::Connection,
-                    Step::Connection => self.state.borrow_mut().step = Step::Synchronization,
-                    Step::Synchronization => {
+                    Step::Connection => self.state.borrow_mut().step = Step::Folders,
+                    Step::Folders => {
                         self.review();
                         return;
                     }
@@ -260,11 +248,6 @@ impl Controller {
                     DisconnectEvent::Cancelled => (),
                     DisconnectEvent::Failed(message) => state.feedback = message,
                     DisconnectEvent::Disconnected { draft_removed } => {
-                        if let Some(account) = state.account.as_ref() {
-                            if draft_removed {
-                                owner.provisional_accounts.borrow_mut().remove(&account.id);
-                            }
-                        }
                         if draft_removed {
                             let closing = state.closing;
                             *state = SetupState {
@@ -284,7 +267,7 @@ impl Controller {
                 let closing = state.closing;
                 drop(state);
                 if closing {
-                    owner.maybe_cleanup();
+                    owner.finish_close_if_idle();
                 } else if !owner.state.borrow().closed {
                     owner.render();
                 }
@@ -326,7 +309,7 @@ impl Controller {
             state.busy = true;
             state.generation += 1;
             state.authorization_url = None;
-            state.feedback = gettext("Signing out before closing…");
+            state.feedback = gettext("Finishing sign-in before closing…");
             if let (Some(engine), Some(id)) = (self.engine(), state.attempt.clone()) {
                 accounts::cancel(&engine, id);
             }
@@ -344,92 +327,26 @@ impl Controller {
             }
         }
         self.render();
-        self.maybe_cleanup();
+        self.finish_close_if_idle();
     }
-    fn cleanup_failed(&self, message: String) {
-        self.cleanup_running.set(false);
-        let mut state = self.state.borrow_mut();
-        state.closing = false;
-        state.busy = false;
-        state.feedback = message;
-        drop(state);
-        self.render();
-    }
-    fn maybe_cleanup(self: &Rc<Self>) {
-        if !self.state.borrow().closing
-            || self.finishing.get()
-            || self.state.borrow().signing_in
-            || self.cleanup_running.replace(true)
-        {
+    fn finish_close_if_idle(self: &Rc<Self>) {
+        if !self.state.borrow().closing || self.finishing.get() || self.state.borrow().signing_in {
             return;
         }
-        let owner = self.clone();
-        gtk::glib::spawn_future_local(async move {
-            // A failed credential commit can leave a recoverable registration
-            // without returning its ID. Discover it before declaring logout done.
-            if let Some(engine) = owner.engine() {
-                match engine
-                    .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
-                    .await
-                {
-                    Ok(result) => {
-                        for account in result.accounts {
-                            match crate::services::configuration::load(&account.id).await {
-                                Ok(None) => {
-                                    owner.provisional_accounts.borrow_mut().insert(account.id);
-                                }
-                                Ok(Some(_)) => (),
-                                Err(_) => {
-                                    owner.cleanup_failed(gettext("Saved configuration could not be read. Your account has been preserved."));
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        owner.cleanup_failed(crate::core::messages::engine_error(&error));
-                        return;
-                    }
+        *self.state.borrow_mut() = SetupState {
+            closed: true,
+            ..Default::default()
+        };
+        if let Some(window) = self.view.window() {
+            let app = window.application();
+            window.destroy();
+            if !self.separate_window {
+                if let Some(app) = app {
+                    app.quit();
                 }
             }
-            let ids: Vec<_> = owner
-                .provisional_accounts
-                .borrow()
-                .iter()
-                .cloned()
-                .collect();
-            for id in ids {
-                let result = match owner.engine() {
-                    Some(engine) => match accounts::disconnect(&engine, id.clone()).await {
-                        Ok(true) => Ok(()),
-                        Ok(false) => Err(gettext(
-                            "The saved setup could not be discarded. Try closing again.",
-                        )),
-                        Err(error) => Err(crate::core::messages::engine_error(&error)),
-                    },
-                    None => Err(gettext("The account service is unavailable. Try again.")),
-                };
-                if let Err(message) = result {
-                    owner.cleanup_failed(message);
-                    return;
-                }
-                owner.provisional_accounts.borrow_mut().remove(&id);
-            }
-            *owner.state.borrow_mut() = SetupState {
-                closed: true,
-                ..Default::default()
-            };
-            if let Some(window) = owner.view.window() {
-                let app = window.application();
-                window.destroy();
-                if !owner.separate_window {
-                    if let Some(app) = app {
-                        app.quit();
-                    }
-                }
-            }
-            owner.hold.borrow_mut().take();
-        });
+        }
+        self.hold.borrow_mut().take();
     }
     fn connect(self: &Rc<Self>) {
         let Some(engine) = self.engine() else {
@@ -506,7 +423,7 @@ impl Controller {
             }
             owner.finish_connection(result, generation);
             if owner.state.borrow().closing {
-                owner.maybe_cleanup();
+                owner.finish_close_if_idle();
             } else if !owner.state.borrow().closed {
                 owner.render();
             }
@@ -526,9 +443,6 @@ impl Controller {
         match result {
             Ok(result) => {
                 // A commit can win cancellation. Track it before close cleanup.
-                self.provisional_accounts
-                    .borrow_mut()
-                    .insert(result.account.id.clone());
                 if state
                     .account
                     .as_ref()
@@ -540,8 +454,7 @@ impl Controller {
                 state.remote_authorization_required = false;
                 state.account = Some(result.account);
                 state.step = Step::Connection;
-                state.feedback =
-                    gettext("Account connected. Continue to configure synchronization.");
+                state.feedback = gettext("Account connected. Continue to choose folders.");
             }
             Err(error) if state.generation == generation => {
                 state.feedback = crate::core::messages::engine_error(&error)
@@ -601,7 +514,6 @@ impl Controller {
             window.is_visible(),
             "close must wait for the authentication result"
         );
-        assert!(!owner.cleanup_running.get());
         owner.finish_connection(
             Ok(drivesync_engine::FinishGoogleSignInResult {
                 account,
@@ -609,14 +521,14 @@ impl Controller {
             }),
             0,
         );
-        owner.maybe_cleanup();
+        owner.finish_close_if_idle();
         window
     }
     /// Resolves the selected account's real root without blocking GTK.
     fn choose_remote(self: &Rc<Self>) {
         let (provider, account, generation) = {
             let mut state = self.state.borrow_mut();
-            if state.step != Step::Synchronization || !state.authorized() {
+            if state.step != Step::Folders || !state.authorized() {
                 return;
             }
             let provider = state.provider.clone().unwrap();
@@ -792,7 +704,7 @@ impl Controller {
             }
         });
     }
-    /// Existing completed identities must never become provisional through Add Account.
+    /// Existing completed identities return to the dashboard without replacing setup.
     async fn preserve_completed_account(
         self: &Rc<Self>,
         result: &drivesync_engine::EngineResult<drivesync_engine::FinishGoogleSignInResult>,
@@ -805,9 +717,6 @@ impl Controller {
             return false;
         }
         let close = self.state.borrow().closing;
-        self.provisional_accounts
-            .borrow_mut()
-            .remove(&result.account.id);
         self.state.borrow_mut().closed = true;
         self.state.borrow_mut().signing_in = false;
         if !self.separate_window {
@@ -826,7 +735,7 @@ impl Controller {
             );
         } else {
             self.toasts.add_toast(adw::Toast::new(&gettext(
-                "This account is already configured. Change its settings in Preferences.",
+                "This account is already configured. Change its folders in Preferences.",
             )));
         }
         if close || self.separate_window {
@@ -835,42 +744,6 @@ impl Controller {
             }
         }
         true
-    }
-    /// Clears abandoned registrations while protecting every completed account.
-    async fn cleanup_other_accounts(
-        &self,
-        engine: &Engine,
-        selected: &AccountId,
-    ) -> Result<(), String> {
-        let accounts = engine
-            .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
-            .await
-            .map_err(|e| crate::core::messages::engine_error(&e))?;
-        for account in accounts.accounts {
-            if &account.id == selected {
-                continue;
-            }
-            match crate::services::configuration::load(&account.id).await {
-                Ok(Some(_)) => (),
-                Ok(None) => {
-                    if !accounts::disconnect(engine, account.id.clone())
-                        .await
-                        .map_err(|e| crate::core::messages::engine_error(&e))?
-                    {
-                        return Err(gettext(
-                            "The saved setup could not be discarded. Try again.",
-                        ));
-                    }
-                    self.provisional_accounts.borrow_mut().remove(&account.id);
-                }
-                Err(_) => {
-                    return Err(gettext(
-                        "Saved configuration could not be read. Your account has been preserved.",
-                    ))
-                }
-            }
-        }
-        Ok(())
     }
     fn finish_setup(self: &Rc<Self>) {
         if !self.state.borrow().can_finish() {
@@ -898,21 +771,6 @@ impl Controller {
         self.render();
         let owner = self.clone();
         gtk::glib::spawn_future_local(async move {
-            let cleanup = owner
-                .cleanup_other_accounts(&engine, &value.account_id)
-                .await;
-            if let Err(message) = cleanup {
-                owner.finishing.set(false);
-                owner.state.borrow_mut().busy = false;
-                owner.state.borrow_mut().feedback = message;
-                if owner.state.borrow().closing {
-                    owner.maybe_cleanup();
-                } else {
-                    owner.render();
-                }
-                return;
-            }
-
             #[cfg(test)]
             let result = if owner.remote_fixture.get() {
                 match setup::check_local_folder(&value.local_uri).await {
@@ -937,13 +795,8 @@ impl Controller {
             .await;
             owner.finishing.set(false);
             match result {
-                Ok(value) => {
-                    crate::application::detectors::schedule_refresh(&owner.context);
+                Ok(_value) => {
                     let close = owner.state.borrow().closing;
-                    owner
-                        .provisional_accounts
-                        .borrow_mut()
-                        .remove(&value.account_id);
                     owner.state.borrow_mut().closed = true;
                     owner
                         .context
@@ -968,7 +821,7 @@ impl Controller {
                     owner.state.borrow_mut().busy = false;
                     owner.state.borrow_mut().feedback = message;
                     if owner.state.borrow().closing {
-                        owner.maybe_cleanup();
+                        owner.finish_close_if_idle();
                     } else {
                         owner.render();
                     }

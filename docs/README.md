@@ -1,3 +1,17 @@
-# Documentação do DriveSync
+# DriveSync documentation
 
-- [Arquitetura atual da interface gráfica](GUI_ARCHITECTURE.md)
+- [Engine account management](engine/accounts/README.md)
+- [Engine connection lifecycle](engine/connection/README.md)
+- [Google Drive provider APIs](engine/providers/README.md)
+- [Synchronization Operations](OPERATIONS.md)
+- [Synchronization Orchestrator and status](ORCHESTRATOR.md)
+- [Functional observation sources](OBSERVATION_SOURCES.md)
+- [Functional correction — Stage 0 baseline](FUNCTIONAL_CORRECTION_STAGE_0.md)
+- [Functional correction — Stage 1 evidence and scope](FUNCTIONAL_CORRECTION_STAGE_1.md)
+- [Functional correction — Stage 2 identity and adoption](FUNCTIONAL_CORRECTION_STAGE_2.md)
+- [Functional correction — Stage 3 crash recovery](FUNCTIONAL_CORRECTION_STAGE_3.md)
+- [Functional correction — Stage 4 initial downloads](FUNCTIONAL_CORRECTION_STAGE_4.md)
+- [Functional correction — Stage 5 initial uploads and continuation](FUNCTIONAL_CORRECTION_STAGE_5.md)
+- [Functional correction — Stage 6 continuous synchronization](FUNCTIONAL_CORRECTION_STAGE_6.md)
+- [Functional correction — Stage 7 tree renames and moves](FUNCTIONAL_CORRECTION_STAGE_7.md)
+- [Functional correction — Stage 8 persistent conflicts and real choices](FUNCTIONAL_CORRECTION_STAGE_8.md)

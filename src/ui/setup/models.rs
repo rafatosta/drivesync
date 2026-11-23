@@ -8,7 +8,7 @@ pub(super) enum Step {
     #[default]
     Provider,
     Connection,
-    Synchronization,
+    Folders,
     Review,
 }
 impl Step {
@@ -16,7 +16,7 @@ impl Step {
         match self {
             Self::Provider => "provider",
             Self::Connection => "connection",
-            Self::Synchronization => "synchronization",
+            Self::Folders => "folders",
             Self::Review => "review",
         }
     }
@@ -24,7 +24,7 @@ impl Step {
         match self {
             Self::Provider => gettextrs::gettext("1 of 4 · Choose provider"),
             Self::Connection => gettextrs::gettext("2 of 4 · Connect account"),
-            Self::Synchronization => gettextrs::gettext("3 of 4 · Configure synchronization"),
+            Self::Folders => gettextrs::gettext("3 of 4 · Choose folders"),
             Self::Review => gettextrs::gettext("4 of 4 · Review configuration"),
         }
     }
@@ -38,7 +38,7 @@ pub(super) struct SetupState {
     pub draft: SetupDraft,
     /// Empty keeps the current local display name; edits remain in memory until completion.
     pub account_nickname: String,
-    /// Current setup only; a chosen folder does not establish sync readiness.
+    /// Current setup only; folder selection is account configuration only.
     pub remote_folder: Option<RemoteFolderLocation>,
     pub remote_authorization_required: bool,
     pub busy: bool,
@@ -79,7 +79,7 @@ impl SetupState {
             && match self.step {
                 Step::Provider => self.provider.is_some(),
                 Step::Connection => self.authorized(),
-                Step::Synchronization => {
+                Step::Folders => {
                     self.authorized()
                         && self.draft.local_uri.is_some()
                         && self.remote_folder.is_some()
@@ -159,8 +159,8 @@ impl SetupState {
         self.step = match self.step {
             Step::Provider => Step::Provider,
             Step::Connection => Step::Provider,
-            Step::Synchronization => Step::Connection,
-            Step::Review => Step::Synchronization,
+            Step::Folders => Step::Connection,
+            Step::Review => Step::Folders,
         };
         self.feedback.clear();
     }
@@ -215,7 +215,7 @@ mod tests {
         assert!(!state.can_continue());
         state.account.as_mut().unwrap().state = AccountState::Connected;
         assert!(state.can_continue());
-        state.step = Step::Synchronization;
+        state.step = Step::Folders;
         assert!(!state.can_continue());
         state.draft.local_uri = Some("file:///tmp/fixture".into());
         assert!(!state.can_continue());
@@ -247,7 +247,7 @@ mod tests {
         state.busy = false;
         state.draft.local_uri = Some("file:///tmp/choice".into());
         state.back();
-        assert_eq!(state.step, Step::Synchronization);
+        assert_eq!(state.step, Step::Folders);
         assert!(state.draft.local_uri.is_some());
     }
 }

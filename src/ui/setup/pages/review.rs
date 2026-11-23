@@ -1,4 +1,4 @@
-//! Final read-only review reports verified facts, without simulated sync success.
+//! Final read-only review reports verified facts, with saved folder choices.
 use super::super::components::Summary;
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
@@ -12,7 +12,7 @@ impl ReviewPage {
         let root = super::content();
         root.set_widget_name("setup-review-page");
         let bytes = gtk::glib::Bytes::from_static(include_bytes!(
-            "../../../../data/illustrations/cloud-sync-success.svg"
+            "../../../../data/illustrations/drivesync-illustration.svg"
         ));
         // Match the wide artwork to the 120px header slot without enlarging it.
         let icon = gtk::gio::BytesIcon::new(&bytes);
@@ -38,7 +38,7 @@ impl ReviewPage {
         root.append(header.widget());
         let summary = Summary::new();
         root.append(summary.widget());
-        root.append(&gtk::Label::builder().label(gettext("Your configuration will be checked and saved. You can change it later in Preferences.")).wrap(true).build());
+        root.append(&gtk::Label::builder().label(gettext("Your account and folder choices will be saved. You can change them later in Preferences.")).wrap(true).build());
         let start = gtk::Button::builder()
             .label(gettext("Finish setup"))
             .sensitive(false)

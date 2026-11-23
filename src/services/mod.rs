@@ -7,3 +7,5 @@ pub(crate) mod setup;
 pub(crate) mod configuration;
 
 pub(crate) mod local_folder;
+
+pub(crate) mod synchronization;

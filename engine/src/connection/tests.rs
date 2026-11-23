@@ -31,22 +31,6 @@ async fn open_without_oauth_preserves_local_use() {
             .kind,
         EngineErrorKind::AuthorizationUnavailable
     );
-    let mut status = engine.observe_synchronization(&AccountId("observed".into()));
-    let other = engine.observe_synchronization(&AccountId("other".into()));
-    assert_eq!(status.snapshot(), crate::SynchronizationStatus::default());
-    engine
-        .synchronization_publisher(&AccountId("observed".into()))
-        .publish(crate::SynchronizationStatus {
-            state: crate::SynchronizationState::Running,
-            activity: crate::SynchronizationActivity::Scanning,
-            ..Default::default()
-        });
-    assert!(status.changed().await);
-    assert_eq!(
-        status.snapshot().activity,
-        crate::SynchronizationActivity::Scanning
-    );
-    assert_eq!(other.snapshot(), crate::SynchronizationStatus::default());
     drop(engine);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -95,6 +79,7 @@ impl Fixture {
         crate::accounts::tests::use_isolated_vault(
             &mut Arc::get_mut(&mut engine.inner).unwrap().accounts,
         );
+        Arc::get_mut(&mut engine.inner).unwrap().sources_enabled = false;
         Self {
             directory,
             engine,
@@ -824,105 +809,730 @@ async fn final_folder_validation_checks_exact_id_and_rejects_files_and_missing_f
     );
 }
 
-#[tokio::test]
-async fn operator_factory_uses_the_persisted_account_and_accounts_owned_session() {
-    use crate::{inventory::*, models::*, operations::*};
-    let metadata = r#"{"id":"source","name":"source.bin","mimeType":"application/octet-stream","parents":["root"],"trashed":false,"version":"1","size":"3","sha256Checksum":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","capabilities":{"canDownload":true}}"#;
-    let root = r#"{"id":"root","mimeType":"application/vnd.google-apps.folder","trashed":false}"#;
-    let mut responses = replies("operator-user");
-    for body in [metadata, root, "abc", metadata, root, metadata, root] {
-        responses.push(Reply::json(200, body));
+impl Fixture {
+    async fn connected(&self) -> Account {
+        let begin = self.begin(None).await;
+        let engine = self.engine.clone();
+        let id = begin.connection_id.clone();
+        let finish = tokio::spawn(async move {
+            engine
+                .finish_google_sign_in(FinishGoogleSignInRequest { connection_id: id })
+                .await
+        });
+        Fixture::callback(&begin, None).await;
+        finish.await.unwrap().unwrap().account
     }
-    let f = Fixture::new(responses).await;
-    let begin = f.begin(None).await;
-    let engine = f.engine.clone();
-    let connection_id = begin.connection_id.clone();
-    let finishing = tokio::spawn(async move {
-        engine
-            .finish_google_sign_in(FinishGoogleSignInRequest { connection_id })
-            .await
-    });
-    assert!(Fixture::callback(&begin, None)
+    fn sync_request(&self, account: &Account) -> crate::StartSynchronizationRequest {
+        let root = self.directory.join("local-root");
+        std::fs::create_dir_all(&root).unwrap();
+        crate::StartSynchronizationRequest {
+            account_id: account.id.clone(),
+            local_root: root,
+            remote_root_id: crate::models::RemoteId("remote-root".into()),
+        }
+    }
+}
+#[tokio::test]
+async fn coordination_start_is_idempotent_with_sources_isolated() {
+    use crate::{SynchronizationActivity, SynchronizationErrorKind, SynchronizationState};
+    let fixture = Fixture::new(replies("sync-user")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    let before = fixture.server.requests.lock().unwrap().len();
+    let status = fixture
+        .engine
+        .start_synchronization(request.clone())
         .await
-        .starts_with("HTTP/1.1 200"));
-    let account = finishing.await.unwrap().unwrap().account;
-    let local = f.directory.join("sync");
-    std::fs::create_dir(&local).unwrap();
-    let inventory = Arc::new(
-        InventoryManager::open(OpenInventoryRequest {
-            local_root: local.clone(),
-            expected: SyncIdentity {
-                sync_id: SyncId("operator-sync".into()),
-                account_id: account.id.clone(),
-                remote_root_id: "root".into(),
-            },
-            create_if_missing: true,
+        .unwrap();
+    assert_eq!(status.state, SynchronizationState::Waiting);
+    assert_eq!(status.activity, SynchronizationActivity::Observing);
+    assert!(status.progress.is_none());
+    let mut subscription = fixture
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut changed = request.clone();
+    changed.remote_root_id.0 = "another-root".into();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(changed.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(SynchronizationErrorKind::AlreadyRunning)
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .stop_synchronization(account.id.clone())
+            .await
+            .unwrap()
+            .state,
+        SynchronizationState::Stopped
+    );
+    assert_eq!(
+        subscription.changed().await.unwrap().state,
+        SynchronizationState::Stopped
+    );
+    fixture.engine.start_synchronization(changed).await.unwrap();
+    assert_eq!(fixture.server.requests.lock().unwrap().len(), before);
+    assert!(fixture.directory.join("accounts.synchronization").is_dir());
+    assert_eq!(
+        fixture
+            .engine
+            .list_accounts(ListAccountsRequest { provider: None })
+            .await
+            .unwrap()
+            .accounts,
+        vec![account.clone()]
+    );
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn observation_ingress_uses_context_and_defers_without_inventing_the_other_side() {
+    use crate::detectors::observation::{Observation, ObservationCoverage, RemoteObservation};
+    use crate::models::*;
+    use crate::{SynchronizationIssueKind, SynchronizationState};
+    let fixture = Fixture::new(replies("observed-user")).await;
+    let account = fixture.connected().await;
+    fixture
+        .engine
+        .start_synchronization(fixture.sync_request(&account))
+        .await
+        .unwrap();
+    let scope = {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        sessions[&account.id].orchestrator.config().clone()
+    };
+    let observed = RemoteObservation {
+        account_id: account.id.clone(),
+        provider_id: account.provider.clone(),
+        sync_root_id: scope.sync_root_id,
+        state: FileState::Present,
+        remote_id: Some(RemoteId("observed".into())),
+        name: Evidence::Known("file".into()),
+        parents: Evidence::Known(vec![RemoteId("remote-root".into())]),
+        mime_type: Evidence::Known("text/plain".into()),
+        size: Evidence::Known(5),
+        checksum: Evidence::NotCollected,
+        version: Evidence::Known(1),
+        modified_time: Evidence::NotCollected,
+        trashed: Evidence::Known(false),
+        capabilities: Evidence::NotCollected,
+        observed_at: Timestamp { unix_millis: 1 },
+        coverage: ObservationCoverage::Complete,
+        page_token: None,
+        event: None,
+    };
+    let mut subscription = fixture
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    let mut wrong = observed.clone();
+    wrong.account_id = AccountId("wrong".into());
+    assert_eq!(
+        fixture
+            .engine
+            .observe(account.id.clone(), Observation::Remote(wrong))
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::InvalidObservation)
+    );
+    fixture
+        .engine
+        .observe(account.id.clone(), Observation::Remote(observed))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if subscription.current().issue.is_some() {
+                break;
+            }
+            subscription.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let status = subscription.current();
+    assert_eq!(status.state, SynchronizationState::Waiting);
+    assert_eq!(
+        status.issue.unwrap().kind,
+        SynchronizationIssueKind::Deferred
+    );
+    assert_eq!(fixture.server.requests.lock().unwrap().len(), 2);
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn disconnect_stops_the_account_worker_without_touching_local_files() {
+    let fixture = Fixture::new(replies("disconnect-sync-user")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    std::fs::write(request.local_root.join("kept"), b"user data").unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut subscription = fixture
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .disconnect_account(RemoveAccountRequest {
+            account_id: account.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        subscription.changed().await.unwrap().state,
+        crate::SynchronizationState::Stopped
+    );
+    assert_eq!(
+        std::fs::read(request.local_root.join("kept")).unwrap(),
+        b"user data"
+    );
+    assert!(fixture
+        .engine
+        .subscribe_synchronization(account.id)
+        .await
+        .is_err());
+}
+#[tokio::test]
+async fn invalid_synchronization_configuration_has_no_filesystem_effect() {
+    let fixture = Fixture::new(vec![]).await;
+    let request = crate::StartSynchronizationRequest {
+        account_id: AccountId("missing".into()),
+        local_root: PathBuf::from("relative"),
+        remote_root_id: crate::models::RemoteId("remote-root".into()),
+    };
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(request)
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::InvalidConfiguration)
+    );
+    assert!(!fixture.directory.join("accounts.synchronization").exists());
+    assert!(fixture.server.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn synchronization_subscription_and_lifecycle_work_without_a_caller_runtime() {
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        struct WakeThread(std::thread::Thread);
+        impl std::task::Wake for WakeThread {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+        let waker = std::task::Waker::from(Arc::new(WakeThread(std::thread::current())));
+        let mut context = std::task::Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                std::task::Poll::Ready(value) => return value,
+                std::task::Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+    let fixture = Fixture::new(replies("no-caller-runtime")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    let engine = fixture.engine.clone();
+    std::thread::spawn(move || {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        block_on(engine.start_synchronization(request)).unwrap();
+        let mut subscription =
+            block_on(engine.subscribe_synchronization(account.id.clone())).unwrap();
+        assert_eq!(
+            subscription.current().state,
+            crate::SynchronizationState::Waiting
+        );
+        block_on(engine.stop_synchronization(account.id)).unwrap();
+        assert_eq!(
+            block_on(subscription.changed()).unwrap().state,
+            crate::SynchronizationState::Stopped
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+#[tokio::test]
+async fn active_account_scopes_reject_overlapping_local_trees_and_stop_independently() {
+    let mut responses = replies("scope-a");
+    responses.extend(replies("scope-b"));
+    let fixture = Fixture::new(responses).await;
+    let account_a = fixture.connected().await;
+    let account_b = fixture.connected().await;
+    let root_a = fixture.sync_request(&account_a);
+    fixture
+        .engine
+        .start_synchronization(root_a.clone())
+        .await
+        .unwrap();
+    let mut root_b = fixture.sync_request(&account_b);
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(root_b.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::RootInUse)
+    );
+    root_b.local_root = root_a.local_root.join("nested");
+    std::fs::create_dir(&root_b.local_root).unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(root_b.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::RootInUse)
+    );
+    root_b.local_root = fixture.directory.join("independent-root");
+    std::fs::create_dir(&root_b.local_root).unwrap();
+    fixture.engine.start_synchronization(root_b).await.unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account_a.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .synchronization_status(account_b.id.clone())
+            .await
+            .unwrap()
+            .state,
+        crate::SynchronizationState::Waiting
+    );
+    fixture
+        .engine
+        .stop_synchronization(account_b.id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn functional_sources_start_from_engine_and_stop_without_mutating_user_files() {
+    let mut responses = replies("functional-sources");
+    responses.extend(vec![Reply::json(200,r#"{"startPageToken":"start"}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#),Reply::json(200,r#"{"files":[],"incompleteSearch":false}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#)]);
+    let mut f = Fixture::new(responses).await;
+    Arc::get_mut(&mut f.engine.inner).unwrap().sources_enabled = true;
+    let account = f.connected().await;
+    let request = f.sync_request(&account);
+    std::fs::write(request.local_root.join("file"), b"preserved").unwrap();
+    f.engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut status = f
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let current = status.current();
+            if f.server.requests.lock().unwrap().len() == 6
+                && current
+                    .current_item
+                    .as_ref()
+                    .and_then(|item| item.local_path.as_deref())
+                    == Some(std::path::Path::new("file"))
+                && current.issue.is_some()
+            {
+                break;
+            }
+            status.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("file")).unwrap(),
+        b"preserved"
+    );
+    assert_eq!(std::fs::read_dir(&request.local_root).unwrap().count(), 1);
+    let stopped = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        f.engine.stop_synchronization(account.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(stopped.state, crate::SynchronizationState::Stopped);
+    assert!(f.server.requests.lock().unwrap()[2..]
+        .iter()
+        .all(|request| request.method == "GET"));
+}
+#[tokio::test]
+async fn disconnect_cancels_remote_collection_and_preserves_local_files() {
+    let mut responses = replies("stop-sources");
+    let mut delayed = Reply::json(200, r#"{"startPageToken":"start"}"#);
+    delayed.delay = std::time::Duration::from_secs(2);
+    responses.push(delayed);
+    let mut f = Fixture::new(responses).await;
+    Arc::get_mut(&mut f.engine.inner).unwrap().sources_enabled = true;
+    let account = f.connected().await;
+    let request = f.sync_request(&account);
+    std::fs::write(request.local_root.join("kept"), b"preserved").unwrap();
+    f.engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while f.server.requests.lock().unwrap().len() < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        f.engine.disconnect_account(RemoveAccountRequest {
+            account_id: account.id,
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("kept")).unwrap(),
+        b"preserved"
+    );
+}
+
+#[tokio::test]
+async fn scoped_source_captures_reconcile_three_levels_without_mutations_or_adoption() {
+    let mut responses = replies("scoped-captures");
+    let root = || {
+        Reply::json(
+            200,
+            r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#,
+        )
+    };
+    responses.extend([Reply::json(200, r#"{"startPageToken":"start"}"#), root()]);
+    for (id, parent, directory) in [
+        ("a", "remote-root", true),
+        ("b", "a", true),
+        ("c", "b", true),
+        ("file", "c", false),
+    ] {
+        responses.push(Reply::json(200,&serde_json::json!({"files":[{"id":id,"name":id,"parents":[parent],"mimeType":if directory {"application/vnd.google-apps.folder"} else {"text/plain"},"trashed":false,"capabilities":{"canListChildren":true}}],"incompleteSearch":false}).to_string()));
+    }
+    responses.push(root());
+    let mut fixture = Fixture::new(responses).await;
+    Arc::get_mut(&mut fixture.engine.inner)
+        .unwrap()
+        .sources_enabled = true;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    std::fs::create_dir_all(request.local_root.join("a/b/c")).unwrap();
+    std::fs::write(request.local_root.join("a/b/c/file"), b"preserved").unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    let mut subscription = fixture
+        .engine
+        .subscribe_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if fixture.server.requests.lock().unwrap().len() == 9
+                && subscription.current().issue.is_some()
+            {
+                break;
+            }
+            subscription.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let scope = {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        sessions[&account.id]
+            .orchestrator
+            .config()
+            .sync_root_id
+            .clone()
+    };
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(request.local_root.join("a/b/c/file")).unwrap(),
+        b"preserved"
+    );
+    assert!(fixture.server.requests.lock().unwrap()[2..]
+        .iter()
+        .all(|r| r.method == "GET"));
+    let inventory = crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
+        directory: synchronization::directory(&fixture.directory.join("accounts")),
+        account_id: account.id.clone(),
+    })
+    .unwrap();
+    assert!(inventory
+        .enumerate(crate::inventory::models::InventoryScopeQuery {
+            account_id: account.id,
+            sync_root_id: scope
         })
         .unwrap()
-        .inventory,
-    );
-    let scope = OperatorScope {
-        sync_id: SyncId("operator-sync".into()),
-        account_id: account.id.clone(),
-        local_root: local.clone(),
-        remote_root_id: RemoteFileId("root".into()),
-    };
-    let operator = DefaultOperatorFactory
-        .create(OperatorConfig {
-            connector: f.engine.clone(),
-            scope: scope.clone(),
-            journal: inventory.clone(),
-        })
-        .unwrap();
-    let remote = RemoteFile {
-        reference: RemoteFileRef {
-            account_id: account.id.clone(),
-            file_id: RemoteFileId("source".into()),
-        },
-        provider: ProviderId("google".into()),
-        name: MetadataValue::Known("source.bin".into()),
-        kind: MetadataValue::Known(RemoteEntryKind::File),
-        mime_type: MetadataValue::Known("application/octet-stream".into()),
-        parent_ids: MetadataValue::Known(vec![RemoteFileId("root".into())]),
-        trashed: MetadataValue::Known(false),
-        version: MetadataValue::Known("1".into()),
-        created_time: MetadataValue::NotCollected,
-        modified_time: MetadataValue::NotCollected,
-        size: MetadataValue::Known(3),
-        md5_checksum: MetadataValue::NotCollected,
-        sha256_checksum: MetadataValue::Known(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
-        ),
-        provider_data: MetadataValue::NotCollected,
-    };
-    let result = operator
-        .download(DownloadRequest {
-            execution: ExecutionContext {
-                id: ExecutionId::new("factory-download".into()).unwrap(),
-                source: Some(SourceEvidence::Remote {
-                    metadata: Box::new(remote.clone()),
-                    revision: None,
-                }),
-            },
-            source: ResourceRef::Remote {
-                provider_id: ProviderId("google".into()),
-                reference: remote.reference,
-            },
-            destination: DirectoryRef::LocalRoot,
-            name: ItemName::Local("download.bin".into()),
-            options: ExecutionOptions::default(),
-        })
+        .is_empty());
+}
+
+#[tokio::test]
+async fn initial_association_authorization_is_explicit_scoped_and_not_retained_after_stop() {
+    let fixture = Fixture::new(replies("association-authorization")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
         .await
         .unwrap();
-    assert_eq!(result.bytes_transferred, 3);
-    assert_eq!(std::fs::read(local.join("download.bin")).unwrap(), b"abc");
-    let mut foreign = scope;
-    foreign.account_id = AccountId("missing".into());
-    assert!(DefaultOperatorFactory
-        .create(OperatorConfig {
-            connector: f.engine.clone(),
-            scope: foreign,
-            journal: inventory
-        })
-        .is_err());
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization_with_initial_association(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::AlreadyRunning)
+    );
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization_with_initial_association(request.clone())
+        .await
+        .unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            sessions[&account.id]
+                .orchestrator
+                .config()
+                .initial_association_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture.engine.start_synchronization(request).await.unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            !sessions[&account.id]
+                .orchestrator
+                .config()
+                .initial_association_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn trash_authorization_is_explicit_scoped_and_not_retained_after_stop() {
+    let fixture = Fixture::new(replies("trash-authorization")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization_with_trash_propagation(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::AlreadyRunning)
+    );
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization_with_trash_propagation(request.clone())
+        .await
+        .unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            sessions[&account.id]
+                .orchestrator
+                .config()
+                .trash_propagation_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture.engine.start_synchronization(request).await.unwrap();
+    {
+        let sessions = fixture.engine.inner.synchronizations.lock().await;
+        assert!(
+            !sessions[&account.id]
+                .orchestrator
+                .config()
+                .trash_propagation_authorized
+        );
+    }
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn stopped_scope_rejects_replaced_root_and_allows_explicit_new_configuration() {
+    let fixture = Fixture::new(replies("stage11-root-replacement")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id.clone())
+        .await
+        .unwrap();
+    let retained = fixture.directory.join("retained-root");
+    std::fs::write(request.local_root.join("retained"), b"preserved").unwrap();
+    std::fs::rename(&request.local_root, &retained).unwrap();
+    std::fs::create_dir(&request.local_root).unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootUnavailable)
+    );
+    assert_eq!(
+        std::fs::read(retained.join("retained")).unwrap(),
+        b"preserved"
+    );
+    let mut changed = request;
+    changed.local_root = fixture.directory.join("new-explicit-root");
+    std::fs::create_dir(&changed.local_root).unwrap();
+    changed.remote_root_id.0 = "new-remote-root".into();
+    fixture.engine.start_synchronization(changed).await.unwrap();
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn historical_inventory_without_root_proof_cannot_silently_bind_a_new_tree() {
+    use crate::inventory::{models::*, Inventory, InventoryConfig};
+    use crate::models::{Evidence, FileIdentity, Id, ItemId, Timestamp};
+    let fixture = Fixture::new(replies("stage11-unbound-history")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    let inventory = Inventory::open(InventoryConfig {
+        directory: synchronization::directory(&fixture.directory.join("accounts")),
+        account_id: account.id.clone(),
+    })
+    .unwrap();
+    let identity = FileIdentity {
+        account_id: account.id.clone(),
+        sync_root_id: synchronization::root_id(&request),
+        item_id: Some(ItemId("historical".into())),
+        remote_id: None,
+        local_identity: Evidence::NotCollected,
+    };
+    let receipt = inventory.write(InventoryWrite {
+        operation_id: Id("historical".into()),
+        item_id: ItemId("historical".into()),
+        identity,
+        expected_revision: Some(0),
+        effect: PersistedEffect::ItemRegistered {
+            local_path: Some("retained".into()),
+        },
+        recorded_at: Timestamp { unix_millis: 0 },
+    });
+    assert_eq!(receipt.status, WriteStatus::Written);
+    std::fs::write(
+        request.local_root.join("retained"),
+        b"unreviewed historical data",
+    )
+    .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootUnavailable)
+    );
+    assert_eq!(
+        std::fs::read(request.local_root.join("retained")).unwrap(),
+        b"unreviewed historical data"
+    );
 }

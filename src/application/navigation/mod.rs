@@ -9,7 +9,7 @@ pub(crate) enum InitialDestination {
     Dashboard,
 }
 pub(crate) fn initial_destination(accounts: &[(Account, bool)]) -> InitialDestination {
-    if accounts.iter().any(|(_, completed)| *completed) {
+    if !accounts.is_empty() {
         InitialDestination::Dashboard
     } else {
         InitialDestination::Setup
@@ -50,35 +50,6 @@ pub(crate) fn show_accounts(
         if context.navigation_generation.get() != generation {
             return;
         }
-        // A previous process may have stopped during consent or cleanup. Never
-        // resume its account or draft: remove only incomplete local registrations.
-        for (account, completed) in &checked {
-            if *completed {
-                continue;
-            }
-            let engine = context.engine.borrow().clone();
-            let result = match engine {
-                Some(engine) => crate::services::accounts::disconnect(&engine, account.id.clone())
-                    .await
-                    .map_err(|error| crate::core::messages::engine_error(&error)),
-                None => Err(gettextrs::gettext(
-                    "The account service is unavailable. Try again.",
-                )),
-            };
-            let failure = match result {
-                Ok(true) => None,
-                Ok(false) => Some(gettextrs::gettext(
-                    "The saved setup could not be discarded. Try again.",
-                )),
-                Err(message) => Some(message),
-            };
-            if let Some(message) = failure {
-                if let (Some(nav), Some(toasts)) = (navigation.upgrade(), overlay.upgrade()) {
-                    show_error(&context, &nav, &toasts, &message);
-                }
-                return;
-            }
-        }
         if context.navigation_generation.get() != generation {
             return;
         }
@@ -97,9 +68,7 @@ pub(crate) fn show_accounts(
 }
 fn checking(nav: &adw::NavigationView) {
     let loading = adw::StatusPage::builder()
-        .title(gettextrs::gettext(
-            "Checking synchronization configuration…",
-        ))
+        .title(gettextrs::gettext("Checking account configuration…"))
         .build();
     nav.replace(&[adw::NavigationPage::new(&loading, "DriveSync")]);
 }
@@ -206,5 +175,4 @@ pub(crate) fn show_dashboard(
         window.set_title(Some("DriveSync"));
     }
     nav.replace(&[crate::ui::dashboard::build(context, nav)]);
-    super::detectors::schedule_refresh(context);
 }

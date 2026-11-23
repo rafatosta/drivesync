@@ -1,10 +1,10 @@
-//! Application connection lifecycle, independent of GTK and synchronization.
-mod detector;
+//! Application account connection lifecycle, independent of GTK.
+mod conflicts;
 mod models;
-mod operator;
-pub(crate) use operator::OperatorAccess;
 mod remote_folders;
+mod scope;
 mod sign_in;
+mod synchronization;
 use crate::{accounts::*, providers::google::*};
 pub use models::*;
 use std::{
@@ -28,10 +28,13 @@ struct Inner {
     client: GoogleDriveClient,
     oauth: Option<GoogleOAuthConfig>,
     ownership: Arc<ConnectionOwnership>,
-    synchronization: crate::synchronization::StatusRegistry,
     attempts: Mutex<HashMap<GoogleSignInId, Arc<sign_in::Attempt>>>,
+    synchronization_directory: std::path::PathBuf,
+    synchronizations: tokio::sync::Mutex<HashMap<crate::AccountId, synchronization::Session>>,
+    #[cfg(test)]
+    sources_enabled: bool,
 }
-/// This connection-only engine owns no synchronization associations. Every
+/// Every
 /// authorization attempt holds a read lease; local removal requires exclusion
 /// against all attempts, including additions whose identity is not yet known.
 #[derive(Default)]
@@ -77,6 +80,7 @@ impl Engine {
         {
             return Err(EngineError::new(EngineErrorKind::InvalidConfiguration));
         }
+        let synchronization_directory = synchronization::directory(&config.data_directory);
         let executor = Executor(Some(
             Builder::new_multi_thread()
                 .worker_threads(1)
@@ -134,7 +138,10 @@ impl Engine {
                 oauth: initialized.2,
                 ownership: initialized.3,
                 attempts: Mutex::new(HashMap::new()),
-                synchronization: Default::default(),
+                synchronization_directory,
+                synchronizations: tokio::sync::Mutex::new(HashMap::new()),
+                #[cfg(test)]
+                sources_enabled: true,
             }),
         })
     }
@@ -165,9 +172,25 @@ impl Engine {
         &self,
         request: RemoveAccountRequest,
     ) -> EngineResult<RemoveAccountResult> {
-        let accounts = self.inner.accounts.clone();
+        let inner = self.inner.clone();
         self.runtime()
-            .spawn(async move { accounts.remove(request).await.map_err(EngineError::from) })
+            .spawn(async move {
+                // Serialize removal against scope replacement, and release operation leases first.
+                let mut sessions = inner.synchronizations.lock().await;
+                if let Some(session) = sessions.get(&request.account_id) {
+                    session.stop().await;
+                }
+                let account_id = request.account_id.clone();
+                let result = inner
+                    .accounts
+                    .remove(request)
+                    .await
+                    .map_err(EngineError::from);
+                if result.is_ok() {
+                    sessions.remove(&account_id);
+                }
+                result
+            })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
     }
@@ -187,26 +210,26 @@ impl Engine {
 #[cfg(test)]
 mod tests;
 
-impl Engine {
-    pub(crate) fn synchronization_publisher(
-        &self,
-        account: &AccountId,
-    ) -> Arc<crate::synchronization::Publisher> {
-        self.inner
-            .synchronization
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .entry(account.clone())
-            .or_insert_with(|| Arc::new(crate::synchronization::Publisher::new()))
-            .clone()
-    }
-    /// Observes one account without starting work, opening Inventory or using credentials.
-    /// Unknown/inactive accounts initially report Idle; accounts never share a channel.
-    pub fn observe_synchronization(
-        &self,
-        account: &AccountId,
-    ) -> crate::SynchronizationSubscription {
-        self.synchronization_publisher(account).subscribe()
-    }
-}
+#[cfg(test)]
+mod live_initial_download_tests;
+
+#[cfg(test)]
+mod live_initial_upload_tests;
+
+#[cfg(test)]
+mod live_continuous_tests;
+
+#[cfg(test)]
+mod live_tree_tests;
+
+#[cfg(test)]
+mod live_conflict_tests;
+
+#[cfg(test)]
+mod live_projection_tests;
+
+#[cfg(test)]
+mod live_trash_tests;
+
+#[cfg(test)]
+mod live_acceptance_tests;

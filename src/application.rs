@@ -1,9 +1,7 @@
 //! Application composition; all engine requests use its public root API.
+mod acceptance;
 pub(crate) mod accounts;
-pub(crate) mod analyzer;
 mod background;
-pub(crate) mod detectors;
-pub(crate) mod inventory;
 mod lifecycle;
 use crate::ui::components::main_menu;
 pub(crate) mod navigation;
@@ -18,11 +16,6 @@ use std::{
 #[derive(Clone, Default)]
 pub(crate) struct Context {
     pub engine: Rc<RefCell<Option<Engine>>>,
-    pub shutting_down: Rc<Cell<bool>>,
-    pub preparation_refreshing: Rc<Cell<bool>>,
-    pub preparation_errors: Rc<RefCell<std::collections::HashMap<String, String>>>,
-    pub detector_generation: Rc<Cell<u64>>,
-    pub detectors: Rc<RefCell<std::collections::HashMap<String, detectors::Session>>>,
     pub navigation_generation: Rc<Cell<u64>>,
     pub pending: Rc<RefCell<Option<GoogleSignInId>>>,
 }
