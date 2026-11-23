@@ -166,6 +166,7 @@ fn current_sides_join_only_through_persisted_identity_and_never_update_baseline(
         device_id: 1,
         inode: 2,
         mount_id: None,
+        birth_ns: None,
     });
     let remote = RemoteObservation {
         account_id: AccountId("account-a".into()),
@@ -289,6 +290,7 @@ fn current_sides_join_only_through_persisted_identity_and_never_update_baseline(
         device_id: 1,
         inode: 999,
         mount_id: None,
+        birth_ns: None,
     });
     assert_eq!(
         context

@@ -28,6 +28,7 @@ pub(in crate::orchestrator) fn fixture() -> File {
                 device_id: 1,
                 inode: 2,
                 mount_id: Some(3),
+                birth_ns: None,
             }),
         },
         local: local.clone(),
@@ -92,6 +93,7 @@ fn local_state(digest: &str, size: u64) -> LocalState {
             device_id: 1,
             inode: 2,
             mount_id: Some(3),
+            birth_ns: None,
         }),
         size: Evidence::Known(size),
         modified_at: Evidence::Known(timestamp(2)),
@@ -485,6 +487,7 @@ fn replacement_requires_bound_slot_evidence_and_confirms_identical_bytes_without
         device_id: 1,
         inode: 99,
         mount_id: Some(3),
+        birth_ns: None,
     });
     assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
     f.environment.local_replacement = Evidence::Known(true);
@@ -515,4 +518,109 @@ fn old_remote_captures_cannot_reverse_a_confirmed_local_edit() {
         .checks
         .iter()
         .any(|c| c.code == "observation.remote_regression"));
+}
+
+#[test]
+fn partial_location_receipts_resume_remaining_edits_and_refresh_descendant_paths() {
+    let mut f = fixture();
+    f.local.name = Evidence::Known("renamed.txt".into());
+    f.local.path = Some("folder/renamed.txt".into());
+    f.remote.name = f.local.name.clone();
+    f.remote.version = Evidence::Known(11);
+    f.local.checksum = checksum("edited");
+    let decision = analyze(&f);
+    assert_eq!(decision.status, DecisionStatus::Ready);
+    assert_eq!(decision.operations.len(), 1);
+    assert_eq!(
+        decision.operations[0].action,
+        OperationAction::UpdateRemoteContent
+    );
+    f.local.checksum = f.remote.checksum.clone();
+    f.local.parent = Evidence::Known("moved-parent".into());
+    f.local.path = Some("moved-parent/renamed.txt".into());
+    f.environment.destination_local_parent = f.local.parent.clone();
+    f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("parent-a".into()));
+    f.remote.parents = Evidence::Known(vec![RemoteId("parent-a".into())]);
+    let decision = analyze(&f);
+    assert_eq!(decision.status, DecisionStatus::Ready);
+    assert_eq!(
+        decision.operations[0].action,
+        OperationAction::ConfirmBaseline
+    );
+}
+
+#[test]
+fn combined_tree_location_and_content_plans_resume_each_verified_step_in_both_directions() {
+    for from_local in [true, false] {
+        let mut f = fixture();
+        f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("new-parent".into()));
+        f.environment.destination_local_parent = Evidence::Known("new-parent".into());
+        f.environment.destination_remote_matches = Evidence::Known(vec![]);
+        f.environment.destination_local_occupied = Evidence::Known(false);
+        if from_local {
+            f.local.name = Evidence::Known("new.txt".into());
+            f.local.path = Some("new-parent/new.txt".into());
+            f.local.parent = Evidence::Known("new-parent".into());
+            f.local.checksum = checksum("edited");
+        } else {
+            f.remote.name = Evidence::Known("new.txt".into());
+            f.remote.parents = Evidence::Known(vec![RemoteId("new-parent".into())]);
+            f.remote.checksum = checksum("edited");
+        }
+        let expected = if from_local {
+            vec![
+                OperationAction::RenameRemote,
+                OperationAction::MoveRemote,
+                OperationAction::UpdateRemoteContent,
+            ]
+        } else {
+            vec![
+                OperationAction::RenameLocal,
+                OperationAction::MoveLocal,
+                OperationAction::UpdateLocalContent,
+            ]
+        };
+        let decision = analyze(&f);
+        assert_eq!(decision.status, DecisionStatus::Ready);
+        assert_eq!(
+            decision
+                .operations
+                .iter()
+                .map(|op| op.action)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        if from_local {
+            f.remote.name = f.local.name.clone();
+        } else {
+            f.local.name = f.remote.name.clone();
+            f.local.path = Some("folder/new.txt".into());
+        }
+        let decision = analyze(&f);
+        assert_eq!(decision.status, DecisionStatus::Ready);
+        assert_eq!(
+            decision
+                .operations
+                .iter()
+                .map(|op| op.action)
+                .collect::<Vec<_>>(),
+            expected[1..]
+        );
+        if from_local {
+            f.remote.parents = Evidence::Known(vec![RemoteId("new-parent".into())]);
+        } else {
+            f.local.parent = Evidence::Known("new-parent".into());
+            f.local.path = Some("new-parent/new.txt".into());
+        }
+        let decision = analyze(&f);
+        assert_eq!(decision.status, DecisionStatus::Ready);
+        assert_eq!(
+            decision
+                .operations
+                .iter()
+                .map(|op| op.action)
+                .collect::<Vec<_>>(),
+            expected[2..]
+        );
+    }
 }

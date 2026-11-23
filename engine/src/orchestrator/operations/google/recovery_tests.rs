@@ -839,3 +839,158 @@ async fn local_update_after_exchange_recovers_new_inode_and_preserves_old_bytes_
         .iter()
         .all(|r| r.starts_with("GET ") && !r.contains("alt=media")));
 }
+
+#[tokio::test]
+async fn lost_tree_receipts_recover_each_action_without_replay() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for action in [
+        OperationAction::RenameLocal,
+        OperationAction::MoveLocal,
+        OperationAction::RenameRemote,
+        OperationAction::MoveRemote,
+    ] {
+        let s = Sandbox::new();
+        let mut executor = setup(&s);
+        std::fs::write(executor.config.local_root.join("file"), b"bytes").unwrap();
+        std::fs::create_dir(executor.config.local_root.join("destination")).unwrap();
+        let changed = Arc::new(AtomicBool::new(false));
+        let effect = changed.clone();
+        let server = endpoint(move |r| {
+            if r.starts_with("PATCH ") { effect.store(true,Ordering::SeqCst); }
+            let done = effect.load(Ordering::SeqCst);
+            let body = if r.contains("/files/old-parent") {
+                serde_json::json!({"id":"old-parent","name":"old","parents":["remote-root"],"mimeType":FOLDER,"version":if done {"2"}else{"1"},"trashed":false}).to_string()
+            } else if r.contains("/files/remote-root") { root() }
+            else if r.contains("/files?") { "{\"files\":[],\"incompleteSearch\":false}".into() }
+            else {
+                let mut v:serde_json::Value = serde_json::from_str(&metadata(if action==OperationAction::RenameRemote && !done {"old"}else if action==OperationAction::RenameLocal {"renamed"}else{"file"},if action==OperationAction::MoveRemote && !done {"old-parent"}else{"remote-root"},if done {2}else{1},"bytes")).unwrap();
+                if done { v["appProperties"]=serde_json::json!({"drivesyncExecution":"execution"}); }
+                v.to_string()
+            };
+            (200,body,vec![("ETag".into(),"\"v1\"".into())])
+        }).await;
+        use_backend(&s, &mut executor, server.client.clone(), true);
+        let mut r = request(&executor, action);
+        let local_action = matches!(
+            action,
+            OperationAction::RenameLocal | OperationAction::MoveLocal
+        );
+        if action == OperationAction::RenameRemote {
+            r.operation.name = Some("file".into());
+        }
+        if action == OperationAction::MoveRemote {
+            r.operation.parent_id = Some(RemoteId("remote-root".into()));
+        }
+        r.remote = normalize(
+            &serde_json::from_str(&metadata(
+                if action == OperationAction::RenameRemote {
+                    "old"
+                } else if action == OperationAction::RenameLocal {
+                    "renamed"
+                } else {
+                    "file"
+                },
+                if action == OperationAction::MoveRemote {
+                    "old-parent"
+                } else {
+                    "remote-root"
+                },
+                1,
+                "bytes",
+            ))
+            .unwrap(),
+        );
+        if local_action {
+            // Exercise the crash window directly; destination association is tested at dispatch.
+            let mut record =
+                super::super::recovery::record(&executor.config, &r, &executor.filesystem, None)
+                    .unwrap();
+            record.remote_ancestry = Some(vec![]);
+            let revision = pending_record(&executor, &r, record.clone(), OperationState::Running);
+            let journal = Journal::new(executor.inventory.clone(), r.clone(), revision, record);
+            executor.filesystem.execute(&r, Some(&journal)).unwrap();
+        } else {
+            assert_eq!(
+                executor.execute(r).await.status,
+                OperationResultStatus::Unconfirmed
+            );
+        }
+        let reopened = reopen(&s, executor);
+        let results = reopened.recover().await.unwrap();
+        assert_eq!(
+            results[0].assessment.outcome,
+            ExecutionEffect::Applied,
+            "{action:?}: {:?}",
+            results[0].assessment.issue
+        );
+        assert!(reopened.recover().await.unwrap().is_empty());
+        assert_eq!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.starts_with("PATCH "))
+                .count(),
+            usize::from(!local_action)
+        );
+    }
+}
+
+#[tokio::test]
+async fn concurrent_remote_ancestor_changes_block_dispatch_and_recovery() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let s = Sandbox::new();
+    let executor = setup(&s);
+    std::fs::write(executor.config.local_root.join("file"), b"bytes").unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let server=endpoint(move |r| {
+        let body=if r.contains("/files/old-parent?") {
+            let changed=count.fetch_add(1,Ordering::SeqCst)>=2;
+            serde_json::json!({"id":"old-parent","name":if changed {"changed"}else{"old"},"parents":["remote-root"],"mimeType":FOLDER,"version":if changed {"2"}else{"1"},"trashed":false,"capabilities":{"canAddChildren":true}}).to_string()
+        }else if r.contains("/files/remote-root?"){root()}
+        else if r.contains("/files?"){ "{\"files\":[],\"incompleteSearch\":false}".into() }
+        else {metadata("file","old-parent",1,"bytes")};
+        (200,body,vec![("ETag".into(),"\"v1\"".into())])
+    }).await;
+    let google = operator(&s, server.client.clone());
+    let mut r = request(&executor, OperationAction::RenameRemote);
+    r.remote =
+        normalize(&serde_json::from_str(&metadata("file", "old-parent", 1, "bytes")).unwrap());
+    let failure = google
+        .run_with_journal(
+            &executor.config,
+            &r,
+            &executor.filesystem,
+            &GoogleSession::new("test", "synthetic"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(failure.code, OperatorErrorKind::PreconditionFailed);
+    assert!(!server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|r| r.starts_with("PATCH ")));
+    let mut record =
+        super::super::recovery::record(&executor.config, &r, &executor.filesystem, None).unwrap();
+    let ancestor: GoogleFile=serde_json::from_value(serde_json::json!({"id":"old-parent","name":"old","parents":["remote-root"],"mimeType":FOLDER,"version":"1","trashed":false})).unwrap();
+    record.remote_ancestry = Some(vec![normalize(&ancestor)]);
+    let recovered = google
+        .probe_recovery(
+            &executor.config,
+            &record,
+            &executor.filesystem,
+            &GoogleSession::new("test", "synthetic"),
+        )
+        .await;
+    assert_eq!(recovered.outcome, ExecutionEffect::Unknown);
+    assert_eq!(recovered.issue, Some(RecoveryIssue::ParentChanged));
+    assert_eq!(
+        std::fs::read(executor.config.local_root.join("file")).unwrap(),
+        b"bytes"
+    );
+}

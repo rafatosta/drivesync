@@ -170,11 +170,11 @@ async fn executes_in_order_and_refreshes_verified_versions_and_revisions() {
     assert_eq!(outcome.decision, DecisionStatus::Ready);
     assert_eq!(outcome.results.len(), 2);
     let calls = calls.requests.lock().unwrap();
+    assert_eq!(calls[0].operation.action, OperationAction::RenameRemote);
     assert_eq!(
-        calls[0].operation.action,
+        calls[1].operation.action,
         OperationAction::UpdateRemoteContent
     );
-    assert_eq!(calls[1].operation.action, OperationAction::RenameRemote);
     assert_eq!(calls[1].operation.depends_on, vec![1]);
     assert_eq!(calls[1].completed_steps, vec![1]);
     assert_eq!(calls[1].expected_revision, Some(7));

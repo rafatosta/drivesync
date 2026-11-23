@@ -399,6 +399,7 @@ fn baseline_requires_complete_matching_evidence() {
         device_id: 1,
         inode: 2,
         mount_id: None,
+        birth_ns: None,
     });
     assert!(executor.baseline(&effect).is_some());
     effect.remote.as_mut().unwrap().name = Evidence::Known("different".into());
@@ -769,4 +770,54 @@ async fn parent_revision_is_checked_in_the_child_confirmation_transaction() {
     );
     assert_eq!(receipt.status, WriteStatus::RevisionConflict);
     assert_eq!(rows(&executor).len(), 1);
+}
+
+#[test]
+fn tree_movement_collisions_hardlinks_and_replaced_destinations_preserve_sources() {
+    for scenario in ["collision", "hardlink", "parent"] {
+        let s = Sandbox::new();
+        let executor = setup(&s);
+        fs::write(executor.config.local_root.join("file"), b"source").unwrap();
+        fs::create_dir(executor.config.local_root.join("destination")).unwrap();
+        let r = request(&executor, OperationAction::MoveLocal);
+        let record =
+            super::recovery::record(&executor.config, &r, &executor.filesystem, None).unwrap();
+        let journal = Journal::new(executor.inventory.clone(), r.clone(), 0, record);
+        if scenario == "collision" {
+            fs::write(
+                executor.config.local_root.join("destination/file"),
+                b"occupied",
+            )
+            .unwrap();
+        }
+        if scenario == "hardlink" {
+            fs::hard_link(
+                executor.config.local_root.join("file"),
+                s.0.join("outside-alias"),
+            )
+            .unwrap();
+        }
+        if scenario == "parent" {
+            fs::rename(
+                executor.config.local_root.join("destination"),
+                executor.config.local_root.join("old-destination"),
+            )
+            .unwrap();
+            fs::create_dir(executor.config.local_root.join("destination")).unwrap();
+        }
+        assert!(
+            executor.filesystem.execute(&r, Some(&journal)).is_err(),
+            "{scenario}"
+        );
+        assert_eq!(
+            fs::read(executor.config.local_root.join("file")).unwrap(),
+            b"source"
+        );
+        if scenario == "collision" {
+            assert_eq!(
+                fs::read(executor.config.local_root.join("destination/file")).unwrap(),
+                b"occupied"
+            );
+        }
+    }
 }

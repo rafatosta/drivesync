@@ -109,3 +109,5 @@ upload session under exclusive account execution ownership and optimistic checkp
 collection, wakes both producers after effects or stale preconditions, and rechecks pending
 recovery when the remote source returns. Captures started before an effect cannot release the
 post-effect barrier; older-than-baseline remote versions defer. NoOp still performs no write.
+
+[Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) orders parent records before descendants and executes combined rename/move/content plans using verified intermediate receipts. Descendant path refresh remains a verified metadata transaction.

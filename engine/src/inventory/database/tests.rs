@@ -34,6 +34,7 @@ fn identity(item: &str, remote: &str) -> FileIdentity {
             device_id: 7,
             inode: item.as_bytes()[0] as u64,
             mount_id: Some(2),
+            birth_ns: None,
         }),
     }
 }
@@ -292,6 +293,7 @@ fn local_state() -> LocalState {
             device_id: 7,
             inode: 97,
             mount_id: Some(2),
+            birth_ns: None,
         }),
         size: Evidence::Known(12),
         modified_at: Evidence::Known(timestamp(3)),

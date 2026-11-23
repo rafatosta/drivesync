@@ -170,6 +170,17 @@ impl Context {
             self.enrich_view(&mut file, &view);
             files.push(file);
         }
+        // A newly relocated parent's durable path must be confirmed before its descendants.
+        // Otherwise a child's unmet parent precondition can repeatedly invalidate the whole batch.
+        files.sort_by_key(|file| {
+            (
+                file.local
+                    .path
+                    .as_ref()
+                    .map_or(usize::MAX, |p| p.components().count()),
+                file.identity.item_id.is_none(),
+            )
+        });
         Ok(files)
     }
 
@@ -224,14 +235,25 @@ impl Context {
                 }
             }
             if let Some(capture) = &captures.local {
-                let path = file
-                    .local
-                    .path
-                    .as_ref()
-                    .or_else(|| file.baseline.local.as_ref().and_then(|s| s.path.as_ref()))
-                    .cloned();
+                let registered = file.baseline.local.as_ref().and_then(|s| s.path.as_ref());
+                let path = file.local.path.as_ref().or(registered).cloned();
+                // An incarnation may move only once in a complete scope, with no other owner.
+                let moved = if local_complete && remote_complete {
+                    view.locate(&file.identity.local_identity).filter(|entry| {
+                        entry.path != path
+                            && !path.as_ref().is_some_and(|p| local.contains_key(p))
+                            && entry
+                                .path
+                                .as_ref()
+                                .is_some_and(|p| !view.owners.contains_key(p))
+                    })
+                } else {
+                    None
+                };
                 file.local = unknown_local_state();
-                if let Some(path) = path {
+                if let Some(entry) = moved {
+                    file.local = local_state(entry.clone());
+                } else if let Some(path) = path {
                     if let Some(entry) = local.get(&path) {
                         // A reused path is not sufficient to attach a replacement inode to this item.
                         if matches!((&entry.identity, &file.identity.local_identity), (Evidence::Known(a), Evidence::Known(b)) if a == b)
@@ -403,10 +425,34 @@ struct View<'a> {
     projected: BTreeMap<RemoteId, Path>,
     candidates: BTreeMap<Path, Vec<&'a RemoteObservation>>,
     local_identities: BTreeSet<IdentityKey>,
+    incarnations: BTreeMap<IdentityKey, Vec<&'a LocalObservation>>,
+    owners: BTreeMap<Path, usize>,
+    persisted_identities: BTreeMap<IdentityKey, usize>,
     local_complete: bool,
     remote_complete: bool,
 }
 impl<'a> View<'a> {
+    fn locate(
+        &self,
+        identity: &Evidence<crate::models::LocalIdentity>,
+    ) -> Option<&'a LocalObservation> {
+        let Evidence::Known(id) = identity else {
+            return None;
+        };
+        if id.birth_ns.is_none()
+            || self.persisted_identities.get(&identity_key(identity)?) != Some(&1)
+        {
+            return None;
+        }
+        let mut entries = self
+            .incarnations
+            .get(&identity_key(identity)?)?
+            .iter()
+            .filter(|entry| &entry.identity == identity);
+        let entry = *entries.next()?;
+        entries.next().is_none().then_some(entry)
+    }
+
     fn new(captures: &'a Captures, snapshots: &[InventorySnapshot], root: &RemoteId) -> Self {
         let local = captures.locals();
         let remote = captures.remotes();
@@ -429,6 +475,22 @@ impl<'a> View<'a> {
             .values()
             .filter_map(|entry| identity_key(&entry.identity))
             .collect();
+        let mut incarnations: BTreeMap<IdentityKey, Vec<&LocalObservation>> = BTreeMap::new();
+        for entry in local.values() {
+            if let Some(key) = identity_key(&entry.identity) {
+                incarnations.entry(key).or_default().push(*entry);
+            }
+        }
+        let mut owners = BTreeMap::new();
+        let mut persisted_identities = BTreeMap::new();
+        for snapshot in snapshots {
+            if let Some(path) = &snapshot.local_path {
+                *owners.entry(path.clone()).or_insert(0) += 1;
+            }
+            if let Some(key) = identity_key(&snapshot.identity.local_identity) {
+                *persisted_identities.entry(key).or_insert(0) += 1;
+            }
+        }
         let mut grouped: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for snapshot in snapshots {
             if let Some(id) = &snapshot.identity.remote_id {
@@ -442,10 +504,22 @@ impl<'a> View<'a> {
                 continue;
             }
             let snapshot = records[0];
-            let Some(path) = snapshot.local_path.as_ref() else {
+            let current = identity_key(&snapshot.identity.local_identity)
+                .and_then(|key| incarnations.get(&key))
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter(|entry| entry.identity == snapshot.identity.local_identity)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let Some(l) = current.first().filter(|_| current.len() == 1) else {
                 continue;
             };
-            let (Some(l), Some(r)) = (local.get(path), remote.get(id)) else {
+            let Some(path) = l.path.as_ref() else {
+                continue;
+            };
+            let Some(r) = remote.get(id) else {
                 continue;
             };
             if snapshot.baseline.state == crate::inventory::models::BaselineState::Synced
@@ -457,6 +531,8 @@ impl<'a> View<'a> {
                             | crate::inventory::models::OperationState::AppliedUnconfirmed
                     )
                 })
+                && (snapshot.local_path.as_ref() == Some(path)
+                    || matches!(&l.identity, Evidence::Known(i) if i.birth_ns.is_some()))
                 && l.kind == Evidence::Known(FileKind::Directory)
                 && matches!((&l.identity,&snapshot.identity.local_identity),(Evidence::Known(a),Evidence::Known(b)) if a == b)
                 && r.state == FileState::Present
@@ -501,6 +577,9 @@ impl<'a> View<'a> {
             projected,
             candidates,
             local_identities,
+            incarnations,
+            owners,
+            persisted_identities,
             local_complete,
             remote_complete,
         }

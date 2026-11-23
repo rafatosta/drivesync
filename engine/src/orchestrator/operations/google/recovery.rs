@@ -10,6 +10,132 @@ impl GoogleOperator {
         session: &GoogleSession,
     ) -> RecoveryAssessment {
         match record.command.action {
+            OperationAction::RenameLocal
+            | OperationAction::MoveLocal
+            | OperationAction::RenameRemote
+            | OperationAction::MoveRemote => {
+                let Some(ancestors) = &record.remote_ancestry else {
+                    return RecoveryAssessment {
+                        outcome: ExecutionEffect::NotApplied,
+                        issue: Some(RecoveryIssue::NotDispatched),
+                        effect: None,
+                    };
+                };
+                if self.check_ancestry(session, ancestors).await.is_err() {
+                    return RecoveryAssessment::unknown(RecoveryIssue::ParentChanged);
+                }
+                let Some(id) = record.command.remote_id.as_ref() else {
+                    return RecoveryAssessment::unknown(RecoveryIssue::MissingCommand);
+                };
+                if self
+                    .within(session, id, &config.remote_root_id)
+                    .await
+                    .is_err()
+                {
+                    return RecoveryAssessment::unknown(RecoveryIssue::RemoteInconclusive);
+                }
+                let snapshot = match self.snapshot(session, id).await {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return RecoveryAssessment::unknown(RecoveryIssue::RemoteInconclusive)
+                    }
+                };
+                let remote = normalize(&snapshot.file);
+                let local_action = matches!(
+                    record.command.action,
+                    OperationAction::RenameLocal | OperationAction::MoveLocal
+                );
+                let local = if local_action {
+                    if remote != record.remote {
+                        return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
+                    }
+                    match fs.moved(record) {
+                        Ok(Some(local)) => local,
+                        Ok(None) => {
+                            return RecoveryAssessment {
+                                outcome: ExecutionEffect::NotApplied,
+                                issue: Some(RecoveryIssue::NotDispatched),
+                                effect: None,
+                            }
+                        }
+                        Err(_) => {
+                            return RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged)
+                        }
+                    }
+                } else {
+                    let local = match fs.check(&record.local) {
+                        Ok(v) => v,
+                        Err(_) => return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged),
+                    };
+                    let mut expected = record.remote.clone();
+                    if record.command.action == OperationAction::RenameRemote {
+                        expected.name =
+                            Evidence::Known(record.command.name.clone().unwrap_or_default());
+                    } else {
+                        expected.parents =
+                            Evidence::Known(record.command.parent_id.iter().cloned().collect());
+                    }
+                    if remote.version == record.remote.version
+                        && remote.name == record.remote.name
+                        && remote.parents == record.remote.parents
+                        && remote.checksum == record.remote.checksum
+                    {
+                        return RecoveryAssessment {
+                            outcome: ExecutionEffect::NotApplied,
+                            issue: Some(RecoveryIssue::NotDispatched),
+                            effect: None,
+                        };
+                    }
+                    if snapshot
+                        .file
+                        .app_properties
+                        .as_ref()
+                        .and_then(|p| p.get("drivesyncExecution"))
+                        != Some(&record.execution_id.0)
+                        || !matches!((&remote.version, &record.remote.version), (Evidence::Known(a), Evidence::Known(b)) if a > b)
+                        || remote.name != expected.name
+                        || remote.parents != expected.parents
+                        || remote.checksum != expected.checksum
+                        || remote.size != expected.size
+                        || remote.mime_type != expected.mime_type
+                        || remote.trashed != expected.trashed
+                    {
+                        return RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged);
+                    }
+                    local
+                };
+                if self
+                    .snapshot(session, id)
+                    .await
+                    .map(|v| normalize(&v.file).version)
+                    .ok()
+                    != Some(remote.version.clone())
+                {
+                    return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
+                }
+                if self.check_ancestry(session, ancestors).await.is_err() {
+                    return RecoveryAssessment::unknown(RecoveryIssue::ParentChanged);
+                }
+                let checked = if local_action {
+                    fs.moved(record)
+                        .and_then(|v| v.ok_or_else(filesystem::stale))
+                } else {
+                    fs.check(&record.local)
+                };
+                if !checked.is_ok_and(|current| current == local) {
+                    return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
+                }
+                RecoveryAssessment {
+                    outcome: ExecutionEffect::Applied,
+                    issue: None,
+                    effect: Some(AppliedEffect {
+                        local: Some(local),
+                        remote: Some(remote),
+                        remote_id: Some(id.clone()),
+                        verified: true,
+                    }),
+                }
+            }
             OperationAction::CreateLocalDirectory
             | OperationAction::Download
             | OperationAction::UpdateLocalContent => {

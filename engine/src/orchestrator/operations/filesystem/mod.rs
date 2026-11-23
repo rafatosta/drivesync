@@ -169,6 +169,7 @@ impl Filesystem {
                 device_id: meta.dev(),
                 inode: meta.ino(),
                 mount_id: None,
+                birth_ns: crate::models::birth_ns(&meta),
             }),
             size: if meta.is_file() {
                 Evidence::Known(meta.len())
@@ -212,9 +213,7 @@ impl Filesystem {
         let path = expected.path.as_deref().ok_or_else(invalid)?;
         let current = self.observe(path)?;
         let identity_matches = match (&expected.identity, &current.identity) {
-            (Evidence::Known(a), Evidence::Known(b)) => {
-                a.device_id == b.device_id && a.inode == b.inode
-            }
+            (Evidence::Known(a), Evidence::Known(b)) => a == b,
             _ => false,
         };
         if expected.state != FileState::Present
@@ -233,6 +232,70 @@ impl Filesystem {
         }
         Ok(current)
     }
+    pub(in crate::orchestrator::operations) fn movement_target(
+        op: &Operation,
+    ) -> Result<PathBuf, OperatorError> {
+        let path = op.local_path.as_ref().ok_or_else(invalid)?;
+        if op.action == OperationAction::RenameLocal {
+            let name = op.name.as_ref().ok_or_else(invalid)?;
+            let mut parts = StdPath::new(name).components();
+            if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
+                return Err(invalid());
+            }
+            Ok(path.with_file_name(name))
+        } else if op.action == OperationAction::MoveLocal {
+            let parent = op.parent.as_ref().ok_or_else(invalid)?;
+            if parent.starts_with(path) {
+                return Err(stale());
+            }
+            Ok(parent.join(path.file_name().ok_or_else(invalid)?))
+        } else {
+            Err(invalid())
+        }
+    }
+    /// Recovery identifies the same incarnation and tagged effect; names or bytes alone are insufficient.
+    pub(in crate::orchestrator::operations) fn moved(
+        &self,
+        record: &crate::inventory::models::RecoveryRecord,
+    ) -> Result<Option<LocalState>, OperatorError> {
+        let target = Self::movement_target(&record.command)?;
+        if let Ok(current) = self.observe(record.local.path.as_deref().ok_or_else(invalid)?) {
+            if current.identity == record.local.identity
+                && current.kind == record.local.kind
+                && current.checksum == record.local.checksum
+            {
+                return Ok(None);
+            }
+            return Err(stale());
+        }
+        self.check_absent(record.local.path.as_deref().ok_or_else(invalid)?)?;
+        let current = self.observe(&target)?;
+        if current.identity != record.local.identity
+            || current.kind != record.local.kind
+            || current.checksum != record.local.checksum
+            || !matches!(&current.identity, Evidence::Known(i) if i.birth_ns.is_some())
+        {
+            return Err(stale());
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(self.entry(&target)?.anchored())
+            .map_err(error)?;
+        let mut marker = vec![0u8; record.execution_id.0.len()];
+        let n = unsafe {
+            libc::fgetxattr(
+                file.as_raw_fd(),
+                c"user.drivesync.execution".as_ptr(),
+                marker.as_mut_ptr().cast(),
+                marker.len(),
+            )
+        };
+        if n != marker.len() as isize || marker != record.execution_id.0.as_bytes() {
+            return Err(stale());
+        }
+        Ok(Some(current))
+    }
     pub fn execute(
         &self,
         request: &ExecuteOperationRequest,
@@ -246,27 +309,77 @@ impl Filesystem {
             }
             OperationAction::RenameLocal | OperationAction::MoveLocal => {
                 self.check(&request.local)?;
-                let target = if op.action == OperationAction::RenameLocal {
-                    let name = op.name.as_ref().ok_or_else(invalid)?;
-                    if StdPath::new(name).components().count() != 1
-                        || !matches!(
-                            StdPath::new(name).components().next(),
-                            Some(Component::Normal(_))
-                        )
+                let target = Self::movement_target(&request.operation)?;
+                let source_parent = self.parent_identity(path)?;
+                let destination_parent = self.parent_identity(&target)?;
+                if let Some(journal) = journal {
+                    let record = journal.record();
+                    if record.parent_identity.as_ref() != Some(&source_parent)
+                        || record.destination_parent_identity.as_ref() != Some(&destination_parent)
                     {
-                        return Err(invalid());
+                        return Err(stale());
                     }
-                    path.with_file_name(name)
-                } else {
-                    op.parent
-                        .as_ref()
-                        .ok_or_else(invalid)?
-                        .join(path.file_name().ok_or_else(invalid)?)
-                };
+                }
+                let file = OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                    .open(self.entry(path)?.anchored())
+                    .map_err(error)?;
+                let meta = file.metadata().map_err(error)?;
+                if meta.is_file() && meta.nlink() != 1 {
+                    return Err(stale());
+                }
+                if request.local.identity
+                    != Evidence::Known(LocalIdentity {
+                        device_id: meta.dev(),
+                        inode: meta.ino(),
+                        mount_id: None,
+                        birth_ns: birth_ns(&meta),
+                    })
+                {
+                    return Err(stale());
+                }
+                if birth_ns(&meta).is_none() {
+                    return Err(stale());
+                }
+                let marker = request.execution_id.0.as_bytes();
+                if unsafe {
+                    libc::fsetxattr(
+                        file.as_raw_fd(),
+                        c"user.drivesync.execution".as_ptr(),
+                        marker.as_ptr().cast(),
+                        marker.len(),
+                        0,
+                    )
+                } != 0
+                {
+                    return Err(error(std::io::Error::last_os_error()));
+                }
+                file.sync_all().map_err(error)?;
                 let source = self.entry(path)?;
                 let dest = self.entry(&target)?;
+                if source_parent != self.parent_identity(path)?
+                    || destination_parent != self.parent_identity(&target)?
+                    || stamp(&std::fs::symlink_metadata(source.anchored()).map_err(error)?)
+                        != stamp(&file.metadata().map_err(error)?)
+                {
+                    return Err(stale());
+                }
                 rename(&source, &dest, libc::RENAME_NOREPLACE)?;
-                self.observe(&target).map_err(OperatorError::uncertain)?
+                source.parent.sync_all().map_err(|e| error(e).uncertain())?;
+                dest.parent.sync_all().map_err(|e| error(e).uncertain())?;
+                if destination_parent != self.parent_identity(&target)? {
+                    return Err(stale().uncertain());
+                }
+                let observed = self.observe(&target).map_err(OperatorError::uncertain)?;
+                if observed.identity != request.local.identity
+                    || observed.kind != request.local.kind
+                    || observed.checksum != request.local.checksum
+                    || observed.size != request.local.size
+                {
+                    return Err(stale().uncertain());
+                }
+                observed
             }
             OperationAction::RemoveLocal => {
                 self.check(&request.local)?;

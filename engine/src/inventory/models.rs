@@ -479,6 +479,8 @@ pub(crate) struct RecoveryRecord {
     pub remote_root_id: RemoteId,
     pub root_identity: LocalIdentity,
     pub parent_identity: Option<LocalIdentity>,
+    /// Pinned destination directory for local movement recovery.
+    pub destination_parent_identity: Option<LocalIdentity>,
     pub command: crate::models::Operation,
     pub execution_id: Id,
     pub identity: FileIdentity,
@@ -493,6 +495,8 @@ pub(crate) struct RecoveryRecord {
     /// Identity committed before publishing a tagged staged entry.
     pub stage_identity: Option<LocalIdentity>,
     pub transfer: Option<TransferReference>,
+    /// Ancestor facts committed before a tree-location mutation.
+    pub remote_ancestry: Option<Vec<RemoteState>>,
 }
 /// Sensitive provider transfer handle. No OAuth credential is stored; Debug redacts the URI.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -513,6 +517,7 @@ impl std::fmt::Debug for TransferReference {
 pub(crate) enum RecoveryCheckpoint {
     LocalStage(LocalIdentity),
     Transfer(TransferReference),
+    RemoteAncestry(Vec<RemoteState>),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum RecoveryIssue {

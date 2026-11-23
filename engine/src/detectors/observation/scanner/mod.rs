@@ -228,6 +228,7 @@ impl Scanner {
                             device_id: meta.dev(),
                             inode: meta.ino(),
                             mount_id: None,
+                            birth_ns: crate::models::birth_ns(&meta),
                         }),
                         size: if kind == FileKind::Regular {
                             Evidence::Known(meta.len())
@@ -244,7 +245,11 @@ impl Scanner {
                         capabilities: Evidence::Known(LocalCapabilities {
                             can_read,
                             can_write: access(&anchored, libc::W_OK),
-                            can_rename: access(&descriptor(&directory), libc::W_OK | libc::X_OK),
+                            // Check the directory reached by our pinned descriptor, not the procfs symlink.
+                            can_rename: access(
+                                &descriptor(&directory).join("."),
+                                libc::W_OK | libc::X_OK,
+                            ),
                             can_delete: Evidence::NotCollected,
                         }),
                         observed_at,

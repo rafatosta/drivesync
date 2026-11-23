@@ -92,6 +92,8 @@ pub struct LocalIdentity {
     pub inode: u64,
     /// Mount identifier when the platform can provide it.
     pub mount_id: Option<u64>,
+    /// Nanosecond birth time, when supported; required to correlate a new path without inode reuse.
+    pub birth_ns: Option<u128>,
 }
 
 /// Content digest normalized together with the algorithm that produced it.
@@ -226,3 +228,12 @@ mod tests {
 mod operation;
 pub(crate) mod path_serde;
 pub(crate) use operation::{ExecutionEffect, Operation, OperationAction, OperationPreconditions};
+
+/// Birth time is auxiliary incarnation evidence, never a path or account association.
+pub(crate) fn birth_ns(meta: &std::fs::Metadata) -> Option<u128> {
+    meta.created()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|v| v.as_nanos())
+}

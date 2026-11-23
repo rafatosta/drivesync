@@ -154,6 +154,65 @@ impl GoogleOperator {
         }
         Ok(())
     }
+    /// Pins ancestor location evidence; child mutations may advance a folder version without relocating it.
+    async fn ancestry(
+        &self,
+        config: &OperatorConfig,
+        session: &GoogleSession,
+        parents: Vec<RemoteId>,
+    ) -> Result<Vec<RemoteState>, OperatorError> {
+        let mut seen = BTreeSet::new();
+        let mut ancestors = Vec::new();
+        for mut next in parents {
+            for _ in 0..128 {
+                if next == config.remote_root_id || seen.contains(&next) {
+                    break;
+                }
+                seen.insert(next.clone());
+                let state = normalize(&self.snapshot(session, &next).await?.file);
+                if state.trashed != Evidence::Known(false)
+                    || state.mime_type != Evidence::Known(FOLDER.into())
+                {
+                    return Err(filesystem::stale());
+                }
+                let Evidence::Known(ids) = &state.parents else {
+                    return Err(filesystem::stale());
+                };
+                if ids.len() != 1 {
+                    return Err(filesystem::stale());
+                }
+                next = ids[0].clone();
+                ancestors.push(state);
+            }
+            if next != config.remote_root_id && !seen.contains(&next) {
+                return Err(filesystem::stale());
+            }
+        }
+        Ok(ancestors)
+    }
+    async fn check_ancestry(
+        &self,
+        session: &GoogleSession,
+        ancestors: &[RemoteState],
+    ) -> Result<(), OperatorError> {
+        for expected in ancestors {
+            let current = normalize(
+                &self
+                    .snapshot(session, expected.id.as_ref().ok_or_else(filesystem::stale)?)
+                    .await?
+                    .file,
+            );
+            if current.id != expected.id
+                || current.name != expected.name
+                || current.parents != expected.parents
+                || current.mime_type != expected.mime_type
+                || current.trashed != expected.trashed
+            {
+                return Err(filesystem::stale());
+            }
+        }
+        Ok(())
+    }
     async fn run_with_journal(
         &self,
         config: &OperatorConfig,
@@ -181,6 +240,27 @@ impl GoogleOperator {
             Some(snapshot)
         } else {
             None
+        };
+        let tree_action = matches!(
+            op.action,
+            OperationAction::RenameLocal
+                | OperationAction::MoveLocal
+                | OperationAction::RenameRemote
+                | OperationAction::MoveRemote
+        );
+        let ancestry = if tree_action {
+            let mut parents = match &r.remote.parents {
+                Evidence::Known(ids) => ids.clone(),
+                _ => return Err(filesystem::stale()),
+            };
+            parents.extend(op.parent_id.iter().cloned());
+            let ancestors = self.ancestry(config, session, parents).await?;
+            if let Some(journal) = journal {
+                journal.checkpoint(RecoveryCheckpoint::RemoteAncestry(ancestors.clone()))?;
+            }
+            ancestors
+        } else {
+            Vec::new()
         };
         let mut local = if r.local.state == FileState::Present {
             Some(fs.check(&r.local)?)
@@ -278,8 +358,12 @@ impl GoogleOperator {
                 {
                     return Err(filesystem::stale());
                 }
+                self.check_ancestry(session, &ancestry).await?;
                 let mut effect = fs.execute(r, journal)?;
-                if op.action == OperationAction::CreateLocalDirectory {
+                self.check_ancestry(session, &ancestry)
+                    .await
+                    .map_err(OperatorError::uncertain)?;
+                {
                     let after = self
                         .snapshot(
                             session,
@@ -437,6 +521,35 @@ impl GoogleOperator {
                         metadata.trashed = GooglePatch::Set(true);
                     }
                 }
+                if matches!(
+                    op.action,
+                    OperationAction::RenameRemote | OperationAction::MoveRemote
+                ) {
+                    let mut properties = snapshot.file.app_properties.clone().unwrap_or_default();
+                    properties.insert("drivesyncExecution".into(), r.execution_id.0.clone());
+                    metadata.app_properties = GooglePatch::Set(properties);
+                    metadata.properties = snapshot
+                        .file
+                        .properties
+                        .clone()
+                        .map(GooglePatch::Set)
+                        .unwrap_or_default();
+                }
+                self.check_ancestry(session, &ancestry).await?;
+                // The source and its path ancestors must still be the captured ones after destination reads.
+                if r.local.state == FileState::Present {
+                    fs.check(&r.local)?;
+                }
+                if let Some(journal) = journal {
+                    let record = journal.record();
+                    if record.parent_identity
+                        != Some(fs.parent_identity(
+                            op.local_path.as_deref().ok_or_else(filesystem::stale)?,
+                        )?)
+                    {
+                        return Err(filesystem::stale());
+                    }
+                }
                 self.client
                     .files_update_conditional(
                         session,
@@ -452,6 +565,9 @@ impl GoogleOperator {
                     .await
                     .map_err(OperatorError::uncertain)?
                     .file;
+                self.check_ancestry(session, &ancestry)
+                    .await
+                    .map_err(OperatorError::uncertain)?;
                 let verified = match op.action {
                     OperationAction::RenameRemote => after.name == op.name,
                     OperationAction::MoveRemote => {

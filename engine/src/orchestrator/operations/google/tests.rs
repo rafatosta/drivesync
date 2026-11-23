@@ -632,6 +632,9 @@ impl ExecutionJournal for MemoryJournal {
         match checkpoint {
             RecoveryCheckpoint::LocalStage(identity) => record.stage_identity = Some(identity),
             RecoveryCheckpoint::Transfer(transfer) => record.transfer = Some(transfer),
+            RecoveryCheckpoint::RemoteAncestry(ancestors) => {
+                record.remote_ancestry = Some(ancestors)
+            }
         }
         Ok(())
     }

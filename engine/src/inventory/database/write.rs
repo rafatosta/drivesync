@@ -309,6 +309,12 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
                 return false;
             };
             match checkpoint {
+                super::models::RecoveryCheckpoint::RemoteAncestry(ancestors) => {
+                    if record.remote_ancestry.is_some() || ancestors.len() > 256 {
+                        return false;
+                    }
+                    record.remote_ancestry = Some(ancestors.clone());
+                }
                 super::models::RecoveryCheckpoint::LocalStage(identity) => {
                     if record.stage_path.is_none()
                         || record

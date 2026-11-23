@@ -38,6 +38,9 @@ fn scanner_preserves_bytes_hashes_and_ignores_internal_artifacts_without_followi
         .scan(&CancellationToken::new())
         .unwrap();
     assert_eq!(scan.coverage, ObservationCoverage::Complete);
+    assert!(
+        matches!(&scan.entries[&PathBuf::from("nested/file")].capabilities, Evidence::Known(c) if c.can_rename == Evidence::Known(true))
+    );
     assert_eq!(scan.entries.len(), 4);
     assert!(scan.entries.contains_key(&bytes));
     assert_eq!(

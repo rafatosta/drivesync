@@ -16,6 +16,7 @@ fn local(path: &str, inode: u64, directory: bool) -> LocalObservation {
         device_id: 1,
         inode,
         mount_id: None,
+        birth_ns: None,
     });
     entry.kind = Evidence::Known(if directory {
         crate::models::FileKind::Directory
@@ -634,4 +635,95 @@ fn atomic_slot_replacement_requires_unchanged_remote_and_absent_old_inode() {
     let item = files.iter().find(|f| f.identity.item_id.is_some()).unwrap();
     assert_ne!(item.environment.local_replacement, Evidence::Known(true));
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn moved_incarnations_follow_trees_but_recycled_or_aliased_inodes_do_not() {
+    for scenario in ["tree", "recycled", "hardlink", "partial", "outside"] {
+        let (context, _directory) = context();
+        let mut parent = local("a", 501, true);
+        let mut child = local("a/file", 502, false);
+        for entry in [&mut parent, &mut child] {
+            if let Evidence::Known(i) = &mut entry.identity {
+                i.birth_ns = Some(700);
+            }
+        }
+        seed(
+            &context,
+            parent.clone(),
+            remote("folder", "a", "remote-root", true),
+        );
+        seed(
+            &context,
+            child.clone(),
+            remote("child", "file", "folder", false),
+        );
+        let mut moved_parent = parent.clone();
+        moved_parent.path = Some("b".into());
+        moved_parent.name = Evidence::Known("b".into());
+        let mut moved_child = child.clone();
+        moved_child.path = Some("b/file".into());
+        moved_child.parent = Evidence::Known("b".into());
+        if scenario == "recycled" {
+            if let Evidence::Known(i) = &mut moved_child.identity {
+                i.birth_ns = Some(701);
+            }
+        }
+        let mut entries = vec![moved_parent, moved_child.clone()];
+        if scenario == "hardlink" {
+            let mut alias = moved_child;
+            alias.path = Some("alias".into());
+            alias.parent = Evidence::Known(Path::new());
+            entries.push(alias);
+        }
+        if scenario == "outside" {
+            entries.clear();
+        }
+        context
+            .build_capture(round(
+                &context,
+                1,
+                if scenario == "partial" {
+                    ObservationCoverage::Partial
+                } else {
+                    ObservationCoverage::Complete
+                },
+                CaptureEntries::Local(entries),
+            ))
+            .unwrap();
+        let files = context
+            .build_capture(round(
+                &context,
+                1,
+                ObservationCoverage::Complete,
+                CaptureEntries::Remote(vec![
+                    remote("folder", "a", "remote-root", true),
+                    remote("child", "file", "folder", false),
+                ]),
+            ))
+            .unwrap();
+        let file = files
+            .iter()
+            .find(|f| f.identity.item_id == Some(ItemId("child".into())))
+            .unwrap();
+        if scenario == "tree" {
+            assert_eq!(file.local.path, Some("b/file".into()));
+            let parent_index = files
+                .iter()
+                .position(|f| f.identity.item_id == Some(ItemId("folder".into())))
+                .unwrap();
+            let child_index = files
+                .iter()
+                .position(|f| f.identity.item_id == Some(ItemId("child".into())))
+                .unwrap();
+            assert!(parent_index < child_index);
+            assert_eq!(file.identity.remote_id, Some(RemoteId("child".into())));
+            assert_eq!(
+                file.environment.destination_remote_parent_id,
+                Evidence::Known(RemoteId("folder".into()))
+            );
+        } else {
+            assert_ne!(file.local.state, FileState::Present, "{scenario}");
+        }
+    }
 }

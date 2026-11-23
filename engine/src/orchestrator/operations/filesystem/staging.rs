@@ -8,6 +8,7 @@ fn identity(meta: &std::fs::Metadata) -> LocalIdentity {
         device_id: meta.dev(),
         inode: meta.ino(),
         mount_id: None,
+        birth_ns: crate::models::birth_ns(meta),
     }
 }
 impl Filesystem {

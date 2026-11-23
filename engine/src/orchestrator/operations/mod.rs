@@ -330,6 +330,68 @@ impl PersistingOperator {
         }
         Ok(())
     }
+    /// A changed path requires a unique persisted incarnation, complete coverage and no hardlink alias.
+    fn validate_relocation(
+        &self,
+        r: &ExecuteOperationRequest,
+        stored: &InventorySnapshot,
+    ) -> Result<(), OperatorError> {
+        use crate::detectors::observation::{
+            remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
+        };
+        use std::os::unix::fs::MetadataExt;
+        if !matches!(&r.local.identity, Evidence::Known(i) if i.birth_ns.is_some())
+            || r.local.identity != stored.identity.local_identity
+        {
+            return Err(filesystem::stale());
+        }
+        self.filesystem.check(&r.local)?;
+        let path = r.local.path.as_deref().ok_or_else(filesystem::stale)?;
+        if r.local.kind == Evidence::Known(FileKind::Regular)
+            && self
+                .filesystem
+                .read(path)?
+                .metadata()
+                .map_err(filesystem::error)?
+                .nlink()
+                != 1
+        {
+            return Err(filesystem::stale());
+        }
+        let mut scanner = Scanner::open(
+            self.config.local_root.clone(),
+            self.config.sync_root_id.clone(),
+        )
+        .map_err(|_| filesystem::stale())?;
+        let scan = loop {
+            let scan = scanner
+                .scan(&CancellationToken::new())
+                .map_err(|_| filesystem::stale())?;
+            if scan.coverage == ObservationCoverage::Complete {
+                break scan;
+            }
+            if !scan.issues.iter().any(|i| {
+                i.kind == crate::detectors::observation::scanner::ScanIssueKind::LimitReached
+            }) || !scanner.expand_limit()
+            {
+                return Err(filesystem::stale());
+            }
+        };
+        if scan
+            .entries
+            .values()
+            .filter(|e| e.identity == r.local.identity)
+            .count()
+            != 1
+            || stored
+                .local_path
+                .as_ref()
+                .is_some_and(|old| scan.entries.contains_key(old))
+        {
+            return Err(filesystem::stale());
+        }
+        Ok(())
+    }
     fn validate(&self, r: &ExecuteOperationRequest) -> Result<(), OperatorError> {
         let op = &r.operation;
         self.filesystem.validate_root()?;
@@ -392,6 +454,9 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
+                if r.local.state == FileState::Present && snapshot.local_path != r.local.path {
+                    self.validate_relocation(r, &snapshot)?;
+                }
                 if matches!(r.local.identity, Evidence::Known(_))
                     && snapshot.identity.local_identity != r.local.identity
                 {

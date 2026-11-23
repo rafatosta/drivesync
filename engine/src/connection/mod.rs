@@ -216,3 +216,6 @@ mod live_initial_upload_tests;
 
 #[cfg(test)]
 mod live_continuous_tests;
+
+#[cfg(test)]
+mod live_tree_tests;

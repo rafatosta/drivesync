@@ -61,7 +61,17 @@ pub(crate) fn analyze(file: &File) -> Decision {
     let remote_changed = side_changed(&changeset, false);
     if !local_changed
         && !remote_changed
-        && file.environment.local_replacement == Evidence::Known(true)
+        && (file.environment.local_replacement == Evidence::Known(true)
+            || (complete(file)
+                && parents_correspond(file)
+                && super::evidence::equivalent(&file.local, &file.remote)
+                && (file.baseline.local.as_ref().is_some_and(|old| {
+                    old.path != file.local.path
+                        || old.name != file.local.name
+                        || old.parent != file.local.parent
+                }) || file.baseline.remote.as_ref().is_some_and(|old| {
+                    old.name != file.remote.name || old.parents != file.remote.parents
+                }))))
     {
         return metadata_plan(
             file,
@@ -495,6 +505,25 @@ fn compare(file: &File) -> Changeset {
             "remote trash state",
         ),
     );
+
+    // Verified partial receipts can converge location before content. Compare those attributes
+    // independently so restarting between steps does not manufacture a concurrent edit conflict.
+    for name in [AttributeName::Name, AttributeName::Parent] {
+        let equal = if name == AttributeName::Name {
+            matches!((&file.local.name, &file.remote.name), (Evidence::Known(a), Evidence::Known(b)) if a == b)
+        } else {
+            parents_correspond(file)
+        };
+        let pair = attributes.get_mut(&name).unwrap();
+        if equal
+            && (name == AttributeName::Parent
+                || (pair.local.status == ChangeStatus::Changed
+                    && pair.remote.status == ChangeStatus::Changed))
+        {
+            pair.local = unchanged("Current corresponding location attribute is equal.".into());
+            pair.remote = unchanged("Current corresponding location attribute is equal.".into());
+        }
+    }
 
     for (name, change) in &attributes {
         for (side, evidence) in [("local", &change.local), ("remote", &change.remote)] {
@@ -1014,6 +1043,11 @@ fn plan_unilateral_changes(file: &File, changeset: &Changeset, from_local: bool)
         };
         operations.push(operation);
     }
+    operations.sort_by_key(|op| match op.action {
+        OperationAction::RenameLocal | OperationAction::RenameRemote => 0,
+        OperationAction::MoveLocal | OperationAction::MoveRemote => 1,
+        _ => 2,
+    });
     operations
 }
 
@@ -1035,7 +1069,8 @@ fn operation_for(
                 known(&file.remote.name)
             },
             if action == OperationAction::MoveRemote {
-                if file.environment.destination_remote_matches != Evidence::Known(Vec::new()) {
+                if !matches!(&file.environment.destination_remote_matches, Evidence::Known(ids) if ids.iter().all(|id| Some(id) == file.identity.remote_id.as_ref()))
+                {
                     return None;
                 }
                 match &file.environment.destination_remote_parent_id {

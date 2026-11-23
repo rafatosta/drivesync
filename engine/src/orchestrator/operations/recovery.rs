@@ -21,6 +21,14 @@ pub(super) fn record(
             .as_ref()
             .map(|path| fs.parent_identity(path))
             .transpose()?,
+        destination_parent_identity: if matches!(
+            r.operation.action,
+            OperationAction::RenameLocal | OperationAction::MoveLocal
+        ) {
+            Some(fs.parent_identity(&Filesystem::movement_target(&r.operation)?)?)
+        } else {
+            None
+        },
         command: r.operation.clone(),
         execution_id: r.execution_id.clone(),
         identity: r.identity.clone(),
@@ -41,6 +49,7 @@ pub(super) fn record(
         },
         stage_identity: None,
         transfer: None,
+        remote_ancestry: None,
     })
 }
 impl PersistingOperator {
@@ -72,6 +81,30 @@ impl PersistingOperator {
             self.confirmed_parent(local_parent, &remote_parents)
                 .ok_or_else(filesystem::stale)?;
         }
+        if matches!(
+            r.operation.action,
+            OperationAction::MoveLocal | OperationAction::MoveRemote
+        ) {
+            let (local, remote) = if r.operation.action == OperationAction::MoveLocal {
+                (
+                    r.operation.parent.clone().ok_or_else(filesystem::stale)?,
+                    match &r.remote.parents {
+                        Evidence::Known(ids) => ids.clone(),
+                        _ => return Err(filesystem::stale()),
+                    },
+                )
+            } else {
+                (
+                    match &r.local.parent {
+                        Evidence::Known(p) => p.clone(),
+                        _ => return Err(filesystem::stale()),
+                    },
+                    r.operation.parent_id.iter().cloned().collect(),
+                )
+            };
+            self.confirmed_parent(&local, &remote)
+                .ok_or_else(filesystem::stale)?;
+        }
         let reserved = self.remote.reserve(&self.config, r).await?;
         record(&self.config, r, &self.filesystem, reserved)
     }
@@ -98,6 +131,16 @@ impl PersistingOperator {
                 return Err(RecoveryIssue::ParentChanged);
             }
         }
+        if matches!(
+            record.command.action,
+            OperationAction::RenameLocal | OperationAction::MoveLocal
+        ) && Filesystem::movement_target(&record.command)
+            .ok()
+            .and_then(|p| self.filesystem.parent_identity(&p).ok())
+            != record.destination_parent_identity
+        {
+            return Err(RecoveryIssue::ParentChanged);
+        }
         if !matches!(
             record.command.action,
             OperationAction::CreateLocalDirectory
@@ -106,6 +149,10 @@ impl PersistingOperator {
                 | OperationAction::Upload
                 | OperationAction::UpdateRemoteContent
                 | OperationAction::UpdateLocalContent
+                | OperationAction::RenameLocal
+                | OperationAction::MoveLocal
+                | OperationAction::RenameRemote
+                | OperationAction::MoveRemote
         ) {
             return Err(RecoveryIssue::UnsupportedAction);
         }

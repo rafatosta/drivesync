@@ -49,6 +49,9 @@ impl ExecutionJournal for Journal {
         match checkpoint {
             RecoveryCheckpoint::LocalStage(identity) => state.1.stage_identity = Some(identity),
             RecoveryCheckpoint::Transfer(transfer) => state.1.transfer = Some(transfer),
+            RecoveryCheckpoint::RemoteAncestry(ancestors) => {
+                state.1.remote_ancestry = Some(ancestors)
+            }
         }
         Ok(())
     }
