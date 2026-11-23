@@ -1,8 +1,8 @@
-# Stage 12 — GUI components and event 1
+# Stage 12 — GUI components and existing file transfers
 
-Scope: mandatory component groundwork and existing remote file download only. Events 2–14
-are not implemented or validated by this activity. The attached Stage 12 specification is
-the acceptance reference. English identifiers and gettext strings follow repository conventions.
+Scope: mandatory component groundwork, existing remote file download, and existing local file
+upload. The attached Stage 12 specification is the acceptance reference. English identifiers
+and gettext strings follow repository conventions.
 
 ### Evento: Mandatory component groundwork
 - Estado inicial / fixture / escopo: clean main at 0226204, identical to origin/main after fetch; deterministic presentation-only fixtures and isolated temporary GTK/XDG profile.
@@ -44,11 +44,20 @@ no event 10/11 acceptance is claimed. Interactive keyboard and screen-reader acc
 - Limitações remanescentes: no updated installed Flatpak package was built, installed or exercised in this activity. The currently running Devel application was left intact. SDK GTK windows exercise the real components and public backend, not the full installed dashboard/sidebar interaction or portal permissions. Keyboard/focus, screen-reader behavior and native Wayland/GPU paths remain unverified. Coalescing can omit short operations; observed download in these fixtures does not prove delivery of every transition. No measured-byte progress, separate verifying phase, two-real-account acceptance, other events or whole-project Stage 12 completion is claimed. Fake conflict and issue states do not homologate future real conflict resolution flows.
 - Resultado: BLOQUEADO for complete event acceptance (real Google + SDK GTK integration and integrity checks passed; installed Flatpak dashboard acceptance remains outstanding).
 
+### Evento: 2 — Upload of an existing local file
+
+- Estado inicial / fixture / escopo: authorized account `rtosta.coc@gmail.com`, isolated native root `~/GoogleDrive/DriveSync-stage12-event2-20261123-01`, containing only the pre-existing binary `existing-local.bin` (33,554,432 bytes). Independent Drive listing confirmed that the corresponding [remote root](https://drive.google.com/drive/folders/1tRWPy1A6B4W1mr6i0ppOX9PrdDqyV3nw) was empty before synchronization and again after the denied-access run.
+- Ação única executada: restore the saved synchronization scope in the installed Devel dashboard. A first run revoked only the fixture's sandbox filesystem access. The dashboard displayed “Synchronization failed” and “The selected folder is unavailable.” Restoring the normal Flatpak permission and relaunching the same isolated profile allowed the existing local file to be observed and uploaded. This exercises recovery from a scope startup error before transfer dispatch.
+- Engine / API / GUI: the installed dashboard observed item registration and then the public `Uploading` state for `existing-local.bin`, operation `9f959aaae15522367a99a2ff53f43559`. The existing Adapter, Controller, `SyncActivity` and `SyncStatus` displayed “Computer → Drive” and “In progress.” The public state carries operation counts and no measured byte progress. The mapping test verifies that both directions retain indeterminate progress. The completed dashboard displayed “Everything synchronized” with a positive public audit: complete coverage, one local and one remote entry, one converged inventory item, zero unconfirmed operations and zero unresolved conflicts.
+- Provider / Inventory: after the app stopped, separate Drive listing, metadata, revision history and media calls found exactly one active child with ID `1b8h5ux1rG72swiFvfc5Zhjs-lPT-qC2Z` and a single binary revision `0BzICdCC9RVFoSTBIOWhZa1BDajNQTlJvZ2ErOXF5L0FVY2c0PQ`. Drive media matched the original bytes exactly. SHA-256 `c072f2f8dc075172b7219e0ac0a996288fdfefd82a9a4456790c5d1f0cadb00c` matched provider metadata and both sides of the confirmed baseline. Reopened inventory held that remote ID in the item identity, applied effect and baseline. The verified Upload receipt, Drive execution marker and observed operation shared the same ID. Relaunching the installed upload profile produced another positive audit. Independent readback after relaunch confirmed the same remote ID, revision, SHA-256 and sole Upload receipt.
+- Revisão e versão: the first readback test required equality between the baseline's provider version and the later file metadata version. It observed baseline and verified receipt at version 1 and later metadata at version 2. The revised check verifies a monotonic file version, unchanged identity/name/parent/type/bytes, one binary revision, and correspondence with the persisted receipt. The specific server-side transition that incremented the version was not observed. [Drive file version and head revision fields](https://developers.google.com/workspace/drive/api/reference/rest/v3/files).
+- Regressão do download: the installed dashboard downloaded `Relatório-evento-1.bin` into a separate empty local root, showed “Drive → Computer” with indeterminate progress and reported a positive audit. The independent event 1 test verified the retained provider ID and version 2, local and remote SHA-256 `341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1`, and the confirmed receipt and baseline.
+- Ambiente e evidências: installed user Flatpak `com.rtosta.DriveSync.Devel//stage12-event2`, commit `ea752bdfdba623a4ee6057749519005353ca0c9cbf3c70ce16a18a62353b8eaa`, GNOME 50. The isolated package adds a test-only non-unique instance and reads mapped GTK labels and the public Engine state. The default `stage11` branch and already-running instance were preserved. Logs, fixture hash and scripts are under `/home/tosta/Documentos/ChatGPT/drivesync 2/relatorios/etapa-12-atividade-2`. The upload/download/error runs used the normal installed dashboard and English labels.
+- Testes: GNOME SDK 50/rust-stable, `cargo fmt --all --check`, `cargo clippy --offline --workspace --all-targets -- -D warnings`, `cargo test --offline --workspace` (701 passed, 24 opt-in ignored), `cargo doc --offline --workspace --no-deps --document-private-items`, and `cargo test --offline --workspace --doc` passed. Independent live provider tests ran explicitly. Package build used `cargo build --release --offline --locked` and `msgfmt --check`.
+- Resultado: APROVADO for existing-file upload and recovery from denied local folder access. The tested error precedes transfer dispatch. Mid-transfer interruption and recovery, interactive accessibility and PT-BR rendering remain outside this run.
+
 ## Execution boundary
 
-No event 2 was started. Upload, remote/local creation observation, DOCX updates, renames,
-moves, directory scenarios, real conflicts, trash, Workspace projection changes and recovery
-acceptance remain outside this work. No push, pull request, remote release or tags were created.
-All Rust tools used the manifest's GNOME SDK 50 and rust-stable extension; nothing was installed
-or updated in the SDK. The five components use the repository's GTK wrapper convention with
-owned state and typed callbacks, rather than introducing a second widget system.
+The latest run covered event 2 and its required event 1 regression. Events 3–14 remain outside
+this run. All Rust tools used the manifest's GNOME SDK 50 and rust-stable extension. The local
+acceptance Flatpak and fixtures were retained. No remote publication occurred.

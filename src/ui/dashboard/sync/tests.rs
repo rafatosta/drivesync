@@ -350,11 +350,26 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         completed: 1,
         total: 2,
     });
-    let current = map_status(&value, false).activity.unwrap();
-    assert_eq!(current.operation_id.as_deref(), Some("execution-1"));
-    assert_eq!(current.name, "Relatório.bin");
-    assert_eq!(current.direction, Direction::RemoteToLocal);
-    assert_eq!(current.progress, ProgressView::Indeterminate);
+    for (activity, kind, direction) in [
+        (
+            SynchronizationActivity::Downloading,
+            ActivityKind::Download,
+            Direction::RemoteToLocal,
+        ),
+        (
+            SynchronizationActivity::Uploading,
+            ActivityKind::Upload,
+            Direction::LocalToRemote,
+        ),
+    ] {
+        value.activity = activity;
+        let current = map_status(&value, false).activity.unwrap();
+        assert_eq!(current.operation_id.as_deref(), Some("execution-1"));
+        assert_eq!(current.name, "Relatório.bin");
+        assert_eq!(current.kind, kind);
+        assert_eq!(current.direction, direction);
+        assert_eq!(current.progress, ProgressView::Indeterminate);
+    }
 }
 
 #[test]
