@@ -24,7 +24,7 @@ use std::{
     io::{Read, Write},
 };
 const FIELDS: &str =
-    "id,name,mimeType,parents,size,sha256Checksum,version,trashed,capabilities,webViewLink,appProperties";
+    "id,name,mimeType,parents,size,sha256Checksum,version,trashed,capabilities,webViewLink,appProperties,properties";
 const FOLDER: &str = "application/vnd.google-apps.folder";
 pub(super) struct GoogleOperator {
     accounts: Accounts,
@@ -479,11 +479,22 @@ impl GoogleOperator {
                 {
                     return Err(filesystem::stale());
                 }
+                let mut properties = snapshot.file.app_properties.clone().unwrap_or_default();
+                properties.insert("drivesyncExecution".into(), r.execution_id.0.clone());
                 self.upload(
                     session,
                     r,
                     fs,
-                    GoogleFileWrite::default(),
+                    GoogleFileWrite {
+                        app_properties: GooglePatch::Set(properties),
+                        properties: snapshot
+                            .file
+                            .properties
+                            .clone()
+                            .map(GooglePatch::Set)
+                            .unwrap_or(GooglePatch::Unchanged),
+                        ..Default::default()
+                    },
                     snapshot.etag.as_deref(),
                     journal,
                 )
@@ -643,7 +654,10 @@ impl GoogleOperator {
                 .await
         }
         .map_err(mutation_error)?;
-        if r.operation.action == OperationAction::Upload {
+        if matches!(
+            r.operation.action,
+            OperationAction::Upload | OperationAction::UpdateRemoteContent
+        ) {
             journal
                 .ok_or_else(filesystem::stale)?
                 .checkpoint(RecoveryCheckpoint::Transfer(TransferReference {
@@ -720,7 +734,10 @@ impl GoogleOperator {
             offset += remaining as u64;
             match progress {
                 GoogleUploadProgress::Complete { file } if offset == total => {
-                    if r.operation.action == OperationAction::Upload {
+                    if matches!(
+                        r.operation.action,
+                        OperationAction::Upload | OperationAction::UpdateRemoteContent
+                    ) {
                         journal.ok_or_else(filesystem::stale)?.checkpoint(
                             RecoveryCheckpoint::Transfer(TransferReference {
                                 session_uri: upload.session_uri.clone(),
@@ -737,7 +754,10 @@ impl GoogleOperator {
                     && range.end_inclusive == offset.checked_sub(1)
                     && offset < total =>
                 {
-                    if r.operation.action == OperationAction::Upload {
+                    if matches!(
+                        r.operation.action,
+                        OperationAction::Upload | OperationAction::UpdateRemoteContent
+                    ) {
                         journal.ok_or_else(filesystem::stale)?.checkpoint(
                             RecoveryCheckpoint::Transfer(TransferReference {
                                 session_uri: upload.session_uri.clone(),

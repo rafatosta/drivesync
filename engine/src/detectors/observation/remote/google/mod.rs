@@ -53,8 +53,9 @@ struct GoogleObserver {
     client: GoogleDriveClient,
     state: Mutex<State>,
 }
-#[derive(Default)]
 struct State {
+    item_limit: usize,
+    quiet_rounds: u8,
     known: BTreeMap<RemoteId, RemoteObservation>,
     cursor: Option<String>,
     capture: Option<Capture>,
@@ -62,6 +63,21 @@ struct State {
     feed_dirty: bool,
     feed_seen: BTreeSet<String>,
     has_snapshot: bool,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            item_limit: MAX_ITEMS,
+            quiet_rounds: 0,
+            has_snapshot: false,
+            known: BTreeMap::new(),
+            capture: None,
+            cursor: None,
+            feed_token: None,
+            feed_dirty: false,
+            feed_seen: BTreeSet::new(),
+        }
+    }
 }
 struct Capture {
     checkpoint: String,
@@ -170,10 +186,11 @@ impl GoogleObserver {
         request: RemoteObserveRequest,
         session: &GoogleSession,
     ) -> Result<RemoteObserveResult, RemoteObserverError> {
-        if request.known_remote_ids.len() > MAX_ITEMS {
+        let mut state = self.state.lock().await;
+        if request.known_remote_ids.len() > state.item_limit {
+            state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
             return Err(RemoteObserverError::IncompleteCoverage);
         }
-        let mut state = self.state.lock().await;
         let budget = request.page_budget.unwrap_or(16).min(64);
         if budget == 0 {
             return Err(RemoteObserverError::IncompleteCoverage);
@@ -184,6 +201,7 @@ impl GoogleObserver {
         ) {
             state.capture = None;
             state.cursor = None;
+            state.quiet_rounds = 0;
             state.feed_token = None;
             state.feed_dirty = false;
             state.feed_seen.clear();
@@ -191,6 +209,7 @@ impl GoogleObserver {
         if state.capture.is_none() && state.cursor.is_none() {
             state.capture = Some(self.begin(session).await?);
         }
+        let item_limit = state.item_limit;
         let mut pages = 0;
         if state.capture.is_none() {
             self.root(session).await?;
@@ -230,7 +249,9 @@ impl GoogleObserver {
                         .new_start_page_token
                         .filter(|s| !s.is_empty())
                         .ok_or(RemoteObserverError::InvalidCursor)?;
-                    if state.feed_dirty {
+                    state.quiet_rounds = state.quiet_rounds.saturating_add(1);
+                    if state.feed_dirty || state.quiet_rounds >= 2 {
+                        state.quiet_rounds = 0;
                         // Account-wide change entries are only invalidations. Recapture the selected
                         // subtree to resolve moves, permissions and folder ancestry consistently.
                         state.capture = Some(self.begin(session).await?);
@@ -353,7 +374,10 @@ impl GoogleObserver {
                 }
                 items.push((id, file));
             }
-            if capture.items.len() + items.len() > MAX_ITEMS {
+            if capture.items.len() + items.len() > item_limit {
+                state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
+                state.capture = None;
+                state.cursor = None;
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
             if let Some(next) = &response.next_page_token {
@@ -405,7 +429,8 @@ impl GoogleObserver {
             .cloned()
             .chain(request.known_remote_ids)
             .collect();
-        if ids.len() > MAX_ITEMS {
+        if ids.len() > state.item_limit {
+            state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
             return Err(RemoteObserverError::IncompleteCoverage);
         }
         let mut observations = Vec::new();

@@ -132,6 +132,8 @@ pub(crate) struct RemoteObservation {
 /// A round is ordered by a source-local generation, never by wall-clock time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ScopeCapture {
+    /// Engine invalidation epoch captured before collection starts.
+    pub collect_epoch: u64,
     /// All configured identities and roots must match the receiving Context.
     pub account_id: AccountId,
     pub provider_id: ProviderId,

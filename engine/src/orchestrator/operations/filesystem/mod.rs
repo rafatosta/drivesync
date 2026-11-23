@@ -185,6 +185,22 @@ impl Filesystem {
             capabilities: Evidence::NotCollected,
         })
     }
+    /// Read-only recovery may accept incidental timestamp changes when the pinned source bytes match.
+    /// This never authorizes continuing a transfer or mutating from stale preconditions.
+    pub(in crate::orchestrator::operations) fn reconcile_source(
+        &self,
+        expected: &LocalState,
+    ) -> Result<LocalState, OperatorError> {
+        let current = self.observe(expected.path.as_deref().ok_or_else(invalid)?)?;
+        if current.identity != expected.identity
+            || current.kind != Evidence::Known(FileKind::Regular)
+            || current.size != expected.size
+            || !matches!((&current.checksum,&expected.checksum),(Evidence::Known(a),Evidence::Known(b)) if a==b && a.algorithm=="sha256" && !a.value.is_empty())
+        {
+            return Err(stale());
+        }
+        Ok(current)
+    }
     pub fn check_absent(&self, path: &StdPath) -> Result<(), OperatorError> {
         let entry = self.entry(path)?;
         match std::fs::symlink_metadata(entry.anchored()) {
@@ -277,6 +293,21 @@ impl Filesystem {
     ) -> Result<LocalState, OperatorError> {
         self.install_with_trash(request, bytes, trash::prepare, journal)
     }
+    #[cfg(test)]
+    pub(in crate::orchestrator::operations) fn install_with_test_trash(
+        &self,
+        request: &ExecuteOperationRequest,
+        bytes: &mut File,
+        data: &StdPath,
+        journal: &dyn super::journal::ExecutionJournal,
+    ) -> Result<LocalState, OperatorError> {
+        self.install_with_trash(
+            request,
+            bytes,
+            |source, original| trash::prepare_to(source, original, data),
+            Some(journal),
+        )
+    }
     fn install_with_trash(
         &self,
         request: &ExecuteOperationRequest,
@@ -308,7 +339,11 @@ impl Filesystem {
             .flush()
             .and_then(|_| output.sync_all())
             .map_err(|e| error(e).uncertain())?;
-        if request.operation.action == OperationAction::Download {
+        if matches!(
+            request.operation.action,
+            OperationAction::Download | OperationAction::UpdateLocalContent
+        ) && journal.is_some()
+        {
             let journal = journal.ok_or_else(stale)?;
             self.mark_stage(&output, request, &stage_path, journal)?;
         }

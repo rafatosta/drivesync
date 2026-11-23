@@ -35,7 +35,8 @@ The Google specialist supports upload, download, content replacement, metadata r
 trash, folder creation, and inert Google Workspace desktop links. Local directory creation,
 rename, move, replacement, and trash are performed by `operations::filesystem`, not a
 filesystem Provider. Metadata mutations and remote replacements require a real strong ETag
-and the analyzed remote version. No unconditional fallback or automatic retry is used.
+and the analyzed remote version. No unconditional fallback or transport-level mutation retry is used. Fresh observations may
+authorize a new plan after a known precondition failure.
 Remote ancestor walks are bounded and reject cycles, ambiguous parents, and scope escapes.
 Destination queries reject incomplete searches and unresolved pagination. Drive permits
 concurrent duplicate names; a preflight collision query is not a server-side uniqueness lock.
@@ -98,3 +99,8 @@ explicit initial-association start method; normal dashboard startup does not gra
 Automated tests use temporary directories, synthetic authorization and loopback HTTP. Real
 Engine validation in a Devel Flatpak build sandbox is recorded separately in the Stage 2
 report; neither category establishes installed-GUI/package acceptance.
+
+[Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) adds verified bound-slot identity refresh for editor
+replacement, update-effect recovery, persisted conditional-upload references and canonical
+private/public property handling. Unknown incomplete replacements remain blocked. Cross-mount
+trash failure preserves the previous bytes in private stages; no destructive fallback exists.

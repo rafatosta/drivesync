@@ -12,3 +12,4 @@
 - [Functional correction — Stage 3 crash recovery](FUNCTIONAL_CORRECTION_STAGE_3.md)
 - [Functional correction — Stage 4 initial downloads](FUNCTIONAL_CORRECTION_STAGE_4.md)
 - [Functional correction — Stage 5 initial uploads and continuation](FUNCTIONAL_CORRECTION_STAGE_5.md)
+- [Functional correction — Stage 6 continuous synchronization](FUNCTIONAL_CORRECTION_STAGE_6.md)

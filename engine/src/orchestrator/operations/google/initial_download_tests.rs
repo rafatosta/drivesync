@@ -117,6 +117,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
     ));
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let mut worker = Orchestrator {
+        capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         local_refresh: Arc::new(tokio::sync::Notify::new()),
         remote_refresh: Arc::new(tokio::sync::Notify::new()),
         config: worker_config,
@@ -126,10 +127,13 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
         recovery_failed: false,
+        refresh_after: None,
     };
     let scanner = Scanner::open(config.local_root.clone(), config.sync_root_id.clone()).unwrap();
+    let epoch = worker.capture_epoch.clone();
     let capture = |generation, entries| {
         Observation::Capture(Box::new(ScopeCapture {
+            collect_epoch: epoch.load(std::sync::atomic::Ordering::SeqCst),
             account_id: config.account_id.clone(),
             provider_id: config.provider_id.clone(),
             sync_root_id: config.sync_root_id.clone(),
@@ -147,11 +151,18 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
     };
     for pass in 0..2 {
         let context = Context::open(context_config()).unwrap();
+        worker.refresh_after = None;
         context
             .consolidate(capture(1, CaptureEntries::Remote(remote.clone())))
             .unwrap();
-        // No new remote capture or external filesystem mutation occurs between levels.
+        // Fresh reads of the unchanged remote tree require no external mutation between levels.
         for generation in 1..=6 {
+            context
+                .consolidate(capture(
+                    generation + 1,
+                    CaptureEntries::Remote(remote.clone()),
+                ))
+                .unwrap();
             let local = scanner.scan(&CancellationToken::new()).unwrap();
             let files = context
                 .consolidate(capture(

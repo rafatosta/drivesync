@@ -10,7 +10,9 @@ impl GoogleOperator {
         session: &GoogleSession,
     ) -> RecoveryAssessment {
         match record.command.action {
-            OperationAction::CreateLocalDirectory | OperationAction::Download => {
+            OperationAction::CreateLocalDirectory
+            | OperationAction::Download
+            | OperationAction::UpdateLocalContent => {
                 let Some(id) = record.command.remote_id.as_ref() else {
                     return RecoveryAssessment::unknown(RecoveryIssue::MissingCommand);
                 };
@@ -28,16 +30,31 @@ impl GoogleOperator {
                     }
                 };
                 if !matches!(remote.version, Evidence::Known(_))
-                    || remote.version != record.remote.version
+                    || (record.command.action != OperationAction::UpdateLocalContent
+                        && remote.version != record.remote.version)
+                    || (record.command.action == OperationAction::UpdateLocalContent
+                        && !remote.unchanged_binary(&record.remote))
                     || remote.name != record.remote.name
                     || remote.parents != record.remote.parents
                     || remote.trashed != Evidence::Known(false)
-                    || (record.command.action == OperationAction::Download
-                        && (remote.checksum != record.remote.checksum
-                            || remote.size != record.remote.size))
+                    || (matches!(
+                        record.command.action,
+                        OperationAction::Download | OperationAction::UpdateLocalContent
+                    ) && (remote.checksum != record.remote.checksum
+                        || remote.size != record.remote.size))
                     || remote.mime_type != record.remote.mime_type
                 {
                     return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
+                }
+                if record.command.action == OperationAction::UpdateLocalContent
+                    && record.stage_identity.is_none()
+                    && fs.check(&record.local).is_ok()
+                {
+                    return RecoveryAssessment {
+                        outcome: ExecutionEffect::NotApplied,
+                        issue: Some(RecoveryIssue::NotDispatched),
+                        effect: None,
+                    };
                 }
                 match fs.published(record) {
                     Ok(None) => RecoveryAssessment {
@@ -85,11 +102,24 @@ impl GoogleOperator {
                     _ => RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged),
                 }
             }
-            OperationAction::CreateRemoteDirectory | OperationAction::Upload => {
-                let Some(id) = record.reserved_remote_id.as_ref() else {
+            OperationAction::CreateRemoteDirectory
+            | OperationAction::Upload
+            | OperationAction::UpdateRemoteContent => {
+                let Some(id) = record
+                    .reserved_remote_id
+                    .as_ref()
+                    .or(record.command.remote_id.as_ref())
+                else {
                     return RecoveryAssessment::unknown(RecoveryIssue::MissingCommand);
                 };
-                let local = match fs.check(&record.local) {
+                let source = || {
+                    if record.command.action == OperationAction::UpdateRemoteContent {
+                        fs.reconcile_source(&record.local)
+                    } else {
+                        fs.check(&record.local)
+                    }
+                };
+                let local = match source() {
                     Ok(local) => local,
                     Err(_) => return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged),
                 };
@@ -102,12 +132,14 @@ impl GoogleOperator {
                         .and_then(|values| values.get("drivesyncExecution"));
                     if marker == Some(&record.execution_id.0)
                         && file.name == record.command.name
-                        && file.parents.as_ref().map(|parents| {
-                            parents
-                                .iter()
-                                .map(|id| RemoteId(id.0.clone()))
-                                .collect::<Vec<_>>()
-                        }) == record.command.parent_id.as_ref().map(|id| vec![id.clone()])
+                        && remote.parents
+                            == if record.command.action == OperationAction::UpdateRemoteContent {
+                                record.remote.parents.clone()
+                            } else {
+                                Evidence::Known(record.command.parent_id.iter().cloned().collect())
+                            }
+                        && (record.command.action != OperationAction::UpdateRemoteContent
+                            || matches!((&remote.version,&record.remote.version),(Evidence::Known(after),Evidence::Known(before)) if after > before))
                         && matches!(remote.version,Evidence::Known(version) if version > 0)
                         && crate::orchestrator::evidence::equivalent(&local, &remote)
                         && self
@@ -117,7 +149,7 @@ impl GoogleOperator {
                     {
                         if let Ok(after) = self.snapshot(session, id).await {
                             if normalize(&after.file).version == remote.version {
-                                let local = match fs.check(&record.local) {
+                                let local = match source() {
                                     Ok(local) => local,
                                     Err(_) => {
                                         return RecoveryAssessment::unknown(
@@ -138,6 +170,12 @@ impl GoogleOperator {
                             }
                         }
                     }
+                }
+                if record.command.action == OperationAction::UpdateRemoteContent
+                    && record.transfer.is_some()
+                {
+                    // Keep the conditional replacement session private; uncertain updates never resume without a fresh write policy.
+                    return RecoveryAssessment::unknown(RecoveryIssue::TransferIncomplete);
                 }
                 if let Some(transfer) = &record.transfer {
                     if transfer.total_bytes

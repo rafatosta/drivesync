@@ -193,6 +193,24 @@ pub(crate) struct RemoteState {
     /// Remote operation capabilities.
     pub capabilities: Evidence<RemoteCapabilities>,
 }
+impl RemoteState {
+    /// Current binary content still matches the baseline; later metadata-only versions are allowed.
+    /// This is evidence for an already bound slot, never permission to associate new items.
+    pub(crate) fn unchanged_binary(&self, previous: &Self) -> bool {
+        self.id.is_some()
+            && self.id == previous.id
+            && self.state == FileState::Present
+            && previous.state == FileState::Present
+            && self.trashed == Evidence::Known(false)
+            && self.name == previous.name
+            && self.parents == previous.parents
+            && self.mime_type == previous.mime_type
+            && matches!(&self.mime_type,Evidence::Known(mime) if !mime.starts_with("application/vnd.google-apps."))
+            && matches!((&self.version,&previous.version),(Evidence::Known(now),Evidence::Known(before)) if now >= before)
+            && matches!((&self.size,&previous.size),(Evidence::Known(now),Evidence::Known(before)) if now == before)
+            && matches!((&self.checksum,&previous.checksum),(Evidence::Known(now),Evidence::Known(before)) if now == before && now.algorithm == "sha256" && !now.value.is_empty())
+    }
+}
 
 /// Physical representation of a local replica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

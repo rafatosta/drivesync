@@ -155,6 +155,9 @@ impl Context {
                 initial_association_authorized: self.config.initial_association_authorized,
                 association_candidates: Vec::new(),
                 observations: Observations {
+                    local_epoch: None,
+                    remote_epoch: None,
+                    remote_generation: None,
                     events: Vec::new(),
                     latest_origin: ObservationOrigin::Remote,
                     local_coverage: ObservationCoverage::Unavailable,
@@ -193,15 +196,19 @@ impl Context {
         if let Some(capture) = &captures.local {
             file.observations.observed_at = capture.observed_at;
             file.observations.local_generation = Some(capture.generation);
+            file.observations.local_epoch = Some(capture.collect_epoch);
             file.observations.local_coverage = capture.coverage;
             file.environment.local_root_available =
                 capture.coverage != ObservationCoverage::Unavailable;
         }
         if let Some(capture) = &captures.remote {
             file.observations.remote_coverage = capture.coverage;
+            file.observations.remote_generation = Some(capture.generation);
+            file.observations.remote_epoch = Some(capture.collect_epoch);
             file.environment.remote_available =
                 capture.coverage != ObservationCoverage::Unavailable;
         }
+        file.environment.local_replacement = Evidence::NotCollected;
         if file.identity.item_id.is_some() {
             if let Some(capture) = &captures.remote {
                 file.remote = file
@@ -230,6 +237,29 @@ impl Context {
                         if matches!((&entry.identity, &file.identity.local_identity), (Evidence::Known(a), Evidence::Known(b)) if a == b)
                         {
                             file.local = local_state((*entry).clone());
+                        } else if local_complete
+                            && remote_complete
+                            && file.baseline.state
+                                == crate::inventory::models::BaselineState::Synced
+                            && entry.kind == Evidence::Known(FileKind::Regular)
+                            && file.baseline.local.as_ref().is_some_and(|old| {
+                                old.kind == entry.kind && old.path.as_ref() == Some(&path)
+                            })
+                            && file.baseline.remote.as_ref().is_some_and(|old| {
+                                old.id == file.identity.remote_id
+                                    && file.remote.unchanged_binary(old)
+                            })
+                            && !identity_key(&file.identity.local_identity)
+                                .is_some_and(|key| view.local_identities.contains(&key))
+                            && local
+                                .values()
+                                .filter(|e| e.identity == entry.identity)
+                                .count()
+                                == 1
+                        {
+                            // The persisted synchronized slot binds this edit; inode reuse alone never does.
+                            file.local = local_state((*entry).clone());
+                            file.environment.local_replacement = Evidence::Known(true);
                         }
                     } else if local_complete
                         && !identity_key(&file.identity.local_identity)

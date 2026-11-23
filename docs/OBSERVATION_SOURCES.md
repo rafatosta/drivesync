@@ -147,3 +147,9 @@ remote children without requiring an external filesystem edit or additional remo
 [Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) also wakes remote observation after verified remote
 creation. Complete collision-free captures prove absence for registered NeverSynced local items
 without a remote ID; partial/unavailable captures cannot authorize a create or upload.
+
+[Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) carries pre-collection invalidation epochs. Own effects
+force current remote recapture, and quiet Changes rounds periodically recapture as well. Cache
+overflow invalidates counterparts and soft item limits grow on retry; hard limits remain explicit
+coverage blockers. Synced-slot replacements require absent old inodes and unchanged remote binary
+evidence, followed by independent Operations validation.

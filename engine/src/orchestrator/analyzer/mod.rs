@@ -59,6 +59,19 @@ pub(crate) fn analyze(file: &File) -> Decision {
 
     let local_changed = side_changed(&changeset, true);
     let remote_changed = side_changed(&changeset, false);
+    if !local_changed
+        && !remote_changed
+        && file.environment.local_replacement == Evidence::Known(true)
+    {
+        return metadata_plan(
+            file,
+            &file.local,
+            &file.remote,
+            OperationAction::ConfirmBaseline,
+            validation,
+            changeset,
+        );
+    }
     if !local_changed && !remote_changed {
         return decision(
             DecisionStatus::NoOp,
@@ -260,6 +273,15 @@ fn validate(file: &File) -> Validation {
         );
     }
 
+    if matches!((&file.remote.version,file.baseline.remote.as_ref().map(|r|&r.version)),(Evidence::Known(current),Some(Evidence::Known(baseline))) if current < baseline)
+    {
+        push_check(
+            &mut checks,
+            ValidationCheckStatus::Defer,
+            "observation.remote_regression",
+            "Remote evidence predates the confirmed baseline; collect again before planning.",
+        );
+    }
     if let Some(conflict) = &file.prior_conflict {
         if !conflict.resolved {
             push_check(
@@ -305,7 +327,7 @@ fn validate(file: &File) -> Validation {
     if let (Evidence::Known(identity), Evidence::Known(observed)) =
         (&file.identity.local_identity, &file.local.identity)
     {
-        if identity != observed {
+        if identity != observed && file.environment.local_replacement != Evidence::Known(true) {
             push_check(
                 &mut checks,
                 ValidationCheckStatus::Conflict,
@@ -315,7 +337,7 @@ fn validate(file: &File) -> Validation {
         }
     }
     if let (Some(identity), Some(observed)) = (&file.identity.remote_id, &file.remote.id) {
-        if identity != observed {
+        if identity != observed && file.environment.local_replacement != Evidence::Known(true) {
             push_check(
                 &mut checks,
                 ValidationCheckStatus::Conflict,

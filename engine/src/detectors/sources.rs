@@ -123,7 +123,11 @@ async fn deliver(
         }
         let files = match detectors.clone().contextualize_batch(observation).await {
             Ok(file) => file,
-            Err(_) => return false,
+            Err(_) => {
+                health(handle, Source::Local, false, true, cancel).await;
+                health(handle, Source::Remote, false, true, cancel).await;
+                return true;
+            }
         };
         for file in files {
             tokio::select! {biased;_=cancelled(cancel)=>return false,result=handle.submit(file)=>if result.is_err(){return false;}}
@@ -144,6 +148,7 @@ async fn local(
     let mut initial = true;
     let mut generation = 0;
     while !cancel.is_cancelled() && !handle.is_finished() {
+        let epoch = handle.collection_epoch();
         if observer.is_none() {
             let path = config.roots.local_root.clone();
             let root_id = config.sync_root_id.clone();
@@ -162,6 +167,7 @@ async fn local(
                 vec![capture(
                     &config,
                     generation,
+                    epoch,
                     ObservationCoverage::Unavailable,
                     CaptureEntries::Local(Vec::new()),
                 )],
@@ -203,6 +209,7 @@ async fn local(
                     vec![capture(
                         &config,
                         generation,
+                        epoch,
                         coverage,
                         CaptureEntries::Local(observations),
                     )],
@@ -216,6 +223,8 @@ async fn local(
             }
             Ok(Err((ScanError::Cancelled, _))) => break,
             Ok(Err((_, _))) => {
+                observer = None;
+                initial = true;
                 health(&handle, Source::Local, false, true, &cancel).await;
                 if !deliver(
                     &detectors,
@@ -223,6 +232,7 @@ async fn local(
                     vec![capture(
                         &config,
                         generation,
+                        epoch,
                         ObservationCoverage::Unavailable,
                         CaptureEntries::Local(Vec::new()),
                     )],
@@ -278,8 +288,14 @@ async fn remote(
     health(&handle, Source::Remote, false, true, &cancel).await;
     let mut mode = RemoteObserveMode::Initial;
     let mut invalidated = false;
+    let mut last_epoch = None;
     let mut generation = 0;
     while !cancel.is_cancelled() && !handle.is_finished() {
+        let epoch = handle.collection_epoch();
+        if last_epoch != Some(epoch) {
+            mode = RemoteObserveMode::Recovery;
+            last_epoch = Some(epoch);
+        }
         let round = async {
             let scoped = detectors.clone();
             let known_remote_ids = tokio::task::spawn_blocking(move || scoped.known_remote_ids())
@@ -331,6 +347,7 @@ async fn remote(
                     vec![capture(
                         &config,
                         generation,
+                        epoch,
                         if result.has_more && result.coverage == ObservationCoverage::Complete {
                             ObservationCoverage::Partial
                         } else {
@@ -362,6 +379,7 @@ async fn remote(
                         vec![capture(
                             &config,
                             generation,
+                            epoch,
                             ObservationCoverage::Unavailable,
                             CaptureEntries::Remote(Vec::new()),
                         )],
@@ -392,6 +410,7 @@ async fn remote(
 fn capture(
     config: &OrchestratorConfig,
     generation: u64,
+    collect_epoch: u64,
     coverage: ObservationCoverage,
     entries: CaptureEntries,
 ) -> Observation {
@@ -402,6 +421,7 @@ fn capture(
         local_root: config.roots.local_root.clone(),
         remote_root_id: config.roots.remote_root_id.clone(),
         generation,
+        collect_epoch,
         coverage,
         observed_at: super::observation::scanner::now(),
         entries,

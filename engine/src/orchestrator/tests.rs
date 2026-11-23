@@ -138,6 +138,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
     let (stop, rx) = watch::channel(false);
     (
         Orchestrator {
+            capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             local_refresh: Arc::new(Notify::new()),
             remote_refresh: Arc::new(Notify::new()),
             config,
@@ -147,6 +148,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             blockers: BTreeMap::new(),
             sources: BTreeMap::new(),
             recovery_failed: false,
+            refresh_after: None,
         },
         stop,
     )
@@ -524,4 +526,74 @@ async fn unavailable_recovery_inventory_blocks_dispatch_before_any_analysis_plan
     .await
     .unwrap();
     assert_eq!(handle.stop().await.state, SynchronizationState::Stopped);
+}
+
+#[tokio::test]
+async fn committed_effects_require_new_reads_of_both_sides_before_reusing_input() {
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut file = changed_file();
+    file.observations.local_generation = Some(10);
+    file.observations.remote_generation = Some(20);
+    file.observations.local_epoch = Some(0);
+    file.observations.remote_epoch = Some(0);
+    assert!(!worker.process(file.clone()).await.results.is_empty());
+    let count = calls.requests.lock().unwrap().len();
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::Defer
+    );
+    file.observations.local_generation = Some(11);
+    file.observations.local_epoch = Some(
+        worker
+            .capture_epoch
+            .load(std::sync::atomic::Ordering::SeqCst),
+    );
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::Defer
+    );
+    assert_eq!(calls.requests.lock().unwrap().len(), count);
+    file.observations.remote_generation = Some(21);
+    file.observations.remote_epoch = file.observations.local_epoch;
+    assert!(!worker.process(file).await.results.is_empty());
+}
+
+#[tokio::test]
+async fn source_recovery_reopens_admission_and_accounts_keep_independent_barriers() {
+    let (operator, _) = mock(OperationResultStatus::Succeeded);
+    let (mut a, _stop) = direct(operator);
+    a.recovery_failed = true;
+    a.recover_pending().await;
+    assert!(!a.recovery_failed);
+    let mut first = changed_file();
+    first.observations.local_generation = Some(1);
+    first.observations.remote_generation = Some(1);
+    first.observations.local_epoch = Some(0);
+    first.observations.remote_epoch = Some(0);
+    assert!(!a.process(first.clone()).await.results.is_empty());
+    let (operator, _) = mock(OperationResultStatus::Succeeded);
+    let (mut b, _stop_b) = direct(operator);
+    b.config.roots.account_id = crate::models::AccountId("account-b".into());
+    first.identity.account_id = b.config.roots.account_id.clone();
+    assert!(!b.process(first).await.results.is_empty());
+    assert!(a.refresh_after.is_some());
+    assert!(b.refresh_after.is_some());
+}
+
+#[tokio::test]
+async fn unchanged_eligible_input_is_processed_when_source_availability_returns() {
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    worker.sources.insert(Source::Local, None);
+    worker.sources.insert(
+        Source::Remote,
+        Some(issue(SynchronizationIssueKind::Deferred, true)),
+    );
+    let file = changed_file();
+    assert!(worker.process(file.clone()).await.results.is_empty());
+    assert!(calls.requests.lock().unwrap().is_empty());
+    worker.sources.insert(Source::Remote, None);
+    assert!(!worker.process(file).await.results.is_empty());
+    assert!(!calls.requests.lock().unwrap().is_empty());
 }

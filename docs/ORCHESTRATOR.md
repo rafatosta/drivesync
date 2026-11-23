@@ -104,3 +104,8 @@ reopening the same scope without duplicate operations or baseline rewrites.
 remote creation wakes the remote producer; the resulting current capture resolves waiting
 children against confirmed parent IDs. Startup recovery can continue a validated incomplete
 upload session under exclusive account execution ownership and optimistic checkpoints.
+
+[Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) invalidates inputs by an epoch sampled before source
+collection, wakes both producers after effects or stale preconditions, and rechecks pending
+recovery when the remote source returns. Captures started before an effect cannot release the
+post-effect barrier; older-than-baseline remote versions defer. NoOp still performs no write.

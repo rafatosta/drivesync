@@ -256,6 +256,80 @@ impl PersistingOperator {
         result.completed_at = Some(now());
         result
     }
+    /// Refresh only an already synchronized regular-file slot after a complete, unambiguous rescan.
+    fn validate_replacement(
+        &self,
+        r: &ExecuteOperationRequest,
+        stored: &InventorySnapshot,
+    ) -> Result<(), OperatorError> {
+        use crate::detectors::observation::{
+            remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
+        };
+        use std::os::unix::fs::MetadataExt;
+        if !matches!(
+            r.operation.action,
+            OperationAction::UpdateRemoteContent | OperationAction::ConfirmBaseline
+        ) || stored.baseline.state != BaselineState::Synced
+            || stored.local_path != r.local.path
+            || !stored.baseline.local.as_ref().is_some_and(|old| {
+                old.path == r.local.path && old.kind == Evidence::Known(FileKind::Regular)
+            })
+            || !stored
+                .baseline
+                .remote
+                .as_ref()
+                .is_some_and(|old| r.remote.unchanged_binary(old))
+            || r.local.kind != Evidence::Known(FileKind::Regular)
+        {
+            return Err(filesystem::stale());
+        }
+        let path = r.local.path.as_deref().ok_or_else(filesystem::stale)?;
+        if self
+            .filesystem
+            .read(path)?
+            .metadata()
+            .map_err(filesystem::error)?
+            .nlink()
+            != 1
+        {
+            return Err(filesystem::stale());
+        }
+        self.filesystem.check(&r.local)?;
+        let mut scanner = Scanner::open(
+            self.config.local_root.clone(),
+            self.config.sync_root_id.clone(),
+        )
+        .map_err(|_| filesystem::stale())?;
+        let scan = loop {
+            let scan = scanner
+                .scan(&CancellationToken::new())
+                .map_err(|_| filesystem::stale())?;
+            if scan.coverage == ObservationCoverage::Complete {
+                break scan;
+            }
+            if !scan.issues.iter().any(|i| {
+                i.kind == crate::detectors::observation::scanner::ScanIssueKind::LimitReached
+            }) || !scanner.expand_limit()
+            {
+                return Err(filesystem::stale());
+            }
+        };
+        if scan.coverage != ObservationCoverage::Complete
+            || scan
+                .entries
+                .values()
+                .any(|e| e.identity == stored.identity.local_identity)
+            || scan
+                .entries
+                .values()
+                .filter(|e| e.identity == r.local.identity)
+                .count()
+                != 1
+        {
+            return Err(filesystem::stale());
+        }
+        Ok(())
+    }
     fn validate(&self, r: &ExecuteOperationRequest) -> Result<(), OperatorError> {
         let op = &r.operation;
         self.filesystem.validate_root()?;
@@ -318,6 +392,11 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
+                if matches!(r.local.identity, Evidence::Known(_))
+                    && snapshot.identity.local_identity != r.local.identity
+                {
+                    self.validate_replacement(r, &snapshot)?;
+                }
                 if (snapshot.identity.remote_id != r.identity.remote_id
                     && !(op.action == OperationAction::Adopt
                         && snapshot.identity.remote_id.is_none()))

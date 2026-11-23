@@ -68,6 +68,10 @@ fn cancellation_limits_and_replaced_roots_never_report_complete() {
     let scan = scanner.scan(&CancellationToken::new()).unwrap();
     assert_eq!(scan.coverage, ObservationCoverage::Partial);
     assert_eq!(scan.issues[0].kind, ScanIssueKind::LimitReached);
+    scanner.expand_limit();
+    let retry = scanner.scan(&CancellationToken::new()).unwrap();
+    assert_eq!(retry.coverage, ObservationCoverage::Complete);
+    assert_eq!(retry.entries.len(), 2);
     let token = CancellationToken::new();
     token.cancel();
     assert!(matches!(scanner.scan(&token), Err(ScanError::Cancelled)));

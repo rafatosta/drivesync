@@ -31,7 +31,9 @@ pub(super) fn record(
         reserved_remote_id,
         stage_path: if matches!(
             r.operation.action,
-            OperationAction::CreateLocalDirectory | OperationAction::Download
+            OperationAction::CreateLocalDirectory
+                | OperationAction::Download
+                | OperationAction::UpdateLocalContent
         ) {
             Some(Filesystem::stage_path(r)?)
         } else {
@@ -102,6 +104,8 @@ impl PersistingOperator {
                 | OperationAction::Download
                 | OperationAction::CreateRemoteDirectory
                 | OperationAction::Upload
+                | OperationAction::UpdateRemoteContent
+                | OperationAction::UpdateLocalContent
         ) {
             return Err(RecoveryIssue::UnsupportedAction);
         }

@@ -38,6 +38,7 @@ pub(crate) struct OrchestratorHandle {
     stop: watch::Sender<bool>,
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
+    capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
 }
@@ -47,10 +48,15 @@ impl Drop for OrchestratorHandle {
     }
 }
 impl OrchestratorHandle {
-    /// A confirmed parent publication requests a fresh local round for waiting children.
+    /// Sample before source I/O; every effect invalidates captures that started in an older epoch.
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.capture_epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Await a coalesced request to collect current local evidence.
     pub(crate) async fn local_refresh(&self) {
         self.local_refresh.notified().await;
     }
+    /// Await a coalesced request to collect current remote evidence.
     pub(crate) async fn remote_refresh(&self) {
         self.remote_refresh.notified().await;
     }
@@ -147,9 +153,11 @@ fn start(
     let (stop, stop_rx) = watch::channel(false);
     let (finished, finished_rx) = watch::channel(false);
     let (files, files_rx) = mpsc::channel(capacity);
+    let capture_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let local_refresh = Arc::new(tokio::sync::Notify::new());
     let remote_refresh = Arc::new(tokio::sync::Notify::new());
     let mut worker = Orchestrator {
+        capture_epoch: capture_epoch.clone(),
         local_refresh: local_refresh.clone(),
         remote_refresh: remote_refresh.clone(),
         config: config.clone(),
@@ -159,6 +167,7 @@ fn start(
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
         recovery_failed: false,
+        refresh_after: None,
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -180,6 +189,7 @@ fn start(
         stop,
         finished: finished_rx,
         status: status_rx,
+        capture_epoch,
         local_refresh,
         remote_refresh,
     }
@@ -194,6 +204,7 @@ enum Command {
     Source(Source, bool, Option<SynchronizationIssue>),
 }
 struct Orchestrator {
+    capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
     config: OrchestratorConfig,
@@ -203,36 +214,13 @@ struct Orchestrator {
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
     recovery_failed: bool,
+    refresh_after: Option<u64>,
 }
 impl Orchestrator {
     async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
         {
             let _lease = ownership.clone().read_owned().await;
-            match self.operator.recover().await {
-                Ok(results) => {
-                    let changed = !results.is_empty();
-                    for result in results {
-                        if result.assessment.outcome == operations::models::ExecutionEffect::Unknown
-                            || !result
-                                .inventory_write
-                                .as_ref()
-                                .is_some_and(|receipt| receipt.status == WriteStatus::Written)
-                        {
-                            self.block(
-                                result.item,
-                                issue(SynchronizationIssueKind::RecoveryRequired, false),
-                            );
-                        }
-                    }
-                    if changed {
-                        self.settle();
-                    }
-                }
-                Err(_) => {
-                    self.recovery_failed = true;
-                    self.settle();
-                }
-            }
+            self.recover_pending().await;
         }
         loop {
             let file = tokio::select! {biased;
@@ -255,6 +243,16 @@ impl Orchestrator {
                     self.process(*file).await;
                 }
                 Command::Source(source, scanning, issue) => {
+                    if source == Source::Remote
+                        && issue.is_none()
+                        && (self.recovery_failed
+                            || self
+                                .blockers
+                                .values()
+                                .any(|(_, i)| i.kind == SynchronizationIssueKind::RecoveryRequired))
+                    {
+                        self.recover_pending().await;
+                    }
                     self.sources.insert(source, issue);
                     if scanning
                         && !self.recovery_failed
@@ -285,6 +283,46 @@ impl Orchestrator {
             None,
             None,
         );
+    }
+    /// Retry observation-based recovery when the remote source returns; no blind command replay.
+    async fn recover_pending(&mut self) {
+        match self.operator.recover().await {
+            Ok(results) => {
+                let changed = self.recovery_failed || !results.is_empty();
+                self.recovery_failed = false;
+                for result in results {
+                    let confirmed = result.assessment.outcome
+                        != operations::models::ExecutionEffect::Unknown
+                        && result
+                            .inventory_write
+                            .as_ref()
+                            .is_some_and(|r| r.status == WriteStatus::Written);
+                    if confirmed {
+                        self.blockers
+                            .retain(|_, (item, _)| !same_item(item, &result.item));
+                        self.refresh_after = Some(
+                            self.capture_epoch
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                + 1,
+                        );
+                        self.local_refresh.notify_one();
+                        self.remote_refresh.notify_one();
+                    } else {
+                        self.block(
+                            result.item,
+                            issue(SynchronizationIssueKind::RecoveryRequired, false),
+                        );
+                    }
+                }
+                if changed {
+                    self.settle();
+                }
+            }
+            Err(_) => {
+                self.recovery_failed = true;
+                self.settle();
+            }
+        }
     }
     fn publish(
         &self,
@@ -413,6 +451,17 @@ impl Orchestrator {
             outcome.decision = DecisionStatus::Defer;
             self.settle();
             return outcome;
+        }
+        if let Some(epoch) = self.refresh_after {
+            if file.observations.local_epoch.is_none_or(|e| e < epoch)
+                || file.observations.remote_epoch.is_none_or(|e| e < epoch)
+            {
+                outcome.decision = DecisionStatus::Defer;
+                self.block(item, issue(SynchronizationIssueKind::Deferred, true));
+                self.settle();
+                return outcome;
+            }
+            self.refresh_after = None;
         }
         file.initial_association_authorized &= self.config.initial_association_authorized;
         let decision = analyzer::analyze(&file);
@@ -581,13 +630,17 @@ impl Orchestrator {
                     .as_ref()
                     .and_then(|write| write.revision);
                 completed.push(step);
-                if expected_action == OperationAction::CreateLocalDirectory {
+                if expected_action != OperationAction::RegisterIdentity {
+                    let epoch = self
+                        .capture_epoch
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1;
+                    if file.observations.local_epoch.is_some()
+                        && file.observations.remote_epoch.is_some()
+                    {
+                        self.refresh_after = Some(epoch);
+                    }
                     self.local_refresh.notify_one();
-                }
-                if matches!(
-                    expected_action,
-                    OperationAction::CreateRemoteDirectory | OperationAction::Upload
-                ) {
                     self.remote_refresh.notify_one();
                 }
             } else {
@@ -599,6 +652,17 @@ impl Orchestrator {
                     OperationResultStatus::Succeeded => SynchronizationIssueKind::RecoveryRequired,
                     OperationResultStatus::Failed => SynchronizationIssueKind::OperationFailed,
                 };
+                let epoch = self
+                    .capture_epoch
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                if file.observations.local_epoch.is_some()
+                    && file.observations.remote_epoch.is_some()
+                {
+                    self.refresh_after = Some(epoch);
+                }
+                self.local_refresh.notify_one();
+                self.remote_refresh.notify_one();
                 self.block(
                     item.clone(),
                     issue(

@@ -84,6 +84,9 @@ impl Context {
                         LocalObservationSource::Watcher => ObservationOrigin::Local,
                     };
                     let observations = Observations {
+                        local_epoch: None,
+                        remote_epoch: None,
+                        remote_generation: None,
                         events: data.event.iter().cloned().collect(),
                         latest_origin: origin,
                         local_coverage: data.coverage,
@@ -108,6 +111,9 @@ impl Context {
                 Observation::Remote(data) => {
                     self.validate_remote_scope(&data)?;
                     let observations = Observations {
+                        local_epoch: None,
+                        remote_epoch: None,
+                        remote_generation: None,
                         events: data.event.iter().cloned().collect(),
                         latest_origin: ObservationOrigin::Remote,
                         local_coverage: ObservationCoverage::Unavailable,
@@ -178,9 +184,6 @@ impl Context {
                 (InventoryLookupStatus::Found, Some(snapshot)) => {
                     let mut identity = snapshot.identity;
                     identity.remote_id = remote_id.or(identity.remote_id);
-                    if let Evidence::Known(observed) = lookup_local_identity {
-                        identity.local_identity = Evidence::Known(observed);
-                    }
                     (
                         identity,
                         snapshot.baseline,

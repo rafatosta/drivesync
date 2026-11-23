@@ -48,6 +48,7 @@ impl ContextConfig {
             destination_remote_parent_id: Evidence::NotCollected,
             destination_remote_matches: Evidence::NotCollected,
             destination_local_occupied: Evidence::NotCollected,
+            local_replacement: Evidence::NotCollected,
         }
     }
 }
@@ -55,6 +56,8 @@ impl ContextConfig {
 /// Current execution environment facts; unknown destinations remain explicit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Environment {
+    /// A new regular inode occupies the already synchronized path; the prior inode is absent.
+    pub local_replacement: Evidence<bool>,
     /// Configured absolute local synchronization root.
     pub local_root: PathRoot,
     /// Configured remote root identity.
@@ -76,6 +79,12 @@ pub(crate) struct Environment {
 /// Provenance and coverage retained for the most recent observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Observations {
+    /// Epoch sampled before the local capture started, never at delivery time.
+    pub local_epoch: Option<u64>,
+    /// Epoch sampled before the remote capture started, never at delivery time.
+    pub remote_epoch: Option<u64>,
+    /// Remote capture sequence, independent of provider cursors and wall-clock time.
+    pub remote_generation: Option<u64>,
     /// Normalized events explicitly supplied by observation sources.
     pub events: Vec<ObservationEvent>,
     /// Source of the observation most recently consolidated.

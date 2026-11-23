@@ -151,6 +151,19 @@ pub(super) fn conditional_body(request: &GoogleFileWrite) -> GoogleResult<Vec<u8
             "trashed" => {
                 out.insert("labels".into(), serde_json::json!({"trashed": value}));
             }
+            "appProperties" | "properties" if value.is_object() => {
+                let visibility = if key == "appProperties" {
+                    "PRIVATE"
+                } else {
+                    "PUBLIC"
+                };
+                let properties: Vec<_> = value.as_object().unwrap().iter().map(|(key,value)| serde_json::json!({"key":key,"value":value,"visibility":visibility})).collect();
+                out.entry("properties")
+                    .or_insert_with(|| serde_json::json!([]))
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(properties);
+            }
             "mimeType" | "description" => {
                 out.insert(key.clone(), value.clone());
             }
@@ -177,6 +190,35 @@ pub(super) fn conditional_file(bytes: &[u8]) -> GoogleResult<GoogleFile> {
                 object.insert(new.into(), value);
             }
         }
+        if object.get("properties").is_some_and(|p| p.is_array()) {
+            let properties = object.remove("properties").unwrap();
+            let mut private = serde_json::Map::new();
+            let mut public = serde_json::Map::new();
+            for property in properties.as_array().unwrap() {
+                let key = property
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| GoogleApiFailure::new(GoogleApiError::InvalidResponse, None))?;
+                let value = property
+                    .get("value")
+                    .filter(|v| v.is_string())
+                    .ok_or_else(|| GoogleApiFailure::new(GoogleApiError::InvalidResponse, None))?;
+                let target = match property
+                    .get("visibility")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("PRIVATE")
+                {
+                    "PRIVATE" => &mut private,
+                    "PUBLIC" => &mut public,
+                    _ => return Err(GoogleApiFailure::new(GoogleApiError::InvalidResponse, None)),
+                };
+                if target.insert(key.into(), value.clone()).is_some() {
+                    return Err(GoogleApiFailure::new(GoogleApiError::InvalidResponse, None));
+                }
+            }
+            object.insert("appProperties".into(), serde_json::Value::Object(private));
+            object.insert("properties".into(), serde_json::Value::Object(public));
+        }
         if let Some(labels) = object.remove("labels") {
             if let Some(value) = labels.get("trashed") {
                 object.insert("trashed".into(), value.clone());
@@ -192,4 +234,36 @@ pub(super) fn conditional_file(bytes: &[u8]) -> GoogleResult<GoogleFile> {
     }
     serde_json::from_value(file)
         .map_err(|_| GoogleApiFailure::new(GoogleApiError::InvalidResponse, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn conditional_private_execution_properties_keep_visibility_in_both_directions() {
+        let request = GoogleFileWrite {
+            app_properties: GooglePatch::Set(std::collections::BTreeMap::from([(
+                "drivesyncExecution".into(),
+                "attempt".into(),
+            )])),
+            ..Default::default()
+        };
+        let mut request = request;
+        request.properties = GooglePatch::Set(std::collections::BTreeMap::from([(
+            "public".into(),
+            "preserved".into(),
+        )]));
+        let body: serde_json::Value =
+            serde_json::from_slice(&conditional_body(&request).unwrap()).unwrap();
+        assert_eq!(
+            body["properties"][0],
+            serde_json::json!({"key":"drivesyncExecution","value":"attempt","visibility":"PRIVATE"})
+        );
+        let file=conditional_file(br#"{"id":"file","title":"name","properties":[{"key":"drivesyncExecution","value":"attempt","visibility":"PRIVATE"},{"key":"public","value":"value","visibility":"PUBLIC"}]}"#).unwrap();
+        assert_eq!(
+            file.app_properties.unwrap()["drivesyncExecution"],
+            "attempt"
+        );
+        assert_eq!(file.properties.unwrap()["public"], "value");
+    }
 }

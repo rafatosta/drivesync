@@ -94,6 +94,12 @@ impl Scanner {
             max_items: MAX_ITEMS,
         })
     }
+    /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
+    pub(crate) fn expand_limit(&mut self) -> bool {
+        let before = self.max_items;
+        self.max_items = self.max_items.saturating_mul(2).min(1_600_000);
+        self.max_items > before
+    }
     fn directory(&self, path: &StdPath) -> Result<File, ScanError> {
         let mut current = self.root.try_clone().map_err(io_error)?;
         for part in path.components() {

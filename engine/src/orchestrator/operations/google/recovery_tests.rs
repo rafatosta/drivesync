@@ -707,3 +707,135 @@ async fn concurrent_inventory_revision_rejects_recovery_without_losing_the_effec
         ExecutionEffect::Applied
     );
 }
+
+#[tokio::test]
+async fn a_lost_update_receipt_is_recovered_by_marker_without_retransmitting_content() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    std::fs::write(executor.config.local_root.join("file"), b"replacement").unwrap();
+    let address = Arc::new(std::sync::Mutex::new(String::new()));
+    let location = address.clone();
+    let uploaded = Arc::new(AtomicBool::new(false));
+    let changed = uploaded.clone();
+    let server = endpoint(move |r| {
+        if r.starts_with("PUT ") && r.contains("uploadType=resumable") {
+            return (
+                200,
+                String::new(),
+                vec![(
+                    "Location".into(),
+                    format!(
+                        "{}/upload/drive/v2/files/remote?upload_id=update",
+                        location.lock().unwrap()
+                    ),
+                )],
+            );
+        }
+        if r.starts_with("PUT ") {
+            changed.store(true, Ordering::SeqCst);
+        }
+        let complete = changed.load(Ordering::SeqCst);
+        let mut value: serde_json::Value = serde_json::from_str(&metadata(
+            "file",
+            "remote-root",
+            if complete { 2 } else { 1 },
+            if complete { "replacement" } else { "old" },
+        ))
+        .unwrap();
+        if complete {
+            value["appProperties"] = serde_json::json!({"drivesyncExecution":"execution"});
+        }
+        (
+            200,
+            value.to_string(),
+            vec![("ETag".into(), "\"v1\"".into())],
+        )
+    })
+    .await;
+    *address.lock().unwrap() = server.base.clone();
+    use_backend(&s, &mut executor, server.client.clone(), true);
+    let mut r = request(&executor, OperationAction::UpdateRemoteContent);
+    r.operation.name = Some("file".into());
+    r.remote =
+        normalize(&serde_json::from_str(&metadata("file", "remote-root", 1, "old")).unwrap());
+    let result = executor.execute(r).await;
+    assert_eq!(result.status, OperationResultStatus::Unconfirmed);
+    assert!(uploaded.load(Ordering::SeqCst));
+    let path = executor.config.local_root.join("file");
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::fs::File::open(&path)
+        .unwrap()
+        .set_modified(modified + std::time::Duration::from_secs(1))
+        .unwrap();
+    let reopened = reopen(&s, executor);
+    let result = reopened.recover().await.unwrap();
+    assert_eq!(result[0].assessment.outcome, ExecutionEffect::Applied);
+    assert_eq!(
+        snapshots(&reopened)[0].baseline.state,
+        BaselineState::Synced
+    );
+    assert_eq!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.starts_with("PUT ") && !r.contains("uploadType=resumable"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn local_update_after_exchange_recovers_new_inode_and_preserves_old_bytes_in_trash() {
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    std::fs::write(executor.config.local_root.join("file"), b"old bytes").unwrap();
+    let server = endpoint(|_| {
+        (
+            200,
+            metadata("file", "remote-root", 2, "replacement"),
+            vec![],
+        )
+    })
+    .await;
+    use_backend(&s, &mut executor, server.client.clone(), false);
+    let mut r = request(&executor, OperationAction::UpdateLocalContent);
+    r.remote = normalize(
+        &serde_json::from_str(&metadata("file", "remote-root", 1, "replacement")).unwrap(),
+    );
+    let old = r.local.identity.clone();
+    let record = executor.prepare(&r).await.unwrap();
+    let revision = pending_record(&executor, &r, record.clone(), OperationState::Running);
+    let journal = Journal::new(executor.inventory.clone(), r.clone(), revision, record);
+    let data = s.0.join("trash-home");
+    std::fs::create_dir(&data).unwrap();
+    let mut bytes = executor.filesystem.temporary().unwrap();
+    bytes.write_all(b"replacement").unwrap();
+    let local = executor
+        .filesystem
+        .install_with_test_trash(&r, &mut bytes, &data, &journal)
+        .unwrap();
+    assert_ne!(local.identity, old);
+    drop(journal);
+    let reopened = reopen(&s, executor);
+    let recovered = reopened.recover().await.unwrap();
+    assert_eq!(recovered[0].assessment.outcome, ExecutionEffect::Applied);
+    assert_eq!(
+        snapshots(&reopened)[0].baseline.state,
+        BaselineState::Synced
+    );
+    let files = std::fs::read_dir(data.join("Trash/files"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(std::fs::read(files[0].path()).unwrap(), b"old bytes");
+    assert!(server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.starts_with("GET ") && !r.contains("alt=media")));
+}

@@ -55,6 +55,13 @@ impl LocalObserver {
                 return Err(error);
             }
         };
+        if scan
+            .issues
+            .iter()
+            .any(|issue| issue.kind == super::scanner::ScanIssueKind::LimitReached)
+        {
+            self.scanner.expand_limit();
+        }
         let coverage = scan.coverage;
         self.latest = scan.entries.values().cloned().collect();
         let observations = if let (Some(previous), true) = (&self.previous, self.recheck) {

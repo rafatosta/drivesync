@@ -40,6 +40,9 @@ pub(in crate::orchestrator) fn fixture() -> File {
             projection: None,
         },
         observations: Observations {
+            local_epoch: None,
+            remote_epoch: None,
+            remote_generation: None,
             events: Vec::<ObservationEvent>::new(),
             latest_origin: ObservationOrigin::Local,
             local_coverage: ObservationCoverage::Complete,
@@ -49,6 +52,7 @@ pub(in crate::orchestrator) fn fixture() -> File {
             observed_at: timestamp(4),
         },
         environment: Environment {
+            local_replacement: Evidence::NotCollected,
             local_root: PathRoot(PathBuf::from("/sync")),
             remote_root_id: RemoteId("drive-root".into()),
             local_root_available: true,
@@ -472,4 +476,43 @@ fn initial_upload_requires_complete_absence_and_stable_readable_binary_evidence(
             "case {case}"
         );
     }
+}
+
+#[test]
+fn replacement_requires_bound_slot_evidence_and_confirms_identical_bytes_without_transfer() {
+    let mut f = fixture();
+    f.local.identity = Evidence::Known(LocalIdentity {
+        device_id: 1,
+        inode: 99,
+        mount_id: Some(3),
+    });
+    assert_eq!(analyze(&f).status, DecisionStatus::Conflict);
+    f.environment.local_replacement = Evidence::Known(true);
+    let unchanged = analyze(&f);
+    assert_eq!(
+        unchanged.operations[0].action,
+        OperationAction::ConfirmBaseline
+    );
+    f.local.checksum = checksum("replacement-bytes");
+    let edited = analyze(&f);
+    assert_eq!(
+        edited.operations[0].action,
+        OperationAction::UpdateRemoteContent
+    );
+}
+
+#[test]
+fn old_remote_captures_cannot_reverse_a_confirmed_local_edit() {
+    let mut f = fixture();
+    f.baseline.remote.as_mut().unwrap().version = Evidence::Known(10);
+    f.remote.version = Evidence::Known(9);
+    f.remote.checksum = checksum("previous-content");
+    let d = analyze(&f);
+    assert_eq!(d.status, DecisionStatus::Defer);
+    assert!(d.operations.is_empty());
+    assert!(d
+        .validation
+        .checks
+        .iter()
+        .any(|c| c.code == "observation.remote_regression"));
 }

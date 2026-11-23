@@ -60,6 +60,7 @@ fn round(
     entries: CaptureEntries,
 ) -> ScopeCapture {
     ScopeCapture {
+        collect_epoch: 0,
         account_id: context.config.account_id.clone(),
         provider_id: context.config.provider_id.clone(),
         sync_root_id: context.config.sync_root_id.clone(),
@@ -566,5 +567,71 @@ fn duplicate_remote_targets_never_resolve_a_free_local_destination() {
             Evidence::Known(vec![RemoteId("one".into()), RemoteId("two".into())])
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn atomic_slot_replacement_requires_unchanged_remote_and_absent_old_inode() {
+    let (context, directory) = context();
+    let old = local("file", 1, false);
+    let r = remote("r", "file", "drive-root", false);
+    seed(&context, old.clone(), r.clone());
+    context
+        .consolidate(Observation::Capture(Box::new(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![r.clone()]),
+        ))))
+        .unwrap();
+    let replacement = local("file", 2, false);
+    let files = context
+        .consolidate(Observation::Capture(Box::new(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![replacement.clone()]),
+        ))))
+        .unwrap();
+    let item = files.iter().find(|f| f.identity.item_id.is_some()).unwrap();
+    assert_eq!(item.environment.local_replacement, Evidence::Known(true));
+    assert_eq!(item.identity.local_identity, old.identity);
+    assert_eq!(item.local.identity, replacement.identity);
+    let moved = local("elsewhere", 1, false);
+    let files = context
+        .consolidate(Observation::Capture(Box::new(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![replacement.clone(), moved]),
+        ))))
+        .unwrap();
+    let item = files.iter().find(|f| f.identity.item_id.is_some()).unwrap();
+    assert_ne!(item.environment.local_replacement, Evidence::Known(true));
+    assert_eq!(item.local.state, FileState::Unknown);
+    let mut changed = r;
+    changed.version = Evidence::Known(2);
+    changed.checksum = Evidence::Known(crate::models::Checksum {
+        algorithm: "sha256".into(),
+        value: "changed".into(),
+    });
+    context
+        .consolidate(Observation::Capture(Box::new(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![changed]),
+        ))))
+        .unwrap();
+    let files = context
+        .consolidate(Observation::Capture(Box::new(round(
+            &context,
+            3,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![replacement]),
+        ))))
+        .unwrap();
+    let item = files.iter().find(|f| f.identity.item_id.is_some()).unwrap();
+    assert_ne!(item.environment.local_replacement, Evidence::Known(true));
     std::fs::remove_dir_all(directory).unwrap();
 }
