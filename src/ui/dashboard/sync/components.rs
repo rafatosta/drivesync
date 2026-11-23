@@ -109,7 +109,7 @@ impl SyncActivity {
     }
     pub fn set_activity(&self, activity: ActivityView) {
         let verb = match activity.kind {
-            ActivityKind::Download => "Downloading…",
+            ActivityKind::Download | ActivityKind::DownloadDiscoveredRemote => "Downloading…",
             ActivityKind::Upload => "Uploading…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
@@ -121,14 +121,15 @@ impl SyncActivity {
         };
         self.text
             .set_label(&format!("{} {}", gettext(verb), activity.name));
-        self.details.set_label(&format!(
-            "{}\n{}",
-            gettext(direction),
-            gettext(match activity.phase {
-                Phase::Running => "In progress",
-                Phase::Failed => "Operation failed",
-            })
-        ));
+        let phase = match activity.phase {
+            Phase::Running if activity.kind == ActivityKind::DownloadDiscoveredRemote => {
+                "New file discovered on Drive"
+            }
+            Phase::Running => "In progress",
+            Phase::Failed => "Operation failed",
+        };
+        self.details
+            .set_label(&format!("{}\n{}", gettext(direction), gettext(phase)));
         self.render_progress(&activity.progress);
         *self.state.borrow_mut() = Some(activity);
         self.widget.set_visible(true);

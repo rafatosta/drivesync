@@ -345,6 +345,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         id: "execution-1".into(),
         item_id: models::ItemId("item-1".into()),
         display_name: Some("Relatório.bin".into()),
+        newly_observed_remote: false,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -370,6 +371,17 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         assert_eq!(current.direction, direction);
         assert_eq!(current.progress, ProgressView::Indeterminate);
     }
+    value.activity = SynchronizationActivity::Downloading;
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .newly_observed_remote = true;
+    let discovery = map_status(&value, false).activity.unwrap();
+    assert_eq!(discovery.kind, ActivityKind::DownloadDiscoveredRemote);
+    assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
+    assert_eq!(discovery.direction, Direction::RemoteToLocal);
+    assert_eq!(discovery.progress, ProgressView::Indeterminate);
 }
 
 #[test]
@@ -397,7 +409,7 @@ fn real_event1_download_uses_public_backend_and_components() {
         let mut saw_download=false; let mut completed=false;
         for _ in 0..1800 {
             if let Some(activity)=controller.activity.state() {
-                if activity.kind==ActivityKind::Download {
+                if matches!(activity.kind, ActivityKind::Download | ActivityKind::DownloadDiscoveredRemote) {
                     assert_eq!(activity.direction,Direction::RemoteToLocal); assert_eq!(activity.progress,ProgressView::Indeterminate);
                     assert!(activity.operation_id.is_some()); assert_eq!(activity.name,"Relatório-evento-1.bin");
                     if !saw_download { println!("real GUI download: {activity:?}");

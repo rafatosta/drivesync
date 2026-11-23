@@ -1530,3 +1530,6 @@ msgstr "Aviso"
 
 msgid "Error"
 msgstr "Erro"
+
+msgid "New file discovered on Drive"
+msgstr "Novo arquivo detectado no Drive"

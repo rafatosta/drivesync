@@ -29,6 +29,7 @@ impl ProgressView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActivityKind {
     Download,
+    DownloadDiscoveredRemote,
     Upload,
     Verify,
     Apply,

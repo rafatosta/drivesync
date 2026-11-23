@@ -146,10 +146,22 @@ async fn real_event1_independent_provider_hash_version_and_baseline() {
 #[tokio::test]
 #[ignore = "requires an explicitly isolated event2 fixture and the authorized Google test account"]
 async fn real_event2_verify_uploaded_file() {
+    verify_binary_fixture(false).await;
+}
+
+/// Verify exactly one new remote identity and its installed download receipt.
+#[tokio::test]
+#[ignore = "requires an explicitly isolated event3 fixture and the authorized Google test account"]
+async fn real_event3_verify_created_remote_file() {
+    verify_binary_fixture(true).await;
+}
+
+async fn verify_binary_fixture(created_remote: bool) {
+    let event = if created_remote { "event3" } else { "event2" };
     let env = |key: &str| std::env::var(key).expect(key);
     let local = PathBuf::from(env("DRIVESYNC_STAGE12_LOCAL_ROOT"));
     let fixture = local.file_name().unwrap().to_str().unwrap();
-    assert!(local.is_absolute() && fixture.starts_with("DriveSync-stage12-event2-"));
+    assert!(local.is_absolute() && fixture.starts_with(&format!("DriveSync-stage12-{event}-")));
     let accounts = PathBuf::from(env("DRIVESYNC_REAL_ACCOUNTS_DIRECTORY"));
     let engine = Engine::open(EngineConfig {
         data_directory: accounts.clone(),
@@ -203,7 +215,7 @@ async fn real_event2_verify_uploaded_file() {
     let files = page.files;
     if phase == "prepare" {
         assert!(files.is_empty());
-        println!("event2 preflight: empty Drive folder {remote_root}");
+        println!("{event} preflight: empty Drive folder {remote_root}");
         return;
     }
     assert_eq!(phase, "verify");
@@ -219,7 +231,15 @@ async fn real_event2_verify_uploaded_file() {
         file.parents.as_deref(),
         Some(&[FileId(remote_root.clone())][..])
     );
-    let name = "existing-local.bin";
+    let name = if created_remote {
+        "created-remote.bin"
+    } else {
+        "existing-local.bin"
+    };
+    if created_remote {
+        assert_eq!(id.0, env("DRIVESYNC_STAGE12_FILE_ID"));
+        assert_eq!(std::fs::read_dir(&local).unwrap().count(), 1);
+    }
     assert_eq!(file.name.as_deref(), Some(name));
     let local_bytes = std::fs::read(local.join(name)).unwrap();
     let size = local_bytes.len() as u64;
@@ -310,6 +330,23 @@ async fn real_event2_verify_uploaded_file() {
     assert_eq!(local.checksum, checksum);
     assert_eq!(remote.size, Evidence::Known(size));
     assert_eq!(local.size, Evidence::Known(size));
+    if created_remote {
+        assert_eq!(remote.version, Evidence::Known(version));
+        assert_eq!(local.path.as_ref(), Some(&PathBuf::from(name)));
+        assert_eq!(local.parent, Evidence::Known(PathBuf::new()));
+        assert_eq!(item.pending_operations.len(), 1);
+        let download = &item.pending_operations[0];
+        assert_eq!(download.action, OperationAction::Download);
+        assert_eq!(download.state, OperationState::Confirmed);
+        assert_eq!(download.id.0, env("DRIVESYNC_STAGE12_OPERATION_ID"));
+        let effect = download.applied_effect.as_ref().unwrap();
+        assert!(effect.verified);
+        assert_eq!(effect.remote_id, remote_id);
+        assert_eq!(effect.remote.as_ref(), Some(remote));
+        assert_eq!(effect.local.as_ref(), Some(local));
+        println!("{event} verified: remote_id={} parent={:?} item_id={:?} version={version} size={size} sha256={digest} operation_id={}", id.0, remote.parents, item.identity.item_id, download.id.0);
+        return;
+    }
     let uploads: Vec<_> = item
         .pending_operations
         .iter()

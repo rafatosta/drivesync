@@ -111,6 +111,17 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     let activity = if status.state == S::Running {
         status.current_item.as_ref().and_then(|item| {
             let (kind, direction) = match status.activity {
+                A::Downloading
+                    if status
+                        .current_operation
+                        .as_ref()
+                        .is_some_and(|op| op.newly_observed_remote) =>
+                {
+                    (
+                        ActivityKind::DownloadDiscoveredRemote,
+                        Direction::RemoteToLocal,
+                    )
+                }
                 A::Downloading => (ActivityKind::Download, Direction::RemoteToLocal),
                 A::Uploading => (ActivityKind::Upload, Direction::LocalToRemote),
                 A::Applying => (ActivityKind::Apply, Direction::None),

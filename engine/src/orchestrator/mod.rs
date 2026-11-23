@@ -577,6 +577,11 @@ impl Orchestrator {
         }
         let total = decision.operations.len() as u64;
         let mut completed = Vec::new();
+        let downloads_new_replica = decision
+            .operations
+            .iter()
+            .any(|op| op.action == OperationAction::Download);
+        let mut registered_remote = false;
         for mut operation in decision.operations {
             if *self.stop.borrow() {
                 break;
@@ -645,21 +650,28 @@ impl Orchestrator {
                     _ => None,
                 };
             }
+            let registers_remote_download = downloads_new_replica
+                && operation.action == OperationAction::RegisterIdentity
+                && file.identity.remote_id.is_some();
             let public_operation = SynchronizationOperation {
                 id: execution_id.0.clone(),
+                newly_observed_remote: registered_remote
+                    && operation.action == OperationAction::Download,
                 item_id: operation.item_ref.clone(),
                 display_name: operation.name.clone().or_else(|| match &file.remote.name {
                     Evidence::Known(name) => Some(name.clone()),
                     _ => None,
                 }),
             };
-            self.publish_execution(
-                activity(operation.action),
-                &item,
-                &public_operation,
-                completed.len() as u64,
-                total,
-            );
+            if !registers_remote_download {
+                self.publish_execution(
+                    activity(operation.action),
+                    &item,
+                    &public_operation,
+                    completed.len() as u64,
+                    total,
+                );
+            }
             let step = operation.step;
             let expected_id = execution_id.clone();
             let expected_item = operation.item_ref.clone();
@@ -704,6 +716,7 @@ impl Orchestrator {
                     .inventory_write
                     .as_ref()
                     .and_then(|write| write.revision);
+                registered_remote |= registers_remote_download;
                 completed.push(step);
                 if expected_action != OperationAction::RegisterIdentity {
                     let epoch = self
@@ -748,13 +761,15 @@ impl Orchestrator {
                 );
             }
             outcome.results.push(result);
-            self.publish_execution(
-                SynchronizationActivity::Applying,
-                &item,
-                &public_operation,
-                completed.len() as u64,
-                total,
-            );
+            if !registers_remote_download && !public_operation.newly_observed_remote {
+                self.publish_execution(
+                    SynchronizationActivity::Applying,
+                    &item,
+                    &public_operation,
+                    completed.len() as u64,
+                    total,
+                );
+            }
             if !confirmed {
                 break;
             }
