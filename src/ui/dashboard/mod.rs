@@ -6,3 +6,5 @@ pub(crate) mod window;
 
 #[cfg(test)]
 pub(crate) use pages::overview::fixture;
+
+pub(crate) mod sync;

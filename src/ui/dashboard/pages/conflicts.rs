@@ -5,7 +5,11 @@ use drivesync_engine::{
     Account, Engine,
 };
 use gettextrs::gettext;
-pub(super) fn present(parent: &gtk::Button, engine: Engine, account: Account) -> gtk::Window {
+pub(super) fn present(
+    parent: &impl IsA<gtk::Widget>,
+    engine: Engine,
+    account: Account,
+) -> gtk::Window {
     let window = gtk::Window::builder()
         .title(format!(
             "{} — {}",

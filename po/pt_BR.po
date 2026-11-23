@@ -1473,3 +1473,42 @@ msgstr "Uma cópia está ausente ou na lixeira, enquanto a outra foi alterada."
 #: src/ui/dashboard/pages/conflicts.rs
 msgid "The copies cannot be associated safely from the available evidence."
 msgstr "As informações disponíveis não permitem associar as cópias com segurança."
+
+msgid "Synchronizing…"
+msgstr "Sincronizando…"
+
+msgid "Everything synchronized"
+msgstr "Tudo sincronizado"
+
+msgid "Offline"
+msgstr "Sem conexão"
+
+msgid "Verifying content…"
+msgstr "Verificando conteúdo…"
+
+msgid "Drive → Computer"
+msgstr "Drive → Computador"
+
+msgid "Computer → Drive"
+msgstr "Computador → Drive"
+
+msgid "In progress"
+msgstr "Em andamento"
+
+msgid "{completed} of {total} bytes"
+msgstr "{completed} de {total} bytes"
+
+msgid "Confirm choice"
+msgstr "Confirmar escolha"
+
+msgid "Decide later"
+msgstr "Decidir depois"
+
+msgid "Computer"
+msgstr "Computador"
+
+msgid "Drive"
+msgstr "Drive"
+
+msgid "Review versions"
+msgstr "Revisar versões"
