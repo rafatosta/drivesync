@@ -107,12 +107,17 @@ impl SyncActivity {
             state: Rc::default(),
         }
     }
-    pub fn set_activity(&self, activity: ActivityView) {
+    pub fn set_activity(&self, mut activity: ActivityView) {
+        let rename = matches!(activity.kind, ActivityKind::Rename { .. });
+        if rename {
+            activity.progress = ProgressView::None;
+        }
         let verb = match activity.kind {
             ActivityKind::Download | ActivityKind::DownloadDiscoveredRemote => "Downloading…",
             ActivityKind::UpdateRemoteContent => "Updating Drive copy…",
             ActivityKind::UpdateLocalContent => "Updating local copy…",
             ActivityKind::Upload | ActivityKind::UploadDiscoveredLocal => "Uploading…",
+            ActivityKind::Rename { .. } => "Renaming…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
@@ -121,8 +126,13 @@ impl SyncActivity {
             Direction::LocalToRemote => "Computer → Drive",
             Direction::None => "",
         };
-        self.text
-            .set_label(&format!("{} {}", gettext(verb), activity.name));
+        let name = match &activity.kind {
+            ActivityKind::Rename { previous_name } => {
+                format!("{previous_name} → {}", activity.name)
+            }
+            _ => activity.name.clone(),
+        };
+        self.text.set_label(&format!("{} {name}", gettext(verb)));
         let phase = match activity.phase {
             Phase::Running if activity.kind == ActivityKind::DownloadDiscoveredRemote => {
                 "New file discovered on Drive"
@@ -139,6 +149,7 @@ impl SyncActivity {
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }
+            Phase::Confirmed if rename => "Rename verified",
             Phase::Confirmed => "Local update verified",
             Phase::Running => "In progress",
             Phase::Failed => "Operation failed",
@@ -152,8 +163,9 @@ impl SyncActivity {
     fn render_progress(&self, value: &ProgressView) {
         let measured = value.measured();
         self.progress.set_visible(measured.is_some());
-        self.spinner.set_visible(measured.is_none());
-        self.spinner.set_spinning(measured.is_none());
+        let indeterminate = measured.is_none() && *value != ProgressView::None;
+        self.spinner.set_visible(indeterminate);
+        self.spinner.set_spinning(indeterminate);
         if let Some((done, total)) = measured {
             self.progress.set_fraction(done as f64 / total as f64);
             let template = match value {
@@ -175,7 +187,10 @@ impl SyncActivity {
         let Some(mut state) = self.state() else {
             return false;
         };
-        if state.scope != scope || state.operation_id.as_deref() != Some(operation) {
+        if state.scope != scope
+            || state.operation_id.as_deref() != Some(operation)
+            || matches!(state.kind, ActivityKind::Rename { .. })
+        {
             return false;
         }
         state.progress = value;

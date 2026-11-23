@@ -29,6 +29,8 @@ pub enum SynchronizationActivity {
     Uploading,
     Downloading,
     Applying,
+    /// Applying a name-only change to an existing replica.
+    Renaming,
 }
 /// Display-safe identity; paths retain platform-native bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -79,6 +81,19 @@ pub struct SynchronizationOperation {
     pub updates_local_content: bool,
     /// Replaces an existing Drive replica. Applying denotes a verified, persisted update.
     pub updates_remote_content: bool,
+    /// Name change on the destination replica. Applying denotes a verified, persisted rename.
+    pub rename: Option<SynchronizationRename>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationRename {
+    pub origin: SynchronizationRenameOrigin,
+    pub previous_name: String,
+    pub new_name: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationRenameOrigin {
+    Local,
+    Remote,
 }
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]

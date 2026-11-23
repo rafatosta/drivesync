@@ -150,6 +150,30 @@ fn isolated_components_and_fake_backend() {
             assert!(current.state().is_none());
         }
 
+        let mut rename = activity();
+        rename.name = "after.bin".into();
+        rename.kind = ActivityKind::Rename {
+            previous_name: "before.bin".into(),
+        };
+        rename.direction = Direction::LocalToRemote;
+        current.set_activity(rename);
+        assert_eq!(current.state().unwrap().progress, ProgressView::None);
+        assert!(!current.update_progress(
+            "fixture-a",
+            "download-1",
+            ProgressView::Bytes {
+                transferred: 5,
+                total: 10,
+            }
+        ));
+        let mut child = current.widget.first_child();
+        while let Some(widget) = child {
+            if widget.is::<gtk::ProgressBar>() || widget.is::<gtk::Spinner>() {
+                assert!(!widget.is_visible());
+            }
+            child = widget.next_sibling();
+        }
+
         let attention = SyncAttention::new();
         let item = AttentionItemView {
             scope: "fixture-a".into(),
@@ -349,6 +373,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         newly_observed_local: false,
         updates_local_content: false,
         updates_remote_content: false,
+        rename: None,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -437,6 +462,43 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
     assert_eq!(discovery.direction, Direction::LocalToRemote);
     assert_eq!(discovery.progress, ProgressView::Indeterminate);
+
+    for (origin, direction) in [
+        (
+            drivesync_engine::SynchronizationRenameOrigin::Local,
+            Direction::LocalToRemote,
+        ),
+        (
+            drivesync_engine::SynchronizationRenameOrigin::Remote,
+            Direction::RemoteToLocal,
+        ),
+    ] {
+        let operation = value.current_operation.as_mut().unwrap();
+        operation.newly_observed_local = false;
+        operation.display_name = Some("Relatório.bin".into());
+        operation.rename = Some(drivesync_engine::SynchronizationRename {
+            origin,
+            previous_name: "Before.bin".into(),
+            new_name: "Relatório.bin".into(),
+        });
+        for (transition, phase) in [
+            (SynchronizationActivity::Renaming, Phase::Running),
+            (SynchronizationActivity::Applying, Phase::Confirmed),
+        ] {
+            value.activity = transition;
+            let rename = map_status(&value, false).activity.unwrap();
+            assert_eq!(
+                rename.kind,
+                ActivityKind::Rename {
+                    previous_name: "Before.bin".into()
+                }
+            );
+            assert_eq!(rename.name, "Relatório.bin");
+            assert_eq!(rename.direction, direction);
+            assert_eq!(rename.phase, phase);
+            assert_eq!(rename.progress, ProgressView::None);
+        }
+    }
 }
 
 #[test]

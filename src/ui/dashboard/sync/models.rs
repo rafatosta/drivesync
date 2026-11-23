@@ -12,6 +12,7 @@ pub enum StatusView {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProgressView {
+    None,
     Indeterminate,
     Bytes { transferred: u64, total: u64 },
     Steps { completed: u64, total: u64 },
@@ -19,7 +20,7 @@ pub enum ProgressView {
 impl ProgressView {
     pub fn measured(&self) -> Option<(u64, u64)> {
         let (value, total) = match *self {
-            Self::Indeterminate => return None,
+            Self::None | Self::Indeterminate => return None,
             Self::Bytes { transferred, total } => (transferred, total),
             Self::Steps { completed, total } => (completed, total),
         };
@@ -32,6 +33,7 @@ pub enum ActivityKind {
     DownloadDiscoveredRemote,
     UpdateLocalContent,
     UpdateRemoteContent,
+    Rename { previous_name: String },
     Upload,
     UploadDiscoveredLocal,
     Verify,

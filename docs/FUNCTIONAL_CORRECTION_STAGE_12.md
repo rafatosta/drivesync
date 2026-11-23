@@ -110,8 +110,28 @@ no event 10/11 acceptance is claimed. Interactive keyboard and screen-reader acc
 - **Limitações.** A evidência das fases transitórias vem dos rótulos GTK visíveis em inglês. O subtítulo geral de sincronização ainda descreve a transferência como envio. O catálogo PT-BR foi compilado. A fixture ficou com as duas versões e o conflito em aberto para revisão.
 - **Resultado.** APROVADO para edição local e recusa segura da precondição no escopo isolado.
 
-## Execution boundary
+### Evento 7 — Renomeação com origem local
 
-The latest run covered only event 6. Events 7–14 remain outside this run.
-All Rust tools used GNOME SDK 50 and the rust-stable extension. The isolated Flatpak and fixtures
-were retained. No remote publication occurred.
+- **Fixture e ação.** Na conta de teste `rtosta.coc@gmail.com`, o Flatpak baixou a fixture de 65.536 bytes e confirmou a convergência no epoch 1. Com a mesma instância em execução, um único `mv` no diretório local trocou `fixture-local-before.bin` por `fixture-local-after.bin`. [Pasta isolada no Drive](https://drive.google.com/drive/folders/1ihtzSuWH1oEY5QqDeJnIZ1rBCrIPOmcw)
+- **Engine e GUI.** O contexto manteve o ItemId `2471c255f746f6a847f41760f0d71405`. O Analyzer selecionou apenas `RenameRemote`. A API publicou origem `Local` e os dois nomes na execução `19de907a11a03bf88b92819fc54a2dfc`. O SyncActivity exibiu a transição de nome e “Computer → Drive”, primeiro com “In progress”, depois com “Rename verified”. As duas fases ficaram sem barra ou spinner de transferência. A auditoria após o recibo confirmou a convergência no epoch 2, com cobertura completa, um único item e zero conflitos ou operações pendentes.
+- **Provider, filesystem e baseline.** A leitura independente verificou o ID `1jB9F8l6FWa0F3kLhKhmztjdSOs24jLQQ`, o mesmo pai e a mesma revisão binária única antes e depois. O diretório local apresentou apenas o nome novo e preservou dispositivo, inode do arquivo `5692152` e inode do pai `5690723`. Os bytes lidos do Drive e do filesystem coincidiram com o SHA-256 `b7b0f13eaa176447f201a118ea394d422d8caacf60e67a8e4f468d3920a7e023`. O baseline permaneceu `Synced`, com nome novo nos dois lados, a versão remota mudou de 2 para 3 e a revisão do Inventory passou de 6 para 11. O único recibo novo foi `RenameRemote`, confirmado e sem sessão de transferência.
+- **Resultado.** APROVADO.
+
+### Evento 7 — Renomeação com origem remota
+
+- **Fixture e ação.** Uma segunda pasta e um segundo perfil local receberam uma fixture distinta de 65.536 bytes. A auditoria inicial confirmou a convergência no epoch 2. Com a mesma instância em execução, uma atualização externa enviou somente o campo de nome de `fixture-remote-before.bin` para `fixture-remote-after.bin`. [Pasta isolada no Drive](https://drive.google.com/drive/folders/1uyVudzQRLjhDOh2EdV_-KsArcAR14jXb)
+- **Engine e GUI.** O detector encontrou a mudança na versão remota 3, o contexto manteve o ItemId `9524ac0025bdb6707173f179d3d6ba7c` e o Analyzer selecionou apenas `RenameLocal`. A API publicou origem `Remote` e os dois nomes na execução `f33e70d487fccde85168c95aa2e60158`. O SyncActivity mostrou a transição de nome e “Drive → Computer”, com “In progress” e “Rename verified”, sem barra ou spinner de transferência nas duas fases. No epoch 3, a auditoria encontrou cobertura completa, um item convergente e zero conflitos ou operações pendentes.
+- **Provider, filesystem e baseline.** A leitura independente verificou o mesmo ID `1rIL6UQKwIKZ-PUOPAgQRICscVWqlN6NU`, o mesmo pai e a mesma revisão binária única. O diretório local apresentou apenas o novo nome e preservou dispositivo, inode do arquivo `5696628` e inode do pai `5690733`. Os bytes lidos do Drive e do filesystem coincidiram com o SHA-256 `16c00f92cc04220a8ea5044af682ad55772e4ea3bfaefd99775cc62ab880b638`. O baseline permaneceu `Synced`, com nome novo nos dois lados, a versão remota mudou de 2 para 3 e a revisão do Inventory passou de 6 para 11. O único recibo novo foi `RenameLocal`, confirmado e sem sessão de transferência.
+- **Resultado.** APROVADO.
+
+#### Correção, regressões e evidências da atividade 7
+
+- A API pública passou a publicar `SynchronizationRename` em uma operação de renomeação. A fase confirmada só é publicada após a escrita verificada do recibo e permanece enquanto as observações são atualizadas. O Adapter apresenta nomes e direção com progresso ausente. O componente descarta atualizações de progresso associadas a renomeações.
+- O Flatpak Devel instalado foi `com.rtosta.DriveSync.Devel//stage12-event7`, commit de empacotamento `d2cbd525cc6df43218331eec30f171b821612878b5dcf0b8e7d1d3104c9a7d43`. O coletor de aceitação ficou no diretório temporário de empacotamento. Depois de uma tentativa de preparação com uma referência de autorização antiga, os cenários usaram a referência corrente da conta de teste e executaram sequencialmente para respeitar o bloqueio de escritor.
+- GNOME SDK 50 passou `cargo fmt --all --check`, `cargo clippy --offline --workspace --all-targets -- -D warnings`, `cargo test --offline --workspace` (701 aprovados e 27 opt-in ignorados), `cargo doc --offline --workspace --no-deps --document-private-items` e `cargo test --offline --workspace --doc`. O teste isolado GTK passou no sandbox instalado, incluindo a recusa de progresso para renomeação. O pacote usou `cargo build --release --offline --locked` e `msgfmt --check`.
+- A ausência de retransmissão pela Engine foi verificada pelo plano com uma única operação de metadados, o recibo sem sessão de transferência, a identidade local preservada e a revisão binária inalterada. As leituras independentes de mídia foram operações de verificação. A validação da GUI usou rótulos e estados de visibilidade GTK em inglês. O catálogo PT-BR foi compilado.
+- As evidências por direção estão em `/home/tosta/Documentos/ChatGPT/drivesync 2/relatorios/etapa-12-atividade-7`, incluindo logs da instalação, rótulos GTK, listagem e revisões do provedor, bytes de leitura independente e snapshots do Inventory.
+
+## Limite da execução
+
+A última execução cobriu exclusivamente a atividade 7. As duas fixtures e o Flatpak Devel foram preservados. Nenhuma publicação remota foi realizada.

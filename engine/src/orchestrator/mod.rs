@@ -282,7 +282,7 @@ impl Orchestrator {
                         self.recover_pending().await;
                     }
                     self.sources.insert(source, issue);
-                    if self.refreshing_content_update()
+                    if self.refreshing_confirmed_update()
                         && !self.recovery_failed
                         && self.blockers.is_empty()
                         && self.sources.len() == 2
@@ -403,12 +403,14 @@ impl Orchestrator {
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         self.blockers.insert(key(&item), (item, issue));
     }
-    fn refreshing_content_update(&self) -> bool {
+    fn refreshing_confirmed_update(&self) -> bool {
         let status = self.status.borrow();
         self.refresh_after.is_some()
             && status.activity == SynchronizationActivity::Applying
             && status.current_operation.as_ref().is_some_and(|operation| {
-                operation.updates_local_content || operation.updates_remote_content
+                operation.updates_local_content
+                    || operation.updates_remote_content
+                    || operation.rename.is_some()
             })
     }
     fn settle(&self) {
@@ -475,7 +477,7 @@ impl Orchestrator {
                 None,
                 None,
             );
-        } else if !self.refreshing_content_update() {
+        } else if !self.refreshing_confirmed_update() {
             self.publish(
                 SynchronizationState::Idle,
                 SynchronizationActivity::None,
@@ -514,7 +516,7 @@ impl Orchestrator {
                 || file.observations.remote_epoch.is_none_or(|e| e < epoch)
             {
                 outcome.decision = DecisionStatus::Defer;
-                if self.refreshing_content_update() {
+                if self.refreshing_confirmed_update() {
                     return outcome;
                 }
                 self.block(item, issue(SynchronizationIssueKind::Deferred, true));
@@ -682,7 +684,25 @@ impl Orchestrator {
                 && file.identity.remote_id.is_none()
                 && matches!(file.local.identity, Evidence::Known(_));
             let internal_registration = registers_remote_download || registers_local_upload;
+            let rename = match operation.action {
+                OperationAction::RenameRemote => {
+                    Some((SynchronizationRenameOrigin::Local, &file.remote.name))
+                }
+                OperationAction::RenameLocal => {
+                    Some((SynchronizationRenameOrigin::Remote, &file.local.name))
+                }
+                _ => None,
+            }
+            .and_then(|(origin, previous)| match (previous, &operation.name) {
+                (Evidence::Known(previous_name), Some(new_name)) => Some(SynchronizationRename {
+                    origin,
+                    previous_name: previous_name.clone(),
+                    new_name: new_name.clone(),
+                }),
+                _ => None,
+            });
             let public_operation = SynchronizationOperation {
+                rename,
                 id: execution_id.0.clone(),
                 newly_observed_remote: registered_remote
                     && operation.action == OperationAction::Download,
@@ -799,7 +819,8 @@ impl Orchestrator {
                 && !public_operation.newly_observed_remote
                 && !public_operation.newly_observed_local
                 && (!(public_operation.updates_local_content
-                    || public_operation.updates_remote_content)
+                    || public_operation.updates_remote_content
+                    || public_operation.rename.is_some())
                     || confirmed)
             {
                 self.publish_execution(
@@ -827,6 +848,9 @@ fn activity(action: OperationAction) -> SynchronizationActivity {
         }
         OperationAction::Download | OperationAction::UpdateLocalContent => {
             SynchronizationActivity::Downloading
+        }
+        OperationAction::RenameRemote | OperationAction::RenameLocal => {
+            SynchronizationActivity::Renaming
         }
         _ => SynchronizationActivity::Applying,
     }

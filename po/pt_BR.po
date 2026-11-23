@@ -1554,3 +1554,9 @@ msgstr "Enviando e verificando conteúdo"
 
 msgid "Drive update verified"
 msgstr "Atualização no Drive verificada"
+
+msgid "Renaming…"
+msgstr "Renomeando…"
+
+msgid "Rename verified"
+msgstr "Renomeação verificada"

@@ -118,7 +118,29 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .is_some_and(|op| op.updates_remote_content);
+            let rename = status
+                .current_operation
+                .as_ref()
+                .and_then(|op| op.rename.as_ref());
             let (kind, direction) = match status.activity {
+                A::Renaming | A::Applying if rename.is_some() => {
+                    let rename = rename?;
+                    let direction = match rename.origin {
+                        drivesync_engine::SynchronizationRenameOrigin::Local => {
+                            Direction::LocalToRemote
+                        }
+                        drivesync_engine::SynchronizationRenameOrigin::Remote => {
+                            Direction::RemoteToLocal
+                        }
+                    };
+                    (
+                        ActivityKind::Rename {
+                            previous_name: rename.previous_name.clone(),
+                        },
+                        direction,
+                    )
+                }
+                A::Renaming => (ActivityKind::Apply, Direction::None),
                 A::Downloading | A::Applying if updates_local => {
                     (ActivityKind::UpdateLocalContent, Direction::RemoteToLocal)
                 }
@@ -180,12 +202,18 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 name,
                 kind,
                 direction,
-                phase: if (updates_local || updates_remote) && status.activity == A::Applying {
+                phase: if (updates_local || updates_remote || rename.is_some())
+                    && status.activity == A::Applying
+                {
                     Phase::Confirmed
                 } else {
                     Phase::Running
                 },
-                progress: ProgressView::Indeterminate,
+                progress: if status.activity == A::Renaming || rename.is_some() {
+                    ProgressView::None
+                } else {
+                    ProgressView::Indeterminate
+                },
             })
         })
     } else {
