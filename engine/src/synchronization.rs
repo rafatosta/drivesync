@@ -73,6 +73,10 @@ pub struct SynchronizationOperation {
     pub newly_observed_remote: bool,
     /// This upload follows a verified registration of a newly observed local identity.
     pub newly_observed_local: bool,
+    /// The operation replaces the content of an existing local replica.
+    /// Downloading covers transfer and verification. Applying denotes a verified,
+    /// persisted update while observations are refreshed.
+    pub updates_local_content: bool,
 }
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]

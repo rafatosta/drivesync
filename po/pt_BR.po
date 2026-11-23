@@ -1536,3 +1536,12 @@ msgstr "Novo arquivo detectado no Drive"
 
 msgid "New file discovered on computer"
 msgstr "Novo arquivo detectado no computador"
+
+msgid "Updating local copy…"
+msgstr "Atualizando a cópia local…"
+
+msgid "Downloading and verifying content"
+msgstr "Baixando e verificando o conteúdo"
+
+msgid "Local update verified"
+msgstr "Atualização local verificada"

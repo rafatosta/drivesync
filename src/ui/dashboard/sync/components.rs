@@ -110,6 +110,7 @@ impl SyncActivity {
     pub fn set_activity(&self, activity: ActivityView) {
         let verb = match activity.kind {
             ActivityKind::Download | ActivityKind::DownloadDiscoveredRemote => "Downloading…",
+            ActivityKind::UpdateLocalContent => "Updating local copy…",
             ActivityKind::Upload | ActivityKind::UploadDiscoveredLocal => "Uploading…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
@@ -128,6 +129,10 @@ impl SyncActivity {
             Phase::Running if activity.kind == ActivityKind::UploadDiscoveredLocal => {
                 "New file discovered on computer"
             }
+            Phase::Running if activity.kind == ActivityKind::UpdateLocalContent => {
+                "Downloading and verifying content"
+            }
+            Phase::Confirmed => "Local update verified",
             Phase::Running => "In progress",
             Phase::Failed => "Operation failed",
         };

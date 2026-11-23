@@ -110,7 +110,14 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     };
     let activity = if status.state == S::Running {
         status.current_item.as_ref().and_then(|item| {
+            let updates_local = status
+                .current_operation
+                .as_ref()
+                .is_some_and(|op| op.updates_local_content);
             let (kind, direction) = match status.activity {
+                A::Downloading | A::Applying if updates_local => {
+                    (ActivityKind::UpdateLocalContent, Direction::RemoteToLocal)
+                }
                 A::Downloading
                     if status
                         .current_operation
@@ -166,7 +173,11 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 name,
                 kind,
                 direction,
-                phase: Phase::Running,
+                phase: if updates_local && status.activity == A::Applying {
+                    Phase::Confirmed
+                } else {
+                    Phase::Running
+                },
                 progress: ProgressView::Indeterminate,
             })
         })

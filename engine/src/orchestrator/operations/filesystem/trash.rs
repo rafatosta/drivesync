@@ -17,12 +17,45 @@ pub(super) fn prepare(
     source: &Entry,
     original: &StdPath,
 ) -> Result<TrashDestination, OperatorError> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .ok_or_else(invalid)?;
-    prepare_to(source, original, &data)
+    prepare_to(source, original, &data_home()?)
 }
+
+pub(super) fn prepare_replacement(
+    source: &Entry,
+    original: &StdPath,
+) -> Result<Option<TrashDestination>, OperatorError> {
+    prepare_replacement_to(source, original, &data_home()?)
+}
+
+pub(super) fn prepare_replacement_to(
+    source: &Entry,
+    original: &StdPath,
+    data: &StdPath,
+) -> Result<Option<TrashDestination>, OperatorError> {
+    prepare_destination(source, original, data, true)
+}
+
+fn mount_id(directory: &File) -> Result<u64, OperatorError> {
+    let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();
+    if unsafe {
+        libc::statx(
+            directory.as_raw_fd(),
+            c"".as_ptr(),
+            libc::AT_EMPTY_PATH,
+            libc::STATX_MNT_ID,
+            stat.as_mut_ptr(),
+        )
+    } != 0
+    {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    let stat = unsafe { stat.assume_init() };
+    if stat.stx_mask & libc::STATX_MNT_ID == 0 {
+        return Err(OperatorError::new(OperatorErrorKind::Unavailable));
+    }
+    Ok(stat.stx_mnt_id)
+}
+
 fn private_child(parent: &File, name: &str) -> Result<File, OperatorError> {
     let parent_path = PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd()));
     let path = parent_path.join(name);
@@ -45,10 +78,24 @@ pub(super) fn prepare_to(
     original: &StdPath,
     data: &StdPath,
 ) -> Result<TrashDestination, OperatorError> {
+    prepare_destination(source, original, data, false)?
+        .ok_or_else(|| OperatorError::new(OperatorErrorKind::Unavailable))
+}
+
+fn prepare_destination(
+    source: &Entry,
+    original: &StdPath,
+    data: &StdPath,
+    retain_on_other_mount: bool,
+) -> Result<Option<TrashDestination>, OperatorError> {
     let root = Filesystem::open(data)?;
     let trash = private_child(&root.root, "Trash")?;
     let files = private_child(&trash, "files")?;
     let info = private_child(&trash, "info")?;
+    // Flatpak bind mounts can have the same device number and still reject rename.
+    if retain_on_other_mount && mount_id(&source.parent)? != mount_id(&files)? {
+        return Ok(None);
+    }
     if std::fs::symlink_metadata(source.anchored())
         .map_err(error)?
         .dev()
@@ -120,10 +167,10 @@ pub(super) fn prepare_to(
     };
     files_sync(&dest.parent)?;
     files_sync(&info)?;
-    Ok(TrashDestination {
+    Ok(Some(TrashDestination {
         destination: dest,
         reference,
-    })
+    }))
 }
 
 fn files_sync(directory: &File) -> Result<(), OperatorError> {
@@ -345,7 +392,7 @@ impl Filesystem {
         Ok(Some(absent))
     }
 }
-fn same_retained_content(current: &LocalState, expected: &LocalState) -> bool {
+pub(super) fn same_retained_content(current: &LocalState, expected: &LocalState) -> bool {
     current.identity == expected.identity
         && current.kind == expected.kind
         && current.size == expected.size

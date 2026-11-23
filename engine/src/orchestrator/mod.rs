@@ -282,6 +282,14 @@ impl Orchestrator {
                         self.recover_pending().await;
                     }
                     self.sources.insert(source, issue);
+                    if self.refreshing_local_update()
+                        && !self.recovery_failed
+                        && self.blockers.is_empty()
+                        && self.sources.len() == 2
+                        && self.sources.values().all(Option::is_none)
+                    {
+                        continue;
+                    }
                     if scanning
                         && !self.recovery_failed
                         && !self
@@ -395,6 +403,15 @@ impl Orchestrator {
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         self.blockers.insert(key(&item), (item, issue));
     }
+    fn refreshing_local_update(&self) -> bool {
+        let status = self.status.borrow();
+        self.refresh_after.is_some()
+            && status.activity == SynchronizationActivity::Applying
+            && status
+                .current_operation
+                .as_ref()
+                .is_some_and(|operation| operation.updates_local_content)
+    }
     fn settle(&self) {
         if self.recovery_failed {
             self.publish(
@@ -459,7 +476,7 @@ impl Orchestrator {
                 None,
                 None,
             );
-        } else {
+        } else if !self.refreshing_local_update() {
             self.publish(
                 SynchronizationState::Idle,
                 SynchronizationActivity::None,
@@ -488,13 +505,6 @@ impl Orchestrator {
             self.settle();
             return outcome;
         }
-        self.publish(
-            SynchronizationState::Running,
-            SynchronizationActivity::Analyzing,
-            Some(item.clone()),
-            None,
-            None,
-        );
         if self.recovery_failed {
             outcome.decision = DecisionStatus::Defer;
             self.settle();
@@ -505,12 +515,22 @@ impl Orchestrator {
                 || file.observations.remote_epoch.is_none_or(|e| e < epoch)
             {
                 outcome.decision = DecisionStatus::Defer;
+                if self.refreshing_local_update() {
+                    return outcome;
+                }
                 self.block(item, issue(SynchronizationIssueKind::Deferred, true));
                 self.settle();
                 return outcome;
             }
             self.refresh_after = None;
         }
+        self.publish(
+            SynchronizationState::Running,
+            SynchronizationActivity::Analyzing,
+            Some(item.clone()),
+            None,
+            None,
+        );
         file.initial_association_authorized &= self.config.initial_association_authorized;
         file.environment.trash_propagation_authorized &= self.config.trash_propagation_authorized;
         let decision = analyzer::analyze(&file);
@@ -669,6 +689,7 @@ impl Orchestrator {
                     && operation.action == OperationAction::Download,
                 newly_observed_local: registered_local
                     && operation.action == OperationAction::Upload,
+                updates_local_content: operation.action == OperationAction::UpdateLocalContent,
                 item_id: operation.item_ref.clone(),
                 display_name: operation.name.clone().or_else(|| match &file.remote.name {
                     Evidence::Known(name) => Some(name.clone()),
@@ -777,6 +798,7 @@ impl Orchestrator {
             if !internal_registration
                 && !public_operation.newly_observed_remote
                 && !public_operation.newly_observed_local
+                && (!public_operation.updates_local_content || confirmed)
             {
                 self.publish_execution(
                     SynchronizationActivity::Applying,

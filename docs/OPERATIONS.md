@@ -84,16 +84,19 @@ writers; callers must treat uncertain outcomes as requiring fresh observation.
 
 Transfers use bounded 256 KiB upload chunks and incremental download reads. Downloaded binary
 content must match the provider SHA-256, size, and unchanged remote version before publication.
-Anonymous staging requires Linux `O_TMPFILE`. Replacement stages bytes in the destination
-filesystem, atomically exchanges entries, and moves the previous bytes to trash. Failed
-staging may retain `.drivesync-transfer-<execution hash>` files for recovery; automatic
-cleanup of uncertain artifacts is deliberately absent.
+Anonymous staging requires Linux `O_TMPFILE`. Replacement stages bytes beside the destination
+and publishes them with an atomic exchange. When freedesktop home trash is on the same mount,
+the displaced bytes go there with a restore receipt. When the mount differs, as it can in
+Flatpak even for the same device number, the old inode stays at the reserved
+`.drivesync-transfer-<execution hash>` path. Operations verifies that retained incarnation
+and its content before reporting success. The execution journal records its relative path.
+The scanner excludes it from synchronization. Retained versions can be recovered manually
+and are never automatically removed.
 
-Local removals and preserved replacement versions use freedesktop home trash with a restore
-receipt. Both trash directories and receipt files are private. Cross-filesystem trash,
-unavailable trash, or unsafe directory ownership/permissions is refused without deleting
-source content. Workspace links contain a fixed HTTPS Drive URL and no `Exec` entry or
-executable mode. Permanent deletion is never used.
+Explicit local removals require freedesktop home trash and a restore receipt. Trash directories
+and receipt files are private. Unavailable or unsafe trash still blocks the operation, and
+explicit removal across mounts remains unsupported. Workspace links contain a fixed HTTPS
+Drive URL and have no executable mode or `Exec` entry. Permanent deletion is forbidden.
 
 Provider, Accounts, GUI and credential storage remain preserved. Connection exposes a separate
 explicit initial-association start method; normal dashboard startup does not grant it.
@@ -103,8 +106,7 @@ report; neither category establishes installed-GUI/package acceptance.
 
 [Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) adds verified bound-slot identity refresh for editor
 replacement, update-effect recovery, persisted conditional-upload references and canonical
-private/public property handling. Unknown incomplete replacements remain blocked. Cross-mount
-trash failure preserves the previous bytes in private stages; no destructive fallback exists.
+private/public property handling. Unknown incomplete replacements remain blocked.
 
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) adds pinned, tagged local moves, conditional marked remote moves and read-only recovery for all four location actions. Destination and ancestor changes block confirmation.
 

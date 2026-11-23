@@ -347,6 +347,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         display_name: Some("Relatório.bin".into()),
         newly_observed_remote: false,
         newly_observed_local: false,
+        updates_local_content: false,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -372,6 +373,27 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         assert_eq!(current.direction, direction);
         assert_eq!(current.progress, ProgressView::Indeterminate);
     }
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .updates_local_content = true;
+    for (activity, phase) in [
+        (SynchronizationActivity::Downloading, Phase::Running),
+        (SynchronizationActivity::Applying, Phase::Confirmed),
+    ] {
+        value.activity = activity;
+        let current = map_status(&value, false).activity.unwrap();
+        assert_eq!(current.kind, ActivityKind::UpdateLocalContent);
+        assert_eq!(current.direction, Direction::RemoteToLocal);
+        assert_eq!(current.phase, phase);
+        assert_eq!(current.progress, ProgressView::Indeterminate);
+    }
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .updates_local_content = false;
     value.activity = SynchronizationActivity::Downloading;
     value
         .current_operation

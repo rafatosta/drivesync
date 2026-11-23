@@ -392,14 +392,14 @@ impl Filesystem {
             verified: true,
         })
     }
-    /// Stages bytes exclusively; old content goes to trash before publishing a replacement.
+    /// Publishes a verified replacement atomically and retains the displaced version.
     pub fn install(
         &self,
         request: &ExecuteOperationRequest,
         bytes: &mut File,
         journal: Option<&dyn super::journal::ExecutionJournal>,
     ) -> Result<LocalState, OperatorError> {
-        self.install_with_trash(request, bytes, trash::prepare, journal)
+        self.install_with_trash(request, bytes, trash::prepare_replacement, journal)
     }
     #[cfg(test)]
     pub(in crate::orchestrator::operations) fn install_with_test_trash(
@@ -412,7 +412,7 @@ impl Filesystem {
         self.install_with_trash(
             request,
             bytes,
-            |source, original| trash::prepare_to(source, original, data),
+            |source, original| trash::prepare_replacement_to(source, original, data),
             Some(journal),
         )
     }
@@ -420,7 +420,7 @@ impl Filesystem {
         &self,
         request: &ExecuteOperationRequest,
         bytes: &mut File,
-        prepare: impl FnOnce(&Entry, &StdPath) -> Result<trash::TrashDestination, OperatorError>,
+        prepare: impl FnOnce(&Entry, &StdPath) -> Result<Option<trash::TrashDestination>, OperatorError>,
         journal: Option<&dyn super::journal::ExecutionJournal>,
     ) -> Result<LocalState, OperatorError> {
         let path = request
@@ -459,10 +459,21 @@ impl Filesystem {
         }
         if request.operation.action == OperationAction::UpdateLocalContent {
             self.check(&request.local)?;
-            // Exchange is atomic. Preserve the previous bytes through the trash backend.
             let trash = prepare(&stage, &self.absolute.join(path))?;
+            self.check(&request.local)?;
             rename(&stage, &dest, libc::RENAME_EXCHANGE)?;
-            trash.commit(&stage).map_err(OperatorError::uncertain)?;
+            if let Some(trash) = trash {
+                trash.commit(&stage).map_err(OperatorError::uncertain)?;
+            } else {
+                // The reserved staging path retains the previous inode when trash is on
+                // another mount. Its location is recorded in the execution journal.
+                let retained = self
+                    .observe(&stage_path)
+                    .map_err(OperatorError::uncertain)?;
+                if !trash::same_retained_content(&retained, &request.local) {
+                    return Err(stale().uncertain());
+                }
+            }
         } else {
             rename(&stage, &dest, libc::RENAME_NOREPLACE)?;
         }
@@ -520,7 +531,7 @@ mod tests {
             .install_with_trash(
                 &request,
                 &mut downloaded,
-                |source, original| trash::prepare_to(source, original, &sandbox.0),
+                |source, original| trash::prepare_replacement_to(source, original, &sandbox.0),
                 None,
             )
             .unwrap();
@@ -537,6 +548,33 @@ mod tests {
         assert_eq!(std::fs::read(old).unwrap(), b"old version");
     }
     #[test]
+    #[ignore = "requires a separate writable trash mount, supplied by the Flatpak verification environment"]
+    fn replacement_across_trash_mount_preserves_both_versions() {
+        let sandbox = Sandbox::new();
+        let executor = setup(&sandbox);
+        let file = executor.config.local_root.join("file");
+        std::fs::write(&file, b"old version").unwrap();
+        let request = request(&executor, OperationAction::UpdateLocalContent);
+        let mut downloaded = executor.filesystem.temporary().unwrap();
+        downloaded.write_all(b"new version").unwrap();
+        let data = PathBuf::from(std::env::var_os("DRIVESYNC_TEST_TRASH_DATA").unwrap());
+        executor
+            .filesystem
+            .install_with_trash(
+                &request,
+                &mut downloaded,
+                |source, original| trash::prepare_replacement_to(source, original, &data),
+                None,
+            )
+            .unwrap();
+        assert_eq!(std::fs::read(file).unwrap(), b"new version");
+        let retained = executor
+            .config
+            .local_root
+            .join(Filesystem::stage_path(&request).unwrap());
+        assert_eq!(std::fs::read(retained).unwrap(), b"old version");
+    }
+    #[test]
     fn unavailable_trash_refuses_replacement_before_exchange() {
         let sandbox = Sandbox::new();
         let executor = setup(&sandbox);
@@ -550,7 +588,7 @@ mod tests {
                 &request,
                 &mut downloaded,
                 |source, original| {
-                    trash::prepare_to(source, original, &sandbox.0.join("unavailable"))
+                    trash::prepare_replacement_to(source, original, &sandbox.0.join("unavailable"))
                 },
                 None
             )

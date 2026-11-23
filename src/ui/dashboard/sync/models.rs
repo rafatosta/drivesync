@@ -30,6 +30,7 @@ impl ProgressView {
 pub enum ActivityKind {
     Download,
     DownloadDiscoveredRemote,
+    UpdateLocalContent,
     Upload,
     UploadDiscoveredLocal,
     Verify,
@@ -44,6 +45,7 @@ pub enum Direction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Running,
+    Confirmed,
     Failed,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
