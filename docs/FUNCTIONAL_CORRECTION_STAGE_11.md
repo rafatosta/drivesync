@@ -36,7 +36,9 @@ is required. Two real Google accounts and bind-mount aliases were not exercised.
 - A create-only, private, fsynced `scope-<scope-id>.json` records device, inode and birth
   identity before observation/recovery starts. Reopening the same scope checks that proof.
   Root replacement, malformed proof or unsafe permissions refuses startup without rewriting
-  the proof or touching either tree. No migration or automatic rebinding was introduced.
+  the proof or touching either tree. Existing Inventory without a root proof also refuses startup; it cannot retroactively
+  prove ownership of a possibly replaced root. An explicit new scope or manual review is
+  required. No migration or automatic rebinding was introduced.
 - `Engine::synchronization_audit` attests convergence at a captured effect epoch. It requires
   complete local and remote rounds at that epoch, the exact returned configured scope, a matching root, one proven owner for
   every observed item, valid representations/digests, confirmed baselines and no unconfirmed
@@ -135,7 +137,7 @@ cargo test --workspace --doc
 cargo build --release --locked
 ```
 
-Default workspace suite: 698 passed, zero failed, 21 opt-in tests ignored. The subprocess
+Default workspace suite: 699 passed, zero failed, 21 opt-in tests ignored. The subprocess
 writer test runs separately to avoid temporarily inheriting parallel account-test leases
 between fork and exec; its child process also ran the lease probe. The 100,001-file experiment, installed real-account
 phases, installed portal-root probe and installed GUI runs were executed separately.

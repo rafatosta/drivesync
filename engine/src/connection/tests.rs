@@ -1486,3 +1486,53 @@ async fn stopped_scope_rejects_replaced_root_and_allows_explicit_new_configurati
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn historical_inventory_without_root_proof_cannot_silently_bind_a_new_tree() {
+    use crate::inventory::{models::*, Inventory, InventoryConfig};
+    use crate::models::{Evidence, FileIdentity, Id, ItemId, Timestamp};
+    let fixture = Fixture::new(replies("stage11-unbound-history")).await;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    let inventory = Inventory::open(InventoryConfig {
+        directory: synchronization::directory(&fixture.directory.join("accounts")),
+        account_id: account.id.clone(),
+    })
+    .unwrap();
+    let identity = FileIdentity {
+        account_id: account.id.clone(),
+        sync_root_id: synchronization::root_id(&request),
+        item_id: Some(ItemId("historical".into())),
+        remote_id: None,
+        local_identity: Evidence::NotCollected,
+    };
+    let receipt = inventory.write(InventoryWrite {
+        operation_id: Id("historical".into()),
+        item_id: ItemId("historical".into()),
+        identity,
+        expected_revision: Some(0),
+        effect: PersistedEffect::ItemRegistered {
+            local_path: Some("retained".into()),
+        },
+        recorded_at: Timestamp { unix_millis: 0 },
+    });
+    assert_eq!(receipt.status, WriteStatus::Written);
+    std::fs::write(
+        request.local_root.join("retained"),
+        b"unreviewed historical data",
+    )
+    .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .start_synchronization(request.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootUnavailable)
+    );
+    assert_eq!(
+        std::fs::read(request.local_root.join("retained")).unwrap(),
+        b"unreviewed historical data"
+    );
+}

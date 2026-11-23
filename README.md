@@ -9,7 +9,9 @@ DriveSync is an early-stage Linux application for connecting Google accounts and
 This checkout includes conservative synchronization for explicitly configured native folders.
 The [Stage 11 acceptance matrix](docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed
 and real-account results separately from controlled tests. Published `main` artifacts may
-not include these unpublished functional corrections.
+not include these unpublished functional corrections. Existing synchronization history without
+a root identity proof requires an explicit new scope or review; no automatic migration or
+data reset is performed.
 
 | Feature | Current availability and limits |
 | --- | --- |

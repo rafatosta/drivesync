@@ -52,7 +52,7 @@ fn validate(request: &StartSynchronizationRequest) -> EngineResult<()> {
     Ok(())
 }
 /// Stable scope identity includes opaque account and provider-root IDs, never a local path alone.
-fn root_id(request: &StartSynchronizationRequest) -> SyncRootId {
+pub(super) fn root_id(request: &StartSynchronizationRequest) -> SyncRootId {
     let mut hash = Sha256::new();
     for bytes in [
         request.account_id.0.as_bytes(),
@@ -164,7 +164,20 @@ impl Engine {
                         &account.provider_user_id,
                     )?);
                     let scope = root_id(&request);
-                    writer.bind(&directory, &scope)?;
+                    let inventory =
+                        crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
+                            directory: directory.clone(),
+                            account_id: request.account_id.clone(),
+                        })
+                        .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
+                    let has_inventory = !inventory
+                        .enumerate(crate::inventory::models::InventoryScopeQuery {
+                            account_id: request.account_id.clone(),
+                            sync_root_id: scope.clone(),
+                        })
+                        .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?
+                        .is_empty();
+                    writer.bind(&directory, &scope, has_inventory)?;
                     let config = OrchestratorConfig {
                         expected_root_identity: Some(writer.identity.clone()),
                         initial_association_authorized,

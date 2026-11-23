@@ -104,7 +104,12 @@ impl WriterLease {
         })
     }
     /// First publication is create-only. Truncation, unsafe ownership and root replacement refuse startup.
-    pub(super) fn bind(&self, directory: &Path, scope: &SyncRootId) -> EngineResult<()> {
+    pub(super) fn bind(
+        &self,
+        directory: &Path,
+        scope: &SyncRootId,
+        has_inventory: bool,
+    ) -> EngineResult<()> {
         if !directory.exists() {
             std::fs::DirBuilder::new()
                 .recursive(true)
@@ -115,6 +120,11 @@ impl WriterLease {
         let root = directory_handle(directory)?;
         let path = std::path::PathBuf::from(format!("/proc/self/fd/{}", root.as_raw_fd()))
             .join(format!("scope-{}.json", scope.0));
+        if has_inventory && !path.try_exists().map_err(|_| unavailable())? {
+            // Historical replicas cannot prove which physical root originally owned their slots.
+            // Refuse rather than bootstrap identity onto a potentially replaced tree.
+            return Err(unavailable());
+        }
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -221,16 +231,16 @@ mod tests {
         let storage = base.join("storage");
         let scope = SyncRootId("test-scope".into());
         let first = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        first.bind(&storage, &scope).unwrap();
+        first.bind(&storage, &scope, false).unwrap();
         drop(first);
         let reopened = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        reopened.bind(&storage, &scope).unwrap();
+        reopened.bind(&storage, &scope, false).unwrap();
         drop(reopened);
         std::fs::write(base.join("a/original"), b"preserved").unwrap();
         std::fs::rename(base.join("a"), base.join("preserved-root")).unwrap();
         std::fs::create_dir(base.join("a")).unwrap();
         let changed = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        assert!(changed.bind(&storage, &scope).is_err());
+        assert!(changed.bind(&storage, &scope, false).is_err());
         drop(changed);
         assert_eq!(
             std::fs::read(base.join("preserved-root/original")).unwrap(),
