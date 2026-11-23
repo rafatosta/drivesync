@@ -226,3 +226,6 @@ mod live_conflict_tests;
 
 #[cfg(test)]
 mod live_projection_tests;
+
+#[cfg(test)]
+mod live_trash_tests;

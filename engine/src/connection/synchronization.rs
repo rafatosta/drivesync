@@ -74,7 +74,7 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, false).await
+        self.start_scope(request, false, false).await
     }
 
     /// Starts an exact scope with explicit permission to associate equivalent preexisting replicas.
@@ -83,13 +83,23 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, true).await
+        self.start_scope(request, true, false).await
+    }
+
+    /// Explicitly enables recoverable trash propagation for this worker session only.
+    /// Normal startup and initial-association startup leave this policy disabled.
+    pub async fn start_synchronization_with_trash_propagation(
+        &self,
+        request: StartSynchronizationRequest,
+    ) -> EngineResult<SynchronizationStatus> {
+        self.start_scope(request, false, true).await
     }
 
     async fn start_scope(
         &self,
         request: StartSynchronizationRequest,
         initial_association_authorized: bool,
+        trash_propagation_authorized: bool,
     ) -> EngineResult<SynchronizationStatus> {
         validate(&request)?;
         let inner = self.inner.clone();
@@ -101,6 +111,8 @@ impl Engine {
                         if session.orchestrator.config().roots == request
                             && session.orchestrator.config().initial_association_authorized
                                 == initial_association_authorized
+                            && session.orchestrator.config().trash_propagation_authorized
+                                == trash_propagation_authorized
                         {
                             return Ok(session.orchestrator.status());
                         }
@@ -141,6 +153,7 @@ impl Engine {
                     }
                     let config = OrchestratorConfig {
                         initial_association_authorized,
+                        trash_propagation_authorized,
                         sync_root_id: root_id(&request),
                         roots: request,
                         provider_id: account.provider,
@@ -155,6 +168,7 @@ impl Engine {
                         local_root_available: true,
                         remote_available: false,
                         initial_association_authorized,
+                        trash_propagation_authorized,
                     })
                     .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
                     let orchestrator =

@@ -3,6 +3,7 @@
 mod conflicts;
 mod models;
 mod projections;
+mod trash;
 pub(crate) use conflicts::attributes as conflict_attributes;
 
 use crate::{
@@ -58,6 +59,9 @@ pub(crate) fn analyze(file: &File) -> Decision {
         );
     }
 
+    if let Some(decision) = trash::analyze(file, validation.clone(), changeset.clone()) {
+        return decision;
+    }
     if let Some(decision) = projections::analyze(file, validation.clone(), changeset.clone()) {
         return decision;
     }
@@ -1382,6 +1386,7 @@ fn remote_capability(file: &File, action: OperationAction) -> Evidence<bool> {
             OperationAction::UpdateRemoteContent => capabilities.can_modify_content.clone(),
             OperationAction::RenameRemote => capabilities.can_rename.clone(),
             OperationAction::MoveRemote => capabilities.can_move_item_within_drive.clone(),
+            OperationAction::TrashRemote => capabilities.can_trash.clone(),
             _ => Evidence::Unsupported,
         },
         other => unavailable_capability(other),

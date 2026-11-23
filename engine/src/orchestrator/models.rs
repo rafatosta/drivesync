@@ -6,6 +6,7 @@ use crate::{
 };
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OrchestratorConfig {
+    pub trash_propagation_authorized: bool,
     pub initial_association_authorized: bool,
     pub roots: StartSynchronizationRequest,
     pub sync_root_id: SyncRootId,

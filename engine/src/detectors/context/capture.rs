@@ -290,6 +290,9 @@ impl Context {
                         && !identity_key(&file.identity.local_identity)
                             .is_some_and(|key| view.local_identities.contains(&key))
                     {
+                        if let Some(old) = &file.baseline.local {
+                            file.local = old.clone();
+                        }
                         file.local.state = FileState::Absent;
                         file.local.path = Some(path);
                     }
@@ -309,6 +312,20 @@ impl Context {
             (&file.remote.parents, &file.remote.name)
         {
             if parents.len() == 1 && valid_name(name) {
+                if file.remote.state == FileState::Absent
+                    && file.remote.trashed == Evidence::Known(true)
+                {
+                    // An explicit trash probe establishes this item's parent independently of
+                    // unrelated inaccessible IDs. It never establishes a free destination.
+                    if let Some(parent) = associated(&parents[0]).filter(|_| {
+                        captures
+                            .remote
+                            .as_ref()
+                            .is_some_and(|c| c.coverage == ObservationCoverage::Complete)
+                    }) {
+                        file.environment.destination_local_parent = Evidence::Known(parent);
+                    }
+                }
                 let projected_name = match &file.remote.mime_type {
                     Evidence::Known(mime) => crate::projections::local_name(name, mime),
                     _ => None,
@@ -402,6 +419,21 @@ impl Context {
                 }
             }
         }
+        file.environment.trash_tree_safe = if file.local.kind
+            != Evidence::Known(FileKind::Directory)
+        {
+            Evidence::NotApplicable
+        } else if local_complete && remote_complete {
+            let path = file.local.path.as_ref();
+            let id = file.identity.remote_id.as_ref();
+            Evidence::Known(!view.local.keys().any(|p| path.is_some_and(|root| p != root && p.starts_with(root)))
+                && !view.remote.values().any(|r| matches!(&r.parents, Evidence::Known(parents) if id.is_some_and(|id| parents.contains(id))))
+                && !view.snapshots.iter().any(|s| s.identity.item_id != file.identity.item_id && (
+                    s.local_path.as_ref().is_some_and(|p| path.is_some_and(|root| p != root && p.starts_with(root)))
+                    || s.baseline.remote.as_ref().is_some_and(|r| matches!(&r.parents, Evidence::Known(parents) if id.is_some_and(|id| parents.contains(id)))))))
+        } else {
+            Evidence::NotCollected
+        };
         self.projection_policy(file, view);
         // Project names through the captured tree only to gather candidates. Duplicate projections
         // remain multiple candidates, without merging sides or granting adoption permission.
@@ -516,6 +548,7 @@ fn identity_key(identity: &Evidence<crate::models::LocalIdentity>) -> Option<Ide
 }
 /// Derived once per round. These indexes accelerate reads without introducing identity claims.
 struct View<'a> {
+    snapshots: &'a [InventorySnapshot],
     captures: &'a Captures,
     local: BTreeMap<Path, &'a LocalObservation>,
     remote: BTreeMap<RemoteId, &'a RemoteObservation>,
@@ -554,7 +587,7 @@ impl<'a> View<'a> {
         entries.next().is_none().then_some(entry)
     }
 
-    fn new(captures: &'a Captures, snapshots: &[InventorySnapshot], root: &RemoteId) -> Self {
+    fn new(captures: &'a Captures, snapshots: &'a [InventorySnapshot], root: &RemoteId) -> Self {
         let local = captures.locals();
         let remote = captures.remotes();
         let local_complete = captures
@@ -678,6 +711,7 @@ impl<'a> View<'a> {
             }
         }
         Self {
+            snapshots,
             captures,
             local,
             remote,

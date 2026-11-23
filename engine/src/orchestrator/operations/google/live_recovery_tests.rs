@@ -298,6 +298,7 @@ async fn real_receipt_loss_and_new_engine_recovery() {
             .starts_with("DriveSync-stage3-validation-"));
         assert_eq!(root.mime_type, Some(MimeType(FOLDER.into())));
         let config = OperatorConfig {
+            trash_propagation_authorized: false,
             initial_association_authorized: false,
             account_id: account.clone(),
             sync_root_id: scope(&account, &remote_root, &local_root),

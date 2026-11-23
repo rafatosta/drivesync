@@ -131,6 +131,7 @@ pub(crate) fn open(
     );
     let operator = operations::DefaultOperatorFactory::new(accounts, inventory, client)
         .create(OperatorConfig {
+            trash_propagation_authorized: config.trash_propagation_authorized,
             initial_association_authorized: config.initial_association_authorized,
             account_id: config.roots.account_id.clone(),
             sync_root_id: config.sync_root_id.clone(),
@@ -471,6 +472,7 @@ impl Orchestrator {
             self.refresh_after = None;
         }
         file.initial_association_authorized &= self.config.initial_association_authorized;
+        file.environment.trash_propagation_authorized &= self.config.trash_propagation_authorized;
         let decision = analyzer::analyze(&file);
         outcome.decision = decision.status;
         if decision.status == DecisionStatus::Conflict {

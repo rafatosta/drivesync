@@ -107,6 +107,7 @@ impl Operator for MockOperator {
 fn config() -> OrchestratorConfig {
     let f = fixture();
     OrchestratorConfig {
+        trash_propagation_authorized: false,
         initial_association_authorized: false,
         roots: StartSynchronizationRequest {
             account_id: f.identity.account_id,

@@ -111,3 +111,5 @@ trash failure preserves the previous bytes in private stages; no destructive fal
 [Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) persists conflict facts and validates revision-bound choices before normal dispatch. Both divergent file contents are privately archived and checkpointed before replacement; directory choices archive locations without replacing descendants. Archive verification is part of uncertain-effect recovery.
 
 [Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) restricts Workspace actions to verified link creation, local metadata updates and baseline confirmation. Remote shortcuts and unsupported native types are refused. Link publication is checkpointed and recovered without uploading its bytes.
+
+[Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.

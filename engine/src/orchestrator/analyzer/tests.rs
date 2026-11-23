@@ -55,6 +55,8 @@ pub(in crate::orchestrator) fn fixture() -> File {
         environment: Environment {
             local_replacement: Evidence::NotCollected,
             projection_issue: None,
+            trash_propagation_authorized: false,
+            trash_tree_safe: Evidence::NotCollected,
             local_root: PathRoot(PathBuf::from("/sync")),
             remote_root_id: RemoteId("drive-root".into()),
             local_root_available: true,
@@ -867,4 +869,64 @@ fn workspace_creation_baseline_refresh_and_remote_rename_never_plan_uploads() {
     let p = analyze(&f);
     assert_eq!(p.status, DecisionStatus::Unsupported);
     assert!(p.operations.is_empty());
+}
+
+#[test]
+fn trash_requires_explicit_policy_complete_scope_unchanged_peer_and_empty_folder() {
+    let mut f = fixture();
+    f.baseline.projection = Some(crate::inventory::models::ProjectionKind::Native);
+    f.environment.destination_local_parent = f.local.parent.clone();
+    f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("parent-a".into()));
+    f.local.state = FileState::Absent;
+    assert_eq!(analyze(&f).status, DecisionStatus::Defer);
+    f.environment.trash_propagation_authorized = true;
+    assert_eq!(
+        analyze(&f).operations[0].action,
+        OperationAction::TrashRemote
+    );
+    f.remote.version = Evidence::Known(9);
+    assert_eq!(
+        analyze(&f).operations[0].action,
+        OperationAction::TrashRemote
+    );
+    for state in [
+        FileState::OutsideScope,
+        FileState::Unknown,
+        FileState::Unavailable,
+    ] {
+        let mut denied = f.clone();
+        denied.remote.state = state;
+        assert!(analyze(&denied).operations.is_empty());
+    }
+    let mut changed = f.clone();
+    changed.remote.checksum = checksum("changed");
+    assert!(analyze(&changed).operations.is_empty());
+    let mut partial = f.clone();
+    partial.observations.local_coverage = ObservationCoverage::Partial;
+    assert!(analyze(&partial).operations.is_empty());
+    f.local.kind = Evidence::Known(FileKind::Directory);
+    f.baseline.local.as_mut().unwrap().kind = f.local.kind.clone();
+    assert!(analyze(&f).operations.is_empty());
+    f.environment.trash_tree_safe = Evidence::Known(false);
+    assert!(analyze(&f).operations.is_empty());
+    f.environment.trash_tree_safe = Evidence::Known(true);
+    assert_eq!(
+        analyze(&f).operations[0].action,
+        OperationAction::TrashRemote
+    );
+    let mut f = fixture();
+    f.baseline.projection = Some(crate::inventory::models::ProjectionKind::Native);
+    f.environment.trash_propagation_authorized = true;
+    f.environment.destination_local_parent = f.local.parent.clone();
+    f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("parent-a".into()));
+    f.remote.state = FileState::Absent;
+    assert!(analyze(&f).operations.is_empty());
+    f.remote.trashed = Evidence::Known(true);
+    f.remote.version = Evidence::Known(9);
+    assert_eq!(
+        analyze(&f).operations[0].action,
+        OperationAction::RemoveLocal
+    );
+    f.local.checksum = checksum("edited child");
+    assert!(analyze(&f).operations.is_empty());
 }

@@ -31,6 +31,7 @@ pub(super) fn context() -> (Context, PathBuf) {
         remote_root_id: RemoteId("drive-root".into()),
         local_root_available: true,
         remote_available: false,
+        trash_propagation_authorized: false,
         initial_association_authorized: false,
     })
     .unwrap();

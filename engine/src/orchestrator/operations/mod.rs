@@ -6,6 +6,7 @@ mod interfaces;
 mod journal;
 pub(super) mod models;
 mod recovery;
+mod trash;
 use crate::{
     accounts::{Accounts, GetAccountRequest},
     inventory::{models::*, Inventory},
@@ -430,6 +431,13 @@ impl PersistingOperator {
         {
             return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation));
         }
+        if matches!(
+            op.action,
+            OperationAction::TrashRemote | OperationAction::RemoveLocal
+        ) && !self.config.trash_propagation_authorized
+        {
+            return Err(filesystem::stale());
+        }
         let pre = op.preconditions.as_ref().ok_or_else(filesystem::stale)?;
         if !matches!(
             pre.local_unchanged,
@@ -501,6 +509,12 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
+                if matches!(
+                    op.action,
+                    OperationAction::TrashRemote | OperationAction::RemoveLocal
+                ) {
+                    self.validate_trash(r, &snapshot)?;
+                }
                 if crate::projections::workspace(&r.remote)
                     && r.local.state == FileState::Present
                     && snapshot.baseline.projection != Some(ProjectionKind::GoogleWorkspaceShortcut)
@@ -545,6 +559,12 @@ impl PersistingOperator {
                 }
             }
             InventoryLookupStatus::NotFound if r.expected_revision == Some(0) => {
+                if matches!(
+                    op.action,
+                    OperationAction::TrashRemote | OperationAction::RemoveLocal
+                ) {
+                    return Err(filesystem::stale());
+                }
                 if matches!(
                     op.action,
                     OperationAction::RegisterIdentity | OperationAction::Adopt

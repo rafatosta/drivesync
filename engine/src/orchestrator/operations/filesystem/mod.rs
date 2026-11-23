@@ -382,13 +382,7 @@ impl Filesystem {
                 }
                 observed
             }
-            OperationAction::RemoveLocal => {
-                self.check(&request.local)?;
-                trash::move_to_trash(&self.entry(path)?, &self.absolute.join(path))?;
-                let mut state = request.local.clone();
-                state.state = FileState::Absent;
-                state
-            }
+            OperationAction::RemoveLocal => self.remove_to_trash(request, journal)?,
             _ => return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation)),
         };
         Ok(AppliedEffect {

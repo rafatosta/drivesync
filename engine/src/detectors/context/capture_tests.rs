@@ -291,6 +291,7 @@ fn reopened_records_are_revisited_and_remote_omission_is_unknown() {
         remote_root_id: context.config.remote_root_id.clone(),
         local_root_available: true,
         remote_available: true,
+        trash_propagation_authorized: false,
         initial_association_authorized: false,
     };
     drop(context);
@@ -876,4 +877,132 @@ fn invalid_names_shortcuts_collisions_and_special_locals_are_per_item_refusals()
             .projection_issue
             .is_some());
     }
+}
+
+#[test]
+fn folder_trash_evidence_requires_complete_empty_captures_and_no_registered_descendant() {
+    let (context, _directory) = context();
+    let folder = local("folder", 41, true);
+    seed(
+        &context,
+        folder.clone(),
+        remote("folder", "folder", "drive-root", true),
+    );
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![folder.clone()]),
+        ))
+        .unwrap();
+    let files = context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![remote("folder", "folder", "drive-root", true)]),
+        ))
+        .unwrap();
+    let parent = files
+        .iter()
+        .find(|f| f.identity.remote_id == Some(RemoteId("folder".into())))
+        .unwrap();
+    assert_eq!(parent.environment.trash_tree_safe, Evidence::Known(true));
+    seed(
+        &context,
+        local("folder/child", 42, false),
+        remote("child", "child", "folder", false),
+    );
+    let files = context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![folder.clone()]),
+        ))
+        .unwrap();
+    let parent = files
+        .iter()
+        .find(|f| f.identity.remote_id == Some(RemoteId("folder".into())))
+        .unwrap();
+    assert_eq!(parent.environment.trash_tree_safe, Evidence::NotCollected);
+    let mut removed_child = remote("child", "child", "folder", false);
+    removed_child.state = FileState::Absent;
+    removed_child.trashed = Evidence::Known(true);
+    let files = context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![
+                remote("folder", "folder", "drive-root", true),
+                removed_child,
+            ]),
+        ))
+        .unwrap();
+    let parent = files
+        .iter()
+        .find(|f| f.identity.remote_id == Some(RemoteId("folder".into())))
+        .unwrap();
+    assert_eq!(parent.environment.trash_tree_safe, Evidence::Known(false));
+    let files = context
+        .build_capture(round(
+            &context,
+            3,
+            ObservationCoverage::Partial,
+            CaptureEntries::Local(vec![folder]),
+        ))
+        .unwrap();
+    let parent = files
+        .iter()
+        .find(|f| f.identity.remote_id == Some(RemoteId("folder".into())))
+        .unwrap();
+    assert_eq!(parent.environment.trash_tree_safe, Evidence::NotCollected);
+}
+
+#[test]
+fn trashed_remote_retains_parent_correspondence_without_claiming_a_free_destination() {
+    let (mut context, _directory) = context();
+    context.config.trash_propagation_authorized = true;
+    let entry = local("file", 43, false);
+    let mut source = remote("file", "file", "drive-root", false);
+    seed(&context, entry.clone(), source.clone());
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![entry]),
+        ))
+        .unwrap();
+    source.state = FileState::Absent;
+    source.trashed = Evidence::Known(true);
+    source.version = Evidence::Known(2);
+    let mut inaccessible = remote("inaccessible", "inaccessible", "drive-root", false);
+    inaccessible.state = FileState::Unknown;
+    let files = context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![source, inaccessible]),
+        ))
+        .unwrap();
+    let file = files
+        .iter()
+        .find(|f| f.identity.item_id == Some(ItemId("file".into())))
+        .unwrap();
+    assert_eq!(
+        file.environment.destination_local_parent,
+        Evidence::Known(Path::new())
+    );
+    assert_eq!(
+        file.environment.destination_remote_parent_id,
+        Evidence::Known(RemoteId("drive-root".into()))
+    );
+    assert_ne!(
+        file.environment.destination_local_occupied,
+        Evidence::Known(false)
+    );
 }

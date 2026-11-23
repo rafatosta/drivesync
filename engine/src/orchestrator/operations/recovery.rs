@@ -52,6 +52,7 @@ pub(super) fn record(
         transfer: None,
         remote_ancestry: None,
         conflict_archive: None,
+        local_trash: None,
     })
 }
 impl PersistingOperator {
@@ -146,7 +147,9 @@ impl PersistingOperator {
         }
         if !matches!(
             record.command.action,
-            OperationAction::CreateLocalDirectory
+            OperationAction::TrashRemote
+                | OperationAction::RemoveLocal
+                | OperationAction::CreateLocalDirectory
                 | OperationAction::Download
                 | OperationAction::CreateLocalShortcut
                 | OperationAction::CreateRemoteDirectory

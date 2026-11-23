@@ -85,6 +85,7 @@ pub(super) fn setup(s: &Sandbox) -> PersistingOperator {
     fs::create_dir(&root).unwrap();
     PersistingOperator {
         config: OperatorConfig {
+            trash_propagation_authorized: false,
             initial_association_authorized: false,
             account_id: AccountId("account".into()),
             sync_root_id: SyncRootId("root".into()),

@@ -353,6 +353,15 @@ fn apply_effect(snapshot: &mut InventorySnapshot, request: &InventoryWrite) -> b
                 return false;
             };
             match checkpoint {
+                super::models::RecoveryCheckpoint::LocalTrash(reference) => {
+                    if record.command.action != super::models::OperationAction::RemoveLocal
+                        || record.local_trash.is_some()
+                        || !reference.destination.is_absolute()
+                    {
+                        return false;
+                    }
+                    record.local_trash = Some(reference.clone());
+                }
                 super::models::RecoveryCheckpoint::ConflictArchive(id) => {
                     if record.command.conflict_id.as_ref() != Some(id)
                         || record

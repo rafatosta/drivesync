@@ -99,9 +99,11 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
         remote_root_id: config.remote_root_id.clone(),
         local_root_available: true,
         remote_available: true,
+        trash_propagation_authorized: false,
         initial_association_authorized: false,
     };
     let worker_config = OrchestratorConfig {
+        trash_propagation_authorized: false,
         initial_association_authorized: false,
         roots: StartSynchronizationRequest {
             account_id: config.account_id.clone(),

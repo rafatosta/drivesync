@@ -1047,3 +1047,78 @@ async fn workspace_link_receipt_loss_recovers_after_document_revision_without_re
     assert!(executor.recover().await.unwrap().is_empty());
     assert_eq!(snapshots(&executor), confirmed);
 }
+
+#[tokio::test]
+async fn local_trash_crash_after_rename_confirms_absence_without_replaying() {
+    use super::super::journal::{ExecutionJournal, Journal};
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    std::fs::write(executor.config.local_root.join("file"), b"recoverable").unwrap();
+    let mut item: serde_json::Value =
+        serde_json::from_str(&metadata("file", "remote-root", 2, "recoverable")).unwrap();
+    item["trashed"] = serde_json::json!(true);
+    let body = item.to_string();
+    let root_available = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let accessible = root_available.clone();
+    let server = endpoint(move |request| {
+        if request.contains("/files/remote-root?") {
+            if accessible.load(std::sync::atomic::Ordering::SeqCst) {
+                (200, root(), vec![])
+            } else {
+                (403, "{}".into(), vec![])
+            }
+        } else {
+            (200, body.clone(), vec![])
+        }
+    })
+    .await;
+    use_backend(&s, &mut executor, server.client.clone(), false);
+    let mut r = request(&executor, OperationAction::RemoveLocal);
+    r.remote = normalize(&serde_json::from_value(item).unwrap());
+    let mut record =
+        super::super::recovery::record(&executor.config, &r, &executor.filesystem, None).unwrap();
+    record.remote_ancestry = Some(vec![]);
+    let revision = pending_record(&executor, &r, record.clone(), OperationState::Running);
+    let journal = Journal::new(executor.inventory.clone(), r.clone(), revision, record);
+    executor
+        .filesystem
+        .remove_to_test_trash(&r, &journal, &s.0)
+        .unwrap();
+    assert!(journal.record().local_trash.is_some());
+    assert_eq!(
+        snapshots(&executor)[0].pending_operations[0].state,
+        OperationState::Running
+    );
+    let executor = reopen(&s, executor);
+    let blocked = executor.recover().await.unwrap();
+    assert_eq!(blocked[0].assessment.outcome, ExecutionEffect::Unknown);
+    assert_eq!(
+        blocked[0].assessment.issue,
+        Some(RecoveryIssue::RootChanged)
+    );
+    assert!(!executor.config.local_root.join("file").exists());
+    root_available.store(true, std::sync::atomic::Ordering::SeqCst);
+    let results = executor.recover().await.unwrap();
+    assert_eq!(results[0].assessment.outcome, ExecutionEffect::Applied);
+    let confirmed = snapshots(&executor);
+    assert_eq!(
+        confirmed[0].baseline.local.as_ref().unwrap().state,
+        FileState::Absent
+    );
+    assert_eq!(
+        confirmed[0].baseline.remote.as_ref().unwrap().state,
+        FileState::Absent
+    );
+    assert_eq!(
+        confirmed[0].pending_operations[0].state,
+        OperationState::Confirmed
+    );
+    assert!(executor.recover().await.unwrap().is_empty());
+    assert_eq!(snapshots(&executor), confirmed);
+    assert!(server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.starts_with("GET ")));
+}

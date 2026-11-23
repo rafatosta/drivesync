@@ -3,6 +3,7 @@ mod conflicts;
 mod projections;
 mod recovery;
 mod resume;
+mod trash;
 struct UploadCursor {
     session: GoogleUploadSession,
     offset: u64,
@@ -277,6 +278,8 @@ impl GoogleOperator {
                 | OperationAction::MoveLocal
                 | OperationAction::RenameRemote
                 | OperationAction::MoveRemote
+                | OperationAction::TrashRemote
+                | OperationAction::RemoveLocal
         );
         let ancestry = if tree_action {
             let mut parents = match &r.remote.parents {
@@ -310,6 +313,12 @@ impl GoogleOperator {
             if op.action != OperationAction::RemoveLocal && snapshot.file.trashed != Some(false) {
                 return Err(filesystem::stale());
             }
+        }
+        if matches!(
+            op.action,
+            OperationAction::TrashRemote | OperationAction::RemoveLocal
+        ) {
+            self.trash_guard(config, r, fs, session).await?;
         }
         self.preserve_conflict(r, fs, session).await?;
         if let (Some(id), Some(journal)) = (&op.conflict_id, journal) {
@@ -398,6 +407,9 @@ impl GoogleOperator {
                     return Err(filesystem::stale());
                 }
                 self.check_ancestry(session, &ancestry).await?;
+                if op.action == OperationAction::RemoveLocal {
+                    self.trash_guard(config, r, fs, session).await?;
+                }
                 let mut effect = fs.execute(r, journal)?;
                 self.check_ancestry(session, &ancestry)
                     .await
@@ -413,6 +425,16 @@ impl GoogleOperator {
                     if after.file.version != source.file.version {
                         return Err(filesystem::stale().uncertain());
                     }
+                }
+                if op.action == OperationAction::RemoveLocal {
+                    self.trash_root(config, session)
+                        .await
+                        .map_err(OperatorError::uncertain)?;
+                    effect.local = Some(
+                        fs.trashed(&journal.ok_or_else(filesystem::stale)?.record())
+                            .map_err(OperatorError::uncertain)?
+                            .ok_or_else(|| filesystem::stale().uncertain())?,
+                    );
                 }
                 effect.remote = Some(normalize(&source.file));
                 return Ok(effect);
@@ -554,7 +576,7 @@ impl GoogleOperator {
                         options.remove_parents = Some(vec![parents[0].clone()]);
                     }
                     _ => {
-                        if caps.can_trash != Some(true) {
+                        if caps.can_trash != Some(true) || caps.can_untrash != Some(true) {
                             return Err(filesystem::stale());
                         }
                         metadata.trashed = GooglePatch::Set(true);
@@ -562,7 +584,9 @@ impl GoogleOperator {
                 }
                 if matches!(
                     op.action,
-                    OperationAction::RenameRemote | OperationAction::MoveRemote
+                    OperationAction::RenameRemote
+                        | OperationAction::MoveRemote
+                        | OperationAction::TrashRemote
                 ) {
                     let mut properties = snapshot.file.app_properties.clone().unwrap_or_default();
                     properties.insert("drivesyncExecution".into(), r.execution_id.0.clone());
@@ -588,6 +612,9 @@ impl GoogleOperator {
                     {
                         return Err(filesystem::stale());
                     }
+                }
+                if op.action == OperationAction::TrashRemote {
+                    self.trash_guard(config, r, fs, session).await?;
                 }
                 self.client
                     .files_update_conditional(
@@ -621,6 +648,29 @@ impl GoogleOperator {
                 };
                 if !verified {
                     return Err(filesystem::stale().uncertain());
+                }
+                if op.action == OperationAction::TrashRemote {
+                    self.trash_root(config, session)
+                        .await
+                        .map_err(OperatorError::uncertain)?;
+                    let current = normalize(&after);
+                    let expected = normalize(&snapshot.file);
+                    if current.name != expected.name
+                        || current.parents != expected.parents
+                        || current.mime_type != expected.mime_type
+                        || current.size != expected.size
+                        || current.checksum != expected.checksum
+                        || !matches!((&current.version,&expected.version),(Evidence::Known(a),Evidence::Known(b)) if a>b)
+                    {
+                        return Err(filesystem::stale().uncertain());
+                    }
+                    if r.local.kind == Evidence::Known(FileKind::Directory) {
+                        self.require_remote_empty(session, id)
+                            .await
+                            .map_err(OperatorError::uncertain)?;
+                    }
+                    fs.confirm_missing_incarnation(&r.local, &config.sync_root_id)
+                        .map_err(OperatorError::uncertain)?;
                 }
                 after
             }
@@ -1132,7 +1182,11 @@ fn normalize(file: &GoogleFile) -> RemoteState {
         .as_ref()
         .is_some_and(|m| m.0.starts_with("application/vnd.google-apps."));
     RemoteState {
-        state: FileState::Present,
+        state: if file.trashed == Some(true) {
+            FileState::Absent
+        } else {
+            FileState::Present
+        },
         id: file.id.as_ref().map(|id| RemoteId(id.0.clone())),
         name: evidence(file.name.clone()),
         parents: evidence(

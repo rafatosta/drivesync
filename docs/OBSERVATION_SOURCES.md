@@ -159,3 +159,5 @@ evidence, followed by independent Operations validation.
 [Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) permits complete, unambiguous bound-slot replacement evidence to expose simultaneous atomic-editor divergence as a conflict. This never authorizes an overwrite: the selected choice, current filesystem, provider state and original-inode absence are rechecked by Operations.
 
 [Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) applies explicit per-item projection, name and special-file policies. Unsupported entries do not prevent independent supported items from progressing; raw provider names remain distinct from derived local filenames.
+
+[Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.

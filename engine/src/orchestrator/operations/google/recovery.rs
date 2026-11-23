@@ -21,6 +21,12 @@ impl GoogleOperator {
                 return RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged);
             }
         }
+        if matches!(
+            record.command.action,
+            OperationAction::TrashRemote | OperationAction::RemoveLocal
+        ) {
+            return self.recover_trash(config, record, fs, session).await;
+        }
         match record.command.action {
             OperationAction::RenameLocal
             | OperationAction::MoveLocal

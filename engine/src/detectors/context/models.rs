@@ -35,6 +35,8 @@ pub(crate) struct ContextConfig {
     pub remote_available: bool,
     /// Explicit authorization to associate an initially untracked item.
     pub initial_association_authorized: bool,
+    /// Explicit recoverable trash propagation authorization for this session only.
+    pub trash_propagation_authorized: bool,
 }
 
 impl ContextConfig {
@@ -50,6 +52,8 @@ impl ContextConfig {
             destination_local_occupied: Evidence::NotCollected,
             local_replacement: Evidence::NotCollected,
             projection_issue: None,
+            trash_propagation_authorized: self.trash_propagation_authorized,
+            trash_tree_safe: Evidence::NotCollected,
         }
     }
 }
@@ -57,6 +61,10 @@ impl ContextConfig {
 /// Current execution environment facts; unknown destinations remain explicit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Environment {
+    /// Session-only authorization; a baseline never grants removal permission.
+    pub trash_propagation_authorized: bool,
+    /// Only fully observed empty directories may be trashed automatically.
+    pub trash_tree_safe: Evidence<bool>,
     /// Proven per-item policy refusal, independent of scope completeness.
     pub projection_issue: Option<String>,
     /// A new regular inode occupies the already synchronized path; the prior inode is absent.

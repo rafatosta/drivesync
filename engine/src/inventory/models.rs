@@ -506,6 +506,16 @@ pub(crate) struct RecoveryRecord {
     pub remote_ancestry: Option<Vec<RemoteState>>,
     /// Archive publication committed before any selected conflict effect.
     pub conflict_archive: Option<Id>,
+    /// Recoverable local trash destination checkpointed before its rename.
+    pub local_trash: Option<TrashReference>,
+}
+/// Pinned freedesktop trash object and its original-location receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TrashReference {
+    #[serde(with = "path_serde::required")]
+    pub destination: Path,
+    pub parent_identity: LocalIdentity,
+    pub info_checksum: Checksum,
 }
 /// Sensitive provider transfer handle. No OAuth credential is stored; Debug redacts the URI.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,6 +535,7 @@ impl std::fmt::Debug for TransferReference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum RecoveryCheckpoint {
     LocalStage(LocalIdentity),
+    LocalTrash(TrashReference),
     Transfer(TransferReference),
     RemoteAncestry(Vec<RemoteState>),
     ConflictArchive(Id),

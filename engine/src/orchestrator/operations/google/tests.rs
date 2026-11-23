@@ -519,7 +519,7 @@ async fn metadata_for_another_identity_is_rejected() {
 }
 
 #[tokio::test]
-async fn remote_move_and_trash_use_conditional_metadata_mutations() {
+async fn remote_move_is_conditional_and_unproven_trash_is_refused() {
     for action in [OperationAction::MoveRemote, OperationAction::TrashRemote] {
         let sandbox = Sandbox::new();
         let executor = setup(&sandbox);
@@ -541,9 +541,18 @@ async fn remote_move_and_trash_use_conditional_metadata_mutations() {
                 &executor.filesystem,
                 &GoogleSession::new("test", "synthetic"),
             )
-            .await
-            .unwrap();
-        assert!(effect.verified);
+            .await;
+        if action == OperationAction::TrashRemote {
+            assert!(effect.is_err());
+            assert!(!server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|r| r.starts_with("PATCH ")));
+            continue;
+        }
+        assert!(effect.unwrap().verified);
         let calls = server.requests.lock().unwrap();
         let patch = calls.iter().find(|r| r.starts_with("PATCH ")).unwrap();
         assert!(patch.to_ascii_lowercase().contains("if-match: \"v1\""));
@@ -636,6 +645,7 @@ impl ExecutionJournal for MemoryJournal {
     fn checkpoint(&self, checkpoint: RecoveryCheckpoint) -> Result<(), OperatorError> {
         let mut record = self.0.lock().unwrap();
         match checkpoint {
+            RecoveryCheckpoint::LocalTrash(reference) => record.local_trash = Some(reference),
             RecoveryCheckpoint::ConflictArchive(id) => record.conflict_archive = Some(id),
             RecoveryCheckpoint::LocalStage(identity) => record.stage_identity = Some(identity),
             RecoveryCheckpoint::Transfer(transfer) => record.transfer = Some(transfer),
