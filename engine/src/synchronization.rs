@@ -62,6 +62,14 @@ pub struct SynchronizationIssue {
     pub kind: SynchronizationIssueKind,
     pub retryable: bool,
 }
+/// Public identity of the operation currently dispatched to the executor.
+/// This does not imply byte telemetry or a lossless sequence of operation events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationOperation {
+    pub id: String,
+    pub item_id: ItemId,
+    pub display_name: Option<String>,
+}
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationStatus {
@@ -69,6 +77,7 @@ pub struct SynchronizationStatus {
     pub state: SynchronizationState,
     pub activity: SynchronizationActivity,
     pub current_item: Option<SynchronizationItem>,
+    pub current_operation: Option<SynchronizationOperation>,
     pub progress: Option<SynchronizationProgress>,
     pub issue: Option<SynchronizationIssue>,
     pub updated_at: DateTime,
@@ -80,6 +89,7 @@ impl SynchronizationStatus {
             state,
             activity: SynchronizationActivity::None,
             current_item: None,
+            current_operation: None,
             progress: None,
             issue: None,
             updated_at: crate::orchestrator::timestamp(),

@@ -1512,3 +1512,21 @@ msgstr "Drive"
 
 msgid "Review versions"
 msgstr "Revisar versões"
+
+msgid "Submitting choice…"
+msgstr "Enviando escolha…"
+
+msgid "File contents are preserved before replacement."
+msgstr "Os conteúdos dos arquivos são preservados antes da substituição."
+
+msgid "{count} items need attention"
+msgstr "{count} itens precisam de atenção"
+
+msgid "Information"
+msgstr "Informação"
+
+msgid "Warning"
+msgstr "Aviso"
+
+msgid "Error"
+msgstr "Erro"

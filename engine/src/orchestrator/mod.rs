@@ -365,8 +365,28 @@ impl Orchestrator {
             state,
             activity,
             current_item: item,
+            current_operation: None,
             progress,
             issue,
+            updated_at: timestamp(),
+        });
+    }
+    fn publish_execution(
+        &self,
+        activity: SynchronizationActivity,
+        item: &SynchronizationItem,
+        operation: &SynchronizationOperation,
+        completed: u64,
+        total: u64,
+    ) {
+        self.status.send_replace(SynchronizationStatus {
+            account_id: self.config.roots.account_id.clone(),
+            state: SynchronizationState::Running,
+            activity,
+            current_item: Some(item.clone()),
+            current_operation: Some(operation.clone()),
+            progress: Some(SynchronizationProgress { completed, total }),
+            issue: None,
             updated_at: timestamp(),
         });
     }
@@ -625,15 +645,20 @@ impl Orchestrator {
                     _ => None,
                 };
             }
-            self.publish(
-                SynchronizationState::Running,
-                activity(operation.action),
-                Some(item.clone()),
-                Some(SynchronizationProgress {
-                    completed: completed.len() as u64,
-                    total,
+            let public_operation = SynchronizationOperation {
+                id: execution_id.0.clone(),
+                item_id: operation.item_ref.clone(),
+                display_name: operation.name.clone().or_else(|| match &file.remote.name {
+                    Evidence::Known(name) => Some(name.clone()),
+                    _ => None,
                 }),
-                None,
+            };
+            self.publish_execution(
+                activity(operation.action),
+                &item,
+                &public_operation,
+                completed.len() as u64,
+                total,
             );
             let step = operation.step;
             let expected_id = execution_id.clone();
@@ -723,15 +748,12 @@ impl Orchestrator {
                 );
             }
             outcome.results.push(result);
-            self.publish(
-                SynchronizationState::Running,
+            self.publish_execution(
                 SynchronizationActivity::Applying,
-                Some(item.clone()),
-                Some(SynchronizationProgress {
-                    completed: completed.len() as u64,
-                    total,
-                }),
-                None,
+                &item,
+                &public_operation,
+                completed.len() as u64,
+                total,
             );
             if !confirmed {
                 break;

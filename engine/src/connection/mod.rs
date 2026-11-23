@@ -233,3 +233,6 @@ mod live_trash_tests;
 
 #[cfg(test)]
 mod live_acceptance_tests;
+
+#[cfg(test)]
+mod live_stage12_tests;

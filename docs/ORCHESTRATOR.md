@@ -70,14 +70,20 @@ blocked; failure to enumerate recovery blocks all mutation admission for the sco
 
 `SynchronizationSubscription` is a coalescing latest-state feed that can be awaited from GLib
 without a caller Tokio runtime. It exposes account, lifecycle, actual activity, current item,
-measured operation-count progress, typed blocker, and UTC timestamp, without sessions or
+the dispatched operation identity/item/display name, measured operation-count progress, typed blocker, and UTC timestamp, without sessions or
 provider diagnostics. It is not an event log: rapid intermediate transitions may coalesce.
 Idle means no pending plan for observed items; it does not prove whole-tree synchronization.
 
 The dashboard prepares completed saved scopes and subscribes for the selected account.
 Selection changes and widget teardown cancel its previous listener. Preparation failure
-leaves accounts and saved choices intact. Status text is localized, and progress appears
-only when a plan has a known operation count. Folder changes stop and replace the prior
+leaves accounts and saved choices intact. The Stage 12 presentation uses controlled components
+and a replaceable public-API adapter. Download activity is indeterminate: operation counts are
+not transfer bytes. Incremental component telemetry is bound to account and operation IDs.
+Only a positive captured-scope synchronization audit can produce the synchronized title; the
+adapter rechecks the subscription after awaiting the audit. New snapshots invalidate the old
+presentation. This remains a coalescing feed, not a complete operation history. See
+[Stage 12](FUNCTIONAL_CORRECTION_STAGE_12.md) for evidence and installed-GUI limitations.
+Folder changes stop and replace the prior
 scope before activating the newly saved one.
 
 ## Current acceptance boundary

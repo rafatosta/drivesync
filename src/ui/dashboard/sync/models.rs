@@ -70,7 +70,14 @@ pub struct AttentionItemView {
     pub action: AttentionAction,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IssueView {
+    pub severity: Severity,
     pub title: String,
     pub description: String,
     pub guidance: Option<String>,

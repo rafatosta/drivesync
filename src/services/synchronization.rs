@@ -86,6 +86,7 @@ mod tests {
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::Observing,
             current_item: None,
+            current_operation: None,
             progress: None,
             issue: None,
             updated_at: drivesync_engine::Timestamp { unix_millis: 0 },

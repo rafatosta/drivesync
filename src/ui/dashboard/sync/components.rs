@@ -8,10 +8,11 @@ fn label() -> gtk::Label {
     gtk::Label::builder()
         .wrap(true)
         .xalign(0.0)
-        .selectable(true)
+        .selectable(false)
         .build()
 }
 #[derive(Clone)]
+/// Selected-scope summary. Only an audited backend may supply `Synced`.
 pub struct SyncStatus {
     pub widget: gtk::Box,
     icon: gtk::Image,
@@ -61,6 +62,9 @@ impl SyncStatus {
         self.description.set_label(description);
         *self.state.borrow_mut() = state;
     }
+    pub fn description(&self) -> String {
+        self.description.text().to_string()
+    }
     pub fn state(&self) -> StatusView {
         self.state.borrow().clone()
     }
@@ -69,26 +73,37 @@ impl SyncStatus {
     }
 }
 #[derive(Clone)]
+/// Current operation only; clearing activity never asserts convergence.
 pub struct SyncActivity {
     pub widget: gtk::Box,
     text: gtk::Label,
+    details: gtk::Label,
     progress: gtk::ProgressBar,
+    spinner: gtk::Spinner,
     state: Rc<RefCell<Option<ActivityView>>>,
 }
 impl SyncActivity {
     pub fn new() -> Self {
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let text = label();
+        text.set_lines(3);
+        text.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        let details = label();
+        let spinner = gtk::Spinner::new();
+        widget.append(&spinner);
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(true);
         progress.set_widget_name("dashboard-synchronization-progress");
         widget.append(&text);
+        widget.append(&details);
         widget.append(&progress);
         widget.set_visible(false);
         Self {
             widget,
             text,
+            details,
             progress,
+            spinner,
             state: Rc::default(),
         }
     }
@@ -104,10 +119,10 @@ impl SyncActivity {
             Direction::LocalToRemote => "Computer → Drive",
             Direction::None => "",
         };
-        self.text.set_label(&format!(
-            "{} {}\n{}\n{}",
-            gettext(verb),
-            activity.name,
+        self.text
+            .set_label(&format!("{} {}", gettext(verb), activity.name));
+        self.details.set_label(&format!(
+            "{}\n{}",
             gettext(direction),
             gettext(match activity.phase {
                 Phase::Running => "In progress",
@@ -121,6 +136,8 @@ impl SyncActivity {
     fn render_progress(&self, value: &ProgressView) {
         let measured = value.measured();
         self.progress.set_visible(measured.is_some());
+        self.spinner.set_visible(measured.is_none());
+        self.spinner.set_spinning(measured.is_none());
         if let Some((done, total)) = measured {
             self.progress.set_fraction(done as f64 / total as f64);
             let template = match value {
@@ -153,6 +170,7 @@ impl SyncActivity {
         self.state.borrow_mut().take();
         self.widget.set_visible(false);
         self.render_progress(&ProgressView::Indeterminate);
+        self.spinner.stop();
     }
     pub fn state(&self) -> Option<ActivityView> {
         self.state.borrow().clone()
@@ -160,6 +178,7 @@ impl SyncActivity {
 }
 type AttentionCallback = Rc<RefCell<Option<Box<dyn Fn(AttentionAction)>>>>;
 #[derive(Clone)]
+/// Deduplicated current issues and UI intentions, without synchronization I/O.
 pub struct SyncAttention {
     pub widget: gtk::Box,
     items: Rc<RefCell<Vec<AttentionItemView>>>,
@@ -197,6 +216,14 @@ impl SyncAttention {
             self.widget.append(&button);
             unique.push(item);
         }
+        if !unique.is_empty() {
+            let heading = label();
+            heading.set_label(
+                &gettext("{count} items need attention")
+                    .replace("{count}", &unique.len().to_string()),
+            );
+            self.widget.prepend(&heading);
+        }
         self.widget.set_visible(!unique.is_empty());
         *self.items.borrow_mut() = unique;
     }
@@ -212,9 +239,11 @@ impl SyncAttention {
     }
 }
 #[derive(Clone)]
+/// Informational diagnosis; exposes no retry or destructive commands.
 pub struct SyncIssueDialog {
     pub window: gtk::Window,
     text: gtk::Label,
+    issue: Rc<RefCell<Option<IssueView>>>,
 }
 impl SyncIssueDialog {
     pub fn new() -> Self {
@@ -229,12 +258,25 @@ impl SyncIssueDialog {
             .default_height(280)
             .build();
         window.set_child(Some(&gtk::ScrolledWindow::builder().child(&text).build()));
-        Self { window, text }
+        Self {
+            window,
+            text,
+            issue: Rc::default(),
+        }
+    }
+    pub fn state(&self) -> Option<IssueView> {
+        self.issue.borrow().clone()
     }
     pub fn set_issue(&self, issue: IssueView) {
+        *self.issue.borrow_mut() = Some(issue.clone());
         self.window.set_title(Some(&issue.title));
         self.text.set_label(&format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
+            gettext(match issue.severity {
+                Severity::Info => "Information",
+                Severity::Warning => "Warning",
+                Severity::Error => "Error",
+            }),
             issue.description,
             issue.guidance.unwrap_or_default()
         ));
@@ -248,9 +290,11 @@ impl SyncIssueDialog {
 }
 type ChoiceCallback = Rc<RefCell<Option<Box<dyn Fn(ConflictChoiceRequest)>>>>;
 #[derive(Clone)]
+/// Revision-bound, explicitly confirmed choice; submission never implies resolution.
 pub struct ConflictResolver {
     pub window: gtk::Window,
     text: gtk::Label,
+    feedback: gtk::Label,
     actions: gtk::Box,
     pub local: gtk::Button,
     pub remote: gtk::Button,
@@ -285,6 +329,8 @@ impl ConflictResolver {
         }
         let text = label();
         body.append(&text);
+        let feedback = label();
+        body.append(&feedback);
         let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let local = gtk::Button::with_label(&gettext("Use local version"));
         let remote = gtk::Button::with_label(&gettext("Use Drive version"));
@@ -298,6 +344,7 @@ impl ConflictResolver {
         let value = Self {
             window,
             text,
+            feedback,
             actions,
             local,
             remote,
@@ -379,11 +426,12 @@ impl ConflictResolver {
         ));
         self.confirm
             .set_sensitive(state == ConflictResolverState::Confirming);
-        self.text.set_tooltip_text(Some(&gettext(match state {
+        self.feedback.set_label(&gettext(match state {
             ConflictResolverState::Loading => "Loading conflicts…",
             ConflictResolverState::Reviewing => "Review versions",
             ConflictResolverState::Confirming => "Confirm choice",
-            ConflictResolverState::Submitting | ConflictResolverState::Applying => {
+            ConflictResolverState::Submitting => "Submitting choice…",
+            ConflictResolverState::Applying => {
                 "Choice recorded. Synchronization will recheck both copies."
             }
             ConflictResolverState::Resolved => "No unresolved conflicts.",
@@ -391,7 +439,7 @@ impl ConflictResolver {
                 "The file changed. Reopen conflicts to review its current versions."
             }
             ConflictResolverState::Failed => "Operation failed",
-        })));
+        }));
     }
     pub fn state(&self) -> ConflictResolverState {
         *self.state.borrow()
@@ -400,9 +448,12 @@ impl ConflictResolver {
         *self.callback.borrow_mut() = Some(Box::new(callback));
     }
     pub fn connect_dismissed(&self, callback: impl Fn() + 'static) {
+        self.window.connect_close_request(move |_| {
+            callback();
+            gtk::glib::Propagation::Proceed
+        });
         let window = self.window.downgrade();
         self.later.connect_clicked(move |_| {
-            callback();
             if let Some(window) = window.upgrade() {
                 window.close();
             }

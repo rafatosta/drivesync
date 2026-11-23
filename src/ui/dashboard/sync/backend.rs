@@ -22,11 +22,12 @@ impl SyncBackend for FakeSyncBackend {
     }
 }
 
-/// Maps the coalescing public API; transfer bytes and operation IDs are unavailable.
+/// Maps the coalescing public API; transfer bytes are unavailable.
 pub struct EngineAdapter {
     engine: drivesync_engine::Engine,
     account: drivesync_engine::AccountId,
     subscription: Option<drivesync_engine::SynchronizationSubscription>,
+    ended: bool,
 }
 impl EngineAdapter {
     pub fn new(engine: drivesync_engine::Engine, account: drivesync_engine::AccountId) -> Self {
@@ -34,20 +35,36 @@ impl EngineAdapter {
             engine,
             account,
             subscription: None,
+            ended: false,
         }
     }
 }
 impl SyncBackend for EngineAdapter {
     fn next(&mut self) -> NextSnapshot<'_> {
         Box::pin(async move {
+            if self.ended {
+                return None;
+            }
             if let Some(subscription) = &mut self.subscription {
                 subscription.changed().await?;
             } else {
-                self.subscription = self
+                match self
                     .engine
                     .subscribe_synchronization(self.account.clone())
                     .await
-                    .ok();
+                {
+                    Ok(subscription) => self.subscription = Some(subscription),
+                    Err(error) => {
+                        self.ended = true;
+                        return Some(Snapshot {
+                            scope: self.account.0.clone(),
+                            status: StatusView::Failed,
+                            description: crate::core::messages::engine_error(&error),
+                            activity: None,
+                            attention: vec![],
+                        });
+                    }
+                }
             }
             let subscription = self.subscription.as_mut()?;
             let status = subscription.current();
@@ -99,20 +116,30 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 A::Applying => (ActivityKind::Apply, Direction::None),
                 _ => return None,
             };
-            let item_id = item
-                .item_id
+            let item_id = status
+                .current_operation
                 .as_ref()
-                .map(|v| v.0.clone())
-                .or_else(|| item.remote_id.as_ref().map(|v| v.0.clone()))?;
-            let name = item
-                .local_path
+                .map(|op| op.item_id.0.clone())
+                .or_else(|| {
+                    item.item_id
+                        .as_ref()
+                        .map(|v| v.0.clone())
+                        .or_else(|| item.remote_id.as_ref().map(|v| v.0.clone()))
+                })?;
+            let name = status
+                .current_operation
                 .as_ref()
-                .and_then(|p| p.file_name())
-                .map(|p| p.to_string_lossy().into_owned())
+                .and_then(|op| op.display_name.clone())
+                .or_else(|| {
+                    item.local_path
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|p| p.to_string_lossy().into_owned())
+                })
                 .unwrap_or_else(|| gettextrs::gettext("Unidentified item"));
             Some(ActivityView {
                 scope: scope.clone(),
-                operation_id: None,
+                operation_id: status.current_operation.as_ref().map(|op| op.id.clone()),
                 item_id,
                 name,
                 kind,
