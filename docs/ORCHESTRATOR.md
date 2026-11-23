@@ -113,3 +113,5 @@ post-effect barrier; older-than-baseline remote versions defer. NoOp still perfo
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) orders parent records before descendants and executes combined rename/move/content plans using verified intermediate receipts. Descendant path refresh remains a verified metadata transaction.
 
 [Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) records incompatible attributes as durable conflicts, merges disjoint attributes through verified receipts, and keeps uncertain effects ahead of new conflict decisions. Choice submission refreshes sources; only verified convergence retires a conflict.
+
+[Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) applies explicit per-item projection, name and special-file policies. Unsupported entries do not prevent independent supported items from progressing; raw provider names remain distinct from derived local filenames.

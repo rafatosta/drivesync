@@ -129,7 +129,11 @@ impl PersistingOperator {
                 local: Some(local.clone()),
                 remote: Some(remote.clone()),
                 confirmed_at: Some(now()),
-                projection: Some(ProjectionKind::Native),
+                projection: Some(if crate::projections::workspace(remote) {
+                    ProjectionKind::GoogleWorkspaceShortcut
+                } else {
+                    ProjectionKind::Native
+                }),
             },
             parent,
         ))
@@ -413,6 +417,19 @@ impl PersistingOperator {
         {
             return Err(filesystem::invalid());
         }
+        if r.local.state == FileState::Present
+            && (!matches!(
+                r.local.kind,
+                Evidence::Known(FileKind::Regular | FileKind::Directory)
+            ) || !matches!(&r.local.name,Evidence::Known(name) if crate::projections::valid_name(name)))
+        {
+            return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation));
+        }
+        if r.remote.state == FileState::Present
+            && !matches!(&r.remote.name,Evidence::Known(name) if crate::projections::valid_name(name))
+        {
+            return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation));
+        }
         let pre = op.preconditions.as_ref().ok_or_else(filesystem::stale)?;
         if !matches!(
             pre.local_unchanged,
@@ -442,6 +459,36 @@ impl PersistingOperator {
         if r.local.state == FileState::Present && op.local_path != r.local.path {
             return Err(filesystem::invalid());
         }
+        if let Evidence::Known(mime) = &r.remote.mime_type {
+            match crate::projections::kind(mime) {
+                crate::projections::RemoteKind::Workspace => {
+                    if !matches!(
+                        op.action,
+                        OperationAction::RegisterIdentity
+                            | OperationAction::CreateLocalShortcut
+                            | OperationAction::RenameLocal
+                            | OperationAction::MoveLocal
+                            | OperationAction::ConfirmBaseline
+                    ) {
+                        return Err(filesystem::stale());
+                    }
+                    if r.local.state == FileState::Present
+                        && !r
+                            .remote
+                            .id
+                            .as_ref()
+                            .is_some_and(|id| crate::projections::content_matches(&r.local, id))
+                    {
+                        return Err(filesystem::stale());
+                    }
+                }
+                crate::projections::RemoteKind::RemoteShortcut
+                | crate::projections::RemoteKind::Unsupported => {
+                    return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation))
+                }
+                _ => {}
+            }
+        }
         // A second unresolved execution must be recovered before any new mutation.
         let lookup = self.inventory.lookup(InventoryLookup {
             account_id: r.identity.account_id.clone(),
@@ -454,6 +501,17 @@ impl PersistingOperator {
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
+                if crate::projections::workspace(&r.remote)
+                    && r.local.state == FileState::Present
+                    && snapshot.baseline.projection != Some(ProjectionKind::GoogleWorkspaceShortcut)
+                {
+                    return Err(filesystem::stale());
+                }
+                if snapshot.baseline.projection == Some(ProjectionKind::GoogleWorkspaceShortcut)
+                    && !crate::projections::workspace(&r.remote)
+                {
+                    return Err(filesystem::stale());
+                }
                 self.validate_consent(r, &snapshot)?;
                 if r.local.state == FileState::Present && snapshot.local_path != r.local.path {
                     self.validate_relocation(r, &snapshot)?;

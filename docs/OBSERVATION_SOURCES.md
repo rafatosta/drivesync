@@ -157,3 +157,5 @@ evidence, followed by independent Operations validation.
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) correlates a changed path only with complete captures, a unique persisted incarnation and filesystem birth evidence. Rename permission checks follow the pinned descriptor into the actual directory, including inside Flatpak.
 
 [Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) permits complete, unambiguous bound-slot replacement evidence to expose simultaneous atomic-editor divergence as a conflict. This never authorizes an overwrite: the selected choice, current filesystem, provider state and original-inode absence are rechecked by Operations.
+
+[Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) applies explicit per-item projection, name and special-file policies. Unsupported entries do not prevent independent supported items from progressing; raw provider names remain distinct from derived local filenames.

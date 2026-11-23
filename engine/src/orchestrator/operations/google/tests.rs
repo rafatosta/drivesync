@@ -101,7 +101,7 @@ pub(super) fn metadata(name: &str, parent: &str, version: u64, content: &str) ->
     serde_json::json!({"id":"remote","name":name,"parents":[parent],"mimeType":"application/octet-stream","version":version.to_string(),"trashed":false,"size":content.len().to_string(),"sha256Checksum":format!("{:x}",Sha256::digest(content.as_bytes())),"capabilities":{"canEdit":true,"canRename":true,"canDownload":true,"canTrash":true,"canMoveItemWithinDrive":true}}).to_string()
 }
 pub(super) fn root() -> String {
-    serde_json::json!({"id":"remote-root","name":"Root","parents":[],"mimeType":FOLDER,"version":"1","trashed":false,"capabilities":{"canAddChildren":true}}).to_string()
+    serde_json::json!({"id":"remote-root","name":"Root","parents":[],"mimeType":FOLDER,"version":"1","trashed":false,"capabilities":{"canAddChildren":true,"canListChildren":true}}).to_string()
 }
 #[tokio::test]
 async fn remote_rename_is_conditional_and_verified_by_readback() {
@@ -409,9 +409,15 @@ async fn source_absence_is_rechecked_before_trashing_remote_content() {
 async fn workspace_shortcut_is_an_inert_non_executable_link() {
     let s = Sandbox::new();
     let executor = setup(&s);
-    let server=endpoint(|_|(200,serde_json::json!({"id":"remote","name":"Document","parents":["remote-root"],"mimeType":"application/vnd.google-apps.document","version":"1","trashed":false}).to_string(),vec![])).await;
+    let server=endpoint(|r|{
+        let body=if r.contains("/files/remote-root?"){root()}else if r.contains("/files?") {
+            if r.contains("Document.desktop"){serde_json::json!({"files":[],"incompleteSearch":false}).to_string()}
+            else{serde_json::json!({"files":[{"id":"remote","name":"Document","mimeType":"application/vnd.google-apps.document"}],"incompleteSearch":false}).to_string()}
+        }else{serde_json::json!({"id":"remote","name":"Document","parents":["remote-root"],"mimeType":"application/vnd.google-apps.document","version":"1","trashed":false}).to_string()};
+        (200,body,vec![])
+    }).await;
     let mut r = request(&executor, OperationAction::CreateLocalShortcut);
-    r.operation.local_path = Some("document.desktop".into());
+    r.operation.local_path = Some("Document.desktop".into());
     let result = operator(&s, server.client.clone())
         .run(
             &executor.config,
@@ -422,7 +428,7 @@ async fn workspace_shortcut_is_an_inert_non_executable_link() {
         .await
         .unwrap();
     assert!(result.verified);
-    let path = executor.config.local_root.join("document.desktop");
+    let path = executor.config.local_root.join("Document.desktop");
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("Type=Link"));
     assert!(!text.contains("Exec="));

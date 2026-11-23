@@ -55,7 +55,8 @@ baseline. `BaselineConfirmed` is used only when both replicas demonstrably conve
 known name, parent relationship, type, and matching SHA-256 for binary content. The current
 baseline check resolves the configured roots or a persisted directory association at any
 supported depth. Parent identity/location/revision dependencies are checked atomically with
-the child write; Workspace projection baselines still require their own mapping policy. A successful
+the child write. Workspace baselines use canonical derived link bytes and projected names with
+`GoogleWorkspaceShortcut`, rather than binary content equivalence. A successful
 individual operation can therefore leave the previous baseline intact. NoOp does not write one.
 
 `RegisterIdentity`, `Adopt`, and `ConfirmBaseline` revalidate using read-only provider calls
@@ -108,3 +109,5 @@ trash failure preserves the previous bytes in private stages; no destructive fal
 [Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) adds pinned, tagged local moves, conditional marked remote moves and read-only recovery for all four location actions. Destination and ancestor changes block confirmation.
 
 [Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) persists conflict facts and validates revision-bound choices before normal dispatch. Both divergent file contents are privately archived and checkpointed before replacement; directory choices archive locations without replacing descendants. Archive verification is part of uncertain-effect recovery.
+
+[Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) restricts Workspace actions to verified link creation, local metadata updates and baseline confirmation. Remote shortcuts and unsupported native types are refused. Link publication is checkpointed and recovered without uploading its bytes.

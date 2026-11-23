@@ -994,3 +994,56 @@ async fn concurrent_remote_ancestor_changes_block_dispatch_and_recovery() {
         b"bytes"
     );
 }
+
+#[tokio::test]
+async fn workspace_link_receipt_loss_recovers_after_document_revision_without_replay() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    let version = Arc::new(AtomicU64::new(1));
+    let served = version.clone();
+    let server = endpoint(move |r| {
+        let body = if r.contains("/files/remote-root?") { root() }
+        else if r.contains("/files?") {
+            if r.contains("Document.desktop") { serde_json::json!({"files":[],"incompleteSearch":false}).to_string() }
+            else { serde_json::json!({"files":[{"id":"remote","name":"Document","mimeType":"application/vnd.google-apps.document"}],"incompleteSearch":false}).to_string() }
+        } else { serde_json::json!({"id":"remote","name":"Document","parents":["remote-root"],"mimeType":"application/vnd.google-apps.document","version":served.load(Ordering::SeqCst).to_string(),"trashed":false}).to_string() };
+        (200, body, vec![])
+    }).await;
+    use_backend(&s, &mut executor, server.client.clone(), true);
+    let mut r = request(&executor, OperationAction::CreateLocalShortcut);
+    r.operation.local_path = Some("Document.desktop".into());
+    r.local.path = r.operation.local_path.clone();
+    r.local.name = Evidence::Known("Document.desktop".into());
+    r.local.kind = Evidence::Known(FileKind::Regular);
+    r.remote.name = Evidence::Known("Document".into());
+    r.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
+    assert_eq!(
+        executor.execute(r).await.status,
+        OperationResultStatus::Unconfirmed
+    );
+    assert_eq!(
+        snapshots(&executor)[0].baseline.state,
+        BaselineState::NeverSynced
+    );
+    version.store(2, Ordering::SeqCst);
+    let executor = reopen(&s, executor);
+    let results = executor.recover().await.unwrap();
+    assert_eq!(results[0].assessment.outcome, ExecutionEffect::Applied);
+    let confirmed = snapshots(&executor);
+    assert_eq!(confirmed[0].baseline.state, BaselineState::Synced);
+    assert_eq!(
+        confirmed[0].baseline.projection,
+        Some(ProjectionKind::GoogleWorkspaceShortcut)
+    );
+    assert_eq!(
+        confirmed[0].baseline.remote.as_ref().unwrap().version,
+        Evidence::Known(2)
+    );
+    assert_eq!(
+        std::fs::read(executor.config.local_root.join("Document.desktop")).unwrap(),
+        crate::projections::link_bytes(&RemoteId("remote".into()))
+    );
+    assert!(executor.recover().await.unwrap().is_empty());
+    assert_eq!(snapshots(&executor), confirmed);
+}

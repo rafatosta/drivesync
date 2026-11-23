@@ -9,6 +9,7 @@ mod inventory;
 pub mod models;
 #[allow(dead_code)] // Some operation and recovery policies are still deliberately unsupported.
 mod orchestrator;
+mod projections;
 pub mod providers;
 pub use models::{AccountId, ProviderId, Timestamp};
 

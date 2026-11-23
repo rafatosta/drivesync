@@ -455,7 +455,9 @@ impl Filesystem {
             .map_err(|e| error(e).uncertain())?;
         if matches!(
             request.operation.action,
-            OperationAction::Download | OperationAction::UpdateLocalContent
+            OperationAction::Download
+                | OperationAction::UpdateLocalContent
+                | OperationAction::CreateLocalShortcut
         ) && journal.is_some()
         {
             let journal = journal.ok_or_else(stale)?;

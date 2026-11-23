@@ -767,3 +767,113 @@ fn moved_incarnations_follow_trees_but_recycled_or_aliased_inodes_do_not() {
         }
     }
 }
+
+#[test]
+fn invalid_names_shortcuts_collisions_and_special_locals_are_per_item_refusals() {
+    let (context, _directory) = context();
+    let mut invalid = remote("bad", "bad/name", "drive-root", false);
+    let mut doc = remote("doc", "Report", "drive-root", false);
+    doc.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
+    doc.size = Evidence::NotApplicable;
+    doc.checksum = Evidence::NotApplicable;
+    let mut shortcut = remote("shortcut", "shortcut", "drive-root", false);
+    shortcut.mime_type = Evidence::Known("application/vnd.google-apps.shortcut".into());
+    invalid.checksum = Evidence::Unavailable;
+    context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![]),
+        ))
+        .unwrap();
+    let files = context
+        .build_capture(round(
+            &context,
+            1,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![invalid, doc.clone(), shortcut]),
+        ))
+        .unwrap();
+    assert!(files
+        .iter()
+        .find(|f| f.remote.id == Some(RemoteId("bad".into())))
+        .unwrap()
+        .environment
+        .projection_issue
+        .is_some());
+    assert!(files
+        .iter()
+        .find(|f| f.remote.id == Some(RemoteId("shortcut".into())))
+        .unwrap()
+        .environment
+        .projection_issue
+        .is_some());
+    let f = files
+        .iter()
+        .find(|f| f.remote.id == Some(RemoteId("doc".into())))
+        .unwrap();
+    assert_eq!(f.local.path, Some("Report.desktop".into()));
+    assert_eq!(f.local.state, FileState::Absent);
+    assert!(f.environment.projection_issue.is_none());
+    assert_eq!(
+        f.environment.destination_remote_matches,
+        Evidence::Known(vec![RemoteId("doc".into())])
+    );
+    let mut blob = remote("blob", "Report.desktop", "drive-root", false);
+    blob.checksum = Evidence::Known(crate::models::Checksum {
+        algorithm: "sha256".into(),
+        value: "a".repeat(64),
+    });
+    let files = context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![doc, blob]),
+        ))
+        .unwrap();
+    assert!(files
+        .iter()
+        .filter(|f| f.remote.id.is_some())
+        .all(|f| f.environment.projection_issue.is_some()));
+    let duplicate_a = remote("dup-a", "duplicate", "drive-root", false);
+    let duplicate_b = remote("dup-b", "duplicate", "drive-root", false);
+    let mut no_hash = remote("no-hash", "no-hash", "drive-root", false);
+    no_hash.checksum = Evidence::Unavailable;
+    let files = context
+        .build_capture(round(
+            &context,
+            3,
+            ObservationCoverage::Complete,
+            CaptureEntries::Remote(vec![duplicate_a, duplicate_b, no_hash]),
+        ))
+        .unwrap();
+    assert!(files
+        .iter()
+        .filter(|f| f.remote.id.is_some())
+        .all(|f| f.environment.projection_issue.is_some()));
+    let mut link = local("link", 88, false);
+    link.kind = Evidence::Known(crate::models::FileKind::Symlink);
+    let mut fifo = local("fifo", 89, false);
+    fifo.kind = Evidence::Known(crate::models::FileKind::Unsupported);
+    let mut nonutf = local("bytes", 90, false);
+    nonutf.name = Evidence::Unsupported;
+    let files = context
+        .build_capture(round(
+            &context,
+            2,
+            ObservationCoverage::Complete,
+            CaptureEntries::Local(vec![link, fifo, nonutf]),
+        ))
+        .unwrap();
+    for path in ["link", "fifo", "bytes"] {
+        assert!(files
+            .iter()
+            .find(|f| f.local.path == Some(path.into()))
+            .unwrap()
+            .environment
+            .projection_issue
+            .is_some());
+    }
+}

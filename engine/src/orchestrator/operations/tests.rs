@@ -822,3 +822,33 @@ fn tree_movement_collisions_hardlinks_and_replaced_destinations_preserve_sources
         }
     }
 }
+
+#[tokio::test]
+async fn workspace_content_writes_and_remote_shortcuts_are_refused_before_dispatch() {
+    for action in [
+        OperationAction::Upload,
+        OperationAction::UpdateRemoteContent,
+        OperationAction::Download,
+        OperationAction::RenameRemote,
+        OperationAction::TrashRemote,
+    ] {
+        let s = Sandbox::new();
+        let executor = setup(&s);
+        let mut r = request(&executor, action);
+        r.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
+        assert_eq!(
+            executor.execute(r).await.status,
+            OperationResultStatus::Skipped
+        );
+        assert!(rows(&executor).is_empty());
+    }
+    let s = Sandbox::new();
+    let executor = setup(&s);
+    let mut r = request(&executor, OperationAction::CreateLocalShortcut);
+    r.remote.mime_type = Evidence::Known("application/vnd.google-apps.shortcut".into());
+    assert_eq!(
+        executor.execute(r).await.status,
+        OperationResultStatus::Skipped
+    );
+    assert!(rows(&executor).is_empty());
+}

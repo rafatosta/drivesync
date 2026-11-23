@@ -2,6 +2,7 @@
 
 mod conflicts;
 mod models;
+mod projections;
 pub(crate) use conflicts::attributes as conflict_attributes;
 
 use crate::{
@@ -22,6 +23,19 @@ pub(crate) use models::{
 pub(crate) fn analyze(file: &File) -> Decision {
     let validation = validate(file);
     let changeset = compare(file);
+    if validation.status != ValidationStatus::InvalidInput {
+        if let Some(reason) = &file.environment.projection_issue {
+            return decision(
+                DecisionStatus::Unsupported,
+                reason,
+                validation,
+                changeset,
+                vec![],
+                ExecutionStatus::NotExecutable,
+                vec![],
+            );
+        }
+    }
     if validation.status != ValidationStatus::Valid {
         let status = match validation.status {
             ValidationStatus::InvalidInput => DecisionStatus::InvalidInput,
@@ -44,6 +58,9 @@ pub(crate) fn analyze(file: &File) -> Decision {
         );
     }
 
+    if let Some(decision) = projections::analyze(file, validation.clone(), changeset.clone()) {
+        return decision;
+    }
     if conflicts::authorized(file) {
         return conflicts::selected(file, validation, changeset);
     }
@@ -492,14 +509,23 @@ fn compare(file: &File) -> Changeset {
             &file.local.kind,
             "local content",
         ),
-        compare_content(
-            &baseline_remote.checksum,
-            &baseline_remote.size,
-            &file.remote.checksum,
-            &file.remote.size,
-            &file.local.kind,
-            "remote content",
-        ),
+        if file.baseline.projection
+            == Some(crate::inventory::models::ProjectionKind::GoogleWorkspaceShortcut)
+            && crate::projections::workspace(&file.remote)
+        {
+            not_applicable(
+                "Workspace content is represented by remote version, not a binary digest.".into(),
+            )
+        } else {
+            compare_content(
+                &baseline_remote.checksum,
+                &baseline_remote.size,
+                &file.remote.checksum,
+                &file.remote.size,
+                &file.local.kind,
+                "remote content",
+            )
+        },
     );
     add_attribute(
         &mut attributes,
@@ -819,13 +845,17 @@ fn initial_remote_plan(
     let Evidence::Known(name) = &file.remote.name else {
         return None;
     };
-    if path.file_name()?.to_str()? != name
+    if path.file_name()?.to_str()?
+        != crate::projections::local_name(name, &known(&file.remote.mime_type)?)?
         || path.parent()? != known(&file.environment.destination_local_parent)?
     {
         return None;
     }
     let action = match known(&file.remote.mime_type)?.as_str() {
         "application/vnd.google-apps.folder" => OperationAction::CreateLocalDirectory,
+        mime if crate::projections::kind(mime) == crate::projections::RemoteKind::Workspace => {
+            OperationAction::CreateLocalShortcut
+        }
         mime if !mime.starts_with("application/vnd.google-apps.") => {
             let checksum = known(&file.remote.checksum)?;
             if checksum.algorithm != "sha256"

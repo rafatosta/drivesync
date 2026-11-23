@@ -54,6 +54,7 @@ pub(in crate::orchestrator) fn fixture() -> File {
         },
         environment: Environment {
             local_replacement: Evidence::NotCollected,
+            projection_issue: None,
             local_root: PathRoot(PathBuf::from("/sync")),
             remote_root_id: RemoteId("drive-root".into()),
             local_root_available: true,
@@ -798,4 +799,72 @@ fn folder_move_conflicts_choose_location_without_planning_binary_transfers() {
             }
         );
     }
+}
+
+fn workspace_fixture() -> File {
+    let mut f = fixture();
+    f.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
+    f.remote.name = Evidence::Known("Document".into());
+    f.remote.parents = Evidence::Known(vec![RemoteId("drive-root".into())]);
+    f.remote.size = Evidence::NotApplicable;
+    f.remote.checksum = Evidence::NotApplicable;
+    f.environment.destination_remote_parent_id = Evidence::Known(RemoteId("drive-root".into()));
+    f.environment.destination_remote_matches =
+        Evidence::Known(f.remote.id.iter().cloned().collect());
+    f.environment.destination_local_parent = Evidence::Known(std::path::PathBuf::new());
+    f.environment.destination_local_occupied = Evidence::Known(false);
+    f.local.state = FileState::Absent;
+    f.local.path = Some("Document.desktop".into());
+    f.local.name = Evidence::Known("Document.desktop".into());
+    f.local.parent = Evidence::Known(std::path::PathBuf::new());
+    f.local.identity = Evidence::NotCollected;
+    f.identity.local_identity = Evidence::NotCollected;
+    f.identity.item_id = None;
+    f.inventory_lookup = InventoryLookupStatus::NotFound;
+    f.inventory_revision = None;
+    f.baseline = Baseline::never_synced();
+    f
+}
+#[test]
+fn workspace_creation_baseline_refresh_and_remote_rename_never_plan_uploads() {
+    use sha2::{Digest, Sha256};
+    let mut f = workspace_fixture();
+    let plan = analyze(&f);
+    assert_eq!(plan.status, DecisionStatus::Ready);
+    assert_eq!(
+        plan.operations.iter().map(|o| o.action).collect::<Vec<_>>(),
+        vec![
+            OperationAction::RegisterIdentity,
+            OperationAction::CreateLocalShortcut
+        ]
+    );
+    let bytes = crate::projections::link_bytes(f.remote.id.as_ref().unwrap());
+    f.local.state = FileState::Present;
+    f.local.kind = Evidence::Known(crate::models::FileKind::Regular);
+    f.local.identity = fixture().local.identity;
+    f.identity.local_identity = f.local.identity.clone();
+    f.local.size = Evidence::Known(bytes.len() as u64);
+    f.local.checksum = checksum(&format!("{:x}", Sha256::digest(&bytes)));
+    f.identity.item_id = fixture().identity.item_id;
+    f.inventory_lookup = InventoryLookupStatus::Found;
+    f.inventory_revision = Some(4);
+    f.baseline = Baseline {
+        state: BaselineState::Synced,
+        local: Some(f.local.clone()),
+        remote: Some(f.remote.clone()),
+        confirmed_at: Some(timestamp(9)),
+        projection: Some(crate::inventory::models::ProjectionKind::GoogleWorkspaceShortcut),
+    };
+    assert_eq!(analyze(&f).status, DecisionStatus::NoOp);
+    f.remote.version = Evidence::Known(11);
+    let p = analyze(&f);
+    assert_eq!(p.operations[0].action, OperationAction::ConfirmBaseline);
+    f.remote.name = Evidence::Known("Renamed".into());
+    let p = analyze(&f);
+    assert_eq!(p.operations[0].action, OperationAction::RenameLocal);
+    assert_eq!(p.operations[0].name, Some("Renamed.desktop".into()));
+    f.local.checksum = checksum("edited");
+    let p = analyze(&f);
+    assert_eq!(p.status, DecisionStatus::Unsupported);
+    assert!(p.operations.is_empty());
 }

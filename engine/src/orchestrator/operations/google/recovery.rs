@@ -58,7 +58,9 @@ impl GoogleOperator {
                     OperationAction::RenameLocal | OperationAction::MoveLocal
                 );
                 let local = if local_action {
-                    if remote != record.remote {
+                    if !(crate::projections::same_representation(&remote, &record.remote)
+                        || remote == record.remote)
+                    {
                         return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
                     }
                     match fs.moved(record) {
@@ -149,6 +151,7 @@ impl GoogleOperator {
                 }
             }
             OperationAction::CreateLocalDirectory
+            | OperationAction::CreateLocalShortcut
             | OperationAction::Download
             | OperationAction::UpdateLocalContent => {
                 let Some(id) = record.command.remote_id.as_ref() else {
@@ -167,8 +170,11 @@ impl GoogleOperator {
                         return RecoveryAssessment::unknown(RecoveryIssue::RemoteInconclusive)
                     }
                 };
-                if !matches!(remote.version, Evidence::Known(_))
-                    || (record.command.action != OperationAction::UpdateLocalContent
+                if (record.command.action == OperationAction::CreateLocalShortcut
+                    && !crate::projections::same_representation(&remote, &record.remote))
+                    || !matches!(remote.version, Evidence::Known(_))
+                    || (record.command.action != OperationAction::CreateLocalShortcut
+                        && record.command.action != OperationAction::UpdateLocalContent
                         && remote.version != record.remote.version)
                     || (record.command.action == OperationAction::UpdateLocalContent
                         && !remote.unchanged_binary(&record.remote))
@@ -180,7 +186,8 @@ impl GoogleOperator {
                         OperationAction::Download | OperationAction::UpdateLocalContent
                     ) && (remote.checksum != record.remote.checksum
                         || remote.size != record.remote.size))
-                    || remote.mime_type != record.remote.mime_type
+                    || (record.command.action != OperationAction::CreateLocalShortcut
+                        && remote.mime_type != record.remote.mime_type)
                 {
                     return RecoveryAssessment::unknown(RecoveryIssue::SourceChanged);
                 }
@@ -193,6 +200,14 @@ impl GoogleOperator {
                         issue: Some(RecoveryIssue::NotDispatched),
                         effect: None,
                     };
+                }
+                if crate::projections::workspace(&remote)
+                    && self
+                        .projection_destination(config, session, &remote)
+                        .await
+                        .is_err()
+                {
+                    return RecoveryAssessment::unknown(RecoveryIssue::DestinationChanged);
                 }
                 match fs.published(record) {
                     Ok(None) => RecoveryAssessment {

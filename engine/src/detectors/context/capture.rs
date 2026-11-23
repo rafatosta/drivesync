@@ -79,8 +79,7 @@ impl Context {
                         || id == &self.config.remote_root_id
                         || (capture.coverage == ObservationCoverage::Complete
                             && entry.state == FileState::Present
-                            && (!matches!(&entry.name, Evidence::Known(name) if valid_name(name))
-                                || !matches!(&entry.parents, Evidence::Known(parents) if parents.len() == 1)
+                            && (!matches!(&entry.parents, Evidence::Known(parents) if parents.len() == 1)
                                 || entry.trashed != Evidence::Known(false)))
                         || !keys.insert(Path::from(&id.0))
                     {
@@ -310,6 +309,15 @@ impl Context {
             (&file.remote.parents, &file.remote.name)
         {
             if parents.len() == 1 && valid_name(name) {
+                let projected_name = match &file.remote.mime_type {
+                    Evidence::Known(mime) => crate::projections::local_name(name, mime),
+                    _ => None,
+                };
+                let Some(projected_name) = projected_name else {
+                    file.environment.projection_issue =
+                        Some("Remote projected name is not representable.".into());
+                    return;
+                };
                 let collisions = view
                     .matches
                     .get(&(parents[0].clone(), name.clone()))
@@ -319,10 +327,15 @@ impl Context {
                     file.environment.destination_remote_matches =
                         Evidence::Known(collisions.clone());
                 }
-                if let Some(parent) =
-                    associated(&parents[0]).filter(|_| remote_complete && collisions.len() == 1)
-                {
-                    let destination = parent.join(name);
+                if let Some(parent) = associated(&parents[0]).filter(|_| {
+                    remote_complete
+                        && collisions.len() == 1
+                        && view
+                            .projected_matches
+                            .get(&(parents[0].clone(), projected_name.clone()))
+                            .is_some_and(|ids| ids.len() == 1)
+                }) {
+                    let destination = parent.join(&projected_name);
                     file.environment.destination_local_parent = Evidence::Known(parent);
                     if local_complete {
                         file.environment.destination_local_occupied =
@@ -335,7 +348,7 @@ impl Context {
                         {
                             file.local.state = FileState::Absent;
                             file.local.path = Some(destination.clone());
-                            file.local.name = Evidence::Known(name.clone());
+                            file.local.name = Evidence::Known(projected_name.clone());
                             file.local.parent =
                                 Evidence::Known(destination.parent().unwrap().to_path_buf());
                             file.environment.destination_remote_parent_id =
@@ -361,9 +374,18 @@ impl Context {
             if let Some(parent_id) = destination {
                 file.environment.destination_remote_parent_id = Evidence::Known(parent_id.clone());
                 if remote_complete {
+                    // A derived local filename is not the provider's document name.
+                    let destination_name = if crate::projections::workspace(&file.remote) {
+                        match &file.remote.name {
+                            Evidence::Known(remote_name) => remote_name,
+                            _ => name,
+                        }
+                    } else {
+                        name
+                    };
                     let matches = view
                         .matches
-                        .get(&(parent_id.clone(), name.clone()))
+                        .get(&(parent_id.clone(), destination_name.clone()))
                         .cloned()
                         .unwrap_or_default();
                     if matches.is_empty()
@@ -380,6 +402,7 @@ impl Context {
                 }
             }
         }
+        self.projection_policy(file, view);
         // Project names through the captured tree only to gather candidates. Duplicate projections
         // remain multiple candidates, without merging sides or granting adoption permission.
         file.association_candidates.clear();
@@ -410,6 +433,79 @@ impl Context {
             }
         }
     }
+    fn projection_policy(&self, file: &mut File, view: &View<'_>) {
+        use crate::projections::{self, RemoteKind};
+        file.environment.projection_issue = None;
+        let reason = if file.local.state == FileState::Present
+            && !matches!(
+                file.local.kind,
+                Evidence::Known(FileKind::Regular | FileKind::Directory)
+            ) {
+            Some("Symbolic links and special local files are not synchronized.")
+        } else if file.local.state == FileState::Present
+            && !matches!(&file.local.name,Evidence::Known(n) if projections::valid_name(n))
+        {
+            Some("Local name is non-UTF-8, reserved or not representable.")
+        } else if let (Evidence::Known(name), Evidence::Known(mime)) =
+            (&file.remote.name, &file.remote.mime_type)
+        {
+            let projected = projections::local_name(name, mime);
+            if projected.is_none() {
+                Some("Remote name is not representable by the Linux projection.")
+            } else if projections::kind(mime) == RemoteKind::RemoteShortcut {
+                Some("Remote Drive shortcuts are not Workspace documents and are not projected.")
+            } else if projections::kind(mime) == RemoteKind::Unsupported {
+                Some("This native remote type has no supported projection.")
+            } else if let Evidence::Known(parents) = &file.remote.parents {
+                if parents.len() == 1
+                    && (view
+                        .matches
+                        .get(&(parents[0].clone(), name.clone()))
+                        .is_some_and(|ids| ids.len() > 1)
+                        || projected.as_ref().is_some_and(|projected| {
+                            view.projected_matches
+                                .get(&(parents[0].clone(), projected.clone()))
+                                .is_some_and(|ids| ids.len() > 1)
+                        }))
+                {
+                    Some("Duplicate remote names or projected-name collisions require manual separation.")
+                } else if projections::kind(mime) == RemoteKind::Workspace
+                    && file.baseline.state != crate::inventory::models::BaselineState::Synced
+                    && (file.local.state == FileState::Present
+                        || file.environment.destination_local_occupied == Evidence::Known(true))
+                {
+                    Some("An occupied Workspace projection slot is never adopted or overwritten.")
+                } else if projections::kind(mime) == RemoteKind::Binary
+                    && file.remote.state == FileState::Present
+                    && (!matches!(&file.remote.checksum,Evidence::Known(h) if h.algorithm=="sha256" && h.value.len()==64 && h.value.bytes().all(|b|b.is_ascii_hexdigit()))
+                        || !matches!(file.remote.size, Evidence::Known(_)))
+                {
+                    Some("Binary size or SHA-256 metadata is insufficient for a verified transfer.")
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        file.environment.projection_issue = reason.map(str::to_owned);
+        if file.environment.projection_issue.is_none()
+            && file.identity.remote_id.is_none()
+            && file.local.state == FileState::Present
+        {
+            if let (Evidence::Known(parent), Evidence::Known(name)) = (
+                &file.environment.destination_remote_parent_id,
+                &file.local.name,
+            ) {
+                if view.projected_matches.get(&(parent.clone(),name.clone())).is_some_and(|ids|ids.iter().any(|id|view.remote.get(id).is_some_and(|r|matches!(&r.mime_type,Evidence::Known(m) if projections::kind(m)==RemoteKind::Workspace))))
+                    || view.matches.get(&(parent.clone(),name.clone())).is_some_and(|ids|ids.iter().any(|id|view.remote.get(id).is_some_and(|r|matches!(&r.mime_type,Evidence::Known(m) if projections::kind(m)==RemoteKind::Workspace)))) {
+                    file.environment.projection_issue=Some("A local item collides with a Workspace projection or remote name.".into());
+                }
+            }
+        }
+    }
 }
 type IdentityKey = (u64, u64, Option<u64>);
 fn identity_key(identity: &Evidence<crate::models::LocalIdentity>) -> Option<IdentityKey> {
@@ -428,6 +524,7 @@ struct View<'a> {
     matches: BTreeMap<(RemoteId, String), Vec<RemoteId>>,
     projected: BTreeMap<RemoteId, Path>,
     candidates: BTreeMap<Path, Vec<&'a RemoteObservation>>,
+    projected_matches: BTreeMap<(RemoteId, String), Vec<RemoteId>>,
     local_identities: BTreeSet<IdentityKey>,
     incarnations: BTreeMap<IdentityKey, Vec<&'a LocalObservation>>,
     owners: BTreeMap<Path, usize>,
@@ -552,6 +649,7 @@ impl<'a> View<'a> {
         }
         let mut matches: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut projected = BTreeMap::new();
+        let mut projected_matches: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut candidates: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for (id, entry) in &remote {
             if entry.state != FileState::Present || entry.trashed != Evidence::Known(false) {
@@ -560,6 +658,14 @@ impl<'a> View<'a> {
             if let (Evidence::Known(parents), Evidence::Known(name)) = (&entry.parents, &entry.name)
             {
                 if parents.len() == 1 {
+                    if let Evidence::Known(mime) = &entry.mime_type {
+                        if let Some(name) = crate::projections::local_name(name, mime) {
+                            projected_matches
+                                .entry((parents[0].clone(), name))
+                                .or_default()
+                                .push(id.clone());
+                        }
+                    }
                     matches
                         .entry((parents[0].clone(), name.clone()))
                         .or_default()
@@ -580,6 +686,7 @@ impl<'a> View<'a> {
             matches,
             projected,
             candidates,
+            projected_matches,
             local_identities,
             incarnations,
             owners,
@@ -641,14 +748,9 @@ impl Captures {
     }
 }
 fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains('/')
-        && !name.contains('\0')
-        && name != ".drivesync"
-        && !name.starts_with(".drivesync-transfer-")
+    crate::projections::valid_name(name)
 }
+
 fn projected_path(
     entry: &RemoteObservation,
     entries: &BTreeMap<RemoteId, &RemoteObservation>,
@@ -669,7 +771,13 @@ fn projected_path(
         return None;
     }
     if &parents[0] == root {
-        return Some(Path::from(name));
+        return Some(Path::from(crate::projections::local_name(
+            name,
+            match &entry.mime_type {
+                Evidence::Known(m) => m,
+                _ => return None,
+            },
+        )?));
     }
     let parent = entries.get(&parents[0])?;
     if parent.state != FileState::Present
@@ -677,5 +785,13 @@ fn projected_path(
     {
         return None;
     }
-    Some(projected_path(parent, entries, root, seen)?.join(name))
+    Some(
+        projected_path(parent, entries, root, seen)?.join(crate::projections::local_name(
+            name,
+            match &entry.mime_type {
+                Evidence::Known(m) => m,
+                _ => return None,
+            },
+        )?),
+    )
 }

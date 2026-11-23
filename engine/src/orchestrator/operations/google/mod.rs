@@ -1,5 +1,6 @@
 //! Google specialization using the preserved provider API and private Accounts sessions.
 mod conflicts;
+mod projections;
 mod recovery;
 mod resume;
 struct UploadCursor {
@@ -242,6 +243,34 @@ impl GoogleOperator {
         } else {
             None
         };
+        if let Some(current) = &snapshot {
+            let remote = normalize(&current.file);
+            if crate::projections::workspace(&remote) {
+                if !matches!(
+                    op.action,
+                    OperationAction::RegisterIdentity
+                        | OperationAction::CreateLocalShortcut
+                        | OperationAction::RenameLocal
+                        | OperationAction::MoveLocal
+                        | OperationAction::ConfirmBaseline
+                ) {
+                    return Err(filesystem::stale());
+                }
+                self.projection_destination(config, session, &remote)
+                    .await?;
+                if r.local.state == FileState::Present
+                    && !remote
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| crate::projections::content_matches(&r.local, id))
+                {
+                    return Err(filesystem::stale());
+                }
+            } else if matches!(&remote.mime_type,Evidence::Known(m) if matches!(crate::projections::kind(m),crate::projections::RemoteKind::RemoteShortcut|crate::projections::RemoteKind::Unsupported))
+            {
+                return Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation));
+            }
+        }
         let tree_action = matches!(
             op.action,
             OperationAction::RenameLocal
@@ -338,6 +367,11 @@ impl GoogleOperator {
                     .await?;
                 if before.file.version != after.file.version {
                     return Err(filesystem::stale());
+                }
+                if crate::projections::workspace(&normalize(&after.file))
+                    && r.local.state == FileState::Present
+                {
+                    local = Some(fs.check(&r.local)?);
                 }
                 return Ok(AppliedEffect {
                     local,
@@ -669,28 +703,43 @@ impl GoogleOperator {
             }
             OperationAction::CreateLocalShortcut => {
                 let snapshot = snapshot.as_ref().ok_or_else(filesystem::stale)?;
-                if !snapshot.file.mime_type.as_ref().is_some_and(|m| {
-                    m.0.starts_with("application/vnd.google-apps.") && m.0 != FOLDER
-                }) || snapshot.file.trashed != Some(false)
+                let remote = normalize(&snapshot.file);
+                if !crate::projections::workspace(&remote)
+                    || remote.trashed != Evidence::Known(false)
                 {
                     return Err(filesystem::stale());
                 }
-                let id = op.remote_id.as_ref().unwrap();
-                // An inert desktop link, with no executable command and no provider-controlled URL.
-                let encoded: String =
-                    id.0.bytes()
-                        .map(|b| {
-                            if b.is_ascii_alphanumeric() || b"-_".contains(&b) {
-                                (b as char).to_string()
-                            } else {
-                                format!("%{b:02X}")
-                            }
-                        })
-                        .collect();
+                let id = op.remote_id.as_ref().ok_or_else(filesystem::stale)?;
+                let expected = match (&remote.name, &remote.mime_type) {
+                    (Evidence::Known(name), Evidence::Known(mime)) => {
+                        crate::projections::local_name(name, mime)
+                    }
+                    _ => None,
+                };
+                if op
+                    .local_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    != expected.as_deref()
+                {
+                    return Err(filesystem::stale());
+                }
                 let mut temp = fs.temporary()?;
-                write!(temp,"[Desktop Entry]\nType=Link\nName=Google Drive item\nURL=https://drive.google.com/open?id={encoded}\n").map_err(filesystem::error)?;
+                temp.write_all(&crate::projections::link_bytes(id))
+                    .map_err(filesystem::error)?;
                 local = Some(fs.install(r, &mut temp, journal)?);
-                snapshot.file.clone()
+                let after = self
+                    .snapshot(session, id)
+                    .await
+                    .map_err(OperatorError::uncertain)?;
+                if after.file.version != snapshot.file.version {
+                    return Err(filesystem::stale().uncertain());
+                }
+                self.projection_destination(config, session, &normalize(&after.file))
+                    .await
+                    .map_err(OperatorError::uncertain)?;
+                after.file
             }
         };
         if r.local.state == FileState::Present
@@ -1078,6 +1127,10 @@ fn evidence<T>(value: Option<T>) -> Evidence<T> {
     value.map(Evidence::Known).unwrap_or(Evidence::NotCollected)
 }
 fn normalize(file: &GoogleFile) -> RemoteState {
+    let nonbinary = file
+        .mime_type
+        .as_ref()
+        .is_some_and(|m| m.0.starts_with("application/vnd.google-apps."));
     RemoteState {
         state: FileState::Present,
         id: file.id.as_ref().map(|id| RemoteId(id.0.clone())),
@@ -1088,11 +1141,19 @@ fn normalize(file: &GoogleFile) -> RemoteState {
                 .map(|p| p.iter().map(|id| RemoteId(id.0.clone())).collect()),
         ),
         mime_type: evidence(file.mime_type.as_ref().map(|m| m.0.clone())),
-        size: evidence(file.size.as_ref().and_then(|v| v.parse().ok())),
-        checksum: evidence(file.sha256_checksum.as_ref().map(|v| Checksum {
-            algorithm: "sha256".into(),
-            value: v.clone(),
-        })),
+        size: if nonbinary {
+            Evidence::NotApplicable
+        } else {
+            evidence(file.size.as_ref().and_then(|v| v.parse().ok()))
+        },
+        checksum: if nonbinary {
+            Evidence::NotApplicable
+        } else {
+            evidence(file.sha256_checksum.as_ref().map(|v| Checksum {
+                algorithm: "sha256".into(),
+                value: v.to_ascii_lowercase(),
+            }))
+        },
         version: evidence(file.version.as_ref().and_then(|v| v.parse().ok())),
         modified_time: Evidence::NotCollected,
         trashed: evidence(file.trashed),

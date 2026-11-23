@@ -42,6 +42,7 @@ pub(super) fn record(
             OperationAction::CreateLocalDirectory
                 | OperationAction::Download
                 | OperationAction::UpdateLocalContent
+                | OperationAction::CreateLocalShortcut
         ) {
             Some(Filesystem::stage_path(r)?)
         } else {
@@ -63,6 +64,7 @@ impl PersistingOperator {
             OperationAction::CreateLocalDirectory
                 | OperationAction::Download
                 | OperationAction::CreateRemoteDirectory
+                | OperationAction::CreateLocalShortcut
                 | OperationAction::Upload
         ) {
             let remote_parents = if matches!(
@@ -146,6 +148,7 @@ impl PersistingOperator {
             record.command.action,
             OperationAction::CreateLocalDirectory
                 | OperationAction::Download
+                | OperationAction::CreateLocalShortcut
                 | OperationAction::CreateRemoteDirectory
                 | OperationAction::Upload
                 | OperationAction::UpdateRemoteContent

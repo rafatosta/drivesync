@@ -49,6 +49,7 @@ impl ContextConfig {
             destination_remote_matches: Evidence::NotCollected,
             destination_local_occupied: Evidence::NotCollected,
             local_replacement: Evidence::NotCollected,
+            projection_issue: None,
         }
     }
 }
@@ -56,6 +57,8 @@ impl ContextConfig {
 /// Current execution environment facts; unknown destinations remain explicit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Environment {
+    /// Proven per-item policy refusal, independent of scope completeness.
+    pub projection_issue: Option<String>,
     /// A new regular inode occupies the already synchronized path; the prior inode is absent.
     pub local_replacement: Evidence<bool>,
     /// Configured absolute local synchronization root.

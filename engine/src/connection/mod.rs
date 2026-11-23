@@ -223,3 +223,6 @@ mod live_tree_tests;
 
 #[cfg(test)]
 mod live_conflict_tests;
+
+#[cfg(test)]
+mod live_projection_tests;

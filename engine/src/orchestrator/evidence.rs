@@ -5,6 +5,9 @@ use crate::{
 };
 
 pub(super) fn equivalent(local: &LocalState, remote: &RemoteState) -> bool {
+    if crate::projections::workspace(remote) {
+        return crate::projections::equivalent(local, remote);
+    }
     if local.state != FileState::Present
         || remote.state != FileState::Present
         || remote.trashed != Evidence::Known(false)
