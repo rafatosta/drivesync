@@ -411,6 +411,7 @@ impl Orchestrator {
                 operation.updates_local_content
                     || operation.updates_remote_content
                     || operation.rename.is_some()
+                    || operation.movement.is_some()
             })
     }
     fn settle(&self) {
@@ -701,7 +702,29 @@ impl Orchestrator {
                 }),
                 _ => None,
             });
+            let movement = match (operation.action, &file.local.parent) {
+                (OperationAction::MoveRemote, Evidence::Known(destination)) => {
+                    match &file.environment.destination_local_parent {
+                        Evidence::Known(source) => Some(SynchronizationMove {
+                            origin: SynchronizationMoveOrigin::Local,
+                            source_parent: source.clone(),
+                            destination_parent: destination.clone(),
+                        }),
+                        _ => None,
+                    }
+                }
+                (OperationAction::MoveLocal, Evidence::Known(source)) => operation
+                    .parent
+                    .as_ref()
+                    .map(|destination| SynchronizationMove {
+                        origin: SynchronizationMoveOrigin::Remote,
+                        source_parent: source.clone(),
+                        destination_parent: destination.clone(),
+                    }),
+                _ => None,
+            };
             let public_operation = SynchronizationOperation {
+                movement,
                 rename,
                 id: execution_id.0.clone(),
                 newly_observed_remote: registered_remote
@@ -820,7 +843,8 @@ impl Orchestrator {
                 && !public_operation.newly_observed_local
                 && (!(public_operation.updates_local_content
                     || public_operation.updates_remote_content
-                    || public_operation.rename.is_some())
+                    || public_operation.rename.is_some()
+                    || public_operation.movement.is_some())
                     || confirmed)
             {
                 self.publish_execution(
@@ -852,6 +876,7 @@ fn activity(action: OperationAction) -> SynchronizationActivity {
         OperationAction::RenameRemote | OperationAction::RenameLocal => {
             SynchronizationActivity::Renaming
         }
+        OperationAction::MoveRemote | OperationAction::MoveLocal => SynchronizationActivity::Moving,
         _ => SynchronizationActivity::Applying,
     }
 }

@@ -326,6 +326,25 @@ async fn rename_and_move_preserve_bytes_and_refuse_collisions() {
     );
 }
 #[test]
+fn local_move_refuses_an_outside_destination() {
+    use std::os::unix::fs::symlink;
+    let sandbox = Sandbox::new();
+    let executor = setup(&sandbox);
+    let source = executor.config.local_root.join("file");
+    let outside = sandbox.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(&source, b"fixture").unwrap();
+    symlink(&outside, executor.config.local_root.join("link")).unwrap();
+
+    for parent in ["../outside", "link"] {
+        let mut request = request(&executor, OperationAction::MoveLocal);
+        request.operation.parent = Some(parent.into());
+        assert!(executor.filesystem.execute(&request, None).is_err());
+        assert_eq!(fs::read(&source).unwrap(), b"fixture");
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    }
+}
+#[test]
 fn symlinks_traversal_internal_paths_and_special_files_are_rejected() {
     use std::os::unix::fs::symlink;
     let s = Sandbox::new();

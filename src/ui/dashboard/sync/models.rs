@@ -33,7 +33,13 @@ pub enum ActivityKind {
     DownloadDiscoveredRemote,
     UpdateLocalContent,
     UpdateRemoteContent,
-    Rename { previous_name: String },
+    Rename {
+        previous_name: String,
+    },
+    Move {
+        source_parent: String,
+        destination_parent: String,
+    },
     Upload,
     UploadDiscoveredLocal,
     Verify,

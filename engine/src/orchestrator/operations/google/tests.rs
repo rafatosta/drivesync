@@ -566,6 +566,42 @@ async fn remote_move_is_conditional_and_unproven_trash_is_refused() {
 }
 
 #[tokio::test]
+async fn remote_move_refuses_an_outside_destination_before_writing() {
+    let sandbox = Sandbox::new();
+    let executor = setup(&sandbox);
+    let server = endpoint(|r| {
+        let body = if r.contains("/files/remote-root?") {
+            root()
+        } else if r.contains("/files/outside?") {
+            serde_json::json!({
+                "id": "outside", "parents": [], "mimeType": FOLDER,
+                "version": "1", "trashed": false,
+                "capabilities": {"canAddChildren": true}
+            })
+            .to_string()
+        } else {
+            metadata("file", "remote-root", 1, "bytes")
+        };
+        (200, body, vec![("ETag".into(), "\"v1\"".into())])
+    })
+    .await;
+    let mut request = request(&executor, OperationAction::MoveRemote);
+    request.operation.parent_id = Some(RemoteId("outside".into()));
+    assert!(operator(&sandbox, server.client.clone())
+        .run(
+            &executor.config,
+            &request,
+            &executor.filesystem,
+            &GoogleSession::new("test", "synthetic"),
+        )
+        .await
+        .is_err());
+    let calls = server.requests.lock().unwrap();
+    assert!(calls.iter().any(|r| r.contains("/files/outside?")));
+    assert!(calls.iter().all(|r| r.starts_with("GET ")));
+}
+
+#[tokio::test]
 async fn adoption_revalidates_versions_and_collisions_using_reads_only() {
     for scenario in ["stable", "changed", "duplicate"] {
         let sandbox = Sandbox::new();

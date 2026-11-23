@@ -31,6 +31,8 @@ pub enum SynchronizationActivity {
     Applying,
     /// Applying a name-only change to an existing replica.
     Renaming,
+    /// Applying a parent change to an existing replica.
+    Moving,
 }
 /// Display-safe identity; paths retain platform-native bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,6 +85,21 @@ pub struct SynchronizationOperation {
     pub updates_remote_content: bool,
     /// Name change on the destination replica. Applying denotes a verified, persisted rename.
     pub rename: Option<SynchronizationRename>,
+    /// Parent change on the destination replica. Applying denotes a verified, persisted move.
+    pub movement: Option<SynchronizationMove>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationMove {
+    pub origin: SynchronizationMoveOrigin,
+    /// Source directory relative to the synchronized root.
+    pub source_parent: std::path::PathBuf,
+    /// Destination directory relative to the synchronized root.
+    pub destination_parent: std::path::PathBuf,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationMoveOrigin {
+    Local,
+    Remote,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationRename {

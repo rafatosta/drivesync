@@ -132,6 +132,28 @@ no event 10/11 acceptance is claimed. Interactive keyboard and screen-reader acc
 - A ausência de retransmissão pela Engine foi verificada pelo plano com uma única operação de metadados, o recibo sem sessão de transferência, a identidade local preservada e a revisão binária inalterada. As leituras independentes de mídia foram operações de verificação. A validação da GUI usou rótulos e estados de visibilidade GTK em inglês. O catálogo PT-BR foi compilado.
 - As evidências por direção estão em `/home/tosta/Documentos/ChatGPT/drivesync 2/relatorios/etapa-12-atividade-7`, incluindo logs da instalação, rótulos GTK, listagem e revisões do provedor, bytes de leitura independente e snapshots do Inventory.
 
+### Evento 8 — Movimentação com origem local
+
+- **Fixture e ação.** No Flatpak Devel com a conta de teste, duas pastas gerenciadas, `Origem` e `Destino`, e o arquivo de 65.536 bytes em `Origem/fixture-local.bin` convergiram no epoch 3. Um único movimento local colocou o mesmo arquivo em `Destino/fixture-local.bin`. [Raiz isolada no Drive](https://drive.google.com/drive/folders/1EG_DxeReQ7sajN1uNK_PC1ULnr9Y5oE6)
+- **Engine e GUI.** O Analyzer selecionou apenas `MoveRemote`. Operations teve uma tentativa recusada com `Unavailable`, seguida da execução confirmada `b0693cb3c8cc94379c08722191ba311c`. A causa específica da primeira recusa não foi identificada. O dashboard mostrou `Origem → Destino`, `Computer → Drive`, `In progress` e `Move verified`, sem barra ou spinner de transferência. A auditoria do epoch 5 confirmou três itens convergentes, cobertura completa e zero conflitos ou pendências.
+- **Identidade e baseline.** O ID remoto `1jmYOTK2S59dp6CPyrpEAX4b8A5dmlK08`, o ItemId `4971240412609adc16783291cb1ea201`, o inode 5703640, o nome e o SHA-256 foram preservados. O pai remoto mudou de `1p_G5PwouISnEpvxPp1Z6qbC-5iImptcu` para `1Xa4h32sq06WWyj_tmwmtKwPaXadIV8L1`. O baseline confirmou o novo caminho e pai, com revisão de Inventory de 6 a 11. O conector independente confirmou a mesma revisão binária única e o novo pai; o recibo confirmado não registrou sessão de transferência.
+- **Resultado.** APROVADO.
+
+### Evento 8 — Movimentação com origem remota
+
+- **Fixture e ação.** A segunda raiz e o segundo perfil local convergiram no epoch 4 com `Origem/fixture-remote.bin`. O conector adicionou o pai `Destino` e removeu o pai `Origem` na mesma atualização de metadados, mantendo o nome. [Raiz isolada no Drive](https://drive.google.com/drive/folders/1egc1CSuMKDObZ9zQFGZbpcggyTtAWT8D)
+- **Engine e GUI.** O detector observou a nova versão do mesmo ID. O Analyzer selecionou apenas `MoveLocal`, confirmado na execução `0456f8634fe1c6ddf532979c6608d7e1`. A GUI mostrou `Origem → Destino`, `Drive → Computer`, `In progress` e `Move verified`, sem barra ou spinner de transferência. A auditoria do epoch 5 confirmou os três itens convergentes, cobertura completa e zero conflitos ou pendências.
+- **Identidade e baseline.** Foram preservados o ID remoto `193aTvAXnULhbergBhVi7oRT6Sl9sC7IV`, o ItemId `80a8220ef5af5db4b4bb8bc3a09bb1a2`, a identidade física local, o nome e o SHA-256. A leitura independente confirmou o pai anterior `1QA_obkZsfg6fVJM2c7cfVANR0ilO8RTh`, o novo pai `1O49Lciesm4cDX0pgS7Ww8ZONkO3WvgSZ` e a mesma revisão binária única. O baseline confirmou o novo caminho e pai, com revisão de Inventory de 6 a 11. O recibo confirmado não registrou sessão de transferência.
+- **Resultado.** APROVADO.
+
+#### API, recusas seguras, regressões e evidências da atividade 8
+
+- A API pública fornece a direção da mudança e os dois caminhos relativos ao escopo sincronizado. O Adapter mapeia esses dados para a atividade e omite progresso de transferência. A fase confirmada só aparece após a escrita verificada do recibo. A GUI mostra a conclusão geral após auditoria positiva.
+- Uma fixture temporária do filesystem comprovou recusa de `MoveLocal` por travessia e por symlink para fora da raiz, com fonte íntegra e destino vazio. O teste de `MoveRemote` consultou um pai externo ao escopo no provedor simulado e comprovou que todas as requisições foram de leitura. Os testes de recusa usaram exclusivamente dados sintéticos.
+- Flatpak Devel instalado `stage12-event8`, commit `56011499a9c9a54821517878366e6e9456d6662502e8340fa40c27c1a2d537dc`. A preparação exigiu reutilizar as referências de autorização dos perfis de teste da atividade 7. As tentativas anteriores ficaram nos logs. A instrumentação para ler rótulos GTK e estados de visibilidade ficou no empacotamento de teste. A apresentação ao vivo foi capturada em inglês e o catálogo PT-BR passou por `msgfmt --check`.
+- GNOME SDK 50 passou `cargo fmt --all --check`, `cargo clippy --offline --workspace --all-targets -- -D warnings`, `cargo test --offline --workspace` (704 aprovados, 27 ignorados), `cargo doc --offline --workspace --no-deps --document-private-items` e `cargo test --offline --workspace --doc`. O pacote usou `cargo build --release --offline --locked`.
+- Evidências em `/home/tosta/Documentos/ChatGPT/drivesync 2/relatorios/etapa-12-atividade-8`. Incluem logs do Flatpak, rótulos GTK, metadados e revisões lidos pelo conector, snapshots do Inventory, SHA-256 e verificação dos recibos.
+
 ## Limite da execução
 
-A última execução cobriu exclusivamente a atividade 7. As duas fixtures e o Flatpak Devel foram preservados. Nenhuma publicação remota foi realizada.
+A última execução cobriu exclusivamente a atividade 8. As duas fixtures e o Flatpak Devel foram preservados. Nenhuma publicação remota foi realizada.

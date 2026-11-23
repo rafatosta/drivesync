@@ -1560,3 +1560,12 @@ msgstr "Renomeando…"
 
 msgid "Rename verified"
 msgstr "Renomeação verificada"
+
+msgid "Moving…"
+msgstr "Movendo…"
+
+msgid "Move verified"
+msgstr "Movimentação verificada"
+
+msgid "Sync root"
+msgstr "Raiz sincronizada"

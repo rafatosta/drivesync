@@ -374,6 +374,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         updates_local_content: false,
         updates_remote_content: false,
         rename: None,
+        movement: None,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -497,6 +498,63 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
             assert_eq!(rename.direction, direction);
             assert_eq!(rename.phase, phase);
             assert_eq!(rename.progress, ProgressView::None);
+        }
+    }
+}
+
+#[test]
+fn move_activity_reports_both_paths_without_transfer_progress() {
+    use drivesync_engine::*;
+    let mut value = SynchronizationStatus {
+        account_id: AccountId("fixture-a".into()),
+        state: SynchronizationState::Running,
+        activity: SynchronizationActivity::Moving,
+        current_item: Some(SynchronizationItem {
+            item_id: None,
+            local_path: None,
+            remote_id: Some(models::RemoteId("drive-file".into())),
+        }),
+        current_operation: None,
+        progress: None,
+        issue: None,
+        updated_at: Timestamp { unix_millis: 0 },
+    };
+    for (origin, direction) in [
+        (SynchronizationMoveOrigin::Local, Direction::LocalToRemote),
+        (SynchronizationMoveOrigin::Remote, Direction::RemoteToLocal),
+    ] {
+        value.current_operation = Some(drivesync_engine::SynchronizationOperation {
+            id: "move".into(),
+            item_id: drivesync_engine::models::ItemId("file".into()),
+            display_name: Some("fixture.bin".into()),
+            newly_observed_remote: false,
+            newly_observed_local: false,
+            updates_local_content: false,
+            updates_remote_content: false,
+            rename: None,
+            movement: Some(SynchronizationMove {
+                origin,
+                source_parent: "Origem".into(),
+                destination_parent: "Projetos/Destino".into(),
+            }),
+        });
+        for (activity, phase) in [
+            (SynchronizationActivity::Moving, Phase::Running),
+            (SynchronizationActivity::Applying, Phase::Confirmed),
+        ] {
+            value.activity = activity;
+            let view = map_status(&value, false).activity.unwrap();
+            assert_eq!(view.direction, direction);
+            assert_eq!(view.name, "fixture.bin");
+            assert_eq!(view.phase, phase);
+            assert_eq!(view.progress, ProgressView::None);
+            assert_eq!(
+                view.kind,
+                ActivityKind::Move {
+                    source_parent: "Origem".into(),
+                    destination_parent: "Projetos/Destino".into(),
+                }
+            );
         }
     }
 }

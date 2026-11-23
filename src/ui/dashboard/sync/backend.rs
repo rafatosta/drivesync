@@ -1,5 +1,6 @@
 //! Backend contracts use presentation values exclusively.
 use super::models::*;
+use gettextrs::gettext;
 use std::{cell::RefCell, collections::VecDeque, future::Future, pin::Pin, rc::Rc};
 pub type NextSnapshot<'a> = Pin<Box<dyn Future<Output = Option<Snapshot>> + 'a>>;
 pub trait SyncBackend {
@@ -122,7 +123,32 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .and_then(|op| op.rename.as_ref());
+            let movement = status
+                .current_operation
+                .as_ref()
+                .and_then(|op| op.movement.as_ref());
             let (kind, direction) = match status.activity {
+                A::Moving | A::Applying if movement.is_some() => {
+                    use drivesync_engine::SynchronizationMoveOrigin;
+                    let movement = movement?;
+                    let display_parent = |path: &std::path::Path| {
+                        if path.as_os_str().is_empty() {
+                            gettext("Sync root")
+                        } else {
+                            path.to_string_lossy().into_owned()
+                        }
+                    };
+                    (
+                        ActivityKind::Move {
+                            source_parent: display_parent(&movement.source_parent),
+                            destination_parent: display_parent(&movement.destination_parent),
+                        },
+                        match movement.origin {
+                            SynchronizationMoveOrigin::Local => Direction::LocalToRemote,
+                            SynchronizationMoveOrigin::Remote => Direction::RemoteToLocal,
+                        },
+                    )
+                }
                 A::Renaming | A::Applying if rename.is_some() => {
                     let rename = rename?;
                     let direction = match rename.origin {
@@ -140,7 +166,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                         direction,
                     )
                 }
-                A::Renaming => (ActivityKind::Apply, Direction::None),
+                A::Renaming | A::Moving => (ActivityKind::Apply, Direction::None),
                 A::Downloading | A::Applying if updates_local => {
                     (ActivityKind::UpdateLocalContent, Direction::RemoteToLocal)
                 }
@@ -202,14 +228,20 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 name,
                 kind,
                 direction,
-                phase: if (updates_local || updates_remote || rename.is_some())
+                phase: if (updates_local
+                    || updates_remote
+                    || rename.is_some()
+                    || movement.is_some())
                     && status.activity == A::Applying
                 {
                     Phase::Confirmed
                 } else {
                     Phase::Running
                 },
-                progress: if status.activity == A::Renaming || rename.is_some() {
+                progress: if matches!(status.activity, A::Renaming | A::Moving)
+                    || rename.is_some()
+                    || movement.is_some()
+                {
                     ProgressView::None
                 } else {
                     ProgressView::Indeterminate

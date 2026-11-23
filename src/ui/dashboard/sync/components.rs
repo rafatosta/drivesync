@@ -109,7 +109,8 @@ impl SyncActivity {
     }
     pub fn set_activity(&self, mut activity: ActivityView) {
         let rename = matches!(activity.kind, ActivityKind::Rename { .. });
-        if rename {
+        let movement = matches!(activity.kind, ActivityKind::Move { .. });
+        if rename || movement {
             activity.progress = ProgressView::None;
         }
         let verb = match activity.kind {
@@ -118,6 +119,7 @@ impl SyncActivity {
             ActivityKind::UpdateLocalContent => "Updating local copy…",
             ActivityKind::Upload | ActivityKind::UploadDiscoveredLocal => "Uploading…",
             ActivityKind::Rename { .. } => "Renaming…",
+            ActivityKind::Move { .. } => "Moving…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
@@ -129,6 +131,12 @@ impl SyncActivity {
         let name = match &activity.kind {
             ActivityKind::Rename { previous_name } => {
                 format!("{previous_name} → {}", activity.name)
+            }
+            ActivityKind::Move {
+                source_parent,
+                destination_parent,
+            } => {
+                format!("{} ({source_parent} → {destination_parent})", activity.name)
             }
             _ => activity.name.clone(),
         };
@@ -149,6 +157,7 @@ impl SyncActivity {
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }
+            Phase::Confirmed if movement => "Move verified",
             Phase::Confirmed if rename => "Rename verified",
             Phase::Confirmed => "Local update verified",
             Phase::Running => "In progress",
@@ -189,7 +198,10 @@ impl SyncActivity {
         };
         if state.scope != scope
             || state.operation_id.as_deref() != Some(operation)
-            || matches!(state.kind, ActivityKind::Rename { .. })
+            || matches!(
+                state.kind,
+                ActivityKind::Rename { .. } | ActivityKind::Move { .. }
+            )
         {
             return false;
         }
