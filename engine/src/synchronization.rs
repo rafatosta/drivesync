@@ -77,6 +77,8 @@ pub struct SynchronizationOperation {
     /// Downloading covers transfer and verification. Applying denotes a verified,
     /// persisted update while observations are refreshed.
     pub updates_local_content: bool,
+    /// Replaces an existing Drive replica. Applying denotes a verified, persisted update.
+    pub updates_remote_content: bool,
 }
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]

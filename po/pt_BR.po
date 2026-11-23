@@ -1545,3 +1545,12 @@ msgstr "Baixando e verificando o conteúdo"
 
 msgid "Local update verified"
 msgstr "Atualização local verificada"
+
+msgid "Updating Drive copy…"
+msgstr "Atualizando cópia no Drive…"
+
+msgid "Uploading and verifying content"
+msgstr "Enviando e verificando conteúdo"
+
+msgid "Drive update verified"
+msgstr "Atualização no Drive verificada"

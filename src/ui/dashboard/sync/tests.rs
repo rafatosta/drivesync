@@ -348,6 +348,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         newly_observed_remote: false,
         newly_observed_local: false,
         updates_local_content: false,
+        updates_remote_content: false,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -394,6 +395,27 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         .as_mut()
         .unwrap()
         .updates_local_content = false;
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .updates_remote_content = true;
+    for (activity, phase) in [
+        (SynchronizationActivity::Uploading, Phase::Running),
+        (SynchronizationActivity::Applying, Phase::Confirmed),
+    ] {
+        value.activity = activity;
+        let current = map_status(&value, false).activity.unwrap();
+        assert_eq!(current.kind, ActivityKind::UpdateRemoteContent);
+        assert_eq!(current.direction, Direction::LocalToRemote);
+        assert_eq!(current.phase, phase);
+        assert_eq!(current.progress, ProgressView::Indeterminate);
+    }
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .updates_remote_content = false;
     value.activity = SynchronizationActivity::Downloading;
     value
         .current_operation

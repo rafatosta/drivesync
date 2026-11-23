@@ -282,7 +282,7 @@ impl Orchestrator {
                         self.recover_pending().await;
                     }
                     self.sources.insert(source, issue);
-                    if self.refreshing_local_update()
+                    if self.refreshing_content_update()
                         && !self.recovery_failed
                         && self.blockers.is_empty()
                         && self.sources.len() == 2
@@ -403,14 +403,13 @@ impl Orchestrator {
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         self.blockers.insert(key(&item), (item, issue));
     }
-    fn refreshing_local_update(&self) -> bool {
+    fn refreshing_content_update(&self) -> bool {
         let status = self.status.borrow();
         self.refresh_after.is_some()
             && status.activity == SynchronizationActivity::Applying
-            && status
-                .current_operation
-                .as_ref()
-                .is_some_and(|operation| operation.updates_local_content)
+            && status.current_operation.as_ref().is_some_and(|operation| {
+                operation.updates_local_content || operation.updates_remote_content
+            })
     }
     fn settle(&self) {
         if self.recovery_failed {
@@ -476,7 +475,7 @@ impl Orchestrator {
                 None,
                 None,
             );
-        } else if !self.refreshing_local_update() {
+        } else if !self.refreshing_content_update() {
             self.publish(
                 SynchronizationState::Idle,
                 SynchronizationActivity::None,
@@ -515,7 +514,7 @@ impl Orchestrator {
                 || file.observations.remote_epoch.is_none_or(|e| e < epoch)
             {
                 outcome.decision = DecisionStatus::Defer;
-                if self.refreshing_local_update() {
+                if self.refreshing_content_update() {
                     return outcome;
                 }
                 self.block(item, issue(SynchronizationIssueKind::Deferred, true));
@@ -690,6 +689,7 @@ impl Orchestrator {
                 newly_observed_local: registered_local
                     && operation.action == OperationAction::Upload,
                 updates_local_content: operation.action == OperationAction::UpdateLocalContent,
+                updates_remote_content: operation.action == OperationAction::UpdateRemoteContent,
                 item_id: operation.item_ref.clone(),
                 display_name: operation.name.clone().or_else(|| match &file.remote.name {
                     Evidence::Known(name) => Some(name.clone()),
@@ -798,7 +798,9 @@ impl Orchestrator {
             if !internal_registration
                 && !public_operation.newly_observed_remote
                 && !public_operation.newly_observed_local
-                && (!public_operation.updates_local_content || confirmed)
+                && (!(public_operation.updates_local_content
+                    || public_operation.updates_remote_content)
+                    || confirmed)
             {
                 self.publish_execution(
                     SynchronizationActivity::Applying,
