@@ -25,11 +25,20 @@ pub(crate) fn kind(mime: &str) -> RemoteKind {
         _ => RemoteKind::Binary,
     }
 }
+pub(crate) const PRIVATE_TRASH_PREFIX: &str = ".drivesync-trash-";
+
+pub(crate) fn private_trash_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|name| name.strip_prefix(PRIVATE_TRASH_PREFIX))
+        .is_some_and(|key| key.len() == 32 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
         && name != ".drivesync"
+        && !private_trash_name(name.as_ref())
         && !name.starts_with(".drivesync-transfer-")
         && !name.contains('/')
         && !name.chars().any(char::is_control)

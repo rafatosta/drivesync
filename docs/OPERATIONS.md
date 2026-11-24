@@ -93,10 +93,19 @@ and its content before reporting success. The execution journal records its rela
 The scanner excludes it from synchronization. Retained versions can be recovered manually
 and are never automatically removed.
 
-Explicit local removals require freedesktop home trash and a restore receipt. Trash directories
-and receipt files are private. Unavailable or unsafe trash still blocks the operation, and
-explicit removal across mounts remains unsupported. Workspace links contain a fixed HTTPS
-Drive URL and have no executable mode or `Exec` entry. Permanent deletion is forbidden.
+Explicit local removals require a restore receipt. The Engine uses freedesktop home trash
+when it is on the source mount. With a separate Flatpak mount, it creates a private
+`.drivesync-trash-<32 hex digits>` directory beside the scope root, or inside the root when
+the parent is on a different mount and the root is on the source mount. The name is reserved
+at every depth, including in other scopes. The Engine persists the original path and the
+destination identity before the no-replace rename and verifies the retained item before
+confirmation. Unavailable or unsafe trash blocks the operation. Permanent deletion is forbidden.
+
+The private directory contains the retained item in `files` and its original path in the
+matching `info/*.trashinfo`. For manual recovery, stop synchronization and use a same-mount
+rename that refuses to overwrite an occupied destination. Restoring the local file alone
+leaves the remote item in the Drive trash. Workspace links contain a fixed HTTPS Drive URL
+and have no executable mode or `Exec` entry.
 
 Provider, Accounts, GUI and credential storage remain preserved. Connection exposes a separate
 explicit initial-association start method; normal dashboard startup does not grant it.

@@ -297,6 +297,7 @@ pub(crate) fn now() -> DateTime {
 }
 pub(crate) fn ignored(name: &std::ffi::OsStr) -> bool {
     name.as_bytes().starts_with(b".drivesync-transfer-")
+        || crate::projections::private_trash_name(name)
 }
 fn issue(result: &mut ScanResult, path: Path, kind: ScanIssueKind) {
     result.coverage = ObservationCoverage::Partial;

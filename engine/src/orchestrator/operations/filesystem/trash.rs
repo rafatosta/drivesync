@@ -1,4 +1,4 @@
-//! Same-filesystem freedesktop trash. Cross-device moves fail without a destructive fallback.
+//! Recoverable trash on the source mount. Every removal has a durable receipt before its rename.
 use super::*;
 use crate::inventory::models::{RecoveryRecord, TrashReference};
 
@@ -13,11 +13,63 @@ impl TrashDestination {
         files_sync(&self.destination.parent).map_err(OperatorError::uncertain)
     }
 }
-pub(super) fn prepare(
+fn prepare_removal(
+    filesystem: &Filesystem,
     source: &Entry,
     original: &StdPath,
 ) -> Result<TrashDestination, OperatorError> {
-    prepare_to(source, original, &data_home()?)
+    let data = data_home()?;
+    let data_root = Filesystem::open(&data)?;
+    let source_mount = mount_id(&source.parent)?;
+    if mount_id(&data_root.root)? == source_mount {
+        if let Some(destination) = prepare_destination(source, original, &data, true)? {
+            return Ok(destination);
+        }
+    }
+
+    prepare_scope_trash(filesystem, source, original, source_mount)
+}
+
+fn prepare_scope_trash(
+    filesystem: &Filesystem,
+    source: &Entry,
+    original: &StdPath,
+    source_mount: u64,
+) -> Result<TrashDestination, OperatorError> {
+    // Only move through a directory visible on the source mount. A nested mount
+    // inside the scope may have neither a usable sibling nor a usable scope root.
+    filesystem.validate_root()?;
+    let scope_parent = filesystem.absolute.parent().ok_or_else(stale)?;
+    let parent = Filesystem::open(scope_parent)?;
+    let anchor = if mount_id(&parent.root)? == source_mount {
+        &parent
+    } else {
+        filesystem
+    };
+    if mount_id(&anchor.root)? != source_mount {
+        return Err(OperatorError::new(OperatorErrorKind::Unavailable));
+    }
+    let key = crate::orchestrator::execution_id().map_err(|_| invalid())?;
+    let name = format!(
+        "{}{key}",
+        crate::projections::PRIVATE_TRASH_PREFIX,
+        key = key.0
+    );
+    let trash = new_private_child(&anchor.root, &name)?;
+    let trash_path = anchor.absolute.join(name);
+    let destination =
+        prepare_in_trash(source, original, &trash, &trash_path, false)?.ok_or_else(stale)?;
+    files_sync(&trash)?;
+    files_sync(&anchor.root)?;
+    Ok(destination)
+}
+
+fn new_private_child(parent: &File, name: &str) -> Result<File, OperatorError> {
+    let child = CString::new(name).map_err(|_| invalid())?;
+    if unsafe { libc::mkdirat(parent.as_raw_fd(), child.as_ptr(), 0o700) } != 0 {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    open_private_child(parent, name)
 }
 
 pub(super) fn prepare_replacement(
@@ -57,8 +109,6 @@ fn mount_id(directory: &File) -> Result<u64, OperatorError> {
 }
 
 fn private_child(parent: &File, name: &str) -> Result<File, OperatorError> {
-    let parent_path = PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd()));
-    let path = parent_path.join(name);
     let child = CString::new(name).map_err(|_| invalid())?;
     if unsafe { libc::mkdirat(parent.as_raw_fd(), child.as_ptr(), 0o700) } != 0 {
         let error_value = std::io::Error::last_os_error();
@@ -66,13 +116,18 @@ fn private_child(parent: &File, name: &str) -> Result<File, OperatorError> {
             return Err(error(error_value));
         }
     }
-    let dir = directory(&path)?;
+    open_private_child(parent, name)
+}
+fn open_private_child(parent: &File, name: &str) -> Result<File, OperatorError> {
+    let parent_path = PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd()));
+    let dir = directory(&parent_path.join(name))?;
     let meta = dir.metadata().map_err(error)?;
     if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
         return Err(OperatorError::new(OperatorErrorKind::PermissionDenied));
     }
     Ok(dir)
 }
+#[cfg(test)]
 pub(super) fn prepare_to(
     source: &Entry,
     original: &StdPath,
@@ -90,8 +145,27 @@ fn prepare_destination(
 ) -> Result<Option<TrashDestination>, OperatorError> {
     let root = Filesystem::open(data)?;
     let trash = private_child(&root.root, "Trash")?;
-    let files = private_child(&trash, "files")?;
-    let info = private_child(&trash, "info")?;
+    prepare_in_trash(
+        source,
+        original,
+        &trash,
+        &data.join("Trash"),
+        retain_on_other_mount,
+    )
+}
+
+fn prepare_in_trash(
+    source: &Entry,
+    original: &StdPath,
+    trash: &File,
+    trash_path: &StdPath,
+    retain_on_other_mount: bool,
+) -> Result<Option<TrashDestination>, OperatorError> {
+    let files = private_child(trash, "files")?;
+    let info = private_child(trash, "info")?;
+    if mount_id(&info)? != mount_id(&files)? {
+        return Err(OperatorError::new(OperatorErrorKind::Unavailable));
+    }
     // Flatpak bind mounts can have the same device number and still reject rename.
     if mount_id(&source.parent)? != mount_id(&files)? {
         return if retain_on_other_mount {
@@ -158,11 +232,11 @@ fn prepare_destination(
     };
     let parent_identity = Filesystem {
         root: dest.parent.try_clone().map_err(error)?,
-        absolute: data.join("Trash/files"),
+        absolute: trash_path.join("files"),
     }
     .root_identity()?;
     let reference = TrashReference {
-        destination: data.join("Trash/files").join(&key),
+        destination: trash_path.join("files").join(&key),
         parent_identity,
         info_checksum: Checksum {
             algorithm: "sha256".into(),
@@ -287,7 +361,9 @@ impl Filesystem {
         request: &ExecuteOperationRequest,
         journal: Option<&dyn super::super::journal::ExecutionJournal>,
     ) -> Result<LocalState, OperatorError> {
-        self.remove_with(request, journal, prepare)
+        self.remove_with(request, journal, |source, original| {
+            prepare_removal(self, source, original)
+        })
     }
     #[cfg(test)]
     pub(in crate::orchestrator::operations) fn remove_to_test_trash(
@@ -457,6 +533,54 @@ mod tests {
             )
             .unwrap(),
             b"retained content"
+        );
+    }
+    #[test]
+    fn scope_trash_is_private_and_can_be_restored_without_overwriting() {
+        use crate::orchestrator::operations::{
+            recovery,
+            tests::{request, setup, Sandbox},
+        };
+        let sandbox = Sandbox::new();
+        let executor = setup(&sandbox);
+        let fs = &executor.filesystem;
+        let original = fs.absolute.join("file");
+        std::fs::write(&original, b"retained").unwrap();
+        let request = request(&executor, OperationAction::RemoveLocal);
+        let journal = Receipt(std::sync::Mutex::new(
+            recovery::record(&executor.config, &request, fs, None).unwrap(),
+        ));
+        let absence = fs
+            .remove_with(&request, Some(&journal), |source, path| {
+                prepare_scope_trash(fs, source, path, mount_id(&source.parent)?)
+            })
+            .unwrap();
+        let record = journal.0.into_inner().unwrap();
+        let reopened = Filesystem::open(&fs.absolute).unwrap();
+        assert_eq!(reopened.trashed(&record).unwrap(), Some(absence));
+        let retained = record.local_trash.unwrap().destination;
+        let files = retained.parent().unwrap();
+        let private = files.parent().unwrap();
+        assert_eq!(private.parent(), fs.absolute.parent());
+        assert!(crate::projections::private_trash_name(
+            private.file_name().unwrap()
+        ));
+        assert_eq!(std::fs::metadata(private).unwrap().mode() & 0o777, 0o700);
+        let source = Filesystem::open(files)
+            .unwrap()
+            .entry(StdPath::new(retained.file_name().unwrap()))
+            .unwrap();
+        let destination = reopened.entry(StdPath::new("file")).unwrap();
+        std::fs::write(&original, b"new occupant").unwrap();
+        assert!(rename(&source, &destination, libc::RENAME_NOREPLACE).is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"new occupant");
+        assert_eq!(std::fs::read(&retained).unwrap(), b"retained");
+        std::fs::rename(&original, fs.absolute.join("occupant")).unwrap();
+        rename(&source, &destination, libc::RENAME_NOREPLACE).unwrap();
+        assert_eq!(std::fs::read(&original).unwrap(), b"retained");
+        assert_eq!(
+            reopened.observe(StdPath::new("file")).unwrap().identity,
+            request.local.identity
         );
     }
     #[test]

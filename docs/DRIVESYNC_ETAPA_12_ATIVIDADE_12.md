@@ -20,3 +20,31 @@ A API pública informa destino, operação em andamento, recusa ou necessidade d
 Regressões no SDK GNOME 50: `cargo fmt --all --check`, `cargo clippy --offline --workspace --all-targets -- -D warnings`, `cargo test --offline --workspace` e teste GTK isolado de componentes. O conjunto inclui pré-condições de identidade e escopo, lixeira indisponível, validação de recibo local, substituição do diretório do recibo e recuperação sem replay.
 
 As evidências estão no workspace de validação, em `relatorios/etapa-12-atividade-12`: `live-*.log`, `installed-mount.log`, `retained-files.log`, `installed-atspi.log`, `workspace.log` e `gtk-components.log`. Os arquivos enviados para a lixeira e seus recibos foram preservados.
+
+## Reteste de `RemoveLocal` com a lixeira na montagem de origem
+
+O bloqueio de montagem do cenário acima foi resolvido para a raiz aninhada homologada.
+No Flatpak Devel `trash-same-mount` (OSTree
+`1a232ca131e8099256e4033bc8f3248e644b74f4140b011ce02863253e88dbce`),
+a pasta sincronizada e os dados do aplicativo seguiram em montagens separadas.
+Com opt-in explícito, o envio de `unavailable.bin` para a lixeira do Drive acionou
+`RemoveLocal`. A Engine registrou `Confirmed` e reteve o arquivo em uma pasta privada
+irmã da raiz. O caminho original, o SHA-256 do recibo e o SHA-256 do conteúdo conferiram
+com o Inventory. A consulta ao Google após reiniciar confirmou o mesmo ID remoto,
+`1wc8094lsMZ3yxMx8JbD5XpvHGkZ8VgR3`, com `trashed=true`. O reinício preservou os
+baselines e os registros de operações confirmadas, sem replay.
+
+Com a sincronização parada, uma restauração manual no mesmo Flatpak recusou um
+destino ocupado com `EEXIST`. Após mover o ocupante de teste para outro nome,
+a restauração recolocou o inode original no caminho do recibo e manteve o
+SHA-256 `0588e95625ec42a5e7e0586d80356f60f1c0477a07118728396f0d86e7e90bb6`.
+A cópia remota permaneceu na lixeira do Google.
+
+O roteiro usou um executável de aceitação compilado com a mesma Engine e montado
+somente para leitura no Flatpak instalado. A primeira execução da fase de exclusão
+comparou o item errado em uma asserção do roteiro. A releitura independente do Inventory
+e a execução de verificação corrigida confirmaram o resultado, sem repetir a exclusão.
+O teste instalado cobriu a lixeira irmã. A seleção de uma pasta reservada dentro
+da raiz, usada quando a raiz coincide com a montagem, segue sem aceite real.
+A sessão padrão da GUI continua sem opt-in e o teste instalado exercitou a API da Engine.
+As evidências estão em `relatorios/lixeira-mesma-montagem` no workspace de validação.

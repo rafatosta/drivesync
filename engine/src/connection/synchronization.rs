@@ -44,7 +44,7 @@ fn validate(request: &StartSynchronizationRequest) -> EngineResult<()> {
             matches!(
                 part,
                 std::path::Component::ParentDir | std::path::Component::CurDir
-            )
+            ) || crate::projections::private_trash_name(part.as_os_str())
         })
     {
         return Err(error(SynchronizationErrorKind::InvalidConfiguration));

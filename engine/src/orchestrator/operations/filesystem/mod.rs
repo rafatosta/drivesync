@@ -79,7 +79,10 @@ impl Filesystem {
     pub fn entry(&self, path: &StdPath) -> Result<Entry, OperatorError> {
         let parts: Vec<_> = path.components().collect();
         if parts.is_empty()
-            || parts.iter().any(|c| !matches!(c, Component::Normal(_)))
+            || parts.iter().any(|c| {
+                !matches!(c, Component::Normal(_))
+                    || crate::projections::private_trash_name(c.as_os_str())
+            })
             || parts.first().is_some_and(|c| c.as_os_str() == ".drivesync")
         {
             return Err(invalid());

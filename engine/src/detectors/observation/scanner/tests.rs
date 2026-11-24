@@ -28,6 +28,10 @@ fn scanner_preserves_bytes_hashes_and_ignores_internal_artifacts_without_followi
     std::fs::create_dir(s.0.join("nested")).unwrap();
     std::fs::write(s.0.join("nested/file"), b"abc").unwrap();
     std::fs::create_dir(s.0.join(".drivesync")).unwrap();
+    let trash =
+        s.0.join(".drivesync-trash-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir(&trash).unwrap();
+    std::fs::write(trash.join("retained"), b"hidden").unwrap();
     std::fs::write(s.0.join(".drivesync/secret"), b"hidden").unwrap();
     std::fs::write(s.0.join(".drivesync-transfer-private"), b"hidden").unwrap();
     let bytes = PathBuf::from(OsString::from_vec(vec![0xff]));
