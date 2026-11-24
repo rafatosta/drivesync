@@ -127,7 +127,19 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .and_then(|op| op.movement.as_ref());
+            let directory_creation = status
+                .current_operation
+                .as_ref()
+                .and_then(|op| op.directory_creation);
             let (kind, direction) = match status.activity {
+                A::CreatingDirectory | A::Applying if directory_creation.is_some() => {
+                    use drivesync_engine::SynchronizationDirectoryDestination;
+                    let direction = match directory_creation? {
+                        SynchronizationDirectoryDestination::Local => Direction::RemoteToLocal,
+                        SynchronizationDirectoryDestination::Remote => Direction::LocalToRemote,
+                    };
+                    (ActivityKind::CreateDirectory, direction)
+                }
                 A::Moving | A::Applying if movement.is_some() => {
                     use drivesync_engine::SynchronizationMoveOrigin;
                     let movement = movement?;
@@ -231,7 +243,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 phase: if (updates_local
                     || updates_remote
                     || rename.is_some()
-                    || movement.is_some())
+                    || movement.is_some()
+                    || directory_creation.is_some())
                     && status.activity == A::Applying
                 {
                     Phase::Confirmed
@@ -241,6 +254,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 progress: if matches!(status.activity, A::Renaming | A::Moving)
                     || rename.is_some()
                     || movement.is_some()
+                    || directory_creation.is_some()
                 {
                     ProgressView::None
                 } else {

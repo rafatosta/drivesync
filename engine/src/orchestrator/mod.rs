@@ -412,6 +412,7 @@ impl Orchestrator {
                     || operation.updates_remote_content
                     || operation.rename.is_some()
                     || operation.movement.is_some()
+                    || operation.directory_creation.is_some()
             })
     }
     fn settle(&self) {
@@ -725,6 +726,15 @@ impl Orchestrator {
             };
             let public_operation = SynchronizationOperation {
                 movement,
+                directory_creation: match operation.action {
+                    OperationAction::CreateLocalDirectory => {
+                        Some(SynchronizationDirectoryDestination::Local)
+                    }
+                    OperationAction::CreateRemoteDirectory => {
+                        Some(SynchronizationDirectoryDestination::Remote)
+                    }
+                    _ => None,
+                },
                 rename,
                 id: execution_id.0.clone(),
                 newly_observed_remote: registered_remote
@@ -844,7 +854,8 @@ impl Orchestrator {
                 && (!(public_operation.updates_local_content
                     || public_operation.updates_remote_content
                     || public_operation.rename.is_some()
-                    || public_operation.movement.is_some())
+                    || public_operation.movement.is_some()
+                    || public_operation.directory_creation.is_some())
                     || confirmed)
             {
                 self.publish_execution(
@@ -877,6 +888,9 @@ fn activity(action: OperationAction) -> SynchronizationActivity {
             SynchronizationActivity::Renaming
         }
         OperationAction::MoveRemote | OperationAction::MoveLocal => SynchronizationActivity::Moving,
+        OperationAction::CreateLocalDirectory | OperationAction::CreateRemoteDirectory => {
+            SynchronizationActivity::CreatingDirectory
+        }
         _ => SynchronizationActivity::Applying,
     }
 }

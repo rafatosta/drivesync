@@ -1569,3 +1569,9 @@ msgstr "Movimentação verificada"
 
 msgid "Sync root"
 msgstr "Raiz sincronizada"
+
+msgid "Creating directory…"
+msgstr "Criando pasta…"
+
+msgid "Directory creation verified"
+msgstr "Criação da pasta verificada"

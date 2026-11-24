@@ -110,7 +110,8 @@ impl SyncActivity {
     pub fn set_activity(&self, mut activity: ActivityView) {
         let rename = matches!(activity.kind, ActivityKind::Rename { .. });
         let movement = matches!(activity.kind, ActivityKind::Move { .. });
-        if rename || movement {
+        let directory_creation = activity.kind == ActivityKind::CreateDirectory;
+        if rename || movement || directory_creation {
             activity.progress = ProgressView::None;
         }
         let verb = match activity.kind {
@@ -120,6 +121,7 @@ impl SyncActivity {
             ActivityKind::Upload | ActivityKind::UploadDiscoveredLocal => "Uploading…",
             ActivityKind::Rename { .. } => "Renaming…",
             ActivityKind::Move { .. } => "Moving…",
+            ActivityKind::CreateDirectory => "Creating directory…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
@@ -157,6 +159,7 @@ impl SyncActivity {
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }
+            Phase::Confirmed if directory_creation => "Directory creation verified",
             Phase::Confirmed if movement => "Move verified",
             Phase::Confirmed if rename => "Rename verified",
             Phase::Confirmed => "Local update verified",
@@ -200,7 +203,9 @@ impl SyncActivity {
             || state.operation_id.as_deref() != Some(operation)
             || matches!(
                 state.kind,
-                ActivityKind::Rename { .. } | ActivityKind::Move { .. }
+                ActivityKind::Rename { .. }
+                    | ActivityKind::Move { .. }
+                    | ActivityKind::CreateDirectory
             )
         {
             return false;

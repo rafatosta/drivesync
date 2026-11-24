@@ -53,6 +53,7 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationActivity::Analyzing => gettext("Analyzing changes…"),
             SynchronizationActivity::Uploading => gettext("Uploading…"),
             SynchronizationActivity::Downloading => gettext("Downloading…"),
+            SynchronizationActivity::CreatingDirectory => gettext("Creating directory…"),
             _ => gettext("Applying changes…"),
         };
     }

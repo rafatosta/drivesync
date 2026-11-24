@@ -43,6 +43,7 @@ pub enum ActivityKind {
     Upload,
     UploadDiscoveredLocal,
     Verify,
+    CreateDirectory,
     Apply,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]

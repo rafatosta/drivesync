@@ -375,6 +375,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         updates_remote_content: false,
         rename: None,
         movement: None,
+        directory_creation: None,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -532,6 +533,7 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
             updates_local_content: false,
             updates_remote_content: false,
             rename: None,
+            directory_creation: None,
             movement: Some(SynchronizationMove {
                 origin,
                 source_parent: "Origem".into(),
@@ -555,6 +557,63 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
                     destination_parent: "Projetos/Destino".into(),
                 }
             );
+        }
+    }
+}
+
+#[test]
+fn directory_creation_reports_real_phase_without_transfer_progress() {
+    use drivesync_engine::*;
+
+    for (destination, direction) in [
+        (
+            SynchronizationDirectoryDestination::Local,
+            Direction::RemoteToLocal,
+        ),
+        (
+            SynchronizationDirectoryDestination::Remote,
+            Direction::LocalToRemote,
+        ),
+    ] {
+        for (activity, phase) in [
+            (SynchronizationActivity::CreatingDirectory, Phase::Running),
+            (SynchronizationActivity::Applying, Phase::Confirmed),
+        ] {
+            let item_id = models::ItemId("empty-folder".into());
+            let status = SynchronizationStatus {
+                account_id: AccountId("fixture-a".into()),
+                state: SynchronizationState::Running,
+                activity,
+                current_item: Some(SynchronizationItem {
+                    item_id: Some(item_id.clone()),
+                    local_path: None,
+                    remote_id: None,
+                }),
+                current_operation: Some(SynchronizationOperation {
+                    id: "create-folder".into(),
+                    item_id,
+                    display_name: Some("Pasta vazia".into()),
+                    newly_observed_remote: false,
+                    newly_observed_local: false,
+                    updates_local_content: false,
+                    updates_remote_content: false,
+                    rename: None,
+                    movement: None,
+                    directory_creation: Some(destination),
+                }),
+                progress: Some(SynchronizationProgress {
+                    completed: 1,
+                    total: 2,
+                }),
+                issue: None,
+                updated_at: Timestamp { unix_millis: 0 },
+            };
+            let view = map_status(&status, false).activity.unwrap();
+            assert_eq!(view.kind, ActivityKind::CreateDirectory);
+            assert_eq!(view.name, "Pasta vazia");
+            assert_eq!(view.direction, direction);
+            assert_eq!(view.phase, phase);
+            assert_eq!(view.progress, ProgressView::None);
         }
     }
 }

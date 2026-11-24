@@ -33,6 +33,8 @@ pub enum SynchronizationActivity {
     Renaming,
     /// Applying a parent change to an existing replica.
     Moving,
+    /// Creating a directory replica.
+    CreatingDirectory,
 }
 /// Display-safe identity; paths retain platform-native bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +89,13 @@ pub struct SynchronizationOperation {
     pub rename: Option<SynchronizationRename>,
     /// Parent change on the destination replica. Applying denotes a verified, persisted move.
     pub movement: Option<SynchronizationMove>,
+    /// Directory creation destination. Applying denotes a verified, persisted creation.
+    pub directory_creation: Option<SynchronizationDirectoryDestination>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationDirectoryDestination {
+    Local,
+    Remote,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationMove {
