@@ -794,3 +794,46 @@ fn trash_activity_and_attention_follow_public_evidence() {
         ));
     }
 }
+
+#[test]
+fn recovery_snapshots_only_report_the_observed_current_state() {
+    use drivesync_engine::*;
+    let mut status = SynchronizationStatus {
+        account_id: AccountId("fixture".into()),
+        state: SynchronizationState::Running,
+        activity: SynchronizationActivity::Recovering,
+        current_item: Some(SynchronizationItem {
+            item_id: Some(models::ItemId("item".into())),
+            local_path: Some("resume.bin".into()),
+            remote_id: None,
+        }),
+        current_operation: None,
+        progress: None,
+        issue: None,
+        updated_at: Timestamp { unix_millis: 0 },
+    };
+    let checking = map_status(&status, true);
+    assert_eq!(checking.status, StatusView::Recovering);
+    let activity = checking.activity.unwrap();
+    assert_eq!(activity.kind, ActivityKind::Recover);
+    assert_eq!(activity.name, "resume.bin");
+    assert_eq!(activity.operation_id, None);
+    assert_eq!(activity.progress, ProgressView::None);
+    assert!(checking.attention.is_empty());
+
+    status.state = SynchronizationState::Waiting;
+    status.activity = SynchronizationActivity::None;
+    status.issue = Some(SynchronizationIssue {
+        kind: SynchronizationIssueKind::RecoveryRequired,
+        retryable: false,
+    });
+    let blocked = map_status(&status, true);
+    assert_eq!(blocked.status, StatusView::Attention);
+    assert!(blocked.activity.is_none());
+    assert_eq!(blocked.attention.len(), 1);
+    assert!(blocked.attention[0].summary.contains("resume.bin"));
+    assert_eq!(
+        blocked.attention[0].action,
+        AttentionAction::OpenIssue("recovery-blocker".into())
+    );
+}

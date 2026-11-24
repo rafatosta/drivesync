@@ -1608,3 +1608,24 @@ msgstr "Criação do atalho do Google Workspace verificada"
 
 msgid "Workspace shortcut update verified"
 msgstr "Atualização do atalho do Google Workspace verificada"
+
+msgid "Checking interrupted operations…"
+msgstr "Verificando operações interrompidas…"
+
+msgid "Checking interrupted operation…"
+msgstr "Verificando operação interrompida…"
+
+msgid "Checking what the interrupted operation changed."
+msgstr "Verificando o que a operação interrompida alterou."
+
+msgid "Interrupted operation needs verification"
+msgstr "Operação interrompida precisa de verificação"
+
+msgid "The result of the operation for {item} is still unknown."
+msgstr "O resultado da operação para {item} ainda é desconhecido."
+
+msgid "An operation needs verification before synchronization can continue."
+msgstr "Uma operação precisa de verificação para a sincronização continuar."
+
+msgid "Keep the current copies while DriveSync checks the result."
+msgstr "Mantenha as cópias atuais enquanto o DriveSync verifica o resultado."

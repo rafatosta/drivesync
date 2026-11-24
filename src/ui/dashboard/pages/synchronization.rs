@@ -85,7 +85,11 @@ impl SynchronizationView {
                             severity: Severity::Warning,
                             title: issue.title,
                             description: issue.summary,
-                            guidance: None,
+                            guidance: (id == "recovery-blocker").then(|| {
+                                gettextrs::gettext(
+                                    "Keep the current copies while DriveSync checks the result.",
+                                )
+                            }),
                         });
                         dialog.present();
                         dialogs.borrow_mut().push(dialog.window);

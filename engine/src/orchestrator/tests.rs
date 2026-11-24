@@ -27,7 +27,10 @@ struct Pause {
     release: Notify,
 }
 impl Operator for MockOperator {
-    fn recover(&self) -> operations::RecoveryFuture<'_> {
+    fn recover_with<'a>(
+        &'a self,
+        _: operations::RecoveryObserver<'a>,
+    ) -> operations::RecoveryFuture<'a> {
         Box::pin(async { Ok(Vec::new()) })
     }
     fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
@@ -346,8 +349,11 @@ async fn successful_receipt_without_persistence_or_with_a_crossed_identity_canno
         crossed: bool,
     }
     impl Operator for InvalidReceipt {
-        fn recover(&self) -> operations::RecoveryFuture<'_> {
-            self.inner.recover()
+        fn recover_with<'a>(
+            &'a self,
+            checking: operations::RecoveryObserver<'a>,
+        ) -> operations::RecoveryFuture<'a> {
+            self.inner.recover_with(checking)
         }
         fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
             Box::pin(async move {
@@ -423,17 +429,21 @@ async fn queue_backpressure_is_bounded_and_the_operation_lease_excludes_removal(
     assert!(ownership.try_write_owned().is_ok());
 }
 #[tokio::test]
-async fn refreshed_same_item_identity_clears_a_blocker_after_a_path_change() {
-    let (operator, _) = mock(OperationResultStatus::Unconfirmed);
+async fn refreshed_same_item_identity_cannot_clear_uncertainty_after_a_path_change() {
+    let (operator, calls) = mock(OperationResultStatus::Unconfirmed);
     let (mut worker, _stop) = direct(operator);
     worker.process(changed_file()).await;
     let mut refreshed = fixture();
     refreshed.local.path = Some("moved/file.txt".into());
     assert_eq!(
         worker.process(refreshed).await.decision,
-        DecisionStatus::NoOp
+        DecisionStatus::Defer
     );
-    assert!(worker.status.borrow().issue.is_none());
+    assert_eq!(
+        worker.status.borrow().issue.as_ref().unwrap().kind,
+        SynchronizationIssueKind::RecoveryRequired
+    );
+    assert_eq!(calls.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -480,19 +490,10 @@ async fn incomplete_sources_suspend_dispatch_until_fresh_complete_observations()
 async fn unavailable_recovery_inventory_blocks_dispatch_before_any_analysis_plan_executes() {
     struct Unavailable;
     impl Operator for Unavailable {
-        fn recover<'a>(
+        fn recover_with<'a>(
             &'a self,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<
-                            Vec<operations::models::RecoveryResult>,
-                            operations::models::OperatorError,
-                        >,
-                    > + Send
-                    + 'a,
-            >,
-        > {
+            _: operations::RecoveryObserver<'a>,
+        ) -> operations::RecoveryFuture<'a> {
             Box::pin(async {
                 Err(operations::models::OperatorError {
                     code: OperatorErrorKind::Unavailable,

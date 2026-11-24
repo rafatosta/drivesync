@@ -3,6 +3,8 @@ mod conflicts;
 mod filesystem;
 mod google;
 mod interfaces;
+#[cfg(test)]
+pub(super) use interfaces::RecoveryObserver;
 mod journal;
 pub(super) mod models;
 mod recovery;
@@ -614,16 +616,11 @@ impl Operator for PersistingOperator {
             self.record_conflict(file, reason)
         })
     }
-    fn recover<'a>(
+    fn recover_with<'a>(
         &'a self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<Vec<RecoveryResult>, OperatorError>>
-                + Send
-                + 'a,
-        >,
-    > {
-        self.recover_future()
+        checking: interfaces::RecoveryObserver<'a>,
+    ) -> interfaces::RecoveryFuture<'a> {
+        self.recover_future(checking)
     }
     fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
         Box::pin(async move {

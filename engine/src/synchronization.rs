@@ -26,6 +26,8 @@ pub enum SynchronizationActivity {
     Observing,
     Scanning,
     Analyzing,
+    /// Checking a durable operation against current evidence after an interruption.
+    Recovering,
     Uploading,
     Downloading,
     Applying,

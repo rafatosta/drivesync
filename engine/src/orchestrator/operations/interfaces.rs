@@ -8,6 +8,8 @@ pub(super) type EffectFuture<'a> =
 /// Executes one authorized operation and persists its real result.
 pub(crate) type RecoveryFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<RecoveryResult>, OperatorError>> + Send + 'a>>;
+pub(crate) type RecoveryObserver<'a> =
+    &'a (dyn Fn(crate::synchronization::SynchronizationItem) + Send + Sync);
 pub(crate) trait Operator: Send + Sync {
     fn record_conflict<'a>(
         &'a self,
@@ -16,7 +18,11 @@ pub(crate) trait Operator: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), OperatorError>> + Send + 'a>> {
         Box::pin(async { Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation)) })
     }
-    fn recover(&self) -> RecoveryFuture<'_>;
+    fn recover_with<'a>(&'a self, checking: RecoveryObserver<'a>) -> RecoveryFuture<'a>;
+    #[cfg(test)]
+    fn recover(&self) -> RecoveryFuture<'_> {
+        self.recover_with(&|_| {})
+    }
     fn execute<'a>(&'a self, request: ExecuteOperationRequest) -> OperationFuture<'a>;
 }
 /// Dispatches exclusively by the provider of the configured account.

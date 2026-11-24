@@ -50,6 +50,9 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
     if status.state == SynchronizationState::Running {
         return match status.activity {
             SynchronizationActivity::Scanning => gettext("Scanning files…"),
+            SynchronizationActivity::Recovering => {
+                gettext("Checking what the interrupted operation changed.")
+            }
             SynchronizationActivity::Analyzing => gettext("Analyzing changes…"),
             SynchronizationActivity::Uploading => gettext("Uploading…"),
             SynchronizationActivity::Downloading => gettext("Downloading…"),
@@ -81,7 +84,17 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationIssueKind::InvalidInput => gettext("The synchronization information is inconsistent. Refresh observations before continuing."),
             SynchronizationIssueKind::OperationFailed => gettext("An operation failed. Check account and folder access."),
             SynchronizationIssueKind::PreconditionFailed => gettext("The item changed before execution. Waiting for a fresh observation."),
-            SynchronizationIssueKind::RecoveryRequired => gettext("An operation needs verification before this item can continue."),
+            SynchronizationIssueKind::RecoveryRequired => {
+                if let Some(name) = status.current_item.as_ref()
+                    .and_then(|item| item.local_path.as_ref())
+                    .and_then(|path| path.file_name())
+                {
+                    gettext("The result of the operation for {item} is still unknown.")
+                        .replace("{item}", &name.to_string_lossy())
+                } else {
+                    gettext("An operation needs verification before synchronization can continue.")
+                }
+            }
             SynchronizationIssueKind::TrashRefused | SynchronizationIssueKind::TrashRecoveryRequired => {
                 let name = status.current_item.as_ref()
                     .and_then(|item| item.local_path.as_ref())
@@ -129,7 +142,7 @@ mod tests {
         });
         assert_eq!(
             description(&status),
-            gettext("An operation needs verification before this item can continue.")
+            gettext("An operation needs verification before synchronization can continue.")
         );
     }
 }

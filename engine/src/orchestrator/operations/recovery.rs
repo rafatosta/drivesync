@@ -165,7 +165,10 @@ impl PersistingOperator {
         }
         Ok(())
     }
-    async fn recover_all(&self) -> Result<Vec<RecoveryResult>, OperatorError> {
+    async fn recover_all(
+        &self,
+        checking: interfaces::RecoveryObserver<'_>,
+    ) -> Result<Vec<RecoveryResult>, OperatorError> {
         let _guard = self.gate.lock().await;
         let _lease = self
             .inventory
@@ -202,6 +205,7 @@ impl PersistingOperator {
                         .clone()
                         .or(pending.remote_id.clone()),
                 };
+                checking(item.clone());
                 let mut revision = Some(snapshot.revision);
                 let mut assessment = match pending.recovery.as_ref() {
                     None => RecoveryAssessment::unknown(RecoveryIssue::MissingCommand),
@@ -347,6 +351,7 @@ impl PersistingOperator {
 impl PersistingOperator {
     pub(super) fn recover_future<'a>(
         &'a self,
+        checking: interfaces::RecoveryObserver<'a>,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<Vec<RecoveryResult>, OperatorError>>
@@ -354,6 +359,6 @@ impl PersistingOperator {
                 + 'a,
         >,
     > {
-        Box::pin(self.recover_all())
+        Box::pin(self.recover_all(checking))
     }
 }

@@ -60,7 +60,7 @@ async fn real_partial_upload_recovers_the_same_session_in_a_new_engine() {
     let phase = env("DRIVESYNC_STAGE5_RESUME_PHASE");
     assert!(matches!(
         phase.as_str(),
-        "prepare" | "recover" | "verify" | "inspect"
+        "prepare" | "recover" | "verify" | "inspect" | "verify-blocked"
     ));
     let directory = PathBuf::from(env("DRIVESYNC_REAL_ACCOUNTS_DIRECTORY"));
     let oauth = PathBuf::from(env("DRIVESYNC_REAL_OAUTH_FILE"));
@@ -229,6 +229,34 @@ async fn real_partial_upload_recovers_the_same_session_in_a_new_engine() {
         .reserved_remote_id
         .clone()
         .unwrap();
+    if phase == "verify-blocked" {
+        let row = &before[0];
+        assert_eq!(row.baseline.state, BaselineState::NeverSynced);
+        assert_eq!(row.identity.remote_id, None);
+        assert_eq!(row.pending_operations.len(), 1);
+        let pending = &row.pending_operations[0];
+        assert_eq!(pending.state, OperationState::AppliedUnconfirmed);
+        let record = pending.recovery.as_ref().unwrap();
+        assert_eq!(record.transfer.as_ref().unwrap().confirmed_offset, 262144);
+        let children = client
+            .files_list(
+                acquired.session.google(),
+                FileListOptions {
+                    q: Some(format!("'{}' in parents", root.0)),
+                    fields: Some(FieldMask(
+                        "files(id,trashed),incompleteSearch,nextPageToken".into(),
+                    )),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(children.files.is_empty());
+        assert_eq!(children.incomplete_search, Some(false));
+        assert!(children.next_page_token.is_none());
+        println!("blocked: same pending upload at 262144 bytes, no confirmed baseline, no remote children");
+        return;
+    }
     if phase == "inspect" {
         let observed = client
             .files_get(
@@ -269,6 +297,27 @@ async fn real_partial_upload_recovers_the_same_session_in_a_new_engine() {
         if rows[0].baseline.state == BaselineState::Synced {
             break;
         }
+    }
+    if phase == "verify" {
+        let mut complete = false;
+        for _ in 0..30 {
+            let audit = engine.synchronization_audit(account.clone()).await.unwrap();
+            complete = audit.initial_complete
+                && audit.coverage_complete
+                && audit.unconfirmed_operations == 0
+                && audit.unresolved_conflicts == 0
+                && audit.inventory_items == 1
+                && audit.converged_items == 1;
+            if complete {
+                println!("audit: one converged item in complete local and remote rounds");
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        assert!(
+            complete,
+            "the recovered fixture must converge in a fresh audit"
+        );
     }
     engine.stop_synchronization(account).await.unwrap();
     let rows = inventory.enumerate(query).unwrap();

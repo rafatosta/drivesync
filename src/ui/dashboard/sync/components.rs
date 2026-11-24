@@ -45,6 +45,7 @@ impl SyncStatus {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
             StatusView::Scanning => "Scanning files…",
+            StatusView::Recovering => "Checking interrupted operations…",
             StatusView::Synchronizing => "Synchronizing…",
             StatusView::Synced => "Everything synchronized",
             StatusView::Attention => "Synchronization needs attention",
@@ -128,6 +129,7 @@ impl SyncActivity {
             ActivityKind::CreateWorkspaceShortcut => "Creating Workspace shortcut…",
             ActivityKind::UpdateWorkspaceShortcut => "Updating Workspace shortcut…",
             ActivityKind::CreateDirectory => "Creating directory…",
+            ActivityKind::Recover => "Checking interrupted operation…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
@@ -177,8 +179,12 @@ impl SyncActivity {
             Phase::Running => "In progress",
             Phase::Failed => "Operation failed",
         };
-        self.details
-            .set_label(&format!("{}\n{}", gettext(direction), gettext(phase)));
+        let details = if direction.is_empty() {
+            gettext(phase)
+        } else {
+            format!("{}\n{}", gettext(direction), gettext(phase))
+        };
+        self.details.set_label(&details);
         self.render_progress(&activity.progress);
         *self.state.borrow_mut() = Some(activity);
         self.widget.set_visible(true);

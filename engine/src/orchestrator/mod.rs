@@ -295,6 +295,7 @@ impl Orchestrator {
                     }
                     if scanning
                         && !self.recovery_failed
+                        && self.blockers.is_empty()
                         && !self
                             .sources
                             .values()
@@ -325,7 +326,16 @@ impl Orchestrator {
     }
     /// Retry observation-based recovery when the remote source returns; no blind command replay.
     async fn recover_pending(&mut self) {
-        match self.operator.recover().await {
+        let checking = |item| {
+            self.publish(
+                SynchronizationState::Running,
+                SynchronizationActivity::Recovering,
+                Some(item),
+                None,
+                None,
+            );
+        };
+        match self.operator.recover_with(&checking).await {
             Ok(results) => {
                 let changed = self.recovery_failed || !results.is_empty();
                 self.recovery_failed = false;
@@ -465,6 +475,7 @@ impl Orchestrator {
                         issue.kind,
                         SynchronizationIssueKind::TrashRefused
                             | SynchronizationIssueKind::TrashRecoveryRequired
+                            | SynchronizationIssueKind::RecoveryRequired
                     )
                 })
             })
@@ -530,7 +541,16 @@ impl Orchestrator {
             self.settle();
             return outcome;
         }
-        if self.recovery_failed {
+        if self.recovery_failed
+            || self.blockers.values().any(|(blocked, issue)| {
+                same_item(blocked, &item)
+                    && matches!(
+                        issue.kind,
+                        SynchronizationIssueKind::RecoveryRequired
+                            | SynchronizationIssueKind::TrashRecoveryRequired
+                    )
+            })
+        {
             outcome.decision = DecisionStatus::Defer;
             self.settle();
             return outcome;
@@ -924,17 +944,10 @@ impl Orchestrator {
                 );
             }
             outcome.results.push(result);
-            if !internal_registration
+            if confirmed
+                && !internal_registration
                 && !public_operation.newly_observed_remote
                 && !public_operation.newly_observed_local
-                && (!(public_operation.updates_local_content
-                    || public_operation.updates_remote_content
-                    || public_operation.rename.is_some()
-                    || public_operation.movement.is_some()
-                    || public_operation.directory_creation.is_some()
-                    || public_operation.workspace_shortcut.is_some()
-                    || public_operation.trash.is_some())
-                    || confirmed)
             {
                 self.publish_execution(
                     SynchronizationActivity::Applying,

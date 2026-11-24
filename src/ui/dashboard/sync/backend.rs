@@ -125,6 +125,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         match status.state {
             S::Stopped => StatusView::Stopped,
             S::Failed => StatusView::Failed,
+            S::Running if status.activity == A::Recovering => StatusView::Recovering,
             S::Running if status.activity == A::Scanning => StatusView::Scanning,
             S::Running => StatusView::Synchronizing,
             S::Idle if audited => StatusView::Synced,
@@ -159,6 +160,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .and_then(|op| op.workspace_shortcut);
             let trash = status.current_operation.as_ref().and_then(|op| op.trash);
             let (kind, direction) = match status.activity {
+                A::Recovering => (ActivityKind::Recover, Direction::None),
                 A::ProjectingWorkspace | A::Applying if workspace_shortcut.is_some() => {
                     use drivesync_engine::WorkspaceShortcutActivity;
                     let kind = match workspace_shortcut? {
@@ -296,7 +298,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 } else {
                     Phase::Running
                 },
-                progress: if matches!(status.activity, A::Renaming | A::Moving)
+                progress: if matches!(status.activity, A::Renaming | A::Moving | A::Recovering)
                     || rename.is_some()
                     || movement.is_some()
                     || directory_creation.is_some()
@@ -313,14 +315,19 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         None
     };
     let description = crate::services::synchronization::description(status);
+    let blocker_id = match status.issue.as_ref().map(|issue| issue.kind) {
+        Some(I::RecoveryRequired | I::TrashRecoveryRequired) => "recovery-blocker",
+        _ => "current-blocker",
+    };
     let attention = status
         .issue
         .as_ref()
         .map(|issue| AttentionItemView {
             scope: scope.clone(),
-            id: "current-blocker".into(),
+            id: blocker_id.into(),
             title: match issue.kind {
                 I::TrashRefused => gettext("Move to trash refused"),
+                I::RecoveryRequired => gettext("Interrupted operation needs verification"),
                 I::TrashRecoveryRequired => gettext("Trash recovery needs verification"),
                 _ => gettext("Synchronization needs attention"),
             },
@@ -328,7 +335,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
             action: if issue.kind == I::Conflict {
                 AttentionAction::OpenConflictList
             } else {
-                AttentionAction::OpenIssue("current-blocker".into())
+                AttentionAction::OpenIssue(blocker_id.into())
             },
         })
         .into_iter()
