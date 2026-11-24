@@ -93,8 +93,12 @@ fn prepare_destination(
     let files = private_child(&trash, "files")?;
     let info = private_child(&trash, "info")?;
     // Flatpak bind mounts can have the same device number and still reject rename.
-    if retain_on_other_mount && mount_id(&source.parent)? != mount_id(&files)? {
-        return Ok(None);
+    if mount_id(&source.parent)? != mount_id(&files)? {
+        return if retain_on_other_mount {
+            Ok(None)
+        } else {
+            Err(OperatorError::new(OperatorErrorKind::Unavailable))
+        };
     }
     if std::fs::symlink_metadata(source.anchored())
         .map_err(error)?

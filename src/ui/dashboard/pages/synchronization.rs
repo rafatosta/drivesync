@@ -57,7 +57,7 @@ impl SynchronizationView {
             let account = account.clone();
             let parent = self.widget.downgrade();
             let dialogs = self.dialogs.clone();
-            let status = self.controller.status.clone();
+            let controller = controller.clone();
             move |action| {
                 let Some(parent) = parent.upgrade() else {
                     return;
@@ -70,15 +70,21 @@ impl SynchronizationView {
                             account.clone(),
                         ));
                     }
-                    AttentionAction::OpenIssue(_) => {
+                    AttentionAction::OpenIssue(id) => {
+                        let Some(issue) = controller
+                            .upgrade()
+                            .and_then(|controller| controller.attention.issue(&id))
+                        else {
+                            return;
+                        };
                         let dialog = SyncIssueDialog::new();
                         dialog.window.set_transient_for(
                             parent.root().and_downcast::<gtk::Window>().as_ref(),
                         );
                         dialog.set_issue(IssueView {
                             severity: Severity::Warning,
-                            title: gettextrs::gettext("Synchronization needs attention"),
-                            description: status.description(),
+                            title: issue.title,
+                            description: issue.summary,
                             guidance: None,
                         });
                         dialog.present();

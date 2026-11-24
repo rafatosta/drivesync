@@ -376,6 +376,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         rename: None,
         movement: None,
         directory_creation: None,
+        trash: None,
     });
     value.progress = Some(SynchronizationProgress {
         completed: 1,
@@ -533,6 +534,7 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
             updates_local_content: false,
             updates_remote_content: false,
             rename: None,
+            trash: None,
             directory_creation: None,
             movement: Some(SynchronizationMove {
                 origin,
@@ -599,6 +601,7 @@ fn directory_creation_reports_real_phase_without_transfer_progress() {
                     updates_remote_content: false,
                     rename: None,
                     movement: None,
+                    trash: None,
                     directory_creation: Some(destination),
                 }),
                 progress: Some(SynchronizationProgress {
@@ -699,5 +702,67 @@ fn init_fixture_locale() {
         gettextrs::bindtextdomain("drivesync", locale).unwrap();
         gettextrs::textdomain("drivesync").unwrap();
         assert_eq!(gettextrs::gettext("Synchronizing…"), "Sincronizando…");
+    }
+}
+
+#[test]
+fn trash_activity_and_attention_follow_public_evidence() {
+    use drivesync_engine::{
+        models::{AccountId, ItemId},
+        SynchronizationActivity as A, SynchronizationIssue, SynchronizationIssueKind as I,
+        SynchronizationItem, SynchronizationOperation, SynchronizationState as S,
+        SynchronizationStatus, SynchronizationTrashDestination as D, Timestamp,
+    };
+    let mut status = SynchronizationStatus {
+        account_id: AccountId("account".into()),
+        state: S::Running,
+        activity: A::TrashingLocal,
+        current_item: Some(SynchronizationItem {
+            item_id: Some(ItemId("item".into())),
+            local_path: Some("fixture.bin".into()),
+            remote_id: None,
+        }),
+        current_operation: Some(SynchronizationOperation {
+            id: "trash".into(),
+            item_id: ItemId("item".into()),
+            display_name: Some("fixture.bin".into()),
+            newly_observed_remote: false,
+            newly_observed_local: false,
+            updates_local_content: false,
+            updates_remote_content: false,
+            rename: None,
+            movement: None,
+            directory_creation: None,
+            trash: Some(D::Local),
+        }),
+        progress: None,
+        issue: None,
+        updated_at: Timestamp { unix_millis: 0 },
+    };
+    let running = super::backend::map_status(&status, false).activity.unwrap();
+    assert_eq!(running.kind, ActivityKind::Trash);
+    assert_eq!(running.direction, Direction::RemoteToLocal);
+    assert_eq!(running.phase, Phase::Running);
+    assert_eq!(running.progress, ProgressView::None);
+    status.activity = A::Applying;
+    status.current_operation.as_mut().unwrap().trash = Some(D::Remote);
+    let verified = super::backend::map_status(&status, false).activity.unwrap();
+    assert_eq!(verified.phase, Phase::Confirmed);
+    assert_eq!(verified.direction, Direction::LocalToRemote);
+    status.state = S::Waiting;
+    status.current_operation = None;
+    for kind in [I::TrashRefused, I::TrashRecoveryRequired] {
+        status.issue = Some(SynchronizationIssue {
+            kind,
+            retryable: false,
+        });
+        let snapshot = super::backend::map_status(&status, true);
+        assert!(snapshot.activity.is_none());
+        assert_eq!(snapshot.status, StatusView::Attention);
+        assert!(snapshot.attention[0].summary.contains("fixture.bin"));
+        assert!(matches!(
+            snapshot.attention[0].action,
+            AttentionAction::OpenIssue(_)
+        ));
     }
 }

@@ -153,7 +153,16 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .and_then(|op| op.directory_creation);
+            let trash = status.current_operation.as_ref().and_then(|op| op.trash);
             let (kind, direction) = match status.activity {
+                A::TrashingLocal | A::TrashingRemote | A::Applying if trash.is_some() => {
+                    use drivesync_engine::SynchronizationTrashDestination;
+                    let direction = match trash? {
+                        SynchronizationTrashDestination::Local => Direction::RemoteToLocal,
+                        SynchronizationTrashDestination::Remote => Direction::LocalToRemote,
+                    };
+                    (ActivityKind::Trash, direction)
+                }
                 A::CreatingDirectory | A::Applying if directory_creation.is_some() => {
                     use drivesync_engine::SynchronizationDirectoryDestination;
                     let direction = match directory_creation? {
@@ -266,7 +275,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     || updates_remote
                     || rename.is_some()
                     || movement.is_some()
-                    || directory_creation.is_some())
+                    || directory_creation.is_some()
+                    || trash.is_some())
                     && status.activity == A::Applying
                 {
                     Phase::Confirmed
@@ -277,6 +287,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     || rename.is_some()
                     || movement.is_some()
                     || directory_creation.is_some()
+                    || trash.is_some()
                 {
                     ProgressView::None
                 } else {
@@ -294,7 +305,11 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         .map(|issue| AttentionItemView {
             scope: scope.clone(),
             id: "current-blocker".into(),
-            title: gettextrs::gettext("Synchronization needs attention"),
+            title: match issue.kind {
+                I::TrashRefused => gettext("Move to trash refused"),
+                I::TrashRecoveryRequired => gettext("Trash recovery needs verification"),
+                _ => gettext("Synchronization needs attention"),
+            },
             summary: description.clone(),
             action: if issue.kind == I::Conflict {
                 AttentionAction::OpenConflictList

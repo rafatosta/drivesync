@@ -35,6 +35,9 @@ pub enum SynchronizationActivity {
     Moving,
     /// Creating a directory replica.
     CreatingDirectory,
+    /// Moving an associated replica to recoverable trash.
+    TrashingLocal,
+    TrashingRemote,
 }
 /// Display-safe identity; paths retain platform-native bytes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +64,8 @@ pub enum SynchronizationIssueKind {
     PreconditionFailed,
     RecoveryRequired,
     WorkerFailed,
+    TrashRefused,
+    TrashRecoveryRequired,
 }
 /// Current blocker without credentials, raw server text, or observation payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +96,13 @@ pub struct SynchronizationOperation {
     pub movement: Option<SynchronizationMove>,
     /// Directory creation destination. Applying denotes a verified, persisted creation.
     pub directory_creation: Option<SynchronizationDirectoryDestination>,
+    /// Trash destination. Applying denotes a verified, persisted trash operation.
+    pub trash: Option<SynchronizationTrashDestination>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationTrashDestination {
+    Local,
+    Remote,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationDirectoryDestination {

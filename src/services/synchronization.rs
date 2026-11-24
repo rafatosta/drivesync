@@ -53,6 +53,9 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationActivity::Analyzing => gettext("Analyzing changes…"),
             SynchronizationActivity::Uploading => gettext("Uploading…"),
             SynchronizationActivity::Downloading => gettext("Downloading…"),
+            SynchronizationActivity::TrashingLocal | SynchronizationActivity::TrashingRemote => {
+                gettext("Moving to trash…")
+            }
             SynchronizationActivity::CreatingDirectory => gettext("Creating directory…"),
             _ => gettext("Applying changes…"),
         };
@@ -67,6 +70,19 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationIssueKind::OperationFailed => gettext("An operation failed. Check account and folder access."),
             SynchronizationIssueKind::PreconditionFailed => gettext("The item changed before execution. Waiting for a fresh observation."),
             SynchronizationIssueKind::RecoveryRequired => gettext("An operation needs verification before this item can continue."),
+            SynchronizationIssueKind::TrashRefused | SynchronizationIssueKind::TrashRecoveryRequired => {
+                let name = status.current_item.as_ref()
+                    .and_then(|item| item.local_path.as_ref())
+                    .and_then(|path| path.file_name())
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_else(|| gettext("Unidentified item").into());
+                let message = if issue.kind == SynchronizationIssueKind::TrashRefused {
+                    gettext("Move to trash refused for {item}.")
+                } else {
+                    gettext("The trash result for {item} requires recovery verification.")
+                };
+                message.replace("{item}", &name)
+            }
             SynchronizationIssueKind::WorkerFailed => gettext("Synchronization could not continue. Stop and restart it before trying again."),
         };
     }

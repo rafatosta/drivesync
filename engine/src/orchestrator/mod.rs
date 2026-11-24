@@ -274,10 +274,13 @@ impl Orchestrator {
                     if source == Source::Remote
                         && issue.is_none()
                         && (self.recovery_failed
-                            || self
-                                .blockers
-                                .values()
-                                .any(|(_, i)| i.kind == SynchronizationIssueKind::RecoveryRequired))
+                            || self.blockers.values().any(|(_, i)| {
+                                matches!(
+                                    i.kind,
+                                    SynchronizationIssueKind::RecoveryRequired
+                                        | SynchronizationIssueKind::TrashRecoveryRequired
+                                )
+                            }))
                     {
                         self.recover_pending().await;
                     }
@@ -346,7 +349,15 @@ impl Orchestrator {
                     } else {
                         self.block(
                             result.item,
-                            issue(SynchronizationIssueKind::RecoveryRequired, false),
+                            issue(
+                                match result.action {
+                                    OperationAction::RemoveLocal | OperationAction::TrashRemote => {
+                                        SynchronizationIssueKind::TrashRecoveryRequired
+                                    }
+                                    _ => SynchronizationIssueKind::RecoveryRequired,
+                                },
+                                false,
+                            ),
                         );
                     }
                 }
@@ -413,6 +424,7 @@ impl Orchestrator {
                     || operation.rename.is_some()
                     || operation.movement.is_some()
                     || operation.directory_creation.is_some()
+                    || operation.trash.is_some()
             })
     }
     fn settle(&self) {
@@ -446,6 +458,15 @@ impl Orchestrator {
             .blockers
             .iter()
             .find(|(_, (_, issue))| is_failure(issue.kind))
+            .or_else(|| {
+                self.blockers.iter().find(|(_, (_, issue))| {
+                    matches!(
+                        issue.kind,
+                        SynchronizationIssueKind::TrashRefused
+                            | SynchronizationIssueKind::TrashRecoveryRequired
+                    )
+                })
+            })
             .or_else(|| self.blockers.first_key_value())
         {
             self.publish(
@@ -571,7 +592,24 @@ impl Orchestrator {
                         .iter()
                         .any(|check| check.code == "operation.pending")
                     {
-                        SynchronizationIssueKind::RecoveryRequired
+                        if file.pending_operations.iter().any(|op| {
+                            op.state == crate::inventory::models::OperationState::AppliedUnconfirmed
+                                && matches!(
+                                    op.action,
+                                    OperationAction::RemoveLocal | OperationAction::TrashRemote
+                                )
+                        }) {
+                            SynchronizationIssueKind::TrashRecoveryRequired
+                        } else {
+                            SynchronizationIssueKind::RecoveryRequired
+                        }
+                    } else if decision
+                        .validation
+                        .checks
+                        .iter()
+                        .any(|check| check.code == "trash.preconditions")
+                    {
+                        SynchronizationIssueKind::TrashRefused
                     } else {
                         SynchronizationIssueKind::Deferred
                     },
@@ -726,6 +764,11 @@ impl Orchestrator {
             };
             let public_operation = SynchronizationOperation {
                 movement,
+                trash: match operation.action {
+                    OperationAction::RemoveLocal => Some(SynchronizationTrashDestination::Local),
+                    OperationAction::TrashRemote => Some(SynchronizationTrashDestination::Remote),
+                    _ => None,
+                },
                 directory_creation: match operation.action {
                     OperationAction::CreateLocalDirectory => {
                         Some(SynchronizationDirectoryDestination::Local)
@@ -838,12 +881,25 @@ impl Orchestrator {
                 }
                 self.local_refresh.notify_one();
                 self.remote_refresh.notify_one();
+                let kind = if public_operation.trash.is_some() {
+                    match kind {
+                        SynchronizationIssueKind::RecoveryRequired => {
+                            SynchronizationIssueKind::TrashRecoveryRequired
+                        }
+                        _ => SynchronizationIssueKind::TrashRefused,
+                    }
+                } else {
+                    kind
+                };
                 self.block(
                     item.clone(),
                     issue(
                         kind,
-                        kind != SynchronizationIssueKind::RecoveryRequired
-                            && result.error.as_ref().is_some_and(|error| error.retryable),
+                        !matches!(
+                            kind,
+                            SynchronizationIssueKind::RecoveryRequired
+                                | SynchronizationIssueKind::TrashRecoveryRequired
+                        ) && result.error.as_ref().is_some_and(|error| error.retryable),
                     ),
                 );
             }
@@ -855,7 +911,8 @@ impl Orchestrator {
                     || public_operation.updates_remote_content
                     || public_operation.rename.is_some()
                     || public_operation.movement.is_some()
-                    || public_operation.directory_creation.is_some())
+                    || public_operation.directory_creation.is_some()
+                    || public_operation.trash.is_some())
                     || confirmed)
             {
                 self.publish_execution(
@@ -891,6 +948,8 @@ fn activity(action: OperationAction) -> SynchronizationActivity {
         OperationAction::CreateLocalDirectory | OperationAction::CreateRemoteDirectory => {
             SynchronizationActivity::CreatingDirectory
         }
+        OperationAction::RemoveLocal => SynchronizationActivity::TrashingLocal,
+        OperationAction::TrashRemote => SynchronizationActivity::TrashingRemote,
         _ => SynchronizationActivity::Applying,
     }
 }

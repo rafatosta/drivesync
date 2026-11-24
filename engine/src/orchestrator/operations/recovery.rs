@@ -325,6 +325,7 @@ impl PersistingOperator {
                     snapshot.revision = revision;
                 }
                 results.push(RecoveryResult {
+                    action: pending.action,
                     operation_id: pending.id,
                     item,
                     assessment: if changed {

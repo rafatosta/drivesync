@@ -1578,3 +1578,21 @@ msgstr "Criação da pasta verificada"
 
 msgid "Version {version}"
 msgstr "Versão {version}"
+
+msgid "Moving to trash…"
+msgstr "Movendo para a lixeira…"
+
+msgid "Move to trash verified"
+msgstr "Envio para a lixeira verificado"
+
+msgid "Move to trash refused"
+msgstr "Envio para a lixeira recusado"
+
+msgid "Move to trash refused for {item}."
+msgstr "Envio de {item} para a lixeira recusado."
+
+msgid "Trash recovery needs verification"
+msgstr "A recuperação da lixeira precisa de verificação"
+
+msgid "The trash result for {item} requires recovery verification."
+msgstr "É preciso verificar o resultado do envio de {item} para a lixeira durante a recuperação."

@@ -119,6 +119,7 @@ impl RecoveryAssessment {
 }
 #[derive(Debug, Clone)]
 pub(crate) struct RecoveryResult {
+    pub action: OperationAction,
     pub operation_id: Id,
     pub item: crate::synchronization::SynchronizationItem,
     pub assessment: RecoveryAssessment,

@@ -62,9 +62,6 @@ impl SyncStatus {
         self.description.set_label(description);
         *self.state.borrow_mut() = state;
     }
-    pub fn description(&self) -> String {
-        self.description.text().to_string()
-    }
     pub fn state(&self) -> StatusView {
         self.state.borrow().clone()
     }
@@ -111,7 +108,8 @@ impl SyncActivity {
         let rename = matches!(activity.kind, ActivityKind::Rename { .. });
         let movement = matches!(activity.kind, ActivityKind::Move { .. });
         let directory_creation = activity.kind == ActivityKind::CreateDirectory;
-        if rename || movement || directory_creation {
+        let trash = activity.kind == ActivityKind::Trash;
+        if rename || movement || directory_creation || trash {
             activity.progress = ProgressView::None;
         }
         let verb = match activity.kind {
@@ -121,6 +119,8 @@ impl SyncActivity {
             ActivityKind::Upload | ActivityKind::UploadDiscoveredLocal => "Uploading…",
             ActivityKind::Rename { .. } => "Renaming…",
             ActivityKind::Move { .. } => "Moving…",
+
+            ActivityKind::Trash => "Moving to trash…",
             ActivityKind::CreateDirectory => "Creating directory…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
@@ -159,6 +159,7 @@ impl SyncActivity {
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }
+            Phase::Confirmed if trash => "Move to trash verified",
             Phase::Confirmed if directory_creation => "Directory creation verified",
             Phase::Confirmed if movement => "Move verified",
             Phase::Confirmed if rename => "Rename verified",
@@ -206,6 +207,7 @@ impl SyncActivity {
                 ActivityKind::Rename { .. }
                     | ActivityKind::Move { .. }
                     | ActivityKind::CreateDirectory
+                    | ActivityKind::Trash
             )
         {
             return false;
@@ -281,6 +283,13 @@ impl SyncAttention {
         }
         self.items.borrow_mut().clear();
         self.widget.set_visible(false);
+    }
+    pub fn issue(&self, id: &str) -> Option<AttentionItemView> {
+        self.items
+            .borrow()
+            .iter()
+            .find(|item| item.id == id)
+            .cloned()
     }
     pub fn connect_activated(&self, callback: impl Fn(AttentionAction) + 'static) {
         *self.callback.borrow_mut() = Some(Box::new(callback));
