@@ -29,6 +29,7 @@ pub struct EngineAdapter {
     account: drivesync_engine::AccountId,
     subscription: Option<drivesync_engine::SynchronizationSubscription>,
     ended: bool,
+    refresh_latest: bool,
 }
 impl EngineAdapter {
     pub fn new(engine: drivesync_engine::Engine, account: drivesync_engine::AccountId) -> Self {
@@ -37,6 +38,7 @@ impl EngineAdapter {
             account,
             subscription: None,
             ended: false,
+            refresh_latest: false,
         }
     }
 }
@@ -47,7 +49,9 @@ impl SyncBackend for EngineAdapter {
                 return None;
             }
             if let Some(subscription) = &mut self.subscription {
-                subscription.changed().await?;
+                if !self.refresh_latest {
+                    subscription.changed().await?;
+                }
             } else {
                 match self
                     .engine
@@ -87,8 +91,26 @@ impl SyncBackend for EngineAdapter {
             } else {
                 false
             };
+            let conflicts = self.engine.list_conflicts(self.account.clone()).await.ok();
             let latest = subscription.current();
-            Some(map_status(&latest, audited && latest == status))
+            self.refresh_latest = latest != status;
+            let mut snapshot = map_status(&latest, audited && !self.refresh_latest);
+            if conflicts.is_some_and(|rows| !rows.is_empty()) {
+                if snapshot.status != StatusView::Failed {
+                    snapshot.status = StatusView::Attention;
+                }
+                snapshot
+                    .attention
+                    .retain(|item| item.action != AttentionAction::OpenConflictList);
+                snapshot.attention.push(AttentionItemView {
+                    scope: snapshot.scope.clone(),
+                    id: "persisted-conflicts".into(),
+                    title: gettext("Synchronization conflicts"),
+                    summary: gettext("Review versions"),
+                    action: AttentionAction::OpenConflictList,
+                });
+            }
+            Some(snapshot)
         })
     }
 }

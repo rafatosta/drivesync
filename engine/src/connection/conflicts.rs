@@ -34,14 +34,27 @@ impl Engine {
                     .filter_map(|s| {
                         let c = s.prior_conflict.filter(|c| !c.resolved)?;
                         let archive_path = root.join(".drivesync/conflicts").join(&c.id.0);
+                        let can_resolve = crate::conflicts::resolvable(&c.local, &c.remote);
                         Some(ConflictSummary {
                             id: c.id,
                             item_id: c.item_id,
                             revision: s.revision,
                             local_path: s.local_path,
                             reason: c.reason,
+                            local: ConflictVersion {
+                                size: observed(c.local.size),
+                                checksum: observed(c.local.checksum),
+                                modified_at: observed(c.local.modified_at),
+                                provider_version: None,
+                            },
+                            remote: ConflictVersion {
+                                size: observed(c.remote.size),
+                                checksum: observed(c.remote.checksum),
+                                modified_at: observed(c.remote.modified_time),
+                                provider_version: observed(c.remote.version),
+                            },
                             archive_path,
-                            can_resolve: crate::conflicts::resolvable(&c.local, &c.remote),
+                            can_resolve,
                             resolution_pending: c.resolution.is_some(),
                         })
                     })

@@ -358,7 +358,7 @@ impl ConflictResolver {
         let window = gtk::Window::builder()
             .modal(true)
             .default_width(560)
-            .default_height(420)
+            .default_height(540)
             .title(gettext("Synchronization conflicts"))
             .build();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -453,7 +453,7 @@ impl ConflictResolver {
     }
     pub fn set_conflict(&self, conflict: ConflictView) {
         self.text.set_label(&format!(
-            "{}\n{}\n{}: {}\n{}: {}\n{}",
+            "{}\n{}\n\n{}\n{}\n\n{}\n{}\n\n{}",
             conflict.name,
             conflict.differences,
             gettext("Computer"),

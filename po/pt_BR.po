@@ -1575,3 +1575,6 @@ msgstr "Criando pasta…"
 
 msgid "Directory creation verified"
 msgstr "Criação da pasta verificada"
+
+msgid "Version {version}"
+msgstr "Versão {version}"

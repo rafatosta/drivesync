@@ -19,11 +19,29 @@ pub struct ConflictSummary {
     pub revision: u64,
     pub local_path: Option<Path>,
     pub reason: String,
+    pub local: ConflictVersion,
+    pub remote: ConflictVersion,
     /// Private recovery directory, published before material replacement.
     pub archive_path: Path,
     pub can_resolve: bool,
     pub resolution_pending: bool,
 }
+/// Observed metadata for one replica at the listed conflict revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictVersion {
+    pub size: Option<u64>,
+    pub checksum: Option<Checksum>,
+    pub modified_at: Option<DateTime>,
+    pub provider_version: Option<u64>,
+}
+
+pub(crate) fn observed<T>(evidence: Evidence<T>) -> Option<T> {
+    match evidence {
+        Evidence::Known(value) => Some(value),
+        _ => None,
+    }
+}
+
 /// Optimistic authorization for the exact conflict revision displayed to the user.
 #[derive(Debug, Clone)]
 pub struct ResolveConflictRequest {

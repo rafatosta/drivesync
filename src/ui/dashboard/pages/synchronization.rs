@@ -64,7 +64,6 @@ impl SynchronizationView {
                 };
                 match action {
                     AttentionAction::OpenConflictList => {
-                        // Preserve the existing revision-bound real conflict flow until event 10.
                         dialogs.borrow_mut().push(super::conflicts::present(
                             &parent,
                             engine.clone(),

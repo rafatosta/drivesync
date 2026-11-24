@@ -1,7 +1,11 @@
 //! Real conflict review. Buttons submit revision-bound Engine choices, never simulated outcomes.
+use crate::ui::dashboard::sync::{
+    components::ConflictResolver,
+    models::{ConflictChoice as ViewChoice, ConflictView},
+};
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
-    conflicts::{ConflictChoice, ResolveConflictRequest},
+    conflicts::{ConflictChoice, ConflictVersion, ResolveConflictRequest},
     Account, Engine,
 };
 use gettextrs::gettext;
@@ -65,7 +69,7 @@ pub(super) fn present(
                 .unwrap_or_else(|| gettext("Unidentified item"));
             row.append(
                 &gtk::Label::builder()
-                    .label(path)
+                    .label(&path)
                     .xalign(0.0)
                     .wrap(true)
                     .selectable(true)
@@ -96,7 +100,7 @@ pub(super) fn present(
             };
             row.append(
                 &gtk::Label::builder()
-                    .label(reason)
+                    .label(&reason)
                     .xalign(0.0)
                     .wrap(true)
                     .build(),
@@ -137,43 +141,88 @@ pub(super) fn present(
                     }
                 });
                 row.append(&open);
-                let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                let local = gtk::Button::with_label(&gettext("Use local version"));
-                let remote = gtk::Button::with_label(&gettext("Use Drive version"));
-                local.set_widget_name("conflict-keep-local");
-                remote.set_widget_name("conflict-keep-remote");
-                actions.append(&local);
-                actions.append(&remote);
-                row.append(&actions);
-                for (button, choice) in [
-                    (&local, ConflictChoice::KeepLocal),
-                    (&remote, ConflictChoice::KeepRemote),
-                ] {
-                    let engine = engine.clone();
-                    let account = account.id.clone();
-                    let conflict = conflict.clone();
-                    let message = message.downgrade();
-                    let actions = actions.downgrade();
-                    let open = open.downgrade();
-                    button.connect_clicked(move |_| {
-                        if let Some(actions) = actions.upgrade() {
-                            actions.set_sensitive(false);
-                        }
-                        gtk::glib::spawn_future_local(apply_choice(
-                            engine.clone(),
-                            account.clone(),
-                            conflict.clone(),
-                            choice,
-                            message.clone(),
-                            open.clone(),
-                        ));
+                let review = gtk::Button::with_label(&gettext("Review versions"));
+                review.set_widget_name("conflict-review");
+                row.append(&review);
+                let engine = engine.clone();
+                let account = account.id.clone();
+                let message = message.downgrade();
+                let open = open.downgrade();
+                review.connect_clicked(move |button| {
+                    let resolver = ConflictResolver::new();
+                    resolver
+                        .window
+                        .set_transient_for(button.root().and_downcast::<gtk::Window>().as_ref());
+                    resolver.window.set_destroy_with_parent(true);
+                    resolver.set_conflict(ConflictView {
+                        id: conflict.id.0.clone(),
+                        revision: conflict.revision,
+                        name: path.clone(),
+                        differences: reason.clone(),
+                        local: version_text(&conflict.local),
+                        remote: version_text(&conflict.remote),
                     });
-                }
+                    resolver.local.set_widget_name("conflict-keep-local");
+                    resolver.confirm.set_widget_name("conflict-confirm");
+                    resolver.connect_dismissed(|| {});
+                    resolver.connect_choice({
+                        let engine = engine.clone();
+                        let account = account.clone();
+                        let conflict = conflict.clone();
+                        let message = message.clone();
+                        let open = open.clone();
+                        let window = resolver.window.downgrade();
+                        let button = button.downgrade();
+                        move |request| {
+                            let choice = match request.choice {
+                                ViewChoice::KeepLocal => ConflictChoice::KeepLocal,
+                                ViewChoice::KeepRemote => ConflictChoice::KeepRemote,
+                            };
+                            if let Some(button) = button.upgrade() {
+                                button.set_sensitive(false);
+                            }
+                            if let Some(window) = window.upgrade() {
+                                window.close();
+                            }
+                            gtk::glib::spawn_future_local(apply_choice(
+                                engine.clone(),
+                                account.clone(),
+                                conflict.clone(),
+                                choice,
+                                message.clone(),
+                                open.clone(),
+                            ));
+                        }
+                    });
+                    resolver.window.present();
+                });
             }
             body.append(&row);
         }
     });
     window
+}
+
+fn version_text(version: &ConflictVersion) -> String {
+    let mut facts = Vec::new();
+    if let Some(number) = version.provider_version {
+        facts.push(gettext("Version {version}").replace("{version}", &number.to_string()));
+    }
+    if let Some(size) = version.size {
+        facts.push(gtk::glib::format_size(size).into());
+    }
+    if let Some(value) = &version.checksum {
+        facts.push(format!("{} {}", value.algorithm, value.value));
+    }
+    if let Some(instant) = version.modified_at {
+        if let Ok(date) = gtk::glib::DateTime::from_unix_utc(instant.unix_millis.div_euclid(1000))
+            .and_then(|date| date.to_local())
+            .and_then(|date| date.format("%x %X"))
+        {
+            facts.push(date.into());
+        }
+    }
+    facts.join("\n")
 }
 
 async fn apply_choice(
@@ -322,8 +371,15 @@ mod tests {
             let dialog = present(&button, engine.clone(), account.clone());
             let mut clicked = false;
             for _ in 0..200 {
-                if let Some(button) = named(dialog.upcast_ref(), "conflict-keep-local") {
+                if let Some(review) = named(dialog.upcast_ref(), "conflict-review") {
+                    review.emit_clicked();
+                    let resolver = gtk::Window::list_toplevels()
+                        .into_iter()
+                        .find(|window| named(window, "conflict-keep-local").is_some())
+                        .unwrap();
+                    let button = named(&resolver, "conflict-keep-local").unwrap();
                     button.emit_clicked();
+                    named(&resolver, "conflict-confirm").unwrap().emit_clicked();
                     clicked = true;
                     break;
                 }
