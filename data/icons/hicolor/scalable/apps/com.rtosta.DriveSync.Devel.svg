@@ -1,44 +1,45 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <title>DriveSync Devel</title>
-  <defs>
-    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#3584e4"/><stop offset="1" stop-color="#1a5fb4"/></linearGradient>
-    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#f6f5f4"/><stop offset="1" stop-color="#d8dce4"/></linearGradient>
-    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffffff"/><stop offset="1" stop-color="#edf0f5"/></linearGradient>
-    <g id="screw"><ellipse rx="3.2" ry="2.8" fill="#9aa4b2"/><ellipse rx="2.1" ry="1.8" fill="#b9c1cb"/></g>
-    <linearGradient id="devel-yellow" gradientUnits="userSpaceOnUse" x1="64" y1="80.64" x2="64" y2="128"><stop stop-color="#f9f06b"/><stop offset="1" stop-color="#f5c211"/></linearGradient>
-    <clipPath id="devel-silhouette" clipPathUnits="userSpaceOnUse">
-      <rect x="12" y="81" width="99" height="35" rx="10"/>
-      <path d="M29 31H94Q102 31 104 41L111 87Q112 96 102 97H21Q11 97 12 87L19 41Q21 31 29 31Z"/>
-      <path d="M29 28H94Q102 28 104 38L111 83Q112 93 102 93H21Q11 93 12 83L19 38Q21 28 29 28Z" stroke="#000" stroke-width="1.5"/>
-    </clipPath>
-  </defs>
-  <g id="drive">
-    <rect x="12" y="81" width="99" height="35" rx="10" fill="#144b91"/>
-    <rect x="12" y="78" width="99" height="35" rx="10" fill="url(#base)"/>
-    <path d="M29 31H94Q102 31 104 41L111 87Q112 96 102 97H21Q11 97 12 87L19 41Q21 31 29 31Z" fill="#b9c1ce"/>
-    <path d="M29 28H94Q102 28 104 38L111 83Q112 93 102 93H21Q11 93 12 83L19 38Q21 28 29 28Z" fill="url(#plate)" stroke="#f6f5f4" stroke-width="1.5"/>
-    <use href="#screw" x="30" y="39"/><use href="#screw" x="94" y="39"/><use href="#screw" x="24" y="83"/><use href="#screw" x="99" y="83"/>
-    <ellipse cx="61" cy="64" rx="27" ry="20" fill="#aeb7c5"/>
-    <ellipse cx="61" cy="61" rx="27" ry="20" fill="#e9edf2" stroke="#f6f5f4" stroke-width="1.2"/>
-    <g id="monogram" fill="#a4afbf" opacity=".24">
-      <path fill-rule="evenodd" d="M45 52Q54 50 61 53Q68 57 63 63Q58 69 42 68L48 54ZM50 65Q58 65 60 59Q61 55 54 54Z"/>
-      <path d="M76 56Q68 52 64 58Q61 62 69 65Q75 67 71 70Q68 72 60 69Q51 67 44 73Q53 70 60 73Q70 77 76 71Q81 65 72 62Q65 60 69 58Q72 57 76 60Z"/>
-    </g>
-    <rect x="24" y="103" width="19" height="6" rx="3" fill="#f6f5f4"/>
-    <circle cx="97" cy="106" r="4.2" fill="#8cce24"/>
-  </g>
-  <g id="remote-sync">
-    <path d="M67 59C56 59 48 51 48 41C48 31 56 23 66 23C70 12 79 8 88 8C99 8 107 15 110 24C119 26 124 33 124 42C124 52 116 60 106 60Z" fill="#929dad"/>
-    <path d="M67 56C56 56 49 48 49 39C49 29 57 21 67 21C71 10 79 6 88 6C99 6 107 13 110 22C119 24 123 31 123 40C123 49 116 56 106 56Z" fill="url(#cloud)" stroke="#b4bdca" stroke-width="1.6"/>
-    <g fill="#1c71d8">
-      <path d="M72 32 A16 16 0 0 1 97 28 L102 24 V36 H90 L93 32 A10 10 0 0 0 77 35 A2.9 2.9 0 0 1 72 32 Z"/>
-      <path d="M101 46 A16 16 0 0 1 76 50 L71 54 V42 H83 L80 46 A10 10 0 0 0 96 43 A2.9 2.9 0 0 1 101 46 Z"/>
-    </g>
-  </g>
-  <!-- GNOME development treatment: the original yellow and black diagonal overlay, clipped to the new artwork. -->
-  <g id="devel-overlay" clip-path="url(#devel-silhouette)" opacity="0.8">
-    <path d="M0 80.640625H128V128H0Z" fill="url(#devel-yellow)"/>
-    <path d="M13.308594 80.640625L60.664062 128H81.878906L34.519532 80.640625ZM55.730469 80.640625L103.09375 128H124.308594L76.945312 80.640625ZM98.160156 80.640625L128 110.480469V89.269531L119.371094 80.640625ZM0 88.546875V109.761719L18.238281 128H39.453125Z" fill="#000000"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 1254 1254">
+<title>DriveSync Devel</title>
+<defs>
+ <linearGradient id="base" x1="0" y1="0" x2=".85" y2="1"><stop stop-color="#0867ff"/><stop offset="1" stop-color="#0053e9"/></linearGradient>
+ <linearGradient id="plate" x1="0" y1="0" x2=".2" y2="1"><stop stop-color="#e3e7ee"/><stop offset="1" stop-color="#dce1e9"/></linearGradient>
+ <linearGradient id="platter" x1="0" y1="0" x2=".3" y2="1"><stop stop-color="#eef1f6"/><stop offset="1" stop-color="#e8ecf2"/></linearGradient>
+ <linearGradient id="cloud" x1="0" y1="0" x2=".1" y2="1"><stop stop-color="#fafbfc"/><stop offset="1" stop-color="#f3f5f8"/></linearGradient>
+ <linearGradient id="arrows" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0062ff"/><stop offset="1" stop-color="#005bf5"/></linearGradient>
+ <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#b4bdcb"/><stop offset="1" stop-color="#9da6b6"/></linearGradient>
+ <clipPath id="devel-silhouette" clipPathUnits="userSpaceOnUse">
+  <path d="M172 820H1053V985Q1053 1084 958 1084H264Q172 1084 172 990Z"/>
+  <path d="M326 329H887Q970 329 982 410L1053 809Q1066 905 979 906H248Q162 906 174 811L233 408Q246 329 326 329Z"/>
+ </clipPath>
+ <linearGradient id="devel-yellow" gradientUnits="userSpaceOnUse" x1="64" y1="80.64" x2="64" y2="128"><stop stop-color="#f9f06b"/><stop offset="1" stop-color="#f5c211"/></linearGradient>
+</defs>
+<g id="drive">
+ <path d="M172 820H1053V985Q1053 1084 958 1084H264Q172 1084 172 990Z" fill="url(#base)"/>
+ <path d="M326 329H887Q970 329 982 410L1053 809Q1066 905 979 906H248Q162 906 174 811L233 408Q246 329 326 329Z" fill="#c7cdd7"/>
+ <path d="M326 342H887Q956 342 968 415L1041 808Q1054 878 978 879H248Q177 879 188 809L246 410Q257 342 326 342Z" fill="#eff2f7"/>
+ <path d="M326 353H887Q945 353 956 420L1028 808Q1040 866 977 866H249Q192 866 203 810L260 418Q270 353 326 353Z" fill="url(#plate)"/>
+ <g id="screws" fill="#909aaa"><ellipse cx="339" cy="410" rx="32" ry="27"/><ellipse cx="286" cy="797" rx="33" ry="29"/><ellipse cx="939" cy="797" rx="33" ry="29"/></g>
+ <g fill="#afb8c5"><ellipse cx="339" cy="410" rx="20" ry="17"/><ellipse cx="286" cy="797" rx="21" ry="18"/><ellipse cx="939" cy="797" rx="21" ry="18"/></g>
+ <ellipse cx="594" cy="636" rx="246" ry="185" fill="#9ca5b3"/>
+ <ellipse cx="594" cy="630" rx="244" ry="185" fill="#bac2ce"/>
+ <ellipse cx="594" cy="620" rx="244" ry="177" fill="#f4f6f9"/>
+ <ellipse cx="594" cy="620" rx="231" ry="168" fill="url(#platter)"/>
+ <g id="monogram" fill="#dce1e8">
+ <path fill-rule="evenodd" d="M484 580Q533 569 574 581Q613 592 607 617Q596 659 474 660L511 584ZM535 588L507 644Q569 643 580 614Q590 590 535 588Z"/>
+ <path d="M710 613L697 627Q671 609 649 617Q626 628 663 642Q708 660 697 682Q682 712 627 702Q591 695 566 685Q530 676 485 696Q519 668 559 669Q590 668 624 682Q660 695 671 678Q680 666 645 654Q608 641 616 624Q629 589 683 603Z"/>
+ </g>
+ <rect x="284" y="957" width="179" height="68" rx="34" fill="#f6f7fa"/>
+ <circle cx="912" cy="991" r="38" fill="#88d600"/>
+</g>
+<g id="cloud-sync">
+ <path d="M620 256C648 187 713 148 780 148C854 148 910 187 938 256C1006 273 1055 332 1055 402C1055 495 991 565 910 565H630C539 565 470 495 470 412C470 329 533 258 620 256Z" fill="url(#rim)"/>
+ <path d="M631 272C656 203 716 163 780 163C847 163 902 203 925 272C990 274 1040 333 1040 402C1040 484 983 550 910 550H630C548 550 485 488 485 410C485 332 546 272 631 272Z" fill="url(#cloud)"/>
+ <g id="sync-arrows" fill="url(#arrows)"><path d="M659.0 475.0C659.2 478.3 662.9 481.5 665.0 483.0C667.1 484.5 670.5 485.4 673.0 485.0C675.5 484.6 679.3 482.1 682.0 480.0C684.7 477.9 699.0 464.0 699.0 464.0C699.0 464.0 711.7 478.2 719.0 484.0C726.3 489.8 738.0 496.4 743.0 499.0C748.0 501.6 753.5 503.5 759.0 505.0C764.5 506.5 772.3 508.6 779.0 509.0C785.7 509.4 800.1 509.4 809.0 508.0C817.9 506.6 829.1 502.3 835.0 500.0C840.9 497.7 848.1 493.3 852.0 491.0C855.9 488.7 859.6 486.0 863.0 483.0C866.4 480.0 875.4 471.5 880.0 466.0C884.6 460.5 889.1 453.4 892.0 448.0C894.9 442.6 898.2 434.2 899.0 431.0C899.8 427.8 899.2 422.8 899.0 421.0C898.8 419.2 898.0 417.4 897.0 416.0C896.0 414.6 893.0 411.4 891.0 410.0C889.0 408.6 886.4 407.3 884.0 407.0C881.6 406.7 877.0 406.8 874.0 408.0C871.0 409.2 867.1 412.0 865.0 415.0C862.9 418.0 859.7 427.8 858.0 431.0C856.3 434.2 854.5 437.4 852.0 440.0C849.5 442.6 835.2 455.9 831.0 459.0C826.8 462.1 821.9 464.4 817.0 466.0C812.1 467.6 797.9 470.5 793.0 471.0C788.1 471.5 782.9 470.8 778.0 470.0C773.1 469.2 767.2 467.5 763.0 466.0C758.8 464.5 754.8 462.4 751.0 460.0C747.2 457.6 742.6 454.1 739.0 451.0C735.4 447.9 729.0 441.0 729.0 441.0C729.0 441.0 731.4 437.4 733.0 436.0C734.6 434.6 748.2 424.9 750.0 423.0C751.8 421.1 752.5 417.4 752.0 415.0C751.5 412.6 749.6 409.0 747.0 408.0C744.4 407.0 685.2 390.1 681.0 389.0C676.8 387.9 669.4 387.9 668.0 388.0C666.6 388.1 665.0 389.0 664.0 390.0C663.0 391.0 659.2 394.2 659.0 397.0C658.8 399.8 658.8 471.7 659.0 475.0Z"/><path d="M677.0 349.0C676.0 352.1 677.1 356.4 678.0 359.0C678.9 361.6 680.9 364.2 683.0 366.0C685.1 367.8 688.5 369.4 691.0 370.0C693.5 370.6 696.9 370.5 699.0 370.0C701.1 369.5 703.2 368.3 705.0 367.0C706.8 365.7 709.4 363.3 711.0 361.0C712.6 358.7 717.0 349.1 721.0 344.0C725.0 338.9 734.9 329.9 737.0 328.0C739.1 326.1 741.5 324.4 744.0 323.0C746.5 321.6 757.2 316.5 761.0 315.0C764.8 313.5 768.9 312.3 773.0 312.0C777.1 311.7 796.2 311.7 800.0 312.0C803.8 312.3 807.5 313.7 811.0 315.0C814.5 316.3 820.8 319.3 824.0 321.0C827.2 322.7 830.3 324.7 833.0 327.0C835.7 329.3 843.0 337.0 843.0 337.0C843.0 337.0 840.6 340.6 839.0 342.0C837.4 343.4 825.1 353.0 824.0 354.0C822.9 355.0 822.3 356.6 822.0 358.0C821.7 359.4 821.4 362.2 822.0 364.0C822.6 365.8 824.0 368.3 826.0 369.0C828.0 369.7 896.1 390.5 898.0 391.0C899.9 391.5 902.6 391.3 904.0 391.0C905.4 390.7 907.0 390.0 908.0 389.0C909.0 388.0 912.8 384.8 913.0 382.0C913.2 379.2 913.2 302.0 913.0 299.0C912.8 296.0 909.2 293.4 907.0 292.0C904.8 290.6 900.7 290.0 899.0 290.0C897.3 290.0 895.4 290.9 894.0 292.0C892.6 293.1 872.0 312.0 872.0 312.0C872.0 312.0 859.3 299.1 852.0 294.0C844.7 288.9 834.4 283.7 828.0 281.0C821.6 278.3 812.9 276.1 808.0 275.0C803.1 273.9 798.0 273.0 793.0 273.0C788.0 273.0 770.8 274.1 765.0 275.0C759.2 275.9 753.5 278.0 748.0 280.0C742.5 282.0 737.0 284.0 732.0 287.0C727.0 290.0 715.1 297.5 708.0 304.0C700.9 310.5 693.9 318.9 689.0 326.0C684.1 333.1 678.0 345.9 677.0 349.0Z"/></g>
+</g>
+<g clip-path="url(#devel-silhouette)" opacity=".8">
+ <g transform="scale(9.796875)">
+  <path d="M0 80.640625H128V128H0Z" fill="url(#devel-yellow)"/>
+  <path d="M13.308594 80.640625L60.664062 128H81.878906L34.519532 80.640625ZM55.730469 80.640625L103.09375 128H124.308594L76.945312 80.640625ZM98.160156 80.640625L128 110.480469V89.269531L119.371094 80.640625ZM0 88.546875V109.761719L18.238281 128H39.453125Z" fill="#000"/>
+ </g>
+</g>
 </svg>
