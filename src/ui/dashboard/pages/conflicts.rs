@@ -1,11 +1,14 @@
 //! Real conflict review. Buttons submit revision-bound Engine choices, never simulated outcomes.
 use crate::ui::dashboard::sync::{
     components::ConflictResolver,
-    models::{ConflictChoice as ViewChoice, ConflictView},
+    models::{ConflictChoice as ViewChoice, ConflictResolverState, ConflictView},
 };
 use adw::{gtk, prelude::*};
 use drivesync_engine::{
-    conflicts::{ConflictChoice, ConflictVersion, ResolveConflictRequest},
+    conflicts::{
+        ConflictChoice, ConflictError, ConflictResolutionStatus, ConflictVersion,
+        ResolveConflictRequest,
+    },
     Account, Engine,
 };
 use gettextrs::gettext;
@@ -148,8 +151,13 @@ pub(super) fn present(
                 let account = account.id.clone();
                 let message = message.downgrade();
                 let open = open.downgrade();
+                let active = std::cell::RefCell::new(None);
                 review.connect_clicked(move |button| {
-                    let resolver = ConflictResolver::new();
+                    if let Some(previous) = active.borrow_mut().take() {
+                        let previous: std::rc::Rc<ConflictResolver> = previous;
+                        previous.window.close();
+                    }
+                    let resolver = std::rc::Rc::new(ConflictResolver::new());
                     resolver
                         .window
                         .set_transient_for(button.root().and_downcast::<gtk::Window>().as_ref());
@@ -163,15 +171,15 @@ pub(super) fn present(
                         remote: version_text(&conflict.remote),
                     });
                     resolver.local.set_widget_name("conflict-keep-local");
+                    resolver.remote.set_widget_name("conflict-keep-remote");
                     resolver.confirm.set_widget_name("conflict-confirm");
                     resolver.connect_dismissed(|| {});
                     resolver.connect_choice({
                         let engine = engine.clone();
                         let account = account.clone();
-                        let conflict = conflict.clone();
                         let message = message.clone();
                         let open = open.clone();
-                        let window = resolver.window.downgrade();
+                        let resolver = std::rc::Rc::downgrade(&resolver);
                         let button = button.downgrade();
                         move |request| {
                             let choice = match request.choice {
@@ -181,19 +189,22 @@ pub(super) fn present(
                             if let Some(button) = button.upgrade() {
                                 button.set_sensitive(false);
                             }
-                            if let Some(window) = window.upgrade() {
-                                window.close();
-                            }
                             gtk::glib::spawn_future_local(apply_choice(
                                 engine.clone(),
-                                account.clone(),
-                                conflict.clone(),
-                                choice,
+                                ResolveConflictRequest {
+                                    account_id: account.clone(),
+                                    conflict_id: drivesync_engine::models::Id(request.id),
+                                    expected_revision: request.revision,
+                                    choice,
+                                },
+                                resolver.clone(),
+                                button.clone(),
                                 message.clone(),
                                 open.clone(),
                             ));
                         }
                     });
+                    *active.borrow_mut() = Some(resolver.clone());
                     resolver.window.present();
                 });
             }
@@ -227,57 +238,53 @@ fn version_text(version: &ConflictVersion) -> String {
 
 async fn apply_choice(
     engine: Engine,
-    account: drivesync_engine::AccountId,
-    conflict: drivesync_engine::conflicts::ConflictSummary,
-    choice: ConflictChoice,
+    request: ResolveConflictRequest,
+    resolver: std::rc::Weak<ConflictResolver>,
+    review: gtk::glib::WeakRef<gtk::Button>,
     message: gtk::glib::WeakRef<gtk::Label>,
     open: gtk::glib::WeakRef<gtk::Button>,
 ) {
-    let result = engine
-        .resolve_conflict(ResolveConflictRequest {
-            account_id: account.clone(),
-            conflict_id: conflict.id.clone(),
-            expected_revision: conflict.revision,
-            choice,
-        })
-        .await;
-    if let Some(label) = message.upgrade() {
-        label.set_label(&if result.is_ok() {
-            gettext("Choice recorded. Synchronization will recheck both copies.")
-        } else {
-            gettext(
-                "The choice could not be applied. Reopen conflicts to review the current versions.",
-            )
-        });
-    }
-    if result.is_err() {
-        return;
-    }
-    for _ in 0..120 {
-        gtk::glib::timeout_future(std::time::Duration::from_secs(1)).await;
-        let Some(label) = message.upgrade() else {
-            return;
-        };
-        let Ok(rows) = engine.list_conflicts(account.clone()).await else {
-            return;
-        };
-        match rows.iter().find(|c| c.item_id == conflict.item_id) {
-            Some(current) if current.id == conflict.id && current.resolution_pending => {}
-            Some(_) => {
-                label.set_label(&gettext(
-                    "The file changed. Reopen conflicts to review its current versions.",
-                ));
-                return;
-            }
-            None => {
-                label.set_label(&gettext(
-                    "No unresolved conflict remains in the current scope.",
-                ));
-                if let Some(button) = open.upgrade() {
-                    button.set_visible(true);
+    use ConflictResolverState::*;
+    let show = |state| {
+        if let Some(resolver) = resolver.upgrade() {
+            resolver.set_state(state);
+        }
+        if let Some(label) = message.upgrade() {
+            label.set_label(&ConflictResolver::state_text(state));
+        }
+    };
+    let account = request.account_id.clone();
+    let id = request.conflict_id.clone();
+    let outcome = match engine.resolve_conflict(request).await {
+        Err(ConflictError::Stale | ConflictError::NotFound) => Stale,
+        Err(_) => Failed,
+        Ok(()) => {
+            show(Applying);
+            loop {
+                gtk::glib::timeout_future(std::time::Duration::from_secs(1)).await;
+                if message.upgrade().is_none() {
+                    return;
                 }
-                return;
+                match engine
+                    .conflict_resolution_status(account.clone(), id.clone())
+                    .await
+                {
+                    Ok(ConflictResolutionStatus::Applying) => {}
+                    Ok(ConflictResolutionStatus::Resolved) => break Resolved,
+                    Ok(ConflictResolutionStatus::Stale) => break Stale,
+                    Ok(ConflictResolutionStatus::Failed) | Err(_) => break Failed,
+                }
             }
+        }
+    };
+    show(outcome);
+    if outcome == Resolved {
+        if let Some(button) = open.upgrade() {
+            button.set_visible(true);
+        }
+    } else if outcome == Failed {
+        if let Some(button) = review.upgrade() {
+            button.set_sensitive(true);
         }
     }
 }

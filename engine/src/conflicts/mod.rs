@@ -35,6 +35,15 @@ pub struct ConflictVersion {
     pub provider_version: Option<u64>,
 }
 
+/// Durable outcome of a submitted conflict choice in the active scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictResolutionStatus {
+    Applying,
+    Resolved,
+    Stale,
+    Failed,
+}
+
 pub(crate) fn observed<T>(evidence: Evidence<T>) -> Option<T> {
     match evidence {
         Evidence::Known(value) => Some(value),

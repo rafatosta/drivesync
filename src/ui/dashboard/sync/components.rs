@@ -343,7 +343,6 @@ pub struct ConflictResolver {
     pub window: gtk::Window,
     text: gtk::Label,
     feedback: gtk::Label,
-    actions: gtk::Box,
     pub local: gtk::Button,
     pub remote: gtk::Button,
     pub confirm: gtk::Button,
@@ -393,7 +392,6 @@ impl ConflictResolver {
             window,
             text,
             feedback,
-            actions,
             local,
             remote,
             confirm,
@@ -410,12 +408,18 @@ impl ConflictResolver {
             let state = value.state.clone();
             let selected = value.choice.clone();
             let confirm = value.confirm.downgrade();
+            let feedback = value.feedback.downgrade();
             button.connect_clicked(move |_| {
                 if *state.borrow() == ConflictResolverState::Reviewing {
                     *selected.borrow_mut() = Some(choice);
                     *state.borrow_mut() = ConflictResolverState::Confirming;
                     if let Some(confirm) = confirm.upgrade() {
                         confirm.set_sensitive(true);
+                    }
+                    if let Some(feedback) = feedback.upgrade() {
+                        feedback.set_label(&ConflictResolver::state_text(
+                            ConflictResolverState::Confirming,
+                        ));
                     }
                 }
             });
@@ -425,8 +429,10 @@ impl ConflictResolver {
             let selected = value.choice.clone();
             let conflict = value.conflict.clone();
             let callback = value.callback.clone();
-            let actions = value.actions.downgrade();
-            move |_| {
+            let local = value.local.downgrade();
+            let remote = value.remote.downgrade();
+            let feedback = value.feedback.downgrade();
+            move |confirm| {
                 if *state.borrow() != ConflictResolverState::Confirming {
                     return;
                 }
@@ -436,8 +442,14 @@ impl ConflictResolver {
                     return;
                 };
                 *state.borrow_mut() = ConflictResolverState::Submitting;
-                if let Some(actions) = actions.upgrade() {
-                    actions.set_sensitive(false);
+                confirm.set_sensitive(false);
+                for button in [local.upgrade(), remote.upgrade()].into_iter().flatten() {
+                    button.set_sensitive(false);
+                }
+                if let Some(feedback) = feedback.upgrade() {
+                    feedback.set_label(&ConflictResolver::state_text(
+                        ConflictResolverState::Submitting,
+                    ));
                 }
                 if let Some(callback) = callback.borrow().as_ref() {
                     callback(ConflictChoiceRequest {
@@ -468,13 +480,26 @@ impl ConflictResolver {
     }
     pub fn set_state(&self, state: ConflictResolverState) {
         *self.state.borrow_mut() = state;
-        self.actions.set_sensitive(matches!(
-            state,
-            ConflictResolverState::Reviewing | ConflictResolverState::Confirming
+        self.local
+            .set_sensitive(state == ConflictResolverState::Reviewing);
+        self.remote
+            .set_sensitive(state == ConflictResolverState::Reviewing);
+        self.later.set_label(&gettext(
+            if matches!(
+                state,
+                ConflictResolverState::Reviewing | ConflictResolverState::Confirming
+            ) {
+                "Decide later"
+            } else {
+                "Close"
+            },
         ));
         self.confirm
             .set_sensitive(state == ConflictResolverState::Confirming);
-        self.feedback.set_label(&gettext(match state {
+        self.feedback.set_label(&Self::state_text(state));
+    }
+    pub(crate) fn state_text(state: ConflictResolverState) -> String {
+        gettext(match state {
             ConflictResolverState::Loading => "Loading conflicts…",
             ConflictResolverState::Reviewing => "Review versions",
             ConflictResolverState::Confirming => "Confirm choice",
@@ -487,7 +512,7 @@ impl ConflictResolver {
                 "The file changed. Reopen conflicts to review its current versions."
             }
             ConflictResolverState::Failed => "Operation failed",
-        }));
+        })
     }
     pub fn state(&self) -> ConflictResolverState {
         *self.state.borrow()

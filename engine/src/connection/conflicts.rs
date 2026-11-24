@@ -63,6 +63,53 @@ impl Engine {
             .await
             .map_err(|_| ConflictError::Unavailable)?
     }
+    /// Checks the exact conflict identity, including records retired by verified convergence.
+    pub async fn conflict_resolution_status(
+        &self,
+        account_id: crate::AccountId,
+        conflict_id: Id,
+    ) -> Result<ConflictResolutionStatus, ConflictError> {
+        let inner = self.inner.clone();
+        self.runtime()
+            .spawn(async move {
+                let sessions = inner.synchronizations.lock().await;
+                let session = sessions.get(&account_id).ok_or(ConflictError::NotStarted)?;
+                let inventory = Inventory::open(InventoryConfig {
+                    directory: inner.synchronization_directory.clone(),
+                    account_id: account_id.clone(),
+                })
+                .map_err(|_| ConflictError::Unavailable)?;
+                let rows = inventory
+                    .enumerate(InventoryScopeQuery {
+                        account_id,
+                        sync_root_id: session.orchestrator.config().sync_root_id.clone(),
+                    })
+                    .map_err(|_| ConflictError::Unavailable)?;
+                for row in rows {
+                    let Some(conflict) = row.prior_conflict.filter(|c| c.id == conflict_id) else {
+                        continue;
+                    };
+                    return Ok(if conflict.resolved {
+                        ConflictResolutionStatus::Resolved
+                    } else if conflict.resolution.is_none() {
+                        ConflictResolutionStatus::Stale
+                    } else if row.pending_operations.iter().any(|operation| {
+                        operation.state == OperationState::Failed
+                            && operation.recovery.as_ref().is_some_and(|record| {
+                                record.command.conflict_id.as_ref() == Some(&conflict_id)
+                            })
+                    }) {
+                        ConflictResolutionStatus::Failed
+                    } else {
+                        ConflictResolutionStatus::Applying
+                    });
+                }
+                Ok(ConflictResolutionStatus::Stale)
+            })
+            .await
+            .map_err(|_| ConflictError::Unavailable)?
+    }
+
     /// Records one explicit choice for a reviewed revision. Actual I/O rechecks both replicas.
     pub async fn resolve_conflict(
         &self,
@@ -74,6 +121,7 @@ impl Engine {
                 let sessions = inner.synchronizations.lock().await;
                 let session = sessions
                     .get(&request.account_id)
+                    .filter(|session| !session.orchestrator.is_finished())
                     .ok_or(ConflictError::NotStarted)?;
                 let inventory = Inventory::open(InventoryConfig {
                     directory: inner.synchronization_directory.clone(),
@@ -110,6 +158,9 @@ impl Engine {
                     return Err(ConflictError::Stale);
                 }
                 let mut conflict = row.prior_conflict.unwrap();
+                if conflict.resolution.is_some() {
+                    return Err(ConflictError::Stale);
+                }
                 if !crate::conflicts::resolvable(&conflict.local, &conflict.remote) {
                     return Err(ConflictError::Unsupported);
                 }
