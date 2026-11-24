@@ -56,6 +56,18 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationActivity::TrashingLocal | SynchronizationActivity::TrashingRemote => {
                 gettext("Moving to trash…")
             }
+            SynchronizationActivity::ProjectingWorkspace => {
+                match status
+                    .current_operation
+                    .as_ref()
+                    .and_then(|op| op.workspace_shortcut)
+                {
+                    Some(drivesync_engine::WorkspaceShortcutActivity::Create) => {
+                        gettext("Creating Workspace shortcut…")
+                    }
+                    _ => gettext("Updating Workspace shortcut…"),
+                }
+            }
             SynchronizationActivity::CreatingDirectory => gettext("Creating directory…"),
             _ => gettext("Applying changes…"),
         };

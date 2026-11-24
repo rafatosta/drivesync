@@ -29,6 +29,8 @@ impl ProgressView {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActivityKind {
+    CreateWorkspaceShortcut,
+    UpdateWorkspaceShortcut,
     Download,
     DownloadDiscoveredRemote,
     UpdateLocalContent,

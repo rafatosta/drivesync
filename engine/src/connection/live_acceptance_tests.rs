@@ -212,22 +212,15 @@ async fn installed_scope_public_audit_matches_provider_tree_hashes_and_reopens_w
                 let id = file.id.as_ref().unwrap().0.clone();
                 let name = file.name.as_ref().unwrap();
                 let mime = &file.mime_type.as_ref().unwrap().0;
-                let dest = path.join(
-                    if mime.starts_with("application/vnd.google-apps.")
-                        && mime != "application/vnd.google-apps.folder"
-                    {
-                        format!("{name}.desktop")
-                    } else {
-                        name.clone()
-                    },
-                );
+                let dest = path.join(crate::projections::local_name(name, mime).unwrap());
                 if mime == "application/vnd.google-apps.folder" {
                     queue.push((RemoteId(id.clone()), dest.clone()));
                     assert!(local.join(&dest).is_dir());
                 } else if mime == "application/vnd.google-apps.document" {
-                    let text = std::fs::read_to_string(local.join(&dest)).unwrap();
-                    assert!(text.contains(&format!("URL=https://drive.google.com/open?id={id}\n")));
-                    assert!(!text.contains("Exec="));
+                    assert_eq!(
+                        std::fs::read(local.join(&dest)).unwrap(),
+                        crate::projections::link_bytes(&RemoteId(id.clone())),
+                    );
                 } else {
                     let bytes = std::fs::read(local.join(&dest)).unwrap();
                     assert_eq!(

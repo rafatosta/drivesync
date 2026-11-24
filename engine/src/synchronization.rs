@@ -35,6 +35,8 @@ pub enum SynchronizationActivity {
     Moving,
     /// Creating a directory replica.
     CreatingDirectory,
+    /// Creating or updating a derived Workspace shortcut on the computer.
+    ProjectingWorkspace,
     /// Moving an associated replica to recoverable trash.
     TrashingLocal,
     TrashingRemote,
@@ -94,10 +96,17 @@ pub struct SynchronizationOperation {
     pub rename: Option<SynchronizationRename>,
     /// Parent change on the destination replica. Applying denotes a verified, persisted move.
     pub movement: Option<SynchronizationMove>,
+    /// Derived Workspace shortcut action. Applying denotes a verified, persisted operation.
+    pub workspace_shortcut: Option<WorkspaceShortcutActivity>,
     /// Directory creation destination. Applying denotes a verified, persisted creation.
     pub directory_creation: Option<SynchronizationDirectoryDestination>,
     /// Trash destination. Applying denotes a verified, persisted trash operation.
     pub trash: Option<SynchronizationTrashDestination>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceShortcutActivity {
+    Create,
+    Update,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationTrashDestination {

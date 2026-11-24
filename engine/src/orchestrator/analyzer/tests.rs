@@ -816,8 +816,8 @@ fn workspace_fixture() -> File {
     f.environment.destination_local_parent = Evidence::Known(std::path::PathBuf::new());
     f.environment.destination_local_occupied = Evidence::Known(false);
     f.local.state = FileState::Absent;
-    f.local.path = Some("Document.desktop".into());
-    f.local.name = Evidence::Known("Document.desktop".into());
+    f.local.path = Some("Document.html".into());
+    f.local.name = Evidence::Known("Document.html".into());
     f.local.parent = Evidence::Known(std::path::PathBuf::new());
     f.local.identity = Evidence::NotCollected;
     f.identity.local_identity = Evidence::NotCollected;
@@ -864,7 +864,7 @@ fn workspace_creation_baseline_refresh_and_remote_rename_never_plan_uploads() {
     f.remote.name = Evidence::Known("Renamed".into());
     let p = analyze(&f);
     assert_eq!(p.operations[0].action, OperationAction::RenameLocal);
-    assert_eq!(p.operations[0].name, Some("Renamed.desktop".into()));
+    assert_eq!(p.operations[0].name, Some("Renamed.html".into()));
     f.local.checksum = checksum("edited");
     let p = analyze(&f);
     assert_eq!(p.status, DecisionStatus::Unsupported);

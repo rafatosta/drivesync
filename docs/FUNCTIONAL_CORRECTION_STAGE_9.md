@@ -8,7 +8,7 @@ or remote shortcut traversal.
 
 | Remote/local item | Policy |
 | --- | --- |
-| Google Docs, Sheets, Slides, Drawings, Forms | Read-only derived `<name>.desktop` link |
+| Google Docs, Sheets, Slides, Drawings, Forms | Read-only derived `<name>.html` link (updated in stage 12, activity 13) |
 | Google folder | Native local directory; normal identity and parent association |
 | Binary file | Native regular file; known size and valid SHA-256 required |
 | Drive `application/vnd.google-apps.shortcut` | Explicit per-item refusal; never followed |
@@ -38,8 +38,8 @@ items continue, while account status must not claim full synchronization.
 
 Initial projection requires a verified empty destination, a registered ItemId/RemoteId and
 a confirmed parent association. The executor rechecks the raw and projected provider
-namespaces. A link contains only fixed desktop-link keys and a percent-encoded Drive ID in a
-fixed HTTPS URL. It has no `Exec` entry and is initially non-executable.
+namespaces. A shortcut uses a fixed HTTPS URL with a percent-encoded Drive ID, a redirect and
+a fallback link. It contains no scripts and is published with mode `0444`.
 
 Convergence verifies canonical local link bytes, actual local identity, projected filename,
 current remote identity/version and the parent association. It stores

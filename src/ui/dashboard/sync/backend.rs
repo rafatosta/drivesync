@@ -153,8 +153,20 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .and_then(|op| op.directory_creation);
+            let workspace_shortcut = status
+                .current_operation
+                .as_ref()
+                .and_then(|op| op.workspace_shortcut);
             let trash = status.current_operation.as_ref().and_then(|op| op.trash);
             let (kind, direction) = match status.activity {
+                A::ProjectingWorkspace | A::Applying if workspace_shortcut.is_some() => {
+                    use drivesync_engine::WorkspaceShortcutActivity;
+                    let kind = match workspace_shortcut? {
+                        WorkspaceShortcutActivity::Create => ActivityKind::CreateWorkspaceShortcut,
+                        WorkspaceShortcutActivity::Update => ActivityKind::UpdateWorkspaceShortcut,
+                    };
+                    (kind, Direction::RemoteToLocal)
+                }
                 A::TrashingLocal | A::TrashingRemote | A::Applying if trash.is_some() => {
                     use drivesync_engine::SynchronizationTrashDestination;
                     let direction = match trash? {
@@ -276,6 +288,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     || rename.is_some()
                     || movement.is_some()
                     || directory_creation.is_some()
+                    || workspace_shortcut.is_some()
                     || trash.is_some())
                     && status.activity == A::Applying
                 {
@@ -287,6 +300,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     || rename.is_some()
                     || movement.is_some()
                     || directory_creation.is_some()
+                    || workspace_shortcut.is_some()
                     || trash.is_some()
                 {
                     ProgressView::None

@@ -1596,3 +1596,15 @@ msgstr "A recuperação da lixeira precisa de verificação"
 
 msgid "The trash result for {item} requires recovery verification."
 msgstr "É preciso verificar o resultado do envio de {item} para a lixeira durante a recuperação."
+
+msgid "Creating Workspace shortcut…"
+msgstr "Criando atalho do Google Workspace…"
+
+msgid "Updating Workspace shortcut…"
+msgstr "Atualizando atalho do Google Workspace…"
+
+msgid "Workspace shortcut creation verified"
+msgstr "Criação do atalho do Google Workspace verificada"
+
+msgid "Workspace shortcut update verified"
+msgstr "Atualização do atalho do Google Workspace verificada"

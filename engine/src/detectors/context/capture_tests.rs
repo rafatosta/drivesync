@@ -814,14 +814,14 @@ fn invalid_names_shortcuts_collisions_and_special_locals_are_per_item_refusals()
         .iter()
         .find(|f| f.remote.id == Some(RemoteId("doc".into())))
         .unwrap();
-    assert_eq!(f.local.path, Some("Report.desktop".into()));
+    assert_eq!(f.local.path, Some("Report.html".into()));
     assert_eq!(f.local.state, FileState::Absent);
     assert!(f.environment.projection_issue.is_none());
     assert_eq!(
         f.environment.destination_remote_matches,
         Evidence::Known(vec![RemoteId("doc".into())])
     );
-    let mut blob = remote("blob", "Report.desktop", "drive-root", false);
+    let mut blob = remote("blob", "Report.html", "drive-root", false);
     blob.checksum = Evidence::Known(crate::models::Checksum {
         algorithm: "sha256".into(),
         value: "a".repeat(64),

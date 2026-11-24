@@ -108,8 +108,12 @@ impl SyncActivity {
         let rename = matches!(activity.kind, ActivityKind::Rename { .. });
         let movement = matches!(activity.kind, ActivityKind::Move { .. });
         let directory_creation = activity.kind == ActivityKind::CreateDirectory;
+        let workspace_shortcut = matches!(
+            activity.kind,
+            ActivityKind::CreateWorkspaceShortcut | ActivityKind::UpdateWorkspaceShortcut
+        );
         let trash = activity.kind == ActivityKind::Trash;
-        if rename || movement || directory_creation || trash {
+        if rename || movement || directory_creation || workspace_shortcut || trash {
             activity.progress = ProgressView::None;
         }
         let verb = match activity.kind {
@@ -121,6 +125,8 @@ impl SyncActivity {
             ActivityKind::Move { .. } => "Moving…",
 
             ActivityKind::Trash => "Moving to trash…",
+            ActivityKind::CreateWorkspaceShortcut => "Creating Workspace shortcut…",
+            ActivityKind::UpdateWorkspaceShortcut => "Updating Workspace shortcut…",
             ActivityKind::CreateDirectory => "Creating directory…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
@@ -159,6 +165,10 @@ impl SyncActivity {
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }
+            Phase::Confirmed if activity.kind == ActivityKind::CreateWorkspaceShortcut => {
+                "Workspace shortcut creation verified"
+            }
+            Phase::Confirmed if workspace_shortcut => "Workspace shortcut update verified",
             Phase::Confirmed if trash => "Move to trash verified",
             Phase::Confirmed if directory_creation => "Directory creation verified",
             Phase::Confirmed if movement => "Move verified",
@@ -207,6 +217,8 @@ impl SyncActivity {
                 ActivityKind::Rename { .. }
                     | ActivityKind::Move { .. }
                     | ActivityKind::CreateDirectory
+                    | ActivityKind::CreateWorkspaceShortcut
+                    | ActivityKind::UpdateWorkspaceShortcut
                     | ActivityKind::Trash
             )
         {

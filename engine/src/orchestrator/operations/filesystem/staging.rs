@@ -116,7 +116,11 @@ impl Filesystem {
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(entry.anchored())
             .map_err(error)?;
-        if identity(&file.metadata().map_err(error)?) != *expected {
+        let meta = file.metadata().map_err(error)?;
+        if identity(&meta) != *expected
+            || (record.command.action == OperationAction::CreateLocalShortcut
+                && meta.mode() & 0o777 != 0o444)
+        {
             return Err(stale());
         }
         let mut marker = vec![0u8; 256];

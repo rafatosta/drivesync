@@ -1005,16 +1005,16 @@ async fn workspace_link_receipt_loss_recovers_after_document_revision_without_re
     let server = endpoint(move |r| {
         let body = if r.contains("/files/remote-root?") { root() }
         else if r.contains("/files?") {
-            if r.contains("Document.desktop") { serde_json::json!({"files":[],"incompleteSearch":false}).to_string() }
+            if r.contains("Document.html") { serde_json::json!({"files":[],"incompleteSearch":false}).to_string() }
             else { serde_json::json!({"files":[{"id":"remote","name":"Document","mimeType":"application/vnd.google-apps.document"}],"incompleteSearch":false}).to_string() }
         } else { serde_json::json!({"id":"remote","name":"Document","parents":["remote-root"],"mimeType":"application/vnd.google-apps.document","version":served.load(Ordering::SeqCst).to_string(),"trashed":false}).to_string() };
         (200, body, vec![])
     }).await;
     use_backend(&s, &mut executor, server.client.clone(), true);
     let mut r = request(&executor, OperationAction::CreateLocalShortcut);
-    r.operation.local_path = Some("Document.desktop".into());
+    r.operation.local_path = Some("Document.html".into());
     r.local.path = r.operation.local_path.clone();
-    r.local.name = Evidence::Known("Document.desktop".into());
+    r.local.name = Evidence::Known("Document.html".into());
     r.local.kind = Evidence::Known(FileKind::Regular);
     r.remote.name = Evidence::Known("Document".into());
     r.remote.mime_type = Evidence::Known("application/vnd.google-apps.document".into());
@@ -1041,7 +1041,7 @@ async fn workspace_link_receipt_loss_recovers_after_document_revision_without_re
         Evidence::Known(2)
     );
     assert_eq!(
-        std::fs::read(executor.config.local_root.join("Document.desktop")).unwrap(),
+        std::fs::read(executor.config.local_root.join("Document.html")).unwrap(),
         crate::projections::link_bytes(&RemoteId("remote".into()))
     );
     assert!(executor.recover().await.unwrap().is_empty());

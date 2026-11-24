@@ -13,7 +13,7 @@ use std::{
         fd::{AsRawFd, FromRawFd},
         unix::{
             ffi::OsStrExt,
-            fs::{MetadataExt, OpenOptionsExt},
+            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         },
     },
     path::{Component, Path as StdPath, PathBuf},
@@ -283,6 +283,28 @@ impl Filesystem {
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(self.entry(&target)?.anchored())
             .map_err(error)?;
+        // A read-only shortcut cannot be tagged again. Its recorded birth identity,
+        // digest and destination prove that the original inode reached the target.
+        if crate::projections::workspace(&record.remote) {
+            let meta = file.metadata().map_err(error)?;
+            if record.parent_identity.as_ref()
+                == Some(&self.parent_identity(record.local.path.as_deref().ok_or_else(invalid)?)?)
+                && record.destination_parent_identity.as_ref()
+                    == Some(&self.parent_identity(&target)?)
+                && meta.mode() & 0o777 == 0o444
+                && meta.nlink() == 1
+                && current.identity
+                    == Evidence::Known(LocalIdentity {
+                        device_id: meta.dev(),
+                        inode: meta.ino(),
+                        mount_id: None,
+                        birth_ns: birth_ns(&meta),
+                    })
+            {
+                return Ok(Some(current));
+            }
+            return Err(stale());
+        }
         let mut marker = vec![0u8; record.execution_id.0.len()];
         let n = unsafe {
             libc::fgetxattr(
@@ -344,7 +366,11 @@ impl Filesystem {
                     return Err(stale());
                 }
                 let marker = request.execution_id.0.as_bytes();
-                if unsafe {
+                if crate::projections::workspace(&request.remote) {
+                    if meta.mode() & 0o777 != 0o444 {
+                        return Err(stale());
+                    }
+                } else if unsafe {
                     libc::fsetxattr(
                         file.as_raw_fd(),
                         c"user.drivesync.execution".as_ptr(),
@@ -456,6 +482,12 @@ impl Filesystem {
         {
             let journal = journal.ok_or_else(stale)?;
             self.mark_stage(&output, request, &stage_path, journal)?;
+        }
+        if request.operation.action == OperationAction::CreateLocalShortcut {
+            output
+                .set_permissions(std::fs::Permissions::from_mode(0o444))
+                .and_then(|_| output.sync_all())
+                .map_err(|e| error(e).uncertain())?;
         }
         if request.operation.action == OperationAction::UpdateLocalContent {
             self.check(&request.local)?;

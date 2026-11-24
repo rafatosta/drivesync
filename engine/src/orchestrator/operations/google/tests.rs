@@ -411,13 +411,13 @@ async fn workspace_shortcut_is_an_inert_non_executable_link() {
     let executor = setup(&s);
     let server=endpoint(|r|{
         let body=if r.contains("/files/remote-root?"){root()}else if r.contains("/files?") {
-            if r.contains("Document.desktop"){serde_json::json!({"files":[],"incompleteSearch":false}).to_string()}
+            if r.contains("Document.html"){serde_json::json!({"files":[],"incompleteSearch":false}).to_string()}
             else{serde_json::json!({"files":[{"id":"remote","name":"Document","mimeType":"application/vnd.google-apps.document"}],"incompleteSearch":false}).to_string()}
         }else{serde_json::json!({"id":"remote","name":"Document","parents":["remote-root"],"mimeType":"application/vnd.google-apps.document","version":"1","trashed":false}).to_string()};
         (200,body,vec![])
     }).await;
     let mut r = request(&executor, OperationAction::CreateLocalShortcut);
-    r.operation.local_path = Some("Document.desktop".into());
+    r.operation.local_path = Some("Document.html".into());
     let result = operator(&s, server.client.clone())
         .run(
             &executor.config,
@@ -428,14 +428,14 @@ async fn workspace_shortcut_is_an_inert_non_executable_link() {
         .await
         .unwrap();
     assert!(result.verified);
-    let path = executor.config.local_root.join("Document.desktop");
+    let path = executor.config.local_root.join("Document.html");
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains("Type=Link"));
-    assert!(!text.contains("Exec="));
+    assert!(text.contains("https://drive.google.com/open?id=remote"));
+    assert!(!text.contains("<script"));
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
-        std::fs::metadata(path).unwrap().permissions().mode() & 0o111,
-        0
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o444
     );
 }
 #[tokio::test]

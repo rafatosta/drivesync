@@ -424,6 +424,7 @@ impl Orchestrator {
                     || operation.rename.is_some()
                     || operation.movement.is_some()
                     || operation.directory_creation.is_some()
+                    || operation.workspace_shortcut.is_some()
                     || operation.trash.is_some()
             })
     }
@@ -762,7 +763,22 @@ impl Orchestrator {
                     }),
                 _ => None,
             };
+            let workspace_shortcut = match operation.action {
+                OperationAction::CreateLocalShortcut => Some(WorkspaceShortcutActivity::Create),
+                OperationAction::RenameLocal
+                | OperationAction::MoveLocal
+                | OperationAction::ConfirmBaseline
+                    if file.baseline.projection
+                        == Some(
+                            crate::inventory::models::ProjectionKind::GoogleWorkspaceShortcut,
+                        ) =>
+                {
+                    Some(WorkspaceShortcutActivity::Update)
+                }
+                _ => None,
+            };
             let public_operation = SynchronizationOperation {
+                workspace_shortcut,
                 movement,
                 trash: match operation.action {
                     OperationAction::RemoveLocal => Some(SynchronizationTrashDestination::Local),
@@ -794,7 +810,11 @@ impl Orchestrator {
             };
             if !internal_registration {
                 self.publish_execution(
-                    activity(operation.action),
+                    if workspace_shortcut.is_some() {
+                        SynchronizationActivity::ProjectingWorkspace
+                    } else {
+                        activity(operation.action)
+                    },
                     &item,
                     &public_operation,
                     completed.len() as u64,
@@ -912,6 +932,7 @@ impl Orchestrator {
                     || public_operation.rename.is_some()
                     || public_operation.movement.is_some()
                     || public_operation.directory_creation.is_some()
+                    || public_operation.workspace_shortcut.is_some()
                     || public_operation.trash.is_some())
                     || confirmed)
             {

@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{
     os::unix::{
         ffi::{OsStrExt, OsStringExt},
-        fs::{symlink, MetadataExt},
+        fs::{symlink, MetadataExt, PermissionsExt},
     },
     path::PathBuf,
 };
@@ -22,7 +22,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
     let phase = env("DRIVESYNC_STAGE9_PHASE");
     assert!(matches!(
         phase.as_str(),
-        "sync" | "resume" | "verify" | "rename" | "edit"
+        "sync" | "resume" | "verify" | "rename" | "move" | "edit" | "replace"
     ));
     let local = PathBuf::from(env("DRIVESYNC_STAGE9_LOCAL_ROOT"));
     assert!(
@@ -53,7 +53,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
         .collect();
     assert_eq!(matching.len(), 1);
     let account = matching[0].id.clone();
-    let remote = RemoteId(env("DRIVESYNC_STAGE9_REMOTE_ROOT"));
+    let remote_root = std::env::var("DRIVESYNC_STAGE9_REMOTE_ROOT").ok();
     let acquired = engine
         .inner
         .accounts
@@ -63,6 +63,30 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
         .await
         .unwrap();
     let session = acquired.session.google();
+    let remote = if let Some(id) = remote_root {
+        RemoteId(id)
+    } else {
+        assert_eq!(phase, "sync");
+        assert!(!local.exists());
+        let root = engine
+            .inner
+            .client
+            .files_create(
+                session,
+                GoogleFileWrite {
+                    name: GooglePatch::Set(local.file_name().unwrap().to_str().unwrap().into()),
+                    mime_type: GooglePatch::Set(MimeType(
+                        "application/vnd.google-apps.folder".into(),
+                    )),
+                    ..Default::default()
+                },
+                FileCreateOptions::default(),
+            )
+            .await
+            .unwrap();
+        RemoteId(root.id.unwrap().0)
+    };
+    println!("remote fixture root {}", remote.0);
     let root = engine
         .inner
         .client
@@ -98,7 +122,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             ("duplicate.bin", "application/octet-stream"),
             ("duplicate.bin", "application/octet-stream"),
             ("Collision", "application/vnd.google-apps.document"),
-            ("Collision.desktop", "application/octet-stream"),
+            ("Collision.html", "application/octet-stream"),
         ] {
             let file = engine
                 .inner
@@ -157,9 +181,12 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
     let before = inventory.enumerate(query.clone()).unwrap();
     let doc = before.iter().find(|r| {
         r.baseline.projection == Some(ProjectionKind::GoogleWorkspaceShortcut)
-            && r.local_path
-                .as_ref()
-                .is_some_and(|p| p.components().count() == 1)
+            && r.local_path.as_ref().is_some_and(|p| {
+                matches!(
+                    p.file_name().and_then(|n| n.to_str()),
+                    Some("Report.html" | "Renamed.html")
+                )
+            })
     });
     let inode = doc.map(|d| {
         std::fs::metadata(local.join(d.local_path.as_ref().unwrap()))
@@ -183,18 +210,47 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             .await
             .unwrap();
     }
-    if phase == "edit" {
-        std::fs::write(
-            local.join(doc.unwrap().local_path.as_ref().unwrap()),
-            b"user edited local projection\n",
-        )
-        .unwrap();
+    let hostile = b"<script>throw new Error('local replacement')</script>\n";
+    if phase == "move" {
+        let d = doc.unwrap();
+        let folder = before
+            .iter()
+            .find(|r| r.local_path.as_deref() == Some(std::path::Path::new("Folder")))
+            .unwrap();
+        engine
+            .inner
+            .client
+            .files_update(
+                session,
+                &FileId(d.identity.remote_id.as_ref().unwrap().0.clone()),
+                GoogleFileWrite::default(),
+                FileUpdateOptions {
+                    add_parents: Some(vec![FileId(
+                        folder.identity.remote_id.as_ref().unwrap().0.clone(),
+                    )]),
+                    remove_parents: Some(vec![FileId(remote.0.clone())]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    if matches!(phase.as_str(), "edit" | "replace") {
+        let path = local.join(doc.unwrap().local_path.as_ref().unwrap());
+        if phase == "edit" {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::write(path, hostile).unwrap();
+        } else {
+            let replacement = path.with_extension("fixture");
+            std::fs::write(&replacement, hostile).unwrap();
+            std::fs::rename(replacement, path).unwrap();
+        }
     }
     engine
         .start_synchronization(StartSynchronizationRequest {
             account_id: account.clone(),
             local_root: local.clone(),
-            remote_root_id: remote,
+            remote_root_id: remote.clone(),
         })
         .await
         .unwrap();
@@ -205,7 +261,8 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             && rows
                 .iter()
                 .all(|r| r.baseline.state == BaselineState::Synced)
-            && (phase != "rename" || local.join("Renamed.desktop").exists())
+            && (phase != "rename" || local.join("Renamed.html").exists())
+            && (phase != "move" || local.join("Folder/Renamed.html").exists())
         {
             break;
         }
@@ -221,7 +278,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
     );
     engine.stop_synchronization(account).await.unwrap();
     let rows = inventory.enumerate(query).unwrap();
-    println!("rows: {rows:#?}");
+
     assert_eq!(rows.len(), 4);
     assert!(rows
         .iter()
@@ -232,7 +289,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             .count(),
         2
     );
-    assert!(!local.join("Collision.desktop").exists());
+    assert!(!local.join("Collision.html").exists());
     assert!(!local.join("duplicate.bin").exists());
     assert!(local.join("ignored-link").is_symlink());
     for row in rows
@@ -240,16 +297,16 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
         .filter(|r| r.baseline.projection == Some(ProjectionKind::GoogleWorkspaceShortcut))
     {
         let path = local.join(row.local_path.as_ref().unwrap());
-        if phase == "edit" && path.components().count() == local.components().count() + 1 {
-            assert_eq!(
-                std::fs::read(path).unwrap(),
-                b"user edited local projection\n"
-            );
+        let tampered = matches!(phase.as_str(), "edit" | "replace")
+            && doc.is_some_and(|d| d.identity.item_id == row.identity.item_id);
+        if tampered {
+            assert_eq!(std::fs::read(path).unwrap(), hostile);
         } else {
             assert_eq!(
-                std::fs::read(path).unwrap(),
+                std::fs::read(&path).unwrap(),
                 crate::projections::link_bytes(row.identity.remote_id.as_ref().unwrap())
             );
+            assert_eq!(std::fs::metadata(path).unwrap().mode() & 0o777, 0o444);
         }
         let source = engine
             .inner
@@ -257,22 +314,36 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             .files_get(
                 session,
                 &FileId(row.identity.remote_id.as_ref().unwrap().0.clone()),
-                FileGetOptions::default(),
+                FileGetOptions {
+                    fields: Some(FieldMask("id,mimeType,version".into())),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();
+        if tampered {
+            let original = doc.unwrap();
+            assert_eq!(
+                row, original,
+                "local tampering must leave the affected baseline intact"
+            );
+            let old = original.baseline.remote.as_ref().unwrap();
+            assert_eq!(
+                source
+                    .version
+                    .map(|v| Evidence::Known(v.parse::<u64>().unwrap())),
+                Some(old.version.clone())
+            );
+        }
         assert!(matches!(
             crate::projections::kind(&source.mime_type.unwrap().0),
             crate::projections::RemoteKind::Workspace
         ));
     }
-    if phase == "verify" || phase == "edit" {
-        assert_eq!(
-            before, rows,
-            "restart or local edits must not replay effects or rewrite baseline"
-        );
+    if phase == "verify" {
+        assert_eq!(before, rows, "restart must not replay confirmed effects");
     }
-    if phase == "rename" {
+    if matches!(phase.as_str(), "rename" | "move") {
         let old = doc.unwrap();
         let new = rows
             .iter()
@@ -280,7 +351,7 @@ async fn real_workspace_projection_mixed_scope_and_restart() {
             .unwrap();
         assert_eq!(new.identity.remote_id, old.identity.remote_id);
         assert_eq!(
-            std::fs::metadata(local.join("Renamed.desktop"))
+            std::fs::metadata(local.join(new.local_path.as_ref().unwrap()))
                 .unwrap()
                 .ino(),
             inode.unwrap()

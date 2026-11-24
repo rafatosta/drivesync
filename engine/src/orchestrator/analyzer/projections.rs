@@ -68,7 +68,7 @@ pub(super) fn analyze(
             DecisionStatus::Defer,
         ));
     };
-    if !projections::content_matches(&file.local, id) {
+    if file.local.identity != old_local.identity || !projections::content_matches(&file.local, id) {
         return Some(blocked(
             "Edited, replaced or absent local projections are preserved and never uploaded.",
             DecisionStatus::Unsupported,

@@ -375,6 +375,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         updates_remote_content: false,
         rename: None,
         movement: None,
+        workspace_shortcut: None,
         directory_creation: None,
         trash: None,
     });
@@ -444,6 +445,30 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         .as_mut()
         .unwrap()
         .updates_remote_content = false;
+    for (shortcut, kind) in [
+        (
+            WorkspaceShortcutActivity::Create,
+            ActivityKind::CreateWorkspaceShortcut,
+        ),
+        (
+            WorkspaceShortcutActivity::Update,
+            ActivityKind::UpdateWorkspaceShortcut,
+        ),
+    ] {
+        value.current_operation.as_mut().unwrap().workspace_shortcut = Some(shortcut);
+        for (activity, phase) in [
+            (SynchronizationActivity::ProjectingWorkspace, Phase::Running),
+            (SynchronizationActivity::Applying, Phase::Confirmed),
+        ] {
+            value.activity = activity;
+            let view = map_status(&value, false).activity.unwrap();
+            assert_eq!(view.kind, kind);
+            assert_eq!(view.direction, Direction::RemoteToLocal);
+            assert_eq!(view.phase, phase);
+            assert_eq!(view.progress, ProgressView::None);
+        }
+    }
+    value.current_operation.as_mut().unwrap().workspace_shortcut = None;
     value.activity = SynchronizationActivity::Downloading;
     value
         .current_operation
@@ -535,6 +560,7 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
             updates_remote_content: false,
             rename: None,
             trash: None,
+            workspace_shortcut: None,
             directory_creation: None,
             movement: Some(SynchronizationMove {
                 origin,
@@ -602,6 +628,7 @@ fn directory_creation_reports_real_phase_without_transfer_progress() {
                     rename: None,
                     movement: None,
                     trash: None,
+                    workspace_shortcut: None,
                     directory_creation: Some(destination),
                 }),
                 progress: Some(SynchronizationProgress {
@@ -732,6 +759,7 @@ fn trash_activity_and_attention_follow_public_evidence() {
             updates_remote_content: false,
             rename: None,
             movement: None,
+            workspace_shortcut: None,
             directory_creation: None,
             trash: Some(D::Local),
         }),

@@ -40,7 +40,7 @@ pub(crate) fn local_name(name: &str, mime: &str) -> Option<String> {
         return None;
     }
     let name = if kind(mime) == RemoteKind::Workspace {
-        format!("{name}.desktop")
+        format!("{name}.html")
     } else {
         name.to_owned()
     };
@@ -57,7 +57,12 @@ pub(crate) fn link_bytes(id: &RemoteId) -> Vec<u8> {
                 }
             })
             .collect();
-    format!("[Desktop Entry]\nType=Link\nName=Google Drive item\nURL=https://drive.google.com/open?id={encoded}\n").into_bytes()
+    // Percent-encoding limits the ID to characters safe in both quoted HTML attributes.
+    let url = format!("https://drive.google.com/open?id={encoded}");
+    format!(
+        "<!doctype html>\n<html lang=\"en\">\n<meta charset=\"utf-8\">\n<meta name=\"referrer\" content=\"no-referrer\">\n<title>Google Drive</title>\n<meta http-equiv=\"refresh\" content=\"0;url={url}\">\n<a href=\"{url}\">Open in Google Drive</a>\n</html>\n"
+    )
+    .into_bytes()
 }
 pub(crate) fn workspace(remote: &RemoteState) -> bool {
     matches!(&remote.mime_type,Evidence::Known(mime) if kind(mime)==RemoteKind::Workspace)
@@ -153,13 +158,31 @@ mod tests {
         }
         assert_eq!(
             local_name("Relatório", "application/vnd.google-apps.document"),
-            Some("Relatório.desktop".into())
+            Some("Relatório.html".into())
         );
-        assert!(local_name(&"a".repeat(248), "application/vnd.google-apps.document").is_none());
+        assert!(local_name(&"a".repeat(251), "application/vnd.google-apps.document").is_none());
         assert!(valid_name(&"a".repeat(255)));
-        let text = String::from_utf8(link_bytes(&RemoteId("x\nExec=malicious".into()))).unwrap();
-        assert!(!text.contains("\nExec="));
-        assert!(text.contains("Type=Link"));
-        assert!(text.contains("%0A"));
+        for mime in ["document", "spreadsheet", "presentation", "drawing", "form"] {
+            let mime = format!("application/vnd.google-apps.{mime}");
+            assert_eq!(
+                local_name("Relatório", &mime).as_deref(),
+                Some("Relatório.html")
+            );
+            assert!(local_name(&"é".repeat(125), &mime).is_some());
+            assert!(local_name(&"é".repeat(126), &mime).is_none());
+        }
+        for (name, mime) in [
+            (
+                "Report.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            ("Report.pdf", "application/pdf"),
+        ] {
+            assert_eq!(kind(mime), RemoteKind::Binary);
+            assert_eq!(local_name(name, mime).as_deref(), Some(name));
+        }
+        let text = String::from_utf8(link_bytes(&RemoteId("x\n\"<&/#%é".into()))).unwrap();
+        assert!(text.contains("https://drive.google.com/open?id=x%0A%22%3C%26%2F%23%25%C3%A9"));
+        assert!(!text.contains("<script"));
     }
 }
