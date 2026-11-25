@@ -576,6 +576,10 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
     assert_eq!(discovery.direction, Direction::RemoteToLocal);
     assert_eq!(discovery.progress, ProgressView::Indeterminate);
+    value.activity = SynchronizationActivity::Applying;
+    let confirmed = map_status(&value, false).activity.unwrap();
+    assert_eq!(confirmed.kind, ActivityKind::DownloadDiscoveredRemote);
+    assert_eq!(confirmed.phase, Phase::Confirmed);
 
     value.activity = SynchronizationActivity::Uploading;
     let operation = value.current_operation.as_mut().unwrap();
@@ -586,6 +590,15 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     assert_eq!(discovery.operation_id.as_deref(), Some("execution-1"));
     assert_eq!(discovery.direction, Direction::LocalToRemote);
     assert_eq!(discovery.progress, ProgressView::Indeterminate);
+    value.activity = SynchronizationActivity::Applying;
+    let confirmed = map_status(&value, false).activity.unwrap();
+    assert_eq!(confirmed.kind, ActivityKind::UploadDiscoveredLocal);
+    assert_eq!(confirmed.phase, Phase::Confirmed);
+    value
+        .current_operation
+        .as_mut()
+        .unwrap()
+        .newly_observed_local = false;
 
     for (origin, direction) in [
         (

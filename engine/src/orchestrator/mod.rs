@@ -5,7 +5,7 @@ mod models;
 mod operations;
 use crate::{
     accounts::Accounts,
-    detectors::context::File,
+    detectors::{context::File, observation::ObservationCoverage},
     inventory::{models::WriteStatus, Inventory, InventoryConfig},
     models::{DateTime, Evidence, Id},
     providers::google::GoogleDriveClient,
@@ -288,8 +288,9 @@ impl Orchestrator {
                     if self.refreshing_confirmed_update()
                         && !self.recovery_failed
                         && self.blockers.is_empty()
-                        && self.sources.len() == 2
-                        && self.sources.values().all(Option::is_none)
+                        && (scanning
+                            || (self.sources.len() == 2
+                                && self.sources.values().all(Option::is_none)))
                     {
                         continue;
                     }
@@ -431,6 +432,8 @@ impl Orchestrator {
             && status.current_operation.as_ref().is_some_and(|operation| {
                 operation.updates_local_content
                     || operation.updates_remote_content
+                    || operation.newly_observed_remote
+                    || operation.newly_observed_local
                     || operation.rename.is_some()
                     || operation.movement.is_some()
                     || operation.directory_creation.is_some()
@@ -564,6 +567,8 @@ impl Orchestrator {
         if let Some(epoch) = self.refresh_after {
             if file.observations.local_epoch.is_none_or(|e| e < epoch)
                 || file.observations.remote_epoch.is_none_or(|e| e < epoch)
+                || file.observations.local_coverage != ObservationCoverage::Complete
+                || file.observations.remote_coverage != ObservationCoverage::Complete
             {
                 outcome.decision = DecisionStatus::Defer;
                 if self.refreshing_confirmed_update() {
@@ -992,11 +997,7 @@ impl Orchestrator {
                 );
             }
             outcome.results.push(result);
-            if confirmed
-                && !internal_registration
-                && !public_operation.newly_observed_remote
-                && !public_operation.newly_observed_local
-            {
+            if confirmed && !internal_registration {
                 self.publish_execution(
                     SynchronizationActivity::Applying,
                     &item,

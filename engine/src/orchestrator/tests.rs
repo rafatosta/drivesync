@@ -560,6 +560,21 @@ async fn committed_effects_require_new_reads_of_both_sides_before_reusing_input(
     assert_eq!(calls.requests.lock().unwrap().len(), count);
     file.observations.remote_generation = Some(21);
     file.observations.remote_epoch = file.observations.local_epoch;
+    for (local, remote) in [
+        (ObservationCoverage::Complete, ObservationCoverage::Partial),
+        (ObservationCoverage::Partial, ObservationCoverage::Complete),
+    ] {
+        file.observations.local_coverage = local;
+        file.observations.remote_coverage = remote;
+        assert_eq!(
+            worker.process(file.clone()).await.decision,
+            DecisionStatus::Defer
+        );
+        assert_eq!(calls.requests.lock().unwrap().len(), count);
+        assert!(worker.refresh_after.is_some());
+    }
+    file.observations.local_coverage = ObservationCoverage::Complete;
+    file.observations.remote_coverage = ObservationCoverage::Complete;
     assert!(!worker.process(file).await.results.is_empty());
 }
 

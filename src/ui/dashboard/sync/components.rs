@@ -265,6 +265,12 @@ impl SyncActivity {
             Phase::Running if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Uploading and verifying content"
             }
+            Phase::Confirmed if activity.kind == ActivityKind::DownloadDiscoveredRemote => {
+                "Download confirmed."
+            }
+            Phase::Confirmed if activity.kind == ActivityKind::UploadDiscoveredLocal => {
+                "Upload confirmed."
+            }
             Phase::Confirmed if activity.kind == ActivityKind::UpdateRemoteContent => {
                 "Drive update verified"
             }

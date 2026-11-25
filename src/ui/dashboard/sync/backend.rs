@@ -187,6 +187,14 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .current_operation
                 .as_ref()
                 .is_some_and(|op| op.updates_remote_content);
+            let newly_observed_remote = status
+                .current_operation
+                .as_ref()
+                .is_some_and(|op| op.newly_observed_remote);
+            let newly_observed_local = status
+                .current_operation
+                .as_ref()
+                .is_some_and(|op| op.newly_observed_local);
             let rename = status
                 .current_operation
                 .as_ref()
@@ -272,29 +280,15 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 A::Downloading | A::Applying if updates_local => {
                     (ActivityKind::UpdateLocalContent, Direction::RemoteToLocal)
                 }
-                A::Downloading
-                    if status
-                        .current_operation
-                        .as_ref()
-                        .is_some_and(|op| op.newly_observed_remote) =>
-                {
-                    (
-                        ActivityKind::DownloadDiscoveredRemote,
-                        Direction::RemoteToLocal,
-                    )
-                }
+                A::Downloading | A::Applying if newly_observed_remote => (
+                    ActivityKind::DownloadDiscoveredRemote,
+                    Direction::RemoteToLocal,
+                ),
                 A::Downloading => (ActivityKind::Download, Direction::RemoteToLocal),
-                A::Uploading
-                    if status
-                        .current_operation
-                        .as_ref()
-                        .is_some_and(|op| op.newly_observed_local) =>
-                {
-                    (
-                        ActivityKind::UploadDiscoveredLocal,
-                        Direction::LocalToRemote,
-                    )
-                }
+                A::Uploading | A::Applying if newly_observed_local => (
+                    ActivityKind::UploadDiscoveredLocal,
+                    Direction::LocalToRemote,
+                ),
                 A::Uploading | A::Applying if updates_remote => {
                     (ActivityKind::UpdateRemoteContent, Direction::LocalToRemote)
                 }
@@ -333,6 +327,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 direction,
                 phase: if (updates_local
                     || updates_remote
+                    || newly_observed_remote
+                    || newly_observed_local
                     || rename.is_some()
                     || movement.is_some()
                     || directory_creation.is_some()

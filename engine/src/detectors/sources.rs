@@ -342,30 +342,26 @@ async fn remote(
         let delay = match result {
             Ok(result) => {
                 let complete = result.coverage == ObservationCoverage::Complete && !result.has_more;
-                let observations = result.observations;
-                health(&handle, Source::Remote, false, !complete, &cancel).await;
-                if !deliver(
-                    &detectors,
-                    &handle,
-                    vec![capture(
-                        &config,
-                        generation,
-                        epoch,
-                        if result.has_more && result.coverage == ObservationCoverage::Complete {
-                            ObservationCoverage::Partial
-                        } else {
-                            result.coverage
-                        },
-                        CaptureEntries::Remote(observations),
-                    )],
-                    &cancel,
-                )
-                .await
-                {
-                    break;
-                }
+                // A paginated round owns its partial data until it can publish a complete scope.
+                health(&handle, Source::Remote, result.has_more, !complete, &cancel).await;
                 mode = RemoteObserveMode::Incremental;
                 if complete {
+                    if !deliver(
+                        &detectors,
+                        &handle,
+                        vec![capture(
+                            &config,
+                            generation,
+                            epoch,
+                            result.coverage,
+                            CaptureEntries::Remote(result.observations),
+                        )],
+                        &cancel,
+                    )
+                    .await
+                    {
+                        break;
+                    }
                     invalidated = false;
                     Duration::from_secs(15)
                 } else {
