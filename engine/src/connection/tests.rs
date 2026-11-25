@@ -666,57 +666,58 @@ async fn malformed_and_incomplete_folder_pages_fail_closed_and_ids_are_escaped()
     assert!(query["q"].starts_with("'x\\'\\\\' in parents"));
 }
 #[tokio::test]
-async fn cancelling_a_remote_query_releases_logout_exclusion() {
+async fn disconnect_cancels_its_folder_query_and_reauthorization() {
     let mut sequence = replies("folder-user");
+    sequence.extend(replies("other-user"));
     let mut reply = Reply::json(
         200,
         r#"{"id":"root","name":"Drive","mimeType":"application/vnd.google-apps.folder","trashed":false}"#,
     );
-    reply.delay = std::time::Duration::from_millis(300);
+    reply.delay = std::time::Duration::from_secs(5);
     sequence.push(reply);
     let f = Fixture::new(sequence).await;
     let account = f.sign_in().await;
+    let other = f.sign_in().await;
+    let reauthorization = f.begin(Some(account.id.clone())).await;
+    let other_reauthorization = f.begin(Some(other.id.clone())).await;
     let engine = f.engine.clone();
     let id = account.id.clone();
     let query = tokio::spawn(async move { engine.remote_folder_root(id).await });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while f.server.requests.lock().unwrap().len() < 3 {
+    let deadline = std::time::Duration::from_secs(2);
+    tokio::time::timeout(deadline, async {
+        while f.server.requests.lock().unwrap().len() < 5 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    let error = f
-        .engine
-        .disconnect_account(RemoveAccountRequest {
-            account_id: account.id.clone(),
-        })
+
+    assert!(
+        tokio::time::timeout(
+            deadline,
+            f.engine.disconnect_account(RemoveAccountRequest {
+                account_id: account.id,
+            }),
+        )
         .await
-        .unwrap_err();
-    assert_eq!(
-        error.kind,
-        EngineErrorKind::Accounts(AccountsError::AccountInUse)
+        .unwrap()
+        .unwrap()
+        .removed
     );
-    query.abort();
-    let _ = query.await;
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if f.engine.inner.ownership.gate.try_write().is_ok() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    assert!(query.await.unwrap().is_err());
+    assert!(
+        !f.engine
+            .cancel_google_sign_in(CancelGoogleSignInRequest {
+                connection_id: reauthorization.connection_id,
+            })
+            .cancelled
+    );
     assert!(
         f.engine
-            .disconnect_account(RemoveAccountRequest {
-                account_id: account.id
+            .cancel_google_sign_in(CancelGoogleSignInRequest {
+                connection_id: other_reauthorization.connection_id,
             })
-            .await
-            .unwrap()
-            .removed
+            .cancelled
     );
 }
 

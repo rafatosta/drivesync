@@ -34,25 +34,49 @@ struct Inner {
     #[cfg(test)]
     sources_enabled: bool,
 }
-/// Every
-/// authorization attempt holds a read lease; local removal requires exclusion
-/// against all attempts, including additions whose identity is not yet known.
+/// Unidentified sign-ins may resolve to any saved account. Other work is account-scoped.
 #[derive(Default)]
 struct ConnectionOwnership {
+    unidentified: Arc<tokio::sync::RwLock<()>>,
+    accounts: Mutex<HashMap<AccountId, Arc<AccountOwnership>>>,
+}
+#[derive(Default)]
+struct AccountOwnership {
+    admission: tokio::sync::Mutex<()>,
     gate: Arc<tokio::sync::RwLock<()>>,
+    cancel_queries: tokio::sync::watch::Sender<()>,
+}
+impl ConnectionOwnership {
+    fn account(&self, id: &AccountId) -> Arc<AccountOwnership> {
+        self.accounts
+            .lock()
+            .unwrap()
+            .entry(id.clone())
+            .or_default()
+            .clone()
+    }
 }
 struct ConnectionRemoval {
-    _lease: tokio::sync::OwnedRwLockWriteGuard<()>,
+    _unidentified: tokio::sync::OwnedRwLockWriteGuard<()>,
+    _account: tokio::sync::OwnedRwLockWriteGuard<()>,
 }
 impl RemovalGuard for ConnectionRemoval {}
 impl AccountAssociations for ConnectionOwnership {
-    fn lock_for_removal(&self, _: &AccountId) -> AccountsResult<Box<dyn RemovalGuard>> {
-        let lease = self
-            .gate
-            .clone()
-            .try_write_owned()
-            .map_err(|_| AccountsFailure::new(AccountsError::AccountInUse))?;
-        Ok(Box::new(ConnectionRemoval { _lease: lease }))
+    fn lock_for_removal(&self, account: &AccountId) -> AccountsResult<Box<dyn RemovalGuard>> {
+        let in_use = |_| AccountsFailure::new(AccountsError::AccountInUse);
+        Ok(Box::new(ConnectionRemoval {
+            _unidentified: self
+                .unidentified
+                .clone()
+                .try_write_owned()
+                .map_err(in_use)?,
+            _account: self
+                .account(account)
+                .gate
+                .clone()
+                .try_write_owned()
+                .map_err(in_use)?,
+        }))
     }
 }
 /// Shared application entry point. All public async requests run on a private
@@ -165,8 +189,9 @@ impl Engine {
     }
     /// Disconnects one account by deleting its local credentials and metadata.
     /// No local/remote files are deleted and Google authorization is not revoked.
-    /// Active authorization attempts reject removal with AccountInUse, preventing
-    /// a late callback from republishing credentials after successful removal.
+    /// Stops synchronization and cancels folder browsing and pending reauthorization.
+    /// Waits for in-flight mutations and credential writes before removing the account.
+    /// An unidentified sign-in can still exclude removal until its identity is resolved.
     /// Dropping the future does not roll back a durable removal already started.
     pub async fn disconnect_account(
         &self,
@@ -177,10 +202,17 @@ impl Engine {
             .spawn(async move {
                 // Serialize removal against scope replacement, and release operation leases first.
                 let mut sessions = inner.synchronizations.lock().await;
-                if let Some(session) = sessions.get(&request.account_id) {
+                let account_id = request.account_id.clone();
+                let ownership = inner.ownership.account(&account_id);
+                let _admission = ownership.admission.lock().await;
+                ownership.cancel_queries.send_replace(());
+                inner.cancel_reauthorization(&account_id);
+                if let Some(session) = sessions.get(&account_id) {
                     session.stop().await;
                 }
-                let account_id = request.account_id.clone();
+                // The sessions and admission locks prevent new account work from
+                // slipping in between draining and durable removal.
+                drop(ownership.gate.write().await);
                 let result = inner
                     .accounts
                     .remove(request)

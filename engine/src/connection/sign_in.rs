@@ -63,7 +63,16 @@ impl Engine {
         let owner = self.clone();
         self.runtime()
             .spawn(async move {
-                let ownership = owner.inner.ownership.gate.clone().read_owned().await;
+                // Publish the attempt before disconnect can cancel account work.
+                let account = request
+                    .account_id
+                    .as_ref()
+                    .map(|id| owner.inner.ownership.account(id));
+                let (_admission, gate) = match &account {
+                    Some(account) => (Some(account.admission.lock().await), account.gate.clone()),
+                    None => (None, owner.inner.ownership.unidentified.clone()),
+                };
+                let ownership = gate.read_owned().await;
                 let config = owner
                     .inner
                     .oauth
@@ -298,18 +307,11 @@ impl Engine {
         let Some(attempt) = entries.get(&request.connection_id) else {
             return CancelGoogleSignInResult { cancelled: false };
         };
-        let mut phase = attempt.phase.lock().unwrap_or_else(|e| e.into_inner());
-        if *phase == Phase::Committing {
-            return CancelGoogleSignInResult { cancelled: false };
+        let cancelled = attempt.cancel();
+        if cancelled {
+            entries.remove(&request.connection_id);
         }
-        *phase = Phase::Cancelled;
-        attempt.cancelled.notify_one();
-        if let Ok(mut listener) = attempt.listener.try_lock() {
-            listener.take();
-        }
-        drop(phase);
-        entries.remove(&request.connection_id);
-        CancelGoogleSignInResult { cancelled: true }
+        CancelGoogleSignInResult { cancelled }
     }
 }
 /// A bounded, GET-only HTTP callback parser. Invalid traffic receives an error
@@ -402,7 +404,29 @@ async fn callback(listener: &TcpListener, redirect: &str, state: &str) -> Engine
     }
 }
 
+impl Inner {
+    pub(super) fn cancel_reauthorization(&self, id: &AccountId) {
+        self.attempts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|_, attempt| attempt.account_id.as_ref() != Some(id) || !attempt.cancel());
+    }
+}
+
 impl Attempt {
+    fn cancel(&self) -> bool {
+        let mut phase = self.phase.lock().unwrap_or_else(|e| e.into_inner());
+        if *phase == Phase::Committing {
+            return false;
+        }
+        *phase = Phase::Cancelled;
+        self.cancelled.notify_one();
+        if let Ok(mut listener) = self.listener.try_lock() {
+            listener.take();
+        }
+        true
+    }
+
     /// Expire the same production state transition used by deterministic tests.
     pub(super) fn expire(&self) -> bool {
         let mut phase = self.phase.lock().unwrap_or_else(|e| e.into_inner());

@@ -3,14 +3,6 @@ use super::*;
 use std::future::Future;
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 
-/// Dropping a UI query cancels its Tokio HTTP task. Accounts still owns any
-/// credential transaction already running on a blocking worker.
-struct QueryTask<T>(tokio::task::JoinHandle<EngineResult<T>>);
-impl<T> Drop for QueryTask<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
 impl Engine {
     /// Revalidates one canonical folder ID under this account without changing Drive.
     /// Files, trashed folders, mismatched responses and inaccessible IDs are errors.
@@ -96,26 +88,49 @@ impl Engine {
             Ok(RemoteFolderPage { folders, next_page_token: page.next_page_token })
         }).await
     }
-    /// The connection read lease excludes logout until the query ends; each
-    /// request obtains fresh Accounts-managed credentials on the engine executor.
+    /// Cancels the Drive read when its caller drops it or the account disconnects.
+    /// Any credential refresh already underway keeps its lease until completion.
     async fn remote_query<T, F, Q>(&self, account_id: AccountId, query: F) -> EngineResult<T>
     where
         T: Send + 'static,
         F: FnOnce(GoogleDriveClient, GoogleSession) -> Q + Send + 'static,
         Q: Future<Output = EngineResult<T>> + Send + 'static,
     {
-        let _lease = self.inner.ownership.gate.clone().read_owned().await;
+        let (caller, mut caller_dropped) = tokio::sync::oneshot::channel::<()>();
         let inner = self.inner.clone();
-        let mut task = QueryTask(self.runtime().spawn(async move {
+        let task = self.runtime().spawn(async move {
+            let (_lease, mut disconnecting) = {
+                let ownership = inner.ownership.account(&account_id);
+                let _admission = ownership.admission.lock().await;
+                (
+                    ownership.gate.clone().read_owned().await,
+                    ownership.cancel_queries.subscribe(),
+                )
+            };
+            let cancelled = || remote_error(RemoteFolderErrorKind::Unavailable);
+            if caller_dropped
+                .try_recv()
+                .is_err_and(|error| error == tokio::sync::oneshot::error::TryRecvError::Closed)
+                || disconnecting.has_changed().unwrap_or(true)
+            {
+                return Err(cancelled());
+            }
             let session = inner
                 .accounts
                 .acquire_session(AcquireSessionRequest { account_id })
                 .await?;
-            query(inner.client.clone(), session.session.google().clone()).await
-        }));
-        (&mut task.0)
+            tokio::select! {
+                biased;
+                _ = &mut caller_dropped => Err(cancelled()),
+                _ = disconnecting.changed() => Err(cancelled()),
+                result = query(inner.client.clone(), session.session.google().clone()) => result,
+            }
+        });
+        let result = task
             .await
-            .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
+            .map_err(|_| EngineError::new(EngineErrorKind::Internal))?;
+        drop(caller);
+        result
     }
 }
 fn remote_error(kind: RemoteFolderErrorKind) -> EngineError {

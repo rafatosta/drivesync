@@ -14,7 +14,7 @@ pub(crate) fn engine_error(error: &EngineError) -> String {
             "Google could not be reached. Check your connection and try again."
         }
         EngineErrorKind::Accounts(AccountsError::AccountInUse) => {
-            "Finish or stop the active account operation before disconnecting."
+            "Finish or cancel the pending sign-in before disconnecting."
         }
         EngineErrorKind::Accounts(AccountsError::IdentityMismatch) => {
             "Sign in with the Google account selected in DriveSync."

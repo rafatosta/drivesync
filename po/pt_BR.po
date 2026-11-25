@@ -1371,8 +1371,8 @@ msgid "Synchronization is unavailable. Prepare the account and try again."
 msgstr "A sincronização está indisponível. Prepare a conta e tente novamente."
 
 #: src/core/messages.rs
-msgid "Finish or stop the active account operation before disconnecting."
-msgstr "Conclua ou pare a operação ativa da conta antes de desconectar."
+msgid "Finish or cancel the pending sign-in before disconnecting."
+msgstr "Conclua ou cancele a entrada pendente antes de desconectar."
 
 #: src/core/messages.rs
 msgid "Choose a local folder separate from other active accounts."

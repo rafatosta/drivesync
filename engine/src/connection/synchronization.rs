@@ -136,10 +136,10 @@ impl Engine {
                 }) {
                     return Err(error(SynchronizationErrorKind::RootInUse));
                 }
-                let _lease = inner.ownership.gate.clone().read_owned().await;
+                let ownership = inner.ownership.account(&request.account_id).gate.clone();
+                let _lease = ownership.clone().read_owned().await;
                 let accounts = inner.accounts.clone();
                 let client = inner.client.clone();
-                let ownership = inner.ownership.gate.clone();
                 let directory = inner.synchronization_directory.clone();
                 let id = request.account_id.clone();
                 let source_accounts = accounts.clone();
