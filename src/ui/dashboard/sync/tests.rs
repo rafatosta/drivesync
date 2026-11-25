@@ -461,8 +461,80 @@ fn isolated_components_and_fake_backend() {
             marker.get(),
             "destroying the owner must cancel pending listeners"
         );
+        assert_transient_checks_do_not_replace_waiting_feedback(&controller).await;
         controller.reset();
     });
+}
+
+async fn assert_transient_checks_do_not_replace_waiting_feedback(controller: &DashboardController) {
+    use std::{collections::VecDeque, time::Duration};
+
+    struct TimedBackend(VecDeque<(u64, Snapshot)>);
+    impl SyncBackend for TimedBackend {
+        fn next(&mut self) -> NextSnapshot<'_> {
+            Box::pin(async {
+                let Some((delay, snapshot)) = self.0.pop_front() else {
+                    return std::future::pending().await;
+                };
+                gtk::glib::timeout_future(Duration::from_millis(delay)).await;
+                Some(snapshot)
+            })
+        }
+    }
+
+    let finalizing = Snapshot {
+        scope: "fixture-a".into(),
+        status: StatusView::Finalizing,
+        description: "Waiting to check the copy on Drive.".into(),
+        item: None,
+        active: false,
+        activity: None,
+        attention: vec![],
+    };
+    let checking = Snapshot {
+        status: StatusView::Checking,
+        description: "Analyzing changes…".into(),
+        active: true,
+        ..finalizing.clone()
+    };
+    let failed = Snapshot {
+        status: StatusView::Failed,
+        description: "Folder unavailable".into(),
+        ..finalizing.clone()
+    };
+    controller.select(
+        finalizing.scope.clone(),
+        Box::new(TimedBackend(VecDeque::from([
+            (0, finalizing.clone()),
+            (10, checking.clone()),
+            (110, finalizing.clone()),
+            (10, checking),
+            (40, failed),
+        ]))),
+    );
+    gtk::glib::timeout_future(Duration::from_millis(70)).await;
+    assert_eq!(controller.status.state(), StatusView::Finalizing);
+    gtk::glib::timeout_future(Duration::from_millis(170)).await;
+    assert_eq!(controller.status.state(), StatusView::Failed);
+    gtk::glib::timeout_future(Duration::from_millis(420)).await;
+    assert_eq!(controller.status.state(), StatusView::Failed);
+
+    controller.select(
+        finalizing.scope.clone(),
+        Box::new(TimedBackend(VecDeque::from([
+            (0, finalizing.clone()),
+            (
+                10,
+                Snapshot {
+                    status: StatusView::Checking,
+                    active: true,
+                    ..finalizing
+                },
+            ),
+        ]))),
+    );
+    gtk::glib::timeout_future(Duration::from_millis(500)).await;
+    assert_eq!(controller.status.state(), StatusView::Checking);
 }
 
 #[test]

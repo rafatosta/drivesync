@@ -4,7 +4,10 @@ use adw::{gtk, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    time::Duration,
 };
+const CHECK_VISIBILITY_DELAY: Duration = Duration::from_millis(400);
+
 /// Aborts a detached GLib future when its last UI owner is destroyed, even before realization.
 #[derive(Default)]
 pub struct SubscriptionTask(RefCell<Option<gtk::glib::JoinHandle<()>>>);
@@ -122,18 +125,11 @@ impl DashboardController {
         self.dialogs.borrow_mut().push(dialog.window.clone());
         dialog
     }
-    pub fn apply(&self, mut snapshot: Snapshot) -> bool {
+    pub fn apply(&self, snapshot: Snapshot) -> bool {
         if self.scope.borrow().as_deref() != Some(snapshot.scope.as_str()) {
             return false;
         }
-        render_feedback(&self.status, &self.activity, &mut snapshot);
-        self.attention.set_items(
-            snapshot
-                .attention
-                .into_iter()
-                .filter(|a| a.scope == snapshot.scope)
-                .collect(),
-        );
+        render_snapshot(&self.status, &self.activity, &self.attention, snapshot);
         true
     }
     pub fn watch_history(
@@ -176,31 +172,51 @@ impl DashboardController {
         let scope = self.scope.clone();
         let generations = self.generation.clone();
         self.task.set(gtk::glib::spawn_future_local(async move {
-            let mut last_rendered = None;
-            while let Some(mut snapshot) = backend.next().await {
+            let mut last_received = None;
+            let pending_check = SubscriptionTask::default();
+            while let Some(snapshot) = backend.next().await {
                 if generations.get() != generation || widget.upgrade().is_none() {
                     break;
                 }
                 if scope.borrow().as_deref() != Some(&snapshot.scope)
-                    || last_rendered.as_ref() == Some(&snapshot)
+                    || last_received.as_ref() == Some(&snapshot)
                 {
                     continue;
                 }
-                last_rendered = Some(snapshot.clone());
-                render_feedback(&status, &activity, &mut snapshot);
-                attention.set_items(
-                    snapshot
-                        .attention
-                        .into_iter()
-                        .filter(|a| a.scope == snapshot.scope)
-                        .collect(),
-                );
+                last_received = Some(snapshot.clone());
+                pending_check.abort();
+                // A quick background check must not replace an item's waiting message.
+                if snapshot.status == StatusView::Checking
+                    && snapshot.active
+                    && snapshot.activity.is_none()
+                    && matches!(
+                        status.state(),
+                        StatusView::Finalizing | StatusView::WaitingForEvidence
+                    )
+                {
+                    let (status, activity, attention) =
+                        (status.clone(), activity.clone(), attention.clone());
+                    let (widget, generations) = (widget.clone(), generations.clone());
+                    pending_check.set(gtk::glib::spawn_future_local(async move {
+                        gtk::glib::timeout_future(CHECK_VISIBILITY_DELAY).await;
+                        if generations.get() == generation && widget.upgrade().is_some() {
+                            render_snapshot(&status, &activity, &attention, snapshot);
+                        }
+                    }));
+                } else {
+                    render_snapshot(&status, &activity, &attention, snapshot);
+                }
             }
         }));
     }
 }
 
-fn render_feedback(status: &SyncStatus, activity: &SyncActivity, snapshot: &mut Snapshot) {
+fn render_snapshot(
+    status: &SyncStatus,
+    activity: &SyncActivity,
+    attention: &SyncAttention,
+    mut snapshot: Snapshot,
+) {
     let operation = snapshot
         .activity
         .take()
@@ -216,10 +232,17 @@ fn render_feedback(status: &SyncStatus, activity: &SyncActivity, snapshot: &mut 
         None => activity.clear(),
     }
     status.render(
-        snapshot.status.clone(),
+        snapshot.status,
         &snapshot.description,
         snapshot.item.as_ref(),
         snapshot.active,
         has_activity,
+    );
+    attention.set_items(
+        snapshot
+            .attention
+            .into_iter()
+            .filter(|item| item.scope == snapshot.scope)
+            .collect(),
     );
 }
