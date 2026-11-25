@@ -50,10 +50,13 @@ async fn hundred_independent_downloads_converge_and_reopen_without_replay() {
             )
         })
         .collect();
-    assert_initial_download(entries, 101).await;
+    assert_eq!(assert_initial_download(entries, 101).await, 1);
 }
 
-async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>, round_limit: u64) {
+async fn assert_initial_download(
+    fixture: Vec<(String, String, Option<String>)>,
+    round_limit: u64,
+) -> u64 {
     let s = Sandbox::new();
     let mut executor = setup(&s);
     let config = executor.config.clone();
@@ -163,6 +166,7 @@ async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>,
         recovery_failed: false,
         refresh_after: None,
         refresh_wait: None,
+        affected: Default::default(),
     };
     let scanner = Scanner::open(config.local_root.clone(), config.sync_root_id.clone()).unwrap();
     let epoch = worker.capture_epoch.clone();
@@ -184,6 +188,7 @@ async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>,
         account_id: config.account_id.clone(),
         sync_root_id: config.sync_root_id.clone(),
     };
+    let mut initial_rounds = 0;
     for pass in 0..2 {
         let context = Context::open(context_config()).unwrap();
         worker.refresh_after = None;
@@ -198,6 +203,9 @@ async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>,
             "fixture_reopen_audit"
         });
         for generation in 1..=round_limit {
+            if pass == 0 {
+                initial_rounds = generation;
+            }
             let refreshed = crate::performance::Sample::begin("fixture_capture_pair");
             context
                 .consolidate(capture(
@@ -269,6 +277,7 @@ async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>,
             .count(),
         expected_files.len()
     );
+    initial_rounds
 }
 
 #[tokio::test]

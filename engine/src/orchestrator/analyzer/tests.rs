@@ -405,7 +405,7 @@ fn initial_remote_planning_rejects_incomplete_parent_collision_and_binary_eviden
     }
 }
 
-fn initial_local(directory: bool, registered: bool) -> File {
+pub(crate) fn initial_local(directory: bool, registered: bool) -> File {
     let mut file = fixture();
     file.baseline = Baseline {
         state: BaselineState::NeverSynced,

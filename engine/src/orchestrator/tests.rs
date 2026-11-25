@@ -48,6 +48,15 @@ impl Operator for MockOperator {
             if let Evidence::Known(version) = &mut remote.version {
                 *version += 1;
             }
+            if r.operation.action == OperationAction::Upload {
+                remote.state = crate::models::FileState::Present;
+                remote.id = Some(crate::models::RemoteId(format!(
+                    "created-{}",
+                    r.operation.item_ref.0
+                )));
+                remote.version = Evidence::Known(1);
+            }
+            let remote_id = remote.id.clone();
             match r.operation.action {
                 OperationAction::UpdateRemoteContent => {
                     remote.checksum = local.checksum.clone();
@@ -85,7 +94,7 @@ impl Operator for MockOperator {
                 effect: Some(AppliedEffect {
                     local: Some(local),
                     remote: Some(remote),
-                    remote_id: r.identity.remote_id,
+                    remote_id,
                     verified: self.outcome == OperationResultStatus::Succeeded,
                 }),
                 completed_at: Some(timestamp()),
@@ -156,6 +165,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             recovery_failed: false,
             refresh_after: None,
             refresh_wait: None,
+            affected: Default::default(),
         },
         stop,
     )
@@ -735,4 +745,33 @@ async fn a_confirmed_directory_waits_for_metadata_and_resumes_without_another_op
     assert_eq!(worker.process(file).await.decision, DecisionStatus::NoOp);
     assert!(worker.status.borrow().issue.is_none());
     assert!(calls.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn independent_uploads_share_a_capture_and_reject_stale_replay() {
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut first = super::analyzer::tests::initial_local(false, true);
+    first.observations.local_epoch = Some(0);
+    first.observations.remote_epoch = Some(0);
+
+    let mut second = first.clone();
+    second.identity.item_id = Some(crate::models::ItemId("another-item".into()));
+    second.local.name = Evidence::Known("second.txt".into());
+    second.local.path = Some("folder/second.txt".into());
+    second.remote.name = second.local.name.clone();
+    if let Evidence::Known(identity) = &mut second.identity.local_identity {
+        identity.inode += 1;
+    }
+    second.local.identity = second.identity.local_identity.clone();
+
+    for file in [first.clone(), second] {
+        let result = worker.process(file).await;
+        assert_eq!(result.results.len(), 1, "{result:?}");
+        assert_eq!(result.results[0].action, OperationAction::Upload);
+        assert_eq!(result.results[0].status, OperationResultStatus::Succeeded);
+    }
+    assert_eq!(worker.process(first).await.decision, DecisionStatus::Defer);
+    assert_eq!(calls.requests.lock().unwrap().len(), 2);
+    assert!(worker.refresh_after.is_none());
 }

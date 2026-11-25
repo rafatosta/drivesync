@@ -3,6 +3,7 @@ mod analyzer;
 mod evidence;
 mod models;
 mod operations;
+mod refresh;
 use crate::{
     accounts::Accounts,
     detectors::{context::File, observation::ObservationCoverage},
@@ -196,6 +197,7 @@ fn start_guarded(
         recovery_failed: false,
         refresh_after: None,
         refresh_wait: None,
+        affected: Default::default(),
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -245,6 +247,7 @@ struct Orchestrator {
     recovery_failed: bool,
     refresh_after: Option<u64>,
     refresh_wait: Option<crate::performance::Sample>,
+    affected: refresh::Refresh,
 }
 impl Orchestrator {
     async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
@@ -434,7 +437,7 @@ impl Orchestrator {
     }
     fn refreshing_confirmed_update(&self) -> bool {
         let status = self.status.borrow();
-        self.refresh_after.is_some()
+        (self.refresh_after.is_some() || self.affected.pending())
             && status.activity == SynchronizationActivity::Applying
             && status.current_operation.as_ref().is_some_and(|operation| {
                 operation.updates_local_content
@@ -572,12 +575,26 @@ impl Orchestrator {
             self.settle();
             return outcome;
         }
-        if let Some(epoch) = self.refresh_after {
+        let complete_epoch = match (
+            file.observations.local_epoch,
+            file.observations.remote_epoch,
+            file.observations.local_coverage,
+            file.observations.remote_coverage,
+        ) {
+            (
+                Some(local),
+                Some(remote),
+                ObservationCoverage::Complete,
+                ObservationCoverage::Complete,
+            ) => Some(local.min(remote)),
+            _ => None,
+        };
+        {
             let _sample = crate::performance::Sample::begin("post_operation_gate_check");
-            if file.observations.local_epoch.is_none_or(|e| e < epoch)
-                || file.observations.remote_epoch.is_none_or(|e| e < epoch)
-                || file.observations.local_coverage != ObservationCoverage::Complete
-                || file.observations.remote_coverage != ObservationCoverage::Complete
+            if self
+                .refresh_after
+                .is_some_and(|epoch| complete_epoch.is_none_or(|seen| seen < epoch))
+                || !self.affected.current(&file, complete_epoch)
             {
                 outcome.decision = DecisionStatus::Defer;
                 if self.refreshing_confirmed_update() {
@@ -595,8 +612,10 @@ impl Orchestrator {
                 self.settle();
                 return outcome;
             }
-            self.refresh_after = None;
-            self.refresh_wait = None;
+            if let Some(epoch) = self.refresh_after.take() {
+                self.affected.advance(epoch);
+                self.refresh_wait = None;
+            }
         }
         self.publish(
             SynchronizationState::Running,
@@ -959,7 +978,26 @@ impl Orchestrator {
                     if file.observations.local_epoch.is_some()
                         && file.observations.remote_epoch.is_some()
                     {
-                        self.wait_for_refresh(epoch);
+                        let scoped = matches!(
+                            expected_action,
+                            OperationAction::Download
+                                | OperationAction::Upload
+                                | OperationAction::UpdateLocalContent
+                                | OperationAction::UpdateRemoteContent
+                                | OperationAction::CreateLocalDirectory
+                                | OperationAction::CreateRemoteDirectory
+                                | OperationAction::CreateLocalShortcut
+                        )
+                        .then(|| result.effect.as_ref())
+                        .flatten()
+                        .and_then(|effect| {
+                            refresh::Dependencies::for_effect(expected_item, effect)
+                        });
+                        if let Some(dependencies) = scoped {
+                            self.affected.record(epoch, dependencies);
+                        } else {
+                            self.wait_for_refresh(epoch);
+                        }
                     }
                     self.local_refresh.notify_one();
                     self.remote_refresh.notify_one();
