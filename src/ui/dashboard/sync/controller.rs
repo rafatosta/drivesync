@@ -32,10 +32,12 @@ pub struct DashboardController {
     pub status: SyncStatus,
     pub activity: SyncActivity,
     pub attention: SyncAttention,
+    recent_activity: super::recent_activity::RecentActivityList,
     dialogs: Rc<RefCell<Vec<gtk::Window>>>,
     generation: Rc<Cell<u64>>,
     scope: Rc<RefCell<Option<String>>>,
     task: Rc<SubscriptionTask>,
+    history_task: Rc<SubscriptionTask>,
 }
 impl DashboardController {
     pub fn new() -> Self {
@@ -43,19 +45,24 @@ impl DashboardController {
         let status = SyncStatus::new();
         let activity = SyncActivity::new();
         let attention = SyncAttention::new();
+        let recent_activity = super::recent_activity::RecentActivityList::new();
         widget.append(&feedback_card(&status, &activity));
+        widget.append(&recent_activity.widget);
         let value = Self {
             widget,
             status,
             activity,
             attention,
+            recent_activity,
             dialogs: Rc::default(),
             generation: Rc::default(),
             scope: Rc::default(),
             task: Rc::default(),
+            history_task: Rc::default(),
         };
         value.widget.connect_unrealize({
             let task = value.task.clone();
+            let history_task = value.history_task.clone();
             let dialogs = value.dialogs.clone();
             let generation = value.generation.clone();
             move |_| {
@@ -64,6 +71,7 @@ impl DashboardController {
                 }
                 generation.set(generation.get().wrapping_add(1));
                 task.abort();
+                history_task.abort();
             }
         });
         value
@@ -74,10 +82,12 @@ impl DashboardController {
         }
         self.generation.set(self.generation.get().wrapping_add(1));
         self.task.abort();
+        self.history_task.abort();
         self.scope.borrow_mut().take();
         self.status.reset();
         self.activity.clear();
         self.attention.clear();
+        self.recent_activity.clear();
     }
     /// Presents a controlled fixture or reviewed conflict; intentions remain backend-independent.
     pub fn present_conflict(
@@ -131,6 +141,34 @@ impl DashboardController {
         );
         true
     }
+    pub fn watch_history(
+        &self,
+        engine: drivesync_engine::Engine,
+        account: drivesync_engine::AccountId,
+    ) {
+        let widget = self.widget.downgrade();
+        let recent_activity = self.recent_activity.clone();
+        self.history_task
+            .set(gtk::glib::spawn_future_local(async move {
+                let mut last_rendered = None;
+                loop {
+                    let history = engine
+                        .recent_synchronization_activity(account.clone(), 5)
+                        .await;
+                    if widget.upgrade().is_none() {
+                        break;
+                    }
+                    let now = gtk::glib::real_time() / 1_000;
+                    let rendered = (history.ok(), now / 60_000);
+                    if last_rendered.as_ref() != Some(&rendered) {
+                        recent_activity.show(rendered.0.as_deref(), now);
+                        last_rendered = Some(rendered);
+                    }
+                    gtk::glib::timeout_future_seconds(15).await;
+                }
+            }));
+    }
+
     pub fn select(&self, scope: String, mut backend: Box<dyn SyncBackend>) {
         self.reset();
         *self.scope.borrow_mut() = Some(scope);

@@ -1759,3 +1759,15 @@ msgstr "Pasta criada no computador."
 
 msgid "Folder created on Drive."
 msgstr "Pasta criada no Drive."
+
+msgid "Recent activity is unavailable."
+msgstr "A atividade recente está indisponível."
+
+msgid "Moved to trash"
+msgstr "Movido para a lixeira"
+
+msgid "Folder created"
+msgstr "Pasta criada"
+
+msgid "Shortcut synchronized"
+msgstr "Atalho sincronizado"

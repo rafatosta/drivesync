@@ -93,10 +93,13 @@ impl SynchronizationView {
                 return;
             };
             match result {
-                Ok(true) => controller.select(
-                    account.id.0.clone(),
-                    Box::new(EngineAdapter::new(engine, account.id)),
-                ),
+                Ok(true) => {
+                    controller.select(
+                        account.id.0.clone(),
+                        Box::new(EngineAdapter::new(engine.clone(), account.id.clone())),
+                    );
+                    controller.watch_history(engine, account.id);
+                }
                 Ok(false) => controller.status.set_state(
                     StatusView::Stopped,
                     &gettextrs::gettext("Configure folders to prepare synchronization."),

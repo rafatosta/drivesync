@@ -282,6 +282,63 @@ impl Engine {
             .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))
     }
 
+    /// Returns the newest confirmed user-visible effects for the account's configured roots.
+    pub async fn recent_synchronization_activity(
+        &self,
+        account_id: AccountId,
+        limit: usize,
+    ) -> EngineResult<Vec<RecentActivity>> {
+        use crate::inventory::{models::InventoryScopeQuery, Inventory, InventoryConfig};
+
+        let sync_root_id = {
+            let sessions = self.inner.synchronizations.lock().await;
+            sessions
+                .get(&account_id)
+                .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?
+                .orchestrator
+                .config()
+                .sync_root_id
+                .clone()
+        };
+        let directory = self.inner.synchronization_directory.clone();
+        self.runtime()
+            .spawn_blocking(move || {
+                let unavailable = || error(SynchronizationErrorKind::InventoryUnavailable);
+                let inventory = Inventory::open(InventoryConfig {
+                    directory,
+                    account_id: account_id.clone(),
+                })
+                .map_err(|_| unavailable())?;
+                let rows = inventory
+                    .enumerate(InventoryScopeQuery {
+                        account_id,
+                        sync_root_id,
+                    })
+                    .map_err(|_| unavailable())?;
+                let mut activities: Vec<_> = rows
+                    .iter()
+                    .flat_map(|row| &row.pending_operations)
+                    .filter_map(|operation| {
+                        recent_activity(operation).map(|activity| (&operation.id.0, activity))
+                    })
+                    .collect();
+                activities.sort_unstable_by(|(left_id, left), (right_id, right)| {
+                    right
+                        .confirmed_at
+                        .unix_millis
+                        .cmp(&left.confirmed_at.unix_millis)
+                        .then_with(|| left_id.cmp(right_id))
+                });
+                Ok(activities
+                    .into_iter()
+                    .take(limit)
+                    .map(|(_, activity)| activity)
+                    .collect())
+            })
+            .await
+            .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
+    }
+
     /// Latest account status without I/O, authentication, or a connectivity claim.
     pub async fn synchronization_status(
         &self,
@@ -339,3 +396,73 @@ impl Engine {
 }
 
 use crate::detectors::observation::Observation;
+
+fn recent_activity(
+    operation: &crate::inventory::models::PendingOperation,
+) -> Option<RecentActivity> {
+    use crate::inventory::models::{OperationAction as Action, OperationState};
+    use crate::models::Evidence;
+    use RecentActivityKind as Kind;
+
+    if operation.state != OperationState::Confirmed {
+        return None;
+    }
+    let kind = match operation.action {
+        Action::Upload => Kind::Upload,
+        Action::Download => Kind::Download,
+        Action::UpdateLocalContent | Action::UpdateRemoteContent => Kind::Update,
+        Action::RenameLocal | Action::RenameRemote => Kind::Rename,
+        Action::MoveLocal | Action::MoveRemote => Kind::Move,
+        Action::RemoveLocal | Action::TrashRemote => Kind::Trash,
+        Action::CreateLocalDirectory | Action::CreateRemoteDirectory => Kind::CreateFolder,
+        Action::CreateLocalShortcut => Kind::ProjectShortcut,
+        Action::RegisterIdentity | Action::Adopt | Action::ConfirmBaseline => return None,
+    };
+    let effect = operation.applied_effect.as_ref()?;
+    let record = operation.recovery.as_deref();
+    let path_name = |path: &std::path::Path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    };
+    let local_name = effect
+        .local
+        .as_ref()
+        .and_then(|local| local.path.as_deref())
+        .and_then(path_name);
+    let remote_name = effect
+        .remote
+        .as_ref()
+        .and_then(|remote| match &remote.name {
+            Evidence::Known(name) => Some(name.clone()),
+            _ => None,
+        });
+    let name = match operation.action {
+        Action::RenameRemote => remote_name.or(local_name),
+        _ => local_name.or(remote_name),
+    }
+    .or_else(|| record.and_then(|record| record.command.name.clone()))
+    .or_else(|| {
+        record
+            .and_then(|record| record.command.local_path.as_deref())
+            .and_then(path_name)
+    })?;
+
+    let size = match operation.action {
+        Action::Upload | Action::UpdateRemoteContent => {
+            effect.remote.as_ref().map(|remote| &remote.size)
+        }
+        Action::Download | Action::UpdateLocalContent => {
+            effect.local.as_ref().map(|local| &local.size)
+        }
+        _ => None,
+    };
+    Some(RecentActivity {
+        kind,
+        name,
+        size: match size {
+            Some(Evidence::Known(bytes)) => Some(*bytes),
+            _ => None,
+        },
+        confirmed_at: operation.updated_at,
+    })
+}

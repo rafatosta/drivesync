@@ -5,5 +5,6 @@ pub mod backend;
 pub mod components;
 pub mod controller;
 pub mod models;
+mod recent_activity;
 #[cfg(test)]
 mod tests;

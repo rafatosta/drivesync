@@ -10,6 +10,28 @@ pub struct StartSynchronizationRequest {
     pub local_root: Path,
     pub remote_root_id: RemoteId,
 }
+/// User-visible effect of a confirmed synchronization operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecentActivityKind {
+    Upload,
+    Download,
+    Update,
+    Rename,
+    Move,
+    Trash,
+    CreateFolder,
+    ProjectShortcut,
+}
+
+/// Historical facts captured by the operation, scoped to the active synchronization roots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentActivity {
+    pub kind: RecentActivityKind,
+    pub name: String,
+    pub size: Option<u64>,
+    pub confirmed_at: DateTime,
+}
+
 /// Account-facing lifecycle, independent of any provider or GUI toolkit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationState {
