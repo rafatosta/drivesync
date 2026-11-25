@@ -573,7 +573,12 @@ impl GoogleObserver {
         has_more: bool,
     ) -> RemoteObserveResult {
         RemoteObserveResult {
-            observations,
+            observations: observations
+                .into_iter()
+                .filter(|item| {
+                    !matches!(&item.name, Evidence::Known(name) if crate::projections::libreoffice_lock_name(name.as_ref()))
+                })
+                .collect(),
             coverage,
             continuation: cursor.map(|value| ProviderCursor {
                 provider_id: self.config.provider_id.clone(),

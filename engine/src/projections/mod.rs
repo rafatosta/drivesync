@@ -33,12 +33,25 @@ pub(crate) fn private_trash_name(name: &std::ffi::OsStr) -> bool {
         .is_some_and(|key| key.len() == 32 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
+pub(crate) fn libreoffice_lock_name(name: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    let bytes = name.as_bytes();
+    bytes.len() > b".~lock.#".len() && bytes.starts_with(b".~lock.") && bytes.ends_with(b"#")
+}
+
+pub(crate) fn libreoffice_lock_path(path: &std::path::Path) -> bool {
+    path.components()
+        .any(|part| libreoffice_lock_name(part.as_os_str()))
+}
+
 pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
         && name != ".drivesync"
         && !private_trash_name(name.as_ref())
+        && !libreoffice_lock_name(name.as_ref())
         && !name.starts_with(".drivesync-transfer-")
         && !name.contains('/')
         && !name.chars().any(char::is_control)

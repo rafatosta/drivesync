@@ -205,6 +205,14 @@ impl PersistingOperator {
                         .clone()
                         .or(pending.remote_id.clone()),
                 };
+                // Excluded editor artifacts retain their journal without replaying mutations.
+                if item
+                    .local_path
+                    .as_deref()
+                    .is_some_and(crate::projections::libreoffice_lock_path)
+                {
+                    continue;
+                }
                 checking(item.clone());
                 let mut revision = Some(snapshot.revision);
                 let mut assessment = match pending.recovery.as_ref() {

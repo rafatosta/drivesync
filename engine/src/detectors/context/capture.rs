@@ -14,13 +14,19 @@ pub(super) struct Captures {
 }
 impl Context {
     pub(crate) fn snapshots(&self) -> Result<Vec<InventorySnapshot>, ContextError> {
-        let snapshots = self
+        let mut snapshots = self
             .inventory
             .enumerate(InventoryScopeQuery {
                 account_id: self.config.account_id.clone(),
                 sync_root_id: self.config.sync_root_id.clone(),
             })
             .map_err(|_| ContextError::InventoryUnavailable)?;
+        snapshots.retain(|snapshot| {
+            !snapshot
+                .local_path
+                .as_deref()
+                .is_some_and(crate::projections::libreoffice_lock_path)
+        });
         for snapshot in &snapshots {
             if let Some(local) = &snapshot.baseline.local {
                 if let Some(path) = &local.path {

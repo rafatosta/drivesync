@@ -27,6 +27,7 @@ fn scanner_preserves_bytes_hashes_and_ignores_internal_artifacts_without_followi
     let s = Sandbox::new();
     std::fs::create_dir(s.0.join("nested")).unwrap();
     std::fs::write(s.0.join("nested/file"), b"abc").unwrap();
+    std::fs::write(s.0.join("nested/.~lock.file#"), b"editor lock").unwrap();
     std::fs::create_dir(s.0.join(".drivesync")).unwrap();
     let trash =
         s.0.join(".drivesync-trash-0123456789abcdef0123456789abcdef");

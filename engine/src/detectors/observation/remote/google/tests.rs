@@ -51,7 +51,7 @@ async fn paginated_capture_publishes_only_complete_coverage_then_uses_changes_cu
         root(),
         Reply::json(
             200,
-            r#"{"files":[{"id":"one","name":"a","mimeType":"text/plain","parents":["root"],"trashed":false}],"incompleteSearch":false,"nextPageToken":"next"}"#,
+            r#"{"files":[{"id":"one","name":"a","mimeType":"text/plain","parents":["root"],"trashed":false},{"id":"lock","name":".~lock.b#","mimeType":"application/octet-stream","parents":["root"],"trashed":false}],"incompleteSearch":false,"nextPageToken":"next"}"#,
         ),
         Reply::json(
             200,
