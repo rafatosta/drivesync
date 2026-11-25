@@ -273,6 +273,31 @@ fn isolated_components_and_fake_backend() {
     }
     gtk::glib::MainContext::default().block_on(async {
         let controller = DashboardController::new();
+        let synced = Snapshot {
+            scope: "fixture-a".into(),
+            status: StatusView::Synced,
+            description: "All files are up to date.".into(),
+            activity: None,
+            attention: vec![],
+        };
+        let icon = controller.status.widget.first_child().unwrap();
+        let icon_updates = std::rc::Rc::new(std::cell::Cell::new(0));
+        icon.connect_notify_local(Some("css-classes"), {
+            let icon_updates = icon_updates.clone();
+            move |icon, _| {
+                if icon.has_css_class("success") {
+                    icon_updates.set(icon_updates.get() + 1);
+                }
+            }
+        });
+        controller.select(
+            "fixture-a".into(),
+            Box::new(FakeSyncBackend::new([synced.clone(), synced])),
+        );
+        gtk::glib::timeout_future(std::time::Duration::from_millis(20)).await;
+        assert_eq!(controller.status.state(), StatusView::Synced);
+        assert_eq!(icon_updates.get(), 1);
+
         let mut measured = activity();
         measured.name = "Relatório.docx".into();
         measured.progress = ProgressView::Steps {
@@ -955,13 +980,31 @@ fn background_checks_preserve_idle_presentation_and_waits_name_the_item() {
         }
     }
 
+    let mut observing = status.clone();
+    observing.state = SynchronizationState::Waiting;
+    observing.current_item = None;
+    for issue in [
+        None,
+        Some(SynchronizationIssue {
+            kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
+            retryable: true,
+        }),
+    ] {
+        observing.issue = issue;
+        assert_eq!(map_status(&observing, true).status, StatusView::Synced);
+        assert_eq!(
+            map_status(&observing, false).status,
+            StatusView::WaitingForEvidence
+        );
+    }
+
     status.state = SynchronizationState::Waiting;
     status.activity = SynchronizationActivity::None;
     status.issue = Some(SynchronizationIssue {
         kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
         retryable: true,
     });
-    let waiting = map_status(&status, false);
+    let waiting = map_status(&status, true);
     assert_eq!(waiting.status, StatusView::WaitingForEvidence);
     assert!(waiting.activity.is_none());
     assert!(waiting.description.contains("Relatório.docx"));

@@ -143,13 +143,17 @@ impl DashboardController {
         let scope = self.scope.clone();
         let generations = self.generation.clone();
         self.task.set(gtk::glib::spawn_future_local(async move {
+            let mut last_rendered = None;
             while let Some(snapshot) = backend.next().await {
                 if generations.get() != generation || widget.upgrade().is_none() {
                     break;
                 }
-                if scope.borrow().as_deref() != Some(&snapshot.scope) {
+                if scope.borrow().as_deref() != Some(&snapshot.scope)
+                    || last_rendered.as_ref() == Some(&snapshot)
+                {
                     continue;
                 }
+                last_rendered = Some(snapshot.clone());
                 status.set_state(snapshot.status, &snapshot.description);
                 match snapshot.activity.filter(|a| a.scope == snapshot.scope) {
                     Some(value) => activity.set_activity(value),

@@ -76,7 +76,8 @@ impl SyncBackend for EngineAdapter {
             let subscription = self.subscription.as_mut()?;
             let status = subscription.current();
             // Audit is horizon-bound. Re-read after the await so a newer event invalidates it.
-            let audited = if status.state == drivesync_engine::SynchronizationState::Idle
+            let audited = if !self.last_synced
+                && status.state == drivesync_engine::SynchronizationState::Idle
                 && status.issue.is_none()
             {
                 self.engine
@@ -97,14 +98,10 @@ impl SyncBackend for EngineAdapter {
             let latest = subscription.current();
             self.refresh_latest = latest != status;
             let background = is_background_check(&latest);
-            // Keep the last audited presentation while a background check is in progress.
+            // A new operation or issue ends the previously audited idle presentation.
             let mut snapshot = map_status(
                 &latest,
-                if background {
-                    self.last_synced
-                } else {
-                    audited && !self.refresh_latest
-                },
+                self.last_synced || (audited && !self.refresh_latest),
             );
             if let Some(rows) = conflicts.filter(|rows| !rows.is_empty()) {
                 let count = rows.len();
@@ -115,8 +112,9 @@ impl SyncBackend for EngineAdapter {
                 )
                 .replace("{count}", &count.to_string());
                 use drivesync_engine::SynchronizationState as State;
-                let has_procedure = latest.issue.is_some()
-                    || (!background && matches!(latest.state, State::Running | State::Failed));
+                let has_procedure = snapshot.status != StatusView::Synced
+                    && (latest.issue.is_some()
+                        || (!background && matches!(latest.state, State::Running | State::Failed)));
                 if has_procedure && !snapshot.description.is_empty() {
                     snapshot.description = format!("{}\n{summary}", snapshot.description);
                 } else {
@@ -152,14 +150,22 @@ fn is_background_check(status: &drivesync_engine::SynchronizationStatus) -> bool
 pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: bool) -> Snapshot {
     use drivesync_engine::{
         SynchronizationActivity as A, SynchronizationIssueKind as I, SynchronizationState as S,
+        SynchronizationWait as W,
     };
     let scope = status.account_id.0.clone();
     let background = is_background_check(status);
+    let issue = status.issue.as_ref().map(|issue| issue.kind);
+    let observing = status.state == S::Waiting
+        && status.activity == A::Observing
+        && status.current_operation.is_none()
+        && status.current_item.is_none()
+        && matches!(
+            issue,
+            None | Some(I::DeferredFor(W::LocalObservation | W::RemoteObservation))
+        );
     let effective_state = if background { S::Idle } else { status.state };
-    let state = match (
-        effective_state,
-        status.issue.as_ref().map(|issue| issue.kind),
-    ) {
+    let state = match (effective_state, issue) {
+        (S::Waiting, _) if audited && observing => StatusView::Synced,
         (S::Stopped, _) => StatusView::Stopped,
         (S::Failed, _) => StatusView::Failed,
         (_, Some(I::Deferred | I::DeferredFor(_) | I::PreconditionFailed)) | (S::Waiting, None) => {
