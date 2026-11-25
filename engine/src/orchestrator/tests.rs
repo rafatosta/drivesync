@@ -166,6 +166,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             refresh_after: None,
             refresh_wait: None,
             affected: Default::default(),
+            unchanged: BTreeMap::new(),
         },
         stop,
     )
@@ -774,4 +775,31 @@ async fn independent_uploads_share_a_capture_and_reject_stale_replay() {
     assert_eq!(worker.process(first).await.decision, DecisionStatus::Defer);
     assert_eq!(calls.requests.lock().unwrap().len(), 2);
     assert!(worker.refresh_after.is_none());
+}
+
+#[tokio::test]
+async fn a_noop_is_reused_only_for_the_same_decision_evidence() {
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut file = fixture();
+    file.observations.local_epoch = Some(0);
+    file.observations.remote_epoch = Some(0);
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::NoOp
+    );
+    assert_eq!(worker.unchanged.len(), 1);
+
+    file.observations.local_generation = Some(40);
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::NoOp
+    );
+    assert!(calls.requests.lock().unwrap().is_empty());
+
+    file = changed_file();
+    file.observations.local_epoch = Some(0);
+    file.observations.remote_epoch = Some(0);
+    assert_eq!(worker.process(file).await.decision, DecisionStatus::Ready);
+    assert!(!calls.requests.lock().unwrap().is_empty());
 }

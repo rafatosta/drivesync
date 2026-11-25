@@ -198,6 +198,7 @@ fn start_guarded(
         refresh_after: None,
         refresh_wait: None,
         affected: Default::default(),
+        unchanged: BTreeMap::new(),
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -248,6 +249,7 @@ struct Orchestrator {
     refresh_after: Option<u64>,
     refresh_wait: Option<crate::performance::Sample>,
     affected: refresh::Refresh,
+    unchanged: BTreeMap<crate::models::ItemId, File>,
 }
 impl Orchestrator {
     async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
@@ -617,6 +619,23 @@ impl Orchestrator {
                 self.refresh_wait = None;
             }
         }
+        file.initial_association_authorized &= self.config.initial_association_authorized;
+        file.environment.trash_propagation_authorized &= self.config.trash_propagation_authorized;
+        if let Some(id) = &file.identity.item_id {
+            if self
+                .unchanged
+                .get(id)
+                .is_some_and(|old| same_decision_input(old, &file))
+            {
+                let _sample = crate::performance::Sample::begin("analysis_reuse");
+                self.blockers
+                    .retain(|_, (blocked, _)| !same_item(blocked, &item));
+                self.settle();
+                outcome.decision = DecisionStatus::NoOp;
+                return outcome;
+            }
+            self.unchanged.remove(id);
+        }
         self.publish(
             SynchronizationState::Running,
             SynchronizationActivity::Analyzing,
@@ -624,10 +643,16 @@ impl Orchestrator {
             None,
             None,
         );
-        file.initial_association_authorized &= self.config.initial_association_authorized;
-        file.environment.trash_propagation_authorized &= self.config.trash_propagation_authorized;
         let decision = analyzer::analyze(&file);
         outcome.decision = decision.status;
+        if decision.status == DecisionStatus::NoOp && complete_epoch.is_some() {
+            if let Some(id) = &file.identity.item_id {
+                if self.unchanged.len() >= 100_000 {
+                    self.unchanged.clear();
+                }
+                self.unchanged.insert(id.clone(), file.clone());
+            }
+        }
         if decision.status == DecisionStatus::Conflict {
             let attributes = analyzer::conflict_attributes(&file);
             let reason = if attributes.is_empty() {
@@ -1064,6 +1089,24 @@ impl Orchestrator {
         outcome
     }
 }
+// Audit provenance advances independently of the Analyzer's decision inputs.
+fn same_decision_input(a: &File, b: &File) -> bool {
+    a.identity == b.identity
+        && a.registration_id == b.registration_id
+        && a.local == b.local
+        && a.remote == b.remote
+        && a.baseline == b.baseline
+        && a.environment == b.environment
+        && a.observations.local_coverage == b.observations.local_coverage
+        && a.observations.remote_coverage == b.observations.remote_coverage
+        && a.inventory_lookup == b.inventory_lookup
+        && a.inventory_revision == b.inventory_revision
+        && a.pending_operations == b.pending_operations
+        && a.prior_conflict == b.prior_conflict
+        && a.initial_association_authorized == b.initial_association_authorized
+        && a.association_candidates == b.association_candidates
+}
+
 fn activity(action: OperationAction) -> SynchronizationActivity {
     match action {
         OperationAction::Upload | OperationAction::UpdateRemoteContent => {

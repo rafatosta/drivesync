@@ -1078,3 +1078,53 @@ fn completion_requires_registered_convergence_current_epochs_and_no_unresolved_i
     assert!(!context.audit(0, &expected).unwrap().initial_complete);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn equivalent_complete_capture_refreshes_provenance_without_rebuilding_items() {
+    let (context, directory) = context();
+    let file = local("file", 8, false);
+    let submit = |capture| {
+        context
+            .consolidate(Observation::Capture(Box::new(capture)))
+            .unwrap()
+    };
+    submit(round(
+        &context,
+        1,
+        ObservationCoverage::Complete,
+        CaptureEntries::Remote(vec![]),
+    ));
+    let first = submit(round(
+        &context,
+        1,
+        ObservationCoverage::Complete,
+        CaptureEntries::Local(vec![file.clone()]),
+    ));
+    assert!(first[0].registration_id.is_some());
+
+    let mut updated = file.clone();
+    updated.observed_at.unix_millis += 100;
+    let mut capture = round(
+        &context,
+        2,
+        ObservationCoverage::Complete,
+        CaptureEntries::Local(vec![updated]),
+    );
+    capture.collect_epoch = 3;
+    let second = submit(capture);
+    assert_eq!(second[0].registration_id, first[0].registration_id);
+    assert_eq!(second[0].observations.local_epoch, Some(3));
+    assert_eq!(second[0].observations.local_generation, Some(2));
+
+    let mut changed = file;
+    changed.size = Evidence::Known(123);
+    let third = submit(round(
+        &context,
+        3,
+        ObservationCoverage::Complete,
+        CaptureEntries::Local(vec![changed]),
+    ));
+    assert_eq!(third[0].local.size, Evidence::Known(123));
+    assert_ne!(third[0].registration_id, second[0].registration_id);
+    std::fs::remove_dir_all(directory).unwrap();
+}

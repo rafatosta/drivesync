@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct Captures {
     pub(super) local: Option<ScopeCapture>,
     pub(super) remote: Option<ScopeCapture>,
+    consolidated: Option<(Vec<InventorySnapshot>, Vec<File>)>,
 }
 impl Context {
     pub(crate) fn snapshots(&self) -> Result<Vec<InventorySnapshot>, ContextError> {
@@ -110,7 +111,27 @@ impl Context {
         {
             return Err(ContextError::InvalidCapture);
         }
+        let unchanged = previous
+            .as_ref()
+            .is_some_and(|previous| same_evidence(previous, &capture));
         *previous = Some(capture);
+        if unchanged
+            && captures
+                .local
+                .as_ref()
+                .is_some_and(|c| c.coverage == ObservationCoverage::Complete)
+            && captures
+                .remote
+                .as_ref()
+                .is_some_and(|c| c.coverage == ObservationCoverage::Complete)
+        {
+            if let Some((previous, files)) = &captures.consolidated {
+                if *previous == snapshots {
+                    let _sample = crate::performance::Sample::begin("context_capture_reuse");
+                    return Ok(captures.republish(files.clone()));
+                }
+            }
+        }
         // Per-item cache entries from a previous generation must not survive capture invalidation.
         *self
             .cache
@@ -187,6 +208,8 @@ impl Context {
                 file.identity.item_id.is_none(),
             )
         });
+        captures.consolidated = (captures.local.is_some() && captures.remote.is_some())
+            .then(|| (snapshots, files.clone()));
         Ok(files)
     }
 
@@ -736,7 +759,83 @@ impl<'a> View<'a> {
         }
     }
 }
+fn same_evidence(previous: &ScopeCapture, incoming: &ScopeCapture) -> bool {
+    if previous.coverage != ObservationCoverage::Complete
+        || incoming.coverage != ObservationCoverage::Complete
+    {
+        return false;
+    }
+    let equal_event = |a: &Option<crate::models::ObservationEvent>,
+                       b: &Option<crate::models::ObservationEvent>| {
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                let mut a = a.clone();
+                a.observed_at = b.observed_at;
+                a == *b
+            }
+            (None, None) => true,
+            _ => false,
+        }
+    };
+    match (&previous.entries, &incoming.entries) {
+        (CaptureEntries::Local(a), CaptureEntries::Local(b)) => {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| {
+                    a.previous_path == b.previous_path
+                        && a.coverage == b.coverage
+                        && local_state(a.clone()) == local_state(b.clone())
+                        && equal_event(&a.event, &b.event)
+                })
+        }
+        (CaptureEntries::Remote(a), CaptureEntries::Remote(b)) => {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| {
+                    a.coverage == b.coverage
+                        && remote_state(a.clone()) == remote_state(b.clone())
+                        && equal_event(&a.event, &b.event)
+                })
+        }
+        _ => false,
+    }
+}
+
 impl Captures {
+    fn republish(&self, mut files: Vec<File>) -> Vec<File> {
+        let locals = self.locals();
+        let remotes = self.remotes();
+        let local = self.local.as_ref().unwrap();
+        let remote = self.remote.as_ref().unwrap();
+        for file in &mut files {
+            let observations = &mut file.observations;
+            observations.local_generation = Some(local.generation);
+            observations.remote_generation = Some(remote.generation);
+            observations.local_epoch = Some(local.collect_epoch);
+            observations.remote_epoch = Some(remote.collect_epoch);
+            observations.observed_at = local.observed_at;
+            for event in &mut observations.events {
+                let current = if let Some(id) = &event.remote_id {
+                    remotes.get(id).and_then(|entry| entry.event.as_ref())
+                } else {
+                    event
+                        .new_path
+                        .as_ref()
+                        .or(event.old_path.as_ref())
+                        .and_then(|path| locals.get(path))
+                        .and_then(|entry| entry.event.as_ref())
+                };
+                if let Some(current) = current {
+                    *event = current.clone();
+                }
+            }
+            if observations.latest_origin == ObservationOrigin::Remote {
+                if let Some(entry) = file.remote.id.as_ref().and_then(|id| remotes.get(id)) {
+                    observations.remote_page_token = entry.page_token.clone();
+                }
+            }
+        }
+        files
+    }
+
     pub(super) fn locals(&self) -> BTreeMap<Path, &LocalObservation> {
         match self.local.as_ref().map(|c| &c.entries) {
             Some(CaptureEntries::Local(entries)) => entries

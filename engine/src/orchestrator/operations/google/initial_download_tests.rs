@@ -22,7 +22,7 @@ use crate::{
     orchestrator::{Orchestrator, OrchestratorConfig},
     synchronization::*,
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, os::unix::fs::MetadataExt};
 
 #[tokio::test]
 async fn three_level_initial_download_rechecks_children_and_reopens_without_replay() {
@@ -167,6 +167,7 @@ async fn assert_initial_download(
         refresh_after: None,
         refresh_wait: None,
         affected: Default::default(),
+        unchanged: BTreeMap::new(),
     };
     let scanner = Scanner::open(config.local_root.clone(), config.sync_root_id.clone()).unwrap();
     let epoch = worker.capture_epoch.clone();
@@ -265,6 +266,20 @@ async fn assert_initial_download(
             let before: Vec<InventorySnapshot> =
                 serde_json::from_slice(&std::fs::read(s.0.join("before.json")).unwrap()).unwrap();
             assert_eq!(rows, before);
+            let root = std::fs::metadata(&config.local_root).unwrap();
+            let audit = context
+                .audit(
+                    epoch.load(std::sync::atomic::Ordering::SeqCst),
+                    &crate::models::LocalIdentity {
+                        device_id: root.dev(),
+                        inode: root.ino(),
+                        mount_id: None,
+                        birth_ns: crate::models::birth_ns(&root),
+                    },
+                )
+                .unwrap();
+            assert!(audit.initial_complete, "{audit:?}");
+            assert_eq!(audit.converged_items, fixture_size);
         }
     }
     assert_eq!(
