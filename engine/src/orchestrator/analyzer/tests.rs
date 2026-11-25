@@ -950,3 +950,26 @@ fn a_confirmed_binary_version_does_not_need_a_second_remote_digest() {
     file.observations.remote_coverage = ObservationCoverage::Partial;
     assert_eq!(analyze(&file).status, DecisionStatus::Defer);
 }
+
+#[test]
+fn remote_directory_does_not_require_binary_content_when_local_type_is_unknown() {
+    let mut file = fixture();
+    file.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+    file.remote.checksum = Evidence::NotApplicable;
+    file.remote.size = Evidence::NotApplicable;
+    file.local.kind = Evidence::Known(FileKind::Directory);
+    file.local.checksum = Evidence::NotApplicable;
+    file.local.size = Evidence::NotApplicable;
+    file.baseline.local = Some(file.local.clone());
+    file.baseline.remote = Some(file.remote.clone());
+    file.local.kind = Evidence::NotCollected;
+    let changeset = compare(&file);
+    assert_eq!(
+        changeset.attributes[&AttributeName::Content].remote.status,
+        ChangeStatus::NotApplicable
+    );
+    assert_eq!(
+        changeset.attributes[&AttributeName::Kind].local.status,
+        ChangeStatus::Indeterminate
+    );
+}

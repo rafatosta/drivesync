@@ -552,7 +552,7 @@ fn compare(file: &File) -> Changeset {
                 &baseline_remote.size,
                 &file.remote.checksum,
                 &file.remote.size,
-                &file.local.kind,
+                &remote_kind(&file.remote.mime_type),
                 "remote content",
             )
         },
