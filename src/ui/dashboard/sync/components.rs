@@ -37,6 +37,8 @@ pub struct SyncStatus {
     description: gtk::Label,
     item_name: gtk::Label,
     spinner: gtk::Spinner,
+    last_update: Rc<RefCell<std::time::Instant>>,
+    update_age: gtk::Label,
     state: Rc<RefCell<StatusView>>,
 }
 impl SyncStatus {
@@ -67,6 +69,30 @@ impl SyncStatus {
         spinner.set_halign(gtk::Align::Start);
         spinner.update_relation(&[gtk::accessible::Relation::LabelledBy(&[title.upcast_ref()])]);
         labels.append(&spinner);
+        let update_age = label();
+        update_age.add_css_class("dim-label");
+        update_age.add_css_class("caption");
+        update_age.set_widget_name("dashboard-synchronization-update-age");
+        labels.append(&update_age);
+        let last_update = Rc::new(RefCell::new(std::time::Instant::now()));
+        gtk::glib::timeout_add_seconds_local(1, {
+            let age = update_age.downgrade();
+            let updated = last_update.clone();
+            move || {
+                let Some(age) = age.upgrade() else {
+                    return gtk::glib::ControlFlow::Break;
+                };
+                let seconds = updated.borrow().elapsed().as_secs();
+                age.set_label(&if seconds >= 30 {
+                    gettext("No new status update for {seconds} s. Waiting for the current stage; completion time is unknown.")
+                        .replace("{seconds}", &seconds.to_string())
+                } else {
+                    gettext("Last status update {seconds} s ago")
+                        .replace("{seconds}", &seconds.to_string())
+                });
+                gtk::glib::ControlFlow::Continue
+            }
+        });
         widget.append(&labels);
         widget.set_hexpand(true);
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
@@ -111,6 +137,8 @@ impl SyncStatus {
             description,
             item_name,
             spinner,
+            last_update,
+            update_age,
             state: Rc::new(RefCell::new(StatusView::Initializing)),
         };
         value.reset();
@@ -173,11 +201,30 @@ impl SyncStatus {
             | StatusView::Stopped => "dim-label",
             _ => "accent",
         });
+        *self.last_update.borrow_mut() = std::time::Instant::now();
+        self.update_age.set_label(&gettext("Status updated now"));
+        self.update_age.set_visible(matches!(
+            state,
+            StatusView::Checking
+                | StatusView::Synchronizing
+                | StatusView::Recovering
+                | StatusView::WaitingForEvidence
+                | StatusView::Finalizing
+        ));
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
         self.description.set_visible(!description.is_empty());
         self.item_name
-            .set_label(item.map_or("", |item| item.name.as_str()));
+            .set_label(&item.map_or_else(String::new, |item| {
+                if matches!(
+                    state,
+                    StatusView::Checking | StatusView::Finalizing | StatusView::WaitingForEvidence
+                ) {
+                    gettext("Item being verified: {name}").replace("{name}", &item.name)
+                } else {
+                    item.name.clone()
+                }
+            }));
         self.item_name
             .set_tooltip_text(item.map(|item| item.path.as_deref().unwrap_or(&item.name)));
         self.item_name.set_visible(item.is_some() && !has_activity);
@@ -354,12 +401,22 @@ impl SyncActivity {
         self.name.set_label(&name);
         self.name
             .set_tooltip_text(self.widget.tooltip_text().as_deref().or(Some(&name)));
-        let details = [direction, phase]
+        let mut details = [direction, phase]
             .into_iter()
             .filter(|label| !label.is_empty())
             .map(gettext)
             .collect::<Vec<_>>()
             .join(" · ");
+        if let ProgressView::Steps { completed, total } = activity.progress {
+            if !details.is_empty() {
+                details.push_str(" · ");
+            }
+            details.push_str(
+                &gettext("{completed} of {total} operation steps confirmed")
+                    .replace("{completed}", &completed.to_string())
+                    .replace("{total}", &total.to_string()),
+            );
+        }
         self.details.set_label(&details);
         self.details.set_visible(!details.is_empty());
         self.render_progress(&activity.progress, activity.phase == Phase::Running);

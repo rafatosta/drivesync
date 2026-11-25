@@ -433,8 +433,6 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         incomplete_description(None)
     } else if state == StatusView::Checking && checking_after_operation && issue.is_none() {
         crate::services::synchronization::verification_description(status.verification)
-    } else if activity.is_some() && status.issue.is_none() {
-        String::new()
     } else {
         crate::services::synchronization::description(status)
     };
@@ -485,12 +483,14 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
 pub(super) fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
     match snapshot.status {
-        StatusView::Checking
-        | StatusView::Initializing
-        | StatusView::WaitingForEvidence
-        | StatusView::VerificationIncomplete => Some(Overview::Checking {
+        StatusView::Checking | StatusView::Initializing => Some(Overview::Checking {
             checked_items: None,
         }),
+        StatusView::WaitingForEvidence | StatusView::VerificationIncomplete => {
+            Some(Overview::Inactive {
+                message: snapshot.description.clone(),
+            })
+        }
         StatusView::Synchronizing | StatusView::Recovering | StatusView::Finalizing => {
             Some(Overview::Syncing {
                 completed_items: None,

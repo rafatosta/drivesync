@@ -1893,3 +1893,18 @@ msgstr "Sincronizando seus arquivos"
 #: src/ui/components/sync_overview/mod.rs
 msgid "Synchronization inactive"
 msgstr "Sincronização inativa"
+
+msgid "No new status update for {seconds} s. Waiting for the current stage; completion time is unknown."
+msgstr "Sem nova atualização de estado há {seconds} s. Aguardando a etapa atual; tempo de conclusão desconhecido."
+
+msgid "Last status update {seconds} s ago"
+msgstr "Última atualização de estado há {seconds} s"
+
+msgid "Status updated now"
+msgstr "Estado atualizado agora"
+
+msgid "Item being verified: {name}"
+msgstr "Item em verificação: {name}"
+
+msgid "{completed} of {total} operation steps confirmed"
+msgstr "{completed} de {total} etapas da operação confirmadas"

@@ -241,6 +241,9 @@ fn render_snapshot(
     match snapshot.overview.take() {
         Some(state) => {
             overview.set_state(state);
+            if !snapshot.description.is_empty() {
+                overview.set_stage(&snapshot.description);
+            }
             overview.widget().set_visible(true);
         }
         None => hide_overview(overview),

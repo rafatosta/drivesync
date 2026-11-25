@@ -189,7 +189,7 @@ impl SyncOverview {
             }
         };
         self.title.set_label(&title);
-        self.description.set_label(&description);
+        self.set_stage(&description);
         self.details.set_label(&details);
         self.detail_revealer.set_reveal_child(!details.is_empty());
         self.icon.set_icon_name(Some(icon));
@@ -218,6 +218,11 @@ impl SyncOverview {
             });
             *self.tick.borrow_mut() = Some(id);
         }
+    }
+
+    /// Shows the backend's current stage without inventing measurable progress.
+    pub fn set_stage(&self, description: &str) {
+        self.description.set_label(description);
     }
 
     /// Connects the action; navigation and resolution belong to the caller.

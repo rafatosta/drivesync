@@ -570,7 +570,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
     assert!(matches!(
         map_status(&value, false).overview,
-        Some(Overview::Checking { .. })
+        Some(Overview::Inactive { .. })
     ));
     assert_eq!(
         map_status(&value, true).overview,
