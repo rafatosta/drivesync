@@ -6,3 +6,5 @@ pub(crate) use widgets::{content, row, scroll, svg_icon};
 pub(crate) mod confirmation;
 
 pub(crate) mod remote_folder_picker;
+
+pub(crate) mod sync_overview;

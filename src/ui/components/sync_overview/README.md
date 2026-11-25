@@ -1,8 +1,9 @@
 # SyncOverview
 
-Standalone GTK4/libadwaita presentation. This module is deliberately not registered
-in the application's module tree until visual approval and a separate integration
-plan. The example includes the module directly; no existing component is changed.
+Standalone GTK4/libadwaita presentation. The user dashboard hosts a clearly labeled
+preview above its existing synchronization content whenever an account is selected.
+Its state selector uses simulated values only; it does not read account data or
+replace the existing status card. The isolated example remains available.
 
 `SyncOverview::new()` starts in Checking with an unknown count. Place `widget()`
 in a GTK container, call `set_state(SyncOverviewState)` on the GTK thread, and

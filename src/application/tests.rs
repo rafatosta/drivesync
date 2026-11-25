@@ -350,3 +350,42 @@ fn capture_dialog(window: &gtk::Window, name: &str) {
         .save_to_png(std::path::Path::new(&output).join(format!("{name}.png")))
         .unwrap();
 }
+
+/// Exercises the dashboard preview without starting account services.
+#[test]
+#[ignore = "requires an isolated GTK display"]
+fn dashboard_sync_overview_preview() {
+    adw::init().unwrap();
+    gtk::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
+    let nav = adw::NavigationView::new();
+    let dashboard = crate::ui::dashboard::fixture(&nav, &fixture_account());
+    let window = adw::ApplicationWindow::builder()
+        .default_width(960)
+        .default_height(720)
+        .build();
+    let accounts = find(dashboard.upcast_ref(), "dashboard-accounts")
+        .unwrap()
+        .downcast::<gtk::ListBox>()
+        .unwrap();
+    accounts.select_row(accounts.row_at_index(0).as_ref());
+    let preview = find(dashboard.upcast_ref(), "dashboard-sync-overview-preview").unwrap();
+    assert!(preview.is_visible());
+    let selector = find(&preview, "dashboard-sync-overview-state")
+        .unwrap()
+        .downcast::<gtk::DropDown>()
+        .unwrap();
+    let overview = find(&preview, "dashboard-sync-overview").unwrap();
+    for state in 0..4 {
+        selector.set_selected(state);
+        assert_eq!(find(&preview, "dashboard-sync-overview").unwrap(), overview);
+    }
+    selector.set_selected(1);
+    capture(&window, &dashboard, "dashboard-sync-overview");
+    accounts.select_row(accounts.row_at_index(1).as_ref());
+    assert!(preview.is_visible());
+    accounts.unselect_all();
+    assert!(!preview.is_visible());
+    window.close();
+}

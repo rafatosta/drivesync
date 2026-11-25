@@ -1885,3 +1885,15 @@ msgstr[1] "{n} itens precisam da sua atenção"
 msgctxt "Thousands separator"
 msgid ","
 msgstr "."
+
+#: src/ui/dashboard/pages/sync_overview_preview.rs
+msgid "Sync overview preview"
+msgstr "Prévia do resumo de sincronização"
+
+#: src/ui/dashboard/pages/sync_overview_preview.rs
+msgid "Simulated data for visual review"
+msgstr "Dados simulados para avaliação visual"
+
+#: src/ui/dashboard/pages/sync_overview_preview.rs
+msgid "Preview action received; no account changes were made"
+msgstr "Ação da prévia recebida; nenhuma alteração foi feita na conta"
