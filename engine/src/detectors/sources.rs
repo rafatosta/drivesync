@@ -337,7 +337,15 @@ async fn remote(
         };
         // Session acquisition can commit refreshed credentials: retain the ownership lease
         // and await its real completion before allowing a disconnect to remove the account.
-        let result = round.await;
+        let result = {
+            let _sample = crate::performance::Sample::begin(match mode {
+                RemoteObserveMode::Initial | RemoteObserveMode::Recovery => {
+                    "remote_full_mode_round"
+                }
+                RemoteObserveMode::Incremental => "remote_incremental_mode_round",
+            });
+            round.await
+        };
         generation += 1;
         let delay = match result {
             Ok(result) => {

@@ -112,6 +112,7 @@ impl Scanner {
     }
     /// Reads native paths and SHA-256 in bounded buffers, checking cancellation and stability.
     pub(crate) fn scan(&self, cancel: &CancellationToken) -> Result<ScanResult, ScanError> {
+        let _sample = crate::performance::Sample::begin("local_full_scan");
         if cancel.is_cancelled() {
             return Err(ScanError::Cancelled);
         }
@@ -322,6 +323,7 @@ fn hash(
     expected: &std::fs::Metadata,
     cancel: &CancellationToken,
 ) -> Result<Checksum, ScanError> {
+    let _sample = crate::performance::Sample::begin("local_sha256");
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)

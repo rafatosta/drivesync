@@ -134,6 +134,7 @@ impl Filesystem {
             return Err(invalid());
         }
         let checksum = if meta.is_file() {
+            let _sample = crate::performance::Sample::begin("operation_local_verification");
             let mut file = self.read(path)?;
             let before = file.metadata().map_err(error)?;
             let mut digest = Sha256::new();

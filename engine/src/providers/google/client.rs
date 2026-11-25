@@ -329,6 +329,7 @@ impl GoogleDriveClient {
         for (key, value) in extra {
             request = request.header(*key, value);
         }
+        let _sample = crate::performance::Sample::begin("provider_request");
         request.send().await.map_err(transport_failure)
     }
 

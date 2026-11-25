@@ -60,6 +60,7 @@ impl Context {
 
     /// Consumes only normalized observations; a completed scope can recheck many known items.
     pub(crate) fn consolidate(&self, observation: Observation) -> Result<Vec<File>, ContextError> {
+        let _sample = crate::performance::Sample::begin("context");
         match observation {
             Observation::Capture(capture) => self.build_capture(*capture),
             observation => self.build(observation).map(|file| vec![file]),

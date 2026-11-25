@@ -99,6 +99,7 @@ impl Inventory {
 
     /// Atomically records a typed operation effect with optional optimistic revision checking.
     pub(crate) fn write(&self, request: InventoryWrite) -> InventoryWriteResult {
+        let _sample = crate::performance::Sample::begin("inventory_write");
         if request.identity.account_id != self.account_id {
             return InventoryWriteResult::new(WriteStatus::Rejected, None, request.recorded_at);
         }

@@ -22,6 +22,7 @@ pub(crate) use models::{
 
 /// Analyzes one File using only its consolidated evidence and persisted baseline.
 pub(crate) fn analyze(file: &File) -> Decision {
+    let _sample = crate::performance::Sample::begin("analysis");
     let validation = validate(file);
     let changeset = compare(file);
     if validation.status != ValidationStatus::InvalidInput

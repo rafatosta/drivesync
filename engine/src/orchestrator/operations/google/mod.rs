@@ -944,6 +944,7 @@ impl GoogleOperator {
         etag: Option<&str>,
         journal: Option<&dyn ExecutionJournal>,
     ) -> Result<GoogleFile, OperatorError> {
+        let _sample = crate::performance::Sample::begin("upload_transfer");
         use std::io::{Seek, SeekFrom};
         fs.check(&r.local).map_err(OperatorError::uncertain)?;
         let mut input = fs.read(
@@ -1035,6 +1036,7 @@ async fn receive_verified(
     size: u64,
     expected: &str,
 ) -> Result<(), OperatorError> {
+    let _sample = crate::performance::Sample::begin("download_transfer_and_verification");
     let mut digest = Sha256::new();
     let mut count = 0u64;
     while let Some(bytes) = stream.next_chunk().await.map_err(read_error)? {

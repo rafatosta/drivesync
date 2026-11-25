@@ -154,6 +154,7 @@ impl GoogleObserver {
         Ok(())
     }
     async fn begin(&self, session: &GoogleSession) -> Result<Capture, RemoteObserverError> {
+        let _sample = crate::performance::Sample::begin("google_full_capture_start");
         // The checkpoint precedes listing so changes during capture cannot fall into a gap.
         let checkpoint = self
             .client
@@ -214,6 +215,7 @@ impl GoogleObserver {
         if state.capture.is_none() {
             self.root(session).await?;
             while pages < budget {
+                let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
                     .feed_token
                     .clone()
@@ -312,6 +314,7 @@ impl GoogleObserver {
             if capture.pages_read >= 100_000 {
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
+            let _sample = crate::performance::Sample::begin("google_full_capture_page");
             let quote = parent.0.replace('\\', "\\\\").replace('\'', "\\'");
             let response = self
                 .client

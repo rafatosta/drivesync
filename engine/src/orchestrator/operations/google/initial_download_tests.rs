@@ -26,21 +26,51 @@ use std::collections::BTreeMap;
 
 #[tokio::test]
 async fn three_level_initial_download_rechecks_children_and_reopens_without_replay() {
+    assert_initial_download(
+        vec![
+            ("a".into(), "remote-root".into(), None),
+            ("b".into(), "a".into(), None),
+            ("c".into(), "b".into(), None),
+            ("empty".into(), "a".into(), Some(String::new())),
+            ("large".into(), "c".into(), Some("data".repeat(262144))),
+        ],
+        6,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn hundred_independent_downloads_converge_and_reopen_without_replay() {
+    let entries = (0..100)
+        .map(|index| {
+            (
+                format!("file-{index:03}"),
+                "remote-root".to_owned(),
+                Some(format!("fixture {index}\n").repeat(4096)),
+            )
+        })
+        .collect();
+    assert_initial_download(entries, 101).await;
+}
+
+async fn assert_initial_download(fixture: Vec<(String, String, Option<String>)>, round_limit: u64) {
     let s = Sandbox::new();
     let mut executor = setup(&s);
     let config = executor.config.clone();
     let mut entries = BTreeMap::new();
-    for (id, name, parent, content) in [
-        ("a", "a", "remote-root", None),
-        ("b", "b", "a", None),
-        ("c", "c", "b", None),
-        ("empty", "empty", "a", Some(String::new())),
-        ("large", "large", "c", Some("data".repeat(262144))),
-    ] {
+    let mut expected_files = BTreeMap::new();
+    let fixture_size = fixture.len();
+    let mut paths = BTreeMap::from([("remote-root".to_owned(), std::path::PathBuf::new())]);
+    for (id, parent, content) in fixture {
+        let path = paths[&parent].join(&id);
+        paths.insert(id.clone(), path.clone());
+        if let Some(content) = &content {
+            expected_files.insert(path, content.clone());
+        }
         let directory = content.is_none();
         let content = content.unwrap_or_default();
-        let file: GoogleFile = serde_json::from_value(serde_json::json!({"id":id,"name":name,"parents":[parent],"mimeType":if directory {FOLDER} else {"application/octet-stream"},"version":"1","trashed":false,"size":content.len().to_string(),"sha256Checksum":format!("{:x}",Sha256::digest(content.as_bytes())),"capabilities":{"canDownload":true}})).unwrap();
-        entries.insert(id.to_owned(), (file, content));
+        let file: GoogleFile = serde_json::from_value(serde_json::json!({"id":id,"name":id,"parents":[parent],"mimeType":if directory {FOLDER} else {"application/octet-stream"},"version":"1","trashed":false,"size":content.len().to_string(),"sha256Checksum":format!("{:x}",Sha256::digest(content.as_bytes())),"capabilities":{"canDownload":true}})).unwrap();
+        entries.insert(id, (file, content));
     }
     let remote: Vec<_> = entries
         .values()
@@ -132,6 +162,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
         sources: BTreeMap::new(),
         recovery_failed: false,
         refresh_after: None,
+        refresh_wait: None,
     };
     let scanner = Scanner::open(config.local_root.clone(), config.sync_root_id.clone()).unwrap();
     let epoch = worker.capture_epoch.clone();
@@ -156,11 +187,18 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
     for pass in 0..2 {
         let context = Context::open(context_config()).unwrap();
         worker.refresh_after = None;
+        worker.refresh_wait = None;
         context
             .consolidate(capture(1, CaptureEntries::Remote(remote.clone())))
             .unwrap();
         // Fresh reads of the unchanged remote tree require no external mutation between levels.
-        for generation in 1..=6 {
+        let _sample = crate::performance::Sample::begin(if pass == 0 {
+            "fixture_initial_convergence"
+        } else {
+            "fixture_reopen_audit"
+        });
+        for generation in 1..=round_limit {
+            let refreshed = crate::performance::Sample::begin("fixture_capture_pair");
             context
                 .consolidate(capture(
                     generation + 1,
@@ -174,6 +212,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
                     CaptureEntries::Local(local.entries.into_values().collect()),
                 ))
                 .unwrap();
+            drop(refreshed);
             let mut published_parent = false;
             for file in files {
                 let result = worker.process(file).await;
@@ -190,22 +229,28 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
                 .await
                 .unwrap();
             }
+            let rows = inventory.enumerate(query.clone()).unwrap();
+            if rows.len() == fixture_size
+                && rows
+                    .iter()
+                    .all(|row| row.baseline.state == BaselineState::Synced)
+            {
+                break;
+            }
         }
         let rows = inventory.enumerate(query.clone()).unwrap();
-        assert_eq!(rows.len(), 5, "pass {pass}");
+        assert_eq!(rows.len(), fixture_size, "pass {pass}");
         assert!(rows
             .iter()
             .all(|r| r.baseline.state == BaselineState::Synced));
         assert!(rows.iter().all(|r| r.pending_operations.len() == 1
             && r.pending_operations[0].state == OperationState::Confirmed));
-        assert_eq!(
-            std::fs::read(config.local_root.join("a/empty")).unwrap(),
-            b""
-        );
-        assert_eq!(
-            std::fs::read(config.local_root.join("a/b/c/large")).unwrap(),
-            "data".repeat(262144).as_bytes()
-        );
+        for (path, content) in &expected_files {
+            assert_eq!(
+                std::fs::read(config.local_root.join(path)).unwrap(),
+                content.as_bytes()
+            );
+        }
         if pass == 0 {
             std::fs::write(s.0.join("before.json"), serde_json::to_vec(&rows).unwrap()).unwrap();
         } else {
@@ -222,7 +267,7 @@ async fn three_level_initial_download_rechecks_children_and_reopens_without_repl
             .iter()
             .filter(|r| r.contains("alt=media"))
             .count(),
-        2
+        expected_files.len()
     );
 }
 

@@ -155,6 +155,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             sources: BTreeMap::new(),
             recovery_failed: false,
             refresh_after: None,
+            refresh_wait: None,
         },
         stop,
     )

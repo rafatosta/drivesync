@@ -195,6 +195,7 @@ fn start_guarded(
         sources: BTreeMap::new(),
         recovery_failed: false,
         refresh_after: None,
+        refresh_wait: None,
     };
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
@@ -243,6 +244,7 @@ struct Orchestrator {
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
     recovery_failed: bool,
     refresh_after: Option<u64>,
+    refresh_wait: Option<crate::performance::Sample>,
 }
 impl Orchestrator {
     async fn run(&mut self, mut files: mpsc::Receiver<Command>, ownership: Arc<RwLock<()>>) {
@@ -350,11 +352,11 @@ impl Orchestrator {
                     if confirmed {
                         self.blockers
                             .retain(|_, (item, _)| !same_item(item, &result.item));
-                        self.refresh_after = Some(
-                            self.capture_epoch
-                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                                + 1,
-                        );
+                        let epoch = self
+                            .capture_epoch
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            + 1;
+                        self.wait_for_refresh(epoch);
                         self.local_refresh.notify_one();
                         self.remote_refresh.notify_one();
                     } else {
@@ -424,6 +426,11 @@ impl Orchestrator {
         self.blockers
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         self.blockers.insert(key(&item), (item, issue));
+    }
+    fn wait_for_refresh(&mut self, epoch: u64) {
+        self.refresh_after = Some(epoch);
+        self.refresh_wait
+            .get_or_insert_with(|| crate::performance::Sample::begin("post_operation_wait"));
     }
     fn refreshing_confirmed_update(&self) -> bool {
         let status = self.status.borrow();
@@ -526,6 +533,7 @@ impl Orchestrator {
         }
     }
     async fn process(&mut self, mut file: File) -> ProcessingOutcome {
+        let _sample = crate::performance::Sample::begin("process");
         let item = SynchronizationItem {
             item_id: file.identity.item_id.clone(),
             local_path: file.local.path.clone(),
@@ -565,6 +573,7 @@ impl Orchestrator {
             return outcome;
         }
         if let Some(epoch) = self.refresh_after {
+            let _sample = crate::performance::Sample::begin("post_operation_gate_check");
             if file.observations.local_epoch.is_none_or(|e| e < epoch)
                 || file.observations.remote_epoch.is_none_or(|e| e < epoch)
                 || file.observations.local_coverage != ObservationCoverage::Complete
@@ -587,6 +596,7 @@ impl Orchestrator {
                 return outcome;
             }
             self.refresh_after = None;
+            self.refresh_wait = None;
         }
         self.publish(
             SynchronizationState::Running,
@@ -949,7 +959,7 @@ impl Orchestrator {
                     if file.observations.local_epoch.is_some()
                         && file.observations.remote_epoch.is_some()
                     {
-                        self.refresh_after = Some(epoch);
+                        self.wait_for_refresh(epoch);
                     }
                     self.local_refresh.notify_one();
                     self.remote_refresh.notify_one();
@@ -970,7 +980,7 @@ impl Orchestrator {
                 if file.observations.local_epoch.is_some()
                     && file.observations.remote_epoch.is_some()
                 {
-                    self.refresh_after = Some(epoch);
+                    self.wait_for_refresh(epoch);
                 }
                 self.local_refresh.notify_one();
                 self.remote_refresh.notify_one();

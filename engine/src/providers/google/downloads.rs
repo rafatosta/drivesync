@@ -121,6 +121,7 @@ impl GoogleDriveClient {
             return Ok(());
         }
 
+        let _sample = crate::performance::Sample::begin("google_sha256_media_and_verification");
         let mut media = self.get_file_bytes(session, id, None).await?;
         let mut received = 0u64;
         let mut md5 = Md5::new();

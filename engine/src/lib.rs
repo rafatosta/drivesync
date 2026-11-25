@@ -20,5 +20,6 @@ pub use accounts::{
 };
 pub use connection::*;
 
+mod performance;
 mod synchronization;
 pub use synchronization::*;
