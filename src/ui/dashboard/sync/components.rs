@@ -13,24 +13,28 @@ fn label() -> gtk::Label {
 }
 /// A single surface for account status and its current operation.
 pub(super) fn feedback_card(status: &SyncStatus, activity: &SyncActivity) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.set_widget_name("dashboard-synchronization-feedback");
     card.add_css_class("card");
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    content.set_margin_top(16);
-    content.set_margin_bottom(16);
-    content.set_margin_start(16);
-    content.set_margin_end(16);
-    content.append(&status.widget);
-    content.append(&activity.widget);
-    card.append(&content);
+    activity.widget.set_margin_start(16);
+    activity.widget.set_margin_end(16);
+    activity.widget.set_margin_bottom(16);
+    card.append(&status.list);
+    card.append(&activity.widget);
     card
 }
+
+type DetailsCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
 #[derive(Clone)]
 /// Selected-scope summary. Only an audited backend may supply `Synced`.
 pub struct SyncStatus {
+    #[cfg(test)]
     pub widget: gtk::Box,
+    list: gtk::ListBox,
+    details_callback: DetailsCallback,
+    row: gtk::ListBoxRow,
+    chevron: gtk::Image,
     icon: gtk::Image,
     title: gtk::Label,
     description: gtk::Label,
@@ -55,8 +59,43 @@ impl SyncStatus {
         labels.append(&title);
         labels.append(&description);
         widget.append(&labels);
+        widget.set_hexpand(true);
+        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+        chevron.set_valign(gtk::Align::Center);
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        header.set_margin_top(12);
+        header.set_margin_bottom(12);
+        header.set_margin_start(12);
+        header.set_margin_end(12);
+        header.append(&widget);
+        header.append(&chevron);
+        let row = gtk::ListBoxRow::builder()
+            .child(&header)
+            .selectable(false)
+            .build();
+        row.set_widget_name("dashboard-synchronization-details");
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        list.append(&row);
+        let details_callback: DetailsCallback = Rc::default();
+        list.connect_row_activated({
+            let callback = details_callback.clone();
+            move |_, row| {
+                if row.is_activatable() {
+                    if let Some(callback) = callback.borrow().as_ref() {
+                        callback();
+                    }
+                }
+            }
+        });
         let value = Self {
+            #[cfg(test)]
             widget,
+            list,
+            details_callback,
+            row,
+            chevron,
             icon,
             title,
             description,
@@ -97,7 +136,27 @@ impl SyncStatus {
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
         self.description.set_visible(!description.is_empty());
+        let actionable = matches!(
+            state,
+            StatusView::Attention | StatusView::Failed | StatusView::Offline
+        );
+        self.chevron.set_visible(actionable);
+        self.row.set_activatable(actionable);
+        self.row.set_focusable(actionable);
+        self.row
+            .set_cursor_from_name(actionable.then_some("pointer"));
+        self.row.set_tooltip_text(
+            actionable
+                .then(|| gettext("Synchronization details"))
+                .as_deref(),
+        );
         *self.state.borrow_mut() = state;
+    }
+    pub fn connect_details(&self, callback: impl Fn() + 'static) {
+        *self.details_callback.borrow_mut() = Some(Box::new(callback));
+    }
+    pub fn diagnostic(&self) -> (String, String) {
+        (self.title.text().into(), self.description.text().into())
     }
     pub fn state(&self) -> StatusView {
         self.state.borrow().clone()
@@ -345,6 +404,9 @@ impl SyncAttention {
         }
         self.items.borrow_mut().clear();
         self.widget.set_visible(false);
+    }
+    pub fn items(&self) -> Vec<AttentionItemView> {
+        self.items.borrow().clone()
     }
     pub fn issue(&self, id: &str) -> Option<AttentionItemView> {
         self.items

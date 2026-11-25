@@ -3,9 +3,8 @@ use crate::{
     application::Context,
     ui::dashboard::sync::{
         backend::EngineAdapter,
-        components::SyncIssueDialog,
         controller::{DashboardController, SubscriptionTask},
-        models::{AttentionAction, IssueView, Severity, StatusView},
+        models::StatusView,
     },
 };
 use adw::{gtk, prelude::*};
@@ -41,12 +40,17 @@ impl SynchronizationView {
             task,
         }
     }
-    pub fn select(&self, context: &Context, account: Option<&Account>) {
+    pub fn select(
+        &self,
+        context: &Context,
+        navigation: &adw::NavigationView,
+        account: Option<&Account>,
+    ) {
         self.task.abort();
         for dialog in self.dialogs.borrow_mut().drain(..) {
             dialog.close();
         }
-        self.controller.attention.connect_activated(|_| {});
+        self.controller.status.connect_details(|| {});
         self.controller.reset();
         let engine = context.engine.borrow().clone();
         self.widget
@@ -56,49 +60,30 @@ impl SynchronizationView {
         };
         let controller = Rc::downgrade(&self.controller);
         let account = account.clone();
-        self.controller.attention.connect_activated({
+        let local_folder = Rc::new(RefCell::new(None));
+        self.controller.status.connect_details({
             let engine = engine.clone();
             let account = account.clone();
-            let parent = self.widget.downgrade();
+            let navigation = navigation.downgrade();
+            let context = context.clone();
             let dialogs = self.dialogs.clone();
             let controller = controller.clone();
-            move |action| {
-                let Some(parent) = parent.upgrade() else {
+            let local_folder = local_folder.clone();
+            move || {
+                let (Some(navigation), Some(controller)) =
+                    (navigation.upgrade(), controller.upgrade())
+                else {
                     return;
                 };
-                match action {
-                    AttentionAction::OpenConflictList => {
-                        dialogs.borrow_mut().push(super::conflicts::present(
-                            &parent,
-                            engine.clone(),
-                            account.clone(),
-                        ));
-                    }
-                    AttentionAction::OpenIssue(id) => {
-                        let Some(issue) = controller
-                            .upgrade()
-                            .and_then(|controller| controller.attention.issue(&id))
-                        else {
-                            return;
-                        };
-                        let dialog = SyncIssueDialog::new();
-                        dialog.window.set_transient_for(
-                            parent.root().and_downcast::<gtk::Window>().as_ref(),
-                        );
-                        dialog.set_issue(IssueView {
-                            severity: Severity::Warning,
-                            title: issue.title,
-                            description: issue.summary,
-                            guidance: (id == "recovery-blocker").then(|| {
-                                gettextrs::gettext(
-                                    "Keep the current copies while DriveSync checks the result.",
-                                )
-                            }),
-                        });
-                        dialog.present();
-                        dialogs.borrow_mut().push(dialog.window);
-                    }
-                }
+                super::diagnostic::show(
+                    &navigation,
+                    &context,
+                    &engine,
+                    &account,
+                    &controller,
+                    local_folder.borrow().as_deref(),
+                    &dialogs,
+                );
             }
         });
         self.task.set(gtk::glib::spawn_future_local(async move {
@@ -116,7 +101,12 @@ impl SynchronizationView {
                     StatusView::Stopped,
                     &gettextrs::gettext("Configure folders to prepare synchronization."),
                 ),
-                Err(error) => controller.status.set_state(StatusView::Failed, &error),
+                Err(error) => {
+                    *local_folder.borrow_mut() = error.local_folder;
+                    controller
+                        .status
+                        .set_state(StatusView::Failed, &error.message);
+                }
             }
         }));
     }

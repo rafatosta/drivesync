@@ -108,9 +108,12 @@ fn build_with_accounts(
     sidebar.on_selected({
         let context = context.clone();
         let synchronization = synchronization.clone();
+        let navigation = navigation.downgrade();
         let title = title.downgrade();
         move |account| {
-            synchronization.select(&context, account.as_ref());
+            if let Some(navigation) = navigation.upgrade() {
+                synchronization.select(&context, &navigation, account.as_ref());
+            }
             if let Some(title) = title.upgrade() {
                 title.set_title(
                     account

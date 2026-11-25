@@ -1687,3 +1687,15 @@ msgstr[1] "{count} conflitos não resolvidos."
 
 msgid "{completed} of {total} confirmed steps for this item"
 msgstr "{completed} de {total} etapas confirmadas deste item"
+
+msgid "Synchronization details"
+msgstr "Detalhes da sincronização"
+
+msgid "Detected problem"
+msgstr "Problema detectado"
+
+msgid "DriveSync could not determine the cause of the synchronization failure."
+msgstr "O DriveSync não conseguiu identificar a causa da falha de sincronização."
+
+msgid "Configure folders"
+msgstr "Configurar pastas"

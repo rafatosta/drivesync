@@ -8,3 +8,5 @@ mod account_menu;
 mod synchronization;
 
 mod conflicts;
+
+mod diagnostic;

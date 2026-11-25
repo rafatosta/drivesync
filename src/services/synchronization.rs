@@ -7,17 +7,52 @@ use drivesync_engine::{
 };
 use gettextrs::gettext;
 
+pub(crate) struct StartFailure {
+    pub message: String,
+    pub local_folder: Option<String>,
+}
+
+impl From<String> for StartFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            local_folder: None,
+        }
+    }
+}
+
 /// Starts only a completed saved scope. Opening a dashboard never grants an initial association.
-pub(crate) async fn ensure_started(engine: &Engine, account: &AccountId) -> Result<bool, String> {
+pub(crate) async fn ensure_started(
+    engine: &Engine,
+    account: &AccountId,
+) -> Result<bool, StartFailure> {
     let Some(config) = super::configuration::load(account).await.map_err(|_| {
         gettext("Saved configuration could not be read. Your account has been preserved.")
     })?
     else {
         return Ok(false);
     };
+    let folder_failure = |message| StartFailure {
+        message,
+        local_folder: Some(super::local_folder::display(&config.local_uri)),
+    };
+    let start_failure = |error: drivesync_engine::EngineError| {
+        let message = crate::core::messages::engine_error(&error);
+        match error.kind {
+            EngineErrorKind::Synchronization(
+                SynchronizationErrorKind::LocalRootUnavailable
+                | SynchronizationErrorKind::RootInUse,
+            ) => folder_failure(message),
+            _ => StartFailure::from(message),
+        }
+    };
     let path = gio::File::for_uri(&config.local_uri)
         .path()
-        .ok_or_else(|| gettext("The selected folder is unavailable. Choose another folder."))?;
+        .ok_or_else(|| {
+            folder_failure(gettext(
+                "The selected folder is unavailable. Choose another folder.",
+            ))
+        })?;
     let request = StartSynchronizationRequest {
         account_id: account.clone(),
         local_root: path,
@@ -36,9 +71,9 @@ pub(crate) async fn ensure_started(engine: &Engine, account: &AccountId) -> Resu
             engine
                 .start_synchronization(request)
                 .await
-                .map_err(|e| crate::core::messages::engine_error(&e))?;
+                .map_err(start_failure)?;
         }
-        Err(error) => return Err(crate::core::messages::engine_error(&error)),
+        Err(error) => return Err(start_failure(error)),
     }
     Ok(true)
 }

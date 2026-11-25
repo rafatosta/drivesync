@@ -293,6 +293,20 @@ fn isolated_components_and_fake_backend() {
         assert_eq!(controller.activity.state(), Some(measured));
         let card = controller.widget.first_child().unwrap();
         assert_eq!(card.widget_name(), "dashboard-synchronization-feedback");
+        let details = card
+            .first_child()
+            .and_downcast::<gtk::ListBox>()
+            .unwrap()
+            .row_at_index(0)
+            .unwrap();
+        let chevron = details.child().unwrap().last_child().unwrap();
+        let activations = std::rc::Rc::new(std::cell::Cell::new(0));
+        controller.status.connect_details({
+            let activations = activations.clone();
+            move || activations.set(activations.get() + 1)
+        });
+        assert!(!details.is_activatable());
+        assert!(!chevron.is_visible());
         let progress = controller
             .activity
             .widget
@@ -309,6 +323,14 @@ fn isolated_components_and_fake_backend() {
         window.present();
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
         save_window(&window, "fixture-dashboard-pt-br.png");
+        controller
+            .status
+            .set_state(StatusView::Failed, "Folder unavailable");
+        assert!(details.is_activatable());
+        assert!(chevron.is_visible());
+        details.emit_by_name::<()>("activate", &[]);
+        assert_eq!(activations.get(), 1);
+        assert_eq!(controller.status.diagnostic().1, "Folder unavailable");
         let conflict = controller.present_conflict(
             ConflictView {
                 id: "fixture-conflict".into(),
@@ -330,6 +352,7 @@ fn isolated_components_and_fake_backend() {
         assert!(!controller.apply(snapshot));
         assert_eq!(controller.activity.state(), None);
         assert!(!progress.is_visible());
+        assert!(!details.is_activatable());
         let marker = std::rc::Rc::new(std::cell::Cell::new(false));
         struct OnDrop(std::rc::Rc<std::cell::Cell<bool>>);
         impl Drop for OnDrop {
