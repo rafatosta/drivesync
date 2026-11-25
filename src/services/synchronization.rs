@@ -124,6 +124,7 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
                 SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
                 SynchronizationWait::FreshObservations => gettext("Checking the computer and Drive again after the last operation."),
                 SynchronizationWait::CompleteObservations => gettext("Waiting for complete scans of the computer and Drive before applying changes."),
+                SynchronizationWait::DirectoryVerification => gettext("Waiting for enough information to verify the folder on the computer and on Drive."),
                 SynchronizationWait::ComparableVersions => gettext("The current versions could not be compared with the last confirmed versions."),
             },
             SynchronizationIssueKind::Conflict => gettext("Review the local and Drive versions to resolve the conflict."),

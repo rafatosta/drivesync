@@ -81,6 +81,8 @@ pub enum SynchronizationWait {
     RemoteObservation,
     FreshObservations,
     CompleteObservations,
+    /// The folder has a confirmed counterpart, but its current metadata is inconclusive.
+    DirectoryVerification,
     ComparableVersions,
 }
 

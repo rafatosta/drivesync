@@ -1738,3 +1738,6 @@ msgstr "Aguardando o fim das verificações no computador e no Drive."
 
 msgid "Waiting for verification"
 msgstr "Aguardando verificação"
+
+msgid "Waiting for enough information to verify the folder on the computer and on Drive."
+msgstr "Aguardando dados para verificar a pasta no computador e no Drive."

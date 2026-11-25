@@ -667,7 +667,14 @@ impl Orchestrator {
                                     == crate::inventory::models::BaselineState::Synced =>
                             {
                                 SynchronizationIssueKind::DeferredFor(
-                                    SynchronizationWait::ComparableVersions,
+                                    if file.baseline.local.as_ref().is_some_and(|local| {
+                                        local.kind
+                                            == Evidence::Known(crate::models::FileKind::Directory)
+                                    }) {
+                                        SynchronizationWait::DirectoryVerification
+                                    } else {
+                                        SynchronizationWait::ComparableVersions
+                                    },
                                 )
                             }
                             _ => SynchronizationIssueKind::Deferred,

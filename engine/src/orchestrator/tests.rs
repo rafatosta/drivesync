@@ -652,3 +652,52 @@ async fn trash_refusal_requires_an_operation_dispatched_to_the_executor() {
         SynchronizationIssueKind::TrashRefused
     );
 }
+
+#[tokio::test]
+async fn a_confirmed_directory_waits_for_metadata_and_resumes_without_another_operation() {
+    use crate::models::FileKind;
+
+    let (operator, calls) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut file = fixture();
+    file.local.path = Some("UEFS".into());
+    file.local.name = Evidence::Known("UEFS".into());
+    file.local.parent = Evidence::Known(PathBuf::new());
+    file.local.kind = Evidence::Known(FileKind::Directory);
+    file.local.checksum = Evidence::NotApplicable;
+    file.local.size = Evidence::NotApplicable;
+    file.remote.name = Evidence::Known("UEFS".into());
+    file.remote.parents = Evidence::Known(vec![file.environment.remote_root_id.clone()]);
+    file.remote.mime_type = Evidence::Known("application/vnd.google-apps.folder".into());
+    file.remote.checksum = Evidence::NotApplicable;
+    file.remote.size = Evidence::NotApplicable;
+    file.baseline.local = Some(file.local.clone());
+    file.baseline.remote = Some(file.remote.clone());
+
+    file.remote.trashed = Evidence::NotCollected;
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::Defer
+    );
+    {
+        let status = worker.status.borrow();
+        assert_eq!(
+            status
+                .current_item
+                .as_ref()
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("UEFS")
+        );
+        assert_eq!(
+            status.issue.as_ref().unwrap().kind,
+            SynchronizationIssueKind::DeferredFor(SynchronizationWait::DirectoryVerification),
+        );
+    }
+
+    file.remote.trashed = Evidence::Known(false);
+    assert_eq!(worker.process(file).await.decision, DecisionStatus::NoOp);
+    assert!(worker.status.borrow().issue.is_none());
+    assert!(calls.requests.lock().unwrap().is_empty());
+}
