@@ -165,6 +165,7 @@ async fn assert_initial_download(
         sources: BTreeMap::new(),
         scanning_sources: Default::default(),
         recovery_failed: false,
+        complete_captures: BTreeMap::new(),
         refresh_after: None,
         refresh_wait: None,
         affected: Default::default(),

@@ -164,6 +164,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             sources: BTreeMap::new(),
             scanning_sources: BTreeSet::new(),
             recovery_failed: false,
+            complete_captures: BTreeMap::new(),
             refresh_after: None,
             refresh_wait: None,
             affected: Default::default(),
@@ -831,4 +832,53 @@ async fn finishing_the_local_scan_preserves_the_active_drive_scan() {
         worker.status.borrow().issue.as_ref().unwrap().kind,
         SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation)
     );
+}
+
+#[tokio::test]
+async fn post_operation_verification_requires_a_fresh_complete_capture_from_each_side() {
+    let (operator, _) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut subscription = SynchronizationSubscription {
+        receiver: worker.status.subscribe(),
+    };
+    worker.wait_for_refresh(2);
+    worker.publish(
+        SynchronizationState::Waiting,
+        SynchronizationActivity::None,
+        None,
+        None,
+        Some(issue(
+            SynchronizationIssueKind::DeferredFor(SynchronizationWait::FreshObservations),
+            true,
+        )),
+    );
+    let expected = |local_read, remote_read| {
+        Some(SynchronizationVerification {
+            local_read,
+            remote_read,
+        })
+    };
+    assert_eq!(subscription.current().verification, expected(false, false));
+
+    worker.record_capture(Source::Remote, Some(1));
+    assert!(!subscription.receiver.has_changed().unwrap());
+    worker.record_capture(Source::Local, Some(2));
+    assert!(subscription.receiver.has_changed().unwrap());
+    assert_eq!(subscription.current().verification, expected(true, false));
+
+    worker.record_capture(Source::Remote, Some(2));
+    assert_eq!(subscription.current().verification, expected(true, true));
+    worker.record_capture(Source::Local, None);
+    assert_eq!(subscription.current().verification, expected(false, true));
+
+    worker.wait_for_refresh(3);
+    assert_eq!(worker.verification(), expected(false, false).unwrap());
+    worker.publish(
+        SynchronizationState::Idle,
+        SynchronizationActivity::None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(subscription.current().verification, None);
 }

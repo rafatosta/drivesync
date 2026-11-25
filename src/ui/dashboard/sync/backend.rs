@@ -178,6 +178,10 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         && status.current_operation.is_none()
         && status.current_item.is_none()
         && issue.is_none();
+    let checking_after_operation = status.activity == A::Applying
+        && status
+            .verification
+            .is_some_and(|check| !check.local_read || !check.remote_read);
     let effective_state = if background { S::Idle } else { status.state };
     let state = match (effective_state, issue) {
         (S::Waiting, _) if audited && observing => StatusView::Synced,
@@ -190,7 +194,9 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         }
         (_, Some(_)) => StatusView::Attention,
         (S::Running, None) if status.activity == A::Recovering => StatusView::Recovering,
-        (S::Running, None) if is_background_check(status) => StatusView::Checking,
+        (S::Running, None) if checking_after_operation || is_background_check(status) => {
+            StatusView::Checking
+        }
         (S::Running, None) => StatusView::Synchronizing,
         (S::Idle, None) if audited => StatusView::Synced,
         (S::Idle, None) => StatusView::VerificationIncomplete,
@@ -387,6 +393,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         gettext("Your files are up to date on this computer and on Drive.")
     } else if state == StatusView::VerificationIncomplete {
         incomplete_description(None)
+    } else if state == StatusView::Checking && checking_after_operation && issue.is_none() {
+        crate::services::synchronization::verification_description(status.verification)
     } else if activity.is_some() && status.issue.is_none() {
         String::new()
     } else {

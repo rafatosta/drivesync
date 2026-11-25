@@ -130,7 +130,7 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
                     gettext("The Drive scan did not finish. DriveSync will try again."),
                 SynchronizationWait::LocalObservation => gettext("Waiting for a complete scan of the computer."),
                 SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
-                SynchronizationWait::FreshObservations => gettext("Checking the computer and Drive again after the last operation."),
+                SynchronizationWait::FreshObservations => verification_description(status.verification),
                 SynchronizationWait::CompleteObservations => gettext("Waiting for complete scans of the computer and Drive before applying changes."),
                 SynchronizationWait::ItemVerification { source, confirmed_action } => item_verification(source, confirmed_action),
             },
@@ -155,6 +155,27 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
         }
         _ => gettext("Waiting for observations."),
     }
+}
+
+pub(crate) fn verification_description(
+    verification: Option<drivesync_engine::SynchronizationVerification>,
+) -> String {
+    use drivesync_engine::SynchronizationVerification as Verification;
+    gettext(match verification {
+        Some(Verification {
+            local_read: true,
+            remote_read: false,
+        }) => "Computer scan complete. Checking Drive…",
+        Some(Verification {
+            local_read: false,
+            remote_read: true,
+        }) => "Drive scan complete. Checking the computer…",
+        Some(Verification {
+            local_read: true,
+            remote_read: true,
+        }) => "Scans complete. Checking the result of the last operation…",
+        _ => "Checking the computer and Drive again after the last operation.",
+    })
 }
 
 fn item_verification(
@@ -226,6 +247,7 @@ mod tests {
             current_item: None,
             current_operation: None,
             progress: None,
+            verification: None,
             issue: None,
             updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
         };
@@ -278,6 +300,7 @@ mod tests {
             }),
             current_operation: None,
             progress: None,
+            verification: None,
             issue: Some(SynchronizationIssue {
                 kind: SynchronizationIssueKind::Unsupported(Some(
                     SynchronizationProjectionIssue::MissingRemoteContentEvidence,

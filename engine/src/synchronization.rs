@@ -216,6 +216,12 @@ pub enum SynchronizationRenameOrigin {
     Local,
     Remote,
 }
+/// Complete source readings collected after the effects awaiting verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SynchronizationVerification {
+    pub local_read: bool,
+    pub remote_read: bool,
+}
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationStatus {
@@ -225,6 +231,8 @@ pub struct SynchronizationStatus {
     pub current_item: Option<SynchronizationItem>,
     pub current_operation: Option<SynchronizationOperation>,
     pub progress: Option<SynchronizationProgress>,
+    /// Readings for the current post-operation check, independent of transfer progress.
+    pub verification: Option<SynchronizationVerification>,
     pub issue: Option<SynchronizationIssue>,
     pub updated_at: DateTime,
 }
@@ -237,6 +245,7 @@ impl SynchronizationStatus {
             current_item: None,
             current_operation: None,
             progress: None,
+            verification: None,
             issue: None,
             updated_at: crate::orchestrator::timestamp(),
         }

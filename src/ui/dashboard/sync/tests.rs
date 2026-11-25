@@ -447,6 +447,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         current_item: None,
         current_operation: None,
         progress: None,
+        verification: None,
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
@@ -677,6 +678,7 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
         }),
         current_operation: None,
         progress: None,
+        verification: None,
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
@@ -770,6 +772,7 @@ fn directory_creation_reports_real_phase_without_transfer_progress() {
                     completed: 1,
                     total: 2,
                 }),
+                verification: None,
                 issue: None,
                 updated_at: Timestamp { unix_millis: 0 },
             };
@@ -900,6 +903,7 @@ fn trash_activity_and_attention_follow_public_evidence() {
             trash: Some(D::Local),
         }),
         progress: None,
+        verification: None,
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
@@ -946,6 +950,7 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
         }),
         current_operation: None,
         progress: None,
+        verification: None,
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
@@ -994,6 +999,7 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
         }),
         current_operation: None,
         progress: None,
+        verification: None,
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
@@ -1062,10 +1068,38 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
 
     status.issue.as_mut().unwrap().kind =
         SynchronizationIssueKind::DeferredFor(SynchronizationWait::FreshObservations);
-    let confirming = map_status(&status, false);
-    assert_eq!(confirming.status, StatusView::Checking);
-    assert!(confirming.description.contains("Relatório.docx"));
-    assert!(confirming.description.contains(&gettextrs::gettext(
-        "Checking the computer and Drive again after the last operation."
-    )));
+    for (local_read, remote_read, text) in [
+        (
+            false,
+            false,
+            "Checking the computer and Drive again after the last operation.",
+        ),
+        (true, false, "Computer scan complete. Checking Drive…"),
+        (false, true, "Drive scan complete. Checking the computer…"),
+        (
+            true,
+            true,
+            "Scans complete. Checking the result of the last operation…",
+        ),
+    ] {
+        status.verification = Some(drivesync_engine::SynchronizationVerification {
+            local_read,
+            remote_read,
+        });
+        let confirming = map_status(&status, false);
+        assert_eq!(confirming.status, StatusView::Checking);
+        assert!(confirming.description.contains("Relatório.docx"));
+        assert!(confirming.description.contains(&gettextrs::gettext(text)));
+    }
+
+    status.state = SynchronizationState::Running;
+    status.activity = SynchronizationActivity::Applying;
+    status.issue = None;
+    status.verification.as_mut().unwrap().remote_read = false;
+    let applying = map_status(&status, false);
+    assert_eq!(applying.status, StatusView::Checking);
+    assert_eq!(
+        applying.description,
+        gettextrs::gettext("Computer scan complete. Checking Drive…")
+    );
 }

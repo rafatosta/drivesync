@@ -1709,6 +1709,15 @@ msgstr "Aguardando uma verificação completa no Drive."
 msgid "Checking the computer and Drive again after the last operation."
 msgstr "Conferindo o resultado da última operação no computador e no Drive."
 
+msgid "Computer scan complete. Checking Drive…"
+msgstr "Leitura no computador concluída. Verificando o Drive…"
+
+msgid "Drive scan complete. Checking the computer…"
+msgstr "Leitura no Drive concluída. Verificando o computador…"
+
+msgid "Scans complete. Checking the result of the last operation…"
+msgstr "Leituras concluídas. Conferindo o resultado da última operação…"
+
 msgid "Waiting for complete scans of the computer and Drive before applying changes."
 msgstr "Aguardando a conclusão das verificações no computador e no Drive para aplicar alterações."
 

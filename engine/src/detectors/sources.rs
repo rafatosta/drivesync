@@ -124,6 +124,18 @@ async fn deliver(
         if cancel.is_cancelled() || handle.is_finished() {
             return false;
         }
+        let capture = match &observation {
+            Observation::Capture(capture) => {
+                let source = match &capture.entries {
+                    CaptureEntries::Local(_) => Source::Local,
+                    CaptureEntries::Remote(_) => Source::Remote,
+                };
+                let complete_epoch = (capture.coverage == ObservationCoverage::Complete)
+                    .then_some(capture.collect_epoch);
+                Some((source, complete_epoch))
+            }
+            _ => None,
+        };
         let files = match detectors.clone().contextualize_batch(observation).await {
             Ok(file) => file,
             Err(_) => {
@@ -132,6 +144,17 @@ async fn deliver(
                 return true;
             }
         };
+        if let Some((source, complete_epoch)) = capture {
+            tokio::select! {
+                biased;
+                _ = cancelled(cancel) => return false,
+                result = handle.source_capture(source, complete_epoch) => {
+                    if result.is_err() {
+                        return false;
+                    }
+                }
+            }
+        }
         for file in files {
             tokio::select! {biased;_=cancelled(cancel)=>return false,result=handle.submit(file)=>if result.is_err(){return false;}}
         }

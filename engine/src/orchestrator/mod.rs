@@ -103,6 +103,16 @@ impl OrchestratorHandle {
             .await
             .map_err(|_| SynchronizationErrorKind::Stopped)
     }
+    pub(crate) async fn source_capture(
+        &self,
+        source: Source,
+        complete_epoch: Option<u64>,
+    ) -> Result<(), SynchronizationErrorKind> {
+        self.files
+            .send(Command::Capture(source, complete_epoch))
+            .await
+            .map_err(|_| SynchronizationErrorKind::Stopped)
+    }
     /// Stops accepting work, drains only the currently executing step, and waits for termination.
     pub(crate) async fn stop(&self) -> SynchronizationStatus {
         self.stop.send_replace(true);
@@ -195,6 +205,7 @@ fn start_guarded(
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
         scanning_sources: BTreeSet::new(),
+        complete_captures: BTreeMap::new(),
         recovery_failed: false,
         refresh_after: None,
         refresh_wait: None,
@@ -209,6 +220,7 @@ fn start_guarded(
             let mut failure = status.borrow().clone();
             failure.state = SynchronizationState::Failed;
             failure.activity = SynchronizationActivity::None;
+            failure.verification = None;
             failure.issue = Some(issue(SynchronizationIssueKind::WorkerFailed, false));
             failure.updated_at = timestamp();
             status.send_replace(failure);
@@ -234,6 +246,7 @@ pub(crate) enum Source {
 enum Command {
     File(Box<File>),
     Source(Source, bool, Option<SynchronizationIssue>),
+    Capture(Source, Option<u64>),
 }
 struct Orchestrator {
     _writer: Option<Arc<dyn Send + Sync>>,
@@ -247,6 +260,7 @@ struct Orchestrator {
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
     scanning_sources: BTreeSet<Source>,
+    complete_captures: BTreeMap<Source, u64>,
     recovery_failed: bool,
     refresh_after: Option<u64>,
     refresh_wait: Option<crate::performance::Sample>,
@@ -279,7 +293,11 @@ impl Orchestrator {
                 Command::File(file) => {
                     self.process(*file).await;
                 }
+                Command::Capture(source, epoch) => self.record_capture(source, epoch),
                 Command::Source(source, scanning, issue) => {
+                    if !scanning && issue.is_some() {
+                        self.record_capture(source, None);
+                    }
                     if source == Source::Remote
                         && issue.is_none()
                         && (self.recovery_failed
@@ -378,6 +396,45 @@ impl Orchestrator {
             }
         }
     }
+    fn record_capture(&mut self, source: Source, epoch: Option<u64>) {
+        match epoch {
+            Some(epoch) => {
+                self.complete_captures.insert(source, epoch);
+            }
+            None => {
+                self.complete_captures.remove(&source);
+            }
+        }
+        self.status.send_if_modified(|status| {
+            if status.verification.is_none() {
+                return false;
+            }
+            let verification = self.verification();
+            if status.verification == Some(verification) {
+                return false;
+            }
+            status.verification = Some(verification);
+            status.updated_at = timestamp();
+            true
+        });
+    }
+
+    fn verification(&self) -> SynchronizationVerification {
+        let required = self
+            .affected
+            .latest_epoch()
+            .max(self.refresh_after.unwrap_or(0));
+        let read = |source| {
+            self.complete_captures
+                .get(&source)
+                .is_some_and(|epoch| *epoch >= required)
+        };
+        SynchronizationVerification {
+            local_read: read(Source::Local),
+            remote_read: read(Source::Remote),
+        }
+    }
+
     fn publish(
         &self,
         state: SynchronizationState,
@@ -393,6 +450,15 @@ impl Orchestrator {
             current_item: item,
             current_operation: None,
             progress,
+            verification: issue
+                .as_ref()
+                .is_some_and(|issue| {
+                    issue.kind
+                        == SynchronizationIssueKind::DeferredFor(
+                            SynchronizationWait::FreshObservations,
+                        )
+                })
+                .then(|| self.verification()),
             issue,
             updated_at: timestamp(),
         });
@@ -412,6 +478,9 @@ impl Orchestrator {
             current_item: Some(item.clone()),
             current_operation: Some(operation.clone()),
             progress: Some(SynchronizationProgress { completed, total }),
+            verification: (activity == SynchronizationActivity::Applying
+                && (self.refresh_after.is_some() || self.affected.pending()))
+            .then(|| self.verification()),
             issue: None,
             updated_at: timestamp(),
         });

@@ -130,6 +130,10 @@ impl Refresh {
         self.affected.retain(|(epoch, _)| *epoch > self.floor);
     }
 
+    pub(super) fn latest_epoch(&self) -> u64 {
+        self.affected.last().map_or(self.floor, |(epoch, _)| *epoch)
+    }
+
     pub(super) fn pending(&self) -> bool {
         !self.affected.is_empty()
     }
