@@ -134,19 +134,18 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         SynchronizationActivity as A, SynchronizationIssueKind as I, SynchronizationState as S,
     };
     let scope = status.account_id.0.clone();
-    let state = if status.issue.is_some() {
-        StatusView::Attention
-    } else {
-        match status.state {
-            S::Stopped => StatusView::Stopped,
-            S::Failed => StatusView::Failed,
-            S::Running if status.activity == A::Recovering => StatusView::Recovering,
-            S::Running if status.activity == A::Scanning => StatusView::Scanning,
-            S::Running => StatusView::Synchronizing,
-            S::Idle if audited => StatusView::Synced,
-            S::Idle => StatusView::Waiting,
-            _ => StatusView::Initializing,
+    let state = match (status.state, status.issue.as_ref().map(|issue| issue.kind)) {
+        (S::Stopped, _) => StatusView::Stopped,
+        (S::Failed, _) => StatusView::Failed,
+        (_, Some(I::Deferred | I::DeferredFor(_) | I::PreconditionFailed)) | (S::Waiting, None) => {
+            StatusView::WaitingForEvidence
         }
+        (_, Some(_)) => StatusView::Attention,
+        (S::Running, None) if status.activity == A::Recovering => StatusView::Recovering,
+        (S::Running, None) if status.activity == A::Scanning => StatusView::Scanning,
+        (S::Running, None) => StatusView::Synchronizing,
+        (S::Idle, None) if audited => StatusView::Synced,
+        (S::Idle, None) => StatusView::Waiting,
     };
     let activity = if status.state == S::Running {
         status.current_item.as_ref().and_then(|item| {
@@ -355,6 +354,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     let attention = status
         .issue
         .as_ref()
+        .filter(|_| matches!(state, StatusView::Attention | StatusView::Failed))
         .map(|issue| AttentionItemView {
             scope: scope.clone(),
             id: blocker_id.into(),

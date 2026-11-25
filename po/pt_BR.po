@@ -1735,3 +1735,6 @@ msgstr "Verificando alterações no computador e no Drive…"
 
 msgid "Waiting for the computer and Drive scans to finish."
 msgstr "Aguardando o fim das verificações no computador e no Drive."
+
+msgid "Waiting for verification"
+msgstr "Aguardando verificação"

@@ -47,6 +47,7 @@ fn isolated_components_and_fake_backend() {
             StatusView::Initializing,
             StatusView::Scanning,
             StatusView::Waiting,
+            StatusView::WaitingForEvidence,
             StatusView::Synchronizing,
             StatusView::Synced,
             StatusView::Attention,
@@ -274,6 +275,7 @@ fn isolated_components_and_fake_backend() {
     gtk::glib::MainContext::default().block_on(async {
         let controller = DashboardController::new();
         let mut measured = activity();
+        measured.name = "Relatório.docx".into();
         measured.progress = ProgressView::Steps {
             completed: 1,
             total: 4,
@@ -281,7 +283,7 @@ fn isolated_components_and_fake_backend() {
         let snapshot = Snapshot {
             scope: "fixture-a".into(),
             status: StatusView::Synchronizing,
-            description: "Baixando".into(),
+            description: String::new(),
             activity: Some(measured.clone()),
             attention: vec![],
         };
@@ -299,6 +301,7 @@ fn isolated_components_and_fake_backend() {
             .unwrap()
             .row_at_index(0)
             .unwrap();
+        assert!(controller.activity.widget.is_ancestor(&details));
         let chevron = details.child().unwrap().last_child().unwrap();
         let activations = std::rc::Rc::new(std::cell::Cell::new(0));
         controller.status.connect_details({
@@ -323,6 +326,15 @@ fn isolated_components_and_fake_backend() {
         window.present();
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
         save_window(&window, "fixture-dashboard-pt-br.png");
+        controller.activity.clear();
+        controller.status.set_state(
+            StatusView::WaitingForEvidence,
+            "Relatório.docx — Aguardando uma verificação completa no Drive.",
+        );
+        assert!(!details.is_activatable());
+        assert!(!chevron.is_visible());
+        gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
+        save_window(&window, "fixture-dashboard-waiting-pt-br.png");
         controller
             .status
             .set_state(StatusView::Failed, "Folder unavailable");
@@ -935,12 +947,12 @@ fn remote_only_item_is_named_during_analysis_and_when_waiting_for_drive() {
         retryable: true,
     });
     let waiting = map_status(&status, false);
-    assert_eq!(waiting.status, StatusView::Attention);
+    assert_eq!(waiting.status, StatusView::WaitingForEvidence);
     assert!(waiting.activity.is_none());
     assert!(waiting.description.contains("Relatório.docx"));
     assert!(waiting
         .description
         .contains(&gettextrs::gettext("Waiting for a complete scan on Drive.")));
     assert!(!waiting.description.contains("opaque-drive-id"));
-    assert_eq!(waiting.attention[0].summary, waiting.description);
+    assert!(waiting.attention.is_empty());
 }

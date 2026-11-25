@@ -15,12 +15,8 @@ fn label() -> gtk::Label {
 pub(super) fn feedback_card(status: &SyncStatus, activity: &SyncActivity) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.set_widget_name("dashboard-synchronization-feedback");
-    card.add_css_class("card");
-    activity.widget.set_margin_start(16);
-    activity.widget.set_margin_end(16);
-    activity.widget.set_margin_bottom(16);
+    status.labels.append(&activity.widget);
     card.append(&status.list);
-    card.append(&activity.widget);
     card
 }
 
@@ -33,6 +29,7 @@ pub struct SyncStatus {
     pub widget: gtk::Box,
     list: gtk::ListBox,
     details_callback: DetailsCallback,
+    labels: gtk::Box,
     row: gtk::ListBoxRow,
     chevron: gtk::Image,
     icon: gtk::Image,
@@ -45,17 +42,17 @@ impl SyncStatus {
         let widget = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let icon = gtk::Image::from_icon_name("view-refresh-symbolic");
         icon.set_pixel_size(24);
-        icon.set_size_request(40, 40);
-        icon.set_valign(gtk::Align::Center);
-        icon.add_css_class("circular");
+        icon.set_size_request(32, 26);
+        icon.set_valign(gtk::Align::Start);
         widget.append(&icon);
         let title = label();
         title.add_css_class("heading");
         title.set_widget_name("dashboard-synchronization-status");
         let description = label();
         description.add_css_class("dim-label");
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 4);
         labels.set_valign(gtk::Align::Center);
+        labels.set_hexpand(true);
         labels.append(&title);
         labels.append(&description);
         widget.append(&labels);
@@ -65,8 +62,8 @@ impl SyncStatus {
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         header.set_margin_top(12);
         header.set_margin_bottom(12);
-        header.set_margin_start(12);
-        header.set_margin_end(12);
+        header.set_margin_start(14);
+        header.set_margin_end(14);
         header.append(&widget);
         header.append(&chevron);
         let row = gtk::ListBoxRow::builder()
@@ -94,6 +91,7 @@ impl SyncStatus {
             widget,
             list,
             details_callback,
+            labels,
             row,
             chevron,
             icon,
@@ -109,6 +107,7 @@ impl SyncStatus {
             StatusView::Initializing => "Preparing synchronization…",
             StatusView::Scanning => "Scanning files…",
             StatusView::Waiting => "Waiting for changes",
+            StatusView::WaitingForEvidence => "Waiting for verification",
             StatusView::Recovering => "Checking interrupted operations…",
             StatusView::Synchronizing => "Synchronizing…",
             StatusView::Synced => "Everything synchronized",
@@ -121,6 +120,7 @@ impl SyncStatus {
             StatusView::Synced => "emblem-ok-symbolic",
             StatusView::Attention | StatusView::Failed => "dialog-warning-symbolic",
             StatusView::Offline => "network-offline-symbolic",
+            StatusView::Waiting | StatusView::WaitingForEvidence => "document-open-recent-symbolic",
             _ => "view-refresh-symbolic",
         }));
         for class in ["accent", "success", "warning", "error", "dim-label"] {
@@ -130,7 +130,10 @@ impl SyncStatus {
             StatusView::Synced => "success",
             StatusView::Attention => "warning",
             StatusView::Failed => "error",
-            StatusView::Waiting | StatusView::Offline | StatusView::Stopped => "dim-label",
+            StatusView::Waiting
+            | StatusView::WaitingForEvidence
+            | StatusView::Offline
+            | StatusView::Stopped => "dim-label",
             _ => "accent",
         });
         self.title.set_label(&gettext(title));
@@ -177,13 +180,14 @@ pub struct SyncActivity {
 }
 impl SyncActivity {
     pub fn new() -> Self {
-        let widget = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let widget = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let text = label();
         text.set_lines(3);
         text.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let details = label();
         let spinner = gtk::Spinner::new();
         details.add_css_class("dim-label");
+        details.add_css_class("caption");
         let operation = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         operation.append(&spinner);
         text.set_hexpand(true);
@@ -279,7 +283,10 @@ impl SyncActivity {
             Phase::Failed => "Operation failed",
         };
         let (headline, phase) = if activity.phase == Phase::Running {
-            (format!("{} {name}", gettext(verb)), phase)
+            (
+                format!("{} · {name}", gettext(verb).trim_end_matches('…')),
+                phase,
+            )
         } else {
             (format!("{} · {name}", gettext(phase)), "")
         };
@@ -289,7 +296,7 @@ impl SyncActivity {
             .filter(|label| !label.is_empty())
             .map(gettext)
             .collect::<Vec<_>>()
-            .join("\n");
+            .join(" · ");
         self.details.set_label(&details);
         self.details.set_visible(!details.is_empty());
         self.render_progress(&activity.progress);

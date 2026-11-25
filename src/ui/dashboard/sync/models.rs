@@ -4,6 +4,7 @@ pub enum StatusView {
     Initializing,
     Scanning,
     Waiting,
+    WaitingForEvidence,
     Synchronizing,
     Recovering,
     Synced,
