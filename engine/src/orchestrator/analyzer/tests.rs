@@ -930,3 +930,23 @@ fn trash_requires_explicit_policy_complete_scope_unchanged_peer_and_empty_folder
     f.local.checksum = checksum("edited child");
     assert!(analyze(&f).operations.is_empty());
 }
+
+#[test]
+fn a_confirmed_binary_version_does_not_need_a_second_remote_digest() {
+    let mut file = fixture();
+    let digest = checksum(&"a".repeat(64));
+    file.local.checksum = digest.clone();
+    file.baseline.local.as_mut().unwrap().checksum = digest.clone();
+    file.baseline.remote.as_mut().unwrap().checksum = digest;
+    file.remote.checksum = Evidence::NotCollected;
+    assert_eq!(analyze(&file).status, DecisionStatus::NoOp);
+
+    let mut later = file.clone();
+    later.remote.version = Evidence::Known(9);
+    assert_eq!(analyze(&later).status, DecisionStatus::Defer);
+    let mut denied = file.clone();
+    denied.remote.checksum = Evidence::PermissionDenied;
+    assert_eq!(analyze(&denied).status, DecisionStatus::Defer);
+    file.observations.remote_coverage = ObservationCoverage::Partial;
+    assert_eq!(analyze(&file).status, DecisionStatus::Defer);
+}

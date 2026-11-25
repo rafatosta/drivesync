@@ -521,6 +521,31 @@ fn compare(file: &File) -> Changeset {
             not_applicable(
                 "Workspace content is represented by remote version, not a binary digest.".into(),
             )
+        } else if file.observations.remote_coverage
+            == crate::detectors::observation::ObservationCoverage::Complete
+            && file.remote.state == FileState::Present
+            && baseline_remote.state == FileState::Present
+            && file.remote.trashed == Evidence::Known(false)
+            && baseline_remote.trashed == Evidence::Known(false)
+            && file.remote.id.is_some()
+            && file.remote.id == baseline_remote.id
+            && file.remote.id == file.identity.remote_id
+            && matches!((&file.remote.version, &baseline_remote.version),
+                (Evidence::Known(current), Evidence::Known(before)) if current == before && *current > 0)
+            && matches!((&file.remote.size, &baseline_remote.size),
+                (Evidence::Known(current), Evidence::Known(before)) if current == before)
+            && matches!((&file.remote.mime_type, &baseline_remote.mime_type),
+                (Evidence::Known(current), Evidence::Known(before))
+                    if current == before && crate::projections::kind(current) == crate::projections::RemoteKind::Binary)
+            && matches!(
+                file.remote.checksum,
+                Evidence::NotCollected | Evidence::Unsupported
+            )
+            && matches!(&baseline_remote.checksum, Evidence::Known(hash)
+                if hash.algorithm == "sha256" && hash.value.len() == 64
+                    && hash.value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            unchanged("The same provider version retains the confirmed binary content.".into())
         } else {
             compare_content(
                 &baseline_remote.checksum,
@@ -1010,7 +1035,8 @@ fn initial_local_plan(
 fn complete(file: &File) -> bool {
     use crate::detectors::observation::ObservationCoverage;
     file.observations.local_coverage == ObservationCoverage::Complete
-        && file.observations.remote_coverage == ObservationCoverage::Complete
+        && file.observations.remote_coverage
+            == crate::detectors::observation::ObservationCoverage::Complete
         && file.environment.local_root_available
         && file.environment.remote_available
 }
