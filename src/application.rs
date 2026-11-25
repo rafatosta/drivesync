@@ -19,5 +19,22 @@ pub(crate) struct Context {
     pub navigation_generation: Rc<Cell<u64>>,
     pub pending: Rc<RefCell<Option<GoogleSignInId>>>,
 }
+/// Restores completed synchronization scopes before presenting the saved accounts.
+pub(crate) async fn restore_engine(
+    config: drivesync_engine::EngineConfig,
+    context: &Context,
+) -> drivesync_engine::EngineResult<Vec<drivesync_engine::Account>> {
+    let current = context.engine.borrow().clone();
+    let engine = match current {
+        Some(engine) => engine,
+        None => Engine::open(config).await?,
+    };
+    let result = engine
+        .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+        .await?;
+    crate::services::configuration::restore_synchronization(&engine, &result.accounts).await;
+    *context.engine.borrow_mut() = Some(engine);
+    Ok(result.accounts)
+}
 #[cfg(test)]
 mod tests;

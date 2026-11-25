@@ -15,7 +15,6 @@ pub(super) fn show(
     engine: &Engine,
     account: &Account,
     controller: &DashboardController,
-    local_folder: Option<&str>,
     dialogs: &Rc<RefCell<Vec<gtk::Window>>>,
 ) {
     if navigation
@@ -45,10 +44,9 @@ pub(super) fn show(
             .build();
         summary.add(&item_details);
     }
-    if let Some(folder) = local_folder {
+    {
         let configure = adw::ActionRow::builder()
             .title(gettext("Configure folders"))
-            .subtitle(folder)
             .use_markup(false)
             .activatable(true)
             .build();

@@ -2,7 +2,7 @@
 mod view;
 use crate::application::Context;
 use adw::{gtk, prelude::*};
-use drivesync_engine::{Engine, EngineConfig, ListAccountsRequest};
+use drivesync_engine::EngineConfig;
 use std::{cell::Cell, rc::Rc};
 /// Opens the engine once, then loads local accounts through the public API.
 pub(crate) fn build(
@@ -47,20 +47,7 @@ pub(crate) fn build(
         let retry = retry.clone();
         let busy = busy.clone();
         gtk::glib::spawn_future_local(async move {
-            let current = context.engine.borrow().clone();
-            let opened = match current {
-                Some(engine) => Ok(engine),
-                None => Engine::open(config).await,
-            };
-            let result = match opened {
-                Ok(engine) => {
-                    *context.engine.borrow_mut() = Some(engine.clone());
-                    engine
-                        .list_accounts(ListAccountsRequest { provider: None })
-                        .await
-                }
-                Err(error) => Err(error),
-            };
+            let result = crate::application::restore_engine(config, &context).await;
             busy.set(false);
             spinner.stop();
             spinner.set_visible(false);
@@ -71,12 +58,7 @@ pub(crate) fn build(
                 Ok(result) => {
                     crate::ui::components::connection::install_action(&context, &nav, &toasts);
                     crate::application::navigation::show_accounts(
-                        &context,
-                        result.accounts,
-                        &nav,
-                        &toasts,
-                        None,
-                        false,
+                        &context, result, &nav, &toasts, None, false,
                     );
                 }
                 Err(error) => {

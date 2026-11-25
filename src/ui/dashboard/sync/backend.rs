@@ -27,56 +27,55 @@ impl SyncBackend for FakeSyncBackend {
 pub struct EngineAdapter {
     engine: drivesync_engine::Engine,
     account: drivesync_engine::AccountId,
-    subscription: Option<drivesync_engine::SynchronizationSubscription>,
-    ended: bool,
+    monitor: drivesync_engine::SynchronizationMonitor,
+    received: bool,
     refresh_latest: bool,
     last_synced: bool,
+    binding_revision: u64,
 }
 impl EngineAdapter {
     pub fn new(engine: drivesync_engine::Engine, account: drivesync_engine::AccountId) -> Self {
         Self {
+            monitor: engine.monitor_synchronization(account.clone()),
             engine,
             account,
-            subscription: None,
-            ended: false,
+            received: false,
             refresh_latest: false,
             last_synced: false,
+            binding_revision: 0,
+        }
+    }
+
+    fn failure(&mut self, error: &drivesync_engine::EngineError) -> Snapshot {
+        self.last_synced = false;
+        self.refresh_latest = false;
+        Snapshot {
+            scope: self.account.0.clone(),
+            status: StatusView::Failed,
+            description: crate::core::messages::engine_error(error),
+            item: None,
+            active: false,
+            activity: None,
+            attention: vec![],
         }
     }
 }
 impl SyncBackend for EngineAdapter {
     fn next(&mut self) -> NextSnapshot<'_> {
         Box::pin(async move {
-            if self.ended {
-                return None;
+            if self.received && !self.refresh_latest {
+                self.monitor.changed().await;
             }
-            if let Some(subscription) = &mut self.subscription {
-                if !self.refresh_latest {
-                    subscription.changed().await?;
-                }
-            } else {
-                match self
-                    .engine
-                    .subscribe_synchronization(self.account.clone())
-                    .await
-                {
-                    Ok(subscription) => self.subscription = Some(subscription),
-                    Err(error) => {
-                        self.ended = true;
-                        return Some(Snapshot {
-                            scope: self.account.0.clone(),
-                            status: StatusView::Failed,
-                            description: crate::core::messages::engine_error(&error),
-                            item: None,
-                            active: false,
-                            activity: None,
-                            attention: vec![],
-                        });
-                    }
-                }
+            self.received = true;
+            let status = match self.monitor.current().await {
+                Ok(status) => status,
+                Err(error) => return Some(self.failure(&error)),
+            };
+            let revision = self.monitor.binding_revision();
+            if revision != self.binding_revision {
+                self.binding_revision = revision;
+                self.last_synced = false;
             }
-            let subscription = self.subscription.as_mut()?;
-            let status = subscription.current();
             // Audit is horizon-bound. Re-read after the await so a newer event invalidates it.
             let audit = if !self.last_synced
                 && status.state == drivesync_engine::SynchronizationState::Idle
@@ -91,8 +90,15 @@ impl SyncBackend for EngineAdapter {
                 None
             };
             let conflicts = self.engine.list_conflicts(self.account.clone()).await.ok();
-            let latest = subscription.current();
-            self.refresh_latest = latest != status;
+            let latest = match self.monitor.current().await {
+                Ok(status) => status,
+                Err(error) => return Some(self.failure(&error)),
+            };
+            let replaced = self.monitor.binding_revision() != revision;
+            self.refresh_latest = replaced || latest != status;
+            if replaced {
+                self.last_synced = false;
+            }
             let background = self.last_synced && is_background_check(&latest);
             // A new operation or issue ends the previously audited idle presentation.
             let audit = audit.filter(|_| !self.refresh_latest);
@@ -103,7 +109,7 @@ impl SyncBackend for EngineAdapter {
             if snapshot.status == StatusView::VerificationIncomplete {
                 snapshot.description = incomplete_description(audit.as_ref());
             }
-            if let Some(rows) = conflicts.filter(|rows| !rows.is_empty()) {
+            if let Some(rows) = conflicts.filter(|rows| !replaced && !rows.is_empty()) {
                 let count = rows.len();
                 let summary = gettextrs::ngettext(
                     "{count} unresolved conflict.",

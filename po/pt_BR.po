@@ -1275,8 +1275,8 @@ msgstr[0] "há {count} dia"
 msgstr[1] "há {count} dias"
 
 #: src/services/synchronization.rs
-msgid "Preparing synchronization…"
-msgstr "Preparando sincronização…"
+msgid "Loading account status…"
+msgstr "Carregando o estado da conta…"
 
 #: src/services/synchronization.rs
 msgid "Configure folders to prepare synchronization."

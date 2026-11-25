@@ -11,6 +11,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+pub use synchronization::SynchronizationMonitor;
 use tokio::runtime::{Builder, Runtime};
 
 /// Runtime shutdown is safe even when the last Engine is dropped on an async task.
@@ -45,6 +46,7 @@ struct AccountOwnership {
     admission: tokio::sync::Mutex<()>,
     gate: Arc<tokio::sync::RwLock<()>>,
     cancel_queries: tokio::sync::watch::Sender<()>,
+    synchronization_changed: tokio::sync::watch::Sender<Option<EngineError>>,
 }
 impl ConnectionOwnership {
     fn account(&self, id: &AccountId) -> Arc<AccountOwnership> {
@@ -220,6 +222,7 @@ impl Engine {
                     .map_err(EngineError::from);
                 if result.is_ok() {
                     sessions.remove(&account_id);
+                    ownership.synchronization_changed.send_replace(None);
                 }
                 result
             })

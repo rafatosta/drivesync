@@ -39,8 +39,15 @@ janela e sem uma entrada no histórico para voltar ao assistente. Adicionar outr
 conta pelo menu abre uma janela separada, mantendo o dashboard visível. Fechar
 ou concluir esse setup fecha somente a janela adicional; contas já configuradas
 são preservadas. O dashboard apresenta uma sidebar adaptável com as contas
-configuradas, apelido e e-mail. A área principal continua vazia, com a conta
-selecionada identificada no cabeçalho.
+configuradas, apelido e e-mail. O painel principal acompanha o estado e a
+atividade da conta selecionada. Trocar a seleção ou atualizar a lista altera
+somente a apresentação.
+
+Na inicialização do aplicativo, os registros salvos são entregues à Engine
+para que ela inicie os workers de cada conta, independentemente da seleção.
+Ao salvar pastas diferentes, a Engine encerra o worker anterior da conta antes
+de iniciar o novo. Uma falha de inicialização é publicada no estado da conta.
+O painel acompanha essas mudanças sem assumir o ciclo de vida dos workers.
 
 Na inicialização, registros completos mantêm o destino no dashboard mesmo quando
 a conta exige reautorização ou uma pasta está temporariamente indisponível. Esses

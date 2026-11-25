@@ -50,9 +50,15 @@ fn isolated_components_and_fake_backend() {
             .last_child()
             .and_downcast::<gtk::Spinner>()
             .unwrap();
+        let icon = status
+            .widget
+            .first_child()
+            .and_downcast::<gtk::Image>()
+            .unwrap();
+        assert!(icon.icon_name().is_none());
         use StatusView::*;
         for (state, waits) in [
-            (Initializing, true),
+            (Initializing, false),
             (Checking, true),
             (VerificationIncomplete, false),
             (WaitingForEvidence, false),

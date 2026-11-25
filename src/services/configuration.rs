@@ -1,7 +1,9 @@
 //! Completed setup choices, atomically persisted only after fresh validation.
-//! These settings do not start or claim a running synchronization process.
+//! The Engine applies saved roots at application startup and after a configuration change.
 use adw::gtk::{gio, glib};
-use drivesync_engine::{AccountId, AccountState, Engine, ListAccountsRequest};
+use drivesync_engine::{
+    Account, AccountId, AccountState, Engine, ListAccountsRequest, StartSynchronizationRequest,
+};
 use gettextrs::gettext;
 use gio::prelude::*;
 
@@ -72,6 +74,28 @@ async fn read(file: &gio::File, id: &AccountId) -> Result<Option<Configuration>,
 /// Absence is incomplete setup; unreadable or malformed settings are never absence.
 pub(crate) async fn load(id: &AccountId) -> Result<Option<Configuration>, glib::Error> {
     read(&file(id), id).await
+}
+/// Hands completed account scopes to the Engine during application startup.
+pub(crate) async fn restore_synchronization(engine: &Engine, accounts: &[Account]) {
+    for account in accounts {
+        if let Ok(Some(config)) = load(&account.id).await {
+            apply_synchronization(engine, &config).await;
+        }
+    }
+}
+
+async fn apply_synchronization(engine: &Engine, config: &Configuration) {
+    // Configuration validation guarantees a native path. The Engine publishes startup failures
+    // separately from the result of saving the settings.
+    if let Some(local_root) = gio::File::for_uri(&config.local_uri).path() {
+        let _ = engine
+            .configure_synchronization(StartSynchronizationRequest {
+                account_id: config.account_id.clone(),
+                local_root,
+                remote_root_id: drivesync_engine::models::RemoteId(config.remote_id.clone()),
+            })
+            .await;
+    }
 }
 async fn write(file: &gio::File, value: &Configuration) -> Result<(), glib::Error> {
     use std::os::unix::fs::DirBuilderExt;
@@ -165,6 +189,7 @@ async fn save_checked_to(
         }
         return Err(gettext("The configuration could not be saved. Try again."));
     }
+    apply_synchronization(engine, &value).await;
     Ok(value)
 }
 /// Called only after the owning account has been disconnected successfully.

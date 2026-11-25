@@ -1,83 +1,11 @@
-//! Saved-folder lifecycle and localized presentation of the public synchronization contract.
-use adw::gtk::{gio, prelude::*};
+//! Localized presentation of the public synchronization contract.
 use drivesync_engine::{
-    AccountId, Engine, EngineErrorKind, StartSynchronizationRequest, SynchronizationActivity,
-    SynchronizationConfirmedAction, SynchronizationErrorKind, SynchronizationIssueKind,
+    SynchronizationActivity, SynchronizationConfirmedAction, SynchronizationIssueKind,
     SynchronizationState, SynchronizationStatus, SynchronizationVerificationSource,
     SynchronizationWait,
 };
 use gettextrs::gettext;
 
-pub(crate) struct StartFailure {
-    pub message: String,
-    pub local_folder: Option<String>,
-}
-
-impl From<String> for StartFailure {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            local_folder: None,
-        }
-    }
-}
-
-/// Starts only a completed saved scope. Opening a dashboard never grants an initial association.
-pub(crate) async fn ensure_started(
-    engine: &Engine,
-    account: &AccountId,
-) -> Result<bool, StartFailure> {
-    let Some(config) = super::configuration::load(account).await.map_err(|_| {
-        gettext("Saved configuration could not be read. Your account has been preserved.")
-    })?
-    else {
-        return Ok(false);
-    };
-    let folder_failure = |message| StartFailure {
-        message,
-        local_folder: Some(super::local_folder::display(&config.local_uri)),
-    };
-    let start_failure = |error: drivesync_engine::EngineError| {
-        let message = crate::core::messages::engine_error(&error);
-        match error.kind {
-            EngineErrorKind::Synchronization(
-                SynchronizationErrorKind::LocalRootUnavailable
-                | SynchronizationErrorKind::RootInUse,
-            ) => folder_failure(message),
-            _ => StartFailure::from(message),
-        }
-    };
-    let path = gio::File::for_uri(&config.local_uri)
-        .path()
-        .ok_or_else(|| {
-            folder_failure(gettext(
-                "The selected folder is unavailable. Choose another folder.",
-            ))
-        })?;
-    let request = StartSynchronizationRequest {
-        account_id: account.clone(),
-        local_root: path,
-        remote_root_id: drivesync_engine::models::RemoteId(config.remote_id),
-    };
-    match engine.start_synchronization(request.clone()).await {
-        Ok(_) => {}
-        Err(error)
-            if error.kind
-                == EngineErrorKind::Synchronization(SynchronizationErrorKind::AlreadyRunning) =>
-        {
-            engine
-                .stop_synchronization(account.clone())
-                .await
-                .map_err(|e| crate::core::messages::engine_error(&e))?;
-            engine
-                .start_synchronization(request)
-                .await
-                .map_err(start_failure)?;
-        }
-        Err(error) => return Err(start_failure(error)),
-    }
-    Ok(true)
-}
 /// Idle means this worker has no queued plan; it is never presented as whole-tree convergence.
 pub(crate) fn description(status: &SynchronizationStatus) -> String {
     if status.state == SynchronizationState::Stopped {
@@ -223,7 +151,7 @@ mod tests {
     #[test]
     fn waiting_idle_and_uncertain_status_do_not_claim_synchronization() {
         let mut status = SynchronizationStatus {
-            account_id: AccountId("account".into()),
+            account_id: drivesync_engine::AccountId("account".into()),
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::Observing,
             current_item: None,
@@ -271,7 +199,7 @@ mod tests {
         };
         let file = "ORIENTAÇÕES/Responsáveis por seção.docx";
         let status = SynchronizationStatus {
-            account_id: AccountId("account".into()),
+            account_id: drivesync_engine::AccountId("account".into()),
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::None,
             current_item: Some(SynchronizationItem {

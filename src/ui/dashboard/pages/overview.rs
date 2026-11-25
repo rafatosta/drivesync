@@ -165,17 +165,6 @@ fn build_with_accounts(
                 }
                 match result {
                     Ok(result) => {
-                        // Prepare every completed account without delaying access to its dashboard.
-                        for account in &result.accounts {
-                            let _ = crate::services::synchronization::ensure_started(
-                                &engine,
-                                &account.id,
-                            )
-                            .await;
-                        }
-                        if generation.get() != request {
-                            return;
-                        }
                         sidebar.set_accounts(result.accounts);
                         if let Some(label) = feedback.upgrade() {
                             label.set_label("");

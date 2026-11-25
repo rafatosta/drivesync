@@ -119,10 +119,7 @@ impl SyncStatus {
     pub fn set_state(&self, state: StatusView, description: &str) {
         let active = matches!(
             state,
-            StatusView::Initializing
-                | StatusView::Checking
-                | StatusView::Synchronizing
-                | StatusView::Recovering
+            StatusView::Checking | StatusView::Synchronizing | StatusView::Recovering
         );
         self.render(state, description, None, active, false);
     }
@@ -135,7 +132,7 @@ impl SyncStatus {
         has_activity: bool,
     ) {
         let title = match state {
-            StatusView::Initializing => "Preparing synchronization…",
+            StatusView::Initializing => "Loading account status…",
             StatusView::WaitingForEvidence => "Waiting to continue synchronization",
             StatusView::Finalizing => "Finalizing synchronization",
             StatusView::Checking => "Checking synchronization…",
@@ -148,19 +145,20 @@ impl SyncStatus {
             StatusView::Failed => "Synchronization failed.",
             StatusView::Stopped => "Synchronization stopped.",
         };
-        self.icon.set_icon_name(Some(match state {
-            StatusView::Initializing | StatusView::Synchronizing => "view-refresh-symbolic",
+        self.icon.set_icon_name(match state {
+            StatusView::Initializing => None,
+            StatusView::Synchronizing => Some("view-refresh-symbolic"),
             StatusView::WaitingForEvidence
             | StatusView::Finalizing
             | StatusView::Checking
             | StatusView::VerificationIncomplete
-            | StatusView::Recovering => "edit-find-symbolic",
-            StatusView::Synced => "object-select-symbolic",
-            StatusView::Attention => "dialog-warning-symbolic",
-            StatusView::Offline => "network-offline-symbolic",
-            StatusView::Failed => "dialog-error-symbolic",
-            StatusView::Stopped => "media-playback-stop-symbolic",
-        }));
+            | StatusView::Recovering => Some("edit-find-symbolic"),
+            StatusView::Synced => Some("object-select-symbolic"),
+            StatusView::Attention => Some("dialog-warning-symbolic"),
+            StatusView::Offline => Some("network-offline-symbolic"),
+            StatusView::Failed => Some("dialog-error-symbolic"),
+            StatusView::Stopped => Some("media-playback-stop-symbolic"),
+        });
         for class in ["accent", "success", "warning", "error", "dim-label"] {
             self.icon.remove_css_class(class);
         }

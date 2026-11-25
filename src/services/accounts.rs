@@ -14,9 +14,17 @@ pub(crate) async fn finish(
     engine: &Engine,
     connection_id: GoogleSignInId,
 ) -> EngineResult<FinishGoogleSignInResult> {
-    engine
+    let result = engine
         .finish_google_sign_in(FinishGoogleSignInRequest { connection_id })
-        .await
+        .await?;
+    if !result.created {
+        super::configuration::restore_synchronization(
+            engine,
+            std::slice::from_ref(&result.account),
+        )
+        .await;
+    }
+    Ok(result)
 }
 /// Cancels an attempt without promising rollback of persistence already underway.
 pub(crate) fn cancel(engine: &Engine, connection_id: GoogleSignInId) -> bool {

@@ -1146,6 +1146,105 @@ async fn active_account_scopes_reject_overlapping_local_trees_and_stop_independe
 }
 
 #[tokio::test]
+async fn managed_workers_run_without_monitors_and_monitors_follow_reconfiguration() {
+    use crate::{SynchronizationErrorKind, SynchronizationState};
+    use std::time::Duration;
+
+    let mut responses = replies("managed-a");
+    responses.extend(replies("managed-b"));
+    let fixture = Fixture::new(responses).await;
+    let engine = &fixture.engine;
+    let account_a = fixture.connected().await;
+    let account_b = fixture.connected().await;
+    let mut root_a = fixture.sync_request(&account_a);
+    let mut root_b = fixture.sync_request(&account_b);
+    root_b.local_root = fixture.directory.join("independent-root");
+    std::fs::create_dir(&root_b.local_root).unwrap();
+
+    engine
+        .configure_synchronization(root_a.clone())
+        .await
+        .unwrap();
+    engine
+        .configure_synchronization(root_b.clone())
+        .await
+        .unwrap();
+    let mut monitor = engine.monitor_synchronization(account_a.id.clone());
+    let initial = monitor.current().await.unwrap();
+    assert_eq!(initial.state, SynchronizationState::Waiting);
+    let revision = monitor.binding_revision();
+    assert_eq!(
+        engine
+            .configure_synchronization(root_a.clone())
+            .await
+            .unwrap(),
+        initial
+    );
+    assert_eq!(monitor.current().await.unwrap(), initial);
+    assert_eq!(monitor.binding_revision(), revision);
+    {
+        let mut other_profile = engine.monitor_synchronization(account_b.id.clone());
+        assert_eq!(
+            other_profile.current().await.unwrap().state,
+            SynchronizationState::Waiting
+        );
+    }
+    assert_eq!(
+        engine
+            .synchronization_status(account_b.id.clone())
+            .await
+            .unwrap()
+            .state,
+        SynchronizationState::Waiting
+    );
+
+    root_a.local_root = root_b.local_root.clone();
+    assert_eq!(
+        engine
+            .configure_synchronization(root_a.clone())
+            .await
+            .unwrap_err()
+            .kind,
+        EngineErrorKind::Synchronization(SynchronizationErrorKind::RootInUse),
+    );
+    tokio::time::timeout(Duration::from_secs(2), monitor.changed())
+        .await
+        .unwrap();
+    assert_eq!(
+        monitor.current().await.unwrap_err().kind,
+        EngineErrorKind::Synchronization(SynchronizationErrorKind::RootInUse)
+    );
+    assert_eq!(
+        engine
+            .synchronization_status(account_a.id.clone())
+            .await
+            .unwrap()
+            .state,
+        SynchronizationState::Stopped
+    );
+    assert_eq!(
+        engine
+            .synchronization_status(account_b.id.clone())
+            .await
+            .unwrap()
+            .state,
+        SynchronizationState::Waiting
+    );
+
+    root_a.local_root = fixture.directory.join("replacement-root");
+    std::fs::create_dir(&root_a.local_root).unwrap();
+    let replacement = engine.configure_synchronization(root_a).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), monitor.changed())
+        .await
+        .unwrap();
+    assert_eq!(monitor.current().await.unwrap(), replacement);
+    assert_ne!(monitor.binding_revision(), revision);
+    drop(monitor);
+    engine.stop_synchronization(account_a.id).await.unwrap();
+    engine.stop_synchronization(account_b.id).await.unwrap();
+}
+
+#[tokio::test]
 async fn functional_sources_start_from_engine_and_stop_without_mutating_user_files() {
     let mut responses = replies("functional-sources");
     responses.extend(vec![Reply::json(200,r#"{"startPageToken":"start"}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#),Reply::json(200,r#"{"files":[],"incompleteSearch":false}"#),Reply::json(200,r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#)]);

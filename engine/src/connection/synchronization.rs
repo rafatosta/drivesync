@@ -33,6 +33,67 @@ impl Session {
         }
     }
 }
+/// Observes an account across worker creation, replacement and shutdown.
+pub struct SynchronizationMonitor {
+    engine: Engine,
+    stopped: SynchronizationStatus,
+    lifecycle: tokio::sync::watch::Receiver<Option<EngineError>>,
+    worker: Option<SynchronizationSubscription>,
+    revision: u64,
+}
+impl SynchronizationMonitor {
+    /// Local revision of the worker binding observed by this monitor.
+    pub fn binding_revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn binding_changed(&mut self) {
+        self.worker = None;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Reads the current status, including a startup failure if the worker could not be opened.
+    pub async fn current(&mut self) -> EngineResult<SynchronizationStatus> {
+        let engine = self.engine.clone();
+        let sessions = engine.inner.synchronizations.lock().await;
+        if self.lifecycle.has_changed().unwrap_or(false) {
+            self.binding_changed();
+        }
+        if let Some(error) = self.lifecycle.borrow_and_update().clone() {
+            return Err(error);
+        }
+        if self.worker.is_none() {
+            self.worker = sessions
+                .get(&self.stopped.account_id)
+                .map(|session| session.orchestrator.subscribe());
+        }
+        Ok(self.worker.as_mut().map_or_else(
+            || self.stopped.clone(),
+            SynchronizationSubscription::current,
+        ))
+    }
+
+    /// Waits for a worker status or a change in the account's worker binding.
+    pub async fn changed(&mut self) {
+        if let Some(worker) = &mut self.worker {
+            tokio::select! {
+                biased;
+                _ = self.lifecycle.changed() => {
+                    self.binding_changed();
+                    return;
+                }
+                changed = worker.changed() => {
+                    if changed.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        if self.lifecycle.changed().await.is_ok() {
+            self.binding_changed();
+        }
+    }
+}
 pub(super) fn error(kind: SynchronizationErrorKind) -> EngineError {
     EngineError::new(EngineErrorKind::Synchronization(kind))
 }
@@ -78,16 +139,41 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, false, false).await
+        self.start_scope(request, false, false, false).await
+    }
+
+    /// Applies saved roots independently of observers. A scope change drains the old worker
+    /// before the new scope can admit operations.
+    pub async fn configure_synchronization(
+        &self,
+        request: StartSynchronizationRequest,
+    ) -> EngineResult<SynchronizationStatus> {
+        self.start_scope(request, false, false, true).await
+    }
+
+    /// Observes one account without configuring or starting a worker.
+    pub fn monitor_synchronization(&self, account_id: AccountId) -> SynchronizationMonitor {
+        SynchronizationMonitor {
+            engine: self.clone(),
+            lifecycle: self
+                .inner
+                .ownership
+                .account(&account_id)
+                .synchronization_changed
+                .subscribe(),
+            stopped: SynchronizationStatus::new(account_id, SynchronizationState::Stopped),
+            worker: None,
+            revision: 0,
+        }
     }
 
     /// Starts an exact scope with explicit permission to associate equivalent preexisting replicas.
-    /// Permission lasts only for this worker session; dashboard startup never calls this method.
+    /// Permission lasts only for this worker session. Applying saved roots does not grant it.
     pub async fn start_synchronization_with_initial_association(
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, true, false).await
+        self.start_scope(request, true, false, false).await
     }
 
     /// Explicitly enables recoverable trash propagation for this worker session only.
@@ -96,7 +182,7 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, false, true).await
+        self.start_scope(request, false, true, false).await
     }
 
     async fn start_scope(
@@ -104,132 +190,163 @@ impl Engine {
         request: StartSynchronizationRequest,
         initial_association_authorized: bool,
         trash_propagation_authorized: bool,
+        replace_scope: bool,
     ) -> EngineResult<SynchronizationStatus> {
-        validate(&request)?;
+        if !replace_scope {
+            validate(&request)?;
+        }
         let inner = self.inner.clone();
         self.runtime()
             .spawn(async move {
                 let mut sessions = inner.synchronizations.lock().await;
-                if let Some(session) = sessions.get(&request.account_id) {
-                    if !session.orchestrator.is_finished() {
-                        if session.orchestrator.config().roots == request
-                            && session.orchestrator.config().initial_association_authorized
-                                == initial_association_authorized
-                            && session.orchestrator.config().trash_propagation_authorized
-                                == trash_propagation_authorized
-                        {
-                            return Ok(session.orchestrator.status());
+                let changes = inner.ownership.account(&request.account_id);
+                let result = async {
+                    if let Some(session) = sessions.get(&request.account_id) {
+                        if !session.orchestrator.is_finished() {
+                            if session.orchestrator.config().roots == request
+                                && (replace_scope
+                                    || (session
+                                        .orchestrator
+                                        .config()
+                                        .initial_association_authorized
+                                        == initial_association_authorized
+                                        && session
+                                            .orchestrator
+                                            .config()
+                                            .trash_propagation_authorized
+                                            == trash_propagation_authorized))
+                            {
+                                return Ok(session.orchestrator.status());
+                            }
+                            if !replace_scope {
+                                return Err(error(SynchronizationErrorKind::AlreadyRunning));
+                            }
                         }
-                        return Err(error(SynchronizationErrorKind::AlreadyRunning));
                     }
-                }
-                if let Some(finished) = sessions.remove(&request.account_id) {
-                    finished.stop().await;
-                }
-                // Active accounts cannot mutate overlapping local trees under independent plans.
-                if sessions.iter().any(|(account, session)| {
-                    account != &request.account_id && !session.orchestrator.is_finished() && {
-                        let root = &session.orchestrator.config().roots.local_root;
-                        request.local_root.starts_with(root)
-                            || root.starts_with(&request.local_root)
+                    if replace_scope {
+                        if let Some(previous) = sessions.remove(&request.account_id) {
+                            previous.stop().await;
+                        }
+                        validate(&request)?;
                     }
-                }) {
-                    return Err(error(SynchronizationErrorKind::RootInUse));
-                }
-                let ownership = inner.ownership.account(&request.account_id).gate.clone();
-                let _lease = ownership.clone().read_owned().await;
-                let accounts = inner.accounts.clone();
-                let client = inner.client.clone();
-                let directory = inner.synchronization_directory.clone();
-                let id = request.account_id.clone();
-                let source_accounts = accounts.clone();
-                let source_client = client.clone();
-                let source_ownership = ownership.clone();
-                #[cfg(test)]
-                let sources_enabled = inner.sources_enabled;
-                #[cfg(not(test))]
-                let sources_enabled = true;
-                let mut session = tokio::task::spawn_blocking(move || {
-                    let account = accounts
-                        .get(GetAccountRequest {
-                            account_id: request.account_id.clone(),
-                        })?
-                        .account;
-                    if account.state != AccountState::Connected {
-                        return Err(error(SynchronizationErrorKind::AccountUnavailable));
+                    // Active accounts cannot mutate overlapping local trees under independent plans.
+                    if sessions.iter().any(|(account, session)| {
+                        account != &request.account_id && !session.orchestrator.is_finished() && {
+                            let root = &session.orchestrator.config().roots.local_root;
+                            request.local_root.starts_with(root)
+                                || root.starts_with(&request.local_root)
+                        }
+                    }) {
+                        return Err(error(SynchronizationErrorKind::RootInUse));
                     }
-                    let writer = Arc::new(super::scope::WriterLease::acquire(
-                        &request.local_root,
-                        &account.provider.0,
-                        &account.provider_user_id,
-                    )?);
-                    let scope = root_id(&request);
-                    let inventory =
-                        crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
-                            directory: directory.clone(),
-                            account_id: request.account_id.clone(),
+                    if let Some(previous) = sessions.remove(&request.account_id) {
+                        previous.stop().await;
+                    }
+                    let ownership = changes.gate.clone();
+                    let _lease = ownership.clone().read_owned().await;
+                    let accounts = inner.accounts.clone();
+                    let client = inner.client.clone();
+                    let directory = inner.synchronization_directory.clone();
+                    let id = request.account_id.clone();
+                    let source_accounts = accounts.clone();
+                    let source_client = client.clone();
+                    let source_ownership = ownership.clone();
+                    #[cfg(test)]
+                    let sources_enabled = inner.sources_enabled;
+                    #[cfg(not(test))]
+                    let sources_enabled = true;
+                    let mut session = tokio::task::spawn_blocking(move || {
+                        let account = accounts
+                            .get(GetAccountRequest {
+                                account_id: request.account_id.clone(),
+                            })?
+                            .account;
+                        if account.state != AccountState::Connected {
+                            return Err(error(SynchronizationErrorKind::AccountUnavailable));
+                        }
+                        let writer = Arc::new(super::scope::WriterLease::acquire(
+                            &request.local_root,
+                            &account.provider.0,
+                            &account.provider_user_id,
+                        )?);
+                        let scope = root_id(&request);
+                        let inventory =
+                            crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
+                                directory: directory.clone(),
+                                account_id: request.account_id.clone(),
+                            })
+                            .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
+                        let has_inventory = !inventory
+                            .enumerate(crate::inventory::models::InventoryScopeQuery {
+                                account_id: request.account_id.clone(),
+                                sync_root_id: scope.clone(),
+                            })
+                            .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?
+                            .is_empty();
+                        writer.bind(&directory, &scope, has_inventory)?;
+                        let config = OrchestratorConfig {
+                            expected_root_identity: Some(writer.identity.clone()),
+                            initial_association_authorized,
+                            trash_propagation_authorized,
+                            sync_root_id: root_id(&request),
+                            roots: request,
+                            provider_id: account.provider,
+                        };
+                        let detectors = Detectors::open(ContextConfig {
+                            inventory_directory: directory.clone(),
+                            account_id: config.roots.account_id.clone(),
+                            provider_id: config.provider_id.clone(),
+                            sync_root_id: config.sync_root_id.clone(),
+                            local_root: PathRoot(config.roots.local_root.clone()),
+                            remote_root_id: config.roots.remote_root_id.clone(),
+                            local_root_available: true,
+                            remote_available: false,
+                            initial_association_authorized,
+                            trash_propagation_authorized,
                         })
                         .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
-                    let has_inventory = !inventory
-                        .enumerate(crate::inventory::models::InventoryScopeQuery {
-                            account_id: request.account_id.clone(),
-                            sync_root_id: scope.clone(),
+                        let orchestrator = orchestrator::open(
+                            config,
+                            directory,
+                            accounts,
+                            client,
+                            ownership,
+                            writer.clone(),
+                        )
+                        .map_err(error)?;
+                        Ok::<_, EngineError>(Session {
+                            detectors: Arc::new(detectors),
+                            orchestrator: Arc::new(orchestrator),
+                            sources: None,
+                            writer: std::sync::Mutex::new(Some(writer)),
                         })
-                        .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?
-                        .is_empty();
-                    writer.bind(&directory, &scope, has_inventory)?;
-                    let config = OrchestratorConfig {
-                        expected_root_identity: Some(writer.identity.clone()),
-                        initial_association_authorized,
-                        trash_propagation_authorized,
-                        sync_root_id: root_id(&request),
-                        roots: request,
-                        provider_id: account.provider,
-                    };
-                    let detectors = Detectors::open(ContextConfig {
-                        inventory_directory: directory.clone(),
-                        account_id: config.roots.account_id.clone(),
-                        provider_id: config.provider_id.clone(),
-                        sync_root_id: config.sync_root_id.clone(),
-                        local_root: PathRoot(config.roots.local_root.clone()),
-                        remote_root_id: config.roots.remote_root_id.clone(),
-                        local_root_available: true,
-                        remote_available: false,
-                        initial_association_authorized,
-                        trash_propagation_authorized,
                     })
-                    .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
-                    let orchestrator = orchestrator::open(
-                        config,
-                        directory,
-                        accounts,
-                        client,
-                        ownership,
-                        writer.clone(),
-                    )
-                    .map_err(error)?;
-                    Ok::<_, EngineError>(Session {
-                        detectors: Arc::new(detectors),
-                        orchestrator: Arc::new(orchestrator),
-                        sources: None,
-                        writer: std::sync::Mutex::new(Some(writer)),
-                    })
-                })
-                .await
-                .map_err(|_| EngineError::new(EngineErrorKind::Internal))??;
-                if sources_enabled {
-                    session.sources = Some(crate::detectors::sources::start(
-                        session.orchestrator.config().clone(),
-                        session.detectors.clone(),
-                        session.orchestrator.clone(),
-                        source_accounts,
-                        source_client,
-                        source_ownership,
-                    ));
+                    .await
+                    .map_err(|_| EngineError::new(EngineErrorKind::Internal))??;
+                    if sources_enabled {
+                        session.sources = Some(crate::detectors::sources::start(
+                            session.orchestrator.config().clone(),
+                            session.detectors.clone(),
+                            session.orchestrator.clone(),
+                            source_accounts,
+                            source_client,
+                            source_ownership,
+                        ));
+                    }
+                    let status = session.orchestrator.status();
+                    sessions.insert(id, session);
+                    changes.synchronization_changed.send_replace(None);
+                    Ok(status)
                 }
-                let status = session.orchestrator.status();
-                sessions.insert(id, session);
-                Ok(status)
+                .await;
+                if replace_scope {
+                    if let Err(error) = &result {
+                        changes
+                            .synchronization_changed
+                            .send_replace(Some(error.clone()));
+                    }
+                }
+                result
             })
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
