@@ -655,7 +655,10 @@ async fn trash_refusal_requires_an_operation_dispatched_to_the_executor() {
 
 #[tokio::test]
 async fn a_confirmed_directory_waits_for_metadata_and_resumes_without_another_operation() {
-    use crate::models::FileKind;
+    use crate::{
+        inventory::models::{OperationState, PendingOperation},
+        models::FileKind,
+    };
 
     let (operator, calls) = mock(OperationResultStatus::Succeeded);
     let (mut worker, _stop) = direct(operator);
@@ -674,6 +677,19 @@ async fn a_confirmed_directory_waits_for_metadata_and_resumes_without_another_op
     file.baseline.local = Some(file.local.clone());
     file.baseline.remote = Some(file.remote.clone());
 
+    file.pending_operations.push(PendingOperation {
+        id: Id("confirmed-folder".into()),
+        item_id: file.identity.item_id.clone().unwrap(),
+        action: OperationAction::CreateLocalDirectory,
+        state: OperationState::Confirmed,
+        remote_id: file.remote.id.clone(),
+        applied_effect: None,
+        idempotency_key: None,
+        recovery: None,
+        recovery_diagnostic: None,
+        created_at: timestamp(),
+        updated_at: timestamp(),
+    });
     file.remote.trashed = Evidence::NotCollected;
     assert_eq!(
         worker.process(file.clone()).await.decision,
@@ -692,7 +708,10 @@ async fn a_confirmed_directory_waits_for_metadata_and_resumes_without_another_op
         );
         assert_eq!(
             status.issue.as_ref().unwrap().kind,
-            SynchronizationIssueKind::DeferredFor(SynchronizationWait::DirectoryVerification),
+            SynchronizationIssueKind::DeferredFor(SynchronizationWait::ItemVerification {
+                source: SynchronizationVerificationSource::Remote,
+                confirmed_action: Some(SynchronizationConfirmedAction::CreateLocalDirectory),
+            }),
         );
     }
 

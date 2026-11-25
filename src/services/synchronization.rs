@@ -2,8 +2,9 @@
 use adw::gtk::{gio, prelude::*};
 use drivesync_engine::{
     AccountId, Engine, EngineErrorKind, StartSynchronizationRequest, SynchronizationActivity,
-    SynchronizationErrorKind, SynchronizationIssueKind, SynchronizationState,
-    SynchronizationStatus, SynchronizationWait,
+    SynchronizationConfirmedAction, SynchronizationErrorKind, SynchronizationIssueKind,
+    SynchronizationState, SynchronizationStatus, SynchronizationVerificationSource,
+    SynchronizationWait,
 };
 use gettextrs::gettext;
 
@@ -118,14 +119,13 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
     }
     if let Some(issue) = &status.issue {
         let message = match issue.kind {
-            SynchronizationIssueKind::Deferred => gettext("The next operation needs more evidence before it can be planned safely."),
+            SynchronizationIssueKind::Deferred => gettext("Waiting for confirmation of the current state before making changes."),
             SynchronizationIssueKind::DeferredFor(reason) => match reason {
                 SynchronizationWait::LocalObservation => gettext("Waiting for a complete scan of the computer."),
                 SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
                 SynchronizationWait::FreshObservations => gettext("Checking the computer and Drive again after the last operation."),
                 SynchronizationWait::CompleteObservations => gettext("Waiting for complete scans of the computer and Drive before applying changes."),
-                SynchronizationWait::DirectoryVerification => gettext("Waiting for enough information to verify the folder on the computer and on Drive."),
-                SynchronizationWait::ComparableVersions => gettext("The current versions could not be compared with the last confirmed versions."),
+                SynchronizationWait::ItemVerification { source, confirmed_action } => item_verification(source, confirmed_action),
             },
             SynchronizationIssueKind::Conflict => gettext("Review the local and Drive versions to resolve the conflict."),
             SynchronizationIssueKind::AdoptionRequired => gettext("Initial association needs confirmation before this item can continue."),
@@ -148,6 +148,32 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
         }
         _ => gettext("Waiting for observations."),
     }
+}
+
+fn item_verification(
+    source: SynchronizationVerificationSource,
+    confirmed_action: Option<SynchronizationConfirmedAction>,
+) -> String {
+    use SynchronizationConfirmedAction as Action;
+    use SynchronizationVerificationSource as Source;
+    let verification = gettext(match source {
+        Source::Local => "Waiting for information from the computer to finish verification.",
+        Source::Remote => "Waiting for information from Drive to finish verification.",
+        Source::Both => {
+            "Waiting for information from the computer and Drive to finish verification."
+        }
+        Source::Unspecified => "Waiting for confirmation of the current state.",
+    });
+    let Some(action) = confirmed_action else {
+        return verification;
+    };
+    let completed = gettext(match action {
+        Action::Download => "Download confirmed.",
+        Action::Upload => "Upload confirmed.",
+        Action::CreateLocalDirectory => "Folder created on the computer.",
+        Action::CreateRemoteDirectory => "Folder created on Drive.",
+    });
+    format!("{completed} {verification}")
 }
 
 fn describe_item(status: &SynchronizationStatus, procedure: String) -> String {
@@ -211,6 +237,22 @@ mod tests {
             gettext("An operation needs verification before synchronization can continue.")
         );
     }
+    #[test]
+    fn confirmed_download_distinguishes_completion_from_pending_drive_verification() {
+        let message = item_verification(
+            SynchronizationVerificationSource::Remote,
+            Some(SynchronizationConfirmedAction::Download),
+        );
+        assert_eq!(
+            message,
+            format!(
+                "{} {}",
+                gettext("Download confirmed."),
+                gettext("Waiting for information from Drive to finish verification."),
+            )
+        );
+    }
+
     #[test]
     fn unsupported_download_identifies_the_affected_file_and_the_missing_evidence() {
         use drivesync_engine::{

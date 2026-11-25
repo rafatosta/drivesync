@@ -666,16 +666,10 @@ impl Orchestrator {
                                 && file.baseline.state
                                     == crate::inventory::models::BaselineState::Synced =>
                             {
-                                SynchronizationIssueKind::DeferredFor(
-                                    if file.baseline.local.as_ref().is_some_and(|local| {
-                                        local.kind
-                                            == Evidence::Known(crate::models::FileKind::Directory)
-                                    }) {
-                                        SynchronizationWait::DirectoryVerification
-                                    } else {
-                                        SynchronizationWait::ComparableVersions
-                                    },
-                                )
+                                SynchronizationIssueKind::DeferredFor(item_verification(
+                                    &file,
+                                    &decision.changeset,
+                                ))
                             }
                             _ => SynchronizationIssueKind::Deferred,
                         }
@@ -1039,6 +1033,39 @@ fn activity(action: OperationAction) -> SynchronizationActivity {
         OperationAction::RemoveLocal => SynchronizationActivity::TrashingLocal,
         OperationAction::TrashRemote => SynchronizationActivity::TrashingRemote,
         _ => SynchronizationActivity::Applying,
+    }
+}
+fn item_verification(file: &File, changeset: &analyzer::Changeset) -> SynchronizationWait {
+    let (mut local, mut remote) = (false, false);
+    for evidence in changeset.attributes.values() {
+        local |= evidence.local.status == analyzer::ChangeStatus::Indeterminate;
+        remote |= evidence.remote.status == analyzer::ChangeStatus::Indeterminate;
+    }
+    let source = match (local, remote) {
+        (true, false) => SynchronizationVerificationSource::Local,
+        (false, true) => SynchronizationVerificationSource::Remote,
+        (true, true) => SynchronizationVerificationSource::Both,
+        (false, false) => SynchronizationVerificationSource::Unspecified,
+    };
+    let confirmed_action = file
+        .pending_operations
+        .iter()
+        .filter(|op| op.state == crate::inventory::models::OperationState::Confirmed)
+        .max_by_key(|op| op.updated_at.unix_millis)
+        .and_then(|op| match op.action {
+            OperationAction::Download => Some(SynchronizationConfirmedAction::Download),
+            OperationAction::Upload => Some(SynchronizationConfirmedAction::Upload),
+            OperationAction::CreateLocalDirectory => {
+                Some(SynchronizationConfirmedAction::CreateLocalDirectory)
+            }
+            OperationAction::CreateRemoteDirectory => {
+                Some(SynchronizationConfirmedAction::CreateRemoteDirectory)
+            }
+            _ => None,
+        });
+    SynchronizationWait::ItemVerification {
+        source,
+        confirmed_action,
     }
 }
 fn issue(kind: SynchronizationIssueKind, retryable: bool) -> SynchronizationIssue {

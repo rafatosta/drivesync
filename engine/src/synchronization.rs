@@ -81,9 +81,29 @@ pub enum SynchronizationWait {
     RemoteObservation,
     FreshObservations,
     CompleteObservations,
-    /// The folder has a confirmed counterpart, but its current metadata is inconclusive.
-    DirectoryVerification,
-    ComparableVersions,
+    /// A confirmed item is awaiting enough current evidence to verify its state.
+    ItemVerification {
+        source: SynchronizationVerificationSource,
+        confirmed_action: Option<SynchronizationConfirmedAction>,
+    },
+}
+
+/// Side whose current evidence is insufficient for verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationVerificationSource {
+    Local,
+    Remote,
+    Both,
+    Unspecified,
+}
+
+/// The last confirmed operation when it was a file transfer or folder creation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationConfirmedAction {
+    Download,
+    Upload,
+    CreateLocalDirectory,
+    CreateRemoteDirectory,
 }
 
 /// Why a file could not be represented or verified for synchronization.
