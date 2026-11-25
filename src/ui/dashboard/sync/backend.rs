@@ -326,6 +326,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
             scope: scope.clone(),
             id: blocker_id.into(),
             title: match issue.kind {
+                I::Unsupported(_) => gettext("Item could not be synchronized"),
                 I::TrashRefused => gettext("Move to trash refused"),
                 I::RecoveryRequired => gettext("Interrupted operation needs verification"),
                 I::TrashRecoveryRequired => gettext("Trash recovery needs verification"),

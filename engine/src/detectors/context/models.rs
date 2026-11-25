@@ -66,7 +66,7 @@ pub(crate) struct Environment {
     /// Only fully observed empty directories may be trashed automatically.
     pub trash_tree_safe: Evidence<bool>,
     /// Proven per-item policy refusal, independent of scope completeness.
-    pub projection_issue: Option<String>,
+    pub projection_issue: Option<crate::SynchronizationProjectionIssue>,
     /// A new regular inode occupies the already synchronized path; the prior inode is absent.
     pub local_replacement: Evidence<bool>,
     /// Configured absolute local synchronization root.

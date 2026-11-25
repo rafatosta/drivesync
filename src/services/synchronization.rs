@@ -76,13 +76,13 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
         };
     }
     if let Some(issue) = &status.issue {
-        return match issue.kind {
+        let message = match issue.kind {
             SynchronizationIssueKind::Deferred => gettext("Waiting for more information about this item."),
             SynchronizationIssueKind::Conflict => gettext("A conflict needs resolution before this item can continue."),
             SynchronizationIssueKind::AdoptionRequired => gettext("Initial association needs confirmation before this item can continue."),
-            SynchronizationIssueKind::Unsupported => gettext("This change is not supported yet."),
+            SynchronizationIssueKind::Unsupported(reason) => projection_message(reason),
             SynchronizationIssueKind::InvalidInput => gettext("The synchronization information is inconsistent. Refresh observations before continuing."),
-            SynchronizationIssueKind::OperationFailed => gettext("An operation failed. Check account and folder access."),
+            SynchronizationIssueKind::OperationFailed => gettext("A synchronization operation failed."),
             SynchronizationIssueKind::PreconditionFailed => gettext("The item changed before execution. Waiting for a fresh observation."),
             SynchronizationIssueKind::RecoveryRequired => {
                 if let Some(name) = status.current_item.as_ref()
@@ -110,11 +110,41 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             }
             SynchronizationIssueKind::WorkerFailed => gettext("Synchronization could not continue. Stop and restart it before trying again."),
         };
+        if matches!(
+            issue.kind,
+            SynchronizationIssueKind::Unsupported(_) | SynchronizationIssueKind::OperationFailed
+        ) {
+            if let Some(path) = status
+                .current_item
+                .as_ref()
+                .and_then(|item| item.local_path.as_ref())
+            {
+                return gettext("{item} — {reason}")
+                    .replace("{reason}", &message)
+                    .replace("{item}", &path.to_string_lossy());
+            }
+        }
+        return message;
     }
     match status.state {
         SynchronizationState::Idle => gettext("No pending operations."),
         SynchronizationState::Failed => gettext("Synchronization failed."),
         _ => gettext("Waiting for observations."),
+    }
+}
+
+fn projection_message(reason: Option<drivesync_engine::SynchronizationProjectionIssue>) -> String {
+    use drivesync_engine::SynchronizationProjectionIssue::*;
+    match reason {
+        Some(SpecialLocalFile) => gettext("Symbolic links and special files are skipped."),
+        Some(InvalidLocalName) => gettext("This local file name cannot be used for synchronization."),
+        Some(InvalidRemoteName) => gettext("This Drive file name cannot be represented on this computer."),
+        Some(DriveShortcut) => gettext("Drive shortcuts are skipped."),
+        Some(UnsupportedDriveType) => gettext("This Google Drive file type cannot be synchronized."),
+        Some(NameCollision) => gettext("Multiple items would use the same name. Rename one of them to continue."),
+        Some(OccupiedWorkspacePath) => gettext("An existing local file occupies the Google Workspace shortcut path."),
+        Some(MissingRemoteContentEvidence) => gettext("Drive did not provide the information needed to verify a download. The local file was kept."),
+        None => gettext("DriveSync cannot apply this change. Existing copies were kept."),
     }
 }
 
@@ -144,5 +174,34 @@ mod tests {
             description(&status),
             gettext("An operation needs verification before synchronization can continue.")
         );
+    }
+    #[test]
+    fn unsupported_download_identifies_the_affected_file_and_the_missing_evidence() {
+        use drivesync_engine::{
+            SynchronizationIssue, SynchronizationItem, SynchronizationProjectionIssue,
+        };
+        let file = "ORIENTAÇÕES/Responsáveis por seção.docx";
+        let status = SynchronizationStatus {
+            account_id: AccountId("account".into()),
+            state: SynchronizationState::Waiting,
+            activity: SynchronizationActivity::None,
+            current_item: Some(SynchronizationItem {
+                item_id: None,
+                local_path: Some(file.into()),
+                remote_id: None,
+            }),
+            current_operation: None,
+            progress: None,
+            issue: Some(SynchronizationIssue {
+                kind: SynchronizationIssueKind::Unsupported(Some(
+                    SynchronizationProjectionIssue::MissingRemoteContentEvidence,
+                )),
+                retryable: false,
+            }),
+            updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
+        };
+        let message = description(&status);
+        assert!(message.contains(file));
+        assert!(message.contains(&gettext("Drive did not provide the information needed to verify a download. The local file was kept.")));
     }
 }

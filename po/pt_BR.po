@@ -1327,16 +1327,8 @@ msgid "Initial association needs confirmation before this item can continue."
 msgstr "A associação inicial precisa ser confirmada antes de continuar com este item."
 
 #: src/services/synchronization.rs
-msgid "This change is not supported yet."
-msgstr "Esta alteração ainda não é compatível."
-
-#: src/services/synchronization.rs
 msgid "The synchronization information is inconsistent. Refresh observations before continuing."
 msgstr "As informações de sincronização estão inconsistentes. Atualize as observações antes de continuar."
-
-#: src/services/synchronization.rs
-msgid "An operation failed. Check account and folder access."
-msgstr "Uma operação falhou. Verifique o acesso à conta e às pastas."
 
 #: src/services/synchronization.rs
 msgid "The item changed before execution. Waiting for a fresh observation."
@@ -1629,3 +1621,51 @@ msgstr "Uma operação precisa de verificação para a sincronização continuar
 
 msgid "Keep the current copies while DriveSync checks the result."
 msgstr "Mantenha as cópias atuais enquanto o DriveSync verifica o resultado."
+
+#: src/ui/dashboard/sync/backend.rs
+msgid "Item could not be synchronized"
+msgstr "Não foi possível sincronizar o item"
+
+#: src/services/synchronization.rs
+msgid "A synchronization operation failed."
+msgstr "Uma operação de sincronização falhou."
+
+#: src/services/synchronization.rs
+msgid "{item} — {reason}"
+msgstr "{item} — {reason}"
+
+#: src/services/synchronization.rs
+msgid "Symbolic links and special files are skipped."
+msgstr "Links simbólicos e arquivos especiais são ignorados."
+
+#: src/services/synchronization.rs
+msgid "This local file name cannot be used for synchronization."
+msgstr "Este nome de arquivo local não pode ser usado na sincronização."
+
+#: src/services/synchronization.rs
+msgid "This Drive file name cannot be represented on this computer."
+msgstr "O nome deste arquivo do Drive não pode ser usado neste computador."
+
+#: src/services/synchronization.rs
+msgid "Drive shortcuts are skipped."
+msgstr "Atalhos do Drive são ignorados."
+
+#: src/services/synchronization.rs
+msgid "This Google Drive file type cannot be synchronized."
+msgstr "O DriveSync não sincroniza este tipo de arquivo do Google Drive."
+
+#: src/services/synchronization.rs
+msgid "Multiple items would use the same name. Rename one of them to continue."
+msgstr "Vários itens usariam o mesmo nome. Renomeie um deles para continuar."
+
+#: src/services/synchronization.rs
+msgid "An existing local file occupies the Google Workspace shortcut path."
+msgstr "Um arquivo local já ocupa o caminho do atalho do Google Workspace."
+
+#: src/services/synchronization.rs
+msgid "Drive did not provide the information needed to verify a download. The local file was kept."
+msgstr "O Drive não forneceu os dados necessários para verificar o download. A cópia local foi preservada."
+
+#: src/services/synchronization.rs
+msgid "DriveSync cannot apply this change. Existing copies were kept."
+msgstr "O DriveSync não conseguiu aplicar esta alteração. As cópias existentes foram preservadas."

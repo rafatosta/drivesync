@@ -1,5 +1,6 @@
 //! Scoped current evidence and destination resolution. No synchronization writes occur here.
 use super::*;
+use crate::SynchronizationProjectionIssue as ProjectionIssue;
 use crate::{
     detectors::observation::models::{CaptureEntries, ScopeCapture},
     inventory::models::{InventoryScopeQuery, InventorySnapshot},
@@ -337,8 +338,7 @@ impl Context {
                     _ => None,
                 };
                 let Some(projected_name) = projected_name else {
-                    file.environment.projection_issue =
-                        Some("Remote projected name is not representable.".into());
+                    file.environment.projection_issue = Some(ProjectionIssue::InvalidRemoteName);
                     return;
                 };
                 let collisions = view
@@ -479,21 +479,21 @@ impl Context {
                 file.local.kind,
                 Evidence::Known(FileKind::Regular | FileKind::Directory)
             ) {
-            Some("Symbolic links and special local files are not synchronized.")
+            Some(ProjectionIssue::SpecialLocalFile)
         } else if file.local.state == FileState::Present
             && !matches!(&file.local.name,Evidence::Known(n) if projections::valid_name(n))
         {
-            Some("Local name is non-UTF-8, reserved or not representable.")
+            Some(ProjectionIssue::InvalidLocalName)
         } else if let (Evidence::Known(name), Evidence::Known(mime)) =
             (&file.remote.name, &file.remote.mime_type)
         {
             let projected = projections::local_name(name, mime);
             if projected.is_none() {
-                Some("Remote name is not representable by the Linux projection.")
+                Some(ProjectionIssue::InvalidRemoteName)
             } else if projections::kind(mime) == RemoteKind::RemoteShortcut {
-                Some("Remote Drive shortcuts are not Workspace documents and are not projected.")
+                Some(ProjectionIssue::DriveShortcut)
             } else if projections::kind(mime) == RemoteKind::Unsupported {
-                Some("This native remote type has no supported projection.")
+                Some(ProjectionIssue::UnsupportedDriveType)
             } else if let Evidence::Known(parents) = &file.remote.parents {
                 if parents.len() == 1
                     && (view
@@ -506,19 +506,19 @@ impl Context {
                                 .is_some_and(|ids| ids.len() > 1)
                         }))
                 {
-                    Some("Duplicate remote names or projected-name collisions require manual separation.")
+                    Some(ProjectionIssue::NameCollision)
                 } else if projections::kind(mime) == RemoteKind::Workspace
                     && file.baseline.state != crate::inventory::models::BaselineState::Synced
                     && (file.local.state == FileState::Present
                         || file.environment.destination_local_occupied == Evidence::Known(true))
                 {
-                    Some("An occupied Workspace projection slot is never adopted or overwritten.")
+                    Some(ProjectionIssue::OccupiedWorkspacePath)
                 } else if projections::kind(mime) == RemoteKind::Binary
                     && file.remote.state == FileState::Present
                     && (!matches!(&file.remote.checksum,Evidence::Known(h) if h.algorithm=="sha256" && h.value.len()==64 && h.value.bytes().all(|b|b.is_ascii_hexdigit()))
                         || !matches!(file.remote.size, Evidence::Known(_)))
                 {
-                    Some("Binary size or SHA-256 metadata is insufficient for a verified transfer.")
+                    Some(ProjectionIssue::MissingRemoteContentEvidence)
                 } else {
                     None
                 }
@@ -528,7 +528,7 @@ impl Context {
         } else {
             None
         };
-        file.environment.projection_issue = reason.map(str::to_owned);
+        file.environment.projection_issue = reason;
         if file.environment.projection_issue.is_none()
             && file.identity.remote_id.is_none()
             && file.local.state == FileState::Present
@@ -539,7 +539,7 @@ impl Context {
             ) {
                 if view.projected_matches.get(&(parent.clone(),name.clone())).is_some_and(|ids|ids.iter().any(|id|view.remote.get(id).is_some_and(|r|matches!(&r.mime_type,Evidence::Known(m) if projections::kind(m)==RemoteKind::Workspace))))
                     || view.matches.get(&(parent.clone(),name.clone())).is_some_and(|ids|ids.iter().any(|id|view.remote.get(id).is_some_and(|r|matches!(&r.mime_type,Evidence::Known(m) if projections::kind(m)==RemoteKind::Workspace)))) {
-                    file.environment.projection_issue=Some("A local item collides with a Workspace projection or remote name.".into());
+                    file.environment.projection_issue=Some(ProjectionIssue::NameCollision);
                 }
             }
         }

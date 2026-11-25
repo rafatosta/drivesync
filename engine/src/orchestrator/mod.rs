@@ -605,7 +605,9 @@ impl Orchestrator {
                 DecisionStatus::Adopt => Some(SynchronizationIssueKind::AdoptionRequired),
                 DecisionStatus::Conflict => Some(SynchronizationIssueKind::Conflict),
                 DecisionStatus::InvalidInput => Some(SynchronizationIssueKind::InvalidInput),
-                DecisionStatus::Unsupported => Some(SynchronizationIssueKind::Unsupported),
+                DecisionStatus::Unsupported => Some(SynchronizationIssueKind::Unsupported(
+                    file.environment.projection_issue,
+                )),
                 _ => Some(
                     if decision
                         .validation

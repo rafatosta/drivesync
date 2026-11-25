@@ -31,6 +31,11 @@ impl Engine {
                     .map_err(|_| ConflictError::Unavailable)?;
                 Ok(snapshots
                     .into_iter()
+                    .filter(|s| {
+                        !s.local_path
+                            .as_deref()
+                            .is_some_and(crate::projections::libreoffice_lock_path)
+                    })
                     .filter_map(|s| {
                         let c = s.prior_conflict.filter(|c| !c.resolved)?;
                         let archive_path = root.join(".drivesync/conflicts").join(&c.id.0);

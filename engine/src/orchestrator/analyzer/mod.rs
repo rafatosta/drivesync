@@ -24,18 +24,18 @@ pub(crate) use models::{
 pub(crate) fn analyze(file: &File) -> Decision {
     let validation = validate(file);
     let changeset = compare(file);
-    if validation.status != ValidationStatus::InvalidInput {
-        if let Some(reason) = &file.environment.projection_issue {
-            return decision(
-                DecisionStatus::Unsupported,
-                reason,
-                validation,
-                changeset,
-                vec![],
-                ExecutionStatus::NotExecutable,
-                vec![],
-            );
-        }
+    if validation.status != ValidationStatus::InvalidInput
+        && file.environment.projection_issue.is_some()
+    {
+        return decision(
+            DecisionStatus::Unsupported,
+            "The item cannot be represented or verified for synchronization.",
+            validation,
+            changeset,
+            vec![],
+            ExecutionStatus::NotExecutable,
+            vec![],
+        );
     }
     if validation.status != ValidationStatus::Valid {
         let status = match validation.status {

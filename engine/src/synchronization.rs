@@ -62,7 +62,7 @@ pub enum SynchronizationIssueKind {
     Deferred,
     Conflict,
     AdoptionRequired,
-    Unsupported,
+    Unsupported(Option<SynchronizationProjectionIssue>),
     InvalidInput,
     OperationFailed,
     PreconditionFailed,
@@ -71,6 +71,19 @@ pub enum SynchronizationIssueKind {
     TrashRefused,
     TrashRecoveryRequired,
 }
+/// Why a file could not be represented or verified for synchronization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationProjectionIssue {
+    SpecialLocalFile,
+    InvalidLocalName,
+    InvalidRemoteName,
+    DriveShortcut,
+    UnsupportedDriveType,
+    NameCollision,
+    OccupiedWorkspacePath,
+    MissingRemoteContentEvidence,
+}
+
 /// Current blocker without credentials, raw server text, or observation payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationIssue {
