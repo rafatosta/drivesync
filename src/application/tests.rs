@@ -55,10 +55,11 @@ fn account_only_layout_and_initial_name_editor() {
         updated_at: Timestamp { unix_millis: 0 },
     };
     let dashboard = crate::ui::dashboard::build(&crate::application::Context::default(), &nav);
-    assert!(find(dashboard.upcast_ref(), "dashboard-content")
+    let content = find(dashboard.upcast_ref(), "dashboard-content")
         .unwrap()
-        .first_child()
-        .is_none());
+        .downcast::<adw::Clamp>()
+        .unwrap();
+    assert!(!content.child().unwrap().is_visible());
     assert!(find(dashboard.upcast_ref(), "account-name-editor").is_none());
     capture(&window, &dashboard, "dashboard-empty");
     let dashboard = crate::ui::dashboard::fixture(&nav, &account);
@@ -86,8 +87,9 @@ fn account_only_layout_and_initial_name_editor() {
     .downcast::<gtk::MenuButton>()
     .unwrap();
     let model = second_menu.menu_model().unwrap();
-    assert_eq!(model.n_items(), 3);
-    for (index, action) in ["local", "remote", "sign-out"].iter().enumerate() {
+    let actions = ["configure", "local", "remote", "sign-out"];
+    assert_eq!(model.n_items(), actions.len() as i32);
+    for (index, action) in actions.iter().enumerate() {
         assert_eq!(
             model
                 .item_attribute_value(index as i32, "action", None)

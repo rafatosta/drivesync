@@ -89,23 +89,26 @@ fn build_with_accounts(
         .build();
     header.pack_start(&toggle);
     content.add_top_bar(&header);
-    let status = adw::StatusPage::builder()
-        .title(gettext("Your accounts"))
-        .description(gettext(
-            "Choose an account to open its saved folders or manage its connection.",
-        ))
-        .icon_name("drive-harddisk-symbolic")
-        .build();
-    status.set_widget_name("dashboard-content");
     let synchronization = super::synchronization::SynchronizationView::new();
-    status.set_child(Some(&synchronization.widget));
-    content.set_content(Some(&status));
+    let dashboard = adw::Clamp::builder()
+        .margin_top(24)
+        .margin_bottom(24)
+        .margin_start(16)
+        .margin_end(16)
+        .valign(gtk::Align::Start)
+        .child(&synchronization.widget)
+        .build();
+    dashboard.set_widget_name("dashboard-content");
+    let scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .child(&dashboard)
+        .build();
+    content.set_content(Some(&scroll));
     split.set_content(Some(&adw::NavigationPage::new(&content, "DriveSync")));
     sidebar.on_selected({
         let context = context.clone();
         let synchronization = synchronization.clone();
         let title = title.downgrade();
-        let status = status.downgrade();
         move |account| {
             synchronization.select(&context, account.as_ref());
             if let Some(title) = title.upgrade() {
@@ -121,24 +124,6 @@ fn build_with_accounts(
                         .and_then(|a| a.email.as_deref())
                         .unwrap_or(""),
                 );
-            }
-            if let Some(status) = status.upgrade() {
-                if let Some(account) = account {
-                    let label = account
-                        .display_name
-                        .as_deref()
-                        .or(account.email.as_deref())
-                        .unwrap_or("Google Drive");
-                    status.set_title(label);
-                    status.set_description(Some(&gettext(
-                        "Use the account menu to open its saved folders or sign out.",
-                    )));
-                } else {
-                    status.set_title(&gettext("Your accounts"));
-                    status.set_description(Some(&gettext(
-                        "Choose an account to open its saved folders or manage its connection.",
-                    )));
-                }
             }
         }
     });
@@ -230,5 +215,9 @@ pub(crate) fn fixture(
     account: &drivesync_engine::Account,
 ) -> adw::NavigationPage {
     super::sidebar::exercise(account);
-    build_with_accounts(&Context::default(), navigation, vec![account.clone()])
+    let mut work = account.clone();
+    work.id = drivesync_engine::AccountId("work-fixture".into());
+    work.display_name = Some("Work".into());
+    work.email = Some("work@example.invalid".into());
+    build_with_accounts(&Context::default(), navigation, vec![account.clone(), work])
 }
