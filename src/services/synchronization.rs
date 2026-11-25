@@ -118,7 +118,7 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationActivity::Moving => gettext("Moving…"),
             _ => gettext("Applying changes…"),
         };
-        return describe_item(status, procedure);
+        return procedure;
     }
     if let Some(issue) = &status.issue {
         let message = match issue.kind {
@@ -145,7 +145,7 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
             SynchronizationIssueKind::TrashRecoveryRequired => gettext("DriveSync needs to verify the result of the move to trash."),
             SynchronizationIssueKind::WorkerFailed => gettext("Synchronization could not continue. Stop and restart it before trying again."),
         };
-        return describe_item(status, message);
+        return message;
     }
     match status.state {
         SynchronizationState::Idle => gettext("No pending operations."),
@@ -185,12 +185,10 @@ fn item_verification(
     use SynchronizationConfirmedAction as Action;
     use SynchronizationVerificationSource as Source;
     let verification = gettext(match source {
-        Source::Local => "Waiting for information from the computer to finish verification.",
-        Source::Remote => "Waiting for information from Drive to finish verification.",
-        Source::Both => {
-            "Waiting for information from the computer and Drive to finish verification."
-        }
-        Source::Unspecified => "Waiting for confirmation of the current state.",
+        Source::Local => "Waiting to check the copy on the computer.",
+        Source::Remote => "Waiting to check the copy on Drive.",
+        Source::Both => "Waiting to check the copies on the computer and on Drive.",
+        Source::Unspecified => "Waiting to verify the item.",
     });
     let Some(action) = confirmed_action else {
         return verification;
@@ -202,22 +200,6 @@ fn item_verification(
         Action::CreateRemoteDirectory => "Folder created on Drive.",
     });
     format!("{completed} {verification}")
-}
-
-fn describe_item(status: &SynchronizationStatus, procedure: String) -> String {
-    let item = status.current_item.as_ref().and_then(|item| {
-        item.local_path
-            .as_ref()
-            .filter(|path| !path.as_os_str().is_empty())
-            .map(|path| path.to_string_lossy().into_owned())
-            .or_else(|| item.display_name.clone())
-    });
-    match item {
-        Some(item) => gettext("{item} — {reason}")
-            .replace("{reason}", &procedure)
-            .replace("{item}", &item),
-        None => procedure,
-    }
 }
 
 fn projection_message(reason: Option<drivesync_engine::SynchronizationProjectionIssue>) -> String {
@@ -277,13 +259,13 @@ mod tests {
             format!(
                 "{} {}",
                 gettext("Download confirmed."),
-                gettext("Waiting for information from Drive to finish verification."),
+                gettext("Waiting to check the copy on Drive."),
             )
         );
     }
 
     #[test]
-    fn unsupported_download_identifies_the_affected_file_and_the_missing_evidence() {
+    fn unsupported_download_explains_the_missing_evidence() {
         use drivesync_engine::{
             SynchronizationIssue, SynchronizationItem, SynchronizationProjectionIssue,
         };
@@ -310,7 +292,7 @@ mod tests {
             updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
         };
         let message = description(&status);
-        assert!(message.contains(file));
+        assert!(!message.contains(file));
         assert!(message.contains(&gettext("Drive did not provide the information needed to verify a download. The local file was kept.")));
     }
 }

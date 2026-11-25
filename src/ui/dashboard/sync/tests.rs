@@ -43,20 +43,20 @@ fn isolated_components_and_fake_backend() {
     adw::init().unwrap();
     for _ in 0..3 {
         let status = SyncStatus::new();
-        let waiting_progress = status
+        let spinner = status
             .widget
             .last_child()
             .unwrap()
             .last_child()
-            .and_downcast::<gtk::ProgressBar>()
+            .and_downcast::<gtk::Spinner>()
             .unwrap();
-        assert!(!waiting_progress.shows_text());
         use StatusView::*;
         for (state, waits) in [
             (Initializing, true),
             (Checking, true),
             (VerificationIncomplete, false),
-            (WaitingForEvidence, true),
+            (WaitingForEvidence, false),
+            (Finalizing, false),
             (Synchronizing, true),
             (Recovering, true),
             (Synced, false),
@@ -66,7 +66,7 @@ fn isolated_components_and_fake_backend() {
             (Stopped, false),
         ] {
             status.set_state(state.clone(), "fixture");
-            assert_eq!(waiting_progress.is_visible(), waits);
+            assert_eq!(spinner.is_visible(), waits);
             assert_eq!(status.state(), state);
         }
         let mut count = 0;
@@ -289,6 +289,8 @@ fn isolated_components_and_fake_backend() {
             scope: "fixture-a".into(),
             status: StatusView::Synced,
             description: "All files are up to date.".into(),
+            item: None,
+            active: false,
             activity: None,
             attention: vec![],
         };
@@ -312,14 +314,16 @@ fn isolated_components_and_fake_backend() {
 
         let mut measured = activity();
         measured.name = "Relatório.docx".into();
-        measured.progress = ProgressView::Steps {
-            completed: 1,
+        measured.progress = ProgressView::Bytes {
+            transferred: 1,
             total: 4,
         };
         let snapshot = Snapshot {
             scope: "fixture-a".into(),
             status: StatusView::Synchronizing,
             description: String::new(),
+            item: None,
+            active: true,
             activity: Some(measured.clone()),
             attention: vec![],
         };
@@ -362,23 +366,46 @@ fn isolated_components_and_fake_backend() {
         window.present();
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
         save_window(&window, "fixture-dashboard-pt-br.png");
-        let waiting_progress = controller
+        assert!(controller.activity.update_progress(
+            "fixture-a",
+            "download-1",
+            ProgressView::Steps {
+                completed: 1,
+                total: 4
+            },
+        ));
+        assert!(!progress.is_visible());
+        let spinner = controller
             .activity
             .widget
             .prev_sibling()
-            .and_downcast::<gtk::ProgressBar>()
+            .and_downcast::<gtk::Spinner>()
             .unwrap();
-        assert!(!waiting_progress.is_mapped());
+        assert!(!spinner.is_mapped());
         controller.activity.clear();
         controller
             .status
             .set_state(StatusView::Checking, "Conferindo a última operação.");
-        assert!(waiting_progress.is_mapped());
-        controller.status.set_state(
-            StatusView::WaitingForEvidence,
-            "Relatório.docx — Aguardando uma verificação completa no Drive.",
+        assert!(spinner.is_mapped());
+        let item = StatusItem {
+            name: "Relatório 日本語 🦀.docx".repeat(20),
+            path: Some(format!(
+                "Projetos/Documentos/{}",
+                "Relatório 日本語 🦀.docx".repeat(20)
+            )),
+        };
+        controller.status.render(
+            StatusView::Finalizing,
+            "Download concluído. Aguardando para conferir a cópia no Drive.",
+            Some(&item),
+            false,
+            false,
         );
-        assert!(waiting_progress.is_mapped());
+        let item_label = spinner.prev_sibling().and_downcast::<gtk::Label>().unwrap();
+        assert_eq!(item_label.text(), item.name);
+        assert_eq!(item_label.ellipsize(), gtk::pango::EllipsizeMode::Middle);
+        assert_eq!(item_label.tooltip_text().as_deref(), item.path.as_deref());
+        assert!(!spinner.is_mapped());
         assert!(!details.is_activatable());
         assert!(!chevron.is_visible());
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
@@ -386,7 +413,7 @@ fn isolated_components_and_fake_backend() {
         controller
             .status
             .set_state(StatusView::Failed, "Folder unavailable");
-        assert!(!waiting_progress.is_mapped());
+        assert!(!spinner.is_mapped());
         assert!(details.is_activatable());
         assert!(chevron.is_visible());
         details.emit_by_name::<()>("activate", &[]);
@@ -928,7 +955,7 @@ fn trash_activity_and_attention_follow_public_evidence() {
         let snapshot = super::backend::map_status(&status, true);
         assert!(snapshot.activity.is_none());
         assert_eq!(snapshot.status, StatusView::Attention);
-        assert!(snapshot.attention[0].summary.contains("fixture.bin"));
+        assert_eq!(snapshot.item.as_ref().unwrap().name, "fixture.bin");
         assert!(matches!(
             snapshot.attention[0].action,
             AttentionAction::OpenIssue(_)
@@ -974,7 +1001,7 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
     assert_eq!(blocked.status, StatusView::Attention);
     assert!(blocked.activity.is_none());
     assert_eq!(blocked.attention.len(), 1);
-    assert!(blocked.attention[0].summary.contains("resume.bin"));
+    assert_eq!(blocked.item.as_ref().unwrap().name, "resume.bin");
     assert_eq!(
         blocked.attention[0].action,
         AttentionAction::OpenIssue("recovery-blocker".into())
@@ -1060,12 +1087,28 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
     let waiting = map_status(&status, true);
     assert_eq!(waiting.status, StatusView::WaitingForEvidence);
     assert!(waiting.activity.is_none());
-    assert!(waiting.description.contains("Relatório.docx"));
+    assert_eq!(waiting.item.as_ref().unwrap().name, "Relatório.docx");
+    assert!(!waiting.description.contains("Relatório.docx"));
+    assert!(!waiting.active);
     assert!(waiting
         .description
         .contains(&gettextrs::gettext("Waiting for a complete scan on Drive.")));
     assert!(!waiting.description.contains("opaque-drive-id"));
     assert!(waiting.attention.is_empty());
+
+    status.issue.as_mut().unwrap().kind =
+        SynchronizationIssueKind::DeferredFor(SynchronizationWait::ItemVerification {
+            source: drivesync_engine::SynchronizationVerificationSource::Remote,
+            confirmed_action: Some(drivesync_engine::SynchronizationConfirmedAction::Download),
+        });
+    let finalizing = map_status(&status, false);
+    assert_eq!(finalizing.status, StatusView::Finalizing);
+    assert!(!finalizing.active);
+    assert!(finalizing.activity.is_none());
+    assert!(finalizing
+        .description
+        .contains(&gettextrs::gettext("Download confirmed.")));
+    assert_eq!(finalizing.item.unwrap().name, "Relatório.docx");
 
     status.issue.as_mut().unwrap().kind =
         SynchronizationIssueKind::DeferredFor(SynchronizationWait::FreshObservations);
@@ -1089,7 +1132,8 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
         });
         let confirming = map_status(&status, false);
         assert_eq!(confirming.status, StatusView::Checking);
-        assert!(confirming.description.contains("Relatório.docx"));
+        assert_eq!(confirming.item.as_ref().unwrap().name, "Relatório.docx");
+        assert!(!confirming.description.contains("Relatório.docx"));
         assert!(confirming.description.contains(&gettextrs::gettext(text)));
     }
 

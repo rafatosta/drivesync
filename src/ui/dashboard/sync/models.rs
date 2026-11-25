@@ -3,6 +3,7 @@
 pub enum StatusView {
     Initializing,
     WaitingForEvidence,
+    Finalizing,
     Checking,
     VerificationIncomplete,
     Synchronizing,
@@ -134,11 +135,20 @@ pub struct ConflictChoiceRequest {
     pub revision: u64,
     pub choice: ConflictChoice,
 }
+/// File identity shown independently of the synchronization message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusItem {
+    pub name: String,
+    pub path: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub scope: String,
     pub status: StatusView,
     pub description: String,
+    pub item: Option<StatusItem>,
+    pub active: bool,
     pub activity: Option<ActivityView>,
     pub attention: Vec<AttentionItemView>,
 }

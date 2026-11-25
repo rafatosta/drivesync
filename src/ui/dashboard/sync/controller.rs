@@ -122,19 +122,11 @@ impl DashboardController {
         self.dialogs.borrow_mut().push(dialog.window.clone());
         dialog
     }
-    pub fn apply(&self, snapshot: Snapshot) -> bool {
+    pub fn apply(&self, mut snapshot: Snapshot) -> bool {
         if self.scope.borrow().as_deref() != Some(snapshot.scope.as_str()) {
             return false;
         }
-        match snapshot.activity.filter(|a| a.scope == snapshot.scope) {
-            Some(activity) => self.activity.set_activity(activity),
-            None => self.activity.clear(),
-        }
-        self.status.set_state_with_progress(
-            snapshot.status,
-            &snapshot.description,
-            self.activity.has_measured_progress(),
-        );
+        render_feedback(&self.status, &self.activity, &mut snapshot);
         self.attention.set_items(
             snapshot
                 .attention
@@ -185,7 +177,7 @@ impl DashboardController {
         let generations = self.generation.clone();
         self.task.set(gtk::glib::spawn_future_local(async move {
             let mut last_rendered = None;
-            while let Some(snapshot) = backend.next().await {
+            while let Some(mut snapshot) = backend.next().await {
                 if generations.get() != generation || widget.upgrade().is_none() {
                     break;
                 }
@@ -195,15 +187,7 @@ impl DashboardController {
                     continue;
                 }
                 last_rendered = Some(snapshot.clone());
-                match snapshot.activity.filter(|a| a.scope == snapshot.scope) {
-                    Some(value) => activity.set_activity(value),
-                    None => activity.clear(),
-                }
-                status.set_state_with_progress(
-                    snapshot.status,
-                    &snapshot.description,
-                    activity.has_measured_progress(),
-                );
+                render_feedback(&status, &activity, &mut snapshot);
                 attention.set_items(
                     snapshot
                         .attention
@@ -214,4 +198,28 @@ impl DashboardController {
             }
         }));
     }
+}
+
+fn render_feedback(status: &SyncStatus, activity: &SyncActivity, snapshot: &mut Snapshot) {
+    let operation = snapshot
+        .activity
+        .take()
+        .filter(|a| a.scope == snapshot.scope);
+    let has_activity = operation.is_some();
+    match operation {
+        Some(operation) => {
+            activity
+                .widget
+                .set_tooltip_text(snapshot.item.as_ref().and_then(|item| item.path.as_deref()));
+            activity.set_activity(operation);
+        }
+        None => activity.clear(),
+    }
+    status.render(
+        snapshot.status.clone(),
+        &snapshot.description,
+        snapshot.item.as_ref(),
+        snapshot.active,
+        has_activity,
+    );
 }

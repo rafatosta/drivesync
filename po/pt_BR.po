@@ -1736,8 +1736,11 @@ msgstr "Verificando alterações no computador e no Drive…"
 msgid "Waiting for the computer and Drive scans to finish."
 msgstr "Aguardando o fim das verificações no computador e no Drive."
 
-msgid "Verification pending"
-msgstr "Verificação pendente"
+msgid "Waiting to continue synchronization"
+msgstr "Aguardando para continuar a sincronização"
+
+msgid "Finalizing synchronization"
+msgstr "Finalizando a sincronização"
 
 msgid "Checking synchronization…"
 msgstr "Verificando a sincronização…"
@@ -1771,20 +1774,20 @@ msgstr "Não há operações na fila. Alguns itens ainda precisam ser verificado
 msgid "Waiting for confirmation of the current state before making changes."
 msgstr "Aguardando a confirmação do estado atual antes de fazer alterações."
 
-msgid "Waiting for information from the computer to finish verification."
-msgstr "Aguardando informações do computador para concluir a verificação."
+msgid "Waiting to check the copy on the computer."
+msgstr "Aguardando para conferir a cópia no computador."
 
-msgid "Waiting for information from Drive to finish verification."
-msgstr "Aguardando informações do Drive para concluir a verificação."
+msgid "Waiting to check the copy on Drive."
+msgstr "Aguardando para conferir a cópia no Drive."
 
-msgid "Waiting for information from the computer and Drive to finish verification."
-msgstr "Aguardando informações do computador e do Drive para concluir a verificação."
+msgid "Waiting to check the copies on the computer and on Drive."
+msgstr "Aguardando para conferir as cópias no computador e no Drive."
 
-msgid "Waiting for confirmation of the current state."
-msgstr "Aguardando a confirmação do estado atual."
+msgid "Waiting to verify the item."
+msgstr "Aguardando para conferir o item."
 
 msgid "Download confirmed."
-msgstr "Download confirmado."
+msgstr "Download concluído."
 
 msgid "Upload confirmed."
 msgstr "Envio confirmado."

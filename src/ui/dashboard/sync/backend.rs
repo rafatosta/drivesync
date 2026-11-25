@@ -67,6 +67,8 @@ impl SyncBackend for EngineAdapter {
                             scope: self.account.0.clone(),
                             status: StatusView::Failed,
                             description: crate::core::messages::engine_error(&error),
+                            item: None,
+                            active: false,
                             activity: None,
                             attention: vec![],
                         });
@@ -151,7 +153,7 @@ fn is_background_check(status: &drivesync_engine::SynchronizationStatus) -> bool
 
 fn incomplete_description(audit: Option<&drivesync_engine::SynchronizationAudit>) -> String {
     match audit {
-        None => gettext("DriveSync could not verify that the folders are up to date."),
+        None => gettext("No pending operations."),
         Some(audit) if !audit.coverage_complete => {
             gettext("DriveSync needs current scans of both folders to confirm synchronization.")
         }
@@ -188,6 +190,13 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         (S::Stopped, _) => StatusView::Stopped,
         (S::Failed, _) => StatusView::Failed,
         (_, Some(I::DeferredFor(W::FreshObservations))) => StatusView::Checking,
+        (
+            _,
+            Some(I::DeferredFor(W::ItemVerification {
+                confirmed_action: Some(_),
+                ..
+            })),
+        ) => StatusView::Finalizing,
         (S::Waiting, None) if observing => StatusView::Checking,
         (_, Some(I::Deferred | I::DeferredFor(_) | I::PreconditionFailed)) | (S::Waiting, None) => {
             StatusView::WaitingForEvidence
@@ -201,7 +210,26 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         (S::Idle, None) if audited => StatusView::Synced,
         (S::Idle, None) => StatusView::VerificationIncomplete,
     };
-    let activity = if effective_state == S::Running {
+    let item_presentation = status.current_item.as_ref().and_then(|item| {
+        let path = item
+            .local_path
+            .as_ref()
+            .filter(|p| !p.as_os_str().is_empty());
+        let name = status
+            .current_operation
+            .as_ref()
+            .and_then(|op| op.display_name.clone())
+            .or_else(|| {
+                path.and_then(|p| p.file_name())
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+            .or_else(|| item.display_name.clone())?;
+        Some(StatusItem {
+            name,
+            path: path.map(|p| p.to_string_lossy().into_owned()),
+        })
+    });
+    let activity = if effective_state == S::Running && issue.is_none() {
         status.current_item.as_ref().and_then(|item| {
             let updates_local = status
                 .current_operation
@@ -330,18 +358,10 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                         .map(|v| v.0.clone())
                         .or_else(|| item.remote_id.as_ref().map(|v| v.0.clone()))
                 })?;
-            let name = status
-                .current_operation
+            let name = item_presentation
                 .as_ref()
-                .and_then(|op| op.display_name.clone())
-                .or_else(|| {
-                    item.local_path
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .map(|p| p.to_string_lossy().into_owned())
-                })
-                .or_else(|| item.display_name.clone())
-                .unwrap_or_else(|| gettextrs::gettext("Unidentified item"));
+                .map(|item| item.name.clone())
+                .unwrap_or_else(|| gettext("Unidentified item"));
             Some(ActivityView {
                 scope: scope.clone(),
                 operation_id: status.current_operation.as_ref().map(|op| op.id.clone()),
@@ -427,10 +447,14 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         })
         .into_iter()
         .collect();
+    let item =
+        item_presentation.filter(|_| !matches!(state, StatusView::Synced | StatusView::Stopped));
     Snapshot {
         scope,
         status: state,
         description,
+        item,
+        active: effective_state == S::Running && issue.is_none(),
         activity,
         attention,
     }

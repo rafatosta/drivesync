@@ -37,6 +37,14 @@ pub(super) fn show(
         .use_markup(false)
         .build();
     summary.add(&details);
+    if let Some(item) = controller.status.item_detail() {
+        let item_details = adw::ActionRow::builder()
+            .title(gettext("Item"))
+            .subtitle(item)
+            .use_markup(false)
+            .build();
+        summary.add(&item_details);
+    }
     if let Some(folder) = local_folder {
         let configure = adw::ActionRow::builder()
             .title(gettext("Configure folders"))

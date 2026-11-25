@@ -2,10 +2,7 @@
 use super::models::*;
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 fn label() -> gtk::Label {
     gtk::Label::builder()
@@ -38,7 +35,8 @@ pub struct SyncStatus {
     icon: gtk::Image,
     title: gtk::Label,
     description: gtk::Label,
-    waiting_progress: gtk::ProgressBar,
+    item_name: gtk::Label,
+    spinner: gtk::Spinner,
     state: Rc<RefCell<StatusView>>,
 }
 impl SyncStatus {
@@ -59,38 +57,16 @@ impl SyncStatus {
         labels.set_hexpand(true);
         labels.append(&title);
         labels.append(&description);
-        let waiting_progress = gtk::ProgressBar::builder()
-            .visible(false)
-            .margin_top(4)
-            .build();
-        waiting_progress.set_widget_name("dashboard-waiting-progress");
-        waiting_progress
-            .update_relation(&[gtk::accessible::Relation::LabelledBy(&[title.upcast_ref()])]);
-        let pulse_callback = Rc::new(Cell::<Option<gtk::TickCallbackId>>::new(None));
-        waiting_progress.connect_map({
-            let pulse_callback = pulse_callback.clone();
-            move |bar| {
-                bar.pulse();
-                let last_pulse = Cell::new(0);
-                let id = bar.add_tick_callback(move |bar, clock| {
-                    let now = clock.frame_time();
-                    if now - last_pulse.get() >= 100_000
-                        && bar.settings().is_gtk_enable_animations()
-                    {
-                        bar.pulse();
-                        last_pulse.set(now);
-                    }
-                    gtk::glib::ControlFlow::Continue
-                });
-                pulse_callback.set(Some(id));
-            }
-        });
-        waiting_progress.connect_unmap(move |_| {
-            if let Some(id) = pulse_callback.take() {
-                id.remove();
-            }
-        });
-        labels.append(&waiting_progress);
+        let item_name = label();
+        item_name.set_widget_name("dashboard-synchronization-item");
+        item_name.set_wrap(false);
+        item_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        labels.append(&item_name);
+        let spinner = gtk::Spinner::new();
+        spinner.set_widget_name("dashboard-synchronization-spinner");
+        spinner.set_halign(gtk::Align::Start);
+        spinner.update_relation(&[gtk::accessible::Relation::LabelledBy(&[title.upcast_ref()])]);
+        labels.append(&spinner);
         widget.append(&labels);
         widget.set_hexpand(true);
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
@@ -133,24 +109,35 @@ impl SyncStatus {
             icon,
             title,
             description,
-            waiting_progress,
+            item_name,
+            spinner,
             state: Rc::new(RefCell::new(StatusView::Initializing)),
         };
         value.reset();
         value
     }
     pub fn set_state(&self, state: StatusView, description: &str) {
-        self.set_state_with_progress(state, description, false);
+        let active = matches!(
+            state,
+            StatusView::Initializing
+                | StatusView::Checking
+                | StatusView::Synchronizing
+                | StatusView::Recovering
+        );
+        self.render(state, description, None, active, false);
     }
-    pub(super) fn set_state_with_progress(
+    pub(super) fn render(
         &self,
         state: StatusView,
         description: &str,
-        measured_progress: bool,
+        item: Option<&StatusItem>,
+        active: bool,
+        has_activity: bool,
     ) {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
-            StatusView::WaitingForEvidence => "Verification pending",
+            StatusView::WaitingForEvidence => "Waiting to continue synchronization",
+            StatusView::Finalizing => "Finalizing synchronization",
             StatusView::Checking => "Checking synchronization…",
             StatusView::VerificationIncomplete => "Synchronization not verified",
             StatusView::Recovering => "Checking interrupted operations…",
@@ -164,6 +151,7 @@ impl SyncStatus {
         self.icon.set_icon_name(Some(match state {
             StatusView::Initializing | StatusView::Synchronizing => "view-refresh-symbolic",
             StatusView::WaitingForEvidence
+            | StatusView::Finalizing
             | StatusView::Checking
             | StatusView::VerificationIncomplete
             | StatusView::Recovering => "edit-find-symbolic",
@@ -181,6 +169,7 @@ impl SyncStatus {
             StatusView::Attention => "warning",
             StatusView::Failed => "error",
             StatusView::WaitingForEvidence
+            | StatusView::Finalizing
             | StatusView::VerificationIncomplete
             | StatusView::Offline
             | StatusView::Stopped => "dim-label",
@@ -189,17 +178,13 @@ impl SyncStatus {
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
         self.description.set_visible(!description.is_empty());
-        self.waiting_progress.set_visible(
-            !measured_progress
-                && matches!(
-                    state,
-                    StatusView::Initializing
-                        | StatusView::WaitingForEvidence
-                        | StatusView::Checking
-                        | StatusView::Synchronizing
-                        | StatusView::Recovering
-                ),
-        );
+        self.item_name
+            .set_label(item.map_or("", |item| item.name.as_str()));
+        self.item_name
+            .set_tooltip_text(item.map(|item| item.path.as_deref().unwrap_or(&item.name)));
+        self.item_name.set_visible(item.is_some() && !has_activity);
+        self.spinner.set_visible(active && !has_activity);
+        self.spinner.set_spinning(active && !has_activity);
         let actionable = matches!(
             state,
             StatusView::Attention | StatusView::Failed | StatusView::Offline
@@ -219,6 +204,9 @@ impl SyncStatus {
     pub fn connect_details(&self, callback: impl Fn() + 'static) {
         *self.details_callback.borrow_mut() = Some(Box::new(callback));
     }
+    pub fn item_detail(&self) -> Option<gtk::glib::GString> {
+        self.item_name.tooltip_text()
+    }
     pub fn diagnostic(&self) -> (String, String) {
         (self.title.text().into(), self.description.text().into())
     }
@@ -234,6 +222,7 @@ impl SyncStatus {
 pub struct SyncActivity {
     pub widget: gtk::Box,
     text: gtk::Label,
+    name: gtk::Label,
     details: gtk::Label,
     progress: gtk::ProgressBar,
     spinner: gtk::Spinner,
@@ -243,8 +232,10 @@ impl SyncActivity {
     pub fn new() -> Self {
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let text = label();
-        text.set_lines(3);
-        text.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        let name = label();
+        name.set_wrap(false);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        name.set_widget_name("dashboard-synchronization-activity-item");
         let details = label();
         let spinner = gtk::Spinner::new();
         details.add_css_class("dim-label");
@@ -257,12 +248,14 @@ impl SyncActivity {
         progress.set_show_text(true);
         progress.set_widget_name("dashboard-synchronization-progress");
         widget.append(&operation);
+        widget.append(&name);
         widget.append(&details);
         widget.append(&progress);
         widget.set_visible(false);
         Self {
             widget,
             text,
+            name,
             details,
             progress,
             spinner,
@@ -349,14 +342,14 @@ impl SyncActivity {
             Phase::Failed => "Operation failed",
         };
         let (headline, phase) = if activity.phase == Phase::Running {
-            (
-                format!("{} · {name}", gettext(verb).trim_end_matches('…')),
-                phase,
-            )
+            (gettext(verb), phase)
         } else {
-            (format!("{} · {name}", gettext(phase)), "")
+            (gettext(phase), "")
         };
         self.text.set_label(&headline);
+        self.name.set_label(&name);
+        self.name
+            .set_tooltip_text(self.widget.tooltip_text().as_deref().or(Some(&name)));
         let details = [direction, phase]
             .into_iter()
             .filter(|label| !label.is_empty())
@@ -365,23 +358,22 @@ impl SyncActivity {
             .join(" · ");
         self.details.set_label(&details);
         self.details.set_visible(!details.is_empty());
-        self.render_progress(&activity.progress);
+        self.render_progress(&activity.progress, activity.phase == Phase::Running);
         *self.state.borrow_mut() = Some(activity);
         self.widget.set_visible(true);
     }
-    fn render_progress(&self, value: &ProgressView) {
-        let measured = value.measured();
+    fn render_progress(&self, value: &ProgressView, running: bool) {
+        let measured = match value {
+            ProgressView::Bytes { .. } if running => value.measured(),
+            _ => None,
+        };
         self.progress.set_visible(measured.is_some());
-        let indeterminate = measured.is_none() && *value != ProgressView::None;
+        let indeterminate = running && measured.is_none() && *value != ProgressView::None;
         self.spinner.set_visible(indeterminate);
         self.spinner.set_spinning(indeterminate);
         if let Some((done, total)) = measured {
             self.progress.set_fraction(done as f64 / total as f64);
-            let template = match value {
-                ProgressView::Bytes { .. } => "{completed} of {total} bytes",
-                _ => "{completed} of {total} confirmed steps for this item",
-            };
-            let measurement = gettext(template)
+            let measurement = gettext("{completed} of {total} bytes")
                 .replace("{completed}", &done.to_string())
                 .replace("{total}", &total.to_string());
             let percent = u128::from(done) * 100 / u128::from(total);
@@ -394,9 +386,6 @@ impl SyncActivity {
             self.progress.set_fraction(0.0);
             self.progress.set_text(None);
         }
-    }
-    pub(super) fn has_measured_progress(&self) -> bool {
-        self.progress.is_visible()
     }
     /// Incremental telemetry requires an exact scope and a published operation identity.
     pub fn update_progress(&self, scope: &str, operation: &str, value: ProgressView) -> bool {
@@ -424,8 +413,8 @@ impl SyncActivity {
     pub fn clear(&self) {
         self.state.borrow_mut().take();
         self.widget.set_visible(false);
-        self.render_progress(&ProgressView::Indeterminate);
-        self.spinner.stop();
+        self.widget.set_tooltip_text(None);
+        self.render_progress(&ProgressView::None, false);
     }
     pub fn state(&self) -> Option<ActivityView> {
         self.state.borrow().clone()
