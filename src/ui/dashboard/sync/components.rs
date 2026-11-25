@@ -38,7 +38,7 @@ pub struct SyncStatus {
     icon: gtk::Image,
     title: gtk::Label,
     description: gtk::Label,
-    verification_progress: gtk::ProgressBar,
+    waiting_progress: gtk::ProgressBar,
     state: Rc<RefCell<StatusView>>,
 }
 impl SyncStatus {
@@ -59,15 +59,15 @@ impl SyncStatus {
         labels.set_hexpand(true);
         labels.append(&title);
         labels.append(&description);
-        let verification_progress = gtk::ProgressBar::builder()
+        let waiting_progress = gtk::ProgressBar::builder()
             .visible(false)
             .margin_top(4)
             .build();
-        verification_progress.set_widget_name("dashboard-verification-progress");
-        verification_progress
+        waiting_progress.set_widget_name("dashboard-waiting-progress");
+        waiting_progress
             .update_relation(&[gtk::accessible::Relation::LabelledBy(&[title.upcast_ref()])]);
         let pulse_callback = Rc::new(Cell::<Option<gtk::TickCallbackId>>::new(None));
-        verification_progress.connect_map({
+        waiting_progress.connect_map({
             let pulse_callback = pulse_callback.clone();
             move |bar| {
                 bar.pulse();
@@ -85,12 +85,12 @@ impl SyncStatus {
                 pulse_callback.set(Some(id));
             }
         });
-        verification_progress.connect_unmap(move |_| {
+        waiting_progress.connect_unmap(move |_| {
             if let Some(id) = pulse_callback.take() {
                 id.remove();
             }
         });
-        labels.append(&verification_progress);
+        labels.append(&waiting_progress);
         widget.append(&labels);
         widget.set_hexpand(true);
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
@@ -133,13 +133,21 @@ impl SyncStatus {
             icon,
             title,
             description,
-            verification_progress,
+            waiting_progress,
             state: Rc::new(RefCell::new(StatusView::Initializing)),
         };
         value.reset();
         value
     }
     pub fn set_state(&self, state: StatusView, description: &str) {
+        self.set_state_with_progress(state, description, false);
+    }
+    pub(super) fn set_state_with_progress(
+        &self,
+        state: StatusView,
+        description: &str,
+        measured_progress: bool,
+    ) {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
             StatusView::WaitingForEvidence => "Verification pending",
@@ -181,8 +189,17 @@ impl SyncStatus {
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
         self.description.set_visible(!description.is_empty());
-        self.verification_progress
-            .set_visible(state == StatusView::Checking);
+        self.waiting_progress.set_visible(
+            !measured_progress
+                && matches!(
+                    state,
+                    StatusView::Initializing
+                        | StatusView::WaitingForEvidence
+                        | StatusView::Checking
+                        | StatusView::Synchronizing
+                        | StatusView::Recovering
+                ),
+        );
         let actionable = matches!(
             state,
             StatusView::Attention | StatusView::Failed | StatusView::Offline
@@ -377,6 +394,9 @@ impl SyncActivity {
             self.progress.set_fraction(0.0);
             self.progress.set_text(None);
         }
+    }
+    pub(super) fn has_measured_progress(&self) -> bool {
+        self.progress.is_visible()
     }
     /// Incremental telemetry requires an exact scope and a published operation identity.
     pub fn update_progress(&self, scope: &str, operation: &str, value: ProgressView) -> bool {

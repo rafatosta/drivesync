@@ -126,12 +126,15 @@ impl DashboardController {
         if self.scope.borrow().as_deref() != Some(snapshot.scope.as_str()) {
             return false;
         }
-        self.status
-            .set_state(snapshot.status, &snapshot.description);
         match snapshot.activity.filter(|a| a.scope == snapshot.scope) {
             Some(activity) => self.activity.set_activity(activity),
             None => self.activity.clear(),
         }
+        self.status.set_state_with_progress(
+            snapshot.status,
+            &snapshot.description,
+            self.activity.has_measured_progress(),
+        );
         self.attention.set_items(
             snapshot
                 .attention
@@ -192,11 +195,15 @@ impl DashboardController {
                     continue;
                 }
                 last_rendered = Some(snapshot.clone());
-                status.set_state(snapshot.status, &snapshot.description);
                 match snapshot.activity.filter(|a| a.scope == snapshot.scope) {
                     Some(value) => activity.set_activity(value),
                     None => activity.clear(),
                 }
+                status.set_state_with_progress(
+                    snapshot.status,
+                    &snapshot.description,
+                    activity.has_measured_progress(),
+                );
                 attention.set_items(
                     snapshot
                         .attention

@@ -43,31 +43,30 @@ fn isolated_components_and_fake_backend() {
     adw::init().unwrap();
     for _ in 0..3 {
         let status = SyncStatus::new();
-        let verification_progress = status
+        let waiting_progress = status
             .widget
             .last_child()
             .unwrap()
             .last_child()
             .and_downcast::<gtk::ProgressBar>()
             .unwrap();
-        assert!(!verification_progress.shows_text());
-        for state in [
-            StatusView::Initializing,
-            StatusView::Checking,
-            StatusView::VerificationIncomplete,
-            StatusView::WaitingForEvidence,
-            StatusView::Synchronizing,
-            StatusView::Synced,
-            StatusView::Attention,
-            StatusView::Offline,
-            StatusView::Failed,
-            StatusView::Stopped,
+        assert!(!waiting_progress.shows_text());
+        use StatusView::*;
+        for (state, waits) in [
+            (Initializing, true),
+            (Checking, true),
+            (VerificationIncomplete, false),
+            (WaitingForEvidence, true),
+            (Synchronizing, true),
+            (Recovering, true),
+            (Synced, false),
+            (Attention, false),
+            (Offline, false),
+            (Failed, false),
+            (Stopped, false),
         ] {
             status.set_state(state.clone(), "fixture");
-            assert_eq!(
-                verification_progress.is_visible(),
-                state == StatusView::Checking
-            );
+            assert_eq!(waiting_progress.is_visible(), waits);
             assert_eq!(status.state(), state);
         }
         let mut count = 0;
@@ -363,22 +362,23 @@ fn isolated_components_and_fake_backend() {
         window.present();
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
         save_window(&window, "fixture-dashboard-pt-br.png");
-        controller.activity.clear();
-        let verification_progress = controller
+        let waiting_progress = controller
             .activity
             .widget
             .prev_sibling()
             .and_downcast::<gtk::ProgressBar>()
             .unwrap();
+        assert!(!waiting_progress.is_mapped());
+        controller.activity.clear();
         controller
             .status
             .set_state(StatusView::Checking, "Conferindo a última operação.");
-        assert!(verification_progress.is_mapped());
+        assert!(waiting_progress.is_mapped());
         controller.status.set_state(
             StatusView::WaitingForEvidence,
             "Relatório.docx — Aguardando uma verificação completa no Drive.",
         );
-        assert!(!verification_progress.is_mapped());
+        assert!(waiting_progress.is_mapped());
         assert!(!details.is_activatable());
         assert!(!chevron.is_visible());
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
@@ -386,6 +386,7 @@ fn isolated_components_and_fake_backend() {
         controller
             .status
             .set_state(StatusView::Failed, "Folder unavailable");
+        assert!(!waiting_progress.is_mapped());
         assert!(details.is_activatable());
         assert!(chevron.is_visible());
         details.emit_by_name::<()>("activate", &[]);
