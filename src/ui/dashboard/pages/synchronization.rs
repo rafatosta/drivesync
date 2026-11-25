@@ -60,7 +60,7 @@ impl SynchronizationView {
         };
         let controller = Rc::downgrade(&self.controller);
         let account = account.clone();
-        let local_folder = Rc::new(RefCell::new(None));
+        let failure = Rc::new(RefCell::new(None));
         self.controller.status.connect_details({
             let engine = engine.clone();
             let account = account.clone();
@@ -68,7 +68,7 @@ impl SynchronizationView {
             let context = context.clone();
             let dialogs = self.dialogs.clone();
             let controller = controller.clone();
-            let local_folder = local_folder.clone();
+            let failure = failure.clone();
             move || {
                 let (Some(navigation), Some(controller)) =
                     (navigation.upgrade(), controller.upgrade())
@@ -81,7 +81,7 @@ impl SynchronizationView {
                     &engine,
                     &account,
                     &controller,
-                    local_folder.borrow().as_deref(),
+                    failure.borrow().as_ref(),
                     &dialogs,
                 );
             }
@@ -102,10 +102,10 @@ impl SynchronizationView {
                     &gettextrs::gettext("Configure folders to prepare synchronization."),
                 ),
                 Err(error) => {
-                    *local_folder.borrow_mut() = error.local_folder;
                     controller
                         .status
                         .set_state(StatusView::Failed, &error.message);
+                    *failure.borrow_mut() = Some(error);
                 }
             }
         }));

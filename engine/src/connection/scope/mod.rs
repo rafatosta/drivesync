@@ -1,16 +1,17 @@
 //! Linux writer exclusion and durable scope/root identity; no synchronization effects occur here.
+mod binding;
+
 use super::*;
 use crate::models::{LocalIdentity, SyncRootId};
 use crate::SynchronizationErrorKind;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
     os::{
         fd::AsRawFd,
         linux::net::SocketAddrExt,
         unix::{
-            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+            fs::{MetadataExt, OpenOptionsExt},
             net::{SocketAddr, UnixListener},
         },
     },
@@ -109,64 +110,18 @@ impl WriterLease {
         directory: &Path,
         scope: &SyncRootId,
         has_inventory: bool,
+        confirm_previous_root: bool,
     ) -> EngineResult<()> {
-        if !directory.exists() {
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(directory)
-                .map_err(|_| unavailable())?;
-        }
-        let root = directory_handle(directory)?;
-        let path = std::path::PathBuf::from(format!("/proc/self/fd/{}", root.as_raw_fd()))
-            .join(format!("scope-{}.json", scope.0));
-        if has_inventory && !path.try_exists().map_err(|_| unavailable())? {
-            // Historical replicas cannot prove which physical root originally owned their slots.
-            // Refuse rather than bootstrap identity onto a potentially replaced tree.
-            return Err(unavailable());
-        }
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&serde_json::to_vec(&self.identity).map_err(|_| unavailable())?)
-                    .map_err(|_| unavailable())?;
-                file.sync_all().map_err(|_| unavailable())?;
-                root.sync_all().map_err(|_| unavailable())?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                let mut file = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW)
-                    .open(path)
-                    .map_err(|_| unavailable())?;
-                let meta = file.metadata().map_err(|_| unavailable())?;
-                if !meta.is_file()
-                    || meta.uid() != unsafe { libc::geteuid() }
-                    || meta.mode() & 0o077 != 0
-                    || meta.nlink() != 1
-                {
-                    return Err(unavailable());
-                }
-                let mut bytes = vec![];
-                (&mut file)
-                    .take(4097)
-                    .read_to_end(&mut bytes)
-                    .map_err(|_| unavailable())?;
-                if bytes.len() > 4096
-                    || serde_json::from_slice::<LocalIdentity>(&bytes).map_err(|_| unavailable())?
-                        != self.identity
-                {
-                    return Err(unavailable());
-                }
-            }
-            Err(_) => return Err(unavailable()),
-        }
-        Ok(())
+        binding::verify(
+            self._directories
+                .last()
+                .expect("lease keeps the root descriptor"),
+            &self.identity,
+            directory,
+            scope,
+            has_inventory,
+            confirm_previous_root,
+        )
     }
 }
 fn directory_handle(path: &Path) -> EngineResult<File> {
@@ -231,16 +186,16 @@ mod tests {
         let storage = base.join("storage");
         let scope = SyncRootId("test-scope".into());
         let first = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        first.bind(&storage, &scope, false).unwrap();
+        first.bind(&storage, &scope, false, false).unwrap();
         drop(first);
         let reopened = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        reopened.bind(&storage, &scope, false).unwrap();
+        reopened.bind(&storage, &scope, false, false).unwrap();
         drop(reopened);
         std::fs::write(base.join("a/original"), b"preserved").unwrap();
         std::fs::rename(base.join("a"), base.join("preserved-root")).unwrap();
         std::fs::create_dir(base.join("a")).unwrap();
         let changed = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        assert!(changed.bind(&storage, &scope, false).is_err());
+        assert!(changed.bind(&storage, &scope, false, false).is_err());
         drop(changed);
         assert_eq!(
             std::fs::read(base.join("preserved-root/original")).unwrap(),
@@ -248,6 +203,87 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(base.join("a")).unwrap().count(), 0);
         std::fs::remove_dir_all(base).unwrap();
+    }
+    #[test]
+    fn bound_scope_rejects_a_missing_marker_without_recreating_it() {
+        let _serial = SERIAL.lock().unwrap();
+        let (base, subject) = fixture();
+        let root = base.join("a");
+        let storage = base.join("storage");
+        let scope = SyncRootId("test-scope".into());
+        let writer = WriterLease::acquire(&root, "test", &subject).unwrap();
+        writer.bind(&storage, &scope, false, false).unwrap();
+        let marker = root.join(".drivesync/root-test-scope.json");
+        std::fs::remove_file(&marker).unwrap();
+        assert!(writer.bind(&storage, &scope, true, true).is_err());
+        assert!(!marker.exists());
+        std::fs::write(storage.join("scope-test-scope.json"), b"malformed binding").unwrap();
+        assert!(writer.bind(&storage, &scope, true, false).is_err());
+        assert!(!marker.exists());
+        drop(writer);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires DRIVESYNC_TEST_BTRFS_DIRECTORY on a writable Btrfs subvolume"]
+    fn btrfs_binding_survives_device_renumbering_and_rejects_replacement() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let base =
+            std::path::PathBuf::from(std::env::var_os("DRIVESYNC_TEST_BTRFS_DIRECTORY").unwrap());
+        let root = base.join("root");
+        let storage = base.join("storage");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&storage).unwrap();
+        std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let scope = SyncRootId("reboot-case".into());
+        let mut writer = WriterLease::acquire(&root, "test", "btrfs-reboot").unwrap();
+        let mut previous = writer.identity.clone();
+        previous.device_id ^= 1;
+        let proof = storage.join("scope-reboot-case.json");
+        std::io::Write::write_all(
+            &mut std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&proof)
+                .unwrap(),
+            &serde_json::to_vec(&previous).unwrap(),
+        )
+        .unwrap();
+        let marker = root.join(".drivesync/root-reboot-case.json");
+        assert_eq!(
+            writer.bind(&storage, &scope, true, false).unwrap_err().kind,
+            crate::EngineErrorKind::Synchronization(
+                SynchronizationErrorKind::LocalRootConfirmationRequired,
+            )
+        );
+        assert!(!marker.exists());
+        assert_eq!(
+            std::fs::read(&proof).unwrap(),
+            serde_json::to_vec(&previous).unwrap()
+        );
+        writer.bind(&storage, &scope, true, true).unwrap();
+        assert_eq!(
+            std::fs::read(&proof).unwrap(),
+            std::fs::read(&marker).unwrap()
+        );
+        writer.identity.device_id ^= 2;
+        writer.bind(&storage, &scope, true, false).unwrap();
+        drop(writer);
+
+        let replacement = base.join("replacement");
+        std::fs::create_dir(&replacement).unwrap();
+        let metadata = replacement.join(".drivesync");
+        std::fs::create_dir(&metadata).unwrap();
+        std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::copy(&marker, metadata.join("root-reboot-case.json")).unwrap();
+        let writer = WriterLease::acquire(&replacement, "test", "btrfs-reboot").unwrap();
+        assert_eq!(
+            writer.bind(&storage, &scope, true, true).unwrap_err().kind,
+            crate::EngineErrorKind::Synchronization(
+                SynchronizationErrorKind::LocalRootIdentityChanged
+            )
+        );
     }
     #[test]
     fn lease_probe() {

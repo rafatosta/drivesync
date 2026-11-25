@@ -207,6 +207,8 @@ pub enum SynchronizationErrorKind {
     UnsupportedProvider,
     InventoryUnavailable,
     LocalRootUnavailable,
+    LocalRootIdentityChanged,
+    LocalRootConfirmationRequired,
     AlreadyRunning,
     RootInUse,
     NotStarted,

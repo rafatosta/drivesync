@@ -78,7 +78,7 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, false, false).await
+        self.start_scope(request, false, false, false).await
     }
 
     /// Starts an exact scope with explicit permission to associate equivalent preexisting replicas.
@@ -87,7 +87,7 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, true, false).await
+        self.start_scope(request, true, false, false).await
     }
 
     /// Explicitly enables recoverable trash propagation for this worker session only.
@@ -96,7 +96,17 @@ impl Engine {
         &self,
         request: StartSynchronizationRequest,
     ) -> EngineResult<SynchronizationStatus> {
-        self.start_scope(request, false, true).await
+        self.start_scope(request, false, true, false).await
+    }
+
+    /// Resumes a previous-format Btrfs binding after the user explicitly confirms
+    /// that the configured directory is the original. This never associates replicas
+    /// or grants trash propagation, and cannot override a current binding mismatch.
+    pub async fn start_synchronization_with_confirmed_local_root(
+        &self,
+        request: StartSynchronizationRequest,
+    ) -> EngineResult<SynchronizationStatus> {
+        self.start_scope(request, false, false, true).await
     }
 
     async fn start_scope(
@@ -104,6 +114,7 @@ impl Engine {
         request: StartSynchronizationRequest,
         initial_association_authorized: bool,
         trash_propagation_authorized: bool,
+        confirm_previous_root: bool,
     ) -> EngineResult<SynchronizationStatus> {
         validate(&request)?;
         let inner = self.inner.clone();
@@ -177,7 +188,7 @@ impl Engine {
                         })
                         .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?
                         .is_empty();
-                    writer.bind(&directory, &scope, has_inventory)?;
+                    writer.bind(&directory, &scope, has_inventory, confirm_previous_root)?;
                     let config = OrchestratorConfig {
                         expected_root_identity: Some(writer.identity.clone()),
                         initial_association_authorized,

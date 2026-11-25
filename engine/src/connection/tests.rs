@@ -1180,7 +1180,11 @@ async fn functional_sources_start_from_engine_and_stop_without_mutating_user_fil
         std::fs::read(request.local_root.join("file")).unwrap(),
         b"preserved"
     );
-    assert_eq!(std::fs::read_dir(&request.local_root).unwrap().count(), 1);
+    let names: std::collections::BTreeSet<_> = std::fs::read_dir(&request.local_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [".drivesync".into(), "file".into()].into());
     let stopped = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         f.engine.stop_synchronization(account.id),
@@ -1469,7 +1473,7 @@ async fn stopped_scope_rejects_replaced_root_and_allows_explicit_new_configurati
             .await
             .unwrap_err()
             .kind,
-        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootUnavailable)
+        EngineErrorKind::Synchronization(crate::SynchronizationErrorKind::LocalRootIdentityChanged)
     );
     assert_eq!(
         std::fs::read(retained.join("retained")).unwrap(),

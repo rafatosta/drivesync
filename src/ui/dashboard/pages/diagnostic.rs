@@ -2,10 +2,11 @@
 use super::conflicts;
 use crate::{
     application::Context,
+    services::synchronization::{self, StartFailure},
     ui::dashboard::sync::{controller::DashboardController, models::AttentionAction},
 };
 use adw::{gtk, prelude::*};
-use drivesync_engine::{Account, Engine};
+use drivesync_engine::{Account, Engine, StartSynchronizationRequest};
 use gettextrs::gettext;
 use std::{cell::RefCell, rc::Rc};
 
@@ -15,7 +16,7 @@ pub(super) fn show(
     engine: &Engine,
     account: &Account,
     controller: &DashboardController,
-    local_folder: Option<&str>,
+    failure: Option<&StartFailure>,
     dialogs: &Rc<RefCell<Vec<gtk::Window>>>,
 ) {
     if navigation
@@ -37,7 +38,14 @@ pub(super) fn show(
         .use_markup(false)
         .build();
     summary.add(&details);
-    if let Some(folder) = local_folder {
+    if let Some((request, folder)) = failure.and_then(|failure| {
+        failure
+            .confirmation
+            .as_ref()
+            .zip(failure.local_folder.as_deref())
+    }) {
+        summary.add(&confirmation_row(navigation, engine, request, folder));
+    } else if let Some(folder) = failure.and_then(|failure| failure.local_folder.as_deref()) {
         let configure = adw::ActionRow::builder()
             .title(gettext("Configure folders"))
             .subtitle(folder)
@@ -116,4 +124,61 @@ pub(super) fn show(
         }
     });
     navigation.push(&page);
+}
+
+fn confirmation_row(
+    navigation: &adw::NavigationView,
+    engine: &Engine,
+    request: &StartSynchronizationRequest,
+    folder: &str,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(gettext("Confirm original folder"))
+        .subtitle(folder)
+        .use_markup(false)
+        .activatable(true)
+        .build();
+    row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    let navigation = navigation.downgrade();
+    let engine = engine.clone();
+    let request = request.clone();
+    row.connect_activated(move |row| {
+        let Some(window) = row.root().and_downcast::<gtk::Window>() else { return; };
+        let dialog = adw::MessageDialog::new(
+            Some(&window),
+            Some(&gettext("Confirm original folder")),
+            Some(&gettext("Confirm only if this is the same folder you previously synchronized. A copy, a restored snapshot, or a newly created folder must be configured separately.")),
+        );
+        dialog.add_responses(&[("cancel", &gettext("Cancel")), ("confirm", &gettext("Confirm"))]);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let row = row.downgrade();
+        let navigation = navigation.clone();
+        let request = request.clone();
+        let engine = engine.clone();
+        dialog.connect_response(Some("confirm"), move |_, _| {
+            let Some(row) = row.upgrade() else { return; };
+            row.set_sensitive(false);
+            let row = row.downgrade();
+            let navigation = navigation.clone();
+            let engine = engine.clone();
+            let request = request.clone();
+            gtk::glib::spawn_future_local(async move {
+                let result = synchronization::confirm_local_root(&engine, request).await;
+                let Some(row) = row.upgrade() else { return; };
+                row.set_sensitive(true);
+                match result {
+                    Ok(()) => {
+                        if let Some(navigation) = navigation.upgrade() {
+                            navigation.pop();
+                            let _ = navigation.activate_action("dashboard.refresh", None);
+                        }
+                    }
+                    Err(error) => row.set_subtitle(&error),
+                }
+            });
+        });
+        dialog.present();
+    });
+    row
 }

@@ -9,9 +9,13 @@ DriveSync is an early-stage Linux application for connecting Google accounts and
 This checkout includes conservative synchronization for explicitly configured native folders.
 The [Stage 11 acceptance matrix](docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed
 and real-account results separately from controlled tests. Published `main` artifacts may
-not include these unpublished functional corrections. Existing synchronization history without
-a root identity proof requires an explicit new scope or review; no automatic migration or
-data reset is performed.
+not include these unpublished functional corrections. DriveSync binds each scope to a
+private proof in application storage and a matching marker in the root's reserved
+`.drivesync` directory. On Btrfs, the proof uses the filesystem UUID, subvolume, inode
+and creation time so device renumbering does not invalidate it. An older Btrfs proof
+whose device number changed requires one explicit confirmation when the inode and
+creation time still agree. Existing inventory without a proof requires review or an
+explicit new scope. Inventory stays in application storage.
 
 | Feature | Current availability and limits |
 | --- | --- |

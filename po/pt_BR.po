@@ -1699,3 +1699,21 @@ msgstr "O DriveSync não conseguiu identificar a causa da falha de sincronizaç�
 
 msgid "Configure folders"
 msgstr "Configurar pastas"
+
+msgid "The folder is accessible, but DriveSync could not verify that it is the original synchronization folder."
+msgstr "A pasta está acessível, mas o DriveSync não conseguiu confirmar que é a pasta original da sincronização."
+
+msgid "The saved folder uses an older identity format. Confirm that it is the original folder to continue."
+msgstr "A pasta salva usa um formato antigo de identificação. Confirme que ela é a pasta original para continuar."
+
+msgid "The saved folders changed. Go back and review the current configuration."
+msgstr "As pastas salvas mudaram. Volte e revise a configuração atual."
+
+msgid "Confirm original folder"
+msgstr "Confirmar pasta original"
+
+msgid "Confirm only if this is the same folder you previously synchronized. A copy, a restored snapshot, or a newly created folder must be configured separately."
+msgstr "Confirme apenas se esta for a mesma pasta que você sincronizava. Para uma cópia, um snapshot restaurado ou uma pasta recém-criada, faça uma configuração separada."
+
+msgid "Confirm"
+msgstr "Confirmar"
