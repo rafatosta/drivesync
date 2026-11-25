@@ -6,6 +6,7 @@ use super::{
 use crate::models::*;
 use sha2::{Digest, Sha256};
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::Read,
@@ -17,9 +18,20 @@ use std::{
         },
     },
     path::{Component, Path as StdPath, PathBuf},
+    time::{Duration, Instant},
 };
 const MAX_ITEMS: usize = 100_000;
 const MAX_DEPTH: usize = 128;
+const HASH_AUDIT_INTERVAL: Duration = Duration::from_secs(30);
+type FileStamp = (u64, u64, u64, i64, i64, i64, i64);
+
+#[derive(Clone)]
+struct CachedHash {
+    stamp: FileStamp,
+    birth_ns: Option<u128>,
+    digest: Checksum,
+    checked: Instant,
+}
 /// Safe coverage failures never authorize inferred absence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanError {
@@ -53,6 +65,7 @@ pub(crate) struct Scanner {
     absolute: PathBuf,
     sync_root_id: SyncRootId,
     max_items: usize,
+    hashes: RefCell<BTreeMap<Path, CachedHash>>,
 }
 fn io_error(error: std::io::Error) -> ScanError {
     if error.kind() == std::io::ErrorKind::PermissionDenied {
@@ -92,6 +105,7 @@ impl Scanner {
             absolute: path,
             sync_root_id,
             max_items: MAX_ITEMS,
+            hashes: RefCell::default(),
         })
     }
     /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
@@ -113,6 +127,8 @@ impl Scanner {
     /// Reads native paths and SHA-256 in bounded buffers, checking cancellation and stability.
     pub(crate) fn scan(&self, cancel: &CancellationToken) -> Result<ScanResult, ScanError> {
         let _sample = crate::performance::Sample::begin("local_full_scan");
+        let previous = self.hashes.take();
+        let mut hashes = BTreeMap::new();
         if cancel.is_cancelled() {
             return Err(ScanError::Cancelled);
         }
@@ -193,9 +209,10 @@ impl Scanner {
                 let mut checksum = Evidence::NotApplicable;
                 let mut can_read = Evidence::NotApplicable;
                 if kind == FileKind::Regular {
-                    match hash(&anchored, &meta, cancel) {
-                        Ok(digest) => {
-                            checksum = Evidence::Known(digest);
+                    match hash(&anchored, &meta, previous.get(&path), cancel) {
+                        Ok(verified) => {
+                            checksum = Evidence::Known(verified.digest.clone());
+                            hashes.insert(path.clone(), verified);
                             can_read = Evidence::Known(true);
                         }
                         Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
@@ -289,6 +306,8 @@ impl Scanner {
             for entry in result.entries.values_mut() {
                 entry.coverage = result.coverage;
             }
+        } else {
+            self.hashes.replace(hashes);
         }
         Ok(result)
     }
@@ -307,7 +326,7 @@ fn issue(result: &mut ScanResult, path: Path, kind: ScanIssueKind) {
         result.issues.push(ScanIssue { path, kind });
     }
 }
-fn stamp(meta: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64) {
+fn stamp(meta: &std::fs::Metadata) -> FileStamp {
     (
         meta.dev(),
         meta.ino(),
@@ -321,9 +340,9 @@ fn stamp(meta: &std::fs::Metadata) -> (u64, u64, u64, i64, i64, i64, i64) {
 fn hash(
     path: &StdPath,
     expected: &std::fs::Metadata,
+    previous: Option<&CachedHash>,
     cancel: &CancellationToken,
-) -> Result<Checksum, ScanError> {
-    let _sample = crate::performance::Sample::begin("local_sha256");
+) -> Result<CachedHash, ScanError> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -333,6 +352,57 @@ fn hash(
     if !before.is_file() || stamp(expected) != stamp(&before) {
         return Err(ScanError::Unavailable);
     }
+    let fingerprint = stamp(&before);
+    let birth_ns = crate::models::birth_ns(&before);
+    let verified = match previous.filter(|cache| {
+        cache.stamp == fingerprint
+            && cache.birth_ns == birth_ns
+            && cache.checked.elapsed() < HASH_AUDIT_INTERVAL
+            && cacheable(&file)
+    }) {
+        Some(cached) => {
+            let _sample = crate::performance::Sample::begin("local_sha256_reuse");
+            cached.clone()
+        }
+        None => CachedHash {
+            stamp: fingerprint,
+            birth_ns,
+            digest: digest(&mut file, cancel)?,
+            checked: Instant::now(),
+        },
+    };
+    if cancel.is_cancelled() {
+        return Err(ScanError::Cancelled);
+    }
+    let after = file.metadata().map_err(io_error)?;
+    let named = std::fs::symlink_metadata(path).map_err(io_error)?;
+    if fingerprint != stamp(&after)
+        || fingerprint != stamp(&named)
+        || birth_ns != crate::models::birth_ns(&after)
+        || birth_ns != crate::models::birth_ns(&named)
+    {
+        return Err(ScanError::Unavailable);
+    }
+    Ok(verified)
+}
+
+fn cacheable(file: &File) -> bool {
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // FUSE and network mounts may cache or synthesize their inode timestamps.
+    if unsafe { libc::fstatfs(file.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    matches!(
+        unsafe { stat.assume_init() }.f_type,
+        libc::EXT4_SUPER_MAGIC
+            | libc::BTRFS_SUPER_MAGIC
+            | libc::XFS_SUPER_MAGIC
+            | libc::TMPFS_MAGIC
+    )
+}
+
+fn digest(file: &mut File, cancel: &CancellationToken) -> Result<Checksum, ScanError> {
+    let _sample = crate::performance::Sample::begin("local_sha256");
     let mut hash = Sha256::new();
     let mut buffer = [0; 65536];
     loop {
@@ -345,16 +415,12 @@ fn hash(
         }
         hash.update(&buffer[..count]);
     }
-    let after = file.metadata().map_err(io_error)?;
-    let named = std::fs::symlink_metadata(path).map_err(io_error)?;
-    if stamp(&before) != stamp(&after) || stamp(&after) != stamp(&named) {
-        return Err(ScanError::Unavailable);
-    }
     Ok(Checksum {
         algorithm: "sha256".into(),
         value: format!("{:x}", hash.finalize()),
     })
 }
+
 fn access(path: &StdPath, mode: i32) -> Evidence<bool> {
     use std::ffi::CString;
     let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {

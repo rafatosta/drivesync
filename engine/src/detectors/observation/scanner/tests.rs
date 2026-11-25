@@ -155,3 +155,62 @@ fn stage11_large_tree_budget_recovers_without_false_absence() {
             .join("; ")
     );
 }
+
+#[test]
+fn hashes_are_reused_only_for_stable_native_file_evidence() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.0.join("file");
+    let key = StdPath::new("file");
+    let cancel = CancellationToken::new();
+    std::fs::write(&path, b"abc").unwrap();
+    let scanner = Scanner::open(sandbox.0.clone(), SyncRootId("cache".into())).unwrap();
+    let scan = || scanner.scan(&cancel).unwrap().entries[key].checksum.clone();
+    let cached = || scanner.hashes.borrow().get(key).unwrap().clone();
+
+    let old = scan();
+    let initial = cached();
+    assert_eq!(scan(), old);
+    assert_eq!(cached().checked, initial.checked);
+
+    let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    std::fs::write(&path, b"xyz").unwrap();
+    File::open(&path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(mtime))
+        .unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+    assert_ne!(scan(), old);
+    assert!(cached().checked > initial.checked);
+
+    let before = cached();
+    std::fs::write(sandbox.0.join("incoming"), b"xyz").unwrap();
+    std::fs::rename(sandbox.0.join("incoming"), &path).unwrap();
+    scan();
+    assert_ne!(cached().stamp.1, before.stamp.1);
+
+    scanner.hashes.borrow_mut().get_mut(key).unwrap().checked =
+        Instant::now() - HASH_AUDIT_INTERVAL;
+    scan();
+    assert!(cached().checked.elapsed() < HASH_AUDIT_INTERVAL);
+}
+
+#[test]
+fn partial_scans_do_not_carry_hash_evidence_into_recovery() {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.0.join("a"), b"abc").unwrap();
+    std::fs::write(sandbox.0.join("b"), b"xyz").unwrap();
+    let cancel = CancellationToken::new();
+    let mut scanner = Scanner::open(sandbox.0.clone(), SyncRootId("cache".into())).unwrap();
+    assert_eq!(
+        scanner.scan(&cancel).unwrap().coverage,
+        ObservationCoverage::Complete
+    );
+    assert_eq!(scanner.hashes.borrow().len(), 2);
+    scanner.max_items = 1;
+    assert_eq!(
+        scanner.scan(&cancel).unwrap().coverage,
+        ObservationCoverage::Partial
+    );
+    assert!(scanner.hashes.borrow().is_empty());
+}
