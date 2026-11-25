@@ -116,11 +116,14 @@ impl SyncStatus {
             StatusView::Stopped => "Synchronization stopped.",
         };
         self.icon.set_icon_name(Some(match state {
-            StatusView::Synced => "emblem-ok-symbolic",
-            StatusView::Attention | StatusView::Failed => "dialog-warning-symbolic",
+            StatusView::Initializing | StatusView::Synchronizing => "view-refresh-symbolic",
+            StatusView::Waiting => "document-open-recent-symbolic",
+            StatusView::WaitingForEvidence | StatusView::Recovering => "edit-find-symbolic",
+            StatusView::Synced => "object-select-symbolic",
+            StatusView::Attention => "dialog-warning-symbolic",
             StatusView::Offline => "network-offline-symbolic",
-            StatusView::Waiting | StatusView::WaitingForEvidence => "document-open-recent-symbolic",
-            _ => "view-refresh-symbolic",
+            StatusView::Failed => "dialog-error-symbolic",
+            StatusView::Stopped => "media-playback-stop-symbolic",
         }));
         for class in ["accent", "success", "warning", "error", "dim-label"] {
             self.icon.remove_css_class(class);
