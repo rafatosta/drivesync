@@ -27,7 +27,7 @@ fn visual_contract() {
             checked_items: Some(2480),
         },
         SyncOverviewState::Syncing {
-            completed_items: 1248,
+            completed_items: Some(1248),
             total_items: Some(1560),
             remaining_items: Some(312),
             remaining_bytes: Some(840_000_000),
@@ -88,7 +88,7 @@ fn visual_contract() {
         Some(2.0),
     ] {
         view.set_state(SyncOverviewState::Syncing {
-            completed_items: 0,
+            completed_items: Some(0),
             total_items: Some(0),
             remaining_items: Some(0),
             remaining_bytes: Some(0),
@@ -100,6 +100,16 @@ fn visual_contract() {
         );
         assert!(!view.details.text().is_empty());
     }
+    view.set_state(SyncOverviewState::Syncing {
+        completed_items: None,
+        total_items: None,
+        remaining_items: None,
+        remaining_bytes: None,
+        progress: None,
+    });
+    assert_eq!(view.description.text(), gettext("Synchronizing your files"));
+    assert!(!view.percentage.is_visible());
+    assert!(!view.detail_revealer.reveals_child());
     view.set_state(SyncOverviewState::Checking {
         checked_items: None,
     });

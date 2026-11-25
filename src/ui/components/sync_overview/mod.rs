@@ -126,11 +126,16 @@ impl SyncOverview {
                 fraction = progress
                     .filter(|v| v.is_finite())
                     .map(|v| v.clamp(0.0, 1.0));
-                let description = match total_items {
-                    Some(total) => gettext("{completed} of {total} items synced")
-                        .replace("{completed}", &number(completed_items))
-                        .replace("{total}", &number(total)),
-                    None => count(completed_items, "{n} item synced", "{n} items synced"),
+                let description = match (completed_items, total_items) {
+                    (Some(completed), Some(total)) => {
+                        gettext("{completed} of {total} items synced")
+                            .replace("{completed}", &number(completed))
+                            .replace("{total}", &number(total))
+                    }
+                    (Some(completed), None) => {
+                        count(completed, "{n} item synced", "{n} items synced")
+                    }
+                    (None, _) => gettext("Synchronizing your files"),
                 };
                 let mut details = Vec::new();
                 if let Some(n) = remaining_items {

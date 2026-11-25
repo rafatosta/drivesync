@@ -292,6 +292,7 @@ fn isolated_components_and_fake_backend() {
     gtk::glib::MainContext::default().block_on(async {
         let controller = DashboardController::new();
         let synced = Snapshot {
+            overview: None,
             scope: "fixture-a".into(),
             status: StatusView::Synced,
             description: "All files are up to date.".into(),
@@ -325,6 +326,7 @@ fn isolated_components_and_fake_backend() {
             total: 4,
         };
         let snapshot = Snapshot {
+            overview: None,
             scope: "fixture-a".into(),
             status: StatusView::Synchronizing,
             description: String::new(),
@@ -339,7 +341,12 @@ fn isolated_components_and_fake_backend() {
         );
         gtk::glib::timeout_future(std::time::Duration::from_millis(20)).await;
         assert_eq!(controller.activity.state(), Some(measured));
-        let card = controller.widget.first_child().unwrap();
+        let card = controller
+            .widget
+            .first_child()
+            .unwrap()
+            .next_sibling()
+            .unwrap();
         assert_eq!(card.widget_name(), "dashboard-synchronization-feedback");
         let details = card
             .first_child()
@@ -489,6 +496,7 @@ async fn assert_transient_checks_do_not_replace_waiting_feedback(controller: &Da
     }
 
     let finalizing = Snapshot {
+        overview: None,
         scope: "fixture-a".into(),
         status: StatusView::Finalizing,
         description: "Waiting to check the copy on Drive.".into(),
@@ -559,6 +567,12 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     };
     assert_ne!(map_status(&value, false).status, StatusView::Synced);
     assert_eq!(map_status(&value, true).status, StatusView::Synced);
+    use crate::ui::components::sync_overview::SyncOverviewState as Overview;
+    assert_eq!(map_status(&value, false).overview, None);
+    assert_eq!(
+        map_status(&value, true).overview,
+        Some(Overview::Completed { last_sync: None })
+    );
     value.issue = Some(SynchronizationIssue {
         kind: SynchronizationIssueKind::RecoveryRequired,
         retryable: false,
@@ -591,6 +605,16 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         completed: 1,
         total: 2,
     });
+    assert_eq!(
+        map_status(&value, false).overview,
+        Some(Overview::Syncing {
+            completed_items: None,
+            total_items: None,
+            remaining_items: None,
+            remaining_bytes: None,
+            progress: None,
+        })
+    );
     for (activity, kind, direction) in [
         (
             SynchronizationActivity::Downloading,
@@ -1225,4 +1249,114 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
         applying.description,
         gettextrs::gettext("Computer scan complete. Checking Drive…")
     );
+}
+
+#[test]
+#[ignore = "requires an isolated GTK display"]
+fn overview_follows_scoped_subscription_and_attention_action() {
+    adw::init().unwrap();
+    let controller = DashboardController::new();
+    use crate::ui::components::sync_overview::SyncOverviewState as Overview;
+    let snapshot = Snapshot {
+        scope: "account-a".into(),
+        status: StatusView::Attention,
+        description: "A real issue supplied by the adapter".into(),
+        item: None,
+        active: false,
+        activity: None,
+        attention: vec![],
+        overview: Some(Overview::Attention {
+            pending_items: None,
+        }),
+    };
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let received = calls.clone();
+    controller
+        .status
+        .connect_details(move || received.set(received.get() + 1));
+    gtk::glib::MainContext::default().block_on(async {
+        controller.select(
+            "account-a".into(),
+            Box::new(FakeSyncBackend::new([snapshot.clone()])),
+        );
+        gtk::glib::timeout_future(std::time::Duration::from_millis(20)).await;
+        assert!(controller.overview.widget().is_visible());
+        let body = controller.overview.widget().first_child().unwrap();
+        body.last_child()
+            .unwrap()
+            .downcast::<gtk::Button>()
+            .unwrap()
+            .emit_clicked();
+        assert_eq!(calls.get(), 1);
+        controller.select("account-b".into(), Box::new(FakeSyncBackend::new([])));
+        assert!(!controller.overview.widget().is_visible());
+        assert!(!controller.apply(snapshot));
+        assert!(!controller.overview.widget().is_visible());
+        let mut snapshot = map_status(
+            &drivesync_engine::SynchronizationStatus {
+                account_id: drivesync_engine::AccountId("account-b".into()),
+                state: drivesync_engine::SynchronizationState::Running,
+                activity: drivesync_engine::SynchronizationActivity::Downloading,
+                current_item: None,
+                current_operation: None,
+                progress: None,
+                verification: None,
+                issue: None,
+                updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
+            },
+            false,
+        );
+        assert!(controller.apply(snapshot.clone()));
+        assert!(controller.overview.widget().is_visible());
+        snapshot.overview = None;
+        assert!(controller.apply(snapshot));
+        assert!(!controller.overview.widget().is_visible());
+        controller.reset();
+    });
+}
+
+#[test]
+#[ignore = "requires the explicitly isolated real test-account profile"]
+fn overview_reads_real_engine_profile_without_starting_synchronization() {
+    let directory = std::path::PathBuf::from(
+        std::env::var("DRIVESYNC_REAL_ACCOUNTS_DIRECTORY")
+            .expect("explicit isolated account profile required"),
+    );
+    assert!(directory
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("stage"));
+    gtk::glib::MainContext::default().block_on(async {
+        let engine = drivesync_engine::Engine::open(drivesync_engine::EngineConfig {
+            data_directory: directory,
+            application_id: "com.rtosta.DriveSync.Devel".into(),
+            google_oauth_file: std::env::var_os("DRIVESYNC_REAL_OAUTH_FILE").map(Into::into),
+        })
+        .await
+        .unwrap();
+        let accounts = engine
+            .list_accounts(drivesync_engine::ListAccountsRequest { provider: None })
+            .await
+            .unwrap()
+            .accounts;
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].email.as_deref(), Some("rtosta.coc@gmail.com"));
+        let account = accounts[0].id.clone();
+        let status = engine
+            .synchronization_status(account.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            status.state,
+            drivesync_engine::SynchronizationState::Stopped
+        );
+        let snapshot = EngineAdapter::new(engine, account.clone())
+            .next()
+            .await
+            .unwrap();
+        assert_eq!(snapshot.scope, account.0);
+        assert_eq!(snapshot.status, StatusView::Stopped);
+        assert_eq!(snapshot.overview, None);
+    });
 }

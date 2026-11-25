@@ -1,5 +1,6 @@
 //! Selection generation and cancellation belong to the dashboard, never to components.
 use super::{backend::SyncBackend, components::*, models::*};
+use crate::ui::components::sync_overview::{SyncOverview, SyncOverviewState};
 use adw::{gtk, prelude::*};
 use std::{
     cell::{Cell, RefCell},
@@ -33,6 +34,7 @@ impl Drop for SubscriptionTask {
 pub struct DashboardController {
     pub widget: gtk::Box,
     pub status: SyncStatus,
+    pub overview: SyncOverview,
     pub activity: SyncActivity,
     pub attention: SyncAttention,
     recent_activity: super::recent_activity::RecentActivityList,
@@ -46,14 +48,23 @@ impl DashboardController {
     pub fn new() -> Self {
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let status = SyncStatus::new();
+        let overview = SyncOverview::new();
+        overview.widget().set_widget_name("dashboard-sync-overview");
+        hide_overview(&overview);
+        overview.connect_attention_requested({
+            let status = status.clone();
+            move || status.request_details()
+        });
         let activity = SyncActivity::new();
         let attention = SyncAttention::new();
         let recent_activity = super::recent_activity::RecentActivityList::new();
+        widget.append(overview.widget());
         widget.append(&feedback_card(&status, &activity));
         widget.append(&recent_activity.widget);
         let value = Self {
             widget,
             status,
+            overview,
             activity,
             attention,
             recent_activity,
@@ -87,6 +98,7 @@ impl DashboardController {
         self.task.abort();
         self.history_task.abort();
         self.scope.borrow_mut().take();
+        hide_overview(&self.overview);
         self.status.reset();
         self.activity.clear();
         self.attention.clear();
@@ -129,7 +141,13 @@ impl DashboardController {
         if self.scope.borrow().as_deref() != Some(snapshot.scope.as_str()) {
             return false;
         }
-        render_snapshot(&self.status, &self.activity, &self.attention, snapshot);
+        render_snapshot(
+            &self.overview,
+            &self.status,
+            &self.activity,
+            &self.attention,
+            snapshot,
+        );
         true
     }
     pub fn watch_history(
@@ -166,6 +184,7 @@ impl DashboardController {
         let generation = self.generation.get();
         // Weak ownership across awaits prevents the task retaining a destroyed dashboard.
         let widget = self.widget.downgrade();
+        let overview = self.overview.clone();
         let status = self.status.clone();
         let activity = self.activity.clone();
         let attention = self.attention.clone();
@@ -194,17 +213,18 @@ impl DashboardController {
                         StatusView::Finalizing | StatusView::WaitingForEvidence
                     )
                 {
+                    let overview = overview.clone();
                     let (status, activity, attention) =
                         (status.clone(), activity.clone(), attention.clone());
                     let (widget, generations) = (widget.clone(), generations.clone());
                     pending_check.set(gtk::glib::spawn_future_local(async move {
                         gtk::glib::timeout_future(CHECK_VISIBILITY_DELAY).await;
                         if generations.get() == generation && widget.upgrade().is_some() {
-                            render_snapshot(&status, &activity, &attention, snapshot);
+                            render_snapshot(&overview, &status, &activity, &attention, snapshot);
                         }
                     }));
                 } else {
-                    render_snapshot(&status, &activity, &attention, snapshot);
+                    render_snapshot(&overview, &status, &activity, &attention, snapshot);
                 }
             }
         }));
@@ -212,11 +232,19 @@ impl DashboardController {
 }
 
 fn render_snapshot(
+    overview: &SyncOverview,
     status: &SyncStatus,
     activity: &SyncActivity,
     attention: &SyncAttention,
     mut snapshot: Snapshot,
 ) {
+    match snapshot.overview.take() {
+        Some(state) => {
+            overview.set_state(state);
+            overview.widget().set_visible(true);
+        }
+        None => hide_overview(overview),
+    }
     let operation = snapshot
         .activity
         .take()
@@ -245,4 +273,9 @@ fn render_snapshot(
             .filter(|item| item.scope == snapshot.scope)
             .collect(),
     );
+}
+
+fn hide_overview(overview: &SyncOverview) {
+    overview.set_state(SyncOverviewState::Completed { last_sync: None });
+    overview.widget().set_visible(false);
 }

@@ -93,18 +93,13 @@ fn build_with_accounts(
     header.pack_start(&toggle);
     content.add_top_bar(&header);
     let synchronization = super::synchronization::SynchronizationView::new();
-    let overview_preview = super::sync_overview_preview::build();
-    let dashboard_body = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    dashboard_body.set_visible(false);
-    dashboard_body.append(&overview_preview);
-    dashboard_body.append(&synchronization.widget);
     let dashboard = adw::Clamp::builder()
         .margin_top(24)
         .margin_bottom(24)
         .margin_start(16)
         .margin_end(16)
         .valign(gtk::Align::Start)
-        .child(&dashboard_body)
+        .child(&synchronization.widget)
         .build();
     dashboard.set_widget_name("dashboard-content");
     let scroll = gtk::ScrolledWindow::builder()
@@ -115,18 +110,10 @@ fn build_with_accounts(
     split.set_content(Some(&adw::NavigationPage::new(&content, "DriveSync")));
     let show_account = Rc::new({
         let context = context.clone();
-        let overview_preview = overview_preview.downgrade();
-        let dashboard_body = dashboard_body.downgrade();
         let synchronization = synchronization.clone();
         let navigation = navigation.downgrade();
         let title = title.downgrade();
         move |account: Option<&Account>| {
-            if let Some(body) = dashboard_body.upgrade() {
-                body.set_visible(account.is_some());
-            }
-            if let Some(preview) = overview_preview.upgrade() {
-                preview.set_visible(account.is_some());
-            }
             if let Some(navigation) = navigation.upgrade() {
                 synchronization.select(&context, &navigation, account);
             }

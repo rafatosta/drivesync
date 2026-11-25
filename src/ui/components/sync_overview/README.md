@@ -1,9 +1,23 @@
 # SyncOverview
 
-Standalone GTK4/libadwaita presentation. The user dashboard hosts a clearly labeled
-preview above its existing synchronization content whenever an account is selected.
-Its state selector uses simulated values only; it does not read account data or
-replace the existing status card. The isolated example remains available.
+Standalone GTK4/libadwaita presentation. The dashboard controller feeds it through
+the existing account-scoped EngineAdapter subscription. The component itself has
+no Engine imports. The simulated dashboard selector has been removed; the isolated
+example remains available.
+
+The adapter maps checks, active synchronization, audited completion and actionable
+issues. Idle alone never means completion. States outside the four-state contract
+(stopped, incomplete verification, waiting or finalizing) keep the existing detailed
+status visible and hide the overview. Its action opens the existing account-scoped
+diagnostic page. Selection changes reset the view and cancel obsolete subscriptions.
+
+The Engine currently exposes operation steps, not account-wide item or byte
+progress. These metrics (including completed_items) are unavailable, not zero;
+active synchronization therefore pulses without a percentage or invented counts.
+A complete persisted conflict list supplies a pending-item count only when there
+is no additional current issue. The generic status updated_at is not a last-sync
+timestamp; last_sync remains unavailable. Completion still requires the Engine's
+existing convergence audit, scoped to its captured observation horizon.
 
 `SyncOverview::new()` starts in Checking with an unknown count. Place `widget()`
 in a GTK container, call `set_state(SyncOverviewState)` on the GTK thread, and
@@ -40,9 +54,9 @@ flatpak run --command=sh --socket=x11 --share=ipc \
 '
 ```
 
-Choose a state, edit counts, uncheck optional values, and switch the theme. The
-completed count is mandatory. The attention button displays a signal receipt in
-the preview only. Indeterminate progress animates normally. No account is needed.
+Choose a state, edit counts, uncheck optional values, and switch the theme. All
+counters can be marked unavailable. The attention button displays a signal receipt
+in the preview only. Indeterminate progress animates normally. No account is needed.
 
 Within the same SDK environment, run the isolated display test with:
 
@@ -57,5 +71,9 @@ Run without personal accounts; this test opens only its own temporary GTK window
 
 Validation performed: workspace formatting, Clippy with warnings denied, workspace
 tests, documentation, doctests, translation compilation and the isolated GTK test
-in GNOME SDK 50. Existing opt-in workspace tests remain ignored. No engine or real
-Google integration is part of this component's acceptance.
+in GNOME SDK 50. The scoped-subscription GTK test covers selection isolation and
+the attention action; the existing component/backend GTK suite also passes. An
+explicit opt-in test opened the isolated rtosta.coc@gmail.com Engine profile and
+verified its stopped-state snapshot through EngineAdapter without starting a
+worker. Other opt-in workspace tests remain ignored. Active Google transfers and
+the installed Flatpak were not exercised for this integration.

@@ -202,6 +202,12 @@ impl SyncStatus {
     pub fn connect_details(&self, callback: impl Fn() + 'static) {
         *self.details_callback.borrow_mut() = Some(Box::new(callback));
     }
+    /// Dispatches the currently selected account's externally owned detail action.
+    pub fn request_details(&self) {
+        if let Some(callback) = self.details_callback.borrow().as_ref() {
+            callback();
+        }
+    }
     pub fn item_detail(&self) -> Option<gtk::glib::GString> {
         self.item_name.tooltip_text()
     }

@@ -62,7 +62,6 @@ fn main() -> gtk::glib::ExitCode {
             (known, value)
         })
         .collect();
-        fields[1].0.set_sensitive(false);
         let last = gtk::CheckButton::with_label("Informar última sincronização (agora)");
         last.set_active(true);
         controls.append(&last);
@@ -88,7 +87,6 @@ fn main() -> gtk::glib::ExitCode {
             let view = view.clone();
             let fields = fields.clone();
             let state = state.clone();
-            fields[1].0.set_sensitive(false);
             let last = last.clone();
             move || {
                 let value = |i: usize| fields[i].0.is_active().then(|| fields[i].1.value() as u64);
@@ -97,7 +95,7 @@ fn main() -> gtk::glib::ExitCode {
                         checked_items: value(0),
                     },
                     1 => SyncOverviewState::Syncing {
-                        completed_items: fields[1].1.value() as u64,
+                        completed_items: value(1),
                         total_items: value(2),
                         remaining_items: value(3),
                         remaining_bytes: value(4),

@@ -1,5 +1,6 @@
 //! Backend contracts use presentation values exclusively.
 use super::models::*;
+use crate::ui::components::sync_overview::SyncOverviewState;
 use gettextrs::gettext;
 use std::{cell::RefCell, collections::VecDeque, future::Future, pin::Pin, rc::Rc};
 pub type NextSnapshot<'a> = Pin<Box<dyn Future<Output = Option<Snapshot>> + 'a>>;
@@ -50,6 +51,9 @@ impl EngineAdapter {
         self.last_synced = false;
         self.refresh_latest = false;
         Snapshot {
+            overview: Some(SyncOverviewState::Attention {
+                pending_items: None,
+            }),
             scope: self.account.0.clone(),
             status: StatusView::Failed,
             description: crate::core::messages::engine_error(error),
@@ -109,6 +113,10 @@ impl SyncBackend for EngineAdapter {
             if snapshot.status == StatusView::VerificationIncomplete {
                 snapshot.description = incomplete_description(audit.as_ref());
             }
+            let pending_items = conflicts
+                .as_ref()
+                .filter(|rows| latest.issue.is_none() && !rows.is_empty())
+                .map(|rows| rows.len() as u64);
             if let Some(rows) = conflicts.filter(|rows| !replaced && !rows.is_empty()) {
                 let count = rows.len();
                 let summary = gettextrs::ngettext(
@@ -140,6 +148,10 @@ impl SyncBackend for EngineAdapter {
                     summary,
                     action: AttentionAction::OpenConflictList,
                 });
+            }
+            snapshot.overview = overview_state(&snapshot);
+            if snapshot.status == StatusView::Attention {
+                snapshot.overview = Some(SyncOverviewState::Attention { pending_items });
             }
             self.last_synced = snapshot.status == StatusView::Synced;
             Some(snapshot)
@@ -455,7 +467,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         .collect();
     let item =
         item_presentation.filter(|_| !matches!(state, StatusView::Synced | StatusView::Stopped));
-    Snapshot {
+    let mut snapshot = Snapshot {
+        overview: None,
         scope,
         status: state,
         description,
@@ -463,5 +476,29 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         active: effective_state == S::Running && issue.is_none(),
         activity,
         attention,
+    };
+    snapshot.overview = overview_state(&snapshot);
+    snapshot
+}
+
+/// Operation steps and byte-less telemetry must never become account item progress.
+fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
+    use crate::ui::components::sync_overview::SyncOverviewState as Overview;
+    match snapshot.status {
+        StatusView::Checking | StatusView::Initializing => Some(Overview::Checking {
+            checked_items: None,
+        }),
+        StatusView::Synchronizing | StatusView::Recovering => Some(Overview::Syncing {
+            completed_items: None,
+            total_items: None,
+            remaining_items: None,
+            remaining_bytes: None,
+            progress: None,
+        }),
+        StatusView::Synced => Some(Overview::Completed { last_sync: None }),
+        StatusView::Attention | StatusView::Failed => Some(Overview::Attention {
+            pending_items: None,
+        }),
+        _ => None,
     }
 }

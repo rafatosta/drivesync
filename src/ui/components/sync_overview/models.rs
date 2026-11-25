@@ -8,7 +8,8 @@ pub enum SyncOverviewState {
         checked_items: Option<u64>,
     },
     Syncing {
-        completed_items: u64,
+        /// Unavailable when the source reports operations rather than confirmed items.
+        completed_items: Option<u64>,
         total_items: Option<u64>,
         remaining_items: Option<u64>,
         remaining_bytes: Option<u64>,
