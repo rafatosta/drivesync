@@ -43,8 +43,7 @@ impl DashboardController {
         let status = SyncStatus::new();
         let activity = SyncActivity::new();
         let attention = SyncAttention::new();
-        widget.append(&status.widget);
-        widget.append(&activity.widget);
+        widget.append(&feedback_card(&status, &activity));
         widget.append(&attention.widget);
         let value = Self {
             widget,

@@ -21,6 +21,7 @@ pub(super) struct SynchronizationView {
 impl SynchronizationView {
     pub fn new() -> Self {
         let controller = Rc::new(DashboardController::new());
+        controller.widget.set_visible(false);
         let task: Rc<SubscriptionTask> = Rc::default();
         let dialogs: Rc<RefCell<Vec<gtk::Window>>> = Rc::default();
         controller.widget.connect_unrealize({
@@ -47,7 +48,10 @@ impl SynchronizationView {
         }
         self.controller.attention.connect_activated(|_| {});
         self.controller.reset();
-        let (Some(account), Some(engine)) = (account, context.engine.borrow().clone()) else {
+        let engine = context.engine.borrow().clone();
+        self.widget
+            .set_visible(account.is_some() && engine.is_some());
+        let (Some(account), Some(engine)) = (account, engine) else {
             return;
         };
         let controller = Rc::downgrade(&self.controller);

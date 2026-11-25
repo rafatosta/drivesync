@@ -3,6 +3,7 @@
 pub enum StatusView {
     Initializing,
     Scanning,
+    Waiting,
     Synchronizing,
     Recovering,
     Synced,

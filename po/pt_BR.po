@@ -1669,3 +1669,21 @@ msgstr "O Drive não forneceu os dados necessários para verificar o download. A
 #: src/services/synchronization.rs
 msgid "DriveSync cannot apply this change. Existing copies were kept."
 msgstr "O DriveSync não conseguiu aplicar esta alteração. As cópias existentes foram preservadas."
+
+
+msgid "Waiting for changes"
+msgstr "Aguardando alterações"
+
+msgid "Your files are up to date on this computer and on Drive."
+msgstr "Seus arquivos estão atualizados neste computador e no Drive."
+
+msgid "{measurement} · {percent}%"
+msgstr "{measurement} · {percent} %"
+
+msgid "{count} unresolved conflict."
+msgid_plural "{count} unresolved conflicts."
+msgstr[0] "{count} conflito não resolvido."
+msgstr[1] "{count} conflitos não resolvidos."
+
+msgid "{completed} of {total} confirmed steps for this item"
+msgstr "{completed} de {total} etapas confirmadas deste item"

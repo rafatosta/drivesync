@@ -11,6 +11,22 @@ fn label() -> gtk::Label {
         .selectable(false)
         .build()
 }
+/// A single surface for account status and its current operation.
+pub(super) fn feedback_card(status: &SyncStatus, activity: &SyncActivity) -> gtk::Box {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    card.set_widget_name("dashboard-synchronization-feedback");
+    card.add_css_class("card");
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+    content.append(&status.widget);
+    content.append(&activity.widget);
+    card.append(&content);
+    card
+}
+
 #[derive(Clone)]
 /// Selected-scope summary. Only an audited backend may supply `Synced`.
 pub struct SyncStatus {
@@ -22,15 +38,23 @@ pub struct SyncStatus {
 }
 impl SyncStatus {
     pub fn new() -> Self {
-        let widget = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let icon = gtk::Image::from_icon_name("emblem-synchronizing-symbolic");
+        let widget = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let icon = gtk::Image::from_icon_name("view-refresh-symbolic");
+        icon.set_pixel_size(24);
+        icon.set_size_request(40, 40);
+        icon.set_valign(gtk::Align::Center);
+        icon.add_css_class("circular");
         widget.append(&icon);
         let title = label();
-        title.add_css_class("title-2");
+        title.add_css_class("heading");
         title.set_widget_name("dashboard-synchronization-status");
         let description = label();
-        widget.append(&title);
-        widget.append(&description);
+        description.add_css_class("dim-label");
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_valign(gtk::Align::Center);
+        labels.append(&title);
+        labels.append(&description);
+        widget.append(&labels);
         let value = Self {
             widget,
             icon,
@@ -45,6 +69,7 @@ impl SyncStatus {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
             StatusView::Scanning => "Scanning files…",
+            StatusView::Waiting => "Waiting for changes",
             StatusView::Recovering => "Checking interrupted operations…",
             StatusView::Synchronizing => "Synchronizing…",
             StatusView::Synced => "Everything synchronized",
@@ -57,10 +82,21 @@ impl SyncStatus {
             StatusView::Synced => "emblem-ok-symbolic",
             StatusView::Attention | StatusView::Failed => "dialog-warning-symbolic",
             StatusView::Offline => "network-offline-symbolic",
-            _ => "emblem-synchronizing-symbolic",
+            _ => "view-refresh-symbolic",
         }));
+        for class in ["accent", "success", "warning", "error", "dim-label"] {
+            self.icon.remove_css_class(class);
+        }
+        self.icon.add_css_class(match state {
+            StatusView::Synced => "success",
+            StatusView::Attention => "warning",
+            StatusView::Failed => "error",
+            StatusView::Waiting | StatusView::Offline | StatusView::Stopped => "dim-label",
+            _ => "accent",
+        });
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
+        self.description.set_visible(!description.is_empty());
         *self.state.borrow_mut() = state;
     }
     pub fn state(&self) -> StatusView {
@@ -88,11 +124,15 @@ impl SyncActivity {
         text.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let details = label();
         let spinner = gtk::Spinner::new();
-        widget.append(&spinner);
+        details.add_css_class("dim-label");
+        let operation = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        operation.append(&spinner);
+        text.set_hexpand(true);
+        operation.append(&text);
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(true);
         progress.set_widget_name("dashboard-synchronization-progress");
-        widget.append(&text);
+        widget.append(&operation);
         widget.append(&details);
         widget.append(&progress);
         widget.set_visible(false);
@@ -199,12 +239,16 @@ impl SyncActivity {
             self.progress.set_fraction(done as f64 / total as f64);
             let template = match value {
                 ProgressView::Bytes { .. } => "{completed} of {total} bytes",
-                _ => "{completed} of {total} operations",
+                _ => "{completed} of {total} confirmed steps for this item",
             };
+            let measurement = gettext(template)
+                .replace("{completed}", &done.to_string())
+                .replace("{total}", &total.to_string());
+            let percent = u128::from(done) * 100 / u128::from(total);
             self.progress.set_text(Some(
-                &gettext(template)
-                    .replace("{completed}", &done.to_string())
-                    .replace("{total}", &total.to_string()),
+                &gettext("{measurement} · {percent}%")
+                    .replace("{measurement}", &measurement)
+                    .replace("{percent}", &percent.to_string()),
             ));
         } else {
             self.progress.set_fraction(0.0);

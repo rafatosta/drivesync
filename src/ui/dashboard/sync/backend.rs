@@ -95,7 +95,24 @@ impl SyncBackend for EngineAdapter {
             let latest = subscription.current();
             self.refresh_latest = latest != status;
             let mut snapshot = map_status(&latest, audited && !self.refresh_latest);
-            if conflicts.is_some_and(|rows| !rows.is_empty()) {
+            if let Some(rows) = conflicts.filter(|rows| !rows.is_empty()) {
+                let count = rows.len();
+                let summary = gettextrs::ngettext(
+                    "{count} unresolved conflict.",
+                    "{count} unresolved conflicts.",
+                    u32::try_from(count).unwrap_or(u32::MAX),
+                )
+                .replace("{count}", &count.to_string());
+                if (snapshot.status == StatusView::Failed
+                    || latest.issue.is_some_and(|issue| {
+                        issue.kind != drivesync_engine::SynchronizationIssueKind::Conflict
+                    }))
+                    && !snapshot.description.is_empty()
+                {
+                    snapshot.description = format!("{summary} {}", snapshot.description);
+                } else {
+                    snapshot.description = summary.clone();
+                }
                 if snapshot.status != StatusView::Failed {
                     snapshot.status = StatusView::Attention;
                 }
@@ -106,7 +123,7 @@ impl SyncBackend for EngineAdapter {
                     scope: snapshot.scope.clone(),
                     id: "persisted-conflicts".into(),
                     title: gettext("Synchronization conflicts"),
-                    summary: gettext("Review versions"),
+                    summary,
                     action: AttentionAction::OpenConflictList,
                 });
             }
@@ -129,6 +146,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
             S::Running if status.activity == A::Scanning => StatusView::Scanning,
             S::Running => StatusView::Synchronizing,
             S::Idle if audited => StatusView::Synced,
+            S::Idle => StatusView::Waiting,
             _ => StatusView::Initializing,
         }
     };
@@ -306,6 +324,15 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                     || trash.is_some()
                 {
                     ProgressView::None
+                } else if let Some(progress) = status
+                    .progress
+                    .as_ref()
+                    .filter(|progress| progress.total > 1 && progress.completed <= progress.total)
+                {
+                    ProgressView::Steps {
+                        completed: progress.completed,
+                        total: progress.total,
+                    }
                 } else {
                     ProgressView::Indeterminate
                 },
@@ -314,7 +341,13 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     } else {
         None
     };
-    let description = crate::services::synchronization::description(status);
+    let description = if state == StatusView::Synced {
+        gettext("Your files are up to date on this computer and on Drive.")
+    } else if activity.is_some() && status.issue.is_none() {
+        String::new()
+    } else {
+        crate::services::synchronization::description(status)
+    };
     let blocker_id = match status.issue.as_ref().map(|issue| issue.kind) {
         Some(I::RecoveryRequired | I::TrashRecoveryRequired) => "recovery-blocker",
         _ => "current-blocker",

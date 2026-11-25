@@ -46,6 +46,7 @@ fn isolated_components_and_fake_backend() {
         for state in [
             StatusView::Initializing,
             StatusView::Scanning,
+            StatusView::Waiting,
             StatusView::Synchronizing,
             StatusView::Synced,
             StatusView::Attention,
@@ -62,7 +63,7 @@ fn isolated_components_and_fake_backend() {
             count += 1;
             child = current.next_sibling();
         }
-        assert_eq!(count, 3);
+        assert_eq!(count, 2);
         let current = SyncActivity::new();
         current.set_activity(activity());
         assert!(!current.update_progress(
@@ -272,11 +273,16 @@ fn isolated_components_and_fake_backend() {
     }
     gtk::glib::MainContext::default().block_on(async {
         let controller = DashboardController::new();
+        let mut measured = activity();
+        measured.progress = ProgressView::Steps {
+            completed: 1,
+            total: 4,
+        };
         let snapshot = Snapshot {
             scope: "fixture-a".into(),
             status: StatusView::Synchronizing,
             description: "Baixando".into(),
-            activity: Some(activity()),
+            activity: Some(measured.clone()),
             attention: vec![],
         };
         controller.select(
@@ -284,7 +290,17 @@ fn isolated_components_and_fake_backend() {
             Box::new(FakeSyncBackend::new([snapshot.clone()])),
         );
         gtk::glib::timeout_future(std::time::Duration::from_millis(20)).await;
-        assert_eq!(controller.activity.state(), Some(activity()));
+        assert_eq!(controller.activity.state(), Some(measured));
+        let card = controller.widget.first_child().unwrap();
+        assert_eq!(card.widget_name(), "dashboard-synchronization-feedback");
+        let progress = controller
+            .activity
+            .widget
+            .last_child()
+            .and_downcast::<gtk::ProgressBar>()
+            .unwrap();
+        assert!(progress.is_visible());
+        assert_eq!(progress.fraction(), 0.25);
         let window = gtk::Window::builder()
             .default_width(360)
             .default_height(500)
@@ -313,6 +329,7 @@ fn isolated_components_and_fake_backend() {
         controller.select("fixture-b".into(), Box::new(FakeSyncBackend::new([])));
         assert!(!controller.apply(snapshot));
         assert_eq!(controller.activity.state(), None);
+        assert!(!progress.is_visible());
         let marker = std::rc::Rc::new(std::cell::Cell::new(false));
         struct OnDrop(std::rc::Rc<std::cell::Cell<bool>>);
         impl Drop for OnDrop {
@@ -401,7 +418,13 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         assert_eq!(current.name, "Relatório.bin");
         assert_eq!(current.kind, kind);
         assert_eq!(current.direction, direction);
-        assert_eq!(current.progress, ProgressView::Indeterminate);
+        assert_eq!(
+            current.progress,
+            ProgressView::Steps {
+                completed: 1,
+                total: 2
+            }
+        );
     }
     value
         .current_operation
@@ -417,7 +440,13 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         assert_eq!(current.kind, ActivityKind::UpdateLocalContent);
         assert_eq!(current.direction, Direction::RemoteToLocal);
         assert_eq!(current.phase, phase);
-        assert_eq!(current.progress, ProgressView::Indeterminate);
+        assert_eq!(
+            current.progress,
+            ProgressView::Steps {
+                completed: 1,
+                total: 2
+            }
+        );
     }
     value
         .current_operation
@@ -438,7 +467,13 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         assert_eq!(current.kind, ActivityKind::UpdateRemoteContent);
         assert_eq!(current.direction, Direction::LocalToRemote);
         assert_eq!(current.phase, phase);
-        assert_eq!(current.progress, ProgressView::Indeterminate);
+        assert_eq!(
+            current.progress,
+            ProgressView::Steps {
+                completed: 1,
+                total: 2
+            }
+        );
     }
     value
         .current_operation
@@ -469,6 +504,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
         }
     }
     value.current_operation.as_mut().unwrap().workspace_shortcut = None;
+    value.progress = None;
     value.activity = SynchronizationActivity::Downloading;
     value
         .current_operation
