@@ -27,7 +27,7 @@ use std::{
     io::{Read, Write},
 };
 const FIELDS: &str =
-    "id,name,mimeType,parents,size,sha256Checksum,version,trashed,capabilities,webViewLink,appProperties,properties";
+    "id,name,mimeType,parents,size,sha256Checksum,md5Checksum,headRevisionId,version,trashed,capabilities,webViewLink,appProperties,properties";
 const FOLDER: &str = "application/vnd.google-apps.folder";
 pub(super) struct GoogleOperator {
     accounts: Accounts,
@@ -38,6 +38,18 @@ impl GoogleOperator {
         Self { accounts, client }
     }
     async fn snapshot(
+        &self,
+        session: &GoogleSession,
+        id: &RemoteId,
+    ) -> Result<GoogleFileSnapshot, OperatorError> {
+        let mut snapshot = self.snapshot_metadata(session, id).await?;
+        self.client
+            .fill_content_sha256(session, &mut snapshot.file, None)
+            .await
+            .map_err(read_error)?;
+        Ok(snapshot)
+    }
+    async fn snapshot_metadata(
         &self,
         session: &GoogleSession,
         id: &RemoteId,
@@ -76,7 +88,7 @@ impl GoogleOperator {
             if !visited.insert(next.clone()) {
                 return Err(filesystem::stale());
             }
-            let file = self.snapshot(session, &next).await?.file;
+            let file = self.snapshot_metadata(session, &next).await?.file;
             if &next != id && file.trashed != Some(false) {
                 return Err(filesystem::stale());
             }
@@ -228,7 +240,14 @@ impl GoogleOperator {
         let pre = op.preconditions.as_ref().ok_or_else(filesystem::stale)?;
         let snapshot = if let Some(id) = &op.remote_id {
             self.within(session, id, &config.remote_root_id).await?;
-            let snapshot = self.snapshot(session, id).await?;
+            let snapshot = if matches!(
+                op.action,
+                OperationAction::Download | OperationAction::UpdateLocalContent
+            ) {
+                self.snapshot_metadata(session, id).await?
+            } else {
+                self.snapshot(session, id).await?
+            };
             if snapshot.file.id.as_ref().map(|v| &v.0) != Some(&id.0)
                 || snapshot
                     .file
@@ -724,6 +743,12 @@ impl GoogleOperator {
                     .file
                     .sha256_checksum
                     .as_deref()
+                    .or(match &r.remote.checksum {
+                        Evidence::Known(checksum) if checksum.algorithm == "sha256" => {
+                            Some(checksum.value.as_str())
+                        }
+                        _ => None,
+                    })
                     .ok_or_else(filesystem::stale)?;
                 let size = snapshot
                     .file
@@ -742,12 +767,23 @@ impl GoogleOperator {
                     .map_err(read_error)?;
                 let mut temp = fs.temporary()?;
                 receive_verified(&mut stream.body, &mut temp, size, expected).await?;
-                let after = self
-                    .snapshot(session, op.remote_id.as_ref().unwrap())
+                let mut after = self
+                    .snapshot_metadata(session, op.remote_id.as_ref().unwrap())
                     .await?;
-                if after.file.version != snapshot.file.version {
+                if after.file.version != snapshot.file.version
+                    || after.file.head_revision_id != snapshot.file.head_revision_id
+                    || after.file.size != snapshot.file.size
+                    || after.file.md5_checksum != snapshot.file.md5_checksum
+                    || after.file.trashed != Some(false)
+                    || after
+                        .file
+                        .sha256_checksum
+                        .as_deref()
+                        .is_some_and(|sha| !sha.eq_ignore_ascii_case(expected))
+                {
                     return Err(filesystem::stale());
                 }
+                after.file.sha256_checksum = Some(expected.to_owned());
                 local = Some(fs.install(r, &mut temp, journal)?);
                 after.file
             }
@@ -1011,7 +1047,7 @@ async fn receive_verified(
         output.write_all(&bytes).map_err(filesystem::error)?;
         digest.update(&bytes);
     }
-    if count != size || format!("{:x}", digest.finalize()) != expected {
+    if count != size || !format!("{:x}", digest.finalize()).eq_ignore_ascii_case(expected) {
         return Err(filesystem::stale());
     }
     Ok(())

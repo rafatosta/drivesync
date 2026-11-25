@@ -343,3 +343,59 @@ async fn an_existing_directory_without_confirmed_parent_association_cannot_recei
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn office_edit_without_provider_sha256_replaces_local_bytes_verified_by_observation() {
+    use super::super::tests::request;
+
+    let s = Sandbox::new();
+    let mut executor = setup(&s);
+    let local = executor.config.local_root.join("file");
+    std::fs::write(&local, b"old").unwrap();
+    let mut office: serde_json::Value =
+        serde_json::from_str(&metadata("file", "remote-root", 1, "hello")).unwrap();
+    office["mimeType"] =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into();
+    office["md5Checksum"] = "5d41402abc4b2a76b9719d911017c592".into();
+    office["headRevisionId"] = "updated-at-drive".into();
+    let observed = normalize(&serde_json::from_value(office.clone()).unwrap());
+    office.as_object_mut().unwrap().remove("sha256Checksum");
+    let server = endpoint(move |req| {
+        (
+            200,
+            if req.contains("alt=media") {
+                "hello".into()
+            } else {
+                office.to_string()
+            },
+            vec![],
+        )
+    })
+    .await;
+    use_backend(&s, &mut executor, server.client.clone(), false);
+    let mut request = request(&executor, OperationAction::UpdateLocalContent);
+    request.operation.name = Some("file".into());
+    request.operation.parent = Some(Path::new());
+    request.remote = observed.clone();
+    let result = executor.execute(request).await;
+    assert_eq!(
+        result.status,
+        OperationResultStatus::Succeeded,
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read(local).unwrap(), b"hello");
+    assert_eq!(
+        result.effect.unwrap().remote.unwrap().checksum,
+        observed.checksum
+    );
+    assert_eq!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.contains("alt=media"))
+            .count(),
+        1
+    );
+}

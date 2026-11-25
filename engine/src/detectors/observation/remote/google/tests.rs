@@ -525,3 +525,56 @@ async fn unavailable_or_denied_roots_recover_from_current_facts_without_another_
         assert_eq!(after.observations[0].state, FileState::Present);
     }
 }
+
+#[tokio::test]
+async fn office_revision_without_sha256_requires_verified_bytes_and_stable_metadata() {
+    use sha2::{Digest, Sha256};
+    let mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    let office = serde_json::json!({
+        "id": "office", "name": "Minutes.docx", "parents": ["root"], "mimeType": mime,
+        "version": "2", "headRevisionId": "revision", "size": "5",
+        "md5Checksum": "5d41402abc4b2a76b9719d911017c592", "trashed": false,
+        "capabilities": {"canDownload": true},
+    });
+    for (bytes, version, verified) in [
+        ("hello", "2", true),
+        ("world", "2", false),
+        ("hello", "3", false),
+    ] {
+        let mut replies = vec![
+            Reply::json(200, r#"{"startPageToken":"start"}"#),
+            root(),
+            Reply::json(
+                200,
+                &serde_json::json!({"files": [office], "incompleteSearch": false}).to_string(),
+            ),
+            Reply::json(200, bytes),
+        ];
+        if bytes == "hello" {
+            let mut after = office.clone();
+            after["version"] = version.into();
+            replies.push(Reply::json(200, &after.to_string()));
+        }
+        replies.push(root());
+        let server = Server::start(replies);
+        let observed = observer(&server)
+            .observe(
+                request(RemoteObserveMode::Initial, 16),
+                &session(),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            observed.observations[0].checksum,
+            if verified {
+                Evidence::Known(Checksum {
+                    algorithm: "sha256".into(),
+                    value: format!("{:x}", Sha256::digest(b"hello")),
+                })
+            } else {
+                Evidence::NotCollected
+            }
+        );
+    }
+}

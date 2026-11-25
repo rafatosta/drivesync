@@ -87,6 +87,12 @@ A cursor expiry or read failure requests a fresh Recovery capture; source loss i
 previous current evidence. Unknown capability attributes remain NotCollected, malformed
 numeric/digest/time attributes are Unavailable, and Workspace-only attributes are NotApplicable.
 
+Some edited Office files expose MD5 but no SHA-256. For a downloadable binary with known
+size and version, the observer streams its bytes, verifies length and Drive's MD5, and checks
+the remote revision again before recording the computed SHA-256. Later captures can reuse
+that digest for the same file version. The operator verifies its download against this
+SHA-256 and rechecks the remote revision before replacing the local file.
+
 Each round reads at most 16 listing/change-feed pages by default (hard round cap 64).
 Specific missing-ID and ancestry probes are additional reads, bounded by the known-ID limit
 and 128 ancestry steps per missing item, and cancel with the observer request. Captures retain

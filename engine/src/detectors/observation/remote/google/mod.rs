@@ -9,7 +9,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 const FIELDS: &str =
-    "id,name,parents,mimeType,size,sha256Checksum,version,modifiedTime,trashed,capabilities";
+    "id,name,parents,mimeType,size,sha256Checksum,md5Checksum,headRevisionId,version,modifiedTime,trashed,capabilities";
 const FOLDER: &str = "application/vnd.google-apps.folder";
 const MAX_ITEMS: usize = 100_000;
 /// Opaque authorized adapter bound to the account that acquired this session through Accounts.
@@ -302,8 +302,8 @@ impl GoogleObserver {
             }
         }
         while pages < budget {
-            let capture = state
-                .capture
+            let State { capture, known, .. } = &mut *state;
+            let capture = capture
                 .as_mut()
                 .ok_or(RemoteObserverError::IncompleteCoverage)?;
             let Some(parent) = capture.folders.front().cloned() else {
@@ -388,7 +388,30 @@ impl GoogleObserver {
                     return Err(RemoteObserverError::InvalidCursor);
                 }
             }
-            for (id, file) in items {
+            for (id, mut file) in items {
+                if !file
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| crate::projections::libreoffice_lock_name(name.as_ref()))
+                {
+                    let cached = known.get(&id).and_then(|old| {
+                        let Evidence::Known(version) = old.version else {
+                            return None;
+                        };
+                        if file.version.as_deref()?.parse::<u64>().ok()? != version {
+                            return None;
+                        }
+                        match &old.checksum {
+                            Evidence::Known(checksum) => Some(checksum.value.as_str()),
+                            _ => None,
+                        }
+                    });
+                    // Keep metadata for diagnostics and retry on the next scoped capture.
+                    let _ = self
+                        .client
+                        .fill_content_sha256(session, &mut file, cached)
+                        .await;
+                }
                 if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER) {
                     capture.visited.insert(id.clone());
                     capture.folders.push_back(id.clone());

@@ -1,6 +1,8 @@
 //! Incremental media and export transport, with explicit partial-read errors.
 use super::client::invalid_argument;
 use super::*;
+use md5::Md5;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 /// Inclusive HTTP byte range. A missing end means the remaining bytes.
@@ -79,6 +81,88 @@ pub struct GoogleDownloadStream {
     pub mime_type: Option<MimeType>,
 }
 impl GoogleDriveClient {
+    /// Recover SHA-256 evidence for a binary revision that only exposes an MD5.
+    /// MD5 checks transport integrity while SHA-256 remains the replica identity evidence.
+    pub(crate) async fn fill_content_sha256(
+        &self,
+        session: &GoogleSession,
+        file: &mut GoogleFile,
+        cached_sha256: Option<&str>,
+    ) -> GoogleResult<()> {
+        let (Some(id), Some(_version), Some(expected), Some(size)) = (
+            file.id.as_ref(),
+            file.version
+                .as_ref()
+                .and_then(|value| value.parse::<u64>().ok()),
+            file.md5_checksum.as_deref().filter(|value| {
+                value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }),
+            file.size
+                .as_ref()
+                .and_then(|value| value.parse::<u64>().ok()),
+        ) else {
+            return Ok(());
+        };
+        if file.sha256_checksum.is_some()
+            || file.trashed.is_none()
+            || file
+                .mime_type
+                .as_ref()
+                .is_none_or(|mime| mime.0.starts_with("application/vnd.google-apps."))
+            || !file
+                .capabilities
+                .as_ref()
+                .is_some_and(|caps| caps.can_download == Some(true))
+        {
+            return Ok(());
+        }
+        if let Some(cached) = cached_sha256 {
+            file.sha256_checksum = Some(cached.to_owned());
+            return Ok(());
+        }
+
+        let mut media = self.get_file_bytes(session, id, None).await?;
+        let mut received = 0u64;
+        let mut md5 = Md5::new();
+        let mut sha256 = Sha256::new();
+        let incomplete = || GoogleApiFailure::new(GoogleApiError::IncompleteTransfer, None);
+        while let Some(bytes) = media.body.next_chunk().await? {
+            received = received
+                .checked_add(bytes.len() as u64)
+                .filter(|count| *count <= size)
+                .ok_or_else(incomplete)?;
+            md5.update(&bytes);
+            sha256.update(&bytes);
+        }
+        if received != size || !format!("{:x}", md5.finalize()).eq_ignore_ascii_case(expected) {
+            return Err(incomplete());
+        }
+        let after = self
+            .files_get(
+                session,
+                id,
+                FileGetOptions {
+                    fields: Some(FieldMask(
+                        "id,version,size,md5Checksum,headRevisionId,trashed".into(),
+                    )),
+                    supports_all_drives: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        if after.id != file.id
+            || after.version != file.version
+            || after.head_revision_id != file.head_revision_id
+            || after.size != file.size
+            || after.md5_checksum != file.md5_checksum
+            || after.trashed != file.trashed
+        {
+            return Err(incomplete());
+        }
+        file.sha256_checksum = Some(format!("{:x}", sha256.finalize()));
+        Ok(())
+    }
+
     /// Reads blob bytes using alt=media. A range requires a consistent 206 reply.
     pub async fn get_file_bytes(
         &self,
