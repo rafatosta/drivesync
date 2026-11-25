@@ -2,7 +2,6 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatusView {
     Initializing,
-    Scanning,
     Waiting,
     WaitingForEvidence,
     Synchronizing,
@@ -47,7 +46,6 @@ pub enum ActivityKind {
     },
     Upload,
     UploadDiscoveredLocal,
-    Analyze,
     Verify,
     Recover,
     CreateDirectory,

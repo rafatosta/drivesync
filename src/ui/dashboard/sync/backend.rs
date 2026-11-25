@@ -30,6 +30,7 @@ pub struct EngineAdapter {
     subscription: Option<drivesync_engine::SynchronizationSubscription>,
     ended: bool,
     refresh_latest: bool,
+    last_synced: bool,
 }
 impl EngineAdapter {
     pub fn new(engine: drivesync_engine::Engine, account: drivesync_engine::AccountId) -> Self {
@@ -39,6 +40,7 @@ impl EngineAdapter {
             subscription: None,
             ended: false,
             refresh_latest: false,
+            last_synced: false,
         }
     }
 }
@@ -94,7 +96,16 @@ impl SyncBackend for EngineAdapter {
             let conflicts = self.engine.list_conflicts(self.account.clone()).await.ok();
             let latest = subscription.current();
             self.refresh_latest = latest != status;
-            let mut snapshot = map_status(&latest, audited && !self.refresh_latest);
+            let background = is_background_check(&latest);
+            // Keep the last audited presentation while a background check is in progress.
+            let mut snapshot = map_status(
+                &latest,
+                if background {
+                    self.last_synced
+                } else {
+                    audited && !self.refresh_latest
+                },
+            );
             if let Some(rows) = conflicts.filter(|rows| !rows.is_empty()) {
                 let count = rows.len();
                 let summary = gettextrs::ngettext(
@@ -105,7 +116,7 @@ impl SyncBackend for EngineAdapter {
                 .replace("{count}", &count.to_string());
                 use drivesync_engine::SynchronizationState as State;
                 let has_procedure = latest.issue.is_some()
-                    || matches!(latest.state, State::Running | State::Failed);
+                    || (!background && matches!(latest.state, State::Running | State::Failed));
                 if has_procedure && !snapshot.description.is_empty() {
                     snapshot.description = format!("{}\n{summary}", snapshot.description);
                 } else {
@@ -125,16 +136,30 @@ impl SyncBackend for EngineAdapter {
                     action: AttentionAction::OpenConflictList,
                 });
             }
+            self.last_synced = snapshot.status == StatusView::Synced;
             Some(snapshot)
         })
     }
 }
+fn is_background_check(status: &drivesync_engine::SynchronizationStatus) -> bool {
+    use drivesync_engine::{SynchronizationActivity as A, SynchronizationState as S};
+    status.state == S::Running
+        && status.issue.is_none()
+        && status.current_operation.is_none()
+        && matches!(status.activity, A::Scanning | A::Observing | A::Analyzing)
+}
+
 pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: bool) -> Snapshot {
     use drivesync_engine::{
         SynchronizationActivity as A, SynchronizationIssueKind as I, SynchronizationState as S,
     };
     let scope = status.account_id.0.clone();
-    let state = match (status.state, status.issue.as_ref().map(|issue| issue.kind)) {
+    let background = is_background_check(status);
+    let effective_state = if background { S::Idle } else { status.state };
+    let state = match (
+        effective_state,
+        status.issue.as_ref().map(|issue| issue.kind),
+    ) {
         (S::Stopped, _) => StatusView::Stopped,
         (S::Failed, _) => StatusView::Failed,
         (_, Some(I::Deferred | I::DeferredFor(_) | I::PreconditionFailed)) | (S::Waiting, None) => {
@@ -142,12 +167,11 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         }
         (_, Some(_)) => StatusView::Attention,
         (S::Running, None) if status.activity == A::Recovering => StatusView::Recovering,
-        (S::Running, None) if status.activity == A::Scanning => StatusView::Scanning,
         (S::Running, None) => StatusView::Synchronizing,
         (S::Idle, None) if audited => StatusView::Synced,
         (S::Idle, None) => StatusView::Waiting,
     };
-    let activity = if status.state == S::Running {
+    let activity = if effective_state == S::Running {
         status.current_item.as_ref().and_then(|item| {
             let updates_local = status
                 .current_operation
@@ -175,7 +199,6 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .and_then(|op| op.workspace_shortcut);
             let trash = status.current_operation.as_ref().and_then(|op| op.trash);
             let (kind, direction) = match status.activity {
-                A::Analyzing => (ActivityKind::Analyze, Direction::None),
                 A::Recovering => (ActivityKind::Recover, Direction::None),
                 A::ProjectingWorkspace | A::Applying if workspace_shortcut.is_some() => {
                     use drivesync_engine::WorkspaceShortcutActivity;
@@ -342,6 +365,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     };
     let description = if state == StatusView::Synced {
         gettext("Your files are up to date on this computer and on Drive.")
+    } else if background {
+        gettext("No pending operations.")
     } else if activity.is_some() && status.issue.is_none() {
         String::new()
     } else {

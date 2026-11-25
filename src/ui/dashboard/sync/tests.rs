@@ -45,7 +45,6 @@ fn isolated_components_and_fake_backend() {
         let status = SyncStatus::new();
         for state in [
             StatusView::Initializing,
-            StatusView::Scanning,
             StatusView::Waiting,
             StatusView::WaitingForEvidence,
             StatusView::Synchronizing,
@@ -915,7 +914,7 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
 }
 
 #[test]
-fn remote_only_item_is_named_during_analysis_and_when_waiting_for_drive() {
+fn background_checks_preserve_idle_presentation_and_waits_name_the_item() {
     use drivesync_engine::{
         models::{AccountId, RemoteId, Timestamp},
         SynchronizationActivity, SynchronizationIssue, SynchronizationIssueKind,
@@ -936,9 +935,25 @@ fn remote_only_item_is_named_during_analysis_and_when_waiting_for_drive() {
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
-    let active = map_status(&status, false).activity.unwrap();
-    assert_eq!(active.kind, ActivityKind::Analyze);
-    assert_eq!(active.name, "Relatório.docx");
+    for audited in [false, true] {
+        let mut idle = status.clone();
+        idle.state = SynchronizationState::Idle;
+        idle.activity = SynchronizationActivity::None;
+        idle.current_item = None;
+        let expected = map_status(&idle, audited);
+        for activity in [
+            SynchronizationActivity::Analyzing,
+            SynchronizationActivity::Scanning,
+            SynchronizationActivity::Observing,
+        ] {
+            status.activity = activity;
+            let checking = map_status(&status, audited);
+            assert_eq!(checking.status, expected.status);
+            assert_eq!(checking.description, expected.description);
+            assert!(checking.activity.is_none());
+            assert!(checking.attention.is_empty());
+        }
+    }
 
     status.state = SynchronizationState::Waiting;
     status.activity = SynchronizationActivity::None;

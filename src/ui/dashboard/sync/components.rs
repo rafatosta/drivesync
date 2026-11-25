@@ -105,7 +105,6 @@ impl SyncStatus {
     pub fn set_state(&self, state: StatusView, description: &str) {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
-            StatusView::Scanning => "Scanning files…",
             StatusView::Waiting => "Waiting for changes",
             StatusView::WaitingForEvidence => "Waiting for verification",
             StatusView::Recovering => "Checking interrupted operations…",
@@ -233,7 +232,6 @@ impl SyncActivity {
             ActivityKind::UpdateWorkspaceShortcut => "Updating Workspace shortcut…",
             ActivityKind::CreateDirectory => "Creating directory…",
             ActivityKind::Recover => "Checking interrupted operation…",
-            ActivityKind::Analyze => "Analyzing changes…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
