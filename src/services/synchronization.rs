@@ -112,7 +112,9 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
         };
         if matches!(
             issue.kind,
-            SynchronizationIssueKind::Unsupported(_) | SynchronizationIssueKind::OperationFailed
+            SynchronizationIssueKind::Unsupported(_)
+                | SynchronizationIssueKind::OperationFailed
+                | SynchronizationIssueKind::Deferred
         ) {
             if let Some(path) = status
                 .current_item

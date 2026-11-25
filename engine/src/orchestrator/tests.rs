@@ -601,3 +601,54 @@ async fn unchanged_eligible_input_is_processed_when_source_availability_returns(
     assert!(!worker.process(file).await.results.is_empty());
     assert!(!calls.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn trash_refusal_requires_an_operation_dispatched_to_the_executor() {
+    use crate::inventory::models::ProjectionKind;
+    use crate::models::FileState;
+
+    let (operator, calls) = mock(OperationResultStatus::Failed);
+    let (mut worker, _stop) = direct(operator);
+    let mut file = fixture();
+    file.baseline.projection = Some(ProjectionKind::Native);
+    file.environment.destination_local_parent = file.local.parent.clone();
+    file.environment.destination_remote_parent_id =
+        Evidence::Known(crate::models::RemoteId("parent-a".into()));
+    file.environment.trash_propagation_authorized = true;
+    file.remote.trashed = Evidence::Known(false);
+    worker.config.trash_propagation_authorized = true;
+
+    for state in [
+        FileState::OutsideScope,
+        FileState::Unknown,
+        FileState::Unavailable,
+        FileState::Absent,
+    ] {
+        file.remote.state = state;
+        worker.process(file.clone()).await;
+        assert_eq!(
+            worker.status.borrow().issue.as_ref().unwrap().kind,
+            SynchronizationIssueKind::Deferred
+        );
+    }
+    worker.config.trash_propagation_authorized = false;
+    file.remote.trashed = Evidence::Known(true);
+    file.remote.version = Evidence::Known(9);
+    worker.process(file.clone()).await;
+    assert_eq!(
+        worker.status.borrow().issue.as_ref().unwrap().kind,
+        SynchronizationIssueKind::Deferred
+    );
+    assert!(calls.requests.lock().unwrap().is_empty());
+
+    worker.config.trash_propagation_authorized = true;
+    worker.process(file).await;
+    assert_eq!(
+        calls.requests.lock().unwrap()[0].operation.action,
+        OperationAction::RemoveLocal
+    );
+    assert_eq!(
+        worker.status.borrow().issue.as_ref().unwrap().kind,
+        SynchronizationIssueKind::TrashRefused
+    );
+}

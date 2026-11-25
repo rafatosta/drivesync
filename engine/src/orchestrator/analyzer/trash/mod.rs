@@ -16,19 +16,10 @@ pub(super) fn analyze(
         return None;
     }
     let blocked = |reason: &str, status| {
-        let mut validation = validation.clone();
-        if status == DecisionStatus::Defer {
-            push_check(
-                &mut validation.checks,
-                ValidationCheckStatus::Defer,
-                "trash.preconditions",
-                reason,
-            );
-        }
         decision(
             status,
             reason,
-            validation,
+            validation.clone(),
             changeset.clone(),
             vec![],
             ExecutionStatus::NotExecutable,

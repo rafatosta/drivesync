@@ -626,13 +626,6 @@ impl Orchestrator {
                         } else {
                             SynchronizationIssueKind::RecoveryRequired
                         }
-                    } else if decision
-                        .validation
-                        .checks
-                        .iter()
-                        .any(|check| check.code == "trash.preconditions")
-                    {
-                        SynchronizationIssueKind::TrashRefused
                     } else {
                         SynchronizationIssueKind::Deferred
                     },
