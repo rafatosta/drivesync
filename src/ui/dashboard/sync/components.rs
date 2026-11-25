@@ -2,7 +2,10 @@
 use super::models::*;
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 fn label() -> gtk::Label {
     gtk::Label::builder()
@@ -39,6 +42,10 @@ pub struct SyncStatus {
     spinner: gtk::Spinner,
     last_update: Rc<RefCell<std::time::Instant>>,
     update_age: gtk::Label,
+    pending_since: Rc<Cell<Option<i64>>>,
+    work_label: gtk::Label,
+    pending_label: gtk::Label,
+    feedback_key: Rc<RefCell<String>>,
     state: Rc<RefCell<StatusView>>,
 }
 impl SyncStatus {
@@ -73,15 +80,29 @@ impl SyncStatus {
         update_age.add_css_class("dim-label");
         update_age.add_css_class("caption");
         update_age.set_widget_name("dashboard-synchronization-update-age");
+        let work_label = label();
+        work_label.set_widget_name("dashboard-synchronization-work");
+        work_label.add_css_class("dim-label");
+        labels.append(&work_label);
+        let pending_label = label();
+        pending_label.set_widget_name("dashboard-synchronization-pending");
+        pending_label.set_margin_top(8);
+        labels.append(&pending_label);
         labels.append(&update_age);
+        let pending_since = Rc::new(Cell::new(None));
         let last_update = Rc::new(RefCell::new(std::time::Instant::now()));
         gtk::glib::timeout_add_seconds_local(1, {
             let age = update_age.downgrade();
             let updated = last_update.clone();
+            let pending = pending_since.clone();
             move || {
                 let Some(age) = age.upgrade() else {
                     return gtk::glib::ControlFlow::Break;
                 };
+                if let Some(since) = pending.get() {
+                    age.set_label(&pending_age(since, gtk::glib::real_time() / 1000));
+                    return gtk::glib::ControlFlow::Continue;
+                }
                 let seconds = updated.borrow().elapsed().as_secs();
                 age.set_label(&if seconds >= 30 {
                     gettext("No new status update for {seconds} s. Waiting for the current stage; completion time is unknown.")
@@ -139,6 +160,10 @@ impl SyncStatus {
             spinner,
             last_update,
             update_age,
+            pending_since,
+            work_label,
+            pending_label,
+            feedback_key: Rc::default(),
             state: Rc::new(RefCell::new(StatusView::Initializing)),
         };
         value.reset();
@@ -162,7 +187,7 @@ impl SyncStatus {
         let title = match state {
             StatusView::Initializing => "Loading account status…",
             StatusView::WaitingForEvidence => "Waiting to continue synchronization",
-            StatusView::Finalizing => "Finalizing synchronization",
+            StatusView::Finalizing => "Verifying an operation",
             StatusView::Checking => "Checking synchronization…",
             StatusView::VerificationIncomplete => "Synchronization not verified",
             StatusView::Recovering => "Checking interrupted operations…",
@@ -201,8 +226,12 @@ impl SyncStatus {
             | StatusView::Stopped => "dim-label",
             _ => "accent",
         });
-        *self.last_update.borrow_mut() = std::time::Instant::now();
-        self.update_age.set_label(&gettext("Status updated now"));
+        let key = format!("{state:?}|{description}|{item:?}");
+        if *self.feedback_key.borrow() != key {
+            *self.feedback_key.borrow_mut() = key;
+            *self.last_update.borrow_mut() = std::time::Instant::now();
+            self.update_age.set_label(&gettext("Status updated now"));
+        }
         self.update_age.set_visible(matches!(
             state,
             StatusView::Checking
@@ -218,7 +247,7 @@ impl SyncStatus {
             .set_label(&item.map_or_else(String::new, |item| {
                 if matches!(
                     state,
-                    StatusView::Checking | StatusView::Finalizing | StatusView::WaitingForEvidence
+                    StatusView::Finalizing | StatusView::WaitingForEvidence
                 ) {
                     gettext("Item being verified: {name}").replace("{name}", &item.name)
                 } else {
@@ -246,6 +275,35 @@ impl SyncStatus {
         );
         *self.state.borrow_mut() = state;
     }
+    /// Pending age comes from the worker's stable wait identity, never from redraw frequency.
+    pub(super) fn set_context(&self, work: &WorkView, pending: Option<&PendingView>) {
+        if pending.is_none() && self.work_label.text().as_str() != work.description {
+            *self.last_update.borrow_mut() = std::time::Instant::now();
+            self.update_age.set_label(&gettext("Status updated now"));
+        }
+        self.work_label.set_label(&work.description);
+        self.work_label.set_visible(!work.description.is_empty());
+        self.pending_label
+            .set_label(pending.map_or("", |p| p.description.as_str()));
+        self.pending_label.set_visible(pending.is_some());
+        self.pending_since.set(pending.map(|p| p.since_millis));
+        if let Some(pending) = pending {
+            self.update_age.set_visible(true);
+            self.update_age.set_label(&pending_age(
+                pending.since_millis,
+                gtk::glib::real_time() / 1000,
+            ));
+            self.item_name.set_visible(false);
+            if matches!(
+                self.state(),
+                StatusView::Checking | StatusView::Finalizing | StatusView::WaitingForEvidence
+            ) {
+                self.description.set_visible(false);
+                self.spinner.set_visible(false);
+                self.spinner.set_spinning(false);
+            }
+        }
+    }
     pub fn connect_details(&self, callback: impl Fn() + 'static) {
         *self.details_callback.borrow_mut() = Some(Box::new(callback));
     }
@@ -265,6 +323,7 @@ impl SyncStatus {
         self.state.borrow().clone()
     }
     pub fn reset(&self) {
+        self.set_context(&WorkView::default(), None);
         self.set_state(StatusView::Initializing, "");
     }
 }
@@ -799,4 +858,11 @@ impl ConflictResolver {
             }
         });
     }
+}
+
+fn pending_age(since: i64, now: i64) -> String {
+    gettext("Waiting for this verification for {seconds} s").replace(
+        "{seconds}",
+        &(now.saturating_sub(since).max(0) / 1000).to_string(),
+    )
 }

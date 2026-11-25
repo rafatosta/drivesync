@@ -43,13 +43,13 @@ fn isolated_components_and_fake_backend() {
     adw::init().unwrap();
     for _ in 0..3 {
         let status = SyncStatus::new();
-        let spinner = status
-            .widget
-            .last_child()
-            .unwrap()
-            .last_child()
-            .and_downcast::<gtk::Spinner>()
-            .unwrap();
+        let spinner = named_widget(
+            status.widget.upcast_ref(),
+            "dashboard-synchronization-spinner",
+        )
+        .unwrap()
+        .downcast::<gtk::Spinner>()
+        .unwrap();
         let icon = status
             .widget
             .first_child()
@@ -293,6 +293,8 @@ fn isolated_components_and_fake_backend() {
         let controller = DashboardController::new();
         let synced = Snapshot {
             overview: None,
+            work: Default::default(),
+            pending: None,
             scope: "fixture-a".into(),
             status: StatusView::Synced,
             description: "All files are up to date.".into(),
@@ -327,6 +329,8 @@ fn isolated_components_and_fake_backend() {
         };
         let snapshot = Snapshot {
             overview: None,
+            work: Default::default(),
+            pending: None,
             scope: "fixture-a".into(),
             status: StatusView::Synchronizing,
             description: String::new(),
@@ -388,12 +392,13 @@ fn isolated_components_and_fake_backend() {
             },
         ));
         assert!(!progress.is_visible());
-        let spinner = controller
-            .activity
-            .widget
-            .prev_sibling()
-            .and_downcast::<gtk::Spinner>()
-            .unwrap();
+        let spinner = named_widget(
+            controller.widget.upcast_ref(),
+            "dashboard-synchronization-spinner",
+        )
+        .unwrap()
+        .downcast::<gtk::Spinner>()
+        .unwrap();
         assert!(!spinner.is_mapped());
         controller.activity.clear();
         controller
@@ -415,7 +420,10 @@ fn isolated_components_and_fake_backend() {
             false,
         );
         let item_label = spinner.prev_sibling().and_downcast::<gtk::Label>().unwrap();
-        assert_eq!(item_label.text(), item.name);
+        assert_eq!(
+            item_label.text(),
+            gettextrs::gettext("Item being verified: {name}").replace("{name}", &item.name)
+        );
         assert_eq!(item_label.ellipsize(), gtk::pango::EllipsizeMode::Middle);
         assert_eq!(item_label.tooltip_text().as_deref(), item.path.as_deref());
         assert!(!spinner.is_mapped());
@@ -497,6 +505,8 @@ async fn assert_transient_checks_do_not_replace_waiting_feedback(controller: &Da
 
     let finalizing = Snapshot {
         overview: None,
+        work: Default::default(),
+        pending: None,
         scope: "fixture-a".into(),
         status: StatusView::Finalizing,
         description: "Waiting to check the copy on Drive.".into(),
@@ -555,6 +565,8 @@ async fn assert_transient_checks_do_not_replace_waiting_feedback(controller: &Da
 fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     use drivesync_engine::*;
     let mut value = SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: AccountId("fixture-a".into()),
         state: SynchronizationState::Idle,
         activity: SynchronizationActivity::None,
@@ -800,6 +812,8 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
 fn move_activity_reports_both_paths_without_transfer_progress() {
     use drivesync_engine::*;
     let mut value = SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: AccountId("fixture-a".into()),
         state: SynchronizationState::Running,
         activity: SynchronizationActivity::Moving,
@@ -878,6 +892,8 @@ fn directory_creation_reports_real_phase_without_transfer_progress() {
         ] {
             let item_id = models::ItemId("empty-folder".into());
             let status = SynchronizationStatus {
+                work: Default::default(),
+                pending: None,
                 account_id: AccountId("fixture-a".into()),
                 state: SynchronizationState::Running,
                 activity,
@@ -979,7 +995,11 @@ fn save_window(window: &gtk::Window, name: &str) {
     let content = snapshot.to_node().expect("fixture must render");
     let background = gtk::Snapshot::new();
     background.append_color(
-        &gtk::gdk::RGBA::new(0.98, 0.98, 0.98, 1.0),
+        &if adw::StyleManager::default().is_dark() {
+            gtk::gdk::RGBA::new(0.12, 0.12, 0.12, 1.0)
+        } else {
+            gtk::gdk::RGBA::new(0.98, 0.98, 0.98, 1.0)
+        },
         &gtk::graphene::Rect::new(0.0, 0.0, window.width() as f32, window.height() as f32),
     );
     background.append_node(&content);
@@ -1012,6 +1032,8 @@ fn trash_activity_and_attention_follow_public_evidence() {
         SynchronizationStatus, SynchronizationTrashDestination as D, Timestamp,
     };
     let mut status = SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: AccountId("account".into()),
         state: S::Running,
         activity: A::TrashingLocal,
@@ -1072,6 +1094,8 @@ fn trash_activity_and_attention_follow_public_evidence() {
 fn recovery_snapshots_only_report_the_observed_current_state() {
     use drivesync_engine::*;
     let mut status = SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: AccountId("fixture".into()),
         state: SynchronizationState::Running,
         activity: SynchronizationActivity::Recovering,
@@ -1121,6 +1145,8 @@ fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
         SynchronizationItem, SynchronizationState, SynchronizationStatus, SynchronizationWait,
     };
     let mut status = SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: AccountId("account".into()),
         state: SynchronizationState::Running,
         activity: SynchronizationActivity::Analyzing,
@@ -1261,6 +1287,8 @@ fn overview_follows_scoped_subscription_and_attention_action() {
     let controller = DashboardController::new();
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
     let snapshot = Snapshot {
+        work: Default::default(),
+        pending: None,
         scope: "account-a".into(),
         status: StatusView::Attention,
         description: "A real issue supplied by the adapter".into(),
@@ -1297,6 +1325,8 @@ fn overview_follows_scoped_subscription_and_attention_action() {
         assert!(!controller.overview.widget().is_visible());
         let mut snapshot = map_status(
             &drivesync_engine::SynchronizationStatus {
+                work: Default::default(),
+                pending: None,
                 account_id: drivesync_engine::AccountId("account-b".into()),
                 state: drivesync_engine::SynchronizationState::Running,
                 activity: drivesync_engine::SynchronizationActivity::Downloading,
@@ -1374,6 +1404,8 @@ fn overview_remains_visible_through_all_account_lifecycle_states() {
     let controller = DashboardController::new();
     controller.select("lifecycle".into(), Box::new(FakeSyncBackend::new([])));
     let status = drivesync_engine::SynchronizationStatus {
+        work: Default::default(),
+        pending: None,
         account_id: drivesync_engine::AccountId("lifecycle".into()),
         state: drivesync_engine::SynchronizationState::Idle,
         activity: drivesync_engine::SynchronizationActivity::None,
@@ -1407,4 +1439,174 @@ fn overview_remains_visible_through_all_account_lifecycle_states() {
     }
     controller.reset();
     assert!(!controller.overview.widget().is_visible());
+}
+
+fn named_widget(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(found) = named_widget(&widget, name) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+#[test]
+#[ignore = "requires an isolated GTK display"]
+fn pending_verification_age_survives_detector_and_analysis_updates() {
+    use drivesync_engine::*;
+    init_fixture_locale();
+    adw::init().unwrap();
+    let item = SynchronizationItem {
+        item_id: None,
+        local_path: Some("IFBA/Avaliação RSC (Portarias)".into()),
+        display_name: Some("Avaliação RSC (Portarias)".into()),
+        remote_id: None,
+    };
+    let wait = SynchronizationIssue {
+        kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::ItemVerification {
+            source: SynchronizationVerificationSource::Remote,
+            confirmed_action: Some(SynchronizationConfirmedAction::CreateLocalDirectory),
+        }),
+        retryable: false,
+    };
+    let since = gtk::glib::real_time() / 1000 - 42_000;
+    let mut status = SynchronizationStatus {
+        account_id: AccountId("fixture-feedback".into()),
+        state: SynchronizationState::Waiting,
+        activity: SynchronizationActivity::None,
+        current_item: Some(item.clone()),
+        current_operation: None,
+        progress: None,
+        verification: None,
+        issue: Some(wait.clone()),
+        updated_at: Timestamp { unix_millis: 0 },
+        pending: Some(SynchronizationPending {
+            item: item.clone(),
+            issue: wait,
+            since: Timestamp { unix_millis: since },
+            missing: vec![SynchronizationMissingEvidence {
+                source: SynchronizationVerificationSource::Remote,
+                attribute: SynchronizationAttribute::Trashed,
+            }],
+        }),
+        work: SynchronizationWork {
+            local: Some(SynchronizationScan {
+                state: SynchronizationScanState::Complete,
+                path: None,
+                items: 247,
+                pages: 0,
+                retry_at: None,
+            }),
+            remote: Some(SynchronizationScan {
+                state: SynchronizationScanState::Reading,
+                path: Some("Documentos/Ensino/TCC".into()),
+                items: 340,
+                pages: 4,
+                retry_at: None,
+            }),
+            analysis: Some(SynchronizationAnalysis {
+                item,
+                kind: Some(models::FileKind::Directory),
+                origin: models::ObservationOrigin::Remote,
+                analyzed_items: 248,
+            }),
+        },
+    };
+    let context = gtk::glib::MainContext::default();
+    let _guard = context.acquire().unwrap();
+    context.block_on(async {
+        let controller = DashboardController::new();
+        controller.select(
+            status.account_id.0.clone(),
+            Box::new(FakeSyncBackend::new([])),
+        );
+        let window = gtk::Window::builder()
+            .default_width(800)
+            .default_height(760)
+            .child(&controller.widget)
+            .build();
+        window.present();
+        for count in 340..345 {
+            status.work.remote.as_mut().unwrap().items = count;
+            status.updated_at.unix_millis += 1;
+            let mapped = map_status(&status, false);
+            assert!(mapped.work.reading);
+            assert_eq!(mapped.pending.as_ref().unwrap().since_millis, since);
+            assert!(controller.apply(mapped));
+            let age = named_widget(
+                controller.widget.upcast_ref(),
+                "dashboard-synchronization-update-age",
+            )
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
+            let seconds = age
+                .text()
+                .split_whitespace()
+                .find_map(|part| part.parse::<u64>().ok())
+                .unwrap();
+            assert!(seconds >= 42, "{}", age.text());
+        }
+        let work = named_widget(
+            controller.widget.upcast_ref(),
+            "dashboard-synchronization-work",
+        )
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+        assert!(work.text().contains("Documentos/Ensino/TCC"));
+        let pending = named_widget(
+            controller.widget.upcast_ref(),
+            "dashboard-synchronization-pending",
+        )
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+        assert!(pending.text().contains("IFBA/Avaliação RSC (Portarias)"));
+        assert!(pending.text().contains(&gettextrs::gettext("Trash state")));
+        gtk::glib::timeout_future(std::time::Duration::from_millis(100)).await;
+        save_window(&window, "pending-and-detector-progress.png");
+        status.work.remote.as_mut().unwrap().state = SynchronizationScanState::RetryScheduled;
+        let snapshot = map_status(&status, false);
+        assert!(matches!(
+            snapshot.overview,
+            Some(crate::ui::components::sync_overview::SyncOverviewState::Waiting { .. })
+        ));
+        controller.apply(snapshot);
+        gtk::glib::timeout_future(std::time::Duration::from_millis(100)).await;
+        save_window(&window, "pending-and-detector-retry.png");
+        controller.reset();
+        assert!(!pending.is_visible());
+        assert!(!work.is_visible());
+        window.close();
+    });
+}
+
+#[test]
+fn active_transfer_keeps_precedence_over_concurrent_detector_reading() {
+    let snapshot = Snapshot {
+        overview: None,
+        scope: "fixture-a".into(),
+        status: StatusView::Synchronizing,
+        description: gettextrs::gettext("Downloading…"),
+        item: None,
+        active: true,
+        activity: Some(activity()),
+        attention: Vec::new(),
+        pending: None,
+        work: WorkView {
+            reading: true,
+            description: "Drive: Reading files and folders".into(),
+            stage: Some("Drive: Reading files and folders".into()),
+        },
+    };
+    assert!(matches!(
+        super::backend::overview_state(&snapshot),
+        Some(crate::ui::components::sync_overview::SyncOverviewState::Syncing { .. })
+    ));
 }

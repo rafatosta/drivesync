@@ -125,3 +125,23 @@ post-effect barrier; older-than-baseline remote versions defer. NoOp still perfo
 [Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
 
 [Stage 11](FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
+
+## Current work and pending verification
+
+Public `SynchronizationStatus.work` contains independent local/remote collection telemetry
+and the last item actually passed to Analyzer (name/path, kind, observation origin and analysis
+count). Source reporters bypass the bounded execution queue so a slow operation cannot hide
+read progress. Publications preserve this telemetry atomically; it never grants observation
+coverage, marks an operation confirmed, or supplies an account completion percentage.
+
+`pending` identifies an unresolved observation wait separately from current work. Its `since`
+is the first publication of the same item and wait reason in the worker session; repeated
+analysis and source updates do not reset it. Attribute comparisons expose typed missing
+local/remote evidence (presence, type, content, name, parent or trash state), without raw
+provider diagnostics. A fresh complete comparison clears the wait. Restarting the worker
+starts a new in-memory waiting interval; Inventory remains the authority for operation receipts.
+
+The dashboard shows collection and the last analyzed item separately from this pending item.
+Waiting alone has no animated transfer bar. The elapsed waiting time comes from `pending.since`,
+not redraws or watch notifications. Remote directory content uses its own MIME-derived kind;
+an unknown local type must not manufacture a remote binary checksum requirement.

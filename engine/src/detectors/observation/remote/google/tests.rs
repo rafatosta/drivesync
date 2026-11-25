@@ -27,6 +27,7 @@ fn observer(server: &Server) -> GoogleObserver {
 }
 fn request(mode: RemoteObserveMode, budget: u64) -> RemoteObserveRequest {
     RemoteObserveRequest {
+        progress: None,
         scope: RemoteScope {
             account_id: AccountId("account".into()),
             provider_id: ProviderId("google".into()),
@@ -678,4 +679,47 @@ async fn changes_for_the_same_binary_revision_reuse_verified_sha256() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn paginated_progress_reports_scoped_folder_names_without_publishing_partial_evidence() {
+    use std::sync::{Arc, Mutex as StdMutex};
+    let server = Server::start(vec![
+        Reply::json(200, r#"{"startPageToken":"start"}"#),
+        root(),
+        Reply::json(
+            200,
+            r#"{"files":[{"id":"folder-id","name":"Teaching","mimeType":"application/vnd.google-apps.folder","parents":["root"],"trashed":false,"capabilities":{"canListChildren":true}}],"incompleteSearch":false}"#,
+        ),
+        Reply::json(200, r#"{"files":[],"incompleteSearch":false}"#),
+        root(),
+    ]);
+    let observer = observer(&server);
+    let samples = Arc::new(StdMutex::new(Vec::new()));
+    let received = samples.clone();
+    let mut req = request(RemoteObserveMode::Initial, 1);
+    req.progress = Some(crate::detectors::observation::ProgressReporter::new(
+        move |path, items, pages| {
+            received.lock().unwrap().push((path, items, pages));
+        },
+    ));
+    let progress = req.progress.clone();
+    let result = observer
+        .observe(req, &session(), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(result.has_more);
+    assert!(result.observations.is_empty());
+    let mut req = request(RemoteObserveMode::Incremental, 1);
+    req.progress = progress;
+    let result = observer
+        .observe(req, &session(), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(result.coverage, ObservationCoverage::Complete);
+    let samples = samples.lock().unwrap();
+    let (path, items, pages) = samples.last().unwrap();
+    assert_eq!(path.as_deref(), Some(std::path::Path::new("Teaching")));
+    assert_eq!((*items, *pages), (1, 2));
+    assert!(!format!("{samples:?}").contains("folder-id"));
 }

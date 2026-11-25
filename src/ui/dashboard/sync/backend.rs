@@ -54,6 +54,8 @@ impl EngineAdapter {
             overview: Some(SyncOverviewState::Attention {
                 pending_items: None,
             }),
+            work: Default::default(),
+            pending: None,
             scope: self.account.0.clone(),
             status: StatusView::Failed,
             description: crate::core::messages::engine_error(error),
@@ -467,6 +469,11 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         item_presentation.filter(|_| !matches!(state, StatusView::Synced | StatusView::Stopped));
     let mut snapshot = Snapshot {
         overview: None,
+        work: work_view(&status.work),
+        pending: status
+            .pending
+            .as_ref()
+            .map(|pending| pending_view(pending, status.verification)),
         scope,
         status: state,
         description,
@@ -482,7 +489,29 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
 /// Operation steps and byte-less telemetry must never become account item progress.
 pub(super) fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
+    if snapshot.work.reading
+        && matches!(
+            snapshot.status,
+            StatusView::Checking
+                | StatusView::Finalizing
+                | StatusView::WaitingForEvidence
+                | StatusView::VerificationIncomplete
+                | StatusView::Initializing
+        )
+    {
+        return Some(Overview::Checking {
+            checked_items: None,
+        });
+    }
     match snapshot.status {
+        StatusView::Checking if !snapshot.active || snapshot.pending.is_some() => {
+            Some(Overview::Waiting {
+                message: snapshot.description.clone(),
+            })
+        }
+        StatusView::Finalizing => Some(Overview::Waiting {
+            message: snapshot.description.clone(),
+        }),
         StatusView::Checking | StatusView::Initializing => Some(Overview::Checking {
             checked_items: None,
         }),
@@ -491,15 +520,13 @@ pub(super) fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
                 message: snapshot.description.clone(),
             })
         }
-        StatusView::Synchronizing | StatusView::Recovering | StatusView::Finalizing => {
-            Some(Overview::Syncing {
-                completed_items: None,
-                total_items: None,
-                remaining_items: None,
-                remaining_bytes: None,
-                progress: None,
-            })
-        }
+        StatusView::Synchronizing | StatusView::Recovering => Some(Overview::Syncing {
+            completed_items: None,
+            total_items: None,
+            remaining_items: None,
+            remaining_bytes: None,
+            progress: None,
+        }),
         StatusView::Synced => Some(Overview::Completed { last_sync: None }),
         StatusView::Attention | StatusView::Failed => Some(Overview::Attention {
             pending_items: None,
@@ -507,5 +534,147 @@ pub(super) fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
         StatusView::Stopped | StatusView::Offline => Some(Overview::Inactive {
             message: snapshot.description.clone(),
         }),
+    }
+}
+
+fn work_view(work: &drivesync_engine::SynchronizationWork) -> WorkView {
+    use drivesync_engine::SynchronizationScanState as State;
+    let mut lines = Vec::new();
+    let mut reading = false;
+    let mut current_stage = None;
+    for (source, scan) in [("Computer", &work.local), ("Drive", &work.remote)] {
+        let Some(scan) = scan else {
+            continue;
+        };
+        reading |= scan.state == State::Reading;
+        let stage = gettext(match scan.state {
+            State::Reading => "Reading files and folders",
+            State::Complete => "Reading complete",
+            State::RetryScheduled => "Reading incomplete; retry scheduled",
+            State::Failed => "Reading failed",
+        });
+        let mut line = format!("{}: {stage}", gettext(source));
+        if scan.state == State::Reading {
+            if let Some(path) = &scan.path {
+                let path = if path.as_os_str().is_empty() {
+                    gettext("Sync root")
+                } else {
+                    path.to_string_lossy().into_owned()
+                };
+                line.push_str(&format!(" — {path}"));
+            }
+        }
+        line.push_str(
+            &gettext(" · {count} items observed").replace("{count}", &scan.items.to_string()),
+        );
+        if scan.pages > 0 {
+            line.push_str(
+                &gettext(" · {count} pages read").replace("{count}", &scan.pages.to_string()),
+            );
+        }
+        if let Some(retry) = scan
+            .retry_at
+            .and_then(|t| gtk::glib::DateTime::from_unix_local(t.unix_millis / 1000).ok())
+            .and_then(|t| t.format("%H:%M:%S").ok())
+        {
+            line.push_str(&gettext(" · Next attempt: {time}").replace("{time}", &retry));
+        }
+        if scan.state == State::Reading && current_stage.is_none() {
+            current_stage = Some(line.clone());
+        }
+        lines.push(line);
+    }
+    if let Some(analysis) = &work.analysis {
+        let name = analysis
+            .item
+            .local_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| analysis.item.display_name.clone())
+            .unwrap_or_else(|| gettext("Unidentified item"));
+        let kind = gettext(
+            if analysis.kind == Some(drivesync_engine::models::FileKind::Directory) {
+                "Folder"
+            } else {
+                "File"
+            },
+        );
+        let origin = gettext(match analysis.origin {
+            drivesync_engine::models::ObservationOrigin::Remote => "Drive",
+            _ => "Computer",
+        });
+        lines.push(
+            gettext(
+                "Last analyzed: {kind} {name} · Observation: {origin} · {count} analyses performed",
+            )
+            .replace("{kind}", &kind)
+            .replace("{name}", &name)
+            .replace("{origin}", &origin)
+            .replace("{count}", &analysis.analyzed_items.to_string()),
+        );
+    }
+    WorkView {
+        description: lines.join("\n"),
+        reading,
+        stage: current_stage,
+    }
+}
+fn pending_view(
+    pending: &drivesync_engine::SynchronizationPending,
+    verification: Option<drivesync_engine::SynchronizationVerification>,
+) -> PendingView {
+    use drivesync_engine::{
+        SynchronizationAttribute as Attribute, SynchronizationVerificationSource as Source,
+    };
+    let name = pending
+        .item
+        .local_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| pending.item.display_name.clone())
+        .unwrap_or_else(|| gettext("Unidentified item"));
+    let mut description = gettext("Pending verification: {name}").replace("{name}", &name);
+    description.push('\n');
+    description.push_str(&match pending.issue.kind {
+        drivesync_engine::SynchronizationIssueKind::DeferredFor(
+            drivesync_engine::SynchronizationWait::FreshObservations,
+        ) => crate::services::synchronization::verification_description(verification),
+        drivesync_engine::SynchronizationIssueKind::DeferredFor(wait) => {
+            crate::services::synchronization::wait_description(wait)
+        }
+        drivesync_engine::SynchronizationIssueKind::PreconditionFailed => {
+            gettext("The item changed before execution. Waiting for a fresh observation.")
+        }
+        _ => gettext("Waiting for confirmation of the current state before making changes."),
+    });
+    if !pending.missing.is_empty() {
+        let missing = pending
+            .missing
+            .iter()
+            .map(|e| {
+                let attribute = gettext(match e.attribute {
+                    Attribute::Existence => "Presence",
+                    Attribute::Kind => "Item type",
+                    Attribute::Content => "Content",
+                    Attribute::Name => "Name",
+                    Attribute::Parent => "Parent folder",
+                    Attribute::Trashed => "Trash state",
+                });
+                let source = gettext(match e.source {
+                    Source::Local => "Computer",
+                    Source::Remote => "Drive",
+                    Source::Both => "Computer and Drive",
+                    Source::Unspecified => "Unknown source",
+                });
+                format!("{attribute} ({source})")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        description.push('\n');
+        description.push_str(&gettext("Still missing: {evidence}").replace("{evidence}", &missing));
+    }
+    PendingView {
+        description,
+        since_millis: pending.since.unix_millis,
     }
 }

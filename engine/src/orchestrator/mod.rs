@@ -39,6 +39,7 @@ pub(crate) struct OrchestratorHandle {
     stop: watch::Sender<bool>,
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
+    telemetry: watch::Sender<SynchronizationStatus>,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
@@ -82,6 +83,81 @@ impl OrchestratorHandle {
             receiver: self.status.clone(),
         }
     }
+    /// Display-only source telemetry bypasses the execution queue and never grants coverage.
+    pub(crate) fn scan_progress(
+        &self,
+        source: Source,
+        path: Option<crate::models::Path>,
+        items: u64,
+        pages: u64,
+    ) {
+        self.telemetry.send_if_modified(|status| {
+            if matches!(
+                status.state,
+                SynchronizationState::Stopped | SynchronizationState::Failed
+            ) {
+                return false;
+            }
+            let scan = SynchronizationScan {
+                state: SynchronizationScanState::Reading,
+                path,
+                items,
+                pages,
+                retry_at: None,
+            };
+            let slot = match source {
+                Source::Local => &mut status.work.local,
+                Source::Remote => &mut status.work.remote,
+            };
+            if slot.as_ref() == Some(&scan) {
+                return false;
+            }
+            *slot = Some(scan);
+            true
+        });
+    }
+    pub(crate) fn scan_state(
+        &self,
+        source: Source,
+        state: SynchronizationScanState,
+        items: Option<u64>,
+    ) {
+        self.telemetry.send_modify(|status| {
+            if matches!(
+                status.state,
+                SynchronizationState::Stopped | SynchronizationState::Failed
+            ) {
+                return;
+            }
+            let slot = match source {
+                Source::Local => &mut status.work.local,
+                Source::Remote => &mut status.work.remote,
+            };
+            let scan = slot.get_or_insert(SynchronizationScan {
+                state,
+                path: None,
+                items: 0,
+                pages: 0,
+                retry_at: None,
+            });
+            if state == SynchronizationScanState::Reading && scan.state != state {
+                scan.path = None;
+                scan.items = 0;
+                scan.pages = 0;
+            }
+            scan.state = state;
+            if let Some(items) = items {
+                scan.items = items;
+            }
+            scan.retry_at = (state == SynchronizationScanState::RetryScheduled).then(|| DateTime {
+                unix_millis: timestamp().unix_millis
+                    + match source {
+                        Source::Local => 2_000,
+                        Source::Remote => 15_000,
+                    },
+            });
+        });
+    }
     /// Backpressure keeps observations bounded; a stopped worker rejects new work.
     pub(crate) async fn submit(&self, file: File) -> Result<(), SynchronizationErrorKind> {
         if *self.stop.borrow() || self.is_finished() {
@@ -98,6 +174,22 @@ impl OrchestratorHandle {
         scanning: bool,
         issue: Option<SynchronizationIssue>,
     ) -> Result<(), SynchronizationErrorKind> {
+        self.scan_state(
+            source,
+            if scanning {
+                SynchronizationScanState::Reading
+            } else if issue
+                .as_ref()
+                .is_some_and(|issue| issue.kind == SynchronizationIssueKind::WorkerFailed)
+            {
+                SynchronizationScanState::Failed
+            } else if issue.is_some() {
+                SynchronizationScanState::RetryScheduled
+            } else {
+                SynchronizationScanState::Complete
+            },
+            None,
+        );
         self.files
             .send(Command::Source(source, scanning, issue))
             .await
@@ -203,6 +295,7 @@ fn start_guarded(
         status: status.clone(),
         stop: stop_rx,
         blockers: BTreeMap::new(),
+        pending: BTreeMap::new(),
         sources: BTreeMap::new(),
         scanning_sources: BTreeSet::new(),
         complete_captures: BTreeMap::new(),
@@ -215,12 +308,16 @@ fn start_guarded(
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
     });
+    let supervisor_status = status.clone();
     tokio::spawn(async move {
+        let status = supervisor_status;
         if task.await.is_err() {
             let mut failure = status.borrow().clone();
             failure.state = SynchronizationState::Failed;
             failure.activity = SynchronizationActivity::None;
             failure.verification = None;
+            failure.work = SynchronizationWork::default();
+            failure.pending = None;
             failure.issue = Some(issue(SynchronizationIssueKind::WorkerFailed, false));
             failure.updated_at = timestamp();
             status.send_replace(failure);
@@ -233,6 +330,7 @@ fn start_guarded(
         stop,
         finished: finished_rx,
         status: status_rx,
+        telemetry: status,
         capture_epoch,
         local_refresh,
         remote_refresh,
@@ -258,6 +356,7 @@ struct Orchestrator {
     status: watch::Sender<SynchronizationStatus>,
     stop: watch::Receiver<bool>,
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
+    pending: BTreeMap<SynchronizationItem, SynchronizationPending>,
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
     scanning_sources: BTreeSet<Source>,
     complete_captures: BTreeMap<Source, u64>,
@@ -364,6 +463,8 @@ impl Orchestrator {
                     if confirmed {
                         self.blockers
                             .retain(|_, (item, _)| !same_item(item, &result.item));
+                        self.pending
+                            .retain(|_, pending| !same_item(&pending.item, &result.item));
                         let epoch = self
                             .capture_epoch
                             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -443,24 +544,47 @@ impl Orchestrator {
         progress: Option<SynchronizationProgress>,
         issue: Option<SynchronizationIssue>,
     ) {
-        self.status.send_replace(SynchronizationStatus {
-            account_id: self.config.roots.account_id.clone(),
-            state,
-            activity,
-            current_item: item,
-            current_operation: None,
-            progress,
-            verification: issue
-                .as_ref()
-                .is_some_and(|issue| {
-                    issue.kind
-                        == SynchronizationIssueKind::DeferredFor(
-                            SynchronizationWait::FreshObservations,
-                        )
+        self.status.send_modify(|previous| {
+            let mut next = SynchronizationStatus {
+                work: Default::default(),
+                pending: None,
+                account_id: self.config.roots.account_id.clone(),
+                state,
+                activity,
+                current_item: item,
+                current_operation: None,
+                progress,
+                verification: issue
+                    .as_ref()
+                    .is_some_and(|issue| {
+                        issue.kind
+                            == SynchronizationIssueKind::DeferredFor(
+                                SynchronizationWait::FreshObservations,
+                            )
+                    })
+                    .then(|| self.verification()),
+                issue,
+                updated_at: timestamp(),
+            };
+            next.work = previous.work.clone();
+            next.pending = self
+                .blockers
+                .keys()
+                .filter_map(|key| self.pending.get(key))
+                .find(|pending| {
+                    matches!(
+                        pending.issue.kind,
+                        SynchronizationIssueKind::Deferred
+                            | SynchronizationIssueKind::DeferredFor(_)
+                            | SynchronizationIssueKind::PreconditionFailed
+                    )
                 })
-                .then(|| self.verification()),
-            issue,
-            updated_at: timestamp(),
+                .cloned();
+            if next.state == SynchronizationState::Stopped {
+                next.work = SynchronizationWork::default();
+                next.pending = None;
+            }
+            *previous = next;
         });
     }
     fn publish_execution(
@@ -471,21 +595,82 @@ impl Orchestrator {
         completed: u64,
         total: u64,
     ) {
-        self.status.send_replace(SynchronizationStatus {
-            account_id: self.config.roots.account_id.clone(),
-            state: SynchronizationState::Running,
-            activity,
-            current_item: Some(item.clone()),
-            current_operation: Some(operation.clone()),
-            progress: Some(SynchronizationProgress { completed, total }),
-            verification: (activity == SynchronizationActivity::Applying
-                && (self.refresh_after.is_some() || self.affected.pending()))
-            .then(|| self.verification()),
-            issue: None,
-            updated_at: timestamp(),
+        self.status.send_modify(|previous| {
+            let mut next = SynchronizationStatus {
+                work: Default::default(),
+                pending: None,
+                account_id: self.config.roots.account_id.clone(),
+                state: SynchronizationState::Running,
+                activity,
+                current_item: Some(item.clone()),
+                current_operation: Some(operation.clone()),
+                progress: Some(SynchronizationProgress { completed, total }),
+                verification: (activity == SynchronizationActivity::Applying
+                    && (self.refresh_after.is_some() || self.affected.pending()))
+                .then(|| self.verification()),
+                issue: None,
+                updated_at: timestamp(),
+            };
+            next.work = previous.work.clone();
+            next.pending = self
+                .blockers
+                .keys()
+                .filter_map(|key| self.pending.get(key))
+                .find(|pending| {
+                    matches!(
+                        pending.issue.kind,
+                        SynchronizationIssueKind::Deferred
+                            | SynchronizationIssueKind::DeferredFor(_)
+                            | SynchronizationIssueKind::PreconditionFailed
+                    )
+                })
+                .cloned();
+            if activity == SynchronizationActivity::Applying && next.verification.is_some() {
+                let issue = issue(
+                    SynchronizationIssueKind::DeferredFor(SynchronizationWait::FreshObservations),
+                    true,
+                );
+                let since = previous
+                    .pending
+                    .as_ref()
+                    .filter(|pending| {
+                        same_item(&pending.item, item) && pending.issue.kind == issue.kind
+                    })
+                    .map_or_else(timestamp, |pending| pending.since);
+                next.pending = Some(SynchronizationPending {
+                    item: item.clone(),
+                    issue,
+                    since,
+                    missing: Vec::new(),
+                });
+            }
+
+            if next.state == SynchronizationState::Stopped {
+                next.work = SynchronizationWork::default();
+                next.pending = None;
+            }
+            *previous = next;
         });
     }
     fn block(&mut self, item: SynchronizationItem, issue: SynchronizationIssue) {
+        let previous = self
+            .pending
+            .values()
+            .find(|pending| same_item(&pending.item, &item) && pending.issue.kind == issue.kind)
+            .cloned();
+        self.pending
+            .retain(|_, pending| !same_item(&pending.item, &item));
+        self.pending.insert(
+            key(&item),
+            SynchronizationPending {
+                item: item.clone(),
+                issue: issue.clone(),
+                since: previous
+                    .as_ref()
+                    .map_or_else(timestamp, |pending| pending.since),
+                missing: previous.map_or_else(Vec::new, |pending| pending.missing),
+            },
+        );
         self.blockers
             .retain(|_, (blocked, _)| !same_item(blocked, &item));
         self.blockers.insert(key(&item), (item, issue));
@@ -699,6 +884,8 @@ impl Orchestrator {
                 let _sample = crate::performance::Sample::begin("analysis_reuse");
                 self.blockers
                     .retain(|_, (blocked, _)| !same_item(blocked, &item));
+                self.pending
+                    .retain(|_, pending| !same_item(&pending.item, &item));
                 self.settle();
                 outcome.decision = DecisionStatus::NoOp;
                 return outcome;
@@ -713,6 +900,29 @@ impl Orchestrator {
             None,
         );
         let decision = analyzer::analyze(&file);
+        self.status.send_modify(|status| {
+            let count = status
+                .work
+                .analysis
+                .as_ref()
+                .map_or(1, |last| last.analyzed_items.saturating_add(1));
+            let kind = match &file.local.kind {
+                Evidence::Known(kind) => Some(*kind),
+                _ => match &file.remote.mime_type {
+                    Evidence::Known(mime) if mime == "application/vnd.google-apps.folder" => {
+                        Some(crate::models::FileKind::Directory)
+                    }
+                    Evidence::Known(_) => Some(crate::models::FileKind::Regular),
+                    _ => None,
+                },
+            };
+            status.work.analysis = Some(SynchronizationAnalysis {
+                item: item.clone(),
+                kind,
+                origin: file.observations.latest_origin,
+                analyzed_items: count,
+            });
+        });
         outcome.decision = decision.status;
         if decision.status == DecisionStatus::NoOp && complete_epoch.is_some() {
             if let Some(id) = &file.identity.item_id {
@@ -805,11 +1015,19 @@ impl Orchestrator {
                 ),
             };
             if let Some(blocker) = blocker {
-                self.block(item, issue(blocker, false));
+                self.block(item.clone(), issue(blocker, false));
+                if let Some(pending) = self.pending.get_mut(&key(&item)) {
+                    pending.missing = missing_evidence(&decision.changeset);
+                }
+            } else {
+                self.pending
+                    .retain(|_, pending| !same_item(&pending.item, &item));
             }
             self.settle();
             return outcome;
         }
+        self.pending
+            .retain(|_, pending| !same_item(&pending.item, &item));
         if decision.execution.status != ExecutionStatus::Executable
             || decision.operations.is_empty()
         {
@@ -1290,4 +1508,27 @@ fn same_item(a: &SynchronizationItem, b: &SynchronizationItem) -> bool {
         return a == b;
     }
     matches!((&a.local_path,&b.local_path),(Some(a),Some(b)) if a==b)
+}
+
+fn missing_evidence(changeset: &analyzer::Changeset) -> Vec<SynchronizationMissingEvidence> {
+    let mut missing = Vec::new();
+    for (attribute, pair) in &changeset.attributes {
+        let attribute = match attribute {
+            analyzer::AttributeName::Existence => SynchronizationAttribute::Existence,
+            analyzer::AttributeName::Kind => SynchronizationAttribute::Kind,
+            analyzer::AttributeName::Content => SynchronizationAttribute::Content,
+            analyzer::AttributeName::Name => SynchronizationAttribute::Name,
+            analyzer::AttributeName::Parent => SynchronizationAttribute::Parent,
+            analyzer::AttributeName::Trashed => SynchronizationAttribute::Trashed,
+        };
+        for (source, evidence) in [
+            (SynchronizationVerificationSource::Local, &pair.local),
+            (SynchronizationVerificationSource::Remote, &pair.remote),
+        ] {
+            if evidence.status == analyzer::ChangeStatus::Indeterminate {
+                missing.push(SynchronizationMissingEvidence { source, attribute });
+            }
+        }
+    }
+    missing
 }

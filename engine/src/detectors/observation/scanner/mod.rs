@@ -8,7 +8,7 @@ use super::{
 use crate::models::*;
 use sha2::{Digest, Sha256};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     fs::{File, OpenOptions},
     io::Read,
@@ -63,6 +63,8 @@ pub(crate) struct ScanResult {
 }
 /// Pins the configured root and rejects later path substitution.
 pub(crate) struct Scanner {
+    progress: Option<super::ProgressReporter>,
+    seen: Cell<u64>,
     root: File,
     absolute: PathBuf,
     sync_root_id: SyncRootId,
@@ -104,6 +106,8 @@ impl Scanner {
     /// Opens each root component without following symlinks, and pins its identity.
     pub(crate) fn open(path: PathBuf, sync_root_id: SyncRootId) -> Result<Self, ScanError> {
         Ok(Self {
+            progress: None,
+            seen: Cell::new(0),
             root: root(&path)?,
             absolute: path,
             sync_root_id,
@@ -111,6 +115,14 @@ impl Scanner {
             hashes: RefCell::default(),
             watcher: RefCell::default(),
         })
+    }
+    pub(crate) fn set_progress(&mut self, progress: super::ProgressReporter) {
+        self.progress = Some(progress);
+    }
+    fn report(&self, path: &StdPath) {
+        if let Some(progress) = &self.progress {
+            progress.report(Some(path.to_path_buf()), self.seen.get(), 0);
+        }
     }
     /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
     pub(crate) fn expand_limit(&mut self) -> bool {
@@ -143,6 +155,7 @@ impl Scanner {
             self.hashes.take();
             return Err(ScanError::Cancelled);
         }
+        self.seen.set(0);
         if let Some(previous) = previous {
             if let Some(scan) = self.scan_dirty(previous, cancel)? {
                 return Ok(scan);
@@ -306,6 +319,7 @@ impl Scanner {
         };
         let mut pending = vec![(PathBuf::new(), 0, (expected.dev(), expected.ino()))];
         while let Some((parent, depth, identity)) = pending.pop() {
+            self.report(&parent);
             let directory = match self.directory(&parent) {
                 Ok(directory) => directory,
                 Err(_) => {
@@ -420,6 +434,8 @@ impl Scanner {
         previous: Option<&CachedHash>,
         cancel: &CancellationToken,
     ) -> Result<(LocalObservation, Option<CachedHash>, Option<ScanIssueKind>), ScanError> {
+        self.seen.set(self.seen.get().saturating_add(1));
+        self.report(path);
         let name = path.file_name().ok_or(ScanError::Unavailable)?;
         let anchored = descriptor(directory).join(name);
         let kind = if meta.is_file() {

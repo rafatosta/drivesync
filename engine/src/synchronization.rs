@@ -222,10 +222,70 @@ pub struct SynchronizationVerification {
     pub local_read: bool,
     pub remote_read: bool,
 }
+/// Read-only collection stage, independent of operations awaiting confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationScanState {
+    Reading,
+    Complete,
+    RetryScheduled,
+    Failed,
+}
+/// Latest source position; counts describe collection, never synchronized items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationScan {
+    pub state: SynchronizationScanState,
+    /// Relative folder or item path, when resolved by the source.
+    pub path: Option<Path>,
+    pub items: u64,
+    pub pages: u64,
+    pub retry_at: Option<DateTime>,
+}
+/// Last item actually passed to the pure Analyzer; not necessarily still executing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationAnalysis {
+    pub item: SynchronizationItem,
+    pub kind: Option<crate::models::FileKind>,
+    pub origin: crate::models::ObservationOrigin,
+    pub analyzed_items: u64,
+}
+/// Independent, coalescing source and analysis telemetry for this account only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SynchronizationWork {
+    pub local: Option<SynchronizationScan>,
+    pub remote: Option<SynchronizationScan>,
+    pub analysis: Option<SynchronizationAnalysis>,
+}
+/// Attribute whose current evidence still prevents an item from being verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationAttribute {
+    Existence,
+    Kind,
+    Content,
+    Name,
+    Parent,
+    Trashed,
+}
+/// One missing comparison, without exposing internal diagnostics or provider payloads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationMissingEvidence {
+    pub source: SynchronizationVerificationSource,
+    pub attribute: SynchronizationAttribute,
+}
+/// An unresolved item, tracked independently of transient source and analysis states.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SynchronizationPending {
+    pub item: SynchronizationItem,
+    pub issue: SynchronizationIssue,
+    /// First publication of this item's current wait reason, not the latest refresh time.
+    pub since: DateTime,
+    pub missing: Vec<SynchronizationMissingEvidence>,
+}
 /// Latest account-scoped synchronization state. Idle does not assert whole-tree convergence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SynchronizationStatus {
     pub account_id: AccountId,
+    pub work: SynchronizationWork,
+    pub pending: Option<SynchronizationPending>,
     pub state: SynchronizationState,
     pub activity: SynchronizationActivity,
     pub current_item: Option<SynchronizationItem>,
@@ -240,6 +300,8 @@ impl SynchronizationStatus {
     pub(crate) fn new(account_id: AccountId, state: SynchronizationState) -> Self {
         Self {
             account_id,
+            work: SynchronizationWork::default(),
+            pending: None,
             state,
             activity: SynchronizationActivity::None,
             current_item: None,

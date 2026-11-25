@@ -283,6 +283,7 @@ mod tests {
             provider_id: config.provider_id.clone(),
         };
         let request = RemoteObserveRequest {
+            progress: None,
             scope: super::super::models::RemoteScope {
                 account_id: config.account_id.clone(),
                 provider_id: config.provider_id.clone(),
@@ -305,6 +306,7 @@ mod tests {
         };
         assert!(!observer.accepts(
             &RemoteObserveRequest {
+                progress: None,
                 scope: super::super::models::RemoteScope {
                     account_id: config.account_id.clone(),
                     provider_id: config.provider_id.clone(),
@@ -319,6 +321,7 @@ mod tests {
         ));
 
         let mut mismatched_provider_request = RemoteObserveRequest {
+            progress: None,
             scope: super::super::models::RemoteScope {
                 account_id: config.account_id.clone(),
                 provider_id: config.provider_id.clone(),

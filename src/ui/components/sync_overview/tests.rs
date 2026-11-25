@@ -118,6 +118,12 @@ fn visual_contract() {
         checked_items: Some(0),
     });
     assert!(view.detail_revealer.reveals_child());
+    view.set_state(SyncOverviewState::Waiting {
+        message: "Waiting for Drive".into(),
+    });
+    assert!(view.tick.borrow().is_none());
+    assert!(!view.progress.is_visible());
+    assert_eq!(view.description.text(), "Waiting for Drive");
     view.set_state(SyncOverviewState::Completed { last_sync: None });
     assert!(view.tick.borrow().is_none());
     assert!(!view.detail_revealer.reveals_child());

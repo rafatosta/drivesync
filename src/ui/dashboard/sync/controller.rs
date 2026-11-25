@@ -240,9 +240,20 @@ fn render_snapshot(
 ) {
     match snapshot.overview.take() {
         Some(state) => {
+            let show_reading =
+                matches!(state, SyncOverviewState::Checking { .. }) && snapshot.work.reading;
             overview.set_state(state);
-            if !snapshot.description.is_empty() {
-                overview.set_stage(&snapshot.description);
+            let stage = if show_reading {
+                snapshot
+                    .work
+                    .stage
+                    .as_deref()
+                    .unwrap_or(&snapshot.description)
+            } else {
+                &snapshot.description
+            };
+            if !stage.is_empty() {
+                overview.set_stage(stage);
             }
             overview.widget().set_visible(true);
         }
@@ -269,6 +280,7 @@ fn render_snapshot(
         snapshot.active,
         has_activity,
     );
+    status.set_context(&snapshot.work, snapshot.pending.as_ref());
     attention.set_items(
         snapshot
             .attention

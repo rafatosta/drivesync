@@ -7,6 +7,10 @@ pub enum SyncOverviewState {
     Checking {
         checked_items: Option<u64>,
     },
+    /// An item needs evidence; no active transfer is implied.
+    Waiting {
+        message: String,
+    },
     Syncing {
         /// Unavailable when the source reports operations rather than confirmed items.
         completed_items: Option<u64>,

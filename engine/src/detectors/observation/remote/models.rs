@@ -32,8 +32,9 @@ pub(crate) struct RemoteObserverConfig {
 }
 
 /// Remote scope and observation behavior requested for one observer round.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct RemoteObserveRequest {
+    pub progress: Option<super::super::ProgressReporter>,
     /// Account, provider, and root isolation boundary.
     pub scope: RemoteScope,
     /// Whether to capture an initial, incremental, or recovery view.

@@ -161,6 +161,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             status,
             stop: rx,
             blockers: BTreeMap::new(),
+            pending: BTreeMap::new(),
             sources: BTreeMap::new(),
             scanning_sources: BTreeSet::new(),
             recovery_failed: false,
@@ -881,4 +882,86 @@ async fn post_operation_verification_requires_a_fresh_complete_capture_from_each
         None,
     );
     assert_eq!(subscription.current().verification, None);
+}
+
+#[tokio::test]
+async fn repeated_item_wait_keeps_its_age_and_exposes_missing_attributes() {
+    let (operator, _) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    let mut file = fixture();
+    file.remote.trashed = Evidence::NotCollected;
+    assert_eq!(
+        worker.process(file.clone()).await.decision,
+        DecisionStatus::Defer
+    );
+    let key = key(&worker.status.borrow().pending.as_ref().unwrap().item);
+    worker.pending.get_mut(&key).unwrap().since = DateTime { unix_millis: 123 };
+    worker.process(file.clone()).await;
+    let status = worker.status.borrow().clone();
+    let pending = status.pending.unwrap();
+    assert_eq!(pending.since.unix_millis, 123);
+    assert!(pending.missing.contains(&SynchronizationMissingEvidence {
+        source: SynchronizationVerificationSource::Remote,
+        attribute: SynchronizationAttribute::Trashed,
+    }));
+    assert!(status.work.analysis.is_some());
+    // A source update changes current work, not the identity or age of the wait.
+    worker.scanning_sources.insert(Source::Remote);
+    worker.settle();
+    assert_eq!(
+        worker
+            .status
+            .borrow()
+            .pending
+            .as_ref()
+            .unwrap()
+            .since
+            .unix_millis,
+        123
+    );
+    file.remote.trashed = Evidence::Known(false);
+    assert_eq!(worker.process(file).await.decision, DecisionStatus::NoOp);
+    assert!(worker.status.borrow().pending.is_none());
+}
+
+#[tokio::test]
+async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage() {
+    let calls = Arc::new(Calls::default());
+    let pause = Arc::new(Pause::default());
+    let handle = start(
+        config(),
+        Box::new(MockOperator {
+            calls,
+            outcome: OperationResultStatus::Succeeded,
+            pause: Some(pause.clone()),
+            panic: false,
+        }),
+        Arc::new(RwLock::new(())),
+        1,
+    );
+    handle.submit(changed_file()).await.unwrap();
+    pause.started.notified().await;
+    let operation = handle.status().current_operation.unwrap().id;
+    handle.scan_progress(Source::Remote, Some("Documents/Teaching".into()), 340, 4);
+    let status = handle.status();
+    assert_eq!(status.account_id, config().roots.account_id);
+    assert_eq!(status.current_operation.unwrap().id, operation);
+    assert_eq!(status.work.remote.as_ref().unwrap().items, 340);
+    assert_eq!(
+        status.work.remote.as_ref().unwrap().path.as_deref(),
+        Some(std::path::Path::new("Documents/Teaching"))
+    );
+    assert!(status.verification.is_none());
+    handle.scan_state(
+        Source::Remote,
+        SynchronizationScanState::RetryScheduled,
+        None,
+    );
+    assert!(handle.status().work.remote.unwrap().retry_at.is_some());
+    pause.release.notify_one();
+    let stopped = handle.stop().await;
+    assert_eq!(stopped.work, SynchronizationWork::default());
+    assert!(stopped.pending.is_none());
+    handle.scan_progress(Source::Local, Some("late".into()), 1, 0);
+    assert_eq!(handle.status().work, SynchronizationWork::default());
 }

@@ -213,10 +213,14 @@ impl GoogleObserver {
         }
         let item_limit = state.item_limit;
         let mut pages = 0;
+        let mut last_read_parent = None;
         if state.capture.is_none() {
             self.root(session).await?;
             let mut updated = BTreeSet::new();
             while pages < budget {
+                if let Some(progress) = &request.progress {
+                    progress.report(None, state.known.len() as u64, pages);
+                }
                 let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
                     .feed_token
@@ -345,6 +349,9 @@ impl GoogleObserver {
                         }
                     }
                 }
+                if let Some(progress) = &request.progress {
+                    progress.finish(None, state.known.len() as u64, pages);
+                }
                 return Ok(self.result(
                     observations,
                     if state.feed_token.is_some() {
@@ -365,8 +372,16 @@ impl GoogleObserver {
             let Some(parent) = capture.folders.front().cloned() else {
                 break;
             };
+            last_read_parent = Some(parent.clone());
             if capture.pages_read >= 100_000 {
                 return Err(RemoteObserverError::IncompleteCoverage);
+            }
+            if let Some(progress) = &request.progress {
+                progress.report(
+                    remote_path(&parent, &self.config.remote_root_id, &capture.items),
+                    capture.items.len() as u64,
+                    capture.pages_read as u64,
+                );
             }
             let _sample = crate::performance::Sample::begin("google_full_capture_page");
             let quote = parent.0.replace('\\', "\\\\").replace('\'', "\\'");
@@ -470,6 +485,12 @@ impl GoogleObserver {
             .capture
             .as_ref()
             .ok_or(RemoteObserverError::IncompleteCoverage)?;
+        if let Some(progress) = &request.progress {
+            let path = last_read_parent.as_ref().and_then(|parent| {
+                remote_path(parent, &self.config.remote_root_id, &capture.items)
+            });
+            progress.finish(path, capture.items.len() as u64, capture.pages_read as u64);
+        }
         if !capture.folders.is_empty() {
             return Ok(self.result(
                 Vec::new(),
@@ -722,3 +743,39 @@ fn failure(error: GoogleApiFailure) -> RemoteObserverError {
 }
 #[cfg(test)]
 mod tests;
+
+/// Resolve only observed parent chains; provider identities are never shown as paths.
+fn remote_path(
+    id: &RemoteId,
+    root: &RemoteId,
+    items: &BTreeMap<RemoteId, RemoteObservation>,
+) -> Option<Path> {
+    let mut id = id.clone();
+    let mut names = Vec::new();
+    for _ in 0..=128 {
+        if &id == root {
+            return Some(names.into_iter().rev().collect());
+        }
+        let item = items.get(&id)?;
+        let Evidence::Known(name) = &item.name else {
+            return None;
+        };
+        if name.is_empty()
+            || std::path::Path::new(name).components().count() != 1
+            || !std::path::Path::new(name)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        names.push(name.clone());
+        let Evidence::Known(parents) = &item.parents else {
+            return None;
+        };
+        if parents.len() != 1 {
+            return None;
+        }
+        id = parents[0].clone();
+    }
+    None
+}

@@ -142,8 +142,21 @@ pub struct StatusItem {
     pub path: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct WorkView {
+    pub stage: Option<String>,
+    pub description: String,
+    pub reading: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingView {
+    pub description: String,
+    pub since_millis: i64,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    pub work: WorkView,
+    pub pending: Option<PendingView>,
     /// Absent when no account overview is available.
     pub overview: Option<crate::ui::components::sync_overview::SyncOverviewState>,
     pub scope: String,

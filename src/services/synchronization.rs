@@ -85,6 +85,26 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
     }
 }
 
+/// Localized wait reason for independently presented pending items.
+pub(crate) fn wait_description(wait: SynchronizationWait) -> String {
+    match wait {
+        SynchronizationWait::LocalObservation => {
+            gettext("Waiting for a complete scan of the computer.")
+        }
+        SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
+        SynchronizationWait::FreshObservations => {
+            gettext("Waiting for new scans after the last operation.")
+        }
+        SynchronizationWait::CompleteObservations => {
+            gettext("Waiting for complete scans of the computer and Drive before applying changes.")
+        }
+        SynchronizationWait::ItemVerification {
+            source,
+            confirmed_action,
+        } => item_verification(source, confirmed_action),
+    }
+}
+
 pub(crate) fn verification_description(
     verification: Option<drivesync_engine::SynchronizationVerification>,
 ) -> String {
@@ -151,6 +171,8 @@ mod tests {
     #[test]
     fn waiting_idle_and_uncertain_status_do_not_claim_synchronization() {
         let mut status = SynchronizationStatus {
+            work: Default::default(),
+            pending: None,
             account_id: drivesync_engine::AccountId("account".into()),
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::Observing,
@@ -199,6 +221,8 @@ mod tests {
         };
         let file = "ORIENTAÇÕES/Responsáveis por seção.docx";
         let status = SynchronizationStatus {
+            work: Default::default(),
+            pending: None,
             account_id: drivesync_engine::AccountId("account".into()),
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::None,

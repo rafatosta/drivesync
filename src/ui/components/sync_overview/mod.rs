@@ -152,6 +152,12 @@ impl SyncOverview {
                     "view-refresh-symbolic",
                 )
             }
+            SyncOverviewState::Waiting { message } => (
+                gettext("Waiting for verification"),
+                message,
+                String::new(),
+                "edit-find-symbolic",
+            ),
             SyncOverviewState::Inactive { message } => (
                 gettext("Synchronization inactive"),
                 message,

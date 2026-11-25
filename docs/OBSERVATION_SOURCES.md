@@ -4,7 +4,8 @@ Reconstruction step 9 implements Scanner, continuous local observation, and the 
 RemoteObserver on the existing `Observation -> Context -> File -> Analyzer -> Operations`
 contracts. [Functional correction Stage 1](FUNCTIONAL_CORRECTION_STAGE_1.md) extends the
 original delivery with scoped captures, Inventory enumeration and candidate evidence.
-Public status, execution requests and Inventory schemas are unchanged. Producers read facts;
+Execution requests and Inventory schemas are unchanged. Public status also exposes display-only
+collection telemetry, independent of normalized capture evidence. Producers read facts;
 only Operations writes execution effects or baselines. Google calls continue through the preserved Provider API.
 
 ## Lifecycle and admission
@@ -169,3 +170,17 @@ evidence, followed by independent Operations validation.
 [Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
 
 [Stage 11](FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
+
+## Display telemetry
+
+Local Scanner reports sampled relative read positions, including before content hashing.
+Google reports resolved folder chains from the current scoped capture, observed item counts
+and pages read. Unknown parent chains remain unknown; opaque Drive IDs are never displayed
+as paths. Sampling is limited to one update per 200 ms, with a final page-batch update.
+Counts describe observed snapshots or partial collection, not transferred or unique synchronized
+items, and no total is inferred. The last Analyzer item is retained as historical context rather
+than presented as an operation still running.
+
+Each source reports reading, complete, retry scheduled (with the source loop's retry time),
+or failed. These values are independent of an item awaiting verification. Stop and worker
+failure clear work telemetry, and late source reports cannot revive a stopped worker's activity.

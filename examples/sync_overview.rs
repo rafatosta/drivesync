@@ -32,6 +32,7 @@ fn main() -> gtk::glib::ExitCode {
             "Concluído",
             "Atenção",
             "Inativa",
+            "Aguardando verificação",
         ]);
         content.append(&state);
         content.append(view.widget());
@@ -96,6 +97,9 @@ fn main() -> gtk::glib::ExitCode {
             move || {
                 let value = |i: usize| fields[i].0.is_active().then(|| fields[i].1.value() as u64);
                 view.set_state(match state.selected() {
+                    5 => SyncOverviewState::Waiting {
+                        message: "Aguardando nova leitura no Drive.".into(),
+                    },
                     0 => SyncOverviewState::Checking {
                         checked_items: value(0),
                     },

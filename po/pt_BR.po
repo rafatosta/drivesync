@@ -1908,3 +1908,66 @@ msgstr "Item em verificação: {name}"
 
 msgid "{completed} of {total} operation steps confirmed"
 msgstr "{completed} de {total} etapas da operação confirmadas"
+
+msgid "Waiting for verification"
+msgstr "Aguardando verificação"
+
+msgid "Verifying an operation"
+msgstr "Conferindo uma operação"
+
+msgid "Waiting for new scans after the last operation."
+msgstr "Aguardando novas leituras após a última operação."
+
+msgid "Reading files and folders"
+msgstr "Lendo arquivos e pastas"
+
+msgid "Reading complete"
+msgstr "Leitura concluída"
+
+msgid "Reading incomplete; retry scheduled"
+msgstr "Leitura incompleta; nova tentativa agendada"
+
+msgid "Reading failed"
+msgstr "Falha na leitura"
+
+msgid " · {count} items observed"
+msgstr " · {count} itens observados"
+
+msgid " · {count} pages read"
+msgstr " · {count} páginas lidas"
+
+msgid " · Next attempt: {time}"
+msgstr " · Próxima tentativa: {time}"
+
+msgid "Last analyzed: {kind} {name} · Observation: {origin} · {count} analyses performed"
+msgstr "Último item analisado: {kind} {name} · Observação: {origin} · {count} análises realizadas"
+
+msgid "Pending verification: {name}"
+msgstr "Verificação pendente: {name}"
+
+msgid "Still missing: {evidence}"
+msgstr "Falta conferir: {evidence}"
+
+msgid "Presence"
+msgstr "Presença"
+
+msgid "Item type"
+msgstr "Tipo do item"
+
+msgid "Content"
+msgstr "Conteúdo"
+
+msgid "Parent folder"
+msgstr "Pasta de origem"
+
+msgid "Trash state"
+msgstr "Estado na lixeira"
+
+msgid "Computer and Drive"
+msgstr "Computador e Drive"
+
+msgid "Unknown source"
+msgstr "Origem desconhecida"
+
+msgid "Waiting for this verification for {seconds} s"
+msgstr "Aguardando esta verificação há {seconds} s"

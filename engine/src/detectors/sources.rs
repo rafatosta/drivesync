@@ -18,7 +18,10 @@ use crate::{
     models::*,
     orchestrator::{OrchestratorConfig, OrchestratorHandle, Source},
     providers::google::GoogleDriveClient,
-    synchronization::{SynchronizationIssue, SynchronizationIssueKind, SynchronizationWait},
+    synchronization::{
+        SynchronizationIssue, SynchronizationIssueKind, SynchronizationScanState,
+        SynchronizationWait,
+    },
 };
 use std::{
     sync::{Arc, Mutex},
@@ -178,9 +181,15 @@ async fn local(
         if observer.is_none() {
             let path = config.roots.local_root.clone();
             let root_id = config.sync_root_id.clone();
-            if let Ok(Ok(scanner)) =
+            if let Ok(Ok(mut scanner)) =
                 tokio::task::spawn_blocking(move || Scanner::open(path, root_id)).await
             {
+                let reporting = handle.clone();
+                scanner.set_progress(super::observation::ProgressReporter::new(
+                    move |path, items, pages| {
+                        reporting.scan_progress(Source::Local, path, items, pages);
+                    },
+                ));
                 observer = Some(Arc::new(Mutex::new(LocalObserver::new(scanner))));
             }
         }
@@ -209,6 +218,7 @@ async fn local(
         if initial {
             health(&handle, Source::Local, true, true, &cancel).await;
         }
+        handle.scan_progress(Source::Local, Some(Path::new()), 0, 0);
         let token = cancel.clone();
         let round = tokio::task::spawn_blocking(move || {
             let mut observer = current.lock().unwrap();
@@ -221,6 +231,15 @@ async fn local(
         generation += 1;
         match round {
             Ok(Ok((observations, coverage))) => {
+                handle.scan_state(
+                    Source::Local,
+                    if coverage == ObservationCoverage::Complete {
+                        SynchronizationScanState::Complete
+                    } else {
+                        SynchronizationScanState::RetryScheduled
+                    },
+                    Some(observations.len() as u64),
+                );
                 health(
                     &handle,
                     Source::Local,
@@ -344,6 +363,11 @@ async fn remote(
         // A paginated traversal may have started before a concurrent operation. Keep
         // the original epoch until every page has been collected or the round fails.
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
+        handle.scan_state(Source::Remote, SynchronizationScanState::Reading, None);
+        let progress_handle = handle.clone();
+        let progress = super::observation::ProgressReporter::new(move |path, items, pages| {
+            progress_handle.scan_progress(Source::Remote, path, items, pages);
+        });
         let round = async {
             let scoped = detectors.clone();
             let known_remote_ids = tokio::task::spawn_blocking(move || scoped.known_remote_ids())
@@ -365,6 +389,7 @@ async fn remote(
             observer
                 .observe(
                     RemoteObserveRequest {
+                        progress: Some(progress),
                         scope: RemoteScope {
                             account_id: config.roots.account_id.clone(),
                             provider_id: config.provider_id.clone(),
@@ -395,6 +420,13 @@ async fn remote(
         let delay = match result {
             Ok(result) => {
                 let complete = result.coverage == ObservationCoverage::Complete && !result.has_more;
+                if complete {
+                    handle.scan_state(
+                        Source::Remote,
+                        SynchronizationScanState::Complete,
+                        Some(result.observations.len() as u64),
+                    );
+                }
                 // A paginated round owns its partial data until it can publish a complete scope.
                 health(&handle, Source::Remote, result.has_more, !complete, &cancel).await;
                 mode = RemoteObserveMode::Incremental;
