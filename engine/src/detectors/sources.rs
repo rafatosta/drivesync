@@ -291,14 +291,12 @@ async fn remote(
     health(&handle, Source::Remote, false, true, &cancel).await;
     let mut mode = RemoteObserveMode::Initial;
     let mut invalidated = false;
-    let mut last_epoch = None;
     let mut generation = 0;
+    let mut collection_epoch = None;
     while !cancel.is_cancelled() && !handle.is_finished() {
-        let epoch = handle.collection_epoch();
-        if last_epoch != Some(epoch) {
-            mode = RemoteObserveMode::Recovery;
-            last_epoch = Some(epoch);
-        }
+        // A paginated traversal may have started before a concurrent operation. Keep
+        // the original epoch until every page has been collected or the round fails.
+        let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
         let round = async {
             let scoped = detectors.clone();
             let known_remote_ids = tokio::task::spawn_blocking(move || scoped.known_remote_ids())
@@ -354,6 +352,7 @@ async fn remote(
                 health(&handle, Source::Remote, result.has_more, !complete, &cancel).await;
                 mode = RemoteObserveMode::Incremental;
                 if complete {
+                    collection_epoch = None;
                     if !deliver(
                         &detectors,
                         &handle,
@@ -371,13 +370,18 @@ async fn remote(
                         break;
                     }
                     invalidated = false;
-                    Duration::from_secs(15)
+                    if handle.collection_epoch() > epoch {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_secs(15)
+                    }
                 } else {
                     Duration::from_millis(50)
                 }
             }
             Err(RemoteObserverError::Cancelled) => break,
             Err(_) => {
+                collection_epoch = None;
                 health(&handle, Source::Remote, false, true, &cancel).await;
                 if !invalidated {
                     if !deliver(

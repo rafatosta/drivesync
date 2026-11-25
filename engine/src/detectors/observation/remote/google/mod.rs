@@ -1,4 +1,4 @@
-//! Google read-only observation. Changes invalidate a scoped capture rather than imply deletion.
+//! Google read-only observation with incremental file evidence and scoped recovery.
 mod normalize;
 use super::{interfaces::*, models::*};
 use crate::detectors::observation::{ObservationCoverage, RemoteObservation};
@@ -6,11 +6,13 @@ use crate::{models::*, providers::google::*};
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet, VecDeque},
+    time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
 const FIELDS: &str =
     "id,name,parents,mimeType,size,sha256Checksum,md5Checksum,headRevisionId,version,modifiedTime,trashed,capabilities";
 const FOLDER: &str = "application/vnd.google-apps.folder";
+const AUDIT_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_ITEMS: usize = 100_000;
 /// Opaque authorized adapter bound to the account that acquired this session through Accounts.
 pub(crate) struct GoogleObserverSession {
@@ -55,12 +57,12 @@ struct GoogleObserver {
 }
 struct State {
     item_limit: usize,
-    quiet_rounds: u8,
+    last_full: Option<Instant>,
     known: BTreeMap<RemoteId, RemoteObservation>,
     cursor: Option<String>,
     capture: Option<Capture>,
     feed_token: Option<String>,
-    feed_dirty: bool,
+    feed_files: Option<BTreeMap<RemoteId, GoogleFile>>,
     feed_seen: BTreeSet<String>,
     has_snapshot: bool,
 }
@@ -68,13 +70,13 @@ impl Default for State {
     fn default() -> Self {
         Self {
             item_limit: MAX_ITEMS,
-            quiet_rounds: 0,
+            last_full: None,
             has_snapshot: false,
             known: BTreeMap::new(),
             capture: None,
             cursor: None,
             feed_token: None,
-            feed_dirty: false,
+            feed_files: Some(BTreeMap::new()),
             feed_seen: BTreeSet::new(),
         }
     }
@@ -202,9 +204,8 @@ impl GoogleObserver {
         ) {
             state.capture = None;
             state.cursor = None;
-            state.quiet_rounds = 0;
             state.feed_token = None;
-            state.feed_dirty = false;
+            state.feed_files = Some(BTreeMap::new());
             state.feed_seen.clear();
         }
         if state.capture.is_none() && state.cursor.is_none() {
@@ -214,6 +215,7 @@ impl GoogleObserver {
         let mut pages = 0;
         if state.capture.is_none() {
             self.root(session).await?;
+            let mut updated = BTreeSet::new();
             while pages < budget {
                 let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
@@ -222,7 +224,7 @@ impl GoogleObserver {
                     .or_else(|| state.cursor.clone())
                     .ok_or(RemoteObserverError::InvalidCursor)?;
                 let response=self.client.changes_list(session,ChangeListOptions {page_token:token.clone(),page_size:Some(100),include_removed:Some(true),include_corpus_removals:Some(true),include_items_from_all_drives:Some(true),supports_all_drives:Some(true),
-                    fields:Some(FieldMask("changes(fileId,removed,changeType),nextPageToken,newStartPageToken".into())),..Default::default()}).await;
+                    fields:Some(FieldMask(format!("changes(fileId,removed,changeType,file({FIELDS})),nextPageToken,newStartPageToken"))),..Default::default()}).await;
                 let response = match response {
                     Ok(response) => response,
                     Err(error) => {
@@ -235,7 +237,29 @@ impl GoogleObserver {
                     }
                 };
                 pages += 1;
-                state.feed_dirty |= !response.changes.is_empty();
+                for change in response.changes {
+                    let Some(files) = &mut state.feed_files else {
+                        break;
+                    };
+                    let accepted = match (
+                        change.change_type.as_deref(),
+                        change.removed,
+                        change.file_id,
+                        change.file,
+                    ) {
+                        (Some("file"), Some(false), Some(id), Some(file))
+                            if !id.0.is_empty()
+                                && file.id.as_ref() == Some(&id)
+                                && files.len() < item_limit =>
+                        {
+                            files.insert(RemoteId(id.0), file).is_none()
+                        }
+                        _ => false,
+                    };
+                    if !accepted {
+                        state.feed_files = None;
+                    }
+                }
                 if let Some(next) = response.next_page_token {
                     if state.feed_seen.len() >= 100_000
                         || next.is_empty()
@@ -251,17 +275,41 @@ impl GoogleObserver {
                         .new_start_page_token
                         .filter(|s| !s.is_empty())
                         .ok_or(RemoteObserverError::InvalidCursor)?;
-                    state.quiet_rounds = state.quiet_rounds.saturating_add(1);
-                    if state.feed_dirty || state.quiet_rounds >= 2 {
-                        state.quiet_rounds = 0;
-                        // Account-wide change entries are only invalidations. Recapture the selected
-                        // subtree to resolve moves, permissions and folder ancestry consistently.
+                    let files = state.feed_files.take();
+                    if state
+                        .last_full
+                        .is_none_or(|last| last.elapsed() >= AUDIT_INTERVAL)
+                        || files.as_ref().is_none_or(|files| {
+                            state.known.len().saturating_add(
+                                files
+                                    .keys()
+                                    .filter(|id| !state.known.contains_key(*id))
+                                    .count(),
+                            ) > item_limit
+                                || !files
+                                    .iter()
+                                    .all(|(id, file)| self.leaf_change(id, file, &state.known))
+                        })
+                    {
+                        // Missing or structural change evidence requires a scoped listing.
                         state.capture = Some(self.begin(session).await?);
                     } else {
+                        for (id, mut file) in files.unwrap_or_default() {
+                            let previous = state.known.get(&id);
+                            self.fill_sha256(session, &mut file, previous).await;
+                            let mut value = normalize::observation(
+                                file,
+                                &self.config,
+                                ObservationCoverage::Complete,
+                            )?;
+                            value.event.as_mut().unwrap().kind = observation_kind(previous, &value);
+                            state.known.insert(id.clone(), value);
+                            updated.insert(id);
+                        }
                         state.cursor = Some(next);
                     }
                     state.feed_token = None;
-                    state.feed_dirty = false;
+                    state.feed_files = Some(BTreeMap::new());
                     state.feed_seen.clear();
                     break;
                 }
@@ -277,7 +325,13 @@ impl GoogleObserver {
                             value.observed_at = super::super::scanner::now();
                             value.page_token = state.cursor.clone();
                             value.event.as_mut().unwrap().observed_at = value.observed_at;
-                            value.event.as_mut().unwrap().kind = ObservationKind::Snapshot;
+                            if value
+                                .remote_id
+                                .as_ref()
+                                .is_none_or(|id| !updated.contains(id))
+                            {
+                                value.event.as_mut().unwrap().kind = ObservationKind::Snapshot;
+                            }
                             value
                         })
                         .collect()
@@ -392,29 +446,7 @@ impl GoogleObserver {
                 }
             }
             for (id, mut file) in items {
-                if !file
-                    .name
-                    .as_deref()
-                    .is_some_and(|name| crate::projections::libreoffice_lock_name(name.as_ref()))
-                {
-                    let cached = known.get(&id).and_then(|old| {
-                        let Evidence::Known(version) = old.version else {
-                            return None;
-                        };
-                        if file.version.as_deref()?.parse::<u64>().ok()? != version {
-                            return None;
-                        }
-                        match &old.checksum {
-                            Evidence::Known(checksum) => Some(checksum.value.as_str()),
-                            _ => None,
-                        }
-                    });
-                    // Keep metadata for diagnostics and retry on the next scoped capture.
-                    let _ = self
-                        .client
-                        .fill_content_sha256(session, &mut file, cached)
-                        .await;
-                }
+                self.fill_sha256(session, &mut file, known.get(&id)).await;
                 if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER) {
                     capture.visited.insert(id.clone());
                     capture.folders.push_back(id.clone());
@@ -472,27 +504,14 @@ impl GoogleObserver {
             value.event.as_mut().unwrap().kind = if !state.has_snapshot {
                 ObservationKind::Snapshot
             } else {
-                match state.known.get(id) {
-                    None => ObservationKind::Created,
-                    Some(old) if old.parents != value.parents => ObservationKind::Moved,
-                    Some(old) if old.name != value.name => ObservationKind::Renamed,
-                    Some(old) if old.checksum != value.checksum || old.size != value.size => {
-                        ObservationKind::Modified
-                    }
-                    Some(old)
-                        if old.version != value.version
-                            || old.capabilities != value.capabilities =>
-                    {
-                        ObservationKind::MetadataChanged
-                    }
-                    _ => ObservationKind::Snapshot,
-                }
+                observation_kind(state.known.get(id), value)
             };
         }
         // Publish a complete initial/recovery view, so every item receives the final coverage.
         observations.extend(next.values().cloned());
         state.known = next;
         state.has_snapshot = true;
+        state.last_full = Some(Instant::now());
         state.cursor = Some(capture.checkpoint);
         Ok(self.result(
             observations,
@@ -501,6 +520,63 @@ impl GoogleObserver {
             false,
         ))
     }
+    /// Fast path for a leaf with a known parent and no change to its observed ancestry.
+    fn leaf_change(
+        &self,
+        id: &RemoteId,
+        file: &GoogleFile,
+        known: &BTreeMap<RemoteId, RemoteObservation>,
+    ) -> bool {
+        if id == &self.config.remote_root_id
+            || file.trashed != Some(false)
+            || file.name.is_none()
+            || file.mime_type.as_ref().is_none_or(|mime| mime.0 == FOLDER)
+        {
+            return false;
+        }
+        let Some([parent]) = file.parents.as_deref() else {
+            return false;
+        };
+        let parent = RemoteId(parent.0.clone());
+        (parent == self.config.remote_root_id
+            || known.get(&parent).is_some_and(
+                |folder| matches!(&folder.mime_type, Evidence::Known(mime) if mime == FOLDER),
+            ))
+            && known.get(id).is_none_or(|previous| {
+                previous.parents == Evidence::Known(vec![parent])
+                    && matches!((&previous.mime_type, &file.mime_type),
+                        (Evidence::Known(previous), Some(current)) if *previous == current.0)
+            })
+    }
+
+    async fn fill_sha256(
+        &self,
+        session: &GoogleSession,
+        file: &mut GoogleFile,
+        previous: Option<&RemoteObservation>,
+    ) {
+        if file
+            .name
+            .as_deref()
+            .is_some_and(|name| crate::projections::libreoffice_lock_name(name.as_ref()))
+        {
+            return;
+        }
+        let cached = previous.and_then(|old| {
+            let (Evidence::Known(version), Evidence::Known(size), Evidence::Known(checksum)) =
+                (&old.version, &old.size, &old.checksum)
+            else {
+                return None;
+            };
+            (file.version.as_deref()?.parse::<u64>().ok()? == *version
+                && file.size.as_deref()?.parse::<u64>().ok()? == *size
+                && checksum.algorithm == "sha256")
+                .then_some(checksum.value.as_str())
+        });
+        // Metadata remains available for diagnostics even when media verification fails.
+        let _ = self.client.fill_content_sha256(session, file, cached).await;
+    }
+
     /// A failed specific read is never evidence of deletion. Ancestry must reach an
     /// observed external root before an item can be classified as outside scope.
     async fn probe(
@@ -614,6 +690,24 @@ impl GoogleObserver {
         }
     }
 }
+fn observation_kind(
+    previous: Option<&RemoteObservation>,
+    current: &RemoteObservation,
+) -> ObservationKind {
+    match previous {
+        None => ObservationKind::Created,
+        Some(old) if old.parents != current.parents => ObservationKind::Moved,
+        Some(old) if old.name != current.name => ObservationKind::Renamed,
+        Some(old) if old.checksum != current.checksum || old.size != current.size => {
+            ObservationKind::Modified
+        }
+        Some(old) if old.version != current.version || old.capabilities != current.capabilities => {
+            ObservationKind::MetadataChanged
+        }
+        _ => ObservationKind::Snapshot,
+    }
+}
+
 fn failure(error: GoogleApiFailure) -> RemoteObserverError {
     match error.kind {
         GoogleApiError::AuthenticationRequired

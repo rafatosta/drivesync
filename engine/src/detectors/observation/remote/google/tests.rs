@@ -14,15 +14,16 @@ fn root() -> Reply {
         r#"{"id":"root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#,
     )
 }
-fn observer(server: &Server) -> Box<dyn RemoteObserver> {
-    let provider = GoogleObserverProvider {
+fn observer(server: &Server) -> GoogleObserver {
+    GoogleObserver {
         client: GoogleDriveClient::with_base_urls(
             format!("{}/drive/v3", server.base),
             format!("{}/upload/drive/v3", server.base),
         )
         .unwrap(),
-    };
-    provider.create(config()).unwrap()
+        config: config(),
+        state: Mutex::new(State::default()),
+    }
 }
 fn request(mode: RemoteObserveMode, budget: u64) -> RemoteObserveRequest {
     RemoteObserveRequest {
@@ -484,6 +485,7 @@ async fn quiet_changes_cursors_still_refresh_current_metadata_without_another_ed
         .await
         .unwrap();
     assert_eq!(cached.observations[0].version, Evidence::Known(1));
+    observer.state.lock().await.last_full = Some(Instant::now() - AUDIT_INTERVAL);
     let refreshed = observer
         .observe(request(RemoteObserveMode::Incremental, 16), &auth, &token)
         .await
@@ -577,4 +579,103 @@ async fn office_revision_without_sha256_requires_verified_bytes_and_stable_metad
             }
         );
     }
+}
+
+#[tokio::test]
+async fn a_leaf_change_publishes_its_revision_without_resetting_the_cursor() {
+    let server = Server::start(vec![
+        Reply::json(200, r#"{"startPageToken":"initial"}"#),
+        root(),
+        Reply::json(
+            200,
+            r#"{"files":[{"id":"one","name":"old","parents":["root"],"mimeType":"text/plain","version":"1","trashed":false}],"incompleteSearch":false}"#,
+        ),
+        root(),
+        root(),
+        Reply::json(
+            200,
+            r#"{"changes":[{"changeType":"file","removed":false,"fileId":"one","file":{"id":"one","name":"new","parents":["root"],"mimeType":"text/plain","version":"2","trashed":false}}],"newStartPageToken":"continued"}"#,
+        ),
+    ]);
+    let observer = observer(&server);
+    let auth = session();
+    let token = CancellationToken::new();
+    observer
+        .observe(request(RemoteObserveMode::Initial, 16), &auth, &token)
+        .await
+        .unwrap();
+    let updated = observer
+        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &token)
+        .await
+        .unwrap();
+    assert_eq!(updated.coverage, ObservationCoverage::Complete);
+    assert_eq!(updated.continuation.unwrap().value, "continued");
+    assert_eq!(updated.observations[0].version, Evidence::Known(2));
+    assert_eq!(
+        updated.observations[0].event.as_ref().unwrap().kind,
+        ObservationKind::Renamed,
+    );
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[5].target.contains("pageToken=initial"));
+}
+
+#[tokio::test]
+async fn changes_for_the_same_binary_revision_reuse_verified_sha256() {
+    let office = serde_json::json!({
+        "id": "office", "name": "Minutes.docx", "parents": ["root"],
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "version": "2", "headRevisionId": "revision", "size": "5",
+        "md5Checksum": "5d41402abc4b2a76b9719d911017c592", "trashed": false,
+        "capabilities": {"canDownload": true},
+    });
+    let server = Server::start(vec![
+        Reply::json(200, r#"{"startPageToken":"start"}"#),
+        root(),
+        Reply::json(
+            200,
+            &serde_json::json!({"files":[office],"incompleteSearch":false}).to_string(),
+        ),
+        Reply::json(200, "hello"),
+        Reply::json(200, &office.to_string()),
+        root(),
+        root(),
+        Reply::json(
+            200,
+            &serde_json::json!({
+                "changes":[{"changeType":"file","removed":false,"fileId":"office","file":office}],
+                "newStartPageToken":"next"
+            })
+            .to_string(),
+        ),
+    ]);
+    let observer = observer(&server);
+    let auth = session();
+    let cancel = CancellationToken::new();
+    let first = observer
+        .observe(request(RemoteObserveMode::Initial, 16), &auth, &cancel)
+        .await
+        .unwrap();
+    let update = observer
+        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &cancel)
+        .await
+        .unwrap();
+    assert!(matches!(
+        &first.observations[0].checksum,
+        Evidence::Known(_)
+    ));
+    assert_eq!(
+        update.observations[0].checksum,
+        first.observations[0].checksum
+    );
+    assert_eq!(update.continuation.unwrap().value, "next");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 8);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.target.contains("alt=media"))
+            .count(),
+        1
+    );
 }
