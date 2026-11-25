@@ -163,6 +163,7 @@ async fn assert_initial_download(
         stop: rx,
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
+        scanning_sources: Default::default(),
         recovery_failed: false,
         refresh_after: None,
         refresh_wait: None,

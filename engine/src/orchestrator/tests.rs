@@ -162,6 +162,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
             stop: rx,
             blockers: BTreeMap::new(),
             sources: BTreeMap::new(),
+            scanning_sources: BTreeSet::new(),
             recovery_failed: false,
             refresh_after: None,
             refresh_wait: None,
@@ -802,4 +803,32 @@ async fn a_noop_is_reused_only_for_the_same_decision_evidence() {
     file.observations.remote_epoch = Some(0);
     assert_eq!(worker.process(file).await.decision, DecisionStatus::Ready);
     assert!(!calls.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn finishing_the_local_scan_preserves_the_active_drive_scan() {
+    let (operator, _) = mock(OperationResultStatus::Succeeded);
+    let (mut worker, _stop) = direct(operator);
+    worker.sources.insert(Source::Local, None);
+    worker.sources.insert(
+        Source::Remote,
+        Some(issue(
+            SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
+            true,
+        )),
+    );
+    worker.scanning_sources.insert(Source::Remote);
+    worker.settle();
+    assert_eq!(
+        worker.status.borrow().activity,
+        SynchronizationActivity::ScanningRemote
+    );
+    assert_eq!(worker.status.borrow().state, SynchronizationState::Running);
+    worker.scanning_sources.remove(&Source::Remote);
+    worker.settle();
+    assert_eq!(worker.status.borrow().state, SynchronizationState::Waiting);
+    assert_eq!(
+        worker.status.borrow().issue.as_ref().unwrap().kind,
+        SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation)
+    );
 }

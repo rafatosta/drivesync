@@ -1671,9 +1671,6 @@ msgid "DriveSync cannot apply this change. Existing copies were kept."
 msgstr "O DriveSync não conseguiu aplicar esta alteração. As cópias existentes foram preservadas."
 
 
-msgid "Waiting for changes"
-msgstr "Aguardando alterações"
-
 msgid "Your files are up to date on this computer and on Drive."
 msgstr "Seus arquivos estão atualizados neste computador e no Drive."
 
@@ -1710,7 +1707,7 @@ msgid "Waiting for a complete scan on Drive."
 msgstr "Aguardando uma verificação completa no Drive."
 
 msgid "Checking the computer and Drive again after the last operation."
-msgstr "Verificando novamente o computador e o Drive após a última operação."
+msgstr "Conferindo o resultado da última operação no computador e no Drive."
 
 msgid "Waiting for complete scans of the computer and Drive before applying changes."
 msgstr "Aguardando a conclusão das verificações no computador e no Drive para aplicar alterações."
@@ -1730,8 +1727,37 @@ msgstr "Verificando alterações no computador e no Drive…"
 msgid "Waiting for the computer and Drive scans to finish."
 msgstr "Aguardando o fim das verificações no computador e no Drive."
 
-msgid "Waiting for verification"
-msgstr "Aguardando verificação"
+msgid "Verification pending"
+msgstr "Verificação pendente"
+
+msgid "Checking synchronization…"
+msgstr "Verificando a sincronização…"
+
+msgid "Synchronization not verified"
+msgstr "Sincronização ainda não confirmada"
+
+msgid "Reading files and folders on Drive…"
+msgstr "Lendo arquivos e pastas no Drive…"
+
+msgid "The computer scan did not finish. DriveSync will try again."
+msgstr "A leitura da pasta no computador ficou incompleta. O DriveSync vai tentar novamente."
+
+msgid "The Drive scan did not finish. DriveSync will try again."
+msgstr "A leitura da pasta no Drive ficou incompleta. O DriveSync vai tentar novamente."
+
+msgid "DriveSync could not verify that the folders are up to date."
+msgstr "O DriveSync não conseguiu confirmar que as pastas estão atualizadas."
+
+msgid "DriveSync needs current scans of both folders to confirm synchronization."
+msgstr "Para confirmar a sincronização, o DriveSync precisa de uma leitura atualizada das duas pastas."
+
+msgid "{count} operation still needs confirmation."
+msgid_plural "{count} operations still need confirmation."
+msgstr[0] "{count} operação ainda precisa de confirmação."
+msgstr[1] "{count} operações ainda precisam de confirmação."
+
+msgid "There are no queued operations, but some items could not be verified."
+msgstr "Não há operações na fila. Alguns itens ainda precisam ser verificados."
 
 msgid "Waiting for confirmation of the current state before making changes."
 msgstr "Aguardando a confirmação do estado atual antes de fazer alterações."

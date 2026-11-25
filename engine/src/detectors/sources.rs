@@ -307,12 +307,17 @@ async fn remote(
             return;
         }
     };
-    health(&handle, Source::Remote, false, true, &cancel).await;
     let mut mode = RemoteObserveMode::Initial;
     let mut invalidated = false;
     let mut generation = 0;
     let mut collection_epoch = None;
     while !cancel.is_cancelled() && !handle.is_finished() {
+        if matches!(
+            mode,
+            RemoteObserveMode::Initial | RemoteObserveMode::Recovery
+        ) {
+            health(&handle, Source::Remote, true, true, &cancel).await;
+        }
         // A paginated traversal may have started before a concurrent operation. Keep
         // the original epoch until every page has been collected or the round fails.
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());

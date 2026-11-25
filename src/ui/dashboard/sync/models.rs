@@ -2,8 +2,9 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatusView {
     Initializing,
-    Waiting,
     WaitingForEvidence,
+    Checking,
+    VerificationIncomplete,
     Synchronizing,
     Recovering,
     Synced,

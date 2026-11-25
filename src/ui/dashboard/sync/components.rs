@@ -105,8 +105,9 @@ impl SyncStatus {
     pub fn set_state(&self, state: StatusView, description: &str) {
         let title = match state {
             StatusView::Initializing => "Preparing synchronization…",
-            StatusView::Waiting => "Waiting for changes",
-            StatusView::WaitingForEvidence => "Waiting for verification",
+            StatusView::WaitingForEvidence => "Verification pending",
+            StatusView::Checking => "Checking synchronization…",
+            StatusView::VerificationIncomplete => "Synchronization not verified",
             StatusView::Recovering => "Checking interrupted operations…",
             StatusView::Synchronizing => "Synchronizing…",
             StatusView::Synced => "Everything synchronized",
@@ -117,8 +118,10 @@ impl SyncStatus {
         };
         self.icon.set_icon_name(Some(match state {
             StatusView::Initializing | StatusView::Synchronizing => "view-refresh-symbolic",
-            StatusView::Waiting => "document-open-recent-symbolic",
-            StatusView::WaitingForEvidence | StatusView::Recovering => "edit-find-symbolic",
+            StatusView::WaitingForEvidence
+            | StatusView::Checking
+            | StatusView::VerificationIncomplete
+            | StatusView::Recovering => "edit-find-symbolic",
             StatusView::Synced => "object-select-symbolic",
             StatusView::Attention => "dialog-warning-symbolic",
             StatusView::Offline => "network-offline-symbolic",
@@ -132,8 +135,8 @@ impl SyncStatus {
             StatusView::Synced => "success",
             StatusView::Attention => "warning",
             StatusView::Failed => "error",
-            StatusView::Waiting
-            | StatusView::WaitingForEvidence
+            StatusView::WaitingForEvidence
+            | StatusView::VerificationIncomplete
             | StatusView::Offline
             | StatusView::Stopped => "dim-label",
             _ => "accent",

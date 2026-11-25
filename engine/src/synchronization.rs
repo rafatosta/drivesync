@@ -47,6 +47,8 @@ pub enum SynchronizationActivity {
     None,
     Observing,
     Scanning,
+    /// Reading a full or paginated inventory from the remote provider.
+    ScanningRemote,
     Analyzing,
     /// Checking a durable operation against current evidence after an interruption.
     Recovering,

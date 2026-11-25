@@ -76,7 +76,7 @@ impl SyncBackend for EngineAdapter {
             let subscription = self.subscription.as_mut()?;
             let status = subscription.current();
             // Audit is horizon-bound. Re-read after the await so a newer event invalidates it.
-            let audited = if !self.last_synced
+            let audit = if !self.last_synced
                 && status.state == drivesync_engine::SynchronizationState::Idle
                 && status.issue.is_none()
             {
@@ -84,25 +84,23 @@ impl SyncBackend for EngineAdapter {
                     .synchronization_audit(self.account.clone())
                     .await
                     .ok()
-                    .is_some_and(|a| {
-                        a.roots.account_id == self.account
-                            && a.initial_complete
-                            && a.coverage_complete
-                            && a.unconfirmed_operations == 0
-                            && a.unresolved_conflicts == 0
-                    })
+                    .filter(|audit| audit.roots.account_id == self.account)
             } else {
-                false
+                None
             };
             let conflicts = self.engine.list_conflicts(self.account.clone()).await.ok();
             let latest = subscription.current();
             self.refresh_latest = latest != status;
-            let background = is_background_check(&latest);
+            let background = self.last_synced && is_background_check(&latest);
             // A new operation or issue ends the previously audited idle presentation.
+            let audit = audit.filter(|_| !self.refresh_latest);
             let mut snapshot = map_status(
                 &latest,
-                self.last_synced || (audited && !self.refresh_latest),
+                self.last_synced || audit.as_ref().is_some_and(|audit| audit.initial_complete),
             );
+            if snapshot.status == StatusView::VerificationIncomplete {
+                snapshot.description = incomplete_description(audit.as_ref());
+            }
             if let Some(rows) = conflicts.filter(|rows| !rows.is_empty()) {
                 let count = rows.len();
                 let summary = gettextrs::ngettext(
@@ -114,6 +112,7 @@ impl SyncBackend for EngineAdapter {
                 use drivesync_engine::SynchronizationState as State;
                 let has_procedure = snapshot.status != StatusView::Synced
                     && (latest.issue.is_some()
+                        || snapshot.status == StatusView::Checking
                         || (!background && matches!(latest.state, State::Running | State::Failed)));
                 if has_procedure && !snapshot.description.is_empty() {
                     snapshot.description = format!("{}\n{summary}", snapshot.description);
@@ -144,7 +143,26 @@ fn is_background_check(status: &drivesync_engine::SynchronizationStatus) -> bool
     status.state == S::Running
         && status.issue.is_none()
         && status.current_operation.is_none()
-        && matches!(status.activity, A::Scanning | A::Observing | A::Analyzing)
+        && matches!(
+            status.activity,
+            A::Scanning | A::ScanningRemote | A::Observing | A::Analyzing
+        )
+}
+
+fn incomplete_description(audit: Option<&drivesync_engine::SynchronizationAudit>) -> String {
+    match audit {
+        None => gettext("DriveSync could not verify that the folders are up to date."),
+        Some(audit) if !audit.coverage_complete => {
+            gettext("DriveSync needs current scans of both folders to confirm synchronization.")
+        }
+        Some(audit) if audit.unconfirmed_operations > 0 => gettextrs::ngettext(
+            "{count} operation still needs confirmation.",
+            "{count} operations still need confirmation.",
+            u32::try_from(audit.unconfirmed_operations).unwrap_or(u32::MAX),
+        )
+        .replace("{count}", &audit.unconfirmed_operations.to_string()),
+        Some(_) => gettext("There are no queued operations, but some items could not be verified."),
+    }
 }
 
 pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: bool) -> Snapshot {
@@ -153,29 +171,29 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
         SynchronizationWait as W,
     };
     let scope = status.account_id.0.clone();
-    let background = is_background_check(status);
+    let background = audited && is_background_check(status);
     let issue = status.issue.as_ref().map(|issue| issue.kind);
     let observing = status.state == S::Waiting
         && status.activity == A::Observing
         && status.current_operation.is_none()
         && status.current_item.is_none()
-        && matches!(
-            issue,
-            None | Some(I::DeferredFor(W::LocalObservation | W::RemoteObservation))
-        );
+        && issue.is_none();
     let effective_state = if background { S::Idle } else { status.state };
     let state = match (effective_state, issue) {
         (S::Waiting, _) if audited && observing => StatusView::Synced,
         (S::Stopped, _) => StatusView::Stopped,
         (S::Failed, _) => StatusView::Failed,
+        (_, Some(I::DeferredFor(W::FreshObservations))) => StatusView::Checking,
+        (S::Waiting, None) if observing => StatusView::Checking,
         (_, Some(I::Deferred | I::DeferredFor(_) | I::PreconditionFailed)) | (S::Waiting, None) => {
             StatusView::WaitingForEvidence
         }
         (_, Some(_)) => StatusView::Attention,
         (S::Running, None) if status.activity == A::Recovering => StatusView::Recovering,
+        (S::Running, None) if is_background_check(status) => StatusView::Checking,
         (S::Running, None) => StatusView::Synchronizing,
         (S::Idle, None) if audited => StatusView::Synced,
-        (S::Idle, None) => StatusView::Waiting,
+        (S::Idle, None) => StatusView::VerificationIncomplete,
     };
     let activity = if effective_state == S::Running {
         status.current_item.as_ref().and_then(|item| {
@@ -367,8 +385,8 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
     };
     let description = if state == StatusView::Synced {
         gettext("Your files are up to date on this computer and on Drive.")
-    } else if background {
-        gettext("No pending operations.")
+    } else if state == StatusView::VerificationIncomplete {
+        incomplete_description(None)
     } else if activity.is_some() && status.issue.is_none() {
         String::new()
     } else {

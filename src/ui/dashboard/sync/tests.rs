@@ -45,7 +45,8 @@ fn isolated_components_and_fake_backend() {
         let status = SyncStatus::new();
         for state in [
             StatusView::Initializing,
-            StatusView::Waiting,
+            StatusView::Checking,
+            StatusView::VerificationIncomplete,
             StatusView::WaitingForEvidence,
             StatusView::Synchronizing,
             StatusView::Synced,
@@ -952,7 +953,7 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
 }
 
 #[test]
-fn background_checks_preserve_idle_presentation_and_waits_name_the_item() {
+fn checks_are_visible_until_audited_and_waits_explain_what_is_missing() {
     use drivesync_engine::{
         models::{AccountId, RemoteId, Timestamp},
         SynchronizationActivity, SynchronizationIssue, SynchronizationIssueKind,
@@ -973,43 +974,52 @@ fn background_checks_preserve_idle_presentation_and_waits_name_the_item() {
         issue: None,
         updated_at: Timestamp { unix_millis: 0 },
     };
-    for audited in [false, true] {
-        let mut idle = status.clone();
-        idle.state = SynchronizationState::Idle;
-        idle.activity = SynchronizationActivity::None;
-        idle.current_item = None;
-        let expected = map_status(&idle, audited);
-        for activity in [
-            SynchronizationActivity::Analyzing,
-            SynchronizationActivity::Scanning,
+    let mut idle = status.clone();
+    idle.state = SynchronizationState::Idle;
+    idle.activity = SynchronizationActivity::None;
+    idle.current_item = None;
+    assert_eq!(
+        map_status(&idle, false).status,
+        StatusView::VerificationIncomplete
+    );
+    let synced = map_status(&idle, true);
+    for (activity, message) in [
+        (SynchronizationActivity::Analyzing, "Analyzing changes…"),
+        (SynchronizationActivity::Scanning, "Checking local files…"),
+        (
+            SynchronizationActivity::ScanningRemote,
+            "Reading files and folders on Drive…",
+        ),
+        (
             SynchronizationActivity::Observing,
-        ] {
-            status.activity = activity;
-            let checking = map_status(&status, audited);
-            assert_eq!(checking.status, expected.status);
-            assert_eq!(checking.description, expected.description);
-            assert!(checking.activity.is_none());
-            assert!(checking.attention.is_empty());
-        }
+            "Checking local files and Drive for changes…",
+        ),
+    ] {
+        status.activity = activity;
+        let checking = map_status(&status, false);
+        assert_eq!(checking.status, StatusView::Checking);
+        assert!(checking.description.contains(&gettextrs::gettext(message)));
+        assert!(checking.activity.is_none());
+        assert!(checking.attention.is_empty());
+        assert_eq!(map_status(&status, true).status, synced.status);
     }
 
     let mut observing = status.clone();
     observing.state = SynchronizationState::Waiting;
     observing.current_item = None;
-    for issue in [
-        None,
-        Some(SynchronizationIssue {
-            kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
-            retryable: true,
-        }),
-    ] {
-        observing.issue = issue;
-        assert_eq!(map_status(&observing, true).status, StatusView::Synced);
-        assert_eq!(
-            map_status(&observing, false).status,
-            StatusView::WaitingForEvidence
-        );
-    }
+    assert_eq!(map_status(&observing, true).status, StatusView::Synced);
+    assert_eq!(map_status(&observing, false).status, StatusView::Checking);
+
+    observing.issue = Some(SynchronizationIssue {
+        kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
+        retryable: true,
+    });
+    let retry = map_status(&observing, true);
+    assert_eq!(retry.status, StatusView::WaitingForEvidence);
+    assert_eq!(
+        retry.description,
+        gettextrs::gettext("The Drive scan did not finish. DriveSync will try again.")
+    );
 
     status.state = SynchronizationState::Waiting;
     status.activity = SynchronizationActivity::None;
@@ -1026,4 +1036,13 @@ fn background_checks_preserve_idle_presentation_and_waits_name_the_item() {
         .contains(&gettextrs::gettext("Waiting for a complete scan on Drive.")));
     assert!(!waiting.description.contains("opaque-drive-id"));
     assert!(waiting.attention.is_empty());
+
+    status.issue.as_mut().unwrap().kind =
+        SynchronizationIssueKind::DeferredFor(SynchronizationWait::FreshObservations);
+    let confirming = map_status(&status, false);
+    assert_eq!(confirming.status, StatusView::Checking);
+    assert!(confirming.description.contains("Relatório.docx"));
+    assert!(confirming.description.contains(&gettextrs::gettext(
+        "Checking the computer and Drive again after the last operation."
+    )));
 }

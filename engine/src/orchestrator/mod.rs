@@ -23,7 +23,7 @@ use operations::{
     Operator, OperatorFactory,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::Read,
     path::PathBuf,
     sync::Arc,
@@ -194,6 +194,7 @@ fn start_guarded(
         stop: stop_rx,
         blockers: BTreeMap::new(),
         sources: BTreeMap::new(),
+        scanning_sources: BTreeSet::new(),
         recovery_failed: false,
         refresh_after: None,
         refresh_wait: None,
@@ -245,6 +246,7 @@ struct Orchestrator {
     stop: watch::Receiver<bool>,
     blockers: BTreeMap<SynchronizationItem, (SynchronizationItem, SynchronizationIssue)>,
     sources: BTreeMap<Source, Option<SynchronizationIssue>>,
+    scanning_sources: BTreeSet<Source>,
     recovery_failed: bool,
     refresh_after: Option<u64>,
     refresh_wait: Option<crate::performance::Sample>,
@@ -292,6 +294,11 @@ impl Orchestrator {
                         self.recover_pending().await;
                     }
                     self.sources.insert(source, issue);
+                    if scanning {
+                        self.scanning_sources.insert(source);
+                    } else {
+                        self.scanning_sources.remove(&source);
+                    }
                     if self.refreshing_confirmed_update()
                         && !self.recovery_failed
                         && self.blockers.is_empty()
@@ -301,25 +308,7 @@ impl Orchestrator {
                     {
                         continue;
                     }
-                    if scanning
-                        && !self.recovery_failed
-                        && self.blockers.is_empty()
-                        && !self
-                            .sources
-                            .values()
-                            .flatten()
-                            .any(|issue| is_failure(issue.kind))
-                    {
-                        self.publish(
-                            SynchronizationState::Running,
-                            SynchronizationActivity::Scanning,
-                            None,
-                            None,
-                            None,
-                        );
-                    } else {
-                        self.settle();
-                    }
+                    self.settle();
                 }
             }
         }
@@ -506,6 +495,17 @@ impl Orchestrator {
                 Some(item.clone()),
                 None,
                 Some(issue.clone()),
+            );
+        } else if let Some(source) = self.scanning_sources.iter().next() {
+            self.publish(
+                SynchronizationState::Running,
+                match source {
+                    Source::Local => SynchronizationActivity::Scanning,
+                    Source::Remote => SynchronizationActivity::ScanningRemote,
+                },
+                None,
+                None,
+                None,
             );
         } else if let Some(issue) = self.sources.values().flatten().next() {
             self.publish(

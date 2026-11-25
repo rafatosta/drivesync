@@ -86,6 +86,9 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
     if status.state == SynchronizationState::Running && status.issue.is_none() {
         let procedure = match status.activity {
             SynchronizationActivity::Scanning => gettext("Checking local files…"),
+            SynchronizationActivity::ScanningRemote => {
+                gettext("Reading files and folders on Drive…")
+            }
             SynchronizationActivity::Observing => {
                 gettext("Checking local files and Drive for changes…")
             }
@@ -121,6 +124,10 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
         let message = match issue.kind {
             SynchronizationIssueKind::Deferred => gettext("Waiting for confirmation of the current state before making changes."),
             SynchronizationIssueKind::DeferredFor(reason) => match reason {
+                SynchronizationWait::LocalObservation if status.activity == SynchronizationActivity::Observing && issue.retryable =>
+                    gettext("The computer scan did not finish. DriveSync will try again."),
+                SynchronizationWait::RemoteObservation if status.activity == SynchronizationActivity::Observing && issue.retryable =>
+                    gettext("The Drive scan did not finish. DriveSync will try again."),
                 SynchronizationWait::LocalObservation => gettext("Waiting for a complete scan of the computer."),
                 SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
                 SynchronizationWait::FreshObservations => gettext("Checking the computer and Drive again after the last operation."),
