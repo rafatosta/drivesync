@@ -2,7 +2,10 @@
 use adw::{gtk, prelude::*};
 use drivesync_engine::{Account, AccountId};
 use gettextrs::gettext;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 type MenuFactory = Rc<dyn Fn(&Account) -> gtk::MenuButton>;
 
@@ -11,6 +14,7 @@ pub(super) struct AccountSidebar {
     pub heading: gtk::Label,
     pub list: gtk::ListBox,
     accounts: Rc<RefCell<Vec<Account>>>,
+    rebuilding: Rc<Cell<bool>>,
     menu: Option<MenuFactory>,
 }
 #[derive(Clone)]
@@ -18,6 +22,7 @@ pub(super) struct SidebarHandle {
     heading: gtk::glib::WeakRef<gtk::Label>,
     list: gtk::glib::WeakRef<gtk::ListBox>,
     accounts: Rc<RefCell<Vec<Account>>>,
+    rebuilding: Rc<Cell<bool>>,
     menu: Option<MenuFactory>,
 }
 impl SidebarHandle {
@@ -26,6 +31,7 @@ impl SidebarHandle {
             heading: self.heading.upgrade()?,
             list: self.list.upgrade()?,
             accounts: self.accounts.clone(),
+            rebuilding: self.rebuilding.clone(),
             menu: self.menu.clone(),
         })
     }
@@ -36,6 +42,7 @@ impl AccountSidebar {
             heading: self.heading.downgrade(),
             list: self.list.downgrade(),
             accounts: self.accounts.clone(),
+            rebuilding: self.rebuilding.clone(),
             menu: self.menu.clone(),
         }
     }
@@ -60,6 +67,7 @@ impl AccountSidebar {
             heading,
             list,
             accounts: Rc::default(),
+            rebuilding: Rc::default(),
             menu: None,
         }
     }
@@ -74,6 +82,7 @@ impl AccountSidebar {
     /// Replaces the snapshot while retaining selection by account identity.
     pub fn set_accounts(&self, accounts: Vec<Account>) {
         let selected: Option<AccountId> = self.selected().map(|account| account.id);
+        self.rebuilding.set(!accounts.is_empty());
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
@@ -103,13 +112,17 @@ impl AccountSidebar {
             }
             self.list.append(&row);
         }
+        self.rebuilding.set(false);
         self.list
             .select_row(self.list.row_at_index(chosen as i32).as_ref());
     }
     pub fn on_selected(&self, callback: impl Fn(Option<Account>) + 'static) {
         let accounts = self.accounts.clone();
+        let rebuilding = self.rebuilding.clone();
         self.list.connect_row_selected(move |_, row| {
-            callback(row.and_then(|row| accounts.borrow().get(row.index() as usize).cloned()));
+            if !rebuilding.get() {
+                callback(row.and_then(|row| accounts.borrow().get(row.index() as usize).cloned()));
+            }
         });
     }
 }

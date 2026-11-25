@@ -2,9 +2,12 @@
 use super::sidebar::AccountSidebar;
 use crate::application::Context;
 use adw::{gtk, prelude::*};
-use drivesync_engine::ListAccountsRequest;
+use drivesync_engine::{Account, ListAccountsRequest};
 use gettextrs::gettext;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 pub(crate) fn build(context: &Context, navigation: &adw::NavigationView) -> adw::NavigationPage {
     build_with_accounts(context, navigation, Vec::new())
@@ -105,29 +108,79 @@ fn build_with_accounts(
         .build();
     content.set_content(Some(&scroll));
     split.set_content(Some(&adw::NavigationPage::new(&content, "DriveSync")));
-    sidebar.on_selected({
+    let show_account = Rc::new({
         let context = context.clone();
         let synchronization = synchronization.clone();
         let navigation = navigation.downgrade();
         let title = title.downgrade();
-        move |account| {
+        move |account: Option<&Account>| {
             if let Some(navigation) = navigation.upgrade() {
-                synchronization.select(&context, &navigation, account.as_ref());
+                synchronization.select(&context, &navigation, account);
             }
             if let Some(title) = title.upgrade() {
                 title.set_title(
                     account
-                        .as_ref()
                         .and_then(|a| a.display_name.as_deref().or(a.email.as_deref()))
                         .unwrap_or("DriveSync"),
                 );
-                title.set_subtitle(
-                    account
-                        .as_ref()
-                        .and_then(|a| a.email.as_deref())
-                        .unwrap_or(""),
-                );
+                title.set_subtitle(account.and_then(|a| a.email.as_deref()).unwrap_or(""));
             }
+        }
+    });
+    let pending = Rc::new(RefCell::new(None::<Account>));
+    let start_opacity = Rc::new(Cell::new(1.0));
+    let animation = adw::TimedAnimation::new(
+        &content,
+        0.0,
+        1.0,
+        240,
+        adw::CallbackAnimationTarget::new({
+            let pending = pending.clone();
+            let start_opacity = start_opacity.clone();
+            let show_account = show_account.clone();
+            let title = title.downgrade();
+            let scroll = scroll.downgrade();
+            move |progress| {
+                let opacity = if progress < 0.5 {
+                    start_opacity.get() * (1.0 - 2.0 * progress)
+                } else {
+                    if let Some(account) = pending.borrow_mut().take() {
+                        show_account(Some(&account));
+                    }
+                    2.0 * progress - 1.0
+                };
+                if let (Some(title), Some(scroll)) = (title.upgrade(), scroll.upgrade()) {
+                    title.set_opacity(opacity);
+                    scroll.set_opacity(opacity);
+                }
+            }
+        }),
+    );
+    animation.set_easing(adw::Easing::Linear);
+    let selected = RefCell::new(None);
+    sidebar.on_selected({
+        let title = title.downgrade();
+        move |account| {
+            let id = account.as_ref().map(|account| account.id.clone());
+            let previous = selected.replace(id.clone());
+            let animate = previous.is_some() && id.is_some() && previous != id;
+            if let Some(account) = account.as_ref() {
+                if pending.borrow().is_some() {
+                    pending.replace(Some(account.clone()));
+                    return;
+                }
+                if animate {
+                    start_opacity.set(title.upgrade().map_or(1.0, |title| title.opacity()));
+                    animation.reset();
+                    pending.replace(Some(account.clone()));
+                    animation.play();
+                    return;
+                }
+            } else {
+                pending.take();
+                animation.skip();
+            }
+            show_account(account.as_ref());
         }
     });
     sidebar.set_accounts(accounts);

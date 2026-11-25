@@ -44,16 +44,7 @@ fn account_only_layout_and_initial_name_editor() {
 
     let nav = adw::NavigationView::new();
     let toasts = adw::ToastOverlay::new();
-    let account = Account {
-        id: AccountId("fixture".into()),
-        provider: ProviderId("google".into()),
-        provider_user_id: "synthetic-subject".into(),
-        email: Some("fixture@example.invalid".into()),
-        display_name: Some("Fixture name".into()),
-        state: AccountState::Connected,
-        created_at: Timestamp { unix_millis: 0 },
-        updated_at: Timestamp { unix_millis: 0 },
-    };
+    let account = fixture_account();
     let dashboard = crate::ui::dashboard::build(&crate::application::Context::default(), &nav);
     let content = find(dashboard.upcast_ref(), "dashboard-content")
         .unwrap()
@@ -121,6 +112,7 @@ fn account_only_layout_and_initial_name_editor() {
     dialog.close();
     assert!(second_menu.is_sensitive());
     assert_eq!(title.subtitle(), "fixture@example.invalid");
+
     let split = find(dashboard.upcast_ref(), "dashboard-split")
         .unwrap()
         .downcast::<adw::OverlaySplitView>()
@@ -160,6 +152,72 @@ fn account_only_layout_and_initial_name_editor() {
     capture(&window, &preferences, "preferences");
     crate::ui::setup::tests::exercise(&window, &account, capture_dialog);
     window.destroy();
+}
+
+#[test]
+#[ignore = "requires an isolated display with a frame clock and XDG profile"]
+fn account_switch_fades_out_and_in() {
+    let profile = std::env::var("XDG_DATA_HOME").expect("isolated XDG profile required");
+    assert!(profile.starts_with("/tmp/drivesync-ui-test-"));
+    adw::init().unwrap();
+    let nav = adw::NavigationView::new();
+    let dashboard = crate::ui::dashboard::fixture(&nav, &fixture_account());
+    let window = gtk::Window::builder()
+        .default_width(960)
+        .default_height(720)
+        .child(&dashboard)
+        .build();
+    let accounts = find(dashboard.upcast_ref(), "dashboard-accounts")
+        .unwrap()
+        .downcast::<gtk::ListBox>()
+        .unwrap();
+    let title = find(dashboard.upcast_ref(), "dashboard-account-title")
+        .unwrap()
+        .downcast::<adw::WindowTitle>()
+        .unwrap();
+    window.present();
+    let settings = gtk::Settings::default().unwrap();
+    settings.set_gtk_enable_animations(true);
+    let faded_accounts = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let handler = title.connect_opacity_notify({
+        let faded_accounts = faded_accounts.clone();
+        move |title| {
+            if title.opacity() < 1.0 {
+                faded_accounts.borrow_mut().push(title.subtitle());
+            }
+        }
+    });
+    accounts.select_row(accounts.row_at_index(1).as_ref());
+    assert_eq!(title.subtitle(), "fixture@example.invalid");
+    let loop_ = gtk::glib::MainLoop::new(None, false);
+    let finish = loop_.clone();
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || finish.quit());
+    loop_.run();
+    title.disconnect(handler);
+    let faded_accounts = faded_accounts.borrow();
+    assert!(faded_accounts
+        .iter()
+        .any(|email| email == "fixture@example.invalid"));
+    assert!(faded_accounts
+        .iter()
+        .any(|email| email == "work@example.invalid"));
+    assert_eq!(title.subtitle(), "work@example.invalid");
+    assert_eq!(title.opacity(), 1.0);
+    settings.set_gtk_enable_animations(false);
+    window.destroy();
+}
+
+fn fixture_account() -> Account {
+    Account {
+        id: AccountId("fixture".into()),
+        provider: ProviderId("google".into()),
+        provider_user_id: "synthetic-subject".into(),
+        email: Some("fixture@example.invalid".into()),
+        display_name: Some("Fixture name".into()),
+        state: AccountState::Connected,
+        created_at: Timestamp { unix_millis: 0 },
+        updated_at: Timestamp { unix_millis: 0 },
+    }
 }
 
 /// Capture optional previews of the real account widgets, using synthetic data.
