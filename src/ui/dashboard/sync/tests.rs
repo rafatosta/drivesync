@@ -43,6 +43,14 @@ fn isolated_components_and_fake_backend() {
     adw::init().unwrap();
     for _ in 0..3 {
         let status = SyncStatus::new();
+        let verification_progress = status
+            .widget
+            .last_child()
+            .unwrap()
+            .last_child()
+            .and_downcast::<gtk::ProgressBar>()
+            .unwrap();
+        assert!(!verification_progress.shows_text());
         for state in [
             StatusView::Initializing,
             StatusView::Checking,
@@ -56,6 +64,10 @@ fn isolated_components_and_fake_backend() {
             StatusView::Stopped,
         ] {
             status.set_state(state.clone(), "fixture");
+            assert_eq!(
+                verification_progress.is_visible(),
+                state == StatusView::Checking
+            );
             assert_eq!(status.state(), state);
         }
         let mut count = 0;
@@ -352,10 +364,21 @@ fn isolated_components_and_fake_backend() {
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;
         save_window(&window, "fixture-dashboard-pt-br.png");
         controller.activity.clear();
+        let verification_progress = controller
+            .activity
+            .widget
+            .prev_sibling()
+            .and_downcast::<gtk::ProgressBar>()
+            .unwrap();
+        controller
+            .status
+            .set_state(StatusView::Checking, "Conferindo a última operação.");
+        assert!(verification_progress.is_mapped());
         controller.status.set_state(
             StatusView::WaitingForEvidence,
             "Relatório.docx — Aguardando uma verificação completa no Drive.",
         );
+        assert!(!verification_progress.is_mapped());
         assert!(!details.is_activatable());
         assert!(!chevron.is_visible());
         gtk::glib::timeout_future(std::time::Duration::from_millis(60)).await;

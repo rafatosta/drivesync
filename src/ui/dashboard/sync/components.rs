@@ -2,7 +2,10 @@
 use super::models::*;
 use adw::{gtk, prelude::*};
 use gettextrs::gettext;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 fn label() -> gtk::Label {
     gtk::Label::builder()
@@ -35,6 +38,7 @@ pub struct SyncStatus {
     icon: gtk::Image,
     title: gtk::Label,
     description: gtk::Label,
+    verification_progress: gtk::ProgressBar,
     state: Rc<RefCell<StatusView>>,
 }
 impl SyncStatus {
@@ -55,6 +59,38 @@ impl SyncStatus {
         labels.set_hexpand(true);
         labels.append(&title);
         labels.append(&description);
+        let verification_progress = gtk::ProgressBar::builder()
+            .visible(false)
+            .margin_top(4)
+            .build();
+        verification_progress.set_widget_name("dashboard-verification-progress");
+        verification_progress
+            .update_relation(&[gtk::accessible::Relation::LabelledBy(&[title.upcast_ref()])]);
+        let pulse_callback = Rc::new(Cell::<Option<gtk::TickCallbackId>>::new(None));
+        verification_progress.connect_map({
+            let pulse_callback = pulse_callback.clone();
+            move |bar| {
+                bar.pulse();
+                let last_pulse = Cell::new(0);
+                let id = bar.add_tick_callback(move |bar, clock| {
+                    let now = clock.frame_time();
+                    if now - last_pulse.get() >= 100_000
+                        && bar.settings().is_gtk_enable_animations()
+                    {
+                        bar.pulse();
+                        last_pulse.set(now);
+                    }
+                    gtk::glib::ControlFlow::Continue
+                });
+                pulse_callback.set(Some(id));
+            }
+        });
+        verification_progress.connect_unmap(move |_| {
+            if let Some(id) = pulse_callback.take() {
+                id.remove();
+            }
+        });
+        labels.append(&verification_progress);
         widget.append(&labels);
         widget.set_hexpand(true);
         let chevron = gtk::Image::from_icon_name("go-next-symbolic");
@@ -97,6 +133,7 @@ impl SyncStatus {
             icon,
             title,
             description,
+            verification_progress,
             state: Rc::new(RefCell::new(StatusView::Initializing)),
         };
         value.reset();
@@ -144,6 +181,8 @@ impl SyncStatus {
         self.title.set_label(&gettext(title));
         self.description.set_label(description);
         self.description.set_visible(!description.is_empty());
+        self.verification_progress
+            .set_visible(state == StatusView::Checking);
         let actionable = matches!(
             state,
             StatusView::Attention | StatusView::Failed | StatusView::Offline
