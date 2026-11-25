@@ -1809,3 +1809,79 @@ msgstr "Pasta criada"
 
 msgid "Shortcut synchronized"
 msgstr "Atalho sincronizado"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Resolve pending items"
+msgstr "Resolver pendências"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Checking for changes"
+msgstr "Verificando alterações"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Identifying items that need to be synced"
+msgstr "Identificando itens que precisam ser sincronizados"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{completed} of {total} items synced"
+msgstr "{completed} de {total} itens sincronizados"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Syncing"
+msgstr "Sincronizando"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{size} remaining"
+msgstr "{size} restantes"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Everything is synced"
+msgstr "Tudo sincronizado"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Your files are up to date"
+msgstr "Seus arquivos estão atualizados"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Last sync: {time}"
+msgstr "Última sincronização: {time}"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Sync needs attention"
+msgstr "Sincronização requer atenção"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Review pending items to continue"
+msgstr "Revise as pendências para continuar"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{percent}%"
+msgstr "{percent}%"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{n} item checked"
+msgid_plural "{n} items checked"
+msgstr[0] "{n} item verificado"
+msgstr[1] "{n} itens verificados"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{n} item synced"
+msgid_plural "{n} items synced"
+msgstr[0] "{n} item sincronizado"
+msgstr[1] "{n} itens sincronizados"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{n} item remaining"
+msgid_plural "{n} items remaining"
+msgstr[0] "{n} item restante"
+msgstr[1] "{n} itens restantes"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "{n} item needs your attention"
+msgid_plural "{n} items need your attention"
+msgstr[0] "{n} item precisa da sua atenção"
+msgstr[1] "{n} itens precisam da sua atenção"
+
+msgctxt "Thousands separator"
+msgid ","
+msgstr "."
