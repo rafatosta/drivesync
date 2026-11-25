@@ -1,4 +1,6 @@
 //! Read-only descriptor-anchored local inventories. A snapshot never creates a sync baseline.
+mod watch;
+
 use super::{
     remote::interfaces::CancellationToken, LocalObservation, LocalObservationSource, Observation,
     ObservationCoverage,
@@ -66,6 +68,7 @@ pub(crate) struct Scanner {
     sync_root_id: SyncRootId,
     max_items: usize,
     hashes: RefCell<BTreeMap<Path, CachedHash>>,
+    watcher: RefCell<Option<watch::Watches>>,
 }
 fn io_error(error: std::io::Error) -> ScanError {
     if error.kind() == std::io::ErrorKind::PermissionDenied {
@@ -106,6 +109,7 @@ impl Scanner {
             sync_root_id,
             max_items: MAX_ITEMS,
             hashes: RefCell::default(),
+            watcher: RefCell::default(),
         })
     }
     /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
@@ -124,6 +128,166 @@ impl Scanner {
         }
         Ok(current)
     }
+    pub(super) fn event_fd(&self) -> Option<File> {
+        self.watcher.borrow().as_ref()?.handle()
+    }
+
+    /// Recheck data changes from a covered native watch set, or rebuild on coverage loss.
+    pub(crate) fn poll(
+        &self,
+        previous: Option<&BTreeMap<Path, LocalObservation>>,
+        cancel: &CancellationToken,
+    ) -> Result<ScanResult, ScanError> {
+        if cancel.is_cancelled() {
+            self.watcher.take();
+            self.hashes.take();
+            return Err(ScanError::Cancelled);
+        }
+        if let Some(previous) = previous {
+            if let Some(scan) = self.scan_dirty(previous, cancel)? {
+                return Ok(scan);
+            }
+        }
+        self.scan(cancel)
+    }
+
+    fn check_root(&self) -> Result<std::fs::Metadata, ScanError> {
+        let actual = root(&self.absolute)?.metadata().map_err(io_error)?;
+        let expected = self.root.metadata().map_err(io_error)?;
+        if (expected.dev(), expected.ino()) != (actual.dev(), actual.ino()) {
+            return Err(ScanError::RootChanged);
+        }
+        Ok(expected)
+    }
+
+    fn scan_dirty(
+        &self,
+        previous: &BTreeMap<Path, LocalObservation>,
+        cancel: &CancellationToken,
+    ) -> Result<Option<ScanResult>, ScanError> {
+        let dirty = self
+            .watcher
+            .borrow_mut()
+            .as_mut()
+            .filter(|watcher| watcher.started.elapsed() < HASH_AUDIT_INTERVAL)
+            .map(|watcher| watcher.dirty(self.max_items));
+        let dirty = match dirty {
+            Some(Ok(dirty)) => dirty,
+            Some(Err(watch::Rebuild::Coverage)) => {
+                self.hashes.take();
+                return Ok(None);
+            }
+            Some(Err(watch::Rebuild::Namespace)) | None => return Ok(None),
+        };
+        let _sample = crate::performance::Sample::begin("local_incremental_scan");
+        self.check_root()?;
+        let mut entries = previous.clone();
+        let mut changed_hashes = BTreeMap::new();
+        for (path, namespace_changed) in dirty {
+            if !self.recheck_path(
+                previous,
+                &mut entries,
+                &mut changed_hashes,
+                &path,
+                namespace_changed,
+                cancel,
+            )? {
+                return Ok(None);
+            }
+        }
+        self.check_root()?;
+        if entries.len() > self.max_items {
+            return Ok(None);
+        }
+        if !self
+            .watcher
+            .borrow()
+            .as_ref()
+            .is_some_and(watch::Watches::mount_coverage_current)
+        {
+            self.hashes.take();
+            return Ok(None);
+        }
+        let mut hashes = self.hashes.borrow_mut();
+        for (path, hash) in changed_hashes {
+            if let Some(hash) = hash {
+                hashes.insert(path, hash);
+            } else {
+                hashes.remove(&path);
+            }
+        }
+        Ok(Some(ScanResult {
+            entries,
+            coverage: ObservationCoverage::Complete,
+            issues: Vec::new(),
+        }))
+    }
+
+    fn recheck_path(
+        &self,
+        previous: &BTreeMap<Path, LocalObservation>,
+        entries: &mut BTreeMap<Path, LocalObservation>,
+        changed_hashes: &mut BTreeMap<Path, Option<CachedHash>>,
+        path: &StdPath,
+        namespace_changed: bool,
+        cancel: &CancellationToken,
+    ) -> Result<bool, ScanError> {
+        let parent = path.parent().unwrap();
+        let Ok(directory) = self.directory(parent) else {
+            return Ok(false);
+        };
+        let before = directory.metadata().map_err(io_error)?;
+        if !parent.as_os_str().is_empty()
+            && !previous
+                .get(parent)
+                .is_some_and(|entry| entry.identity == Evidence::Known(local_identity(&before)))
+        {
+            return Ok(false);
+        }
+        let old = previous.get(path);
+        if old.is_some_and(|entry| entry.kind != Evidence::Known(FileKind::Regular)) {
+            return Ok(false);
+        }
+        let anchored = descriptor(&directory).join(path.file_name().unwrap());
+        match std::fs::symlink_metadata(&anchored) {
+            Ok(meta) if meta.is_file() && meta.nlink() == 1 && meta.dev() == before.dev() => {
+                match self.collect_entry(&directory, parent, path, &meta, None, cancel)? {
+                    (entry, Some(hash), None)
+                        if namespace_changed
+                            || old.is_some_and(|old| old.identity == entry.identity) =>
+                    {
+                        changed_hashes.insert(path.to_path_buf(), Some(hash));
+                        entries.insert(path.to_path_buf(), entry);
+                    }
+                    _ => return Ok(false),
+                }
+            }
+            Err(error) if namespace_changed && error.kind() == std::io::ErrorKind::NotFound => {
+                changed_hashes.insert(path.to_path_buf(), None);
+                entries.remove(path);
+            }
+            _ => return Ok(false),
+        }
+        if namespace_changed {
+            if let Some(grandparent) = parent.parent() {
+                let Ok(grandparent_fd) = self.directory(grandparent) else {
+                    return Ok(false);
+                };
+                let (entry, _, _) = self.collect_entry(
+                    &grandparent_fd,
+                    grandparent,
+                    parent,
+                    &before,
+                    None,
+                    cancel,
+                )?;
+                entries.insert(parent.to_path_buf(), entry);
+            }
+        }
+        let after = directory.metadata().map_err(io_error)?;
+        Ok(stamp(&before) == stamp(&after))
+    }
+
     /// Reads native paths and SHA-256 in bounded buffers, checking cancellation and stability.
     pub(crate) fn scan(&self, cancel: &CancellationToken) -> Result<ScanResult, ScanError> {
         let _sample = crate::performance::Sample::begin("local_full_scan");
@@ -132,12 +296,9 @@ impl Scanner {
         if cancel.is_cancelled() {
             return Err(ScanError::Cancelled);
         }
-        let current = root(&self.absolute)?;
-        let expected = self.root.metadata().map_err(io_error)?;
-        let actual = current.metadata().map_err(io_error)?;
-        if (expected.dev(), expected.ino()) != (actual.dev(), actual.ino()) {
-            return Err(ScanError::RootChanged);
-        }
+        self.watcher.take();
+        let expected = self.check_root()?;
+        let mut watcher = cacheable(&self.root).then(watch::Watches::open).flatten();
         let mut result = ScanResult {
             entries: BTreeMap::new(),
             coverage: ObservationCoverage::Complete,
@@ -156,6 +317,13 @@ impl Scanner {
             if (actual.dev(), actual.ino()) != identity {
                 issue(&mut result, parent, ScanIssueKind::Unstable);
                 continue;
+            }
+            if actual.dev() != expected.dev()
+                || watcher
+                    .as_mut()
+                    .is_some_and(|watcher| watcher.add(&directory, &parent).is_none())
+            {
+                watcher = None;
             }
             if cancel.is_cancelled() {
                 return Err(ScanError::Cancelled);
@@ -197,93 +365,26 @@ impl Scanner {
                         continue;
                     }
                 };
-                let kind = if meta.is_file() {
-                    FileKind::Regular
-                } else if meta.is_dir() {
-                    FileKind::Directory
-                } else if meta.file_type().is_symlink() {
-                    FileKind::Symlink
-                } else {
-                    FileKind::Unsupported
-                };
-                let mut checksum = Evidence::NotApplicable;
-                let mut can_read = Evidence::NotApplicable;
-                if kind == FileKind::Regular {
-                    match hash(&anchored, &meta, previous.get(&path), cancel) {
-                        Ok(verified) => {
-                            checksum = Evidence::Known(verified.digest.clone());
-                            hashes.insert(path.clone(), verified);
-                            can_read = Evidence::Known(true);
-                        }
-                        Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
-                        Err(ScanError::PermissionDenied) => {
-                            checksum = Evidence::PermissionDenied;
-                            can_read = Evidence::Known(false);
-                            issue(&mut result, path.clone(), ScanIssueKind::Unreadable);
-                        }
-                        Err(_) => {
-                            checksum = Evidence::Unavailable;
-                            can_read = Evidence::Unavailable;
-                            issue(&mut result, path.clone(), ScanIssueKind::Unstable);
-                        }
-                    }
+                let (entry, verified, problem) = self.collect_entry(
+                    &directory,
+                    &parent,
+                    &path,
+                    &meta,
+                    previous.get(&path),
+                    cancel,
+                )?;
+                let is_directory = entry.kind == Evidence::Known(FileKind::Directory);
+                if meta.is_file() && (meta.nlink() != 1 || meta.dev() != expected.dev()) {
+                    watcher = None;
                 }
-                let observed_at = now();
-                result.entries.insert(
-                    path.clone(),
-                    LocalObservation {
-                        sync_root_id: self.sync_root_id.clone(),
-                        state: FileState::Present,
-                        path: Some(path.clone()),
-                        previous_path: None,
-                        name: name
-                            .to_str()
-                            .map(|name| Evidence::Known(name.to_owned()))
-                            .unwrap_or(Evidence::Unsupported),
-                        parent: Evidence::Known(parent.clone()),
-                        kind: Evidence::Known(kind),
-                        identity: Evidence::Known(LocalIdentity {
-                            device_id: meta.dev(),
-                            inode: meta.ino(),
-                            mount_id: None,
-                            birth_ns: crate::models::birth_ns(&meta),
-                        }),
-                        size: if kind == FileKind::Regular {
-                            Evidence::Known(meta.len())
-                        } else {
-                            Evidence::NotApplicable
-                        },
-                        modified_at: Evidence::Known(DateTime {
-                            unix_millis: meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000,
-                        }),
-                        changed_at: Evidence::Known(DateTime {
-                            unix_millis: meta.ctime() * 1000 + meta.ctime_nsec() / 1_000_000,
-                        }),
-                        checksum,
-                        capabilities: Evidence::Known(LocalCapabilities {
-                            can_read,
-                            can_write: access(&anchored, libc::W_OK),
-                            // Check the directory reached by our pinned descriptor, not the procfs symlink.
-                            can_rename: access(
-                                &descriptor(&directory).join("."),
-                                libc::W_OK | libc::X_OK,
-                            ),
-                            can_delete: Evidence::NotCollected,
-                        }),
-                        observed_at,
-                        coverage: ObservationCoverage::Complete,
-                        event: Some(ObservationEvent {
-                            origin: ObservationOrigin::Scanner,
-                            kind: ObservationKind::Snapshot,
-                            observed_at,
-                            old_path: None,
-                            new_path: Some(path.clone()),
-                            remote_id: None,
-                            move_cookie: None,
-                        }),
-                    },
-                );
-                if kind == FileKind::Directory {
+                if let Some(verified) = verified {
+                    hashes.insert(path.clone(), verified);
+                }
+                if let Some(problem) = problem {
+                    issue(&mut result, path.clone(), problem);
+                }
+                result.entries.insert(path.clone(), entry);
+                if is_directory {
                     if depth >= MAX_DEPTH {
                         issue(&mut result, path, ScanIssueKind::LimitReached);
                     } else {
@@ -298,18 +399,110 @@ impl Scanner {
                 issue(&mut result, parent, ScanIssueKind::Unstable);
             }
         }
-        let current = root(&self.absolute)?.metadata().map_err(io_error)?;
-        if (current.dev(), current.ino()) != (expected.dev(), expected.ino()) {
-            return Err(ScanError::RootChanged);
-        }
+        self.check_root()?;
         if result.coverage != ObservationCoverage::Complete {
             for entry in result.entries.values_mut() {
                 entry.coverage = result.coverage;
             }
         } else {
             self.hashes.replace(hashes);
+            self.watcher.replace(watcher);
         }
         Ok(result)
+    }
+
+    fn collect_entry(
+        &self,
+        directory: &File,
+        parent: &StdPath,
+        path: &StdPath,
+        meta: &std::fs::Metadata,
+        previous: Option<&CachedHash>,
+        cancel: &CancellationToken,
+    ) -> Result<(LocalObservation, Option<CachedHash>, Option<ScanIssueKind>), ScanError> {
+        let name = path.file_name().ok_or(ScanError::Unavailable)?;
+        let anchored = descriptor(directory).join(name);
+        let kind = if meta.is_file() {
+            FileKind::Regular
+        } else if meta.is_dir() {
+            FileKind::Directory
+        } else if meta.file_type().is_symlink() {
+            FileKind::Symlink
+        } else {
+            FileKind::Unsupported
+        };
+        let mut verified_hash = None;
+        let mut problem = None;
+        let mut checksum = Evidence::NotApplicable;
+        let mut can_read = Evidence::NotApplicable;
+        if kind == FileKind::Regular {
+            match hash(&anchored, meta, previous, cancel) {
+                Ok(verified) => {
+                    checksum = Evidence::Known(verified.digest.clone());
+                    verified_hash = Some(verified);
+                    can_read = Evidence::Known(true);
+                }
+                Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
+                Err(ScanError::PermissionDenied) => {
+                    checksum = Evidence::PermissionDenied;
+                    can_read = Evidence::Known(false);
+                    problem = Some(ScanIssueKind::Unreadable);
+                }
+                Err(_) => {
+                    checksum = Evidence::Unavailable;
+                    can_read = Evidence::Unavailable;
+                    problem = Some(ScanIssueKind::Unstable);
+                }
+            }
+        }
+        let observed_at = now();
+        Ok((
+            LocalObservation {
+                sync_root_id: self.sync_root_id.clone(),
+                state: FileState::Present,
+                path: Some(path.to_path_buf()),
+                previous_path: None,
+                name: name
+                    .to_str()
+                    .map(|name| Evidence::Known(name.to_owned()))
+                    .unwrap_or(Evidence::Unsupported),
+                parent: Evidence::Known(parent.to_path_buf()),
+                kind: Evidence::Known(kind),
+                identity: Evidence::Known(local_identity(meta)),
+                size: if kind == FileKind::Regular {
+                    Evidence::Known(meta.len())
+                } else {
+                    Evidence::NotApplicable
+                },
+                modified_at: Evidence::Known(DateTime {
+                    unix_millis: meta.mtime() * 1000 + meta.mtime_nsec() / 1_000_000,
+                }),
+                changed_at: Evidence::Known(DateTime {
+                    unix_millis: meta.ctime() * 1000 + meta.ctime_nsec() / 1_000_000,
+                }),
+                checksum,
+                capabilities: Evidence::Known(LocalCapabilities {
+                    can_read,
+                    can_write: access(&anchored, libc::W_OK),
+                    // Check the directory reached by our pinned descriptor, not the procfs symlink.
+                    can_rename: access(&descriptor(directory).join("."), libc::W_OK | libc::X_OK),
+                    can_delete: Evidence::NotCollected,
+                }),
+                observed_at,
+                coverage: ObservationCoverage::Complete,
+                event: Some(ObservationEvent {
+                    origin: ObservationOrigin::Scanner,
+                    kind: ObservationKind::Snapshot,
+                    observed_at,
+                    old_path: None,
+                    new_path: Some(path.to_path_buf()),
+                    remote_id: None,
+                    move_cookie: None,
+                }),
+            },
+            verified_hash,
+            problem,
+        ))
     }
 }
 pub(crate) fn now() -> DateTime {
@@ -324,6 +517,14 @@ fn issue(result: &mut ScanResult, path: Path, kind: ScanIssueKind) {
     result.coverage = ObservationCoverage::Partial;
     if result.issues.len() < 256 {
         result.issues.push(ScanIssue { path, kind });
+    }
+}
+fn local_identity(meta: &std::fs::Metadata) -> LocalIdentity {
+    LocalIdentity {
+        device_id: meta.dev(),
+        inode: meta.ino(),
+        mount_id: None,
+        birth_ns: crate::models::birth_ns(meta),
     }
 }
 fn stamp(meta: &std::fs::Metadata) -> FileStamp {

@@ -1,4 +1,4 @@
-//! Continuous local observation by verified periodic snapshots, without filesystem mutation.
+//! Continuous local observation by verified event-driven reads and periodic audits.
 use super::{
     remote::interfaces::CancellationToken,
     scanner::{now, ScanError, ScanResult, Scanner},
@@ -22,6 +22,10 @@ impl LocalObserver {
             latest: Vec::new(),
         }
     }
+    pub(crate) fn event_fd(&self) -> Option<std::fs::File> {
+        self.scanner.event_fd()
+    }
+
     /// Full latest read, including unchanged entries; coverage is supplied by poll.
     pub(crate) fn snapshot(&self) -> Vec<LocalObservation> {
         self.latest.clone()
@@ -48,7 +52,8 @@ impl LocalObserver {
         &mut self,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Observation>, ObservationCoverage), ScanError> {
-        let scan = match self.scanner.scan(cancel) {
+        let prior = self.previous.as_ref().filter(|_| !self.recheck);
+        let scan = match self.scanner.poll(prior, cancel) {
             Ok(scan) => scan,
             Err(error) => {
                 self.recheck = true;

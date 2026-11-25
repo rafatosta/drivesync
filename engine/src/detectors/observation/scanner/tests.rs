@@ -214,3 +214,54 @@ fn partial_scans_do_not_carry_hash_evidence_into_recovery() {
     );
     assert!(scanner.hashes.borrow().is_empty());
 }
+
+#[test]
+fn native_events_recheck_dirty_files_and_rebuild_on_directory_changes() {
+    let sandbox = Sandbox::new();
+    std::fs::create_dir(sandbox.0.join("folder")).unwrap();
+    std::fs::write(sandbox.0.join("folder/a"), b"before").unwrap();
+    std::fs::write(sandbox.0.join("b"), b"stable").unwrap();
+    let cancel = CancellationToken::new();
+    let scanner = Scanner::open(sandbox.0.clone(), SyncRootId("watched".into())).unwrap();
+    let initial = scanner.poll(None, &cancel).unwrap();
+    let started = || scanner.watcher.borrow().as_ref().unwrap().started;
+    let original_watch = started();
+    let untouched = scanner.hashes.borrow()[StdPath::new("b")].checked;
+    let again = scanner.poll(Some(&initial.entries), &cancel).unwrap();
+    assert_eq!(started(), original_watch);
+    assert_eq!(again.entries, initial.entries);
+
+    std::fs::write(sandbox.0.join("folder/a"), b"temporary").unwrap();
+    std::fs::write(sandbox.0.join("folder/a"), b"after").unwrap();
+    let updated = scanner.poll(Some(&again.entries), &cancel).unwrap();
+    assert_eq!(started(), original_watch);
+    assert_eq!(
+        scanner.hashes.borrow()[StdPath::new("b")].checked,
+        untouched
+    );
+    assert_eq!(
+        updated.entries[StdPath::new("b")],
+        again.entries[StdPath::new("b")]
+    );
+    assert_eq!(
+        updated.entries[StdPath::new("folder/a")].checksum,
+        Evidence::Known(Checksum {
+            algorithm: "sha256".into(),
+            value: format!("{:x}", Sha256::digest(b"after")),
+        })
+    );
+
+    std::fs::rename(sandbox.0.join("folder/a"), sandbox.0.join("moved")).unwrap();
+    let moved = scanner.poll(Some(&updated.entries), &cancel).unwrap();
+    assert_eq!(started(), original_watch);
+    assert_eq!(moved.coverage, ObservationCoverage::Complete);
+    assert!(moved.entries.contains_key(StdPath::new("moved")));
+    assert!(!moved.entries.contains_key(StdPath::new("folder/a")));
+
+    std::fs::create_dir(sandbox.0.join("new-directory")).unwrap();
+    let changed_tree = scanner.poll(Some(&moved.entries), &cancel).unwrap();
+    assert!(started() > original_watch);
+    assert!(changed_tree
+        .entries
+        .contains_key(StdPath::new("new-directory")));
+}

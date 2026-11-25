@@ -252,9 +252,28 @@ async fn local(
                 break;
             }
         }
+        let event_fd = observer
+            .as_ref()
+            .and_then(|observer| observer.lock().ok()?.event_fd())
+            .and_then(|fd| {
+                // AsyncFd owns this duplicate and its raw descriptor stays valid until drop.
+                unsafe {
+                    tokio::io::unix::AsyncFd::register_with_interest(
+                        fd,
+                        tokio::io::Interest::READABLE,
+                    )
+                    .ok()
+                }
+            });
         tokio::select! {
             _ = cancelled(&cancel) => {},
             _ = handle.local_refresh() => {},
+            _ = async {
+                match &event_fd {
+                    Some(fd) => { let _ = fd.readable().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {},
             _ = tokio::time::sleep(Duration::from_secs(2)) => {},
         }
     }

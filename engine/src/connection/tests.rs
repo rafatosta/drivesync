@@ -1544,3 +1544,92 @@ async fn historical_inventory_without_root_proof_cannot_silently_bind_a_new_tree
         b"unreviewed historical data"
     );
 }
+
+#[tokio::test]
+async fn download_refreshes_both_sources_without_restarting_the_google_cursor() {
+    use sha2::{Digest, Sha256};
+    let bytes = "download fixture";
+    let remote_file = serde_json::json!({
+        "id": "file-id", "name": "file", "parents": ["remote-root"],
+        "mimeType": "text/plain", "version": "1", "trashed": false,
+        "size": bytes.len().to_string(), "sha256Checksum": format!("{:x}", Sha256::digest(bytes)),
+        "capabilities": {"canDownload": true}
+    });
+    let file = || Reply::json(200, &remote_file.to_string());
+    let root = || {
+        Reply::json(
+            200,
+            r#"{"id":"remote-root","mimeType":"application/vnd.google-apps.folder","trashed":false,"capabilities":{"canListChildren":true}}"#,
+        )
+    };
+    let mut responses = replies("download-cursor");
+    responses.extend([
+        Reply::json(200, r#"{"startPageToken":"initial"}"#),
+        root(),
+        Reply::json(
+            200,
+            &serde_json::json!({"files":[remote_file],"incompleteSearch":false}).to_string(),
+        ),
+        root(),
+        file(),
+        file(),
+        file(),
+        file(),
+        file(),
+        Reply::json(200, bytes),
+        file(),
+        root(),
+        Reply::json(200, r#"{"changes":[],"newStartPageToken":"advanced"}"#),
+    ]);
+    let mut fixture = Fixture::new(responses).await;
+    Arc::get_mut(&mut fixture.engine.inner)
+        .unwrap()
+        .sources_enabled = true;
+    let account = fixture.connected().await;
+    let request = fixture.sync_request(&account);
+    fixture
+        .engine
+        .start_synchronization(request.clone())
+        .await
+        .unwrap();
+
+    let audit = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(audit) = fixture
+                .engine
+                .synchronization_audit(account.id.clone())
+                .await
+            {
+                if audit.initial_complete {
+                    break audit;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    fixture
+        .engine
+        .stop_synchronization(account.id)
+        .await
+        .unwrap();
+    let requests = fixture.server.requests.lock().unwrap();
+    assert!(
+        audit.as_ref().is_ok_and(|audit| audit.converged_items == 1),
+        "{audit:?}; {requests:?}"
+    );
+    assert_eq!(
+        std::fs::read(request.local_root.join("file")).unwrap(),
+        bytes.as_bytes()
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.target.contains("/changes/startPageToken"))
+            .count(),
+        1
+    );
+    assert!(requests
+        .iter()
+        .any(|r| r.target.contains("/changes?") && r.target.contains("pageToken=initial")));
+}
