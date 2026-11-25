@@ -48,6 +48,8 @@ pub enum SynchronizationActivity {
 pub struct SynchronizationItem {
     pub item_id: Option<ItemId>,
     pub local_path: Option<Path>,
+    /// Observed name when a local path is unavailable.
+    pub display_name: Option<String>,
     pub remote_id: Option<RemoteId>,
 }
 /// Completed, durably confirmed steps within the current item's plan, not transfer bytes.
@@ -60,6 +62,7 @@ pub struct SynchronizationProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationIssueKind {
     Deferred,
+    DeferredFor(SynchronizationWait),
     Conflict,
     AdoptionRequired,
     Unsupported(Option<SynchronizationProjectionIssue>),
@@ -71,6 +74,16 @@ pub enum SynchronizationIssueKind {
     TrashRefused,
     TrashRecoveryRequired,
 }
+/// Evidence the worker needs before it can continue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SynchronizationWait {
+    LocalObservation,
+    RemoteObservation,
+    FreshObservations,
+    CompleteObservations,
+    ComparableVersions,
+}
+
 /// Why a file could not be represented or verified for synchronization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SynchronizationProjectionIssue {

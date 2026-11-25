@@ -526,6 +526,12 @@ impl Orchestrator {
         let item = SynchronizationItem {
             item_id: file.identity.item_id.clone(),
             local_path: file.local.path.clone(),
+            display_name: [&file.local.name, &file.remote.name]
+                .into_iter()
+                .find_map(|name| match name {
+                    Evidence::Known(name) if !name.is_empty() => Some(name.clone()),
+                    _ => None,
+                }),
             remote_id: file.identity.remote_id.clone(),
         };
         let mut outcome = ProcessingOutcome {
@@ -563,7 +569,15 @@ impl Orchestrator {
                 if self.refreshing_confirmed_update() {
                     return outcome;
                 }
-                self.block(item, issue(SynchronizationIssueKind::Deferred, true));
+                self.block(
+                    item,
+                    issue(
+                        SynchronizationIssueKind::DeferredFor(
+                            SynchronizationWait::FreshObservations,
+                        ),
+                        true,
+                    ),
+                );
                 self.settle();
                 return outcome;
             }
@@ -627,7 +641,37 @@ impl Orchestrator {
                             SynchronizationIssueKind::RecoveryRequired
                         }
                     } else {
-                        SynchronizationIssueKind::Deferred
+                        let waits_for = |code| {
+                            decision
+                                .validation
+                                .checks
+                                .iter()
+                                .any(|check| check.code == code)
+                        };
+                        match (
+                            waits_for("observation.local_absence"),
+                            waits_for("observation.remote_absence"),
+                        ) {
+                            (true, true) => SynchronizationIssueKind::DeferredFor(
+                                SynchronizationWait::CompleteObservations,
+                            ),
+                            (true, false) => SynchronizationIssueKind::DeferredFor(
+                                SynchronizationWait::LocalObservation,
+                            ),
+                            (false, true) => SynchronizationIssueKind::DeferredFor(
+                                SynchronizationWait::RemoteObservation,
+                            ),
+                            _ if decision.changeset.status
+                                == analyzer::ComparisonStatus::Blocked
+                                && file.baseline.state
+                                    == crate::inventory::models::BaselineState::Synced =>
+                            {
+                                SynchronizationIssueKind::DeferredFor(
+                                    SynchronizationWait::ComparableVersions,
+                                )
+                            }
+                            _ => SynchronizationIssueKind::Deferred,
+                        }
                     },
                 ),
             };
@@ -648,7 +692,15 @@ impl Orchestrator {
         if !self.sources.is_empty()
             && (self.sources.len() < 2 || self.sources.values().any(Option::is_some))
         {
-            self.block(item, issue(SynchronizationIssueKind::Deferred, true));
+            self.block(
+                item,
+                issue(
+                    SynchronizationIssueKind::DeferredFor(
+                        SynchronizationWait::CompleteObservations,
+                    ),
+                    true,
+                ),
+            );
             self.settle();
             return outcome;
         }
@@ -1017,16 +1069,21 @@ fn key(item: &SynchronizationItem) -> SynchronizationItem {
         SynchronizationItem {
             item_id: item.item_id.clone(),
             local_path: None,
+            display_name: None,
             remote_id: None,
         }
     } else if item.remote_id.is_some() {
         SynchronizationItem {
             item_id: None,
             local_path: None,
+            display_name: None,
             remote_id: item.remote_id.clone(),
         }
     } else {
-        item.clone()
+        SynchronizationItem {
+            display_name: None,
+            ..item.clone()
+        }
     }
 }
 

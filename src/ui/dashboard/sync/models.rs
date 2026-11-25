@@ -46,6 +46,7 @@ pub enum ActivityKind {
     },
     Upload,
     UploadDiscoveredLocal,
+    Analyze,
     Verify,
     Recover,
     CreateDirectory,

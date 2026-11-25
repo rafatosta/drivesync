@@ -199,6 +199,10 @@ impl PersistingOperator {
                             .as_ref()
                             .and_then(|r| r.command.local_path.clone())
                     }),
+                    display_name: pending
+                        .recovery
+                        .as_ref()
+                        .and_then(|r| r.command.name.clone()),
                     remote_id: snapshot
                         .identity
                         .remote_id

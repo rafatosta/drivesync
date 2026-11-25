@@ -18,7 +18,7 @@ use crate::{
     models::*,
     orchestrator::{OrchestratorConfig, OrchestratorHandle, Source},
     providers::google::GoogleDriveClient,
-    synchronization::{SynchronizationIssue, SynchronizationIssueKind},
+    synchronization::{SynchronizationIssue, SynchronizationIssueKind, SynchronizationWait},
 };
 use std::{
     sync::{Arc, Mutex},
@@ -96,9 +96,12 @@ fn supervise(
 async fn failed(handle: &OrchestratorHandle, source: Source, cancel: &CancellationToken) {
     tokio::select! {biased;_=cancelled(cancel)=>{},_=handle.source_status(source,false,Some(SynchronizationIssue {kind:SynchronizationIssueKind::WorkerFailed,retryable:false}))=>{}}
 }
-fn issue() -> SynchronizationIssue {
+fn issue(source: Source) -> SynchronizationIssue {
     SynchronizationIssue {
-        kind: SynchronizationIssueKind::Deferred,
+        kind: SynchronizationIssueKind::DeferredFor(match source {
+            Source::Local => SynchronizationWait::LocalObservation,
+            Source::Remote => SynchronizationWait::RemoteObservation,
+        }),
         retryable: true,
     }
 }
@@ -109,7 +112,7 @@ async fn health(
     problem: bool,
     cancel: &CancellationToken,
 ) {
-    tokio::select! {biased;_=cancelled(cancel)=>{},_=handle.source_status(source,scanning,if problem{Some(issue())}else{None})=>{}}
+    tokio::select! {biased;_=cancelled(cancel)=>{},_=handle.source_status(source,scanning,if problem{Some(issue(source))}else{None})=>{}}
 }
 async fn deliver(
     detectors: &Arc<Detectors>,

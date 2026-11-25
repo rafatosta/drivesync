@@ -1702,3 +1702,36 @@ msgstr "Configurar pastas"
 
 msgid "The folder is accessible, but DriveSync could not verify that it is the original synchronization folder."
 msgstr "A pasta está acessível, mas o DriveSync não conseguiu confirmar que é a pasta original da sincronização."
+
+msgid "The next operation needs more evidence before it can be planned safely."
+msgstr "São necessários mais dados para planejar a próxima operação com segurança."
+
+msgid "Waiting for a complete scan of the computer."
+msgstr "Aguardando uma verificação completa no computador."
+
+msgid "Waiting for a complete scan on Drive."
+msgstr "Aguardando uma verificação completa no Drive."
+
+msgid "Checking the computer and Drive again after the last operation."
+msgstr "Verificando novamente o computador e o Drive após a última operação."
+
+msgid "Waiting for complete scans of the computer and Drive before applying changes."
+msgstr "Aguardando a conclusão das verificações no computador e no Drive para aplicar alterações."
+
+msgid "The current versions could not be compared with the last confirmed versions."
+msgstr "Não foi possível comparar as versões atuais com as últimas versões confirmadas."
+
+msgid "Review the local and Drive versions to resolve the conflict."
+msgstr "Revise as versões do computador e do Drive para resolver o conflito."
+
+msgid "DriveSync could not move the item to trash."
+msgstr "O DriveSync não conseguiu mover o item para a lixeira."
+
+msgid "DriveSync needs to verify the result of the move to trash."
+msgstr "O DriveSync precisa verificar o resultado da movimentação para a lixeira."
+
+msgid "Checking local files and Drive for changes…"
+msgstr "Verificando alterações no computador e no Drive…"
+
+msgid "Waiting for the computer and Drive scans to finish."
+msgstr "Aguardando o fim das verificações no computador e no Drive."

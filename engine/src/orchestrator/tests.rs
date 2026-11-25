@@ -626,19 +626,19 @@ async fn trash_refusal_requires_an_operation_dispatched_to_the_executor() {
     ] {
         file.remote.state = state;
         worker.process(file.clone()).await;
-        assert_eq!(
+        assert!(matches!(
             worker.status.borrow().issue.as_ref().unwrap().kind,
-            SynchronizationIssueKind::Deferred
-        );
+            SynchronizationIssueKind::Deferred | SynchronizationIssueKind::DeferredFor(_)
+        ));
     }
     worker.config.trash_propagation_authorized = false;
     file.remote.trashed = Evidence::Known(true);
     file.remote.version = Evidence::Known(9);
     worker.process(file.clone()).await;
-    assert_eq!(
+    assert!(matches!(
         worker.status.borrow().issue.as_ref().unwrap().kind,
-        SynchronizationIssueKind::Deferred
-    );
+        SynchronizationIssueKind::Deferred | SynchronizationIssueKind::DeferredFor(_)
+    ));
     assert!(calls.requests.lock().unwrap().is_empty());
 
     worker.config.trash_propagation_authorized = true;

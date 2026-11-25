@@ -3,7 +3,7 @@ use adw::gtk::{gio, prelude::*};
 use drivesync_engine::{
     AccountId, Engine, EngineErrorKind, StartSynchronizationRequest, SynchronizationActivity,
     SynchronizationErrorKind, SynchronizationIssueKind, SynchronizationState,
-    SynchronizationStatus,
+    SynchronizationStatus, SynchronizationWait,
 };
 use gettextrs::gettext;
 
@@ -82,9 +82,12 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
     if status.state == SynchronizationState::Stopped {
         return gettext("Synchronization stopped.");
     }
-    if status.state == SynchronizationState::Running {
-        return match status.activity {
-            SynchronizationActivity::Scanning => gettext("Scanning files…"),
+    if status.state == SynchronizationState::Running && status.issue.is_none() {
+        let procedure = match status.activity {
+            SynchronizationActivity::Scanning => gettext("Checking local files…"),
+            SynchronizationActivity::Observing => {
+                gettext("Checking local files and Drive for changes…")
+            }
             SynchronizationActivity::Recovering => {
                 gettext("Checking what the interrupted operation changed.")
             }
@@ -107,66 +110,58 @@ pub(crate) fn description(status: &SynchronizationStatus) -> String {
                 }
             }
             SynchronizationActivity::CreatingDirectory => gettext("Creating directory…"),
+            SynchronizationActivity::Renaming => gettext("Renaming…"),
+            SynchronizationActivity::Moving => gettext("Moving…"),
             _ => gettext("Applying changes…"),
         };
+        return describe_item(status, procedure);
     }
     if let Some(issue) = &status.issue {
         let message = match issue.kind {
-            SynchronizationIssueKind::Deferred => gettext("Waiting for more information about this item."),
-            SynchronizationIssueKind::Conflict => gettext("A conflict needs resolution before this item can continue."),
+            SynchronizationIssueKind::Deferred => gettext("The next operation needs more evidence before it can be planned safely."),
+            SynchronizationIssueKind::DeferredFor(reason) => match reason {
+                SynchronizationWait::LocalObservation => gettext("Waiting for a complete scan of the computer."),
+                SynchronizationWait::RemoteObservation => gettext("Waiting for a complete scan on Drive."),
+                SynchronizationWait::FreshObservations => gettext("Checking the computer and Drive again after the last operation."),
+                SynchronizationWait::CompleteObservations => gettext("Waiting for complete scans of the computer and Drive before applying changes."),
+                SynchronizationWait::ComparableVersions => gettext("The current versions could not be compared with the last confirmed versions."),
+            },
+            SynchronizationIssueKind::Conflict => gettext("Review the local and Drive versions to resolve the conflict."),
             SynchronizationIssueKind::AdoptionRequired => gettext("Initial association needs confirmation before this item can continue."),
             SynchronizationIssueKind::Unsupported(reason) => projection_message(reason),
             SynchronizationIssueKind::InvalidInput => gettext("The synchronization information is inconsistent. Refresh observations before continuing."),
             SynchronizationIssueKind::OperationFailed => gettext("A synchronization operation failed."),
             SynchronizationIssueKind::PreconditionFailed => gettext("The item changed before execution. Waiting for a fresh observation."),
-            SynchronizationIssueKind::RecoveryRequired => {
-                if let Some(name) = status.current_item.as_ref()
-                    .and_then(|item| item.local_path.as_ref())
-                    .and_then(|path| path.file_name())
-                {
-                    gettext("The result of the operation for {item} is still unknown.")
-                        .replace("{item}", &name.to_string_lossy())
-                } else {
-                    gettext("An operation needs verification before synchronization can continue.")
-                }
-            }
-            SynchronizationIssueKind::TrashRefused | SynchronizationIssueKind::TrashRecoveryRequired => {
-                let name = status.current_item.as_ref()
-                    .and_then(|item| item.local_path.as_ref())
-                    .and_then(|path| path.file_name())
-                    .map(|name| name.to_string_lossy())
-                    .unwrap_or_else(|| gettext("Unidentified item").into());
-                let message = if issue.kind == SynchronizationIssueKind::TrashRefused {
-                    gettext("Move to trash refused for {item}.")
-                } else {
-                    gettext("The trash result for {item} requires recovery verification.")
-                };
-                message.replace("{item}", &name)
-            }
+            SynchronizationIssueKind::RecoveryRequired => gettext("An operation needs verification before synchronization can continue."),
+            SynchronizationIssueKind::TrashRefused => gettext("DriveSync could not move the item to trash."),
+            SynchronizationIssueKind::TrashRecoveryRequired => gettext("DriveSync needs to verify the result of the move to trash."),
             SynchronizationIssueKind::WorkerFailed => gettext("Synchronization could not continue. Stop and restart it before trying again."),
         };
-        if matches!(
-            issue.kind,
-            SynchronizationIssueKind::Unsupported(_)
-                | SynchronizationIssueKind::OperationFailed
-                | SynchronizationIssueKind::Deferred
-        ) {
-            if let Some(path) = status
-                .current_item
-                .as_ref()
-                .and_then(|item| item.local_path.as_ref())
-            {
-                return gettext("{item} — {reason}")
-                    .replace("{reason}", &message)
-                    .replace("{item}", &path.to_string_lossy());
-            }
-        }
-        return message;
+        return describe_item(status, message);
     }
     match status.state {
         SynchronizationState::Idle => gettext("No pending operations."),
         SynchronizationState::Failed => gettext("Synchronization failed."),
+        _ if status.activity == SynchronizationActivity::Observing => {
+            gettext("Waiting for the computer and Drive scans to finish.")
+        }
         _ => gettext("Waiting for observations."),
+    }
+}
+
+fn describe_item(status: &SynchronizationStatus, procedure: String) -> String {
+    let item = status.current_item.as_ref().and_then(|item| {
+        item.local_path
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(|path| path.to_string_lossy().into_owned())
+            .or_else(|| item.display_name.clone())
+    });
+    match item {
+        Some(item) => gettext("{item} — {reason}")
+            .replace("{reason}", &procedure)
+            .replace("{item}", &item),
+        None => procedure,
     }
 }
 
@@ -200,7 +195,10 @@ mod tests {
             issue: None,
             updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
         };
-        assert_eq!(description(&status), gettext("Waiting for observations."));
+        assert_eq!(
+            description(&status),
+            gettext("Waiting for the computer and Drive scans to finish.")
+        );
         status.state = SynchronizationState::Idle;
         assert_eq!(description(&status), gettext("No pending operations."));
         status.issue = Some(drivesync_engine::SynchronizationIssue {
@@ -223,6 +221,7 @@ mod tests {
             state: SynchronizationState::Waiting,
             activity: SynchronizationActivity::None,
             current_item: Some(SynchronizationItem {
+                display_name: None,
                 item_id: None,
                 local_path: Some(file.into()),
                 remote_id: None,

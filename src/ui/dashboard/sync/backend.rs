@@ -103,13 +103,11 @@ impl SyncBackend for EngineAdapter {
                     u32::try_from(count).unwrap_or(u32::MAX),
                 )
                 .replace("{count}", &count.to_string());
-                if (snapshot.status == StatusView::Failed
-                    || latest.issue.is_some_and(|issue| {
-                        issue.kind != drivesync_engine::SynchronizationIssueKind::Conflict
-                    }))
-                    && !snapshot.description.is_empty()
-                {
-                    snapshot.description = format!("{summary} {}", snapshot.description);
+                use drivesync_engine::SynchronizationState as State;
+                let has_procedure = latest.issue.is_some()
+                    || matches!(latest.state, State::Running | State::Failed);
+                if has_procedure && !snapshot.description.is_empty() {
+                    snapshot.description = format!("{}\n{summary}", snapshot.description);
                 } else {
                     snapshot.description = summary.clone();
                 }
@@ -178,6 +176,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                 .and_then(|op| op.workspace_shortcut);
             let trash = status.current_operation.as_ref().and_then(|op| op.trash);
             let (kind, direction) = match status.activity {
+                A::Analyzing => (ActivityKind::Analyze, Direction::None),
                 A::Recovering => (ActivityKind::Recover, Direction::None),
                 A::ProjectingWorkspace | A::Applying if workspace_shortcut.is_some() => {
                     use drivesync_engine::WorkspaceShortcutActivity;
@@ -295,6 +294,7 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
                         .and_then(|p| p.file_name())
                         .map(|p| p.to_string_lossy().into_owned())
                 })
+                .or_else(|| item.display_name.clone())
                 .unwrap_or_else(|| gettextrs::gettext("Unidentified item"));
             Some(ActivityView {
                 scope: scope.clone(),

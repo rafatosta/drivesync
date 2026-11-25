@@ -229,6 +229,7 @@ impl SyncActivity {
             ActivityKind::UpdateWorkspaceShortcut => "Updating Workspace shortcut…",
             ActivityKind::CreateDirectory => "Creating directory…",
             ActivityKind::Recover => "Checking interrupted operation…",
+            ActivityKind::Analyze => "Analyzing changes…",
             ActivityKind::Verify => "Verifying content…",
             ActivityKind::Apply => "Applying changes…",
         };
@@ -249,7 +250,6 @@ impl SyncActivity {
             }
             _ => activity.name.clone(),
         };
-        self.text.set_label(&format!("{} {name}", gettext(verb)));
         let phase = match activity.phase {
             Phase::Running if activity.kind == ActivityKind::DownloadDiscoveredRemote => {
                 "New file discovered on Drive"
@@ -275,15 +275,23 @@ impl SyncActivity {
             Phase::Confirmed if movement => "Move verified",
             Phase::Confirmed if rename => "Rename verified",
             Phase::Confirmed => "Local update verified",
-            Phase::Running => "In progress",
+            Phase::Running => "",
             Phase::Failed => "Operation failed",
         };
-        let details = if direction.is_empty() {
-            gettext(phase)
+        let (headline, phase) = if activity.phase == Phase::Running {
+            (format!("{} {name}", gettext(verb)), phase)
         } else {
-            format!("{}\n{}", gettext(direction), gettext(phase))
+            (format!("{} · {name}", gettext(phase)), "")
         };
+        self.text.set_label(&headline);
+        let details = [direction, phase]
+            .into_iter()
+            .filter(|label| !label.is_empty())
+            .map(gettext)
+            .collect::<Vec<_>>()
+            .join("\n");
         self.details.set_label(&details);
+        self.details.set_visible(!details.is_empty());
         self.render_progress(&activity.progress);
         *self.state.borrow_mut() = Some(activity);
         self.widget.set_visible(true);

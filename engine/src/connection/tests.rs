@@ -969,6 +969,10 @@ async fn observation_ingress_uses_context_and_defers_without_inventing_the_other
     let status = subscription.current();
     assert_eq!(status.state, SynchronizationState::Waiting);
     assert_eq!(
+        status.current_item.unwrap().display_name.as_deref(),
+        Some("file")
+    );
+    assert_eq!(
         status.issue.unwrap().kind,
         SynchronizationIssueKind::Deferred
     );

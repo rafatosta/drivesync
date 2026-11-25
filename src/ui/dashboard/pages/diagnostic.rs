@@ -62,44 +62,50 @@ pub(super) fn show(
     }
     content.add(&summary);
 
-    let items = controller.attention.items();
-    if !items.is_empty() {
-        let issues = adw::PreferencesGroup::new();
-        for issue in items {
-            let subtitle = if issue.id == "recovery-blocker" {
-                format!(
-                    "{}\n{}",
-                    issue.summary,
-                    gettext("Keep the current copies while DriveSync checks the result.")
-                )
-            } else {
-                issue.summary
-            };
-            let row = adw::ActionRow::builder()
-                .title(issue.title)
-                .subtitle(if subtitle == description {
-                    String::new()
-                } else {
-                    subtitle
-                })
-                .use_markup(false)
-                .build();
-            if issue.action == AttentionAction::OpenConflictList {
-                row.set_activatable(true);
-                row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-                let engine = engine.clone();
-                let account = account.clone();
-                let dialogs = dialogs.clone();
-                row.connect_activated(move |row| {
-                    dialogs.borrow_mut().push(conflicts::present(
-                        row,
-                        engine.clone(),
-                        account.clone(),
-                    ));
-                });
-            }
-            issues.add(&row);
+    let issues = adw::PreferencesGroup::new();
+    let mut has_details = false;
+    for issue in controller.attention.items() {
+        if issue.action != AttentionAction::OpenConflictList
+            && issue.id != "recovery-blocker"
+            && (description == issue.summary
+                || description.starts_with(&format!("{}\n", issue.summary)))
+        {
+            continue;
         }
+        let subtitle = if issue.id == "recovery-blocker" {
+            format!(
+                "{}\n{}",
+                issue.summary,
+                gettext("Keep the current copies while DriveSync checks the result.")
+            )
+        } else {
+            issue.summary
+        };
+        let row = adw::ActionRow::builder()
+            .title(issue.title)
+            .subtitle(if subtitle == description {
+                String::new()
+            } else {
+                subtitle
+            })
+            .use_markup(false)
+            .build();
+        if issue.action == AttentionAction::OpenConflictList {
+            row.set_activatable(true);
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let engine = engine.clone();
+            let account = account.clone();
+            let dialogs = dialogs.clone();
+            row.connect_activated(move |row| {
+                dialogs
+                    .borrow_mut()
+                    .push(conflicts::present(row, engine.clone(), account.clone()));
+            });
+        }
+        issues.add(&row);
+        has_details = true;
+    }
+    if has_details {
         content.add(&issues);
     }
     let toolbar = adw::ToolbarView::new();

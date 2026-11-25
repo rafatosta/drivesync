@@ -401,6 +401,7 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     value.state = SynchronizationState::Running;
     value.activity = SynchronizationActivity::Downloading;
     value.current_item = Some(SynchronizationItem {
+        display_name: None,
         item_id: None,
         local_path: None,
         remote_id: Some(models::RemoteId("remote-1".into())),
@@ -596,6 +597,7 @@ fn move_activity_reports_both_paths_without_transfer_progress() {
         state: SynchronizationState::Running,
         activity: SynchronizationActivity::Moving,
         current_item: Some(SynchronizationItem {
+            display_name: None,
             item_id: None,
             local_path: None,
             remote_id: Some(models::RemoteId("drive-file".into())),
@@ -672,6 +674,7 @@ fn directory_creation_reports_real_phase_without_transfer_progress() {
                 state: SynchronizationState::Running,
                 activity,
                 current_item: Some(SynchronizationItem {
+                    display_name: None,
                     item_id: Some(item_id.clone()),
                     local_path: None,
                     remote_id: None,
@@ -804,6 +807,7 @@ fn trash_activity_and_attention_follow_public_evidence() {
         state: S::Running,
         activity: A::TrashingLocal,
         current_item: Some(SynchronizationItem {
+            display_name: None,
             item_id: Some(ItemId("item".into())),
             local_path: Some("fixture.bin".into()),
             remote_id: None,
@@ -862,6 +866,7 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
         state: SynchronizationState::Running,
         activity: SynchronizationActivity::Recovering,
         current_item: Some(SynchronizationItem {
+            display_name: None,
             item_id: Some(models::ItemId("item".into())),
             local_path: Some("resume.bin".into()),
             remote_id: None,
@@ -895,4 +900,47 @@ fn recovery_snapshots_only_report_the_observed_current_state() {
         blocked.attention[0].action,
         AttentionAction::OpenIssue("recovery-blocker".into())
     );
+}
+
+#[test]
+fn remote_only_item_is_named_during_analysis_and_when_waiting_for_drive() {
+    use drivesync_engine::{
+        models::{AccountId, RemoteId, Timestamp},
+        SynchronizationActivity, SynchronizationIssue, SynchronizationIssueKind,
+        SynchronizationItem, SynchronizationState, SynchronizationStatus, SynchronizationWait,
+    };
+    let mut status = SynchronizationStatus {
+        account_id: AccountId("account".into()),
+        state: SynchronizationState::Running,
+        activity: SynchronizationActivity::Analyzing,
+        current_item: Some(SynchronizationItem {
+            item_id: None,
+            local_path: None,
+            display_name: Some("Relatório.docx".into()),
+            remote_id: Some(RemoteId("opaque-drive-id".into())),
+        }),
+        current_operation: None,
+        progress: None,
+        issue: None,
+        updated_at: Timestamp { unix_millis: 0 },
+    };
+    let active = map_status(&status, false).activity.unwrap();
+    assert_eq!(active.kind, ActivityKind::Analyze);
+    assert_eq!(active.name, "Relatório.docx");
+
+    status.state = SynchronizationState::Waiting;
+    status.activity = SynchronizationActivity::None;
+    status.issue = Some(SynchronizationIssue {
+        kind: SynchronizationIssueKind::DeferredFor(SynchronizationWait::RemoteObservation),
+        retryable: true,
+    });
+    let waiting = map_status(&status, false);
+    assert_eq!(waiting.status, StatusView::Attention);
+    assert!(waiting.activity.is_none());
+    assert!(waiting.description.contains("Relatório.docx"));
+    assert!(waiting
+        .description
+        .contains(&gettextrs::gettext("Waiting for a complete scan on Drive.")));
+    assert!(!waiting.description.contains("opaque-drive-id"));
+    assert_eq!(waiting.attention[0].summary, waiting.description);
 }
