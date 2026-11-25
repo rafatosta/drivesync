@@ -10,7 +10,6 @@ use gettextrs::gettext;
 pub(crate) struct StartFailure {
     pub message: String,
     pub local_folder: Option<String>,
-    pub confirmation: Option<StartSynchronizationRequest>,
 }
 
 impl From<String> for StartFailure {
@@ -18,7 +17,6 @@ impl From<String> for StartFailure {
         Self {
             message,
             local_folder: None,
-            confirmation: None,
         }
     }
 }
@@ -37,7 +35,16 @@ pub(crate) async fn ensure_started(
     let folder_failure = |message| StartFailure {
         message,
         local_folder: Some(super::local_folder::display(&config.local_uri)),
-        confirmation: None,
+    };
+    let start_failure = |error: drivesync_engine::EngineError| {
+        let message = crate::core::messages::engine_error(&error);
+        match error.kind {
+            EngineErrorKind::Synchronization(
+                SynchronizationErrorKind::LocalRootUnavailable
+                | SynchronizationErrorKind::RootInUse,
+            ) => folder_failure(message),
+            _ => StartFailure::from(message),
+        }
     };
     let path = gio::File::for_uri(&config.local_uri)
         .path()
@@ -51,23 +58,6 @@ pub(crate) async fn ensure_started(
         local_root: path,
         remote_root_id: drivesync_engine::models::RemoteId(config.remote_id),
     };
-    let start_failure = |error: drivesync_engine::EngineError| {
-        let message = crate::core::messages::engine_error(&error);
-        match error.kind {
-            EngineErrorKind::Synchronization(
-                SynchronizationErrorKind::LocalRootConfirmationRequired,
-            ) => {
-                let mut failure = folder_failure(message);
-                failure.confirmation = Some(request.clone());
-                failure
-            }
-            EngineErrorKind::Synchronization(
-                SynchronizationErrorKind::LocalRootUnavailable
-                | SynchronizationErrorKind::RootInUse,
-            ) => folder_failure(message),
-            _ => StartFailure::from(message),
-        }
-    };
     match engine.start_synchronization(request.clone()).await {
         Ok(_) => {}
         Err(error)
@@ -79,7 +69,7 @@ pub(crate) async fn ensure_started(
                 .await
                 .map_err(|e| crate::core::messages::engine_error(&e))?;
             engine
-                .start_synchronization(request.clone())
+                .start_synchronization(request)
                 .await
                 .map_err(start_failure)?;
         }
@@ -87,30 +77,6 @@ pub(crate) async fn ensure_started(
     }
     Ok(true)
 }
-pub(crate) async fn confirm_local_root(
-    engine: &Engine,
-    request: StartSynchronizationRequest,
-) -> Result<(), String> {
-    let saved = super::configuration::load(&request.account_id)
-        .await
-        .map_err(|_| {
-            gettext("Saved configuration could not be read. Your account has been preserved.")
-        })?;
-    if !saved.is_some_and(|saved| {
-        saved.remote_id == request.remote_root_id.0
-            && gio::File::for_uri(&saved.local_uri).path().as_ref() == Some(&request.local_root)
-    }) {
-        return Err(gettext(
-            "The saved folders changed. Go back and review the current configuration.",
-        ));
-    }
-    engine
-        .start_synchronization_with_confirmed_local_root(request)
-        .await
-        .map(|_| ())
-        .map_err(|e| crate::core::messages::engine_error(&e))
-}
-
 /// Idle means this worker has no queued plan; it is never presented as whole-tree convergence.
 pub(crate) fn description(status: &SynchronizationStatus) -> String {
     if status.state == SynchronizationState::Stopped {

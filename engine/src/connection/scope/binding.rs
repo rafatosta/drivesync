@@ -35,11 +35,6 @@ struct Binding {
     identity: Identity,
 }
 
-enum SavedBinding {
-    Current(Binding),
-    Previous(LocalIdentity),
-}
-
 #[repr(C)]
 struct FilesystemInfo {
     max_id: u64,
@@ -137,7 +132,7 @@ fn random() -> io::Result<[u8; 32]> {
     Ok(token)
 }
 
-fn publish(directory: &File, target: &Path, binding: &Binding, replace: bool) -> EngineResult<()> {
+fn publish(directory: &File, target: &Path, binding: &Binding) -> EngineResult<()> {
     let bytes = serde_json::to_vec(binding).map_err(|_| unavailable())?;
     let random = random().map_err(|_| unavailable())?;
     let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -151,24 +146,20 @@ fn publish(directory: &File, target: &Path, binding: &Binding, replace: bool) ->
     let result = (|| -> io::Result<()> {
         file.write_all(&bytes)?;
         file.sync_all()?;
-        if replace {
-            fs::rename(&temp, target)?;
-        } else {
-            use std::{ffi::CString, os::unix::ffi::OsStrExt};
-            let from = CString::new(temp.as_os_str().as_bytes())?;
-            let to = CString::new(target.as_os_str().as_bytes())?;
-            if unsafe {
-                libc::renameat2(
-                    libc::AT_FDCWD,
-                    from.as_ptr(),
-                    libc::AT_FDCWD,
-                    to.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            } != 0
-            {
-                return Err(io::Error::last_os_error());
-            }
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let from = CString::new(temp.as_os_str().as_bytes())?;
+        let to = CString::new(target.as_os_str().as_bytes())?;
+        if unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
         }
         directory.sync_all()
     })();
@@ -184,7 +175,6 @@ pub(super) fn verify(
     storage: &Path,
     scope: &SyncRootId,
     has_inventory: bool,
-    confirm_previous_root: bool,
 ) -> EngineResult<()> {
     if !storage.exists() {
         fs::DirBuilder::new()
@@ -195,44 +185,22 @@ pub(super) fn verify(
     }
     let storage = directory_handle(storage)?;
     let saved_path = fd_path(&storage, &format!("scope-{}.json", scope.0));
-    let saved = read(&saved_path)?
-        .map(|bytes| {
-            serde_json::from_slice(&bytes)
-                .map(SavedBinding::Current)
-                .or_else(|_| serde_json::from_slice(&bytes).map(SavedBinding::Previous))
-                .map_err(|_| changed())
-        })
+    let saved: Option<Binding> = read(&saved_path)?
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| changed()))
         .transpose()?;
-    if saved.is_none() && (has_inventory || confirm_previous_root) {
+    if saved.is_none() && has_inventory {
         return Err(unavailable());
     }
     let identity = identity(root, runtime)?;
-    if let Some(SavedBinding::Previous(previous)) = &saved {
-        if previous != runtime {
-            // The previous format cannot prove the Btrfs subvolume. Require
-            // consent even if the directory's inode and birth time agree.
-            if !matches!(identity, Identity::Btrfs { .. })
-                || previous.inode != runtime.inode
-                || previous.birth_ns != runtime.birth_ns
-                || previous.mount_id != runtime.mount_id
-            {
-                return Err(changed());
-            }
-            if !confirm_previous_root {
-                return Err(synchronization::error(
-                    SynchronizationErrorKind::LocalRootConfirmationRequired,
-                ));
-            }
-        }
-    }
-    if let Some(SavedBinding::Current(binding)) = &saved {
-        if binding.scope != scope.0 || binding.identity != identity {
-            return Err(changed());
-        }
+    if saved
+        .as_ref()
+        .is_some_and(|binding| binding.scope != scope.0 || binding.identity != identity)
+    {
+        return Err(changed());
     }
 
     let metadata = fd_path(root, ".drivesync");
-    if !matches!(saved, Some(SavedBinding::Current(_))) {
+    if saved.is_none() {
         match fs::DirBuilder::new().mode(0o700).create(&metadata) {
             Ok(()) => root.sync_all().map_err(|_| unavailable())?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
@@ -248,7 +216,7 @@ pub(super) fn verify(
     let marker: Option<Binding> = read(&marker_path)?
         .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| changed()))
         .transpose()?;
-    if let Some(SavedBinding::Current(binding)) = saved {
+    if let Some(binding) = saved {
         return if marker.as_ref() == Some(&binding) {
             Ok(())
         } else {
@@ -265,9 +233,9 @@ pub(super) fn verify(
                 token: random().map_err(|_| unavailable())?,
                 identity,
             };
-            publish(&metadata, &marker_path, &marker, false)?;
+            publish(&metadata, &marker_path, &marker)?;
             marker
         }
     };
-    publish(&storage, &saved_path, &marker, saved.is_some())
+    publish(&storage, &saved_path, &marker)
 }

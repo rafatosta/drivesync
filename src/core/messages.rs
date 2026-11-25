@@ -47,9 +47,6 @@ pub(crate) fn engine_error(error: &EngineError) -> String {
             drivesync_engine::SynchronizationErrorKind::LocalRootIdentityChanged => {
                 "The folder is accessible, but DriveSync could not verify that it is the original synchronization folder."
             }
-            drivesync_engine::SynchronizationErrorKind::LocalRootConfirmationRequired => {
-                "The saved folder uses an older identity format. Confirm that it is the original folder to continue."
-            }
             drivesync_engine::SynchronizationErrorKind::RootInUse => {
                 "Choose a local folder separate from other active accounts."
             }

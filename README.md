@@ -12,10 +12,8 @@ and real-account results separately from controlled tests. Published `main` arti
 not include these unpublished functional corrections. DriveSync binds each scope to a
 private proof in application storage and a matching marker in the root's reserved
 `.drivesync` directory. On Btrfs, the proof uses the filesystem UUID, subvolume, inode
-and creation time so device renumbering does not invalidate it. An older Btrfs proof
-whose device number changed requires one explicit confirmation when the inode and
-creation time still agree. Existing inventory without a proof requires review or an
-explicit new scope. Inventory stays in application storage.
+and creation time so device renumbering does not invalidate it. Existing inventory
+requires a matching proof in the current format. Inventory stays in application storage.
 
 | Feature | Current availability and limits |
 | --- | --- |

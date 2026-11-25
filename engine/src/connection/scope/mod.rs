@@ -110,7 +110,6 @@ impl WriterLease {
         directory: &Path,
         scope: &SyncRootId,
         has_inventory: bool,
-        confirm_previous_root: bool,
     ) -> EngineResult<()> {
         binding::verify(
             self._directories
@@ -120,7 +119,6 @@ impl WriterLease {
             directory,
             scope,
             has_inventory,
-            confirm_previous_root,
         )
     }
 }
@@ -186,16 +184,16 @@ mod tests {
         let storage = base.join("storage");
         let scope = SyncRootId("test-scope".into());
         let first = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        first.bind(&storage, &scope, false, false).unwrap();
+        first.bind(&storage, &scope, false).unwrap();
         drop(first);
         let reopened = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        reopened.bind(&storage, &scope, false, false).unwrap();
+        reopened.bind(&storage, &scope, false).unwrap();
         drop(reopened);
         std::fs::write(base.join("a/original"), b"preserved").unwrap();
         std::fs::rename(base.join("a"), base.join("preserved-root")).unwrap();
         std::fs::create_dir(base.join("a")).unwrap();
         let changed = WriterLease::acquire(&base.join("a"), "test", &subject).unwrap();
-        assert!(changed.bind(&storage, &scope, false, false).is_err());
+        assert!(changed.bind(&storage, &scope, false).is_err());
         drop(changed);
         assert_eq!(
             std::fs::read(base.join("preserved-root/original")).unwrap(),
@@ -205,20 +203,23 @@ mod tests {
         std::fs::remove_dir_all(base).unwrap();
     }
     #[test]
-    fn bound_scope_rejects_a_missing_marker_without_recreating_it() {
+    fn bound_scope_rejects_missing_marker_and_refuses_old_proof_without_writes() {
         let _serial = SERIAL.lock().unwrap();
         let (base, subject) = fixture();
         let root = base.join("a");
         let storage = base.join("storage");
         let scope = SyncRootId("test-scope".into());
         let writer = WriterLease::acquire(&root, "test", &subject).unwrap();
-        writer.bind(&storage, &scope, false, false).unwrap();
+        writer.bind(&storage, &scope, false).unwrap();
         let marker = root.join(".drivesync/root-test-scope.json");
         std::fs::remove_file(&marker).unwrap();
-        assert!(writer.bind(&storage, &scope, true, true).is_err());
+        assert!(writer.bind(&storage, &scope, true).is_err());
         assert!(!marker.exists());
-        std::fs::write(storage.join("scope-test-scope.json"), b"malformed binding").unwrap();
-        assert!(writer.bind(&storage, &scope, true, false).is_err());
+        let old_proof = serde_json::to_vec(&writer.identity).unwrap();
+        let proof = storage.join("scope-test-scope.json");
+        std::fs::write(&proof, &old_proof).unwrap();
+        assert!(writer.bind(&storage, &scope, true).is_err());
+        assert_eq!(std::fs::read(proof).unwrap(), old_proof);
         assert!(!marker.exists());
         drop(writer);
         std::fs::remove_dir_all(base).unwrap();
@@ -227,7 +228,7 @@ mod tests {
     #[test]
     #[ignore = "requires DRIVESYNC_TEST_BTRFS_DIRECTORY on a writable Btrfs subvolume"]
     fn btrfs_binding_survives_device_renumbering_and_rejects_replacement() {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
         let base =
             std::path::PathBuf::from(std::env::var_os("DRIVESYNC_TEST_BTRFS_DIRECTORY").unwrap());
         let root = base.join("root");
@@ -237,38 +238,10 @@ mod tests {
         std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700)).unwrap();
         let scope = SyncRootId("reboot-case".into());
         let mut writer = WriterLease::acquire(&root, "test", "btrfs-reboot").unwrap();
-        let mut previous = writer.identity.clone();
-        previous.device_id ^= 1;
-        let proof = storage.join("scope-reboot-case.json");
-        std::io::Write::write_all(
-            &mut std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&proof)
-                .unwrap(),
-            &serde_json::to_vec(&previous).unwrap(),
-        )
-        .unwrap();
         let marker = root.join(".drivesync/root-reboot-case.json");
-        assert_eq!(
-            writer.bind(&storage, &scope, true, false).unwrap_err().kind,
-            crate::EngineErrorKind::Synchronization(
-                SynchronizationErrorKind::LocalRootConfirmationRequired,
-            )
-        );
-        assert!(!marker.exists());
-        assert_eq!(
-            std::fs::read(&proof).unwrap(),
-            serde_json::to_vec(&previous).unwrap()
-        );
-        writer.bind(&storage, &scope, true, true).unwrap();
-        assert_eq!(
-            std::fs::read(&proof).unwrap(),
-            std::fs::read(&marker).unwrap()
-        );
+        writer.bind(&storage, &scope, false).unwrap();
         writer.identity.device_id ^= 2;
-        writer.bind(&storage, &scope, true, false).unwrap();
+        writer.bind(&storage, &scope, true).unwrap();
         drop(writer);
 
         let replacement = base.join("replacement");
@@ -279,7 +252,7 @@ mod tests {
         std::fs::copy(&marker, metadata.join("root-reboot-case.json")).unwrap();
         let writer = WriterLease::acquire(&replacement, "test", "btrfs-reboot").unwrap();
         assert_eq!(
-            writer.bind(&storage, &scope, true, true).unwrap_err().kind,
+            writer.bind(&storage, &scope, true).unwrap_err().kind,
             crate::EngineErrorKind::Synchronization(
                 SynchronizationErrorKind::LocalRootIdentityChanged
             )
